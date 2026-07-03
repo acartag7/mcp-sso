@@ -103,6 +103,48 @@ the full OAuth flow and calls the protected `/mcp` through the **official MCP SD
 client** with a bridge-minted token — register → authorize → token → `/mcp` → refresh
 → replay-revocation observed → revoke.
 
+## Live client verification
+
+The automated gate uses the official MCP SDK client. Verifying against the real
+MCP clients (Claude Code, claude.ai) is a manual step. Status:
+
+| Client | Status | Date | Environment / caveat |
+| --- | --- | --- | --- |
+| OAuth flow + `/mcp` (curl) | ✅ verified | 2026-07-04 | `examples/fastify-sqlite` locally, full dance + tokenless 401 challenge |
+| Official MCP SDK client | ✅ verified | 2026-07-04 | `test/e2e-mcp-sdk.test.ts` |
+| Claude Code | ⏳ pending | — | local `http://localhost` (no tunnel needed); interactive OAuth |
+| claude.ai custom connector | ⏳ pending | — | needs a public `https` tunnel |
+
+**`DEV_STUB_SUBJECT` caveat:** local verification uses the example's stub identity,
+which **bypasses identity** (every authorize resolves to the stub subject) so MCP
+clients — which do not send `Cf-Access-Jwt-Assertion` — can complete the OAuth dance
+without Cloudflare Access. The real CF Access identity leg (header-injected, fail-closed)
+is validated in the production swap, not locally.
+
+To run the client checks yourself:
+
+```bash
+# 1. Start the example locally (Claude Code can reach http://localhost directly):
+OAUTH_ISSUER=http://localhost OAUTH_RESOURCE=http://localhost/mcp \
+OAUTH_CONSENT_SIGNING_SECRET=$(openssl rand -hex 32) \
+OAUTH_SIGNING_PRIVATE_JWK='{"kty":"EC","crv":"P-256",...}' \
+OAUTH_ALLOW_INSECURE_LOCALHOST=true DEV_STUB_SUBJECT=local@dev \
+node examples/fastify-sqlite/index.ts
+
+# 2a. Claude Code (local — no tunnel):
+claude mcp add --transport http my-bridge http://localhost:3000/mcp
+#   → a browser opens to the consent page; approve; the tool is callable.
+
+# 2b. claude.ai (needs a public https URL): expose the server, then set
+#     OAUTH_ISSUER/OAUTH_RESOURCE to the tunnel URL and restart so metadata matches:
+cloudflared tunnel --url http://localhost:3000   # → https://<random>.trycloudflare.com
+#   → in claude.ai, add the tunnel URL as a custom connector; approve; connect.
+```
+
+> A cloudflared quick tunnel registers within seconds but "may take some time to be
+> reachable"; if the edge still returns 404 after ~90s, run it from a non-sandboxed
+> environment (quick-tunnel inbound routing is environment-dependent).
+
 ## License
 
 MIT

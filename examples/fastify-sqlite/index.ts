@@ -24,12 +24,14 @@ async function main(): Promise<void> {
   console.error(`  issuer=${config.issuer}  resource=${config.resource}`);
 }
 
+// DEV ONLY (DEV_STUB_SUBJECT): bypasses identity entirely so MCP clients — which do
+// NOT send a Cf-Access-Jwt-Assertion header — can complete the OAuth dance locally
+// without Cloudflare Access. Every authorize resolves to `subject`. Never use in
+// production; production uses the real CF Access identity port (header-injected by CF).
 function stubIdentity(subject: string) {
   return {
-    async verify(input: unknown) {
-      return typeof input === "string" && input
-        ? { ok: true as const, identity: { subject } }
-        : { ok: false as const, reason: "stub: empty assertion" };
+    async verify(_input: unknown) {
+      return { ok: true as const, identity: { subject } };
     },
   };
 }
