@@ -268,6 +268,18 @@ design — scheme allow-list, CRLF rejection, resolved-IP private-range check,
 connect-to-IP, per-hop re-validation, byte cap, timeout). v0.1 does no outbound
 fetching; the boundary exists so v0.2 cannot accidentally add a raw `fetch`.
 
+### 6.7 `RateLimitPort` *(fix #7)*
+```ts
+interface RateLimitPort { check(key: string): Promise<boolean>; }
+const noopRateLimit: RateLimitPort = { async check(): Promise<boolean> { return true; } };
+```
+Optional DoS defense for the unauthenticated `/oauth/register` + `/oauth/token`
+endpoints (threat-model #8). The adapter calls `check("register:<ip>")` /
+`check("token:<ip>")` before the use-case; `false` ⇒ **429 Too Many Requests**.
+The default `noopRateLimit` allows everything (rate-limiting is advisory, not a
+hard gate). A thrown error is treated as **fail-open** (allow) — a rate-limiter
+outage must not lock out all auth; this is defense-in-depth, not a security boundary.
+
 ## 7. Crypto & token contracts
 
 All signing goes through `jose` (the only runtime dep). **Algorithm pinning is
@@ -491,6 +503,30 @@ The **JSON-RPC `/mcp` surface** uses a separate envelope (built by the framework
 adapter, Phase 3): `{ jsonrpc:"2.0", error:{ code:-32001, message:"<oauth-code>:
 <message>" }, id:null }`, with the `WWW-Authenticate` challenge on 401 (§8.2).
 
+### 9.6 Framework adapters *(Phase 3 — thin wiring)*
+The `/fastify`, `/express`, `/hono` adapters are **thin**: all logic stays in the
+core use-cases; an adapter only parses the request, calls the use-case, and shapes
+the response. Wiring rules:
+- **Endpoints:** GET `/.well-known/oauth-authorization-server` →
+  `authorizationServerMetadata`; GET `/.well-known/oauth-protected-resource` AND
+  its path-inserted form → `protectedResourceMetadata` (§9.1); GET `/oauth/jwks` →
+  `jwks`; POST `/oauth/register` → `registerClient` (behind `RateLimitPort`,
+  §6.7); GET `/oauth/authorize` → resolve subject via `IdentityPort` → `prepare`,
+  render the consent page; POST `/oauth/authorize/approve` → `approve`; POST
+  `/oauth/token` → `exchangeAuthorizationCode`/`refresh` (behind `RateLimitPort`);
+  POST `/oauth/revoke` → `revoke` (always 200).
+- **Error → response:** an `OAuthError` with `.redirect` ⇒ **302** to the tagged
+  `redirect_uri?error=…`; otherwise direct — status `error.status`, body
+  `oauthErrorBody(error)` (§9.5). On the protected `/mcp` surface, 401/403 set the
+  `WWW-Authenticate` challenge from `buildUnauthorizedChallenge` (§8.2/§8.3).
+- **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
+  with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
+  redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src
+  'unsafe-inline'`, `X-Content-Type-Options: nosniff`, all values HTML-escaped.
+- Framework adapters are optional `peerDependencies` (`fastify`/`express`/`hono`);
+  anything added to `devDependencies` for testing gets a `dependency-ledger` entry
+  with the 15-day check.
+
 ## 10. Redirect-URI policy
 
 Two policies, by DCR mode. Both share the core rule: **no allow-all (`"*"`), no
@@ -677,10 +713,11 @@ integrity failures are always **direct 4xx**.
 ## 15. Package & export map
 
 Single package `mcp-idp-bridge`. Runtime dep: **`jose` only**. Framework adapters
-(Phase 3) will be optional peers; `node:sqlite` is built-in (no dep). A SQL
-adapter is a downstream/local concern, not shipped in v0.1. No postinstall, no
-bundler. Dev runs on **Node 24 native TS** (`.ts` imports, no build step); the
-published artifact is plain-`tsc` ESM + `.d.ts`.
+and identity ports are optional `peerDependencies` (the consumer installs the one
+framework/IdP it uses); `node:sqlite` is built-in (no dep). A SQL adapter is a
+downstream/local concern. No postinstall, no bundler. Dev runs on **Node 24 native
+TS** (`.ts` imports, no build step); the published artifact is plain-`tsc` ESM +
+`.d.ts`.
 
 Dev/test does **not** consume the package via its own exports: Node 24 native TS
 imports source files directly (e.g. `../src/index.ts`), so there is no build step
@@ -690,10 +727,14 @@ the npm artifact is cut, so the published package is never broken by `.ts` paths
 
 ```
 "exports": {
-  ".":              { "types": "./dist/index.d.ts",        "default": "./dist/index.js" },
-  "./store/memory": { "types": "./dist/store/memory.d.ts", "default": "./dist/store/memory.js" },
-  "./store/sqlite": { "types": "./dist/store/sqlite.d.ts", "default": "./dist/store/sqlite.js" }
-  // Phase 3 entries (./fastify, ./express, ./hono, ./identity/*) are added the same way.
+  ".":                          { "types": "./dist/index.d.ts",                    "default": "./dist/index.js" },
+  "./store/memory":             { "types": "./dist/store/memory.d.ts",             "default": "./dist/store/memory.js" },
+  "./store/sqlite":             { "types": "./dist/store/sqlite.d.ts",             "default": "./dist/store/sqlite.js" },
+  "./fastify":                  { "types": "./dist/adapters/fastify.d.ts",         "default": "./dist/adapters/fastify.js" },
+  "./express":                  { "types": "./dist/adapters/express.d.ts",         "default": "./dist/adapters/express.js" },
+  "./hono":                     { "types": "./dist/adapters/hono.d.ts",            "default": "./dist/adapters/hono.js" },
+  "./identity/cloudflare-access": { "types": "./dist/identity/cloudflare-access.d.ts", "default": "./dist/identity/cloudflare-access.js" },
+  "./identity/entra":             { "types": "./dist/identity/entra.d.ts",             "default": "./dist/identity/entra.js" }
 }
 ```
 
@@ -725,11 +766,11 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | RFC 7009 revocation (always 200; unknown = no-op) | ✅ v0.1 | §9.4 |
 | Hashed single-use codes/tokens; single-use consent JTI | ✅ v0.1 | §7, §12 |
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
-| Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core (Deny-button UI Phase 3) | §9.3 |
-| Rate-limit hook ports *(fix #7)* | ⏳ Phase 3 | — |
+| Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
+| Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
 | CIMD (SSRF-guarded FetcherPort) | ⏳ boundary v0.1, impl v0.2 | §6.6 |
-| Framework adapters | ⏳ Phase 3 | §15 |
-| Identity ports (CF Access, Entra) | ⏳ Phase 3 | §6.5 |
+| Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
+| Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 
 **RC re-check gate:** the 2026-07-28 RC is treated as additive hardening built in
 now; revisit it when it finalizes (~end July 2026) before anything is called v1.0.

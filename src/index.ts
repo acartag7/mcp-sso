@@ -69,3 +69,4 @@ export {
 export { type ClientStore, type ClientRegistration, type ApplicationType } from "./ports/client-store.ts";
 export { type IdentityPort, type IdentityClaims, type IdentityResult } from "./ports/identity.ts";
 export { type FetcherPort, type FetchInit, type FetchResult } from "./ports/fetcher.ts";
+export { type RateLimitPort, noopRateLimit } from "./ports/rate-limit.ts";
