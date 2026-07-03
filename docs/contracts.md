@@ -257,6 +257,14 @@ Phase 3; the boundary is stated now so the core never depends on a specific IdP.
   the IdP's own policy (e.g. Cloudflare Access Zero Trust). Never the sole gate.
 - **Unit-testable claim validation.** Export the claim-validation logic as a pure
   function so it is unit-testable WITHOUT the JWKS network fetch.
+- **Entra multi-tenant.** When `allowedTenantIds` is set, `tid` must be allowlisted
+  AND `iss` must equal `entraIssuer(payload.tid)` (the standard Entra multi-tenant
+  issuer pattern). Unset ⇒ single-tenant: `iss` must equal `entraIssuer(config.tenantId)`.
+- **Entra nonce.** Pass a `nonce` in `getAuthorizationUrl` and validate `payload.nonce`
+  on return (OIDC request binding) — recommended.
+- **Entra subject allowlist.** Matches the immutable `oid` by default; matching the
+  mutable preferred_username/email requires `allowMutableClaims` (Microsoft warns
+  against using those claims for authorization).
 
 ### 6.6 `FetcherPort` (boundary now; CIMD impl v0.2)
 ```ts
@@ -279,6 +287,11 @@ endpoints (threat-model #8). The adapter calls `check("register:<ip>")` /
 The default `noopRateLimit` allows everything (rate-limiting is advisory, not a
 hard gate). A thrown error is treated as **fail-open** (allow) — a rate-limiter
 outage must not lock out all auth; this is defense-in-depth, not a security boundary.
+**`req.ip` behind a proxy:** the adapter keys on the framework's `req.ip`, which
+behind a reverse proxy/tunnel is the proxy's address, not the client's. The
+composition root MUST configure the framework to trust the proxy hop
+(`trustProxy`/`trust proxy`) so `req.ip` is the real client — otherwise all proxied
+traffic is attributed to one IP and the limiter is ineffective.
 
 ## 7. Crypto & token contracts
 

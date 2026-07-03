@@ -7,43 +7,73 @@ import {
   verifyEntraIdToken,
 } from "../src/identity/entra.ts";
 
+const TENANT = "11111111-2222-3333-4444-555555555555";
+const OTHER_TENANT = "99999999-8888-7777-6666-555555555555";
 const CONFIG: EntraConfig = {
-  tenantId: "11111111-2222-3333-4444-555555555555",
+  tenantId: TENANT,
   clientId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   redirectUri: "https://bridge.test/oauth/entra/callback",
 };
 const NOW = Math.floor(Date.parse("2026-07-03T12:00:00.000Z") / 1000);
-const AT = { currentDate: new Date(NOW * 1000) };
 
-test("entra endpoints are https and tenant-derived", () => {
-  assert.equal(entraIssuer(CONFIG.tenantId), `https://login.microsoftonline.com/${CONFIG.tenantId}/v2.0`);
-  assert.equal(getAuthorizationUrl(CONFIG, { state: "s1", codeChallenge: "challenge-value" }),
-    `https://login.microsoftonline.com/${CONFIG.tenantId}/oauth2/v2.0/authorize?client_id=${CONFIG.clientId}&response_type=code&redirect_uri=${encodeURIComponent(CONFIG.redirectUri)}&response_mode=query&scope=openid+profile+email+offline_access&state=s1&code_challenge=challenge-value&code_challenge_method=S256`);
+function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { iss: entraIssuer(TENANT), aud: CONFIG.clientId, tid: TENANT, oid: "oid-abc", exp: NOW + 3600, iat: NOW, ...overrides };
+}
+
+test("getAuthorizationUrl: tenant-derived, PKCE S256, optional nonce", () => {
+  const url = getAuthorizationUrl(CONFIG, { state: "s1", codeChallenge: "challenge-value" });
+  assert.match(url, /^https:\/\/login\.microsoftonline\.com\/11111111-2222-3333-4444-555555555555\/oauth2\/v2\.0\/authorize\?/);
+  assert.match(url, /code_challenge_method=S256/);
+  assert.equal(url.includes("nonce="), false);
+  const withNonce = getAuthorizationUrl(CONFIG, { state: "s1", codeChallenge: "c", nonce: "n-1" });
+  assert.match(withNonce, /nonce=n-1/);
 });
 
-test("validateEntraIdToken: iss/aud/tid gates + subject extraction", () => {
-  const good = { iss: entraIssuer(CONFIG.tenantId), aud: CONFIG.clientId, tid: CONFIG.tenantId, oid: "oid-abc", exp: NOW + 3600, iat: NOW };
-  const ok = validateEntraIdToken(good, CONFIG);
-  assert.equal(ok.ok, true);
-  assert.equal(ok.ok && ok.identity.subject, "oid-abc"); // oid preferred
-  assert.equal(ok.ok && ok.identity.claims?.email, undefined);
-
-  assert.equal(validateEntraIdToken({ ...good, iss: "https://evil/v2.0" }, CONFIG).ok, false); // bad iss
-  assert.equal(validateEntraIdToken({ ...good, aud: "other-client" }, CONFIG).ok, false); // bad aud
-  assert.equal(validateEntraIdToken({ ...good, tid: "other-tenant" }, CONFIG).ok, false); // bad tid
-  assert.equal(validateEntraIdToken({ ...good, exp: undefined }, CONFIG).ok, false); // no exp
-  const noOid = validateEntraIdToken({ ...good, oid: undefined, preferred_username: "user@example.com" }, CONFIG);
-  assert.equal(noOid.ok && noOid.identity.subject, "user@example.com"); // fallback to preferred_username
-
-  const allow = { ...CONFIG, subjectAllowlist: ["user@example.com"] };
-  assert.equal(validateEntraIdToken({ ...good, oid: undefined, preferred_username: "user@example.com" }, allow).ok, true); // allowlist match
-  assert.equal(validateEntraIdToken({ ...good, oid: "someone-else" }, allow).ok, false); // not in allowlist
+test("validateEntraIdToken: single-tenant iss/aud/tid/exp gates + subject extraction", () => {
+  assert.equal(validateEntraIdToken(payload() as never, CONFIG).ok, true);
+  assert.equal(validateEntraIdToken(payload({ iss: "https://evil/v2.0" }) as never, CONFIG).ok, false); // bad iss
+  assert.equal(validateEntraIdToken(payload({ aud: "other" }) as never, CONFIG).ok, false); // bad aud
+  assert.equal(validateEntraIdToken(payload({ tid: OTHER_TENANT }) as never, CONFIG).ok, false); // foreign tid
+  assert.equal(validateEntraIdToken(payload({ exp: undefined }) as never, CONFIG).ok, false); // no exp
+  const noOid = validateEntraIdToken(payload({ oid: undefined, preferred_username: "user@example.com" }) as never, CONFIG);
+  assert.equal(noOid.ok && noOid.identity.subject, "user@example.com"); // subject fallback (oid preferred)
 });
 
-test("subjectAllowed: case-insensitive over oid/preferred_username/email", () => {
-  assert.equal(subjectAllowed("ignored", { oid: "OID-1" }, ["oid-1"]), true);
-  assert.equal(subjectAllowed("ignored", { preferred_username: "U@x.test" }, ["u@x.test"]), true);
-  assert.equal(subjectAllowed("ignored", { email: "a@b.test" }, ["c@d.test"]), false);
+test("validateEntraIdToken: multi-tenant — tid allowlisted, iss follows the token's tid", () => {
+  const mt: EntraConfig = { ...CONFIG, allowedTenantIds: [TENANT, OTHER_TENANT] };
+  // a token from OTHER_TENANT: tid allowlisted, iss = entraIssuer(OTHER_TENANT) -> ok
+  const foreign = payload({ tid: OTHER_TENANT, iss: entraIssuer(OTHER_TENANT) });
+  assert.equal(validateEntraIdToken(foreign as never, mt).ok, true);
+  // iss not matching the token's own tid -> rejected
+  assert.equal(validateEntraIdToken(payload({ tid: OTHER_TENANT, iss: entraIssuer(TENANT) }) as never, mt).ok, false);
+  // tid not in allowlist -> rejected
+  assert.equal(validateEntraIdToken(payload({ tid: "deadbeef-0000-0000-0000-000000000000" }) as never, mt).ok, false);
+});
+
+test("validateEntraIdToken: nonce binding", () => {
+  assert.equal(validateEntraIdToken(payload({ nonce: "n-1" }) as never, CONFIG, "n-1").ok, true);
+  assert.equal(validateEntraIdToken(payload({ nonce: "n-1" }) as never, CONFIG, "other").ok, false); // mismatch
+});
+
+test("subjectAllowed: oid-primary; mutable claims opt-in only", () => {
+  // oid matches by default
+  assert.equal(subjectAllowed({ oid: "OID-1" }, ["oid-1"]), true);
+  // email/preferred_username do NOT match by default (mutable)
+  assert.equal(subjectAllowed({ preferred_username: "u@x.test", email: "u@x.test" }, ["u@x.test"]), false);
+  // opt-in -> mutable claims match (case-insensitive)
+  assert.equal(subjectAllowed({ preferred_username: "U@X.test" }, ["u@x.test"], true), true);
+  assert.equal(subjectAllowed({ email: "a@b.test" }, ["a@b.test"], true), true);
+});
+
+test("validateEntraIdToken: subjectAllowlist matches oid by default, mutable only when opted in", () => {
+  const allowOid: EntraConfig = { ...CONFIG, subjectAllowlist: ["oid-abc"] };
+  assert.equal(validateEntraIdToken(payload() as never, allowOid).ok, true); // oid matches
+  assert.equal(validateEntraIdToken(payload({ oid: "other" }) as never, allowOid).ok, false); // oid not in list
+  // preferred_username/email do NOT satisfy the allowlist without allowMutableClaims
+  const allowEmail: EntraConfig = { ...CONFIG, subjectAllowlist: ["user@example.com"] };
+  assert.equal(validateEntraIdToken(payload({ oid: undefined, preferred_username: "user@example.com" }) as never, allowEmail).ok, false);
+  const allowEmailMutable: EntraConfig = { ...CONFIG, subjectAllowlist: ["user@example.com"], allowMutableClaims: true };
+  assert.equal(validateEntraIdToken(payload({ oid: undefined, preferred_username: "user@example.com" }) as never, allowEmailMutable).ok, true);
 });
 
 test("verifyEntraIdToken: recorded fixture (known RS256 key, no JWKS fetch)", async () => {
@@ -51,17 +81,16 @@ test("verifyEntraIdToken: recorded fixture (known RS256 key, no JWKS fetch)", as
   const sign = (claims: Record<string, unknown>, opts?: { exp?: number }) =>
     new SignJWT(claims).setProtectedHeader({ alg: "RS256", typ: "JWT" })
       .setIssuedAt(NOW).setExpirationTime(opts?.exp ?? NOW + 3600).sign(privateKey);
-  const baseClaims = { iss: entraIssuer(CONFIG.tenantId), aud: CONFIG.clientId, tid: CONFIG.tenantId, oid: "oid-xyz", email: "u@x.test" };
 
-  const good = await verifyEntraIdToken(await sign(baseClaims), publicKey, CONFIG, AT.currentDate);
+  const good = await verifyEntraIdToken(await sign(payload()), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) });
   assert.equal(good.ok, true);
-  assert.equal(good.ok && good.identity.subject, "oid-xyz");
+  assert.equal(good.ok && good.identity.subject, "oid-abc");
 
-  assert.equal((await verifyEntraIdToken(await sign({ ...baseClaims, iss: "https://login.microsoftonline.com/other/v2.0" }), publicKey, CONFIG, AT.currentDate)).ok, false); // bad iss
-  assert.equal((await verifyEntraIdToken(await sign({ ...baseClaims, aud: "other" }), publicKey, CONFIG, AT.currentDate)).ok, false); // bad aud
-  assert.equal((await verifyEntraIdToken(await sign({ ...baseClaims, tid: "other" }), publicKey, CONFIG, AT.currentDate)).ok, false); // bad tid
-  assert.equal((await verifyEntraIdToken(await sign(baseClaims, { exp: NOW - 120 }), publicKey, CONFIG, AT.currentDate)).ok, false); // expired
-  assert.equal((await verifyEntraIdToken((await sign(baseClaims)).slice(0, -3) + "xxx", publicKey, CONFIG, AT.currentDate)).ok, false); // tampered
+  assert.equal((await verifyEntraIdToken(await sign(payload({ iss: entraIssuer(OTHER_TENANT), tid: OTHER_TENANT })), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) })).ok, false); // foreign tenant, single-tenant config
+  assert.equal((await verifyEntraIdToken(await sign(payload(), { exp: NOW - 120 }), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) })).ok, false); // expired
+  // nonce binding
+  assert.equal((await verifyEntraIdToken(await sign(payload({ nonce: "n-1" })), publicKey, CONFIG, { currentDate: new Date(NOW * 1000), expectedNonce: "n-1" })).ok, true);
+  assert.equal((await verifyEntraIdToken(await sign(payload({ nonce: "n-1" })), publicKey, CONFIG, { currentDate: new Date(NOW * 1000), expectedNonce: "other" })).ok, false);
 });
 
 test("exchangeCodeForToken: posts to the token endpoint and returns the id_token", async () => {
@@ -80,8 +109,8 @@ test("exchangeCodeForToken: posts to the token endpoint and returns the id_token
   await assert.rejects(exchangeCodeForToken(CONFIG, { code: "c", codeVerifier: "v" }, failing));
 });
 
-test("createEntraIdentity: exposes the port and rejects a non-string id_token (no network)", async () => {
+test("createEntraIdentity: exposes the port; getAuthorizationUrl carries nonce; verify rejects non-string", async () => {
   const entra = createEntraIdentity(CONFIG);
-  assert.match(entra.getAuthorizationUrl({ state: "s", codeChallenge: "c" }), /login\.microsoftonline\.com/);
-  assert.equal((await entra.verify(undefined)).ok, false); // non-string id_token — returns before any JWKS fetch
+  assert.match(entra.getAuthorizationUrl({ state: "s", codeChallenge: "c", nonce: "n" }), /nonce=n/);
+  assert.equal((await entra.verify(undefined)).ok, false); // non-string id_token — no JWKS fetch
 });

@@ -33,8 +33,12 @@ export interface EntraConfig {
   redirectUri: string;
   /** Allowed `tid` values; defaults to [tenantId]. */
   allowedTenantIds?: string[];
-  /** Optional defense-in-depth subject/email allowlist (case-insensitive). */
+  /** Optional defense-in-depth subject allowlist (case-insensitive). Matches the
+   *  immutable `oid` by default; set `allowMutableClaims` to also match the mutable
+   *  preferred_username/email (Microsoft warns against those for authorization). */
   subjectAllowlist?: string[];
+  /** Opt-in: also match the allowlist against preferred_username/email. Default false. */
+  allowMutableClaims?: boolean;
 }
 
 type EntraPayload = JWTPayload & { oid?: string; email?: string; preferred_username?: string; tid?: string };
@@ -54,6 +58,8 @@ export interface EntraAuthorizeRequest {
   codeChallenge: string;
   codeChallengeMethod?: "S256";
   scope?: string;
+  /** OIDC nonce — bind the returned id_token to this request (recommended). */
+  nonce?: string;
 }
 
 /** Build the Entra v2.0 authorization URL (auth-code + PKCE S256). */
@@ -67,6 +73,7 @@ export function getAuthorizationUrl(config: EntraConfig, req: EntraAuthorizeRequ
     state: req.state,
     code_challenge: req.codeChallenge,
     code_challenge_method: req.codeChallengeMethod ?? "S256",
+    ...(req.nonce ? { nonce: req.nonce } : {}),
   });
   return `${entraAuthorizeEndpoint(config.tenantId)}?${params.toString()}`;
 }
@@ -96,18 +103,26 @@ export async function exchangeCodeForToken(
   return parsed.id_token;
 }
 
-/** Validate an Entra id_token's claims (iss/aud/tid/exp) and extract the subject.
- *  Exported so the gate is unit-testable WITHOUT the JWKS fetch. Signature is
- *  checked separately by jwtVerify in the caller. */
-export function validateEntraIdToken(payload: EntraPayload, config: EntraConfig): { ok: true; identity: IdentityClaims } | { ok: false; reason: string } {
-  if (payload.iss !== entraIssuer(config.tenantId)) return { ok: false, reason: "entra_bad_iss" };
+/** Validate an Entra id_token's claims and extract the subject. Exported so the gate
+ *  is unit-testable WITHOUT the JWKS fetch. Signature is checked separately by
+ *  jwtVerify in the caller. Multi-tenant: when `allowedTenantIds` is set, the `tid`
+ *  must be allowlisted AND `iss` must equal `entraIssuer(payload.tid)` (the standard
+ *  Entra multi-tenant issuer pattern). Single-tenant (unset): `iss` must equal
+ *  `entraIssuer(config.tenantId)` exactly. */
+export function validateEntraIdToken(payload: EntraPayload, config: EntraConfig, expectedNonce?: string): { ok: true; identity: IdentityClaims } | { ok: false; reason: string } {
+  if (config.allowedTenantIds && config.allowedTenantIds.length > 0) {
+    if (!payload.tid || !config.allowedTenantIds.includes(payload.tid)) return { ok: false, reason: "entra_bad_tid" };
+    if (payload.iss !== entraIssuer(payload.tid)) return { ok: false, reason: "entra_bad_iss" };
+  } else {
+    if (payload.iss !== entraIssuer(config.tenantId)) return { ok: false, reason: "entra_bad_iss" };
+    if (payload.tid && payload.tid !== config.tenantId) return { ok: false, reason: "entra_bad_tid" };
+  }
   if (payload.aud !== config.clientId) return { ok: false, reason: "entra_bad_aud" };
-  const allowedTids = config.allowedTenantIds ?? [config.tenantId];
-  if (!payload.tid || !allowedTids.includes(payload.tid)) return { ok: false, reason: "entra_bad_tid" };
+  if (expectedNonce !== undefined && payload.nonce !== expectedNonce) return { ok: false, reason: "entra_bad_nonce" };
   if (!payload.exp) return { ok: false, reason: "entra_missing_exp" };
   const subject = payload.oid ?? payload.preferred_username ?? payload.email;
   if (!subject) return { ok: false, reason: "entra_no_subject" };
-  if (config.subjectAllowlist && config.subjectAllowlist.length > 0 && !subjectAllowed(subject, payload, config.subjectAllowlist)) {
+  if (config.subjectAllowlist && config.subjectAllowlist.length > 0 && !subjectAllowed(payload, config.subjectAllowlist, config.allowMutableClaims)) {
     return { ok: false, reason: "entra_subject_not_allowed" };
   }
   return {
@@ -116,21 +131,33 @@ export function validateEntraIdToken(payload: EntraPayload, config: EntraConfig)
   };
 }
 
-/** Case-insensitive allowlist match on oid / preferred_username / email. */
-export function subjectAllowed(subject: string, payload: EntraPayload, allowlist: string[]): boolean {
-  void subject;
-  const candidates = [payload.oid, payload.preferred_username, payload.email].filter((v): v is string => typeof v === "string" && v.length > 0);
+/** Case-insensitive allowlist match. Matches the immutable `oid` by default; only
+ *  matches the mutable preferred_username/email when `allowMutable` is true
+ *  (Microsoft warns against using those claims for authorization). */
+export function subjectAllowed(payload: EntraPayload, allowlist: string[], allowMutable = false): boolean {
+  const candidates: string[] = [];
+  if (payload.oid) candidates.push(payload.oid);
+  if (allowMutable) {
+    if (payload.preferred_username) candidates.push(payload.preferred_username);
+    if (payload.email) candidates.push(payload.email);
+  }
   return candidates.some((c) => allowlist.some((entry) => entry.trim().toLowerCase() === c.trim().toLowerCase()));
 }
 
 export type EntraVerifyKey = Awaited<ReturnType<typeof importJWK>>;
 
+export interface EntraVerifyOptions {
+  currentDate?: Date;
+  /** If set, the id_token's `nonce` claim must equal this (OIDC request binding). */
+  expectedNonce?: string;
+}
+
 /** Verify an Entra id_token against an explicit key (CryptoKey/Uint8Array). Exported
  *  so the full path is testable with a known key — no JWKS fetch. */
-export async function verifyEntraIdToken(token: string, key: EntraVerifyKey, config: EntraConfig, currentDate?: Date): Promise<IdentityResult> {
+export async function verifyEntraIdToken(token: string, key: EntraVerifyKey, config: EntraConfig, options?: EntraVerifyOptions): Promise<IdentityResult> {
   try {
-    const { payload } = await jwtVerify<EntraPayload>(token, key, { algorithms: ["RS256"], currentDate });
-    return validateEntraIdToken(payload, config);
+    const { payload } = await jwtVerify<EntraPayload>(token, key, { algorithms: ["RS256"], currentDate: options?.currentDate });
+    return validateEntraIdToken(payload, config, options?.expectedNonce);
   } catch (error) {
     return { ok: false, reason: jwtErrorReason(error) };
   }
@@ -139,7 +166,7 @@ export async function verifyEntraIdToken(token: string, key: EntraVerifyKey, con
 export interface EntraIdentity {
   getAuthorizationUrl(req: EntraAuthorizeRequest): string;
   exchangeCodeForToken(args: { code: string; codeVerifier: string }, transport: EntraTokenTransport): Promise<string>;
-  verify(input: unknown): Promise<IdentityResult>;
+  verify(input: unknown, options?: { expectedNonce?: string }): Promise<IdentityResult>;
 }
 
 /** Build the Entra identity port. `verify` takes a raw id_token string; the adapter
@@ -150,11 +177,11 @@ export function createEntraIdentity(config: EntraConfig): EntraIdentity {
   return {
     getAuthorizationUrl: (req) => getAuthorizationUrl(config, req),
     exchangeCodeForToken: (args, transport) => exchangeCodeForToken(config, args, transport),
-    async verify(input: unknown): Promise<IdentityResult> {
+    async verify(input: unknown, options?: { expectedNonce?: string }): Promise<IdentityResult> {
       if (typeof input !== "string" || !input) return { ok: false, reason: "entra_id_token_missing" };
       try {
         const { payload } = await jwtVerify<EntraPayload>(input, jwks, { algorithms: ["RS256"] });
-        return validateEntraIdToken(payload, config);
+        return validateEntraIdToken(payload, config, options?.expectedNonce);
       } catch (error) {
         return { ok: false, reason: jwtErrorReason(error) };
       }
