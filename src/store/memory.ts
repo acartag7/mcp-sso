@@ -102,7 +102,7 @@ export class MemoryStore implements StorePort {
     // preserving the replay signal that a naive per-token sweep would drop.
     const tokens = [...this.refreshTokens.values()];
     for (const [hash, t] of this.refreshTokens) {
-      const familyValid = tokens.some((m) => m.familyId === t.familyId && m.expiresAt > nowIso);
+      const familyValid = tokens.some((m) => m.familyId === t.familyId && m.expiresAt >= nowIso);
       if (!familyValid) this.refreshTokens.delete(hash);
     }
     // delete ANY empty family (not only revoked ones).

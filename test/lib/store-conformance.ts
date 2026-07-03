@@ -127,6 +127,15 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     assert.equal(replay, null, "post-validity replay is undetected (rows GC'd) — accepted boundary");
     await store.close();
   });
+
+  test(`${label}: sweep treats expires_at == now as still-valid (boundary, addendum 8)`, async () => {
+    const store = make();
+    // a token expiring EXACTLY at the sweep instant is a still-valid family member
+    await store.saveRefreshToken(refresh("edge", "fam-edge", null, NOW));
+    await store.sweepExpired(NOW);
+    assert.ok(await store.findRefreshToken(sha256Hex("edge")), "expires_at == now survives (>= now is still-valid)");
+    await store.close();
+  });
 }
 
 function authCode(rawCode: string, expiresAt: string): SaveAuthCodeInput {

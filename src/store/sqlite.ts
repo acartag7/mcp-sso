@@ -136,7 +136,7 @@ export class SqliteStore implements StorePort {
       // materialized before the DELETE, so this correctly identifies families with
       // a live successor and keeps the consumed predecessor (replay signal).
       this.db.prepare(
-        `DELETE FROM oauth_refresh_tokens WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens WHERE expires_at > ?)`,
+        `DELETE FROM oauth_refresh_tokens WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens WHERE expires_at >= ?)`,
       ).run(nowIso);
       // delete ANY empty family (not only revoked ones).
       this.db.prepare(`DELETE FROM oauth_refresh_token_families WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens)`).run();

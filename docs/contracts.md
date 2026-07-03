@@ -595,9 +595,11 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
    revokes on mismatch; the backfill is defense-in-depth at the store layer.)
 5. **Family-validity sweep (addendum 8):** an expired refresh token still rotates
    to `null`; `sweepExpired(now)` deletes a refresh token (consumed OR unconsumed)
-   ONLY when **no token in its family has `expires_at > now`** (a `NOT EXISTS`
+   ONLY when **no token in its family has `expires_at >= now`** (a `NOT EXISTS`
    family-member-still-valid check), and deletes ANY family left empty (not only
-   revoked ones). This retains a consumed predecessor while a successor rotated
+   revoked ones). **Boundary:** `expires_at >= now` counts as still-valid (matching
+   the Captatum/TiDB adapter; the suite asserts the exact-boundary case so adapters
+   cannot disagree). This retains a consumed predecessor while a successor rotated
    from it is still valid — a naive per-token expiry sweep would delete the
    predecessor at its own expiry and drop the **replay signal** while the successor
    is live (a replay-detection regression; the suite includes the
