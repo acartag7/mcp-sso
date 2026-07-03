@@ -1,0 +1,73 @@
+{
+  "name": "mcp-idp-bridge",
+  "version": "0.0.0",
+  "description": "OAuth 2.1 for remote MCP servers: a spec-correct resource-server verifier plus a small AS-lite bridge with a pluggable upstream identity provider.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.34.4",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./store/memory": {
+      "types": "./dist/store/memory.d.ts",
+      "default": "./dist/store/memory.js"
+    },
+    "./store/sqlite": {
+      "types": "./dist/store/sqlite.d.ts",
+      "default": "./dist/store/sqlite.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "scripts": {
+    "test": "node --test --test-reporter=spec",
+    "typecheck": "tsc --noEmit",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepublishOnly": "pnpm run build",
+    "check:lines": "node scripts/check-line-length.mjs"
+  },
+  "dependencies": {
+    "jose": "6.2.3"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@types/node": "24.13.2",
+    "typescript": "6.0.3"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "oauth",
+    "oauth2",
+    "authorization",
+    "resource-server",
+    "identity",
+    "cloudflare-access",
+    "entra",
+    "pkce",
+    "jose"
+  ],
+  "homepage": "https://github.com/acartag7/mcp-idp-bridge",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/acartag7/mcp-idp-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/acartag7/mcp-idp-bridge/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

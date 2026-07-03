@@ -1,0 +1,6 @@
+# pnpm settings (see docs/dependency-ledger.md).
+# minimumReleaseAge is in MINUTES: 21600 = 15 days. This is the install-time
+# supply-chain floor; it and the dependency-ledger 15-day curation rule are the
+# same standard. Never weaken it to paper over a fresh-publish install problem —
+# use minimumReleaseAgeExclude for a specific justified package instead.
+minimumReleaseAge: 21600
