@@ -40,21 +40,31 @@ optional peer that a consumer opts into.
 | [`typescript`](https://www.typescriptlang.org/) | `6.0.3` | 2026-04-16 | 78d | ✅ | Type-checking + the publish `tsc` build. (7.0.1-rc skipped — RC.) |
 | [`@types/node`](https://www.npmjs.com/package/@types/node) | `24.13.2` | 2026-06-10 | 23d | ✅ | Node 24 typings; matches the `engines.node >=24` target. |
 | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | 95d | ✅ | The official MCP SDK — used **only** in tests/the Phase 4 example as the real client for the end-to-end verify gate. Not a runtime dep. |
+| [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | 80d | ✅ | Reference framework adapter — dev/test + optional peer. (Latest `5.9.0` is 5d — rejected.) |
+| [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | 214d | ✅ | Framework adapter — dev/test + optional peer. |
+| [`hono`](https://hono.dev/) | `4.12.26` | 2026-06-18 | 15d | ✅ | Framework adapter — dev/test + optional peer. (Latest `4.12.27` is 10d — rejected.) |
+| [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | 214d | ✅ | Express typings (dev only). |
 
 Dev tooling with **no added dependency**: the test runner is `node:test` (built
 in), assertions `node:assert/strict` (built in), the SQLite store uses `node:sqlite`
 (built in). No bundler, no test framework, no postinstall — ever.
 
-## Optional peer dependencies (Phase 3; not installed in v0.1)
+## Optional peer dependencies (not shipped to consumers)
 
-Recorded now so the choice is pre-vetted when the framework adapters and (future)
-SQL adapter are added. None are installed in v0.1; `engines`/runtime stays `jose`-only.
+`fastify`, `express`, and `hono` are declared as **optional `peerDependencies`** — a
+consumer installs only the framework adapter(s) it uses. They are also installed as
+**devDependencies** (above) for adapter testing. `jose` remains the sole runtime dep.
+
+| Package | Peer range | Notes |
+|---|---|---|
+| `fastify` | `>=5` | `/fastify` adapter (reference). |
+| `express` | `>=5` | `/express` adapter. |
+| `hono` | `>=4` | `/hono` adapter. |
+
+Reserved (NOT shipped, not installed) for a future downstream `StorePort` adapter:
 
 | Package | Version | Published | Age | 15-day check | Purpose |
 |---|---|---|---|---|---|
-| [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | 80d | ✅ | Reference framework adapter (Phase 3). (Latest `5.9.0` is 5d — rejected.) |
-| [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | 214d | ✅ | Framework adapter (Phase 3). |
-| [`hono`](https://hono.dev/) | `4.12.26` | 2026-06-18 | 15d | ✅ | Framework adapter (Phase 3). (Latest `4.12.27` is 10d — rejected.) |
 | [`mysql2`](https://github.com/sidorares/node-mysql2) | `3.22.5` | 2026-06-06 | 27d | ✅ | Reserved for a downstream SQL `StorePort` adapter (not shipped in v0.1; a Captatum-local concern). |
 
 ## Engines & package manager

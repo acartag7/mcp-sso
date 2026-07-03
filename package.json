@@ -22,6 +22,22 @@
     "./store/sqlite": {
       "types": "./dist/store/sqlite.d.ts",
       "default": "./dist/store/sqlite.js"
+    },
+    "./fastify": {
+      "types": "./dist/adapters/fastify.d.ts",
+      "default": "./dist/adapters/fastify.js"
+    },
+    "./express": {
+      "types": "./dist/adapters/express.d.ts",
+      "default": "./dist/adapters/express.js"
+    },
+    "./hono": {
+      "types": "./dist/adapters/hono.d.ts",
+      "default": "./dist/adapters/hono.js"
+    },
+    "./identity/cloudflare-access": {
+      "types": "./dist/identity/cloudflare-access.d.ts",
+      "default": "./dist/identity/cloudflare-access.js"
     }
   },
   "files": [
@@ -42,8 +58,22 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@types/express": "5.0.6",
     "@types/node": "24.13.2",
+    "express": "5.2.1",
+    "fastify": "5.8.5",
+    "hono": "4.12.26",
     "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "fastify": ">=5",
+    "express": ">=5",
+    "hono": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "fastify": { "optional": true },
+    "express": { "optional": true },
+    "hono": { "optional": true }
   },
   "keywords": [
     "mcp",
