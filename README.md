@@ -20,8 +20,7 @@ hashed single-use codes, refresh rotation with family theft-detection,
 anchored redirect allowlists, timing-safe PKCE, alg pinning, fail-closed
 configuration, npm provenance, and a published threat model.
 
-**Status: pre-release scaffold.** See [`docs/KICKOFF.md`](docs/KICKOFF.md) for
-the build plan.
+**Status: pre-release scaffold.**
 
 ## License
 

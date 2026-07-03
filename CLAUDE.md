@@ -14,8 +14,9 @@ branding in this repo.
 
 ## Start work
 
-1. Read `docs/KICKOFF.md` — it is the build plan (extraction sources, spec
-   target, the 7 fixes, identity ports, package shape, definition of done).
+1. The build/extraction plan is NOT kept in this repo (no handoff artifacts in
+   repos — repo docs are durable-only). It lives in this project's Claude
+   memory and in session prompts from the owner.
 2. Contract-first: `docs/contracts.md` and `docs/threat-model.md` are written
    and reviewed BEFORE implementation code. Update them before changing any
    port/schema/error shape.
