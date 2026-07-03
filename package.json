@@ -38,6 +38,10 @@
     "./identity/cloudflare-access": {
       "types": "./dist/identity/cloudflare-access.d.ts",
       "default": "./dist/identity/cloudflare-access.js"
+    },
+    "./identity/entra": {
+      "types": "./dist/identity/entra.d.ts",
+      "default": "./dist/identity/entra.js"
     }
   },
   "files": [
