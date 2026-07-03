@@ -3,6 +3,7 @@
     "target": "ES2023",
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
     "lib": ["ES2023"],
     "rootDir": ".",
     "strict": true,

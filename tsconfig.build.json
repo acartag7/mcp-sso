@@ -3,6 +3,7 @@
   "compilerOptions": {
     "noEmit": false,
     "noEmitOnError": true,
+    "rewriteRelativeImportExtensions": true,
     "declaration": true,
     "outDir": "./dist",
     "rootDir": "./src",
