@@ -53,6 +53,7 @@ export class SqliteStore implements StorePort {
 
   async consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean> {
     this.ensureOpen();
+    assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso"); // addendum 10: source left this unvalidated
     const result = this.db.prepare(
       `INSERT INTO oauth_consent_jtis (jti, expires_at) VALUES (?, ?) ON CONFLICT(jti) DO NOTHING`,
     ).run(jti, expiresAtIso);
@@ -130,8 +131,15 @@ export class SqliteStore implements StorePort {
     this.transaction(() => {
       this.db.prepare(`DELETE FROM oauth_auth_codes WHERE expires_at < ?`).run(nowIso);
       this.db.prepare(`DELETE FROM oauth_consent_jtis WHERE expires_at < ?`).run(nowIso);
-      this.db.prepare(`DELETE FROM oauth_refresh_tokens WHERE expires_at < ? AND consumed_at IS NULL`).run(nowIso);
-      this.db.prepare(`DELETE FROM oauth_refresh_token_families WHERE revoked_at IS NOT NULL AND family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens)`).run();
+      // Family-validity retention (addendum 8): delete a refresh token (consumed or
+      // not) ONLY when its family has no still-valid member. The subquery is
+      // materialized before the DELETE, so this correctly identifies families with
+      // a live successor and keeps the consumed predecessor (replay signal).
+      this.db.prepare(
+        `DELETE FROM oauth_refresh_tokens WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens WHERE expires_at > ?)`,
+      ).run(nowIso);
+      // delete ANY empty family (not only revoked ones).
+      this.db.prepare(`DELETE FROM oauth_refresh_token_families WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens)`).run();
     });
   }
 

@@ -2,8 +2,8 @@
 // Fix #1: the 401 challenge carries RFC 9728 `resource_metadata` + the supported
 // `scope` (+ optional error), not a bare `Bearer` (the source bug).
 
-import type { BridgeConfig } from "./config.js";
-import { originOf } from "./config.js";
+import type { BridgeConfig } from "./config.ts";
+import { originOf } from "./config.ts";
 
 export interface ChallengeOptions {
   /** Catalog the client may request (space-joined into `scope`). */

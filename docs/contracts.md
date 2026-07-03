@@ -246,6 +246,18 @@ root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
 `GenericOidcIdentity` only if it falls out naturally. Concrete shapes are fixed in
 Phase 3; the boundary is stated now so the core never depends on a specific IdP.
 
+**Identity-port hardening (addenda 11–12, binding on the Phase 3 implementations):**
+- **Trust roots MUST be `https`.** A port's JWKS certs URL and issuer MUST be
+  `https://` — http JWKS lets a MITM substitute signing keys = total auth bypass.
+  Validate with a **raw `^https://` prefix check BEFORE `new URL()`** (Node's lenient
+  URL parser normalizes `https:/host` into a valid-looking URL). Applies to
+  CloudflareAccessIdentity and EntraIdentity.
+- **Optional subject allowlist (defense-in-depth).** A port MAY accept a
+  case-insensitive, trimmed subject/email allowlist; empty ⇒ delegate entirely to
+  the IdP's own policy (e.g. Cloudflare Access Zero Trust). Never the sole gate.
+- **Unit-testable claim validation.** Export the claim-validation logic as a pure
+  function so it is unit-testable WITHOUT the JWKS network fetch.
+
 ### 6.6 `FetcherPort` (boundary now; CIMD impl v0.2)
 ```ts
 interface FetcherPort { fetch(url: string, init?: FetchInit): Promise<FetchResult>; }
@@ -465,10 +477,19 @@ codeChallengeMethod, resource?, scope?, state?, subject })`** → `PreparedConse
   id revokes nothing.
 
 ### 9.5 Error bodies
-`oauthErrorBody(error)` → `{ error: { code, message } }`. JSON-RPC errors (the
-`/mcp` surface) wrap this as `{ jsonrpc:"2.0", error:{ code:-32001,
-message:"<code>: <message>" }, id:null }` and set the `WWW-Authenticate`
-challenge on 401 (§8.2).
+**Raw OAuth endpoints** (token / register / revoke, and direct authorize errors)
+use the RFC 6749 §5.2 / RFC 7591 §3.3 / RFC 7009 §2.2.1 shape — a top-level ASCII
+`error` string plus an optional `error_description` string:
+`oauthErrorBody(error)` → `{ error: error.code, error_description: error.message }`.
+This string form is REQUIRED for interoperability: a standard client (and the
+official MCP SDK, whose `OAuthErrorResponseSchema` requires `error` to be a string)
+reads `body.error === "invalid_grant"` to drive recovery — drop the token and
+re-authorize — so replay/expiry/PKCE/client-binding failures must surface as a
+top-level string, NOT the `{error:{code,message}}` JSON-RPC inner-envelope shape.
+
+The **JSON-RPC `/mcp` surface** uses a separate envelope (built by the framework
+adapter, Phase 3): `{ jsonrpc:"2.0", error:{ code:-32001, message:"<oauth-code>:
+<message>" }, id:null }`, with the `WWW-Authenticate` challenge on 401 (§8.2).
 
 ## 10. Redirect-URI policy
 
@@ -524,7 +545,7 @@ Every `StorePort` implementation MUST satisfy these invariants — the
 `SqliteStore`, and any downstream SQL adapter must pass the same suite. **Fix #3**
 documents the one contract the source left implicit.
 
-### 12.1 Records (all secrets are SHA-256 hex digests; timestamps are UTC ISO 8601 `Z`)
+### 12.1 Records (secrets are SHA-256 hex digests; timestamps are UTC ISO 8601 with EXACTLY 3 ms digits)
 ```ts
 interface AuthCodeRecord {
   codeHash: string; clientId: string; subject: string; redirectUri: string;
@@ -541,9 +562,15 @@ interface SaveRefreshTokenInput {
   clientId: string; subject: string; scopes: string[]; expiresAt: string;
 }
 ```
-Inputs are validated: `assertSha256Hex` for every hash, `assertUtcIsoTimestamp`
-for every timestamp, `codeChallengeMethod === "S256"`, and on rotation
-`next.previousTokenHash === tokenHash`.
+Inputs are validated: `assertSha256Hex` for every hash; `assertUtcIsoTimestamp`
+for every timestamp — which **requires exactly 3 millisecond digits** (e.g.
+`2026-07-03T13:00:00.000Z`), rejecting both no-ms and ≠3-digit forms. Rationale:
+stores compare expiry strings **lexicographically** (SQLite `TEXT` / in-memory
+string compare), and mixed precision inverts ordering (`"...00Z"` sorts after
+`"...00.500Z"`, flipping an expired token to valid). `codeChallengeMethod ===
+"S256"`; on rotation `next.previousTokenHash === tokenHash`. **`consumeConsentJti`
+validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, where
+`jti` rows were written with an unvalidated timestamp; the library closes it).
 
 ### 12.2 Invariants the suite asserts
 1. **Hashed, single-use auth codes:** `consumeAuthCode` deletes on read; a second
@@ -551,7 +578,9 @@ for every timestamp, `codeChallengeMethod === "S256"`, and on rotation
    in storage. SQLite asserts the on-disk file contains no raw secret and has no
    content/body/cache tables (state is OAuth-only).
 2. **Consent JTI single-use:** `consumeConsentJti` returns `true` once, `false` on
-   replay (atomic insert-or-ignore).
+   replay (atomic insert-or-ignore). It also **rejects a `expiresAtIso` that is not
+   a 3-ms UTC timestamp** (addendum 10 — the source left this unvalidated; the
+   library closes the gap).
 3. **Rotation + replay revokes the family:** rotating a token returns the consumed
    record; replaying it returns `null` and revokes the family; subsequent rotation
    of any token in that family returns `null`.
@@ -564,9 +593,17 @@ for every timestamp, `codeChallengeMethod === "S256"`, and on rotation
    cannot poison the next token — those fields always come from the stored record.
    (The use-case still independently enforces RFC 6749 §6 client binding and
    revokes on mismatch; the backfill is defense-in-depth at the store layer.)
-5. **Expiry:** an expired refresh token rotates to `null`; `sweepExpired` removes
-   expired codes, JTIs, and unconsumed expired refresh tokens, and orphaned
-   revoked families.
+5. **Family-validity sweep (addendum 8):** an expired refresh token still rotates
+   to `null`; `sweepExpired(now)` deletes a refresh token (consumed OR unconsumed)
+   ONLY when **no token in its family has `expires_at > now`** (a `NOT EXISTS`
+   family-member-still-valid check), and deletes ANY family left empty (not only
+   revoked ones). This retains a consumed predecessor while a successor rotated
+   from it is still valid — a naive per-token expiry sweep would delete the
+   predecessor at its own expiry and drop the **replay signal** while the successor
+   is live (a replay-detection regression; the suite includes the
+   successor-outlives-predecessor case). Expired auth codes and JTIs are swept by
+   their own expiry. **Accepted boundary:** replay after the WHOLE family is past
+   validity is undetected (the rows are GC'd by then).
 6. **Idempotent close:** `close()` is callable more than once; any op after close
    throws `Store is closed`.
 7. **Granted-scope derivation *(RC item (c))*:** `findGrantedScopes(subject,
@@ -583,6 +620,14 @@ for every timestamp, `codeChallengeMethod === "S256"`, and on rotation
   `:memory:` or file. STRICT tables, `BEGIN IMMEDIATE` transactions,
   `INSERT ... ON CONFLICT DO NOTHING` for consent JTIs. The schema migration is
   idempotent.
+
+**Async-store transaction hygiene (addendum 13 — for the Captatum TiDB adapter and
+any future async store):** acquire the connection → `begin` INSIDE the `try`
+(behind a begun-guard) → `release` in `finally` on EVERY path, including a
+`begin` throw; swallow cleanup errors from `rollback`/`release` so the original
+error propagates. A `begin`-failure that leaks a connection otherwise exhausts the
+pool = an auth outage. (The in-tree memory + sqlite adapters are synchronous, so
+this is forward guidance for async adapters.)
 
 ## 13. Audit contract
 

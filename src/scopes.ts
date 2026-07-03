@@ -2,7 +2,7 @@
 // fetch:* scopes) and fail-closed: any requested scope not in the catalog is
 // rejected with invalid_scope. `requireScope` drives the 403 step-up (§8.3).
 
-import { OAuthError } from "./errors.js";
+import { OAuthError } from "./errors.ts";
 
 export interface AuthorizedSubject {
   subject: string;

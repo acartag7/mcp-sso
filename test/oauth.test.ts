@@ -8,7 +8,7 @@ import type { ClientRegistration, ClientStore } from "../src/ports/client-store.
 import {
   type BridgeConfig, AuthConfigError, createBridgeConfig, originOf,
 } from "../src/config.ts";
-import { OAuthError } from "../src/errors.ts";
+import { OAuthError, oauthErrorBody } from "../src/errors.ts";
 import { pkceChallenge, verifyAccessToken } from "../src/crypto.ts";
 import { requireScope } from "../src/scopes.ts";
 import { buildUnauthorizedChallenge } from "../src/challenge.ts";
@@ -314,14 +314,7 @@ test("scope accumulation: re-authorize unions with active grants (stored mode, R
 });
 
 test("config fail-closed: https-only, secret length, key shape, catalog, defaults-subset", () => {
-  const base = {
-    issuer: "https://auth.test", resource: "https://api.test/mcp",
-    consentSigningSecret: "test-consent-secret-with-enough-entropy",
-    signingPrivateJwk: testPrivateJwk(), signingKeyId: "k",
-    redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
-    allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" as const },
-    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
-  };
+  const base = baseInput();
   assert.throws(() => createBridgeConfig({ ...base, issuer: "http://auth.test" }), AuthConfigError); // not https
   assert.throws(() => createBridgeConfig({ ...base, consentSigningSecret: "short" }), AuthConfigError); // <32
   assert.throws(() => createBridgeConfig({ ...base, signingPrivateJwk: { kty: "EC", crv: "P-256" } }), AuthConfigError); // no d/x/y
@@ -333,6 +326,39 @@ test("config fail-closed: https-only, secret length, key shape, catalog, default
   assert.equal(originOf(dev.resource), "http://localhost");
   assert.throws(() => createBridgeConfig({ ...base, issuer: "http://api.test", dev: { allowInsecureLocalhost: true } }), AuthConfigError); // non-loopback
 });
+
+test("oauthErrorBody is RFC 6749 §5.2 shape (top-level error string)", () => {
+  // The official MCP SDK reads body.error as a STRING to drive recovery
+  // (invalid_grant -> drop token, re-authorize). It must NOT be {error:{code,...}}.
+  const body = oauthErrorBody(new OAuthError("invalid_grant", "Authorization code is invalid"));
+  assert.deepEqual(body, { error: "invalid_grant", error_description: "Authorization code is invalid" });
+  assert.equal(typeof body.error, "string");
+});
+
+test("dev.allowInsecureLocalhost emits a loud warning (and only then)", () => {
+  const captured: string[] = [];
+  const orig = console.warn;
+  console.warn = (...args: unknown[]) => { captured.push(args.map(String).join(" ")); };
+  try {
+    createBridgeConfig({ ...baseInput(), issuer: "http://localhost", resource: "http://localhost/mcp", dev: { allowInsecureLocalhost: true } });
+    createBridgeConfig(baseInput()); // https, no flag -> no warning
+  } finally {
+    console.warn = orig;
+  }
+  assert.equal(captured.length, 1, "exactly one warning, only for the dev flag");
+  assert.match(captured[0]!, /allowInsecureLocalhost/);
+});
+
+function baseInput() {
+  return {
+    issuer: "https://auth.test", resource: "https://api.test/mcp",
+    consentSigningSecret: "test-consent-secret-with-enough-entropy",
+    signingPrivateJwk: testPrivateJwk(), signingKeyId: "k",
+    redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
+    allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" as const },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  };
+}
 
 test("requireScope step-up (403 insufficient_scope)", () => {
   assert.doesNotThrow(() => requireScope({ subject: "s", clientId: "c", scopes: ["mcp:read"] }, "mcp:read"));

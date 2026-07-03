@@ -4,22 +4,22 @@
 // redirect target so the adapter can 302 them. Scope accumulation (RC item c)
 // runs in stored-DCR mode only, deriving prior grants from active refresh tokens.
 
-import type { ClockPort } from "./ports/clock.js";
-import type { AuditPort } from "./ports/audit.js";
-import type { StorePort } from "./ports/store.js";
-import type { BridgeConfig } from "./config.js";
-import { originOf } from "./config.js";
-import type { ConsentRequestClaims } from "./crypto.js";
-import { OAuthError, withRedirect } from "./errors.js";
+import type { ClockPort } from "./ports/clock.ts";
+import type { AuditPort } from "./ports/audit.ts";
+import type { StorePort } from "./ports/store.ts";
+import type { BridgeConfig } from "./config.ts";
+import { originOf } from "./config.ts";
+import type { ConsentRequestClaims } from "./crypto.ts";
+import { OAuthError, withRedirect } from "./errors.ts";
 import {
   expiresAtIso, generateAuthorizationCode, sha256Hex,
   signConsentToken, verifyConsentToken,
-} from "./crypto.js";
-import { normalizeScopes } from "./scopes.js";
+} from "./crypto.ts";
+import { normalizeScopes } from "./scopes.ts";
 import {
   assertAllowedRedirectUri, assertRedirectAllowedForClient,
-} from "./redirect.js";
-import { buildErrorRedirect } from "./challenge.js";
+} from "./redirect.ts";
+import { buildErrorRedirect } from "./challenge.ts";
 
 export interface OAuthAuthorizationDeps {
   config: BridgeConfig;

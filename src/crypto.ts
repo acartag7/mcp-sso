@@ -6,10 +6,10 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { SignJWT, importJWK, jwtVerify } from "jose";
 import type { JWK, JWTPayload } from "jose";
-import type { ClockPort } from "./ports/clock.js";
-import type { BridgeConfig } from "./config.js";
-import { scopeString } from "./scopes.js";
-import { OAuthError } from "./errors.js";
+import type { ClockPort } from "./ports/clock.ts";
+import type { BridgeConfig } from "./config.ts";
+import { scopeString } from "./scopes.ts";
+import { OAuthError } from "./errors.ts";
 
 const CONSENT_AUDIENCE = "mcp-idp-bridge/consent";
 const CONSENT_TYP = "mcp-idp-bridge-consent";

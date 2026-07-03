@@ -4,7 +4,7 @@
 // boot if either origin is not loopback.
 
 import type { JWK } from "jose";
-import type { ClientStore } from "./ports/client-store.js";
+import type { ClientStore } from "./ports/client-store.ts";
 
 export type DcrMode = { mode: "stateless" } | { mode: "stored"; store: ClientStore };
 
@@ -39,8 +39,9 @@ export class AuthConfigError extends Error {
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** Validate and freeze a BridgeConfig. Throws AuthConfigError on any problem —
- *  never warns, never degrades. The returned object is the only thing use-cases
- *  accept. */
+ *  it never degrades to a silent default. The dev escape hatch, when accepted,
+ *  emits an advisory warning (see below). The returned object is the only thing
+ *  use-cases accept. */
 export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   validateUrl(input, "issuer", input.issuer);
   validateUrl(input, "resource", input.resource);
@@ -63,6 +64,14 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   }
   if (input.dcr.mode === "stored" && !input.dcr.store) {
     throw new AuthConfigError("dcr.mode 'stored' requires a ClientStore");
+  }
+  if (input.dev?.allowInsecureLocalhost === true) {
+    // Defense-in-depth advisory (threat-model #16): the loopback-only check above
+    // already passed; this surfaces that the dev escape hatch is ACTIVE, so an
+    // operator who tunnels/exposes the loopback bridge gets a loud signal.
+    console.warn(
+      "[mcp-idp-bridge] dev.allowInsecureLocalhost is ON — http:// is permitted on loopback origins only. Do NOT use in production.",
+    );
   }
   return Object.freeze({ ...input });
 }

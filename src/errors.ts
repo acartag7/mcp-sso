@@ -23,8 +23,15 @@ export class OAuthError extends Error {
   }
 }
 
-export function oauthErrorBody(error: OAuthError): { error: { code: string; message: string } } {
-  return { error: { code: error.code, message: error.message } };
+/** RFC 6749 §5.2 / RFC 7591 §3.3 / RFC 7009 §2.2.1 error body for the raw OAuth
+ *  endpoints (token / register / revoke / direct-authorize): a top-level ASCII
+ *  `error` string + `error_description`. The string form is REQUIRED for
+ *  interoperability — the official MCP SDK's OAuthErrorResponseSchema reads
+ *  `body.error` as a string to drive recovery (e.g. "invalid_grant" → drop token,
+ *  re-authorize), so replay/expiry/PKCE failures must surface as a top-level
+ *  string, not the JSON-RPC inner-envelope `{error:{code,message}}` shape. */
+export function oauthErrorBody(error: OAuthError): { error: string; error_description: string } {
+  return { error: error.code, error_description: error.message };
 }
 
 /** Attach a redirect target to an existing OAuthError (used by the authorize flow

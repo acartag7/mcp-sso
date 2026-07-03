@@ -5,8 +5,8 @@
 // Shared rule: no allow-all ("*"), no unanchored prefix, userinfo rejected, hash
 // stripped. Built-in MCP-client loopback defaults always apply (§10.1).
 
-import type { ClientRegistration } from "./ports/client-store.js";
-import { OAuthError } from "./errors.js";
+import type { ClientRegistration } from "./ports/client-store.ts";
+import { OAuthError } from "./errors.ts";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 

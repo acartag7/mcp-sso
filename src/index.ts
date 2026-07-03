@@ -6,15 +6,15 @@
 export {
   type BridgeConfig, type DcrMode, type DevOptions, AuthConfigError,
   createBridgeConfig, originOf, pathAfterOrigin,
-} from "./config.js";
+} from "./config.ts";
 
 export {
   type RedirectTarget, OAuthError, oauthErrorBody, withRedirect,
-} from "./errors.js";
+} from "./errors.ts";
 
 export {
   type AuthorizedSubject, normalizeScopes, scopeString, requireScope,
-} from "./scopes.js";
+} from "./scopes.ts";
 
 export {
   type ConsentRequestClaims, type AccessTokenClaims, type VerifiedAccessToken,
@@ -22,50 +22,50 @@ export {
   pkceChallenge, publicJwk, sha256Hex, generateAuthorizationCode,
   generateRefreshToken, generateRefreshFamilyId, parseRefreshFamilyId,
   generateConsentJti, expiresAtIso,
-} from "./crypto.js";
+} from "./crypto.ts";
 
 export {
   DEFAULT_ALLOWED_REDIRECT_ORIGINS,
   assertAllowedRedirectUri, assertRedirectAllowedForClient,
-} from "./redirect.js";
+} from "./redirect.ts";
 
 export {
   type ChallengeOptions, buildUnauthorizedChallenge, buildErrorRedirect,
   protectedResourceMetadataUrl,
-} from "./challenge.js";
+} from "./challenge.ts";
 
 export {
   authorizationServerMetadata, protectedResourceMetadata,
   protectedResourceMetadataUrls, jwks,
-} from "./metadata.js";
+} from "./metadata.ts";
 
 export {
   type OAuthAuthorizationDeps, type AuthorizeRequestInput,
   type PreparedConsent, type ApproveInput, type ApproveResult,
   OAuthAuthorizationUseCase,
-} from "./authorize.js";
+} from "./authorize.ts";
 
 export {
   type OAuthTokenDeps, type AuthorizationCodeGrantInput,
   type RefreshGrantInput, type TokenResponse, OAuthTokenUseCase,
-} from "./token.js";
+} from "./token.ts";
 
 export {
   type RequestAuthDeps, type RequestAuthInput, type RequestAuthResult,
   RequestAuthorizer, createRequestAuthorizer,
-} from "./verifier.js";
+} from "./verifier.ts";
 
 export {
   type RegisterDeps, type RegisterInput, type RegisteredClient, registerClient,
-} from "./register.js";
+} from "./register.ts";
 
-export { type ClockPort, SystemClock } from "./ports/clock.js";
-export { type AuditPort, type AuthAuditEvent, type AuthAuditEventName, noopAudit } from "./ports/audit.js";
+export { type ClockPort, SystemClock } from "./ports/clock.ts";
+export { type AuditPort, type AuthAuditEvent, type AuthAuditEventName, noopAudit } from "./ports/audit.ts";
 export {
   type StorePort, type AuthCodeRecord, type RefreshTokenRecord,
   type SaveAuthCodeInput, type SaveRefreshTokenInput,
   StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
-} from "./ports/store.js";
-export { type ClientStore, type ClientRegistration, type ApplicationType } from "./ports/client-store.js";
-export { type IdentityPort, type IdentityClaims, type IdentityResult } from "./ports/identity.js";
-export { type FetcherPort, type FetchInit, type FetchResult } from "./ports/fetcher.js";
+} from "./ports/store.ts";
+export { type ClientStore, type ClientRegistration, type ApplicationType } from "./ports/client-store.ts";
+export { type IdentityPort, type IdentityClaims, type IdentityResult } from "./ports/identity.ts";
+export { type FetcherPort, type FetchInit, type FetchResult } from "./ports/fetcher.ts";

@@ -2,16 +2,16 @@
 // (contracts §9.4). Refresh enforces RFC 6749 §6 client binding (mismatch revokes
 // the family). Revoke follows RFC 7009: always succeeds, unknown token is a no-op.
 
-import type { ClockPort } from "./ports/clock.js";
-import type { AuditPort } from "./ports/audit.js";
-import type { AuthCodeRecord, RefreshTokenRecord, StorePort } from "./ports/store.js";
-import type { BridgeConfig } from "./config.js";
-import { OAuthError } from "./errors.js";
+import type { ClockPort } from "./ports/clock.ts";
+import type { AuditPort } from "./ports/audit.ts";
+import type { AuthCodeRecord, RefreshTokenRecord, StorePort } from "./ports/store.ts";
+import type { BridgeConfig } from "./config.ts";
+import { OAuthError } from "./errors.ts";
 import {
   expiresAtIso, generateRefreshToken, parseRefreshFamilyId, sha256Hex,
   signAccessToken, verifyPkceS256,
-} from "./crypto.js";
-import { normalizeScopes, scopeString } from "./scopes.js";
+} from "./crypto.ts";
+import { normalizeScopes, scopeString } from "./scopes.ts";
 
 export interface OAuthTokenDeps {
   config: BridgeConfig;

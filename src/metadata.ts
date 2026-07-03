@@ -4,9 +4,9 @@
 // field is the resource server's own key set, not the AS's signing keys.
 
 import type { JWK } from "jose";
-import type { BridgeConfig } from "./config.js";
-import { originOf, pathAfterOrigin } from "./config.js";
-import { publicJwk } from "./crypto.js";
+import type { BridgeConfig } from "./config.ts";
+import { originOf, pathAfterOrigin } from "./config.ts";
+import { publicJwk } from "./crypto.ts";
 
 /** RFC 8414 authorization-server metadata. Includes RC item (a): the iss flag. */
 export function authorizationServerMetadata(config: BridgeConfig): Record<string, unknown> {

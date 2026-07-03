@@ -36,6 +36,7 @@ export class MemoryStore implements StorePort {
 
   async consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean> {
     this.ensureOpen();
+    assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso"); // addendum 10: source left this unvalidated
     if (this.consentJtis.has(jti)) return false;
     this.consentJtis.set(jti, expiresAtIso);
     return true;
@@ -95,12 +96,18 @@ export class MemoryStore implements StorePort {
     assertUtcIsoTimestamp(nowIso, "nowIso");
     for (const [hash, record] of this.authCodes) if (record.expiresAt < nowIso) this.authCodes.delete(hash);
     for (const [jti, expiresAt] of this.consentJtis) if (expiresAt < nowIso) this.consentJtis.delete(jti);
-    for (const [hash, t] of this.refreshTokens) if (t.expiresAt < nowIso && !t.consumedAt) this.refreshTokens.delete(hash);
-    for (const [familyId] of this.families) {
-      if (this.families.get(familyId) && ![...this.refreshTokens.values()].some((t) => t.familyId === familyId)) {
-        this.families.delete(familyId);
-      }
+    // Family-validity retention (addendum 8): delete a refresh token (consumed or
+    // not) ONLY when no member of its family is still valid (> now). This keeps a
+    // consumed predecessor while its successor (rotated, expires later) is live —
+    // preserving the replay signal that a naive per-token sweep would drop.
+    const tokens = [...this.refreshTokens.values()];
+    for (const [hash, t] of this.refreshTokens) {
+      const familyValid = tokens.some((m) => m.familyId === t.familyId && m.expiresAt > nowIso);
+      if (!familyValid) this.refreshTokens.delete(hash);
     }
+    // delete ANY empty family (not only revoked ones).
+    const liveFamilies = new Set([...this.refreshTokens.values()].map((t) => t.familyId));
+    for (const familyId of [...this.families.keys()]) if (!liveFamilies.has(familyId)) this.families.delete(familyId);
   }
 
   async close(): Promise<void> {

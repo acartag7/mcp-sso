@@ -2,13 +2,13 @@
 // bearer token, verifies it (audience fail-closed), enforces scope step-up, and
 // audits. NO bypass path: there is intentionally no local/unauthenticated flavor.
 
-import type { ClockPort } from "./ports/clock.js";
-import type { AuditPort } from "./ports/audit.js";
-import type { BridgeConfig } from "./config.js";
-import type { AuthorizedSubject } from "./scopes.js";
-import { requireScope } from "./scopes.js";
-import { OAuthError } from "./errors.js";
-import { verifyAccessToken } from "./crypto.js";
+import type { ClockPort } from "./ports/clock.ts";
+import type { AuditPort } from "./ports/audit.ts";
+import type { BridgeConfig } from "./config.ts";
+import type { AuthorizedSubject } from "./scopes.ts";
+import { requireScope } from "./scopes.ts";
+import { OAuthError } from "./errors.ts";
+import { verifyAccessToken } from "./crypto.ts";
 
 export interface RequestAuthDeps {
   config: BridgeConfig;
