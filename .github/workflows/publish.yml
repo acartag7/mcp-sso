@@ -13,6 +13,9 @@ on:
         default: true
   push:
     tags:
+      # Provenance ordering: the repo MUST be public before any real publish.
+      # Sigstore attests against the source repo; a private repo breaks provenance
+      # verification for auditors. Make the repo public, then tag.
       - "v*.*.*"
 
 permissions:

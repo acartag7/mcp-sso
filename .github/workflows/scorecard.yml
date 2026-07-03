@@ -1,0 +1,42 @@
+name: scorecard
+
+# OpenSSF Scorecard analysis. Runs on every push to main and weekly. Publishes
+# results + SARIF. CAVEAT while the repo is private: results publishing and the
+# badge only fully work on PUBLIC repos — a private run is expected to be limited or
+# to fail at publish time. Do NOT weaken or delete this workflow to get green while
+# private; it becomes meaningful the moment the repo flips public.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "33 6 * * 1" # weekly, Monday ~06:33 UTC (off the :00/:30 marks)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: OpenSSF Scorecard
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required for signature verification
+      security-events: write # required to upload the SARIF results
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (2026-06-18)
+        with:
+          persist-credentials: false
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3 (2025-09-30)
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # public_repos is implicit via publish_results; on a private repo this step
+          # is limited — see the workflow header. Never disable to force green.
+          publish_results: true
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2 (2026-06-04)
+        with:
+          sarif_file: results.sarif
