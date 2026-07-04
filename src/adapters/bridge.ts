@@ -148,6 +148,11 @@ export function asOAuth(error: unknown): OAuthError {
   return error instanceof OAuthError ? error : new OAuthError("internal_error", "OAuth request failed", 500);
 }
 
+export function asDirectOAuth(error: unknown): OAuthError {
+  const mapped = asOAuth(error);
+  return new OAuthError(mapped.code, mapped.message, mapped.status);
+}
+
 function parseApproved(raw: unknown): boolean | undefined {
   return raw === false || raw === "false" ? false : true;
 }
