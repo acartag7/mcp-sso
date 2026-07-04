@@ -196,7 +196,7 @@ a manual step, tracked here:
 | OAuth flow + `/mcp` (curl) | ✅ verified | 2026-07-04 | `examples/fastify-sqlite` locally, full dance + tokenless 401 challenge |
 | Official MCP SDK client | ✅ verified | 2026-07-04 | `test/e2e-mcp-sdk.test.ts`, 83/83 |
 | Claude Code | ✅ verified | 2026-07-04 | local `http://localhost`, `claude mcp add --transport http`; consent screen showed correct scopes, `ping` round-tripped |
-| claude.ai custom connector | ⏳ pending | — | needs a public `https` tunnel; see note below |
+| claude.ai custom connector | ✅ verified | 2026-07-04 | named Cloudflare tunnel on a real domain; consent screen showed correct scopes, `ping` round-tripped |
 
 **`DEV_STUB_SUBJECT` caveat:** local client verification uses the example's
 stub identity, which **bypasses identity** (every authorize resolves to the
@@ -206,19 +206,38 @@ CF Access identity leg (header-injected, fail-closed) is validated in the
 production swap, not locally. Never run the stub against a public URL for
 longer than a verification window — see the reproduction steps below.
 
-**claude.ai check attempted 2026-07-04, not yet completed:** three independent
-`cloudflared tunnel --url` quick tunnels (anonymous, account-less) were tried.
-Each registered cleanly with Cloudflare's edge and stayed connected with zero
-errors for the whole attempt, and the same local server answered correctly
-over plain `http://localhost` throughout — but every public request through
-each tunnel's hostname returned a `404` from Cloudflare's edge itself, never
-reaching the app. That combination (healthy backend, healthy tunnel-side
-connection log, edge-level 404) points at the anonymous quick tunnel's
-one-connector, no-redundancy routing (`cloudflared`'s own CLI disclaims
-"no uptime guarantee" for these), not a bug in the OAuth/DCR code path — which
-the Claude Code check above already exercised end-to-end successfully with
-the identical server. Retry with a named (account-backed) Cloudflare tunnel
-or an alternative like `ngrok` next time.
+**Tunnel notes from the 2026-07-04 verification session**, kept here because
+they cost real time to work out and aren't obvious from `cloudflared --help`:
+
+- **Anonymous quick tunnels (`cloudflared tunnel --url ...`, no account)
+  were unreliable and are not what was ultimately used.** Three independent
+  quick tunnels each registered cleanly with Cloudflare's edge (zero errors in
+  the connector log) and the same local server answered correctly over plain
+  `http://localhost` throughout — but every public request through each
+  tunnel's hostname returned a `404` straight from Cloudflare's edge, never
+  reaching the app. That combination (healthy backend, healthy connector log,
+  edge-level 404) is consistent with the anonymous quick tunnel's
+  single-connector, no-redundancy design — `cloudflared`'s own CLI disclaims
+  "no uptime guarantee" for these on every startup. It was not a bug in the
+  OAuth/DCR code path, which the Claude Code check above already exercised
+  successfully with the identical server.
+- **What actually worked: a named (account-backed) tunnel on a real domain,
+  with an explicit `ingress:` hostname rule in a config file** — not the
+  ad-hoc `cloudflared tunnel run --url <url> <tunnel>` shortcut. The ad-hoc
+  form also produced clean edge-level `404`s in this session, even with a
+  named tunnel and a brand-new DNS record; switching to a config file with
+  an explicit `hostname:`/`service:` ingress rule (plus the required
+  catch-all `http_status:404`) fixed it immediately. If you're setting this
+  up yourself, prefer the config-file form from the start.
+- **A sharp edge if you already run other named tunnels on the same
+  machine:** `cloudflared`'s default `~/.cloudflared/config.yml` (the
+  `tunnel:`/`credentials-file:` it points at) can silently override which
+  credentials get used even when you pass a *different* tunnel ID or name on
+  the command line — producing a confusing auth-retry loop
+  (`control stream encountered a failure while serving`) that looks like a
+  network problem, not a wrong-credentials problem. Pass `--credentials-file`
+  explicitly (or a full `--config`) to be sure which tunnel you're actually
+  authenticating as.
 
 To run the client checks yourself:
 
@@ -234,16 +253,25 @@ node examples/fastify-sqlite/index.ts
 claude mcp add --transport http my-bridge http://localhost:3000/mcp
 #   → a browser opens to the consent page; approve; the tool is callable.
 
-# 2b. claude.ai (needs a public https URL): expose the server, then set
-#     OAUTH_ISSUER/OAUTH_RESOURCE to the tunnel URL and restart so metadata matches:
-cloudflared tunnel --url http://localhost:3000   # → https://<random>.trycloudflare.com
-#   → in claude.ai, add the tunnel URL as a custom connector; approve; connect.
+# 2b. claude.ai (needs a public https URL). A named Cloudflare tunnel on a
+#     domain you control is the reliable option (see the tunnel notes above
+#     for why the ad-hoc `cloudflared tunnel --url`/`tunnel run --url` forms
+#     were unreliable in practice):
+cat > tunnel-config.yml <<CFG
+tunnel: <your-tunnel-id>
+credentials-file: /path/to/<your-tunnel-id>.json
+ingress:
+  - hostname: mcp-sso-verify.yourdomain.com
+    service: http://localhost:3000
+  - service: http_status:404
+CFG
+cloudflared tunnel route dns <your-tunnel-id> mcp-sso-verify.yourdomain.com
+cloudflared tunnel --config tunnel-config.yml run
+#   → set OAUTH_ISSUER/OAUTH_RESOURCE to https://mcp-sso-verify.yourdomain.com
+#     before starting the server, so the metadata matches.
+#   → in claude.ai, add https://mcp-sso-verify.yourdomain.com/mcp as a custom
+#     connector; approve; connect.
 ```
-
-> A cloudflared quick tunnel registers within seconds but "may take some time
-> to be reachable"; if the edge still returns 404 after ~90s, run it from a
-> non-sandboxed environment (quick-tunnel inbound routing is
-> environment-dependent).
 
 ## Verify
 
