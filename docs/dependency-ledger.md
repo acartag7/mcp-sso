@@ -100,6 +100,15 @@ pinned to a SHA whose tag is ≥15 days old at pin time):
 4. Update this file whenever a pin changes — version, publish date, and the 15-day
    check must always reflect reality.
 
+**Documented exception (2026-07-04):** `mcp-sso@0.0.0` was published with a local
+`npm publish --no-provenance` to bootstrap the package name on the registry —
+npm's Trusted Publisher (OIDC) can only be configured for a package that already
+exists, so the very first publish couldn't itself go through OIDC. This was a
+one-time, explicitly-owner-approved exception to rule 3, not a new precedent: it
+carries no provenance attestation and is not the v0.1.0 release artifact. Every
+publish from `v0.1.0` onward goes through GitHub Actions via OIDC Trusted
+Publishing (`.github/workflows/publish.yml`), with `--provenance` intact.
+
 ## Consuming this package under a `minimumReleaseAge` floor
 
 A consumer that sets `minimumReleaseAge: 21600` (15 days) — the same standard this
