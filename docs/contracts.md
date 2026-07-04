@@ -506,6 +506,9 @@ codeChallengeMethod, resource?, scope?, state?, subject })`** → `PreparedConse
 ### 9.4 Token
 `POST /oauth/token`, `cache-control: no-store`. Response:
 `{ access_token, token_type: "Bearer", expires_in, refresh_token, scope }`.
+*(This is the USER-grant shape. The v0.2 `client_credentials` grant returns a
+machine shape with no `refresh_token` member — the response type splits when
+§17.2 ships.)*
 - **`exchangeAuthorizationCode`**: consumes the code (§7.3), verifies PKCE S256
   and client/redirect binding, mints an ES256 access token (§7.2) + a refresh
   token (§7.4, new family).
@@ -836,29 +839,50 @@ rejected with `invalid_client`, direct):**
 
 ```ts
 cimd?: {
-  fetcher: FetcherPort;         // MUST be createGuardedFetcher() or equivalent
+  enabled: true;
+  fetcher?: GuardedFetcher;     // BRANDED type — see below; omitted ⇒ the library
+                                // constructs its own createGuardedFetcher()
   maxDocumentBytes?: number;    // default 5120 (the draft's recommended 5 KB cap)
   fetchTimeoutMs?: number;      // default 5000 — one wall-clock deadline, DNS→body
   cacheTtlCapSeconds?: number;  // default 3600; cache lifetime clamped [60, cap]
 }
 ```
 
-Boot: `cimd` present requires `fetcher` (`AuthConfigError`). When enabled, AS
-metadata emits `client_id_metadata_document_supported: true` (draft §5 MUST
-when supported). Detection is by shape: a `client_id` starting with
-`https://` takes the CIMD path (draft §6.9 — our generated ids `mcpdc_`/`mcc_`
-never collide).
+**The guard is structural, not advisory.** `GuardedFetcher` is a branded type
+(unique symbol brand) that ONLY `createGuardedFetcher()` can produce — the
+CIMD config does NOT accept a bare `FetcherPort`, because the core cannot
+verify that an arbitrary `fetch()` object performs DNS pinning, IP blocking,
+and redirect refusal. By default the library constructs the guarded fetcher
+itself. Testability is preserved one layer down:
+`createGuardedFetcher({ transport? })` accepts an injectable low-level
+connect-to-validated-IP transport for tests, but the guard pipeline — URL
+admission, blocklists, DNS validation, redirect refusal, caps — always runs
+around whatever transport is injected and cannot be skipped. (`FetcherPort`
+in §6.6 remains the generic boundary description; CIMD requires the brand.)
+
+Boot: `cimd.enabled` requires nothing else (`AuthConfigError` only on invalid
+caps). When enabled, AS metadata emits
+`client_id_metadata_document_supported: true` (draft §5 MUST when supported).
+Detection is by shape: a `client_id` starting with `https://` takes the CIMD
+path (draft §6.9 — our generated ids `mcpdc_`/`mcc_` never collide).
 
 **17.1.1 URL admission (pure function, unit-testable, runs before any DNS):**
 
-1. Raw-string checks first: length ≤ 2048; no raw or percent-encoded CR/LF
-   (`\r`, `\n`, `%0d`, `%0a` case-insensitive); no other control chars; raw
-   `^https://` prefix check BEFORE `new URL()` (addendum 11 pattern).
+1. Raw-string checks first — every check in this step runs on the RAW
+   client_id string BEFORE `new URL()`: length ≤ 2048; no raw or
+   percent-encoded CR/LF (`\r`, `\n`, `%0d`, `%0a` case-insensitive); no
+   other control chars; raw `^https://` prefix check (addendum 11 pattern);
+   and **dot-segment rejection**: split the raw path on `/` and reject any
+   segment equal to `.` or `..` in literal OR percent-encoded form (`%2e`,
+   `%2E`, and mixed — decode each segment once for this comparison only).
+   This MUST happen pre-parse: the WHATWG parser *normalizes* both literal
+   and percent-encoded dot segments away (`/a/%2e%2e/b` parses to pathname
+   `/b`), so a post-parse `pathname` inspection can never see them. Unit
+   tests MUST cover the literal, `%2e`, `%2E`, and mixed-case variants.
 2. Parse (WHATWG). MUST: non-root path component (`pathname.length > 1` — the
    draft requires "a path component"; we read that as a real path,
-   fail-closed). MUST NOT: fragment, userinfo, `.`/`..` path segments.
-   **Query strings are rejected** (draft says SHOULD NOT; we fail closed —
-   stricter than spec, documented).
+   fail-closed). MUST NOT: fragment, userinfo. **Query strings are rejected**
+   (draft says SHOULD NOT; we fail closed — stricter than spec, documented).
 3. Host rules: IP-literal hosts rejected (v4 and v6 — beyond-spec hardening; a
    bare-IP "identity" defeats the hostname-display trust model). Note the
    WHATWG parser canonicalizes dword/octal/hex forms (`https://2130706433/`)
@@ -1022,8 +1046,14 @@ in this flow."* Decisions:
   (`invalid_target`). Mint an access token with `sub = client_id`
   (RFC 9068 §2.2) and the existing `client_id` claim; **NO refresh token**
   (RFC 6749 §4.4.3 SHOULD NOT — the client holds a durable credential; a
-  refresh token is a second bearer secret with zero benefit). Response omits
-  `refresh_token`.
+  refresh token is a second bearer secret with zero benefit). **This requires
+  splitting the §9.4 response type**, whose current `TokenResponse` makes
+  `refresh_token` required: the implementation defines `UserTokenResponse`
+  (today's shape, refresh_token required — authorization-code, refresh, and
+  device grants) and `MachineTokenResponse { access_token, token_type:
+  "Bearer", expires_in, scope }` — no `refresh_token` member at all, not an
+  optional one, so an accidental `refresh_token: undefined` is
+  unrepresentable. The token endpoint returns one or the other by grant type.
 - **Rotation:** `rotateMachineClientSecret(store, clientId, { graceSeconds =
   86400 })` — adds the new secret, expires the old at `now + grace` (the
   two-active-secrets overlap pattern, per Okta/Entra practice; RFC 7592 is
@@ -1088,9 +1118,18 @@ MCP spec.
   it MUST echo the `user_code` and say the user is authorizing a device they
   should confirm is theirs (§5.4 remote-phishing mitigation), show client
   info + requested scopes + Approve/Deny, and end on "return to your device"
-  (no redirect). The consent-token + single-use-JTI + Origin-check machinery
-  (§7.1, §9.3) is REUSED, with claims bound to `userCodeHash` instead of
-  `redirect_uri`. The 17.4 group ceiling applies here exactly as at authorize.
+  (no redirect). **This is a distinct consent surface, not a reuse of §7.1's
+  token** — the §7.1 `ConsentRequestClaims` requires `redirectUri` and
+  `approve()` always resolves to a redirect, which the device flow has none
+  of. Contract: a separate `DeviceConsentClaims` token — HS256 with the same
+  consent secret but a DISTINCT pinned audience `"mcp-sso/device-consent"`
+  (so the two token kinds can never validate on each other's surface),
+  claims `{ userCodeHash, clientId, scopes, allowedScopes?, subject, jti,
+  iat, exp }` — and a separate `approveDevice({ deviceConsentToken,
+  approved?, origin? })` use-case returning `{ decision: "approved" |
+  "denied" }` with no redirect member. It shares the Origin/CSRF rule and the
+  single-use-JTI store primitive (`consumeConsentJti`) with §9.3. The §17.4
+  group ceiling applies here exactly as at authorize.
 - **Token endpoint:** `grant_type=urn:ietf:params:oauth:grant-type:device_code`
   + `device_code` + `client_id` (must match the record; mismatch ⇒
   `invalid_grant`). Error state machine, all HTTP 400 §5.2-shaped:
@@ -1160,9 +1199,29 @@ groupAuthorization?: {
   deployment demand. (Microsoft's first-line recommendation — App Roles via
   the `roles` claim, which never overflows — is recorded as a backlog
   alternative, not v0.2.)
-- **Core enforcement (IdP-agnostic):** `IdentityClaims` gains optional
-  `allowedScopes?: string[]`; `prepare` (and the device-flow approval) accepts
-  it. When present: requested scopes are **narrowed by intersection** with
+- **Plumbing (explicit signature changes — the ceiling must travel the whole
+  path, not live as a local Entra patch).** Today the adapters reduce identity
+  to a bare subject string (`resolveSubject(): Promise<string>` in
+  `adapters/http.ts`), `Bridge.handleAuthorize(req, subject)` takes only the
+  string, and `ConsentRequestClaims` has no ceiling field. The contract
+  changes every hop:
+  1. `IdentityClaims` gains optional `allowedScopes?: string[]` (set by the
+     Entra port from the group mapping; any future port may set it).
+  2. `resolveSubject` is REPLACED by `resolveIdentity(identity, input):
+     Promise<{ subject: string; allowedScopes?: string[] }>` — same
+     fail-closed `access_denied` behavior, richer return. (Internal adapter
+     helper; not a public export — no compat shim needed.)
+  3. `Bridge.handleAuthorize(req, identity: { subject; allowedScopes? })` —
+     the bare-string form is removed in the same release.
+  4. `AuthorizeRequestInput` gains `allowedScopes?: string[]`.
+  5. `ConsentRequestClaims` gains `allowedScopes?: string[]`, carried in the
+     consent JWT as an `allowed_scopes` claim (§7.1 shape extended), so
+     `approve` re-intersects from the *verified token*, not from anything
+     client-resupplied.
+  6. The device-approval path (§17.3 `DeviceConsentClaims`) carries the same
+     field the same way.
+- **Core enforcement (IdP-agnostic):** with the ceiling present,
+  `prepare` (and the device-flow approval) **narrows by intersection** with
   the ceiling — RFC 6749 permits granting fewer scopes than requested, and
   the token response `scope` + consent page reflect the narrowed set (this is
   not fail-open: the un-entitled scope is never granted; rejecting outright

@@ -186,7 +186,7 @@ Okta, and most enterprise SSO), that's exactly what this library does.
 | --- | --- | --- |
 | **mcp-sso** (this repo) | Resource-server verifier + a DCR/PKCE/consent bridge, with pluggable identity (Cloudflare Access, Entra ID, dev stub). | Your IdP doesn't speak DCR — Entra, Okta, most enterprise SSO. |
 | [`mcp-auth`](https://github.com/mcp-auth/js) | Resource-server-only auth for Node MCP servers. | Your IdP **already** speaks DCR/OAuth 2.1 — [check the compatibility list](https://mcp-auth.dev/provider-list) — and you just need the resource-server wiring. |
-| [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | A full OAuth 2.1 authorization server for MCP; ships `client_credentials` and device-code (RFC 8628) today. | You need `client_credentials` or device-flow now — only the former is on our roadmap — and are fine bringing your own storage/consent/identity model. |
+| [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | A full OAuth 2.1 authorization server for MCP; ships `client_credentials` and device-code (RFC 8628) today. | You need `client_credentials` or device-flow **today** — both are on our v0.2 roadmap (contracts locked, not yet shipped) — and are fine bringing your own storage/consent/identity model. |
 | [`workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) | Cloudflare's OAuth 2.1 provider library, KV-backed. | Your MCP server **is** a Cloudflare Worker. |
 | Hosted SaaS (Stytch, WorkOS, Auth0, etc.) | Fully managed AS + identity. | You want zero self-hosted auth infrastructure and are fine with a vendor dependency and its pricing. |
 
