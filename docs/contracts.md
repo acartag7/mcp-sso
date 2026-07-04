@@ -646,9 +646,8 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
    to `null`; `sweepExpired(now)` deletes a refresh token (consumed OR unconsumed)
    ONLY when **no token in its family has `expires_at >= now`** (a `NOT EXISTS`
    family-member-still-valid check), and deletes ANY family left empty (not only
-   revoked ones). **Boundary:** `expires_at >= now` counts as still-valid (matching
-   the Captatum/TiDB adapter; the suite asserts the exact-boundary case so adapters
-   cannot disagree). This retains a consumed predecessor while a successor rotated
+   revoked ones). **Boundary:** `expires_at >= now` counts as still-valid (the
+   suite asserts the exact-boundary case so adapters cannot disagree). This retains a consumed predecessor while a successor rotated
    from it is still valid — a naive per-token expiry sweep would delete the
    predecessor at its own expiry and drop the **replay signal** while the successor
    is live (a replay-detection regression; the suite includes the
@@ -672,8 +671,8 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
   `INSERT ... ON CONFLICT DO NOTHING` for consent JTIs. The schema migration is
   idempotent.
 
-**Async-store transaction hygiene (addendum 13 — for the Captatum TiDB adapter and
-any future async store):** acquire the connection → `begin` INSIDE the `try`
+**Async-store transaction hygiene (addendum 13 — for any pooled/async adapter,
+e.g. a MySQL-compatible or Postgres store):** acquire the connection → `begin` INSIDE the `try`
 (behind a begun-guard) → `release` in `finally` on EVERY path, including a
 `begin` throw; swallow cleanup errors from `rollback`/`release` so the original
 error propagates. A `begin`-failure that leaks a connection otherwise exhausts the
