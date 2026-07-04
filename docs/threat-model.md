@@ -90,11 +90,11 @@
 | 5 | Open-redirect / redirect_uri abuse | Spoofing / Elevation | Anchored allowlist (§10); error redirects target only validated redirect_uris | None (a redirect can only go to a §10-validated URI) |
 | 6 | Token substitution across resources | Elevation | Audience fail-closed (§7.2) | None |
 | 7 | PRM/metadata substitution (client-side) | Spoofing | https-only (TLS); RFC 9728 §3.3 client validates `resource` matches; bridge emits `resource`=config | MITM on non-TLS — excluded by https-only (loopback dev aside) |
-| 8 | DCR flooding / audit spam | DoS | Stateless registrations are cheap + audit is metadata-only; **rate-limit hook ports (fix #7) are Phase 3** | Until fix #7, `/oauth/register` + `/oauth/token` can be hammered — DoS possible; noted for deployers |
+| 8 | DCR flooding / audit spam | DoS | Stateless registrations are cheap + audit is metadata-only; **`RateLimitPort` hook exists (fix #7)** | The hook defaults to no-op — `/oauth/register` + `/oauth/token` can be hammered unless a deployer injects a real limiter or fronts the bridge with a rate-limiting proxy |
 | 9 | Stored-mode client spoofing (claim another's redirect) | Spoofing / Elevation | Registration validates each `redirect_uri` via the global allowlist (§10.1); `application_type` per-type policy blocks a web client widening via native | None (only already-trusted URIs registerable) |
 | 10 | Scope escalation | Elevation | `normalizeScopes` vs catalog (unknown ⇒ reject); server-authoritative prior-scopes (derived, not client-claimed); consent shows the delta; `requireScope` at the RS | None |
 | 11 | Consent replay | Tampering | Single-use consent JTI, atomic `consumeConsentJti` | None |
-| 12 | Identity spoofing | Spoofing | `IdentityPort` verifies upstream credential; no/failed identity ⇒ 401 fail-closed; no passthrough | Depends on the IdP impl (Phase 3) correctly validating iss/aud/tid |
+| 12 | Identity spoofing | Spoofing | `IdentityPort` verifies upstream credential; no/failed identity ⇒ 401 fail-closed; no passthrough | Depends on the concrete identity port (Cloudflare Access, Entra) correctly validating iss/aud/tid — a new/custom `IdentityPort` implementation must do the same |
 | 13 | SSRF via CIMD (v0.2) | SSRF | `FetcherPort` boundary; v0.1 fetches nothing | The v0.2 impl must enforce scheme allow-list, resolved-IP private-range check, connect-to-IP, per-hop re-validation, byte cap, timeout |
 | 14 | Secrets in logs/audit | Info disclosure | Metadata-only audit; tests assert no raw secrets leak | None |
 | 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day pins; SHA-pinned CI; provenance publish; no postinstall/bundler | A zero-day in jose itself — minimized by single-dep + pin + age |
@@ -123,9 +123,12 @@
 - **No live access-token revocation in v0.1.** Refresh revokes the family (so future
   refreshes fail), but an already-minted access token remains valid until its short
   `exp`. Token introspection is out of v0.1 scope. Accepted: short TTL bounds exposure.
-- **Rate limiting is Phase 3 (fix #7).** Until then the unauthenticated DCR/token
-  endpoints can be flooded (audit is metadata-only, but DoS is possible). Deployers
-  should front the bridge with a rate-limiting proxy in the interim.
+- **The rate-limit hook (`RateLimitPort`, fix #7) ships in v0.1, but defaults to
+  a no-op that allows everything.** Unless a deployer injects a real limiter (a
+  per-IP token bucket, etc.) at the composition root, the unauthenticated
+  DCR/token endpoints can be flooded (audit is metadata-only, but DoS is
+  possible). Deployers who don't wire a real `RateLimitPort` should front the
+  bridge with a rate-limiting proxy instead.
 - **Single-node store is not HA** (memory is process-local; sqlite is one file).
   Documented; a SQL adapter is the scale path.
 - **CIMD (v0.2) adds an outbound-fetch SSRF surface.** The `FetcherPort` boundary is

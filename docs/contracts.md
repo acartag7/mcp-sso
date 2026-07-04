@@ -54,11 +54,13 @@ spec).
 memory + sqlite reference adapters and a shared conformance suite, and the
 identity-port boundary.
 
-**v0.1 does NOT include:** framework adapters (`/fastify` `/express` `/hono`),
-concrete identity-port implementations (Cloudflare Access, Entra), a runnable
-example, multi-tenant/SaaS, UI beyond the consent page, generic-OIDC-provider
-ambitions, token introspection, or the CIMD implementation (its port boundary is
-defined now; impl is v0.2). Those are later phases — see `docs/threat-model.md`
+**v0.1 does NOT include:** multi-tenant/SaaS, UI beyond the consent page,
+generic-OIDC-provider ambitions (`GenericOidcIdentity` — Cloudflare Access and
+Entra are the only concrete identity ports today), token introspection, or the
+CIMD implementation (its port boundary is defined now; impl is v0.2). Framework
+adapters (`/fastify` `/express` `/hono`), the Cloudflare Access/Entra identity
+ports, and a runnable example were originally Phase 3/4 scope and have since
+shipped — see §16 for the current conformance matrix and `docs/threat-model.md`
 for the boundary.
 
 ## 2. The two roles
@@ -109,7 +111,7 @@ the **issuer** origin (these may be different hosts).
   asserted by the shared conformance suite, not by copying code.
 - **Identity is pluggable.** The core never depends on a specific IdP; an
   `IdentityPort` (§6.5) resolves the verified subject. Concrete implementations
-  arrive in Phase 3.
+  (Cloudflare Access, Entra) shipped in Phase 3.
 - **Fail-closed everywhere.** Ambiguous config, a missing identity, an unknown
   audience, or a replayed token is a hard failure, never a degraded default.
 
@@ -233,7 +235,7 @@ Required only when `dcr.mode === "stored"`. Reference: in-memory map (Phase 2);
 a persisted adapter is deployment-specific. `applicationType` drives the
 per-client redirect policy (§10).
 
-### 6.5 `IdentityPort` (boundary now; implementations Phase 3)
+### 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's
 `authorize` use-case takes a required `subject: string`; the adapter/composition
 root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
@@ -243,8 +245,10 @@ root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
   registration for the bridge; validate iss/aud/tid; map oid/email → subject. The
   bridge then issues its OWN audience-bound tokens (no passthrough).
 
-`GenericOidcIdentity` only if it falls out naturally. Concrete shapes are fixed in
-Phase 3; the boundary is stated now so the core never depends on a specific IdP.
+`GenericOidcIdentity` remains v0.2-and-later scope (see the README roadmap).
+Cloudflare Access and Entra's concrete shapes were fixed in Phase 3; the
+boundary itself was stated at Phase 2 so the core never depends on a specific
+IdP.
 
 **Identity-port hardening (addenda 11–12, binding on the Phase 3 implementations):**
 - **Trust roots MUST be `https`.** A port's JWKS certs URL and issuer MUST be
