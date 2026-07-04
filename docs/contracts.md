@@ -710,7 +710,16 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
   range scans (`sweepExpired`'s family DELETE, the rotation `FOR UPDATE`) take
   next-key/gap locks that deadlock each other; `READ COMMITTED` disables gap
   locking. `sweepExpired` is a two-step SELECT-exact-dead-rows-then-DELETE-by-PK
-  so a successor committed mid-sweep can never be swept.
+  so a successor committed mid-sweep can never be swept. **Pool sizing is the
+  deployer's responsibility** — `createMysqlStore(config)` accepts a `mysql2`
+  `PoolOptions` object (or URI string), so `connectionLimit` is set there; provision
+  it for peak refresh-rotation concurrency (the default is 10). Two performance
+  trade-offs are accepted as-is, both because the path is low-QPS OAuth state, not a
+  hot loop: (1) `READ COMMITTED` is set per transaction (one extra ~1ms round-trip)
+  because `mysql2`'s pool exposes no per-connection init hook to set it once; (2)
+  statements use the text protocol (`query`) rather than prepared statements
+  (`execute`), which do not support the `IN (?)` array expansion the two-step sweep
+  relies on. Revisit either only if profiling flags it.
 
 **Async-store transaction hygiene (addendum 13 — for any pooled/async adapter,
 e.g. a MySQL-compatible or Postgres store):** acquire the connection → `begin` INSIDE the `try`
@@ -1469,7 +1478,11 @@ both `windowSeconds` and `limit` as positive integers (fail-closed on misconfig)
 Keys are as in §6.7 (`register:<ip>` etc.). Failure semantics are UNCHANGED from
 §6.7: `check()` THROWS on Redis error, so the bridge `guard()` fails OPEN
 (availability over advisory defense). Client library enters as an optional peer
-dep through the §15 ledger process (15-day rule).
+dep through the §15 ledger process (15-day rule). The hot path runs the script via
+`EVALSHA` (Redis caches compiled scripts by SHA1 after the first call, so only the
+hash crosses the wire); on `NOSCRIPT` (Redis restart or `SCRIPT FLUSH`) it falls
+back to `EVAL`, which re-loads the script for next time. Atomicity and fail-open
+are identical either way.
 
 ## 18. Contract-change protocol
 

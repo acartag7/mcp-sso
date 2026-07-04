@@ -174,9 +174,16 @@
 - **Single-node store is not HA** (memory is process-local; sqlite is one file).
   Documented; the pooled `MysqlStore` (`/store/mysql`, v0.1.2) is the scale path to a
   shared DB. Under concurrent `/oauth/token` load a fixed-size pool can be saturated —
-  provisioning pool size for peak refresh-rotation concurrency is the deployer's job;
-  the error surfaces as a 500 (NOT fail-open — fail-open applies only to `RateLimitPort`
+  provisioning `mysql2` `connectionLimit` for peak refresh-rotation concurrency is the
+  deployer's job (the default is 10; size it to the expected sustained token-refresh
+  rate × per-request latency, and leave headroom for the periodic `sweepExpired`); the
+  error surfaces as a 500 (NOT fail-open — fail-open applies only to `RateLimitPort`
   per §6.7), and wiring the Redis `RateLimitPort` is the in-band DoS mitigation.
+  Performance posture: both adapters are correctness-first on low-QPS OAuth-state
+  paths; the hot path (the rate-limit check on `/oauth/register` + `/oauth/token`) uses
+  Redis `EVALSHA` with a `NOSCRIPT`→`EVAL` fallback so only the script hash crosses the
+  wire; the MySQL adapter uses the text protocol and per-transaction `READ COMMITTED`
+  (see contracts §12.3 for the two accepted trade-offs).
 - **CIMD (v0.2) adds an outbound-fetch SSRF surface.** The `FetcherPort` boundary is
   in place to gate it; the v0.2 implementation must enforce the full contracts
   §17.1 control set before it ships (that section is now the normative list —
