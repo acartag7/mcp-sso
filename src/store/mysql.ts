@@ -1,15 +1,15 @@
-// MysqlStore — pooled persistent StorePort on mysql2 (contracts §12.3). See §12.3
-// for the binding async/pooled pattern: begun-guard + release-in-finally (addendum 13),
-// SELECT ... FOR UPDATE on rotate/consume, READ COMMITTED isolation, the two-step
-// sweep, INSERT IGNORE for consent JTIs, and the row-alias family upsert.
+// MysqlStore — pooled persistent StorePort on mysql2. See contracts §12.3 for the
+// async/pooled pattern (begun-guard + release-in-finally, FOR UPDATE, READ COMMITTED,
+// two-step sweep, INSERT IGNORE, row-alias family upsert).
 
 import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
-import { StoreInputError, assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
-import { migrateMysqlStore } from "./mysql-schema.ts";
-
-interface AuthCodeRow { code_hash: string; client_id: string; subject: string; redirect_uri: string; resource: string; scopes_json: string; code_challenge: string; code_challenge_method: "S256"; expires_at: string }
-interface RefreshTokenRow { token_hash: string; family_id: string; previous_token_hash: string | null; client_id: string; subject: string; scopes_json: string; expires_at: string; consumed_at: string | null; f_revoked_at: string | null }
+import { assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
+import {
+  migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
+  authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
+  type AuthCodeRow, type RefreshTokenRow,
+} from "./mysql-schema.ts";
 
 export class MysqlStore implements StorePort {
   private closed = false;
@@ -77,13 +77,15 @@ export class MysqlStore implements StorePort {
       if (!row || row.f_revoked_at !== null) return null;
       if (row.consumed_at !== null) { await revokeFamily(conn, row.family_id, nowIso); return null; } // SAME conn — review B1
       if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
-      await conn.query(`UPDATE oauth_refresh_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL`, [nowIso, tokenHash]);
+      // Insert successor BEFORE marking the predecessor consumed: a colliding successor
+      // hash returns null WITHOUT consuming the predecessor (sqlite parity; Codex P2).
       try {
         await insertRefreshToken(conn, nextFromRow(next, row)); // Fix #3 backfill from the consumed row
       } catch (error) {
-        if (isDuplicateEntry(error)) return null; // colliding successor hash -> null (review M2)
+        if (isDuplicateEntry(error)) return null;
         throw error;
       }
+      await conn.query(`UPDATE oauth_refresh_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL`, [nowIso, tokenHash]);
       return refreshTokenFromRow(row);
     });
   }
@@ -123,9 +125,9 @@ export class MysqlStore implements StorePort {
     await this.transaction(async (conn) => {
       await conn.query(`DELETE FROM oauth_auth_codes WHERE expires_at < ?`, [nowIso]);
       await conn.query(`DELETE FROM oauth_consent_jtis WHERE expires_at < ?`, [nowIso]);
-      // Two-step (review H1): SELECT the exact dead rows by PK, then DELETE by hash — a
+      // Two-step (review H1): SELECT exact dead rows by PK, then DELETE by hash — a
       // successor committed after the SELECT is not in the list, so a still-valid rotated
-      // successor cannot be swept under READ COMMITTED. GROUP BY avoids ER_UPDATE_TABLE_USED.
+      // successor can't be swept. GROUP BY avoids ER_UPDATE_TABLE_USED.
       const [dead] = await conn.query<RowDataPacket[]>(
         `SELECT token_hash FROM oauth_refresh_tokens WHERE family_id IN (
            SELECT family_id FROM (SELECT family_id FROM oauth_refresh_tokens GROUP BY family_id HAVING MAX(expires_at) < ?) AS dead_families
@@ -158,7 +160,9 @@ export class MysqlStore implements StorePort {
     const conn = await this.pool.getConnection();
     let begun = false;
     try {
-      await conn.query("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED");
+      // Next-tx form (not SET SESSION): scopes READ COMMITTED to THIS transaction so a
+      // shared pool (new MysqlStore(appPool)) doesn't inherit it after release (Codex P2).
+      await conn.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
       await conn.beginTransaction();
       begun = true;
       const result = await fn(conn);
@@ -189,60 +193,4 @@ export async function createMysqlStore(config: string | PoolOptions): Promise<My
     throw error;
   }
   return store;
-}
-
-async function insertRefreshToken(conn: PoolConnection, input: SaveRefreshTokenInput): Promise<void> {
-  await conn.query(
-    `INSERT INTO oauth_refresh_tokens (token_hash, family_id, previous_token_hash, client_id, subject, scopes_json, expires_at, consumed_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-    [input.tokenHash, input.familyId, input.previousTokenHash, input.clientId, input.subject, JSON.stringify(input.scopes), input.expiresAt],
-  );
-}
-
-async function revokeFamily(conn: PoolConnection, familyId: string, revokedAtIso: string): Promise<void> {
-  // MySQL 8.0.20+ row-alias ODKU (NOT sqlite's `excluded`); revoked_at set once (review H1).
-  await conn.query(
-    `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, ?) AS new ON DUPLICATE KEY UPDATE revoked_at = COALESCE(oauth_refresh_token_families.revoked_at, new.revoked_at)`,
-    [familyId, revokedAtIso],
-  );
-}
-
-function isDuplicateEntry(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as { code?: string }).code === "ER_DUP_ENTRY";
-}
-
-function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow): SaveRefreshTokenInput {
-  return { ...input, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json) };
-}
-
-function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {
-  return { codeHash: row.code_hash, clientId: row.client_id, subject: row.subject, redirectUri: row.redirect_uri, resource: row.resource, scopes: parseScopes(row.scopes_json), codeChallenge: row.code_challenge, codeChallengeMethod: row.code_challenge_method, expiresAt: row.expires_at };
-}
-
-function refreshTokenFromRow(row: RefreshTokenRow): RefreshTokenRecord {
-  return { tokenHash: row.token_hash, familyId: row.family_id, previousTokenHash: row.previous_token_hash, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), expiresAt: row.expires_at };
-}
-
-function validateAuthCode(input: SaveAuthCodeInput): void {
-  assertSha256Hex(input.codeHash, "codeHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-  if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
-}
-
-function validateRefreshToken(input: SaveRefreshTokenInput): void {
-  assertSha256Hex(input.tokenHash, "tokenHash");
-  if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-}
-
-function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
-  assertSha256Hex(tokenHash, "tokenHash");
-  validateRefreshToken(next);
-  assertUtcIsoTimestamp(nowIso, "nowIso");
-  if (next.previousTokenHash !== tokenHash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
-}
-
-function parseScopes(value: string): string[] {
-  const parsed = JSON.parse(value) as unknown;
-  if (!Array.isArray(parsed) || parsed.some((scope) => typeof scope !== "string")) throw new Error("Stored scopes are invalid");
-  return parsed;
 }

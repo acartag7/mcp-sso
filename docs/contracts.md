@@ -705,11 +705,13 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
   expires_at = expires_at` form reports `affectedRows=1` even on a no-op replay
   under MySQL 8.4, so it cannot distinguish first-use); the family-revoke upsert
   uses the MySQL 8.0.20+ row-alias `VALUES(...) AS new ON DUPLICATE KEY UPDATE`.
-  Transactions run at **`READ COMMITTED`** (`SET SESSION TRANSACTION ISOLATION
-  LEVEL READ COMMITTED` before `BEGIN`): under InnoDB's default `REPEATABLE READ`,
-  range scans (`sweepExpired`'s family DELETE, the rotation `FOR UPDATE`) take
-  next-key/gap locks that deadlock each other; `READ COMMITTED` disables gap
-  locking. `sweepExpired` is a two-step SELECT-exact-dead-rows-then-DELETE-by-PK
+  Transactions run at **`READ COMMITTED`** (`SET TRANSACTION ISOLATION LEVEL
+  READ COMMITTED` — the next-transaction form, before `BEGIN`): under InnoDB's
+  default `REPEATABLE READ`, range scans (`sweepExpired`'s family DELETE, the
+  rotation `FOR UPDATE`) take next-key/gap locks that deadlock each other;
+  `READ COMMITTED` disables gap locking. The next-transaction form scopes the
+  isolation to that one transaction, so a caller-supplied shared pool
+  (`new MysqlStore(appPool)`) does not inherit READ COMMITTED after `release()`. `sweepExpired` is a two-step SELECT-exact-dead-rows-then-DELETE-by-PK
   so a successor committed mid-sweep can never be swept. **Pool sizing is the
   deployer's responsibility** — `createMysqlStore(config)` accepts a `mysql2`
   `PoolOptions` object (or URI string), so `connectionLimit` is set there; provision
@@ -728,7 +730,8 @@ e.g. a MySQL-compatible or Postgres store):** acquire the connection → `begin`
 error propagates. A `begin`-failure that leaks a connection otherwise exhausts the
 pool = an auth outage. A pooled SQL adapter should also pin `READ COMMITTED`
 isolation (gap-lock avoidance — see the `MysqlStore` note above) and fail-closed
-assert `STRICT_TRANS_TABLES` + binary table collation at boot. (The in-tree
+assert strict mode (`STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES` — either suffices for
+InnoDB) + binary column collations at boot. (The in-tree
 memory + sqlite adapters are synchronous, so this is forward guidance for async
 adapters.)
 
