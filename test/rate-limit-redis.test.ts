@@ -10,12 +10,14 @@ import { test } from "node:test";
 import { Redis } from "ioredis";
 import { RedisRateLimit } from "../src/rate-limit/redis.ts";
 
-const CI = process.env.CI === "true";
+const RUN_INTEGRATION = process.env.RUN_INTEGRATION === "true";
 const REDIS_URL = process.env.REDIS_URL;
 const RUN = !!REDIS_URL;
 
-if (CI && !REDIS_URL) {
-  throw new Error("REDIS_URL is required in CI — the RedisRateLimit adapter must be exercised.");
+if (RUN_INTEGRATION && !REDIS_URL) {
+  // Keyed on RUN_INTEGRATION (not the ambient CI var): publish.yml runs `pnpm test`
+  // under CI=true without the service containers, so gating on CI would block releases.
+  throw new Error("REDIS_URL is required when RUN_INTEGRATION is set — the RedisRateLimit adapter must be exercised.");
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => { setTimeout(r, ms); });

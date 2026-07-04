@@ -43,7 +43,10 @@ jobs:
           --health-retries=5
 
     env:
-      CI: "true"
+      # RUN_INTEGRATION scopes the in-file hard-fail gate to THIS job. publish.yml also
+      # runs `pnpm test` under GitHub's ambient CI=true (without the service containers),
+      # so the gate must not key on CI alone or every release would fail at module load.
+      RUN_INTEGRATION: "true"
       MYSQL_URL: mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4
       REDIS_URL: redis://127.0.0.1:6379
 
@@ -64,7 +67,7 @@ jobs:
       # B3: hard-fail if the integration env did not reach the test process.
       - name: assert integration env present
         run: |
-          node -e "if(!process.env.MYSQL_URL||!process.env.REDIS_URL){console.error('FATAL: MYSQL_URL/REDIS_URL missing — adapters would be silently skipped');process.exit(1)}else{console.log('MYSQL_URL + REDIS_URL present')}"
+          node -e "if(process.env.RUN_INTEGRATION!=='true'||!process.env.MYSQL_URL||!process.env.REDIS_URL){console.error('FATAL: RUN_INTEGRATION/MYSQL_URL/REDIS_URL missing — adapters would be silently skipped');process.exit(1)}else{console.log('RUN_INTEGRATION + MYSQL_URL + REDIS_URL present')}"
       - run: pnpm test
       # Build smoke: the published artifact (tsc -> dist) must compile.
       - name: build smoke

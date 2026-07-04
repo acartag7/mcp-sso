@@ -17,13 +17,16 @@ import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
 import { runStoreConformance } from "./lib/store-conformance.ts";
 
-const CI = process.env.CI === "true";
+const RUN_INTEGRATION = process.env.RUN_INTEGRATION === "true";
 const MYSQL_URL = process.env.MYSQL_URL;
 const RUN = !!MYSQL_URL;
 
-if (CI && !MYSQL_URL) {
-  // B3: a missing MYSQL_URL in CI must RED, not silently skip.
-  throw new Error("MYSQL_URL is required in CI — the MysqlStore adapter must be exercised.");
+if (RUN_INTEGRATION && !MYSQL_URL) {
+  // B3: in the integration CI job (RUN_INTEGRATION set), a missing MYSQL_URL must RED,
+  // not silently skip. Keyed on RUN_INTEGRATION (not the ambient CI var) because
+  // publish.yml also runs `pnpm test` under CI=true without the service containers —
+  // gating on CI would block every release.
+  throw new Error("MYSQL_URL is required when RUN_INTEGRATION is set — the MysqlStore adapter must be exercised.");
 }
 
 const NOW = "2026-07-03T12:00:00.000Z";
