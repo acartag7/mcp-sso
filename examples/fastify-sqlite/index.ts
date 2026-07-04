@@ -20,7 +20,7 @@ async function main(): Promise<void> {
   const { app } = await buildApp({ config, identity, sqliteFile: process.env.OAUTH_SQLITE_FILE });
   const port = Number(process.env.PORT ?? 3000);
   await app.listen({ port, host: "0.0.0.0" });
-  console.error(`mcp-idp-bridge example listening on :${port}`);
+  console.error(`mcp-sso example listening on :${port}`);
   console.error(`  issuer=${config.issuer}  resource=${config.resource}`);
 }
 

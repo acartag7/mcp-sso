@@ -33,7 +33,7 @@ Pre-release (`0.0.0` / pre-`v0.1`) is not a supported release.
 
 ## Scope
 
-This policy covers the published library **`mcp-idp-bridge`** and its subpaths
+This policy covers the published library **`mcp-sso`** and its subpaths
 (`/fastify`, `/express`, `/hono`, `/identity/*`, `/store/*`). The `examples/`
 directory is **illustrative wiring, not a supported surface** — please don't report
 example-app configuration as a library vulnerability.

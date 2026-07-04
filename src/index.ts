@@ -1,4 +1,4 @@
-// mcp-idp-bridge — OAuth 2.1 for remote MCP servers.
+// mcp-sso — OAuth 2.1 for remote MCP servers.
 // Framework-free core: a resource-server verifier + an AS-lite bridge. Store
 // implementations live at /store/memory and /store/sqlite; framework adapters
 // and identity ports arrive in Phase 3. See docs/contracts.md.

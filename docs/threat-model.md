@@ -1,6 +1,6 @@
 # Threat Model
 
-> Security reasoning for `mcp-idp-bridge`. `docs/contracts.md` is the contract
+> Security reasoning for `mcp-sso`. `docs/contracts.md` is the contract
 > surface; **this file is the attacker-driven reasoning about why those controls
 > hold and what they do not cover.** Update this document before any change to
 > auth, token issuance/verification, redirect policy, the store, identity

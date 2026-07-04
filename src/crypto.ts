@@ -11,8 +11,8 @@ import type { BridgeConfig } from "./config.ts";
 import { scopeString } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 
-const CONSENT_AUDIENCE = "mcp-idp-bridge/consent";
-const CONSENT_TYP = "mcp-idp-bridge-consent";
+const CONSENT_AUDIENCE = "mcp-sso/consent";
+const CONSENT_TYP = "mcp-sso-consent";
 const CODE_PREFIX = "ac";
 const REFRESH_PREFIX = "rt";
 

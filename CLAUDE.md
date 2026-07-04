@@ -1,4 +1,4 @@
-# mcp-idp-bridge
+# mcp-sso
 
 OAuth 2.1 for remote MCP servers: a spec-correct **resource-server verifier**
 (RFC 9728 PRM, `WWW-Authenticate` challenges, fail-closed audience validation)

@@ -1,7 +1,7 @@
 # Contracts
 
 > **Contract-first.** This document is the source of truth for every port, schema,
-> endpoint, token claim, and error shape in `mcp-idp-bridge`. It is written and
+> endpoint, token claim, and error shape in `mcp-sso`. It is written and
 > reviewed **before** implementation code, and it MUST be updated before any change
 > to a port, schema, or error shape. `docs/threat-model.md` reasons about this
 > surface; `docs/dependency-ledger.md` records the pins. If code and this document
@@ -35,7 +35,7 @@
 
 ## 1. Purpose & scope
 
-`mcp-idp-bridge` is a spec-correct **OAuth 2.1 layer for remote MCP servers** with
+`mcp-sso` is a spec-correct **OAuth 2.1 layer for remote MCP servers** with
 two halves, in one framework-free core:
 
 - a **resource-server verifier** — RFC 9728 Protected Resource Metadata (PRM),
@@ -303,7 +303,7 @@ validates an access token and vice-versa).
 
 ### 7.1 Consent token (HS256, single-use)
 Short-lived JWT binding one authorize request to a single approval. Claims:
-`iss`=issuer, `aud`=`"mcp-idp-bridge/consent"`, `sub`=verified subject,
+`iss`=issuer, `aud`=`"mcp-sso/consent"`, `sub`=verified subject,
 `client_id`, `redirect_uri`, `resource`, `scope` (space-joined), `code_challenge`,
 `code_challenge_method`=`"S256"`, `state`?, `jti` (random, single-use), `iat`,
 `exp`. Verified with `algorithms: ["HS256"]`, pinned iss+aud, clock from
@@ -724,7 +724,7 @@ integrity failures are always **direct 4xx**.
 
 ## 15. Package & export map
 
-Single package `mcp-idp-bridge`. Runtime dep: **`jose` only**. Framework adapters
+Single package `mcp-sso`. Runtime dep: **`jose` only**. Framework adapters
 and identity ports are optional `peerDependencies` (the consumer installs the one
 framework/IdP it uses); `node:sqlite` is built-in (no dep). A SQL adapter is a
 downstream/local concern. No postinstall, no bundler. Dev runs on **Node 24 native

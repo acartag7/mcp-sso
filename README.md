@@ -1,4 +1,4 @@
-# mcp-idp-bridge
+# mcp-sso
 
 **OAuth 2.1 for remote MCP servers — a spec-correct resource-server verifier plus a
 small AS-lite bridge, one runtime dependency (`jose`).**
@@ -27,7 +27,7 @@ Extracted from a production MCP deployment, behind a published threat model.
 
 Entra ID is the canonical case. A remote MCP server wants to trust Entra for
 identity, but MCP clients **must** DCR, and Entra has no DCR endpoint. So either the
-server breaks MCP clients, or it ships bespoke OAuth. `mcp-idp-bridge` is the
+server breaks MCP clients, or it ships bespoke OAuth. `mcp-sso` is the
 reusable, audited answer: the bridge does DCR/PKCE/consent/rotation with MCP
 clients, validates the upstream Entra (or Cloudflare Access, or any OIDC) identity,
 and issues its own tokens. One library, any IdP, real MCP clients.
@@ -35,7 +35,7 @@ and issues its own tokens. One library, any IdP, real MCP clients.
 ## Quickstart (Fastify + sqlite + Cloudflare Access)
 
 ```ts
-import { createCloudflareAccessIdentity } from "mcp-idp-bridge/identity/cloudflare-access";
+import { createCloudflareAccessIdentity } from "mcp-sso/identity/cloudflare-access";
 // see examples/fastify-sqlite/ for the full app (OAuth routes + a protected /mcp)
 ```
 

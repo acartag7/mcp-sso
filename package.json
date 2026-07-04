@@ -1,5 +1,5 @@
 {
-  "name": "mcp-idp-bridge",
+  "name": "mcp-sso",
   "version": "0.0.0",
   "description": "OAuth 2.1 for remote MCP servers: a spec-correct resource-server verifier plus a small AS-lite bridge with a pluggable upstream identity provider.",
   "license": "MIT",
@@ -92,13 +92,13 @@
     "pkce",
     "jose"
   ],
-  "homepage": "https://github.com/acartag7/mcp-idp-bridge",
+  "homepage": "https://github.com/acartag7/mcp-sso",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/acartag7/mcp-idp-bridge.git"
+    "url": "git+https://github.com/acartag7/mcp-sso.git"
   },
   "bugs": {
-    "url": "https://github.com/acartag7/mcp-idp-bridge/issues"
+    "url": "https://github.com/acartag7/mcp-sso/issues"
   },
   "publishConfig": {
     "access": "public",

@@ -47,7 +47,7 @@ export async function buildApp(opts: ExampleOptions) {
     }
     void oauthErrorBody;
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    const mcp = new McpServer({ name: "mcp-idp-bridge-example", version: "0.0.1" });
+    const mcp = new McpServer({ name: "mcp-sso-example", version: "0.0.1" });
     mcp.tool("ping", "echo the authenticated subject", async () => ({
       content: [{ type: "text" as const, text: `pong: ${auth.subject}` }],
     }));

@@ -103,10 +103,10 @@ pinned to a SHA whose tag is ≥15 days old at pin time):
 ## Consuming this package under a `minimumReleaseAge` floor
 
 A consumer that sets `minimumReleaseAge: 21600` (15 days) — the same standard this
-repo uses — will refuse to install a freshly-published `mcp-idp-bridge`. That is
+repo uses — will refuse to install a freshly-published `mcp-sso`. That is
 correct behavior, not a bug. Consumers have two sound options:
 
-- **own-package exclusion:** `minimumReleaseAgeExclude: ["mcp-idp-bridge"]`, or
+- **own-package exclusion:** `minimumReleaseAgeExclude: ["mcp-sso"]`, or
 - **exact-pin + provenance check:** pin the exact version and verify its
   provenance/Sigstore attestation before trusting it.
 

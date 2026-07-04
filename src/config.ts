@@ -70,7 +70,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
     // already passed; this surfaces that the dev escape hatch is ACTIVE, so an
     // operator who tunnels/exposes the loopback bridge gets a loud signal.
     console.warn(
-      "[mcp-idp-bridge] dev.allowInsecureLocalhost is ON — http:// is permitted on loopback origins only. Do NOT use in production.",
+      "[mcp-sso] dev.allowInsecureLocalhost is ON — http:// is permitted on loopback origins only. Do NOT use in production.",
     );
   }
   return Object.freeze({ ...input });
