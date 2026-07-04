@@ -39,8 +39,12 @@ test("RedisRateLimit: rejects non-positive windowSeconds/limit at construction (
 test("RedisRateLimit: check() THROWS on Redis error so the bridge guard() fails open (§6.7/§17.10) — review M1", async () => {
   // A Redis outage must surface as a throw (not a swallow/return-false), so the bridge's
   // guard() catches it and allows the request. This locks the fail-open contract directly
-  // against the real adapter (the bridge test uses a stub).
-  const broken = { eval: async () => { throw new Error("redis down"); } } as unknown as Redis;
+  // against the real adapter (the bridge test uses a stub). The hot path tries EVALSHA
+  // first, so the stub rejects on both evalsha and eval.
+  const broken = {
+    evalsha: async () => { throw new Error("redis down"); },
+    eval: async () => { throw new Error("redis down"); },
+  } as unknown as Redis;
   const rl = new RedisRateLimit(broken, { windowSeconds: 60, limit: 1 });
   await assert.rejects(rl.check("k"), /redis down/);
 });
@@ -81,6 +85,23 @@ if (RUN) {
       assert.equal(await limiter.check(key), true);  // fresh window, n=1 again
       const ttlReset = await client.ttl(prefix + key);
       assert.ok(ttlReset > 0 && ttlReset <= 2, `ttl should be reset after the window, got ${ttlReset}`);
+    } finally {
+      await client.quit();
+    }
+  });
+
+  test("RedisRateLimit: uses EVALSHA on the hot path and falls back to EVAL on NOSCRIPT (perf)", async () => {
+    const client = new Redis(REDIS_URL as string);
+    try {
+      const prefix = uniquePrefix();
+      const limiter = new RedisRateLimit(client, { windowSeconds: 60, limit: 5, keyPrefix: prefix });
+      // Cold start: EVALSHA misses (NOSCRIPT) -> EVAL fallback loads the script.
+      assert.equal(await limiter.check("c1"), true);
+      // SCRIPT FLUSH drops the cache -> the next check MUST hit NOSCRIPT and fall back,
+      // then re-cache so subsequent calls use EVALSHA again. Throws if the fallback breaks.
+      await client.script("FLUSH");
+      assert.equal(await limiter.check("c2"), true);
+      assert.equal(await limiter.check("c3"), true);
     } finally {
       await client.quit();
     }
