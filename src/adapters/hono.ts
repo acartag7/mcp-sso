@@ -6,8 +6,9 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
+import { OAuthError } from "../errors.ts";
 import { Bridge } from "./bridge.ts";
-import { resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
+import { oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface HonoAdapterOptions {
   bridge: Bridge;
@@ -52,7 +53,16 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   app.get("/oauth/jwks", async (c) => send(c, await bridge.handleJwks()));
   app.post("/oauth/register", async (c) => send(c, await bridge.handleRegister(await toNorm(c))));
   app.get("/oauth/authorize", async (c) => {
-    const subject = await resolveSubject(identity, c.req.header(identityHeader));
+    // Identity resolution happens before the Bridge's own try/catch (which
+    // maps OAuthError → NormResponse), so a rejected identity would otherwise
+    // surface as a framework 500. Route it through the same §9.5 path (§9.3).
+    let subject: string;
+    try {
+      subject = await resolveSubject(identity, c.req.header(identityHeader));
+    } catch (error) {
+      if (!(error instanceof OAuthError)) throw error; // real 500
+      return send(c, oauthErrorResponse(error));
+    }
     return send(c, await bridge.handleAuthorize(await toNorm(c), subject));
   });
   app.post("/oauth/authorize/approve", async (c) => send(c, await bridge.handleApprove(await toNorm(c))));

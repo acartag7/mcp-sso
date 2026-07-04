@@ -6,8 +6,9 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
+import { OAuthError } from "../errors.ts";
 import { Bridge } from "./bridge.ts";
-import { headerString, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
+import { headerString, oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface ExpressAdapterOptions {
   bridge: Bridge;
@@ -40,7 +41,17 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   router.get("/oauth/jwks", wrap(async (_req, res) => send(res, await bridge.handleJwks())));
   router.post("/oauth/register", wrap(async (req, res) => send(res, await bridge.handleRegister(toNorm(req)))));
   router.get("/oauth/authorize", wrap(async (req, res) => {
-    const subject = await resolveSubject(identity, headerString(req.headers, identityHeader));
+    // Identity resolution happens before the Bridge's own try/catch (which
+    // maps OAuthError → NormResponse), so a rejected identity would otherwise
+    // surface as a 500 here. Route it through the same §9.5 path (§9.3).
+    let subject: string;
+    try {
+      subject = await resolveSubject(identity, headerString(req.headers, identityHeader));
+    } catch (error) {
+      if (!(error instanceof OAuthError)) throw error; // real 500 via wrap()
+      send(res, oauthErrorResponse(error));
+      return;
+    }
     send(res, await bridge.handleAuthorize(toNorm(req), subject));
   }));
   router.post("/oauth/authorize/approve", wrap(async (req, res) => send(res, await bridge.handleApprove(toNorm(req)))));

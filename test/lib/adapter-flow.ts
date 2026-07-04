@@ -82,4 +82,30 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       await client.close?.();
     }
   });
+
+  test(`${name} adapter: rejected identity ⇒ direct 401 access_denied with §9.5 body`, async () => {
+    // contracts §9.3: identity not resolved/rejected is a DIRECT error (never a
+    // redirect — the redirect_uri is untrusted pre-validation) and §9.5 mandates
+    // the RFC 6749 §5.2 top-level {error, error_description} shape, NOT the
+    // JSON-RPC inner envelope nor a framework-shaped body. Without the adapter
+    // routing the OAuthError from resolveSubject through oauthErrorResponse,
+    // Express/Hono returned 500 internal_error and Fastify returned 401 with a
+    // Fastify body.
+    const client = await mount(makeBridge(), stubIdentity);
+    try {
+      const auth = await client.get(`/oauth/authorize?${new URLSearchParams({
+        response_type: "code", client_id: "anything", redirect_uri: REDIRECT,
+        code_challenge: pkceChallenge("correct-horse-battery-staple-0123"), code_challenge_method: "S256", scope: "mcp:read",
+      })}`, { [IDENTITY_HEADER]: "not-the-stub-token" });
+      assert.equal(auth.status, 401);
+      assert.equal(auth.headers.location, undefined, "identity rejection is direct, never a redirect");
+      const body = JSON.parse(auth.body);
+      assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"], "RFC 6749 §5.2 shape only");
+      assert.equal(body.error, "access_denied");
+      assert.equal(typeof body.error_description, "string");
+      assert.ok(body.error_description.length > 0);
+    } finally {
+      await client.close?.();
+    }
+  });
 }

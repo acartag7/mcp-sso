@@ -6,8 +6,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
+import { OAuthError } from "../errors.ts";
 import { Bridge } from "./bridge.ts";
-import { headerString, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
+import { headerString, oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface FastifyAdapterOptions {
   bridge: Bridge;
@@ -42,7 +43,18 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
   app.get("/oauth/jwks", async (_req, reply) => send(reply, await bridge.handleJwks()));
   app.post("/oauth/register", async (req, reply) => send(reply, await bridge.handleRegister(toNorm(req))));
   app.get("/oauth/authorize", async (req, reply) => {
-    const subject = await resolveSubject(identity, headerString(req.headers, identityHeader));
+    // Identity resolution happens before the Bridge's own try/catch (which
+    // maps OAuthError → NormResponse), so a rejected identity would otherwise
+    // surface as a 401 with Fastify's framework body, not §9.5. Route it
+    // through the same path (§9.3).
+    let subject: string;
+    try {
+      subject = await resolveSubject(identity, headerString(req.headers, identityHeader));
+    } catch (error) {
+      if (!(error instanceof OAuthError)) throw error; // real 500
+      await send(reply, oauthErrorResponse(error));
+      return;
+    }
     await send(reply, await bridge.handleAuthorize(toNorm(req), subject));
   });
   app.post("/oauth/authorize/approve", async (req, reply) => send(reply, await bridge.handleApprove(toNorm(req))));
