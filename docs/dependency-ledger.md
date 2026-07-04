@@ -5,8 +5,8 @@
 > before every publish. Companion to `docs/contracts.md` §15 and
 > `docs/threat-model.md` ("Implementation gates").
 >
-> **Today:** 2026-07-03. **15-day cutoff:** a pin is acceptable only if published
-> on or before **2026-06-18** (≥15 days old).
+> **Today:** 2026-07-04. **15-day cutoff:** a pin is acceptable only if published
+> on or before **2026-06-19** (≥15 days old).
 
 ## The 15-day rule and `minimumReleaseAge`
 
@@ -27,7 +27,7 @@ weaken the rule to paper over a fresh-publish install problem.
 
 | Package | Version | Published | Age | 15-day check | Notes |
 |---|---|---|---|---|---|
-| [`jose`](https://github.com/panva/jose) | `6.2.3` | 2026-04-27 | 67d | ✅ | **The only runtime dep.** JOSE/JWT/JWKS primitives (ES256/HS256 sign+verify, `importJWK`, `createRemoteJWKSet`). Pure JS, no native, no postinstall. |
+| [`jose`](https://github.com/panva/jose) | `6.2.3` | 2026-04-27 | 68d | ✅ | **The only runtime dep.** JOSE/JWT/JWKS primitives (ES256/HS256 sign+verify, `importJWK`, `createRemoteJWKSet`). Pure JS, no native, no postinstall. |
 
 There is exactly one runtime dependency by design (`docs/contracts.md` §15). Every
 other capability is a built-in (`node:crypto`, `node:sqlite`, `node:test`) or an
@@ -37,13 +37,15 @@ optional peer that a consumer opts into.
 
 | Package | Version | Published | Age | 15-day check | Purpose |
 |---|---|---|---|---|---|
-| [`typescript`](https://www.typescriptlang.org/) | `6.0.3` | 2026-04-16 | 78d | ✅ | Type-checking + the publish `tsc` build. (7.0.1-rc skipped — RC.) |
-| [`@types/node`](https://www.npmjs.com/package/@types/node) | `24.13.2` | 2026-06-10 | 23d | ✅ | Node 24 typings; matches the `engines.node >=24` target. |
-| [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | 95d | ✅ | The official MCP SDK — used **only** in tests/the Phase 4 example as the real client for the end-to-end verify gate. Not a runtime dep. |
-| [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | 80d | ✅ | Reference framework adapter — dev/test + optional peer. (Latest `5.9.0` is 5d — rejected.) |
-| [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | 214d | ✅ | Framework adapter — dev/test + optional peer. |
-| [`hono`](https://hono.dev/) | `4.12.26` | 2026-06-18 | 15d | ✅ | Framework adapter — dev/test + optional peer. (Latest `4.12.27` is 10d — rejected.) |
-| [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | 214d | ✅ | Express typings (dev only). |
+| [`typescript`](https://www.typescriptlang.org/) | `6.0.3` | 2026-04-16 | 79d | ✅ | Type-checking + the publish `tsc` build. (7.0.1-rc skipped — RC.) |
+| [`@types/node`](https://www.npmjs.com/package/@types/node) | `24.13.2` | 2026-06-10 | 24d | ✅ | Node 24 typings; matches the `engines.node >=24` target. |
+| [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | 96d | ✅ | The official MCP SDK — used **only** in tests/the Phase 4 example as the real client for the end-to-end verify gate. Not a runtime dep. |
+| [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | 81d | ✅ | Reference framework adapter — dev/test + optional peer. (Latest `5.9.0` is 5d — rejected.) |
+| [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | 215d | ✅ | Framework adapter — dev/test + optional peer. |
+| [`hono`](https://hono.dev/) | `4.12.26` | 2026-06-18 | 16d | ✅ | Framework adapter — dev/test + optional peer. (Latest `4.12.27` is 10d — rejected.) |
+| [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | 215d | ✅ | Express typings (dev only). |
+| [`mysql2`](https://github.com/sidorares/node-mysql2) | `3.22.5` | 2026-06-06 | 28d | ✅ | The `/store/mysql` `StorePort` adapter — dev/test + optional peer. Newest eligible version as of 2026-07-04 (cutoff 2026-06-19); it is also the latest stable. |
+| [`ioredis`](https://github.com/redis/ioredis) | `5.11.1` | 2026-06-04 | 30d | ✅ | The `/rate-limit/redis` `RateLimitPort` adapter — dev/test + optional peer. Newest eligible (cutoff 2026-06-19) AND the latest stable. (Official `redis@6.1.0` is 3d old — rejected; `redis@6.0.0` is eligible but a minor behind, so `ioredis` was chosen.) |
 
 Dev tooling with **no added dependency**: the test runner is `node:test` (built
 in), assertions `node:assert/strict` (built in), the SQLite store uses `node:sqlite`
@@ -51,28 +53,25 @@ in), assertions `node:assert/strict` (built in), the SQLite store uses `node:sql
 
 ## Optional peer dependencies (not shipped to consumers)
 
-`fastify`, `express`, and `hono` are declared as **optional `peerDependencies`** — a
-consumer installs only the framework adapter(s) it uses. They are also installed as
-**devDependencies** (above) for adapter testing. `jose` remains the sole runtime dep.
+`fastify`, `express`, `hono`, `mysql2`, and `ioredis` are declared as **optional
+`peerDependencies`** — a consumer installs only the adapter(s) it uses. They are
+also installed as **devDependencies** (above) for adapter testing. `jose` remains
+the sole runtime dep.
 
 | Package | Peer range | Notes |
 |---|---|---|
 | `fastify` | `>=5` | `/fastify` adapter (reference). |
 | `express` | `>=5` | `/express` adapter. |
 | `hono` | `>=4` | `/hono` adapter. |
-
-Reserved (NOT shipped, not installed) for a future downstream `StorePort` adapter:
-
-| Package | Version | Published | Age | 15-day check | Purpose |
-|---|---|---|---|---|---|
-| [`mysql2`](https://github.com/sidorares/node-mysql2) | `3.22.5` | 2026-06-06 | 27d | ✅ | Reserved for a downstream SQL `StorePort` adapter (not shipped in v0.1; a Captatum-local concern). |
+| `mysql2` | `>=3` | `/store/mysql` `StorePort` adapter (v0.1.2 Phase 5). Pooled; see contracts §12.3 async-tx hygiene. |
+| `ioredis` | `>=5` | `/rate-limit/redis` `RateLimitPort` adapter (v0.1.2 Phase 5). Fixed-window Lua script; see contracts §17.10. |
 
 ## Engines & package manager
 
 | Tool | Pin | Published | Notes |
 |---|---|---|---|
 | Node.js | `>=24` (dev on 24.x; 24.3.0 verified locally) | 24 line since 2025 | Native TS execution (`.ts` imports) + `node:sqlite` + `node:test`. The published artifact is `tsc`-compiled ESM. |
-| pnpm | `10.34.4` via corepack `packageManager` | 2026-06-18 (15d ✅) | The mature 10.x line; the last patch. (pnpm `11.8.0`, also 15d old, is the newer alternative if a 10.x blocker appears.) |
+| pnpm | `10.34.4` via corepack `packageManager` | 2026-06-18 (16d ✅) | The mature 10.x line; the last patch. (pnpm `11.8.0`, also 16d old, is the newer alternative if a 10.x blocker appears.) |
 
 ## CI / GitHub Actions (SHA-pinned)
 
@@ -86,6 +85,20 @@ pinned to a SHA whose tag is ≥15 days old at pin time):
 - `pnpm/action-setup` — pnpm via corepack (matches `packageManager`).
 - npm publish step runs `npm publish --provenance` under the GitHub Actions OIDC
   token (**no `NPM_TOKEN` with publish rights, no local publishes**).
+
+### CI service containers (image tags)
+
+The `verify` job runs the `/store/mysql` and `/rate-limit/redis` integration tests
+against `mysql:8.4` and `redis:7-alpine` service containers (pinned by **tag**, not
+digest). This is a deliberate, narrower trust boundary than the SHA-pinned Actions
+above: a service image is a *test fixture*, not a build input that executes in the
+published artifact. A tag rebuild that changed `sql_mode` defaults, the default
+authentication plugin, or timezone handling would be caught loudly rather than
+silently — `migrateMysqlStore` **fail-closed asserts** `STRICT_TRANS_TABLES` in
+`sql_mode` and `utf8mb4_bin` table collation at boot, so image drift that matters for
+correctness turns the CI red, not green-with-wrong-results. (If a future change makes
+these assertions insufficient, promote both images to `@sha256:<digest>` pins recorded
+here with the same 15-day check.)
 
 ## Verification & change protocol
 

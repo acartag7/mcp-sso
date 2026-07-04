@@ -39,9 +39,14 @@
   passthrough is forbidden by the MCP spec). The bridge mints its own
   audience-bound tokens.
 - The **store is within the bridge boundary**: `MemoryStore` is the process;
-  `SqliteStore` is a local file (no network). A downstream SQL adapter (e.g. a
-  MySQL-compatible one) extends the boundary to the DB network — that is the
-  deployer's/host's responsibility, validated by the store-conformance suite.
+  `SqliteStore` is a local file (no network). The pooled `MysqlStore` (`/store/mysql`,
+  v0.1.2) extends the boundary to the DB network — TLS, credentials, and DB access
+  control are the deployer's/host's responsibility, validated by the store-conformance
+  suite. The library's own control on that path is **§12.3 async-transaction hygiene**:
+  a `beginTransaction` failure cannot leak a pooled connection (begun-guard + `release`
+  in `finally` on every path), so a begin/commit/rollback error cannot exhaust the pool
+  into an auth outage. `rotateRefreshToken` takes a `SELECT ... FOR UPDATE` row lock so
+  concurrent rotations of one token cannot double-spend the successor.
 - **Fetched metadata is UNTRUSTED DATA.** v0.1 does no outbound fetching. v0.2
   CIMD (Client ID Metadata Documents) fetches client-supplied URLs — an
   attacker-controlled input driving a server-side fetch. That path MUST go
@@ -140,8 +145,8 @@
   publish pipeline without updating **this document and `docs/contracts.md`**.
 - No dependency install or bump without a `docs/dependency-ledger.md` recheck
   (version + publish date, ≥15 days, the 15-day gate).
-- The **store-conformance suite must be green** (memory + sqlite) before any
-  correctness claim; a downstream SQL adapter must pass the same suite.
+- The **store-conformance suite must be green** (memory + sqlite + mysql) before any
+  correctness claim; a further downstream SQL adapter must pass the same suite.
 - The **end-to-end verify gate** (Phase 4) — register → authorize (identity port)
   → token → protected `/mcp` call → refresh → replay-detection (family revoked) →
   revoke, driven by the **official MCP SDK client** — must pass before v0.1 ships.
@@ -161,10 +166,17 @@
   a no-op that allows everything.** Unless a deployer injects a real limiter (a
   per-IP token bucket, etc.) at the composition root, the unauthenticated
   DCR/token endpoints can be flooded (audit is metadata-only, but DoS is
-  possible). Deployers who don't wire a real `RateLimitPort` should front the
-  bridge with a rate-limiting proxy instead.
+  possible). A reference distributed limiter ships at `/rate-limit/redis`
+  (v0.1.2, §17.10): a Redis/Valkey fixed-window counter closes the multi-instance
+  gap (threat #19) where a per-process limiter is bypassed by spreading requests
+  across instances. Deployers who don't wire a real `RateLimitPort` should front
+  the bridge with a rate-limiting proxy instead.
 - **Single-node store is not HA** (memory is process-local; sqlite is one file).
-  Documented; a SQL adapter is the scale path.
+  Documented; the pooled `MysqlStore` (`/store/mysql`, v0.1.2) is the scale path to a
+  shared DB. Under concurrent `/oauth/token` load a fixed-size pool can be saturated —
+  provisioning pool size for peak refresh-rotation concurrency is the deployer's job;
+  the error surfaces as a 500 (NOT fail-open — fail-open applies only to `RateLimitPort`
+  per §6.7), and wiring the Redis `RateLimitPort` is the in-band DoS mitigation.
 - **CIMD (v0.2) adds an outbound-fetch SSRF surface.** The `FetcherPort` boundary is
   in place to gate it; the v0.2 implementation must enforce the full contracts
   §17.1 control set before it ships (that section is now the normative list —

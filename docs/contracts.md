@@ -54,7 +54,7 @@ MCP clients and are never forwarded** (token passthrough is forbidden by the MCP
 spec).
 
 **v0.1 includes:** the framework-free verifier + bridge core, the store port with
-memory + sqlite reference adapters and a shared conformance suite, and the
+memory + sqlite + mysql reference adapters and a shared conformance suite, and the
 identity-port boundary.
 
 **v0.1 does NOT include:** multi-tenant/SaaS, UI beyond the consent page,
@@ -114,8 +114,8 @@ the **issuer** origin (these may be different hosts).
 - **Proven core behind generic ports.** The verifier + bridge logic is
   battle-tested OAuth, extracted behind framework-free ports so any host or
   adapter can use it without coupling to a specific framework or database.
-- **`StorePort` is the parity boundary.** The in-tree memory + sqlite adapters
-  and **any downstream SQL adapter** must all satisfy the §12 invariants — that
+- **`StorePort` is the parity boundary.** The in-tree memory, sqlite, and mysql
+  adapters (and **any further downstream SQL adapter**) must all satisfy the §12 invariants — that
   is exactly what fix #3 (documented rotation backfill) makes possible. Parity is
   asserted by the shared conformance suite, not by copying code.
 - **Identity is pluggable.** The core never depends on a specific IdP; an
@@ -610,7 +610,7 @@ This replaces the source's blanket loopback-for-everyone default in stored mode.
 
 Every `StorePort` implementation MUST satisfy these invariants — the
 `store-conformance` suite asserts them against **both** `MemoryStore` and
-`SqliteStore`, and any downstream SQL adapter must pass the same suite. **Fix #3**
+`SqliteStore`, and `MysqlStore`, and any further downstream SQL adapter must pass the same suite. **Fix #3**
 documents the one contract the source left implicit.
 
 ### 12.1 Records (secrets are SHA-256 hex digests; timestamps are UTC ISO 8601 with EXACTLY 3 ms digits)
@@ -689,14 +689,39 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
   `:memory:` or file. STRICT tables, `BEGIN IMMEDIATE` transactions,
   `INSERT ... ON CONFLICT DO NOTHING` for consent JTIs. The schema migration is
   idempotent.
+- `MysqlStore` (`/store/mysql`) — `mysql2` (optional peer dep; pooled). The first
+  *async/pooled* reference adapter, so it is the binding example of addendum 13
+  below: a pooled connection, `beginTransaction`/`commit`/`rollback` behind a
+  begun-guard, `release()` in `finally` on every path. Timestamps are stored as
+  `VARCHAR(24)` with a binary collation so expiry comparison is byte-lexicographic
+  (identical semantics to SQLite `TEXT`, preserving the §12.1 3-ms ordering
+  invariant — `DATETIME` would change comparison/tz semantics and is NOT used).
+  Because a pool does NOT serialize writers the way `BEGIN IMMEDIATE` does,
+  `rotateRefreshToken` takes a row lock via `SELECT ... FOR UPDATE` inside the
+  transaction — without it, two concurrent rotations of the same token would both
+  see `consumed_at IS NULL`, double-insert the successor, and break replay
+  detection (§12.2 invariant 3). `INSERT IGNORE` substitutes for SQLite
+  `ON CONFLICT DO NOTHING` on consent JTIs (the `ON DUPLICATE KEY UPDATE
+  expires_at = expires_at` form reports `affectedRows=1` even on a no-op replay
+  under MySQL 8.4, so it cannot distinguish first-use); the family-revoke upsert
+  uses the MySQL 8.0.20+ row-alias `VALUES(...) AS new ON DUPLICATE KEY UPDATE`.
+  Transactions run at **`READ COMMITTED`** (`SET SESSION TRANSACTION ISOLATION
+  LEVEL READ COMMITTED` before `BEGIN`): under InnoDB's default `REPEATABLE READ`,
+  range scans (`sweepExpired`'s family DELETE, the rotation `FOR UPDATE`) take
+  next-key/gap locks that deadlock each other; `READ COMMITTED` disables gap
+  locking. `sweepExpired` is a two-step SELECT-exact-dead-rows-then-DELETE-by-PK
+  so a successor committed mid-sweep can never be swept.
 
 **Async-store transaction hygiene (addendum 13 — for any pooled/async adapter,
 e.g. a MySQL-compatible or Postgres store):** acquire the connection → `begin` INSIDE the `try`
 (behind a begun-guard) → `release` in `finally` on EVERY path, including a
 `begin` throw; swallow cleanup errors from `rollback`/`release` so the original
 error propagates. A `begin`-failure that leaks a connection otherwise exhausts the
-pool = an auth outage. (The in-tree memory + sqlite adapters are synchronous, so
-this is forward guidance for async adapters.)
+pool = an auth outage. A pooled SQL adapter should also pin `READ COMMITTED`
+isolation (gap-lock avoidance — see the `MysqlStore` note above) and fail-closed
+assert `STRICT_TRANS_TABLES` + binary table collation at boot. (The in-tree
+memory + sqlite adapters are synchronous, so this is forward guidance for async
+adapters.)
 
 ## 13. Audit contract
 
@@ -743,12 +768,11 @@ integrity failures are always **direct 4xx**.
 
 ## 15. Package & export map
 
-Single package `mcp-sso`. Runtime dep: **`jose` only**. Framework adapters
-and identity ports are optional `peerDependencies` (the consumer installs the one
-framework/IdP it uses); `node:sqlite` is built-in (no dep). A SQL adapter is a
-downstream/local concern. No postinstall, no bundler. Dev runs on **Node 24 native
-TS** (`.ts` imports, no build step); the published artifact is plain-`tsc` ESM +
-`.d.ts`.
+Single package `mcp-sso`. Runtime dep: **`jose` only**. Framework adapters,
+identity ports, and the MySQL/Redis adapters are optional `peerDependencies`
+(the consumer installs only the ones it uses); `node:sqlite` is built-in (no
+dep). No postinstall, no bundler. Dev runs on **Node 24 native TS** (`.ts`
+imports, no build step); the published artifact is plain-`tsc` ESM + `.d.ts`.
 
 Dev/test does **not** consume the package via its own exports: Node 24 native TS
 imports source files directly (e.g. `../src/index.ts`), so there is no build step
@@ -761,6 +785,8 @@ the npm artifact is cut, so the published package is never broken by `.ts` paths
   ".":                          { "types": "./dist/index.d.ts",                    "default": "./dist/index.js" },
   "./store/memory":             { "types": "./dist/store/memory.d.ts",             "default": "./dist/store/memory.js" },
   "./store/sqlite":             { "types": "./dist/store/sqlite.d.ts",             "default": "./dist/store/sqlite.js" },
+  "./store/mysql":              { "types": "./dist/store/mysql.d.ts",              "default": "./dist/store/mysql.js" },
+  "./rate-limit/redis":         { "types": "./dist/rate-limit/redis.d.ts",         "default": "./dist/rate-limit/redis.js" },
   "./fastify":                  { "types": "./dist/adapters/fastify.d.ts",         "default": "./dist/adapters/fastify.js" },
   "./express":                  { "types": "./dist/adapters/express.d.ts",         "default": "./dist/adapters/express.js" },
   "./hono":                     { "types": "./dist/adapters/hono.d.ts",            "default": "./dist/adapters/hono.js" },
@@ -1426,22 +1452,31 @@ gate replaces no-gate).
   is out of scope for the example but the read is isolated behind a single
   `getBackendCredential()` swap point. The MCP client never sees the key.
 
-### 17.10 v0.1.1 note — distributed `RateLimitPort` (Redis/Valkey)
+### 17.10 distributed `RateLimitPort` (Redis/Valkey) — shipped v0.1.2
+
+> Implemented at `src/rate-limit/redis.ts` (subpath `./rate-limit/redis`); `ioredis`
+> is an optional peer dep. Retained under §17 (contracts) as the locked spec for the
+> shipped adapter, not a forward-looking v0.2 contract.
 
 Scope confirmed earlier (roadmap): a Redis/Valkey-backed `RateLimitPort`
-ONLY — not a Redis `StorePort`. Contract: fixed-window counter per key —
-atomic `INCR` + `EXPIRE`-on-first-increment (single Lua script or
-`SET ... NX EX` + `INCR`), config `{ windowSeconds, limit }`, keys as in §6.7
-(`register:<ip>` etc.). Failure semantics are UNCHANGED from §6.7: a limiter
-error fails OPEN (availability over advisory defense). Client library enters
-as an optional peer dep through the §15 ledger process (15-day rule).
+ONLY — not a Redis `StorePort`. Contract: fixed-window counter per key — one Lua
+script does atomic `INCR` + `EXPIRE`-on-first-increment (the TTL is set exactly
+once per window, on `n == 1`; never reset mid-window). Config
+`{ windowSeconds: number, limit: number, keyPrefix?: string }` (`keyPrefix`
+defaults to `mcp-sso:rl:` so a shared Redis is namespaced; it MUST NOT collide
+with a non-string key, which would degrade to fail-open). Constructor validates
+both `windowSeconds` and `limit` as positive integers (fail-closed on misconfig).
+Keys are as in §6.7 (`register:<ip>` etc.). Failure semantics are UNCHANGED from
+§6.7: `check()` THROWS on Redis error, so the bridge `guard()` fails OPEN
+(availability over advisory defense). Client library enters as an optional peer
+dep through the §15 ledger process (15-day rule).
 
 ## 18. Contract-change protocol
 
 1. Update **this document** first (port/schema/error/endpoint/TTL).
 2. If a runtime behavior changed, check the threat model and the store-conformance
-   invariants (§12) — and whether it affects memory/sqlite parity (and any
-   downstream SQL adapter).
+   invariants (§12) — and whether it affects memory/sqlite/mysql parity (and any
+   further downstream SQL adapter).
 3. Then change code; the conformance suite and unit tests must stay green.
 4. Never weaken a fail-closed control to make a test pass. If a test and a
    fail-closed rule conflict, the rule wins; change the test (and document why).
