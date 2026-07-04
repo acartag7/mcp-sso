@@ -117,6 +117,25 @@ if (RUN) {
     }
   });
 
+  test("MysqlStore: a successor-hash collision returns null and leaves the predecessor unconsumed (parity)", async () => {
+    const store = make();
+    try {
+      await store.saveRefreshToken(refresh("orig", "fam-col", null, FUTURE));
+      await store.saveRefreshToken(refresh("existing", "fam-other", null, FUTURE)); // hash collides with the successor below
+      // Rotate "orig" but supply a successor tokenHash that already exists -> null.
+      const rotated = await store.rotateRefreshToken(sha256Hex("orig"), {
+        ...refresh("next", "fam-col", sha256Hex("orig"), FUTURE), tokenHash: sha256Hex("existing"),
+      }, NOW);
+      assert.equal(rotated, null, "collision -> null");
+      // The predecessor must STILL be consumable: the failed rotation did not consume it
+      // (matches sqlite's check-before-update; Codex P2). Would fail if UPDATE preceded INSERT.
+      const retry = await store.rotateRefreshToken(sha256Hex("orig"), refresh("ok", "fam-col", sha256Hex("orig"), FUTURE), LATER);
+      assert.ok(retry, "predecessor survives the failed rotation");
+    } finally {
+      await store.close();
+    }
+  });
+
   test("MysqlStore: sweep concurrent with rotation keeps the live successor (H1)", async () => {
     const store = make();
     try {
