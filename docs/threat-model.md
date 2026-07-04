@@ -6,17 +6,28 @@
 > auth, token issuance/verification, redirect policy, the store, identity
 > handling, egress, or the build/publish pipeline.
 >
-> Status: **v0.1** (private). Companion to `docs/contracts.md`.
+> Status: **v0.1 shipped + v0.2 contracts locked 2026-07-04** (threats 17–25
+> below cover the locked-but-unimplemented contracts in `contracts.md` §17).
+> Companion to `docs/contracts.md`.
 
 ## Assets
 
 - **Signing keys** — the HS256 consent secret and the ES256 access-token private
   key. Compromise = minting arbitrary tokens.
 - **OAuth state in the store** — auth-code hashes, refresh-token family/tokens,
-  consent JTIs. Integrity and single-use semantics are load-bearing.
+  consent JTIs; *(v0.2)* device-code records and machine-client secret hashes.
+  Integrity and single-use semantics are load-bearing.
 - **Subject identities** — emails / OIDs resolved from the upstream IdP.
 - **Audit events** — the evidence trail (metadata-only).
 - **The protected resource** — the MCP server behind `/mcp`.
+- ***(v0.2)* Machine-client secrets** (`mcs_…`, stored as SHA-256 only) —
+  each is standing M2M access until rotated.
+- ***(v0.2)* Pairing / user codes** — short-lived human-entered codes whose
+  compromise window is bounded by TTL + attempt caps.
+- ***(v0.2)* Quickstart secret file** (`.mcp-sso/secrets.json`) — plaintext
+  signing material on disk, guarded by file permissions.
+- ***(v0.2)* The group→scope mapping config** — its integrity decides
+  privilege tiers (GUID-keyed by contract).
 
 ## Trust boundaries
 
@@ -32,9 +43,23 @@
   MySQL-compatible one) extends the boundary to the DB network — that is the
   deployer's/host's responsibility, validated by the store-conformance suite.
 - **Fetched metadata is UNTRUSTED DATA.** v0.1 does no outbound fetching. v0.2
-  CIMD (Client-issued Metadata Discovery) will fetch PRM/AS-metadata from
-  client-supplied URLs — that path MUST go through the SSRF-guarded `FetcherPort`
-  (§6.6); its boundary exists now so v0.2 cannot add a raw `fetch`.
+  CIMD (Client ID Metadata Documents) fetches client-supplied URLs — an
+  attacker-controlled input driving a server-side fetch. That path MUST go
+  through the SSRF-guarded `FetcherPort` under the full contracts §17.1
+  control set; the fetched document is registration *data* (validated,
+  escaped, never executed), and URLs inside tokens or documents are data,
+  never instructions (e.g. Entra's `_claim_sources` endpoint is never
+  dereferenced — §17.4).
+- ***(v0.2)* The server console is a trust boundary** (console pairing,
+  §17.5): whoever reads the process stderr is treated as the operator. Log
+  aggregation pipelines EXTEND this boundary — the port's deployment envelope
+  is single-operator hosts with operator-private console output, and that
+  envelope is a documented non-goal boundary, not a hardening gap to fix.
+- ***(v0.2)* Deployer configuration is trusted** — the OIDC discovery issuer
+  (§17.6) and the webhook audit URL (§17.7) are deliberately NOT behind the
+  SSRF guard: they are static, reviewed config (enterprise IdPs/SIEMs
+  legitimately live on private networks). Only *client-supplied* URLs get the
+  §17.1 treatment.
 
 ## Required controls (the "why" behind contracts §5–§14)
 
@@ -95,10 +120,19 @@
 | 10 | Scope escalation | Elevation | `normalizeScopes` vs catalog (unknown ⇒ reject); server-authoritative prior-scopes (derived, not client-claimed); consent shows the delta; `requireScope` at the RS | None |
 | 11 | Consent replay | Tampering | Single-use consent JTI, atomic `consumeConsentJti` | None |
 | 12 | Identity spoofing | Spoofing | `IdentityPort` verifies upstream credential; no/failed identity ⇒ 401 fail-closed; no passthrough | Depends on the concrete identity port (Cloudflare Access, Entra) correctly validating iss/aud/tid — a new/custom `IdentityPort` implementation must do the same |
-| 13 | SSRF via CIMD (v0.2) | SSRF | `FetcherPort` boundary; v0.1 fetches nothing | The v0.2 impl must enforce scheme allow-list, resolved-IP private-range check, connect-to-IP, per-hop re-validation, byte cap, timeout |
+| 13 | SSRF via CIMD (v0.2) | SSRF | Full §17.1 contract: URL admission (https-only, no userinfo/fragment/query/dot-segments/IP-literals/CRLF), complete IANA IPv4+IPv6 special-purpose blocklists (binary compare; embedding prefixes blocked wholesale), all-records DNS validation + pinned connect (no re-resolve), redirects refused (draft -01 MUST NOT), 200-only, 5 KiB cap, 5 s deadline, single generic client-facing error | Timing side-channel could still leak coarse network facts (fetch duration); accepted — response content/error shape leak nothing |
 | 14 | Secrets in logs/audit | Info disclosure | Metadata-only audit; tests assert no raw secrets leak | None |
 | 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day pins; SHA-pinned CI; provenance publish; no postinstall/bundler | A zero-day in jose itself — minimized by single-dep + pin + age |
 | 16 | Dev flag used to weaken a real host | Misconfiguration | `allowInsecureLocalhost` rejected unless loopback + loud warning | Someone tunnels a loopback dev instance out — dev-only, documented |
+| 17 | *(v0.2)* CIMD client impersonation via lookalike/localhost redirect (the MCP-documented attack: legit metadata URL + attacker's loopback redirect) | Spoofing | Exact `client_id` echo-match; redirect exact-match against the doc; consent page MUST show client_id host + redirect host, warns on loopback-only redirects; `client_name` labeled unverified | Real and spec-acknowledged: user judgment on lookalike domains / loopback approval remains the last line — CIMD cannot fully close this by design |
+| 18 | *(v0.2)* Machine-client secret theft / misuse | Spoofing / Elevation | Out-of-band provisioning only (open DCR can NEVER mint a secret-bearing client — §17.2); 256-bit secrets, SHA-256-only storage, shown once; scopes capped by per-client `allowedScopes`; no refresh tokens; rotation with bounded grace | A stolen secret is valid until rotated — there is no theft *signal* (unlike refresh replay); bounded by rotation practice + audit of `oauth.token.client_credentials` |
+| 19 | *(v0.2)* Device-flow `user_code` brute force | Spoofing | 34.5-bit code + 600 s TTL + built-in in-process 5-attempts-per-IP cap + `RateLimitPort` hook ≈ RFC 8628 §5.1's 2⁻³² budget | In-process cap is per-instance; multi-instance deployments need the distributed limiter (§17.10) for the full budget |
+| 20 | *(v0.2)* Device-flow remote phishing (attacker delivers THEIR user_code to the victim) | Spoofing | Consent page echoes the user_code + "you are authorizing a device — confirm it is yours" (§5.4); short TTL limits emailed-code viability | Real-time phishing remains viable per the RFC itself; accepted with the UI mitigations, documented |
+| 21 | *(v0.2)* Pairing-code exposure (console scrollback, shipped logs) | Info disclosure / Spoofing | TTL 600 s, single-use, 5-attempt invalidation, session binding, ~52-bit code, in-process limiter | Shared log pipelines are OUTSIDE the deployment envelope (single-operator only) — a documented non-goal, not a mitigated risk |
+| 22 | *(v0.2)* Group-authorization bypass (spoofed/mutable group names, overage truncation, stale grants) | Elevation | GUID-only mapping keys (display names boot-rejected); overage ⇒ fail-closed `entra_groups_overage`; `_claim_sources` URL never dereferenced; ceiling intersected at `prepare` AND `approve` (prior grants cannot resurrect removed-group scopes) | Refresh tokens outlive group removal until family expiry/revocation (no identity at refresh) — bounded by `refreshTokenTtlSeconds`, documented |
+| 23 | *(v0.2)* Quickstart secret-file theft | Info disclosure | `0700` dir + `0600` file + `O_EXCL` create; group/other-readable file is a BOOT FAILURE; `.gitignore` written into the dir | Any process running as the same OS user can read it — the OS user account is the boundary; production uses env/secret managers |
+| 24 | *(v0.2)* Audit-sink loss or injection | Repudiation / Tampering | JSONL sink: JSON encoding escapes newlines (no log injection); fan-out isolation (`combineAudit`); webhook https-only, no redirects | Audit writes are fail-open by design (evidence, not a gate): sink outage = lost events; webhook is at-most-once — hard-evidence deployments use file + shipper |
+| 25 | *(v0.2)* CIMD fetch abuse as DoS/amplification (attacker makes the AS fetch repeatedly) | DoS | Single-flight per URL, global in-flight cap, `RateLimitPort` on authorize, 5 KiB/5 s caps; error responses not cached (spec MUST NOT) but rate-limited | Sustained distributed abuse degrades to rate-limiter quality — same §8-class residual as DCR flooding |
 
 ## Implementation gates
 
@@ -132,5 +166,25 @@
 - **Single-node store is not HA** (memory is process-local; sqlite is one file).
   Documented; a SQL adapter is the scale path.
 - **CIMD (v0.2) adds an outbound-fetch SSRF surface.** The `FetcherPort` boundary is
-  in place to gate it; the v0.2 implementation must enforce the full SSRF control
-  set before it ships.
+  in place to gate it; the v0.2 implementation must enforce the full contracts
+  §17.1 control set before it ships (that section is now the normative list —
+  this line no longer paraphrases it).
+- ***(v0.2, accepted by contract)* Group membership changes lag on refresh.**
+  Removing a user from a mapped Entra group does not shrink scopes on an
+  existing refresh-token family; the ceiling re-applies at the next full
+  authorize. Bounded by `refreshTokenTtlSeconds` and family revocation.
+- ***(v0.2, accepted by contract)* Machine-secret theft has no built-in
+  theft signal.** Refresh-token replay reveals theft (family revocation);
+  a copied `client_credentials` secret does not. Rotation cadence and audit
+  review are the compensating controls.
+- ***(v0.2, accepted by contract)* Console pairing is single-operator
+  only.** Codes printed to stderr enter any log pipeline attached to it;
+  that deployment shape is excluded by the documented envelope rather than
+  mitigated.
+- ***(v0.2, accepted by contract)* Audit sinks are fail-open.** An auth flow
+  never fails because evidence could not be written; deployments that need
+  guaranteed evidence must layer a reliable transport under the file sink.
+- ***(v0.2, accepted by contract)* In-process attempt limiters are
+  per-instance.** The pairing and device-flow attempt caps hold per process;
+  horizontally scaled deployments need the §17.10 distributed limiter to keep
+  the full brute-force budget.

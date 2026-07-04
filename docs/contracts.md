@@ -7,9 +7,11 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and this document
 > disagree, this document wins until one of them is deliberately changed.
 >
-> Status: **v0.1** (private). Spec conformance target: **MCP Authorization
-> 2025-11-25** (the stable spec clients implement), with the **2026-07-28 RC**
-> hardening items built in now because all are backward-compatible additions.
+> Status: **v0.1 shipped** (`mcp-sso@0.1.0` on npm) + **v0.2 contracts locked
+> 2026-07-04 (§17, pre-implementation)**. Spec conformance target: **MCP
+> Authorization 2025-11-25** (the stable spec clients implement), with the
+> **2026-07-28 RC** hardening items built in now because all are
+> backward-compatible additions.
 
 ## Contents
 
@@ -29,7 +31,8 @@
 14. [Error catalog](#14-error-catalog)
 15. [Package & export map](#15-package--export-map)
 16. [Spec-conformance matrix](#16-spec-conformance-matrix)
-17. [Contract-change protocol](#17-contract-change-protocol)
+17. [v0.2 feature contracts (locked 2026-07-04)](#17-v02-feature-contracts-locked-2026-07-04)
+18. [Contract-change protocol](#18-contract-change-protocol)
 
 ---
 
@@ -62,6 +65,12 @@ adapters (`/fastify` `/express` `/hono`), the Cloudflare Access/Entra identity
 ports, and a runnable example were originally Phase 3/4 scope and have since
 shipped — see §16 for the current conformance matrix and `docs/threat-model.md`
 for the boundary.
+
+**v0.2 contracts are locked in §17** (CIMD, `client_credentials`, device flow,
+Entra group authorization, console pairing, generic OIDC + GitHub/Google,
+audit sinks, quickstart secret persistence). Written 2026-07-04, before any
+implementation, per the contract-first house rule. Nothing in §17 is shipped
+until §16 says so.
 
 ## 2. The two roles
 
@@ -245,10 +254,12 @@ root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
   registration for the bridge; validate iss/aud/tid; map oid/email → subject. The
   bridge then issues its OWN audience-bound tokens (no passthrough).
 
-`GenericOidcIdentity` remains v0.2-and-later scope (see the README roadmap).
+`GenericOidcIdentity`, the Google preset, the dedicated GitHub port, and the
+console-pairing port are v0.2 scope — contracts locked in §17.5–§17.6.
 Cloudflare Access and Entra's concrete shapes were fixed in Phase 3; the
 boundary itself was stated at Phase 2 so the core never depends on a specific
-IdP.
+IdP. The v0.2 group-authorization extension (`IdentityClaims.allowedScopes`
+scope ceiling) is locked in §17.4.
 
 **Identity-port hardening (addenda 11–12, binding on the Phase 3 implementations):**
 - **Trust roots MUST be `https`.** A port's JWKS certs URL and issuer MUST be
@@ -274,11 +285,12 @@ IdP.
 ```ts
 interface FetcherPort { fetch(url: string, init?: FetchInit): Promise<FetchResult>; }
 ```
-Reserved for v0.2 Client-issued Metadata Discovery. **Any metadata fetch MUST go
-through an SSRF-guarded `FetcherPort`** (reference: Captatum's `guardedFetch`
-design — scheme allow-list, CRLF rejection, resolved-IP private-range check,
-connect-to-IP, per-hop re-validation, byte cap, timeout). v0.1 does no outbound
-fetching; the boundary exists so v0.2 cannot accidentally add a raw `fetch`.
+Reserved for v0.2 Client ID Metadata Documents. **Any metadata fetch MUST go
+through an SSRF-guarded `FetcherPort`.** v0.1 does no outbound fetching; the
+boundary exists so v0.2 cannot accidentally add a raw `fetch`. The full
+enforcement contract — URL admission, the complete IANA IPv4/IPv6 blocklists,
+DNS pinning, redirect refusal, byte/timeout caps, document validation — is
+locked in **§17.1**.
 
 ### 6.7 `RateLimitPort` *(fix #7)*
 ```ts
@@ -784,15 +796,581 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ⏳ boundary v0.1, impl v0.2 | §6.6 |
+| CIMD (SSRF-guarded FetcherPort) | ⏳ boundary v0.1, **contract locked §17.1**, impl v0.2 | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
+| `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | 🔒 v0.2 contract locked | §17.2 |
+| Device authorization grant (RFC 8628) | 🔒 v0.2 contract locked | §17.3 |
+| Entra group→scope ceiling (Gate 2) | 🔒 v0.2 contract locked | §17.4 |
+| Console-pairing identity | 🔒 v0.2 contract locked | §17.5 |
+| `GenericOidcIdentity` + Google preset + GitHub port | 🔒 v0.2 contract locked | §17.6 |
+| Audit reference sinks + expanded events | 🔒 v0.2 contract locked | §17.7 |
+| Quickstart secret persistence | 🔒 v0.2 contract locked | §17.8 |
 
 **RC re-check gate:** the 2026-07-28 RC is treated as additive hardening built in
 now; revisit it when it finalizes (~end July 2026) before anything is called v1.0.
 The RC changes nothing about the RS model or the bridge architecture.
 
-## 17. Contract-change protocol
+## 17. v0.2 feature contracts (locked 2026-07-04)
+
+> Written and reviewed **before implementation** (contract-first house rule,
+> applied to the whole v0.2 batch at once because the features interact).
+> Every open design question is resolved to an explicit decision here; deferred
+> items are recorded as decisions too, with rationale. `docs/threat-model.md`
+> carries the attacker analysis; `docs/authorization.md` carries the
+> deployer-facing Gate 1/Gate 2 model. Spec facts below were verified against
+> primary sources on 2026-07-04 (IETF drafts/RFCs, IANA registries,
+> modelcontextprotocol.io, vendor docs).
+
+### 17.1 CIMD — Client ID Metadata Documents (the SSRF enforcement contract)
+
+**Conformance target: `draft-ietf-oauth-client-id-metadata-document-01`**
+(2026-03-02). The MCP 2025-11-25 spec normatively references draft **-00**, but
+-01 is strictly stricter (MUST-level RFC 6890 SSRF rule, redirect prohibition,
+200-only rule) — we build to -01 deliberately. The MCP profile additionally
+requires the document to contain `client_id`, `client_name`, and
+`redirect_uris`.
+
+**Config (opt-in; absent ⇒ CIMD disabled and URL-shaped client_ids are
+rejected with `invalid_client`, direct):**
+
+```ts
+cimd?: {
+  fetcher: FetcherPort;         // MUST be createGuardedFetcher() or equivalent
+  maxDocumentBytes?: number;    // default 5120 (the draft's recommended 5 KB cap)
+  fetchTimeoutMs?: number;      // default 5000 — one wall-clock deadline, DNS→body
+  cacheTtlCapSeconds?: number;  // default 3600; cache lifetime clamped [60, cap]
+}
+```
+
+Boot: `cimd` present requires `fetcher` (`AuthConfigError`). When enabled, AS
+metadata emits `client_id_metadata_document_supported: true` (draft §5 MUST
+when supported). Detection is by shape: a `client_id` starting with
+`https://` takes the CIMD path (draft §6.9 — our generated ids `mcpdc_`/`mcc_`
+never collide).
+
+**17.1.1 URL admission (pure function, unit-testable, runs before any DNS):**
+
+1. Raw-string checks first: length ≤ 2048; no raw or percent-encoded CR/LF
+   (`\r`, `\n`, `%0d`, `%0a` case-insensitive); no other control chars; raw
+   `^https://` prefix check BEFORE `new URL()` (addendum 11 pattern).
+2. Parse (WHATWG). MUST: non-root path component (`pathname.length > 1` — the
+   draft requires "a path component"; we read that as a real path,
+   fail-closed). MUST NOT: fragment, userinfo, `.`/`..` path segments.
+   **Query strings are rejected** (draft says SHOULD NOT; we fail closed —
+   stricter than spec, documented).
+3. Host rules: IP-literal hosts rejected (v4 and v6 — beyond-spec hardening; a
+   bare-IP "identity" defeats the hostname-display trust model). Note the
+   WHATWG parser canonicalizes dword/octal/hex forms (`https://2130706433/`)
+   to dotted-quad hostnames, so literal-encoding bypasses are caught by this
+   same check. `localhost`, `*.localhost`, and trailing-dot hostnames rejected
+   pre-DNS. Explicit ports allowed (draft MAY) but must pass the port denylist
+   `{22, 25, 465, 587, 993, 995, 1433, 1521, 3306, 3389, 5432, 6379, 9200,
+   11211, 27017}`.
+
+**Loopback exception:** none in production. The draft permits a loopback AS to
+fetch same-loopback client_ids; we bind that to the existing
+`dev.allowInsecureLocalhost` flag (which already boot-fails on non-loopback
+origins) — loopback CIMD fetches are permitted only under that flag.
+
+**17.1.2 Fetch enforcement (`createGuardedFetcher` — the reference
+`FetcherPort`):**
+
+- **DNS pinning:** resolve ALL A + AAAA records; EVERY resolved address must
+  pass the blocklist (any hit rejects the whole fetch — multi-record attacks);
+  connect to one validated resolved IP (family-consistent), with `Host` header
+  and TLS SNI set to the original hostname, certificate verified against the
+  original hostname. The hostname is NEVER re-resolved after validation
+  (closes the rebinding TOCTOU; TTL-0 tricks are irrelevant under pinning).
+- **Blocked ranges — IPv4** (IANA IPv4 Special-Purpose registry, complete,
+  plus multicast): `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`,
+  `169.254.0.0/16`, `172.16.0.0/12`, `192.0.0.0/24` (entire block, including
+  its sub-registrations and the globally-reachable PCP/TURN anycasts —
+  fail-closed), `192.0.2.0/24`, `192.31.196.0/24`, `192.52.193.0/24`,
+  `192.88.99.0/24`, `192.168.0.0/16`, `192.175.48.0/24`, `198.18.0.0/15`,
+  `198.51.100.0/24`, `203.0.113.0/24`, `224.0.0.0/4` (multicast — separate
+  IANA registry, blocked explicitly), `240.0.0.0/4` (incl.
+  `255.255.255.255/32`).
+- **Blocked ranges — IPv6** (IANA IPv6 Special-Purpose registry, complete,
+  plus multicast): `::/128`, `::1/128`, `::/96` (IPv4-compatible, deprecated),
+  `::ffff:0:0/96` (IPv4-mapped), `64:ff9b::/96` + `64:ff9b:1::/48` (NAT64),
+  `100::/64`, `100:0:0:1::/64`, `2001::/23` (the entire IETF-protocol block —
+  covers Teredo `2001::/32`, benchmarking, AMT, AS112, ORCHID/ORCHIDv2, DRIP;
+  no legitimate metadata host lives there), `2001:db8::/32`, `2002::/16`
+  (6to4), `2620:4f:8000::/48`, `3fff::/20` (new documentation block, RFC
+  9637), `5f00::/16` (SRv6, RFC 9602), `fc00::/7`, `fe80::/10`, `fec0::/10`
+  (deprecated site-local), `ff00::/8` (multicast). Zone-scoped addresses
+  (`%zone`) rejected outright.
+- **Embedded IPv4:** every IPv4-embedding IPv6 form (IPv4-mapped,
+  IPv4-compatible, both NAT64 prefixes, 6to4, Teredo) is **blocked wholesale
+  by the list above** — no extraction-and-recheck step exists to get subtly
+  wrong. Membership tests compare **parsed binary addresses**, never strings.
+- **Redirects: refused.** Draft -01 MUST NOT follow; any 3xx is an error. The
+  core additionally asserts `result.url === <requested URL>` and
+  `status === 200`, so a fetcher that silently followed a redirect is detected
+  and the result rejected. (Max hop count is therefore 0 by contract.)
+- **Response:** status 200 only (draft MUST); `Content-Type` must be
+  `application/json` or a `+json` suffix type (our hardening — the draft only
+  requires the body to be JSON); body read with a streaming hard cap of
+  `maxDocumentBytes` — exceeding it REJECTS (never truncates: truncated JSON
+  must never parse "successfully"); unknown `Content-Encoding` rejected and
+  decompressed output counted against the same cap (decompression bombs).
+- **Timeout:** one `AbortController` deadline (`fetchTimeoutMs`, default
+  5000 ms) spanning DNS, connect, TLS, headers, and body. The spec is silent
+  on timeouts; this value is our own hardening, recorded as such.
+- **Concurrency/DoS:** single-flight per URL (concurrent authorizes for the
+  same client_id coalesce into one fetch); a global in-flight cap (default 8);
+  the authorize endpoint sits behind `RateLimitPort` (`cimd:<ip>`). Error
+  responses are NOT cached (draft MUST NOT) — the rate-limit layer, not a
+  negative cache, bounds refetch abuse.
+
+**17.1.3 Document validation (pure function, unit-testable):**
+
+- Strict `JSON.parse`; result must be a JSON object.
+- `client_id` member MUST equal the fetched URL by **exact character-for-
+  character comparison** (RFC 3986 §6.2.1 simple string comparison — no
+  normalization, no case-folding, no trailing-slash equivalence).
+- Required members (MCP profile): `client_id`, `client_name` (non-empty
+  string, ≤ 256 chars — display data, HTML-escaped at render),
+  `redirect_uris` (non-empty array).
+- `token_endpoint_auth_method` MUST be absent or `"none"`. **v0.2 CIMD
+  clients are public clients only** — the draft explicitly sanctions this
+  profile restriction. `private_key_jwt` (confidential CIMD via published
+  JWKS) is DEFERRED, together with 17.2's `private_key_jwt` — one future
+  asymmetric-client-auth unit. `client_secret` /
+  `client_secret_expires_at` present ⇒ reject (draft MUST NOT).
+- `redirect_uris` entries: https (exact-match at authorize, per draft §4.5 /
+  RFC 9700) or loopback http (RFC 8252 any-port at match time — consistent
+  with §10.2 native policy). Same hygiene as §10: no wildcards, no fragments,
+  no userinfo. If present: `response_types` must include `"code"`;
+  `grant_types` ⊆ `{authorization_code, refresh_token}`; else reject.
+- Unknown members ignored (the RFC 7591 registry allows extras). `logo_uri`
+  is NOT fetched and NOT displayed in v0.2 (the draft requires
+  prefetch-and-cache IF displayed; we sidestep the second fetch surface).
+
+**17.1.4 Flow integration:**
+
+- CIMD resolution runs in `prepare`, pre-validation (the fetched document IS
+  the registration). Any failure — admission, DNS, blocklist, fetch, size,
+  status, parse, validation — is a **direct** error (§9.3 channel) with ONE
+  generic client-facing message ("client_id could not be resolved"): the error
+  MUST NOT distinguish blocked-address from network-failure from invalid-
+  document (**SSRF oracle prevention**). The specific reason goes to audit
+  only (`oauth.cimd.fetch`, failure, reason code).
+- The presented `redirect_uri` must exact-match a document entry (loopback
+  any-port exception). Consent page MUST display the client_id host and the
+  redirect host, SHOULD warn when every registered redirect is loopback (the
+  MCP localhost-impersonation consideration); `client_name` renders as
+  unverified display text.
+- **Scope accumulation applies to CIMD clients in both DCR modes** — the §9.3
+  stateless exclusion is about *ephemeral, unverified* ids; a CIMD client_id
+  is stable and validated, so `findGrantedScopes(subject, clientIdUrl)` is
+  meaningful.
+- Token/refresh/revoke: NO re-fetch; binding is the existing auth-code-record
+  and refresh-record client checks (§9.4). Validated documents cache per RFC
+  9111 headers clamped to `[60, cacheTtlCapSeconds]` seconds, keyed by exact
+  URL, in-memory per instance; invalid/error results never cached.
+- No new store records.
+
+### 17.2 `client_credentials` grant (MCP extension `io.modelcontextprotocol/oauth-client-credentials`)
+
+The extension (ext-auth repo, status Draft) requires OAuth 2.1-shaped client
+authentication and states outright: *"Dynamic Client Registration is not used
+in this flow."* Decisions:
+
+- **Stored-DCR mode only**, and machine clients are **provisioned
+  out-of-band, never via `/oauth/register`**: the open registration endpoint
+  MUST reject any request naming `token_endpoint_auth_method` other than
+  `"none"` or a `grant_types` containing `client_credentials`
+  (`invalid_client_metadata`). Otherwise anyone on the internet could mint
+  themselves a secret. Config: `clientCredentials?: { enabled: boolean }`;
+  boot `AuthConfigError` if enabled with `dcr.mode !== "stored"`.
+- **Provisioning API (library function, not an endpoint):**
+  `provisionMachineClient(store, { name?, allowedScopes, secretTtlSeconds? })`
+  → `{ clientId, clientSecret }`. `clientId` = `mcc_<random>` — the prefix is
+  enforced, giving a namespace disjoint from human subjects and from `mcpdc_`
+  ids (RFC 9700 §4.15.1: the AS MUST let the RS distinguish machine tokens
+  from user tokens; here `sub` starting `mcc_` ⇔ machine). The secret is
+  returned ONCE and never retrievable.
+- **`ClientStore` extension:** `applicationType` gains `"machine"`; machine
+  records carry `allowedScopes: string[]` (validated ⊆ `scopeCatalog` at
+  wiring) and `secrets: Array<{ hash, createdAtEpoch, expiresAtEpoch? }>`
+  (max 2 active); `redirectUris` MUST be `[]`; machine clients are rejected at
+  `/oauth/authorize` and the device endpoints (`invalid_client`).
+- **Secret contract:** `mcs_` + base64url(32 CSPRNG bytes) — 256-bit,
+  clearing RFC 6749 §10.10 (≥2⁻¹²⁸ MUST) and RFC 6819 §5.1.4.2.2. Stored as
+  **unsalted SHA-256 hex only**: RFC 6819 §5.1.4.1.3 conditions salting/work
+  factors on LOW-entropy credentials (user passwords); for a 256-bit random
+  secret SHA-256 is sufficient, keeps the hot path cheap (bcrypt on the token
+  endpoint is a DoS lever), and keeps `jose` the only dep. Digest comparison
+  is constant-time.
+- **Token-endpoint auth:** support BOTH `client_secret_basic` (RFC 6749 §2.3.1
+  MUST — including the percent-decode-after-Basic-split quirk; our base64url
+  alphabet makes encoding a no-op but we decode anyway) and
+  `client_secret_post` (OAuth 2.1 §2.4.1 MUST — the two specs flipped the
+  mandatory method; the MCP extension names `client_secret_basic`). Advertise
+  `token_endpoint_auth_methods_supported:
+  ["none","client_secret_basic","client_secret_post"]` and
+  `grant_types_supported` += `client_credentials` (RFC 8414's default omits
+  it). `private_key_jwt` (RFC 7523; the extension's RECOMMENDED method) is
+  DEFERRED with 17.1's confidential-CIMD — recorded, not forgotten; the
+  secret-based path is extension-compliant.
+- **Grant semantics:** authenticate the client (failure ⇒ `invalid_client`
+  401, `WWW-Authenticate: Basic` when Basic was attempted); `scope` normalized
+  against the client's `allowedScopes` (omitted ⇒ the full allowed set —
+  RFC 6749 §3.3 default); `resource` if present MUST equal `config.resource`
+  (`invalid_target`). Mint an access token with `sub = client_id`
+  (RFC 9068 §2.2) and the existing `client_id` claim; **NO refresh token**
+  (RFC 6749 §4.4.3 SHOULD NOT — the client holds a durable credential; a
+  refresh token is a second bearer secret with zero benefit). Response omits
+  `refresh_token`.
+- **Rotation:** `rotateMachineClientSecret(store, clientId, { graceSeconds =
+  86400 })` — adds the new secret, expires the old at `now + grace` (the
+  two-active-secrets overlap pattern, per Okta/Entra practice; RFC 7592 is
+  Experimental and hard-cutover, not used). Verification accepts any
+  unexpired stored hash.
+- **Audit:** `oauth.token.client_credentials`, `oauth.client.provision`,
+  `oauth.client.rotate_secret` — clientId/scopes metadata only; never a secret
+  or a secret hash.
+- The MCP `initialize`-handshake extension advertisement
+  (`capabilities.extensions`) is the host app's/example's concern, not the
+  bridge's.
+
+### 17.3 Device authorization grant (RFC 8628)
+
+Honest scope note: RFC 8628 is in neither the MCP core spec nor any official
+MCP extension (SEP-2059 was closed unadopted). This ships for the owner's real
+non-MCP-shaped clients (CLI over SSH, sandboxed CI agents) as standard OAuth,
+discoverable via RFC 8414 metadata; MCP clients will not discover it via the
+MCP spec.
+
+- **Endpoint:** `POST ${issuer}/oauth/device_authorization` (behind
+  `RateLimitPort`, key `device:<ip>`). Request: `client_id` required
+  (stateless: any non-empty; stored: must exist and not be `machine`; CIMD
+  URL ids allowed — the document is fetched/validated per 17.1), `scope`
+  optional (§11 normalization), `resource` optional (must equal
+  `config.resource`). Duplicate parameters rejected (§3.1 MUST NOT).
+- **Response** (200, `application/json`, `cache-control: no-store`):
+  `device_code`, `user_code`, `verification_uri` = `${issuer}/oauth/device`,
+  `verification_uri_complete` = `${issuer}/oauth/device?user_code=XXXX-XXXX`,
+  `expires_in` = `deviceCodeTtlSeconds` (config, default **600**), `interval`
+  = **5**.
+- **`user_code`:** 8 chars from the RFC 8628 §6.1 base-20 set
+  `BCDFGHJKLMNPQRSTVWXZ` (~34.5 bits), displayed `XXXX-XXXX`; CSPRNG with
+  rejection sampling. Input canonicalization per §6.1: uppercase, strip every
+  character outside the charset, then compare. Stored as
+  `sha256(canonical)`.
+- **`device_code`:** `dc_` + base64url(32 bytes) (§5.2 "very high entropy"),
+  stored hashed, treated as a bearer secret.
+- **Brute force (§5.1 budget):** 34.5 bits × 600 s TTL × a built-in
+  **in-process** per-IP cap of 5 wrong `user_code` submissions per 10 minutes
+  (deliberately NOT dependent on the deployer wiring `RateLimitPort`; the
+  port hook `device-verify:<ip>` adds defense-in-depth) ≈ the RFC's 2⁻³²
+  target. The in-process limiter is per-instance; multi-instance deployments
+  get the residual noted in the threat model.
+- **Store additions (`StorePort`, conformance-suite invariants):**
+  `DeviceCodeRecord { deviceCodeHash, userCodeHash, clientId, scopes,
+  resource, status: "pending"|"approved"|"denied", subject: string|null,
+  approvedScopes: string[]|null, intervalSeconds, lastPolledAt: string|null,
+  expiresAt }` with methods: `saveDeviceCode`,
+  `findDeviceCodeByUserCodeHash` (pending + unexpired only),
+  `pollDeviceCode(hash, nowIso)` (atomic: stamps `lastPolledAt`; polls faster
+  than `intervalSeconds` return a too-fast marker AND bump the stored
+  interval +5 — server-side mirror of the client's `slow_down` MUST),
+  `resolveDeviceCode(userCodeHash, {status, subject, approvedScopes}, nowIso)`
+  (CAS `pending`→`approved`/`denied`), `consumeApprovedDeviceCode(hash,
+  nowIso)` (single-use delete-on-read for token issuance), and `sweepExpired`
+  extended to device codes. Timestamps follow §12.1 (3-ms rule).
+- **Verification UI (adapter):** `GET /oauth/device` renders enter-the-code
+  first (prefilled from `user_code` query for the `_complete` variant); on a
+  canonicalized match, identity resolution runs (the SAME `IdentityPort`
+  machinery as authorize), then the existing consent page in a device variant:
+  it MUST echo the `user_code` and say the user is authorizing a device they
+  should confirm is theirs (§5.4 remote-phishing mitigation), show client
+  info + requested scopes + Approve/Deny, and end on "return to your device"
+  (no redirect). The consent-token + single-use-JTI + Origin-check machinery
+  (§7.1, §9.3) is REUSED, with claims bound to `userCodeHash` instead of
+  `redirect_uri`. The 17.4 group ceiling applies here exactly as at authorize.
+- **Token endpoint:** `grant_type=urn:ietf:params:oauth:grant-type:device_code`
+  + `device_code` + `client_id` (must match the record; mismatch ⇒
+  `invalid_grant`). Error state machine, all HTTP 400 §5.2-shaped:
+  `authorization_pending` (pending), `slow_down` (poll arrived before the
+  current interval elapsed; interval grows +5 persistently),
+  `access_denied` (denied — terminal; record deleted on delivery),
+  `expired_token` (expired — terminal). Success: `consumeApprovedDeviceCode`
+  (single-use) → mint access + refresh tokens (new family) with
+  `approvedScopes` — this IS a user grant, so refresh tokens apply, unlike
+  17.2.
+- **Metadata:** `device_authorization_endpoint` + `grant_types_supported` +=
+  the device URN.
+- **Audit:** `oauth.device.authorization`, `oauth.device.approve`
+  (approved/denied), `oauth.token.device_code`.
+
+### 17.4 Entra group-based authorization (Gate 2 becomes a scope ceiling)
+
+Entra-specific by design (the owner's real deployment; do not generalize
+prematurely). Facts verified against Microsoft Learn 2026-07-04: JWT group
+claims cap at **200 groups**, beyond which the claim is **omitted** and
+`_claim_names`/`_claim_sources` overage markers appear instead; group
+**object IDs are the only universally available, immutable, collision-safe
+form** (display names are a documented spoof vector — any user can create a
+duplicate-named group); the `_claim_sources` endpoint URL is legacy Azure AD
+Graph and Microsoft says not to rely on it.
+
+**Config (on `EntraConfig`):**
+
+```ts
+groupAuthorization?: {
+  mapping: Record<string, string[]>; // Entra group OBJECT ID (GUID) → scopes
+  baseScopes?: string[];             // scopes every authenticated subject gets; default []
+}
+```
+
+- Boot validation: every `mapping` key must be GUID-shaped (display names
+  rejected — fail-closed against the documented spoofing vector); scope
+  values non-empty. The adapter wiring (`registerOAuthRoutes`), which sees
+  both configs, MUST additionally validate every mapped scope ⊆
+  `scopeCatalog` (`AuthConfigError`).
+- **Combination model: UNION.** A subject's scope ceiling
+  `allowedScopes = baseScopes ∪ ⋃ mapping[g]` over every group GUID `g` in
+  the verified `groups` claim that has a mapping entry. No tier precedence,
+  no highest-wins — union is order-independent and matches how directory
+  membership composes. Unmapped groups contribute nothing.
+- **Overage = fail closed.** `groups` absent + (`_claim_names.groups` or
+  `hasgroups`) present ⇒ `verify()` fails with reason
+  `entra_groups_overage`. The `_claim_sources` URL is NEVER dereferenced — a
+  URL inside a token is data, not instructions. Documented remediation:
+  configure the app registration with **"Groups assigned to the
+  application"** (`groupMembershipClaims: "ApplicationGroup"`) — caveats
+  recorded: requires Entra P1, direct membership only, no nesting — or reduce
+  group sprawl.
+- **No groups claim at all** (not configured in the app manifest, or the user
+  is in zero groups) ⇒ ceiling = `baseScopes`; if that is empty ⇒ fail with
+  `entra_no_groups` (likely `groupMembershipClaims` misconfiguration —
+  documented). Nested groups: the `SecurityGroup` claim is transitive;
+  `ApplicationGroup` is direct-only (deployer caveat in
+  `docs/authorization.md`).
+- **Graph API fallback: DEFERRED (explicit decision).** The designed
+  extension point is `POST /users/{oid}/checkMemberGroups` (≤20 group IDs per
+  call — allowlist-shaped, transitive, app-only permissions
+  `GroupMember.Read.All` + `User.ReadBasic.All`), but it puts an outbound
+  Microsoft Graph call inside the auth path (availability + latency), needs
+  admin consent and a confidential Entra client, and `ApplicationGroup`
+  filtering already solves overage for the mapping use case. Revisit on real
+  deployment demand. (Microsoft's first-line recommendation — App Roles via
+  the `roles` claim, which never overflows — is recorded as a backlog
+  alternative, not v0.2.)
+- **Core enforcement (IdP-agnostic):** `IdentityClaims` gains optional
+  `allowedScopes?: string[]`; `prepare` (and the device-flow approval) accepts
+  it. When present: requested scopes are **narrowed by intersection** with
+  the ceiling — RFC 6749 permits granting fewer scopes than requested, and
+  the token response `scope` + consent page reflect the narrowed set (this is
+  not fail-open: the un-entitled scope is never granted; rejecting outright
+  would only worsen interop since MCP clients cannot know what to request).
+  An EMPTY intersection ⇒ `access_denied` (redirect channel). The ceiling is
+  embedded in the consent-token claims, and `approve` re-intersects
+  `union(requested, priorScopes)` against it — accumulated prior grants must
+  not resurrect scopes a since-removed group granted. `defaultScopes` pass
+  through the same intersection.
+- **Refresh is NOT re-checked** (no identity at refresh): group revocation
+  takes effect at the next full authorize. Residual risk documented in the
+  threat model; deployers needing faster revocation shorten
+  `refreshTokenTtlSeconds` or revoke families.
+- Guest (B2B) behavior is UNVERIFIED in Microsoft's docs — added to the Entra
+  live-verification checklist rather than assumed.
+- **Audit:** new event `identity.verify` (success/failure + reason, incl.
+  `entra_groups_overage`) — failed-login evidence for enterprises.
+
+### 17.5 Console-pairing identity (zero-IdP setup)
+
+`createConsolePairingIdentity({ subject = "console-operator",
+codeTtlSeconds = 600, maxAttempts = 5, output = stderr })` — an
+`IdentityPort` for single-operator deployments: a one-time code is printed to
+the server console and pasted at the consent step. **Replaces the example's
+`DEV_STUB_SUBJECT` outright** (the stub is deleted when this ships — a real
+gate replaces no-gate).
+
+- **Code:** 12 chars from the base-20 set `BCDFGHJKLMNPQRSTVWXZ`, displayed
+  `XXXX-XXXX-XXXX` (~51.9 bits — deliberately above RFC 8628's 34.5-bit
+  example because this code is the ENTIRE identity gate, not a secondary
+  confirmation). CSPRNG rejection sampling; input canonicalization as 17.3;
+  timing-safe comparison.
+- **Lifecycle:** generated lazily when a pairing-needed authorize arrives
+  (never at boot — no stale scrollback codes), printed to stderr with
+  timestamp and expiry; ONE active code per process; single-use (consumed on
+  success); invalidated by expiry (600 s) or by `maxAttempts` (5) wrong
+  submissions, after which the next request prints a fresh code. **Never
+  persisted** — process-memory only; restart = clean slate (fail-closed).
+- **Session binding:** the code is bound to the pairing session (random nonce
+  in the form) that triggered its printing — a code printed for one flow
+  cannot be consumed by another, so an attacker triggering codes onto the
+  operator's console gains nothing and cannot race a pasted code.
+- **Rate limiting:** the attempt cap is built-in and in-process — it cannot be
+  misconfigured away; the `RateLimitPort` hook (`pairing:<ip>`) adds
+  defense-in-depth.
+- **Trust boundary (threat model):** whoever can read the process's stderr IS
+  the operator. Log pipelines (docker logs, CloudWatch, Loki) EXTEND that
+  boundary — codes land in them; TTL + single-use + attempt cap bound but do
+  not eliminate the exposure. **Deployment envelope: single-operator/personal
+  deployments with operator-private console output. Explicit non-goal
+  everywhere else** — multi-operator or shared-log environments must use a
+  real IdP port. The printed banner and docs say exactly this.
+- Audit: `oauth.pairing.attempt` (success/failure — brute-force evidence).
+
+### 17.6 `GenericOidcIdentity` + Google preset + dedicated GitHub port
+
+**`createGenericOidcIdentity(config)`** — the missing generic port:
+
+- Config: `issuer` (https, the exact-match anchor), `clientId`,
+  `clientSecret?`, `redirectUri`, `endpoints: "discover" |
+  { authorizationEndpoint, tokenEndpoint, jwksUri }` (manual mode — zero
+  boot-time fetching), `scopes?` (default `openid profile email`),
+  `subjectAllowlist?` (matches `sub`), `allowEmailAllowlist?` (opt-in; only
+  matches when `email_verified === true`).
+- **Discovery** (`endpoints: "discover"`): fetched ONCE at boot from
+  `${issuer}/.well-known/openid-configuration`; the document's `issuer` MUST
+  exactly equal the configured issuer (OIDC Discovery §4.3; RFC 8414 §3.3:
+  "MUST NOT be used" on mismatch — boot failure); all endpoints + `jwks_uri`
+  MUST pass the raw `^https://` check (addendum 11). Discovery/JWKS fetches
+  use plain https (NOT the 17.1 SSRF guard): the issuer is deployer-trusted
+  config, and enterprise IdPs legitimately live on private networks —
+  documented rationale. Redirects on the discovery fetch: not followed
+  (fail closed).
+- **id_token validation:** `iss` exact-match; `aud` must contain `clientId`
+  and multiple-audience tokens are rejected outright (fail-closed
+  simplification of OIDC Core §3.1.3.7); `exp`/`iat` via jose with
+  `ClockPort`; algorithms pinned to `{RS256, ES256}` ∩ the provider's
+  advertised set; **nonce always sent, always verified** (once sent, OIDC
+  Core makes the claim mandatory — missing/mismatch is a hard failure);
+  `at_hash` validated if present, absence accepted (code flow). Subject =
+  `sub`, keyed as `(issuer, sub)`; email is a display attribute, never the
+  identity key.
+- **PKCE:** always S256. If discovery omits `code_challenge_methods_supported`
+  (per RFC 8414 that means no PKCE support), boot FAILS unless the deployer
+  sets `allowProviderWithoutPkce: true` (state + nonce + client secret still
+  bind the flow; the flag is loud).
+- **Google preset** (`createGoogleIdentity`): the generic port pinned to
+  `https://accounts.google.com` + discovery; `clientSecret` REQUIRED
+  (Google's advertised token auth methods are secret-based only; its docs'
+  newer "Optional" marking is unverified — we treat it as required);
+  subject = `sub` per Google's own don't-key-on-email guidance; optional
+  `hostedDomain` validated against the **`hd` claim** (Google: check the
+  claim, never the email's domain); email surfaced only when
+  `email_verified === true`. `iss` accepted ONLY as
+  `https://accounts.google.com` (the schemeless legacy variant is rejected;
+  if live verification ever hits it, any allowance will be an explicit,
+  documented Google-only quirk).
+- **GitHub = its own dedicated port** (`createGitHubIdentity`), NOT a preset:
+  GitHub OAuth Apps have **no OIDC discovery document (404, verified) and no
+  id_token** — identity comes from the REST API, so forcing it through the
+  generic port would mean a degenerate bespoke branch inside it. Contract:
+  hardcoded `https://github.com/login/oauth/{authorize,access_token}`;
+  `Accept: application/json` on the token exchange (default response is
+  form-encoded); `state` required; PKCE S256 sent (supported since
+  2025-07-14; optional) AND `client_secret` always required; scope
+  `user:email` only; identity: `GET https://api.github.com/user` → subject =
+  the **numeric `id`** as a string (stable; `login` is mutable), email from
+  `GET /user/emails` filtered to `primary && verified` (else no email
+  attribute). Allowlist matches the numeric id by default; matching `login`
+  requires the mutable-claims opt-in (mirrors Entra's `allowMutableClaims`).
+  The upstream GitHub token is discarded after the identity calls (the bridge
+  mints its own tokens), so OAuth Apps suffice; GitHub Apps work identically
+  if the deployer prefers.
+- **Entra refactor:** the public `identity/entra` API is UNCHANGED in v0.2;
+  sharing internals with the generic port is permitted as an implementation
+  detail, not required.
+- **Verification + guides (decided, not deferred):** every new port/preset
+  ships with (1) exported pure claim-validation functions unit-tested without
+  network, (2) a manual live checklist at the top of the file (Entra
+  pattern: register → sign in → claims validated → allowlist negative test →
+  bridge mints its own token), (3) a README conformance row only after a real
+  live pass. Setup guides are **human-facing docs written to be
+  agent-executable** (exact console paths and field names —
+  `docs/identity/{github,google,entra}.md`); a scripted/agentic setup flow is
+  explicitly out of v0.2 scope (provider UIs churn; an agent can follow the
+  docs).
+- Export map additions: `./identity/generic-oidc`, `./identity/google`,
+  `./identity/github`, `./identity/console-pairing`.
+
+### 17.7 Audit reference sinks + event coverage
+
+- **Decision: no new port.** `AuditPort` IS the sink boundary; a second
+  `AuditSinkPort` would be indirection with no gain. v0.2 ships reference
+  implementations:
+  - `JsonlFileAudit(filePath)` — one `JSON.stringify`d event per line
+    (JSON encoding escapes newlines ⇒ log-injection-safe by construction),
+    `O_APPEND` writes, file created `0600`; NO rotation (logrotate is the
+    deployer's).
+  - `WebhookAudit(url, { timeoutMs = 5000, headers? })` — per-event POST,
+    https required (raw prefix check), redirects not followed, at-most-once
+    (no retry). Deliberately NOT behind the 17.1 SSRF guard: the URL is
+    static deployer config (trusted), and SIEM collectors legitimately live
+    on private networks — documented rationale.
+  - `combineAudit(...sinks)` — fan-out; one sink's failure never stops the
+    others.
+- **Failure policy:** an audit-write failure NEVER blocks the auth operation
+  (matches `RateLimitPort`'s advisory posture — audit is evidence, not a
+  gate); failures surface on stderr. Residual (threat model): audit loss under
+  sink outage — deployers with hard evidence requirements should use the file
+  sink + a log shipper.
+- **New `AuthAuditEventName` values:** `identity.verify`,
+  `oauth.pairing.attempt`, `oauth.device.authorization`,
+  `oauth.device.approve`, `oauth.token.device_code`,
+  `oauth.token.client_credentials`, `oauth.client.provision`,
+  `oauth.client.rotate_secret`, `oauth.cimd.fetch`. `AuthAuditEvent` gains
+  optional `ip?: string` (adapter-populated; personal data — noted in docs).
+  The §13 metadata-only rule is unchanged and the no-secrets serialization
+  test extends to every new event.
+- **Retention: documentation guidance, not a library mechanism.** The library
+  emits; the deployer retains (compliance frameworks set their own periods).
+
+### 17.8 Quickstart secret persistence (auto-keygen)
+
+`loadOrCreateQuickstartSecrets({ dir = "./.mcp-sso" })` →
+`{ signingPrivateJwk, consentSigningSecret }`:
+
+- If `${dir}/secrets.json` exists: load, validate shape (§5 boot checks), and
+  on POSIX **reject group/other-readable files** (`mode & 0o077` ⇒ boot error
+  with the exact `chmod 600` remediation; the check is skipped on Windows,
+  documented). If absent: generate (EC P-256 keypair via jose; consent secret
+  = base64url(48 bytes)), `mkdir` `0700`, write `0600` with `O_EXCL`, and
+  write `${dir}/.gitignore` containing `*` so the directory can never be
+  committed.
+- **Fail-closed:** unwritable directory, partial write, bad permissions, or
+  an unparseable file is a boot `AuthConfigError`. NEVER fall back to
+  ephemeral in-memory keys — silent key rotation on restart would invalidate
+  every outstanding token while masking the misconfiguration.
+- Env-var configuration remains the primary production path; this is the
+  zero-setup path (same audience as 17.5). Threat-model entry: plaintext key
+  material on disk, boundary = the OS user account; production belongs in
+  env/secret managers. (`npx mcp-sso init` remains a possible wrapper later;
+  the function is the contract.)
+
+### 17.9 Worked-example design notes (v0.2 examples)
+
+- Express + Hono equivalents of `examples/fastify-sqlite` — execution only,
+  no new contract surface. Examples use console pairing (17.5) or a real IdP;
+  the `DEV_STUB_SUBJECT` pattern is removed.
+- **API-key-gateway example** (mcp-sso as the SSO front door for a backend
+  that only accepts a static API key): the backend key lives in an env var
+  (`BACKEND_API_KEY`), read once at boot into a closure — never logged, never
+  audited, never present in token claims or responses; injected server-side
+  on the proxied backend call only after `RequestAuthorizer` accepts the
+  bridge-minted token. Missing key = boot failure. Secret-manager integration
+  is out of scope for the example but the read is isolated behind a single
+  `getBackendCredential()` swap point. The MCP client never sees the key.
+
+### 17.10 v0.1.1 note — distributed `RateLimitPort` (Redis/Valkey)
+
+Scope confirmed earlier (roadmap): a Redis/Valkey-backed `RateLimitPort`
+ONLY — not a Redis `StorePort`. Contract: fixed-window counter per key —
+atomic `INCR` + `EXPIRE`-on-first-increment (single Lua script or
+`SET ... NX EX` + `INCR`), config `{ windowSeconds, limit }`, keys as in §6.7
+(`register:<ip>` etc.). Failure semantics are UNCHANGED from §6.7: a limiter
+error fails OPEN (availability over advisory defense). Client library enters
+as an optional peer dep through the §15 ledger process (15-day rule).
+
+## 18. Contract-change protocol
 
 1. Update **this document** first (port/schema/error/endpoint/TTL).
 2. If a runtime behavior changed, check the threat model and the store-conformance
