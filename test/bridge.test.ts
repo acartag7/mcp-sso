@@ -123,3 +123,10 @@ test("bridge: rate-limit (fix #7) returns 429 when the port denies", async () =>
   assert.equal(res.status, 429);
   assert.equal((res.body as { error: string }).error, "temporarily_unavailable");
 });
+
+test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Redis outage must not lock out auth)", async () => {
+  const boom: RateLimitPort = { async check(): Promise<boolean> { throw new Error("redis down"); } };
+  const ctx = setup(boom);
+  const res = await ctx.bridge.handleRegister(req({ body: { redirect_uris: [REDIRECT] } }));
+  assert.equal(res.status, 201); // not 429 — the bridge guard() caught the throw and allowed
+});

@@ -111,6 +111,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     assert.ok(rotated, "rotation succeeds");
     // sweep AFTER the predecessor expired but BEFORE the successor -> predecessor retained
     await store.sweepExpired("2026-07-03T12:45:00.000Z");
+    assert.ok(await store.findRefreshToken(sha256Hex("pred")), "predecessor directly verified retained after sweep");
     const replay = await store.rotateRefreshToken(sha256Hex("pred"), refresh("p2", "fam-succ", sha256Hex("pred"), late), "2026-07-03T12:45:00.000Z");
     assert.equal(replay, null, "predecessor replay detected -> family revoked");
     const after = await store.rotateRefreshToken(sha256Hex("succ"), refresh("s2", "fam-succ", sha256Hex("succ"), late), "2026-07-03T12:45:00.000Z");
@@ -122,6 +123,9 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     const store = make();
     await store.saveRefreshToken(refresh("only", "fam-only", null, "2026-07-03T12:30:00.000Z"));
     await store.sweepExpired("2026-07-03T12:45:00.000Z"); // past the only token's expiry
+    // Directly verify sweep actually deleted the row — `rotate ... === null` alone cannot
+    // distinguish "swept (row gone)" from "not swept (row expired, rotate rejected)".
+    assert.equal(await store.findRefreshToken(sha256Hex("only")), null, "swept token must be deleted");
     // family fully GC'd -> a later replay is undetected (accepted boundary, addendum 8)
     const replay = await store.rotateRefreshToken(sha256Hex("only"), refresh("o2", "fam-only", sha256Hex("only"), "2026-07-03T13:00:00.000Z"), "2026-07-03T12:45:00.000Z");
     assert.equal(replay, null, "post-validity replay is undetected (rows GC'd) — accepted boundary");
