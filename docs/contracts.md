@@ -7,7 +7,7 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and this document
 > disagree, this document wins until one of them is deliberately changed.
 >
-> Status: **v0.1 shipped** (`mcp-sso@0.1.0` on npm) + **v0.2 contracts locked
+> Status: **v0.1 shipped** (`mcp-sso@0.1.1` on npm) + **v0.2 contracts locked
 > 2026-07-04 (§17, pre-implementation)**. Spec conformance target: **MCP
 > Authorization 2025-11-25** (the stable spec clients implement), with the
 > **2026-07-28 RC** hardening items built in now because all are
