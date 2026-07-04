@@ -2,11 +2,15 @@
 // A fixed-window counter per key: one Lua script does INCR + EXPIRE-on-first-
 // increment atomically (Redis runs Lua single-threaded, so two concurrent first-
 // incrementers cannot both see n==1 and the TTL is set exactly once per window).
-// check() THROWS on any Redis error — the bridge's guard() catches that and fails
-// OPEN (availability over advisory defense; §6.7 "Throw => adapter fails open",
-// §17.10 "failure semantics UNCHANGED"). Rate-limiting is DoS defense-in-depth
-// (threat-model #8), NOT a security boundary, so an outage must not lock out auth.
+// The hot path uses EVALSHA (one round-trip carries only the SHA1, not the script
+// body); on NOSCRIPT — Redis restarted or SCRIPT FLUSH — it falls back to EVAL,
+// which re-loads the script for next time. Atomicity and fail-open are identical
+// either way. check() THROWS on any OTHER Redis error — the bridge's guard()
+// catches that and fails OPEN (availability over advisory defense; §6.7 "Throw =>
+// adapter fails open", §17.10 "failure semantics UNCHANGED"). Rate-limiting is DoS
+// defense-in-depth (threat-model #8), NOT a security boundary.
 
+import { createHash } from "node:crypto";
 import type { Redis } from "ioredis";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 
@@ -27,6 +31,9 @@ const FIXED_WINDOW_LUA = [
   "if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end",
   "return n",
 ].join("\n");
+// SHA1 of the script body — Redis caches compiled scripts by this hash (SCRIPT LOAD),
+// so EVALSHA runs the cached script without re-sending the body. Computed once.
+const FIXED_WINDOW_SHA = createHash("sha1").update(FIXED_WINDOW_LUA).digest("hex");
 
 export class RedisRateLimit implements RateLimitPort {
   private readonly client: Redis;
@@ -48,12 +55,27 @@ export class RedisRateLimit implements RateLimitPort {
   }
 
   async check(key: string): Promise<boolean> {
-    // Throws on Redis outage / WRONGTYPE / eval failure -> bridge guard() fails open.
-    const count = await this.client.eval(FIXED_WINDOW_LUA, 1, this.keyPrefix + key, this.windowSeconds);
+    const fullKey = this.keyPrefix + key;
+    let count: unknown;
+    try {
+      count = await this.client.evalsha(FIXED_WINDOW_SHA, 1, fullKey, this.windowSeconds);
+    } catch (error) {
+      // NOSCRIPT = Redis has no cached copy of the script (restart / FLUSH). Fall back
+      // to EVAL, which re-loads it; subsequent calls use EVALSHA again. This is the ONLY
+      // swallowed error — any other failure propagates so guard() fails open.
+      if (!isNoScript(error)) throw error;
+      count = await this.client.eval(FIXED_WINDOW_LUA, 1, fullKey, this.windowSeconds);
+    }
     return Number(count) <= this.limit;
   }
 }
 
 export function createRedisRateLimit(client: Redis, config: RedisRateLimitConfig): RedisRateLimit {
   return new RedisRateLimit(client, config);
+}
+
+// ioredis surfaces Redis's NOSCRIPT error as a ReplyError whose message begins with
+// "NOSCRIPT" (there is no `.code` field — verified against ioredis 5.11 / Redis 7).
+function isNoScript(error: unknown): boolean {
+  return String((error as { message?: string } | null)?.message ?? "").startsWith("NOSCRIPT");
 }
