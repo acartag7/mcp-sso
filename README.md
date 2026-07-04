@@ -274,17 +274,10 @@ cloudflared tunnel --config tunnel-config.yml run
 #     connector; approve; connect.
 ```
 
-## Verify
+## Contributing
 
-```bash
-pnpm install          # via corepack (packageManager pin); minimumReleaseAge = 15d
-pnpm typecheck && pnpm check:lines && pnpm test && pnpm build
-```
-
-The suite includes an **end-to-end gate** (`test/e2e-mcp-sdk.test.ts`) that
-drives the full OAuth flow and calls the protected `/mcp` through the
-**official MCP SDK client** with a bridge-minted token — register →
-authorize → token → `/mcp` → refresh → replay-revocation observed → revoke.
+Building, testing, and verifying changes locally is a development concern,
+not a using-the-library one — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 
