@@ -66,7 +66,11 @@ export class RedisRateLimit implements RateLimitPort {
       if (!isNoScript(error)) throw error;
       count = await this.client.eval(FIXED_WINDOW_LUA, 1, fullKey, this.windowSeconds);
     }
-    return Number(count) <= this.limit;
+    // Fail-open on a non-numeric reply (defensive — unreachable in practice: the script
+    // always returns the INCR integer; ioredis rejects on connection loss) to match the
+    // throw -> fail-open posture of §6.7/§17.10 rather than deny (NaN <= limit is false).
+    const n = Number(count);
+    return Number.isFinite(n) ? n <= this.limit : true;
   }
 }
 

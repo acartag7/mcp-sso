@@ -36,13 +36,21 @@ test("RedisRateLimit: rejects non-positive windowSeconds/limit at construction (
   assert.throws(() => new RedisRateLimit(stub, { windowSeconds: 1, limit: 1.5 }));
 });
 
-test("RedisRateLimit: check() THROWS on Redis error so the bridge guard() fails open (§6.7/§17.10) — review M1", async () => {
-  // A Redis outage must surface as a throw (not a swallow/return-false), so the bridge's
-  // guard() catches it and allows the request. This locks the fail-open contract directly
-  // against the real adapter (the bridge test uses a stub). The hot path tries EVALSHA
-  // first, so the stub rejects on both evalsha and eval.
+test("RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws (fail-open) — review M1", async () => {
+  // The hot path tries EVALSHA first. A non-NOSCRIPT error (Redis outage, WRONGTYPE, etc.)
+  // must propagate so the bridge guard() catches it and allows the request. This stub
+  // exercises the evalsha-throw branch only (the NOSCRIPT->eval-throw branch is covered
+  // by the test below).
+  const broken = { evalsha: async () => { throw new Error("redis down"); } } as unknown as Redis;
+  const rl = new RedisRateLimit(broken, { windowSeconds: 60, limit: 1 });
+  await assert.rejects(rl.check("k"), /redis down/);
+});
+
+test("RedisRateLimit: if EVALSHA returns NOSCRIPT and EVAL also fails, the EVAL error propagates (fail-open)", async () => {
+  // Locks the fail-open contract on the fallback-also-fails path: NOSCRIPT is the ONLY
+  // swallowed error; a failure from the fallback EVAL must NOT be swallowed.
   const broken = {
-    evalsha: async () => { throw new Error("redis down"); },
+    evalsha: async () => { throw new Error("NOSCRIPT No matching script. Please use EVAL."); },
     eval: async () => { throw new Error("redis down"); },
   } as unknown as Redis;
   const rl = new RedisRateLimit(broken, { windowSeconds: 60, limit: 1 });
@@ -63,8 +71,7 @@ if (RUN) {
       assert.equal(await lb.check(key), true);  // n=2 — shared window across clients
       assert.equal(await la.check(key), false); // n=3 > limit
     } finally {
-      await a.quit();
-      await b.quit();
+      await Promise.allSettled([a.quit(), b.quit()]);
     }
   });
 
@@ -90,15 +97,16 @@ if (RUN) {
     }
   });
 
-  test("RedisRateLimit: uses EVALSHA on the hot path and falls back to EVAL on NOSCRIPT (perf)", async () => {
+  test("RedisRateLimit: falls back to EVAL on NOSCRIPT and re-caches for subsequent EVALSHA", async () => {
     const client = new Redis(REDIS_URL as string);
     try {
       const prefix = uniquePrefix();
       const limiter = new RedisRateLimit(client, { windowSeconds: 60, limit: 5, keyPrefix: prefix });
-      // Cold start: EVALSHA misses (NOSCRIPT) -> EVAL fallback loads the script.
+      // Warm: prior tests (or this call) have cached the script server-side -> EVALSHA hits.
       assert.equal(await limiter.check("c1"), true);
-      // SCRIPT FLUSH drops the cache -> the next check MUST hit NOSCRIPT and fall back,
-      // then re-cache so subsequent calls use EVALSHA again. Throws if the fallback breaks.
+      // SCRIPT FLUSH drops the cache -> the next check MUST hit NOSCRIPT and fall back to
+      // EVAL, which re-loads it so the call after that uses EVALSHA again. Throws if the
+      // fallback breaks (the only NOSCRIPT trigger here is the explicit FLUSH).
       await client.script("FLUSH");
       assert.equal(await limiter.check("c2"), true);
       assert.equal(await limiter.check("c3"), true);
