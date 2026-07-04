@@ -196,7 +196,7 @@ a manual step, tracked here:
 | OAuth flow + `/mcp` (curl) | ✅ verified | 2026-07-04 | `examples/fastify-sqlite` locally, full dance + tokenless 401 challenge |
 | Official MCP SDK client | ✅ verified | 2026-07-04 | `test/e2e-mcp-sdk.test.ts`, 83/83 |
 | Claude Code | ✅ verified | 2026-07-04 | local `http://localhost`, `claude mcp add --transport http`; consent screen showed correct scopes, `ping` round-tripped |
-| claude.ai custom connector | ⏳ pending | — | needs a public `https` tunnel |
+| claude.ai custom connector | ⏳ pending | — | needs a public `https` tunnel; see note below |
 
 **`DEV_STUB_SUBJECT` caveat:** local client verification uses the example's
 stub identity, which **bypasses identity** (every authorize resolves to the
@@ -205,6 +205,20 @@ can complete the OAuth dance without standing up Cloudflare Access. The real
 CF Access identity leg (header-injected, fail-closed) is validated in the
 production swap, not locally. Never run the stub against a public URL for
 longer than a verification window — see the reproduction steps below.
+
+**claude.ai check attempted 2026-07-04, not yet completed:** three independent
+`cloudflared tunnel --url` quick tunnels (anonymous, account-less) were tried.
+Each registered cleanly with Cloudflare's edge and stayed connected with zero
+errors for the whole attempt, and the same local server answered correctly
+over plain `http://localhost` throughout — but every public request through
+each tunnel's hostname returned a `404` from Cloudflare's edge itself, never
+reaching the app. That combination (healthy backend, healthy tunnel-side
+connection log, edge-level 404) points at the anonymous quick tunnel's
+one-connector, no-redundancy routing (`cloudflared`'s own CLI disclaims
+"no uptime guarantee" for these), not a bug in the OAuth/DCR code path — which
+the Claude Code check above already exercised end-to-end successfully with
+the identical server. Retry with a named (account-backed) Cloudflare tunnel
+or an alternative like `ngrok` next time.
 
 To run the client checks yourself:
 
