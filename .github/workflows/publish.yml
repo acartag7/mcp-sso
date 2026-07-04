@@ -1,8 +1,15 @@
 name: publish
 
-# Publish to npm with --provenance (Sigstore/OIDC). NEVER auto-runs on push to main.
-# Real publish only on a `v*.*.*` tag; workflow_dispatch defaults to a dry run so the
-# tarball can be validated without publishing. No local publishes (see the threat model).
+# Publish to npm via Trusted Publishing (OIDC, passwordless — no NPM_TOKEN secret).
+# NEVER auto-runs on push to main. Real publish only on a `v*.*.*` tag;
+# workflow_dispatch defaults to a dry run so the tarball can be validated without
+# publishing. No local publishes (see the threat model).
+#
+# Requires a Trusted Publisher configured on npmjs.com for this package: GitHub
+# Actions provider, repo acartag7/mcp-sso, workflow publish.yml, environment
+# publish. The npm CLI (>=11.5.1, bundled with Node 24) auto-exchanges the
+# GitHub OIDC token for a short-lived publish token when id-token: write is
+# granted — nothing to rotate, nothing to leak.
 
 on:
   workflow_dispatch:
@@ -20,12 +27,15 @@ on:
 
 permissions:
   contents: read
-  id-token: write # OIDC for npm --provenance
+  id-token: write # OIDC for npm Trusted Publishing + provenance
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     environment: publish # gate: require explicit approval before any real publish
+    permissions:
+      contents: write # for the release-entry step below (gh release create)
+      id-token: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (2026-06-18)
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (2026-06-15)
@@ -39,7 +49,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck && pnpm check:lines && pnpm test
       - run: pnpm build
-      - name: npm publish (dry-run OR provenance)
+      - name: npm publish (dry-run OR OIDC Trusted Publishing)
         run: npm publish ${{ inputs.dry_run == false && '--provenance' || '--dry-run' }}
+      - name: Create GitHub Release
+        # Only on a real tag push, not a workflow_dispatch dry run. Auto-generated
+        # notes are a baseline, not a substitute for hand-written highlights — edit
+        # the release afterward with a curated summary before calling it final.
+        if: github.event_name == 'push'
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass the tag through an env var, NOT interpolated into `run:` — tag
+          # names are attacker-controlled and GitHub expands `${{ }}` before the
+          # shell starts, even inside quotes, so this is the injection-safe form.
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --generate-notes --title "$TAG"
