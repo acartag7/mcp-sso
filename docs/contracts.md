@@ -860,8 +860,15 @@ admission, blocklists, DNS validation, redirect refusal, caps — always runs
 around whatever transport is injected and cannot be skipped. (`FetcherPort`
 in §6.6 remains the generic boundary description; CIMD requires the brand.)
 
-Boot: `cimd.enabled` requires nothing else (`AuthConfigError` only on invalid
-caps). When enabled, AS metadata emits
+Boot: invalid caps are an `AuthConfigError`, and — because a compile-time
+brand is invisible to plain-JS consumers and defeated by a cast — **if
+`cimd.fetcher` is provided, boot MUST verify the RUNTIME brand**: a
+non-exported unique symbol property that `createGuardedFetcher()` stamps on
+the object it returns. An object without the stamp is rejected with
+`AuthConfigError` at boot, never used. (The symbol is module-private; the
+only way to obtain a branded fetcher is to have `createGuardedFetcher()`
+construct it, so the guard pipeline is provably attached.) When enabled, AS
+metadata emits
 `client_id_metadata_document_supported: true` (draft §5 MUST when supported).
 Detection is by shape: a `client_id` starting with `https://` takes the CIMD
 path (draft §6.9 — our generated ids `mcpdc_`/`mcc_` never collide).

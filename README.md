@@ -204,6 +204,11 @@ Okta, and most enterprise SSO), that's exactly what this library does.
 - **`client_credentials` grant** (the official MCP extension
   `io.modelcontextprotocol/oauth-client-credentials`, for headless/M2M
   agents that can't do interactive consent).
+- **Device authorization flow (RFC 8628)** — for a human who must authorize
+  from a device that can't receive a browser redirect (a CLI over SSH, a
+  coding agent in sandboxed CI). Standard OAuth, not part of the MCP spec
+  itself — a different problem than `client_credentials`, which has no human
+  at all.
 - A `/store/mysql` adapter (MySQL/MariaDB/PlanetScale-compatible, protocol
   level) as the second production store option alongside sqlite.
 
