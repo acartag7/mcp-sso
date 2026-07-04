@@ -6,7 +6,7 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
-import { asOAuth, Bridge } from "./bridge.ts";
+import { asDirectOAuth, Bridge } from "./bridge.ts";
 import { headerString, oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface ExpressAdapterOptions {
@@ -30,13 +30,12 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
     if (r.redirect) { res.redirect(r.status, r.redirect); return; }
     res.status(r.status).send(r.body);
   };
-  // Last-resort handler: route any escaped throw through the same §9.5 path the
-  // Bridge uses (asOAuth preserves an OAuthError's code/status; anything else
-  // becomes a generic 500 internal_error with no detail leaked — verification.md
-  // HF.3). Without this Express shaped the body as {error:{code,message}} and
-  // echoed String(error), leaking internals.
+  // Last-resort handler: route escaped throws through the direct §9.5 path. The
+  // Bridge is the only layer that may emit redirect-tagged errors after request
+  // validation; adapter-level catches strip redirect targets and hide non-OAuth
+  // details (verification.md HF.3).
   const wrap = (fn: (req: Request, res: Response) => Promise<void>): (req: Request, res: Response) => Promise<void> =>
-    (req, res) => fn(req, res).catch((error) => { send(res, oauthErrorResponse(asOAuth(error))); });
+    (req, res) => fn(req, res).catch((error) => { send(res, oauthErrorResponse(asDirectOAuth(error))); });
 
   const resourcePath = pathAfterOrigin(bridge.config.resource);
   router.get("/.well-known/oauth-authorization-server", wrap(async (_req, res) => send(res, await bridge.handleAuthorizationServerMetadata())));

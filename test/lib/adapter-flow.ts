@@ -10,7 +10,7 @@ import type { JWK } from "jose";
 import { Bridge } from "../../src/adapters/bridge.ts";
 import { createBridgeConfig } from "../../src/config.ts";
 import { pkceChallenge } from "../../src/crypto.ts";
-import { OAuthError } from "../../src/errors.ts";
+import { OAuthError, withRedirect } from "../../src/errors.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
 
@@ -126,6 +126,32 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
       assert.equal(body.error, "access_denied");
       assert.equal(body.error_description, "identity blocked");
+    } finally {
+      await client.close?.();
+    }
+  });
+
+  test(`${name} adapter: identity OAuthError redirect is ignored pre-validation`, async () => {
+    // Identity resolution is pre-validation. A user-supplied IdentityPort must not
+    // be able to smuggle a redirect target by throwing an OAuthError with redirect.
+    const throwing: IdentityPort = {
+      async verify() {
+        throw withRedirect(new OAuthError("access_denied", "identity blocked", 401), "https://evil.test/callback", "stolen");
+      },
+    };
+    const client = await mount(makeBridge(), throwing);
+    try {
+      const auth = await client.get(`/oauth/authorize?${new URLSearchParams({
+        response_type: "code", client_id: "anything", redirect_uri: "https://evil.test/callback",
+        code_challenge: pkceChallenge("correct-horse-battery-staple-0123"), code_challenge_method: "S256", scope: "mcp:read",
+      })}`, { [IDENTITY_HEADER]: "anything" });
+      assert.equal(auth.status, 401);
+      assert.equal(auth.headers.location, undefined);
+      const body = JSON.parse(auth.body);
+      assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
+      assert.equal(body.error, "access_denied");
+      assert.equal(body.error_description, "identity blocked");
+      assert.ok(!auth.body.includes("evil.test"));
     } finally {
       await client.close?.();
     }
