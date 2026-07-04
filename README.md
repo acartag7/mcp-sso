@@ -19,9 +19,10 @@ an API key: generate one, paste it into the client's config, done.
 ```
 
 That key now lives forever in a plaintext config file, on every machine that
-talks to the server, with no expiry, no per-user identity, and no revocation
-story short of rotating the one key everyone shares. It's the thing security
-reviews flag and the thing that leaks in a `git add .` or a support screenshot.
+talks to the server. It has no expiry, no per-user identity, and no
+revocation story short of rotating the one key everyone shares. It's what
+security reviews flag, and what leaks in a `git add .` or a support
+screenshot.
 
 The MCP spec's actual answer is OAuth 2.1 with Dynamic Client Registration —
 the client self-registers, the user sees a real sign-in/consent screen, and
@@ -36,41 +37,55 @@ the token that comes back is short-lived, per-user, and revocable:
 ```
 
 No secret in the config. The first connection pops a browser consent screen;
-after that, the client holds a token it refreshes itself. That's the
-trade — a login flow instead of a static credential — and it's why this
+after that, the client holds a token and refreshes it on its own. This
+trade-off — a login flow instead of a static credential — is why this
 library exists: **OAuth in MCP servers, instead of API keys.**
 
-The catch: MCP clients (claude.ai, ChatGPT, Claude Code, Cursor) require DCR
-to self-onboard, and most real identity providers (Microsoft Entra ID, Okta,
-Cloudflare Access) **don't implement DCR**. `mcp-sso` is the bridge: it speaks
-DCR + PKCE + consent to the MCP client, while your IdP stays the identity
-source of truth. Upstream IdP tokens never pass through — the bridge mints
-its **own** audience-bound tokens.
+The catch: MCP clients (claude.ai, ChatGPT, Claude Code, Cursor) require
+Dynamic Client Registration (DCR) to self-onboard — the client calls a
+registration endpoint on the identity provider to enroll itself
+automatically. Many enterprise identity providers (Microsoft Entra ID, Okta,
+Cloudflare Access) never built that endpoint. `mcp-sso` is the bridge: it
+speaks DCR, PKCE, and consent to the MCP client, while your IdP stays the
+identity source of truth. Upstream IdP tokens never pass through — the
+bridge mints its **own** audience-bound tokens.
 
 ## What ships today
 
-> **Status: pre-release** (`0.0.0`, private until `v0.1`). Not yet on npm.
-> Everything below is implemented, tested, and passes the conformance suite
-> on `main` — nothing in this section is aspirational.
+> **Status:** `v0.1.0` is live on npm ([`npm i mcp-sso`](https://www.npmjs.com/package/mcp-sso)).
+> We've implemented and tested everything below; it passes the conformance
+> suite on `main` — nothing here is aspirational. Not-yet-built work is
+> called out separately in [Roadmap](#roadmap--not-yet-shipped).
 
-- **Resource-server verifier** — RFC 9728 Protected Resource Metadata (root
-  **and** path-inserted), `WWW-Authenticate: Bearer resource_metadata=…`
-  challenges, `insufficient_scope` 403 step-up, and **fail-closed audience
-  validation** — an ambiguous or wrong `aud` is a hard rejection, never a
-  degraded default.
-- **AS-lite bridge** — DCR (RFC 7591, stateless or stored-client mode), PKCE
-  S256, consent (approve + deny), refresh-token rotation with **family
-  replay-detection**, RFC 6749 §5.2 wire error bodies, RFC 9207 `iss`, JWKS,
-  RFC 8414 AS metadata.
+- **Resource-server verifier** (RS = Resource Server) — protects your `/mcp`
+  endpoint:
+  - Publishes discovery metadata so clients can find the authorization
+    server (RFC 9728, served at the root and per-path).
+  - Returns a proper `WWW-Authenticate` challenge when a token is missing or
+    invalid, with a scope-based 403 step-up when more permission is needed.
+  - **Fails closed on audience** — a token minted for a different resource
+    is a hard rejection, never a degraded default.
+- **AS-lite bridge** (AS = Authorization Server) — issues short-lived tokens
+  instead of a static key:
+  - Clients self-register (RFC 7591 DCR) and prove they hold the right
+    authorization code with PKCE S256 (Proof Key for Code Exchange — proves
+    the client that started the flow is the one finishing it).
+  - Users see a real consent screen (approve or deny).
+  - Refresh tokens rotate on every use, with theft detection if an old one
+    gets replayed.
+  - Wire-compatible error bodies and metadata (RFC 6749 §5.2, RFC 9207,
+    RFC 8414) so official MCP SDK clients just work.
 - **Identity, pluggable:**
-  - **Cloudflare Access** — verifies the header CF injects in front of your
-    app; optional email allowlist.
-  - **Microsoft Entra ID** — OIDC auth-code + PKCE, multi-tenant `iss`-from-
-    `tid`, nonce binding, `oid`-primary allowlist.
+  - **Cloudflare Access** — verifies the header Cloudflare injects in front
+    of your app, with an optional email allowlist.
+  - **Microsoft Entra ID** — verifies OIDC (OpenID Connect, an identity
+    layer on top of OAuth) tokens via auth-code + PKCE, resolves the right
+    tenant automatically, checks the token wasn't replayed (nonce), and
+    allowlists users by their stable object ID.
   - **Dev stub** (`DEV_STUB_SUBJECT`) — for local development only, bypasses
     identity entirely so you can run the OAuth dance without standing up an
-    IdP. Never for production; see the caveat in "Live client verification"
-    below.
+    IdP. Never for production; see the caveat under [Live client
+    verification](#live-client-verification) below.
 - **Framework adapters** — `/fastify`, `/express`, `/hono`: thin route
   wiring, all logic lives in the framework-free core.
 - **Stores** — `node:sqlite` (built into Node 24, **the recommended
@@ -78,12 +93,14 @@ its **own** audience-bound tokens.
   in-memory store for tests, sharing one conformance suite (rotation
   backfill, family-validity sweep, single-use consent JTI) that any
   downstream SQL adapter must also pass.
-- **Supply-chain posture** — `jose` is the **only runtime dependency**; every
-  pin (runtime and dev) is verified ≥15 days old before it's accepted
-  (`docs/dependency-ledger.md`); CI actions are SHA-pinned; npm publish runs
-  `--provenance` from GitHub Actions OIDC only, no local publishes.
-- **A published threat model** (`docs/threat-model.md`) — STRIDE table, the
-  replay-detection control, accepted boundaries, implementation gates.
+- **Supply-chain posture** — `jose` is the only runtime dependency, every
+  pin is at least 15 days old before we accept it, and npm publishes run
+  only through GitHub Actions with Sigstore provenance — never from a local
+  machine. Full policy in [Security is the product](#security-is-the-product)
+  below.
+- **A published threat model** (`docs/threat-model.md`) — a STRIDE table
+  (the standard framework for categorizing threats), the replay-detection
+  control, accepted boundaries, implementation gates.
 - **An end-to-end verify gate** (`test/e2e-mcp-sdk.test.ts`) that drives the
   full flow — register → authorize → token → call the protected `/mcp` →
   refresh → replay-revocation observed → revoke — through the **official MCP
@@ -122,45 +139,58 @@ Claude Code or claude.ai at `https://api.example.com/mcp`.
 ## Enterprise: the Entra DCR wall
 
 Microsoft Entra ID is the canonical hard case. A remote MCP server wants to
-trust Entra for identity, but MCP clients **must** DCR, and Entra has no DCR
-endpoint. So either the server breaks every MCP client, or someone ships
-bespoke OAuth glue per deployment. `mcp-sso` is the reusable, audited answer:
-the bridge does DCR/PKCE/consent/rotation with MCP clients, validates the
-upstream Entra (or Cloudflare Access, or any OIDC provider) identity, and
-issues its own tokens. One library, any IdP, real MCP clients.
+trust Entra for identity. But MCP clients must DCR, and Entra has no DCR
+endpoint. So either the server breaks every MCP client, or someone
+hand-rolls bespoke OAuth glue per deployment.
+
+`mcp-sso` backs the bridge with a published threat model, not just an
+unverifiable "trust us." It handles DCR, PKCE, consent, and refresh rotation
+for the client. It verifies the upstream identity — Cloudflare Access or
+Entra ID today, a generic OIDC port on the roadmap — and issues its own
+tokens.
 
 ## Security is the product
 
 - **Fail-closed everywhere** — ambiguous config, a missing identity, an
   unknown audience, or a replayed token is a hard failure, never a degraded
-  default. There is no unauthenticated bypass in production configuration.
-- **Supply chain** — `jose` is the only runtime dep; every pin is ≥15 days
-  old (`minimumReleaseAge` in minutes); CI actions are SHA-pinned; npm
-  publish is `--provenance` from GitHub Actions OIDC (no local publishes).
-  See [`docs/dependency-ledger.md`](docs/dependency-ledger.md).
+  default. There is no unauthenticated bypass in production configuration —
+  see the fail-closed gates in [`docs/threat-model.md`](docs/threat-model.md).
+- **Supply chain** — `jose` is the only runtime dep; we check every pin is
+  at least 15 days old before accepting it (`minimumReleaseAge`, in minutes);
+  CI actions are pinned by commit SHA; npm publishes run only through GitHub
+  Actions with Sigstore provenance, never from a local machine. See
+  [`docs/dependency-ledger.md`](docs/dependency-ledger.md).
 - **Threat model** — [`docs/threat-model.md`](docs/threat-model.md): STRIDE
   table, the replay-detection control, the accepted boundaries, and the
   implementation gates.
-- Hashed single-use codes/tokens, separate consent/access signing keys, alg
-  pinning, timing-safe PKCE, anchored redirect allowlists + RFC 8252 loopback
-  rules, metadata-only audit.
+- **Codes and tokens are hashed and single-use** — a leaked database dump
+  doesn't hand out live credentials.
+- **Separate signing keys for consent vs. access tokens, with algorithm
+  pinning** — stops an attacker downgrading or reusing a key across
+  purposes.
+- **Timing-safe PKCE verification** — stops a timing side-channel from
+  leaking the code verifier.
+- **Redirect URIs are matched against an explicit allowlist** (RFC 8252
+  loopback rules for native/local clients) — stops an open-redirect
+  takeover of the auth flow.
+- **Audit logging is metadata-only** — no tokens or codes ever land in a
+  log.
 
 ## Alternatives
 
-There is no one-size answer here — pick based on what you already have.
+**Start here:** does your identity provider already speak DCR/OAuth 2.1? If
+yes, you don't need a bridge — see `mcp-auth` below. If no (true for Entra,
+Okta, and most enterprise SSO), that's exactly what this library does.
 
 | Project | What it is | Choose it if… |
 | --- | --- | --- |
-| **mcp-sso** (this repo) | RS verifier **+** AS-lite bridge with pluggable identity (Cloudflare Access, Entra ID, dev stub). Bridges DCR for IdPs that don't speak it. | Your IdP doesn't support DCR (Entra, Okta, most enterprise SSO) and you want one library to own both the resource-server check and the client-facing OAuth dance. |
-| [`mcp-auth`](https://github.com/mcp-auth/js) | Plug-and-play RS-side auth for Node MCP servers — connects to an already MCP-compliant provider. | Your identity provider **already** speaks DCR/OAuth 2.1 the way MCP expects (see their [provider compatibility list](https://mcp-auth.dev/provider-list)) — you just need the resource-server wiring, not a bridge. |
-| [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | A generic OAuth 2.1 authorization server for MCP, built on the official MCP TypeScript SDK's `OAuthServerProvider`. Supports `authorization_code`, `refresh_token`, `client_credentials`, and device-code (RFC 8628) grants today. | You want to **run your own AS from scratch** (BYO storage/consent/identity model) and need `client_credentials` or device-flow support now — both are on our v0.2 roadmap, not yet shipped here. |
-| [`workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) | Cloudflare's OAuth 2.1 provider library, KV-backed, for Workers. | Your MCP server **is** a Cloudflare Worker and you're fine with Workers KV as the token store. |
-| Hosted SaaS (Stytch, WorkOS, Auth0, etc.) | Fully managed AS + identity, MCP-flavored onboarding guides. | You want zero self-hosted auth infrastructure and are fine with a vendor dependency and its pricing. |
+| **mcp-sso** (this repo) | Resource-server verifier + a DCR/PKCE/consent bridge, with pluggable identity (Cloudflare Access, Entra ID, dev stub). | Your IdP doesn't speak DCR — Entra, Okta, most enterprise SSO. |
+| [`mcp-auth`](https://github.com/mcp-auth/js) | Resource-server-only auth for Node MCP servers. | Your IdP **already** speaks DCR/OAuth 2.1 — [check the compatibility list](https://mcp-auth.dev/provider-list) — and you just need the resource-server wiring. |
+| [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | A full OAuth 2.1 authorization server for MCP; ships `client_credentials` and device-code (RFC 8628) today. | You need `client_credentials` or device-flow now — only the former is on our roadmap — and are fine bringing your own storage/consent/identity model. |
+| [`workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) | Cloudflare's OAuth 2.1 provider library, KV-backed. | Your MCP server **is** a Cloudflare Worker. |
+| Hosted SaaS (Stytch, WorkOS, Auth0, etc.) | Fully managed AS + identity. | You want zero self-hosted auth infrastructure and are fine with a vendor dependency and its pricing. |
 
 ## Roadmap — not yet shipped
-
-Nothing in this section is available today. It's here so the scope is
-explicit, not implied.
 
 - **First-run console-pairing identity** — a one-time code printed to the
   server console, pasted at consent: real OAuth with zero IdP setup, meant to
@@ -195,49 +225,25 @@ a manual step, tracked here:
 | --- | --- | --- | --- |
 | OAuth flow + `/mcp` (curl) | ✅ verified | 2026-07-04 | `examples/fastify-sqlite` locally, full dance + tokenless 401 challenge |
 | Official MCP SDK client | ✅ verified | 2026-07-04 | `test/e2e-mcp-sdk.test.ts`, 83/83 |
-| Claude Code | ✅ verified | 2026-07-04 | local `http://localhost`, `claude mcp add --transport http`; consent screen showed correct scopes, `ping` round-tripped |
-| claude.ai custom connector | ✅ verified | 2026-07-04 | named Cloudflare tunnel on a real domain; consent screen showed correct scopes, `ping` round-tripped |
+| Claude Code | ✅ verified† | 2026-07-04 | local `http://localhost`, `claude mcp add --transport http`; consent + scopes + `ping` round-trip confirmed |
+| claude.ai custom connector | ✅ verified† | 2026-07-04 | named Cloudflare tunnel on a real domain; same as above |
 
-**`DEV_STUB_SUBJECT` caveat:** local client verification uses the example's
-stub identity, which **bypasses identity** (every authorize resolves to the
-stub subject) so MCP clients — which do not send `Cf-Access-Jwt-Assertion` —
-can complete the OAuth dance without standing up Cloudflare Access. The real
-CF Access identity leg (header-injected, fail-closed) is validated in the
-production swap, not locally. Never run the stub against a public URL for
-longer than a verification window — see the reproduction steps below.
+† **These two rows verify the DCR/OAuth mechanics, not the production
+identity leg.** Both ran against the example's `DEV_STUB_SUBJECT` stub,
+which **bypasses identity entirely** so the OAuth dance can complete
+without Cloudflare Access (MCP clients don't send `Cf-Access-Jwt-Assertion`
+on their own). The real Cloudflare Access identity check — header-injected,
+fail-closed — still needs its own live-client verification. Never run the
+stub against a public URL for longer than a verification window; see the
+reproduction steps below.
 
-**Tunnel notes from the 2026-07-04 verification session**, kept here because
-they cost real time to work out and aren't obvious from `cloudflared --help`:
-
-- **Anonymous quick tunnels (`cloudflared tunnel --url ...`, no account)
-  were unreliable and are not what was ultimately used.** Three independent
-  quick tunnels each registered cleanly with Cloudflare's edge (zero errors in
-  the connector log) and the same local server answered correctly over plain
-  `http://localhost` throughout — but every public request through each
-  tunnel's hostname returned a `404` straight from Cloudflare's edge, never
-  reaching the app. That combination (healthy backend, healthy connector log,
-  edge-level 404) is consistent with the anonymous quick tunnel's
-  single-connector, no-redundancy design — `cloudflared`'s own CLI disclaims
-  "no uptime guarantee" for these on every startup. It was not a bug in the
-  OAuth/DCR code path, which the Claude Code check above already exercised
-  successfully with the identical server.
-- **What actually worked: a named (account-backed) tunnel on a real domain,
-  with an explicit `ingress:` hostname rule in a config file** — not the
-  ad-hoc `cloudflared tunnel run --url <url> <tunnel>` shortcut. The ad-hoc
-  form also produced clean edge-level `404`s in this session, even with a
-  named tunnel and a brand-new DNS record; switching to a config file with
-  an explicit `hostname:`/`service:` ingress rule (plus the required
-  catch-all `http_status:404`) fixed it immediately. If you're setting this
-  up yourself, prefer the config-file form from the start.
-- **A sharp edge if you already run other named tunnels on the same
-  machine:** `cloudflared`'s default `~/.cloudflared/config.yml` (the
-  `tunnel:`/`credentials-file:` it points at) can silently override which
-  credentials get used even when you pass a *different* tunnel ID or name on
-  the command line — producing a confusing auth-retry loop
-  (`control stream encountered a failure while serving`) that looks like a
-  network problem, not a wrong-credentials problem. Pass `--credentials-file`
-  explicitly (or a full `--config`) to be sure which tunnel you're actually
-  authenticating as.
+**On tunnels:** anonymous `cloudflared tunnel --url` quick tunnels were
+unreliable during this verification (they register cleanly but can 404
+persistently at Cloudflare's edge — no redundancy, by design). A **named
+tunnel with an explicit `ingress:` config file** is what actually worked;
+even the ad-hoc `tunnel run --url` form failed in testing. Full write-up,
+including a `~/.cloudflared/config.yml` credentials gotcha:
+[`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 To run the client checks yourself:
 
@@ -254,9 +260,8 @@ claude mcp add --transport http my-bridge http://localhost:3000/mcp
 #   → a browser opens to the consent page; approve; the tool is callable.
 
 # 2b. claude.ai (needs a public https URL). A named Cloudflare tunnel on a
-#     domain you control is the reliable option (see the tunnel notes above
-#     for why the ad-hoc `cloudflared tunnel --url`/`tunnel run --url` forms
-#     were unreliable in practice):
+#     domain you control is the reliable option — see docs/troubleshooting.md
+#     for why the ad-hoc `--url` forms aren't:
 cat > tunnel-config.yml <<CFG
 tunnel: <your-tunnel-id>
 credentials-file: /path/to/<your-tunnel-id>.json
