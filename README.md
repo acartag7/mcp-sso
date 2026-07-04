@@ -52,7 +52,7 @@ bridge mints its **own** audience-bound tokens.
 
 ## What ships today
 
-> **Status:** `v0.1.0` is live on npm ([`npm i mcp-sso`](https://www.npmjs.com/package/mcp-sso)).
+> **Status:** `v0.1.1` is live on npm ([`npm i mcp-sso`](https://www.npmjs.com/package/mcp-sso)).
 > We've implemented and tested everything below; it passes the conformance
 > suite on `main` — nothing here is aspirational. Not-yet-built work is
 > called out separately in [Roadmap](#roadmap--not-yet-shipped).
