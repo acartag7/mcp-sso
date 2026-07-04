@@ -12,6 +12,41 @@ jobs:
   verify:
     name: typecheck · lines · test · build
     runs-on: ubuntu-latest
+
+    # Integration backends for the MySQL StorePort (src/store/mysql) and the
+    # Redis/Valkey RateLimitPort (src/rate-limit/redis). The adapter tests gate on
+    # MYSQL_URL/REDIS_URL and HARD-FAIL in CI if either is unset (docs review B3), so
+    # a wiring typo can never silently skip coverage and print a green checkmark.
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: mcp_sso
+          MYSQL_USER: mcp
+          MYSQL_PASSWORD: mcppw
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u mcp -pmcppw --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=18
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=5
+
+    env:
+      CI: "true"
+      MYSQL_URL: mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4
+      REDIS_URL: redis://127.0.0.1:6379
+
     steps:
       # SHA-pinned actions (see docs/dependency-ledger.md). Bump by resolving a new
       # tag's commit SHA and re-checking the 15-day rule.
@@ -26,6 +61,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm check:lines
+      # B3: hard-fail if the integration env did not reach the test process.
+      - name: assert integration env present
+        run: |
+          node -e "if(!process.env.MYSQL_URL||!process.env.REDIS_URL){console.error('FATAL: MYSQL_URL/REDIS_URL missing — adapters would be silently skipped');process.exit(1)}else{console.log('MYSQL_URL + REDIS_URL present')}"
       - run: pnpm test
       # Build smoke: the published artifact (tsc -> dist) must compile.
       - name: build smoke
