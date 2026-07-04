@@ -123,11 +123,9 @@ export class MysqlStore implements StorePort {
     await this.transaction(async (conn) => {
       await conn.query(`DELETE FROM oauth_auth_codes WHERE expires_at < ?`, [nowIso]);
       await conn.query(`DELETE FROM oauth_consent_jtis WHERE expires_at < ?`, [nowIso]);
-      // Family-validity retention (addendum 8): delete a refresh token ONLY when its
-      // family has no still-valid member. Two-step (review H1): SELECT the exact dead
-      // rows by PK, then DELETE those rows — a successor committed after the SELECT is
-      // not in the hash list, so a still-valid rotated successor cannot be swept under
-      // READ COMMITTED. The derived table + GROUP BY avoids ER_UPDATE_TABLE_USED.
+      // Two-step (review H1): SELECT the exact dead rows by PK, then DELETE by hash — a
+      // successor committed after the SELECT is not in the list, so a still-valid rotated
+      // successor cannot be swept under READ COMMITTED. GROUP BY avoids ER_UPDATE_TABLE_USED.
       const [dead] = await conn.query<RowDataPacket[]>(
         `SELECT token_hash FROM oauth_refresh_tokens WHERE family_id IN (
            SELECT family_id FROM (SELECT family_id FROM oauth_refresh_tokens GROUP BY family_id HAVING MAX(expires_at) < ?) AS dead_families
@@ -140,8 +138,8 @@ export class MysqlStore implements StorePort {
     });
   }
 
-  /** Run idempotent migrations + boot-time config assertions (strict mode, binary
-   *  collation). MUST be called once before first use; createMysqlStore does this. */
+  /** Run idempotent migrations + boot-time config assertions (strict mode, binary collation).
+   *  MUST be called once before first use; createMysqlStore does this. */
   async migrate(): Promise<void> {
     this.ensureOpen();
     const conn = await this.pool.getConnection();
@@ -153,9 +151,9 @@ export class MysqlStore implements StorePort {
     if (!this.closed) { this.closed = true; await this.pool.end(); }
   }
 
-  /** §12.3 addendum 13: acquire OUTSIDE the try; begin inside the try behind a
-   *  begun-guard; release in finally on EVERY path; swallow cleanup so the original
-   *  error propagates. READ COMMITTED drops InnoDB gap locks (no sweep/rotate deadlock). */
+  /** §12.3 addendum 13: acquire OUTSIDE the try; begin inside behind a begun-guard;
+   *  release in finally on EVERY path; swallow cleanup so the original error propagates.
+   *  READ COMMITTED drops InnoDB gap locks (no sweep/rotate deadlock). */
   private async transaction<T>(fn: (conn: PoolConnection) => Promise<T>): Promise<T> {
     const conn = await this.pool.getConnection();
     let begun = false;
@@ -180,6 +178,7 @@ export class MysqlStore implements StorePort {
 }
 
 export async function createMysqlStore(config: string | PoolOptions): Promise<MysqlStore> {
+  // typeof narrows the union so each call matches a createPool overload (else TS2769).
   const pool = typeof config === "string" ? createPool(config) : createPool(config);
   const store = new MysqlStore(pool);
   try {
