@@ -152,7 +152,7 @@ There is no one-size answer here — pick based on what you already have.
 | Project | What it is | Choose it if… |
 | --- | --- | --- |
 | **mcp-sso** (this repo) | RS verifier **+** AS-lite bridge with pluggable identity (Cloudflare Access, Entra ID, dev stub). Bridges DCR for IdPs that don't speak it. | Your IdP doesn't support DCR (Entra, Okta, most enterprise SSO) and you want one library to own both the resource-server check and the client-facing OAuth dance. |
-| [`mcp-auth`](https://github.com/mcp-auth/js) | Plug-and-play RS-side auth for Node MCP servers — connects to an already MCP-compliant provider. | Your identity provider **already** speaks DCR/OAuth 2.1 the way MCP expects (see their [provider compatibility list](https://mcp-auth.dev/docs/provider-list)) — you just need the resource-server wiring, not a bridge. |
+| [`mcp-auth`](https://github.com/mcp-auth/js) | Plug-and-play RS-side auth for Node MCP servers — connects to an already MCP-compliant provider. | Your identity provider **already** speaks DCR/OAuth 2.1 the way MCP expects (see their [provider compatibility list](https://mcp-auth.dev/provider-list)) — you just need the resource-server wiring, not a bridge. |
 | [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | A generic OAuth 2.1 authorization server for MCP, built on the official MCP TypeScript SDK's `OAuthServerProvider`. Supports `authorization_code`, `refresh_token`, `client_credentials`, and device-code (RFC 8628) grants today. | You want to **run your own AS from scratch** (BYO storage/consent/identity model) and need `client_credentials` or device-flow support now — both are on our v0.2 roadmap, not yet shipped here. |
 | [`workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) | Cloudflare's OAuth 2.1 provider library, KV-backed, for Workers. | Your MCP server **is** a Cloudflare Worker and you're fine with Workers KV as the token store. |
 | Hosted SaaS (Stytch, WorkOS, Auth0, etc.) | Fully managed AS + identity, MCP-flavored onboarding guides. | You want zero self-hosted auth infrastructure and are fine with a vendor dependency and its pricing. |
@@ -195,7 +195,7 @@ a manual step, tracked here:
 | --- | --- | --- | --- |
 | OAuth flow + `/mcp` (curl) | ✅ verified | 2026-07-04 | `examples/fastify-sqlite` locally, full dance + tokenless 401 challenge |
 | Official MCP SDK client | ✅ verified | 2026-07-04 | `test/e2e-mcp-sdk.test.ts`, 83/83 |
-| Claude Code | ⏳ pending | — | local `http://localhost` (no tunnel needed); interactive OAuth |
+| Claude Code | ✅ verified | 2026-07-04 | local `http://localhost`, `claude mcp add --transport http`; consent screen showed correct scopes, `ping` round-tripped |
 | claude.ai custom connector | ⏳ pending | — | needs a public `https` tunnel |
 
 **`DEV_STUB_SUBJECT` caveat:** local client verification uses the example's
