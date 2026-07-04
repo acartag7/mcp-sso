@@ -237,12 +237,8 @@ fail-closed — still needs its own live-client verification. Never run the
 stub against a public URL for longer than a verification window; see the
 reproduction steps below.
 
-**On tunnels:** anonymous `cloudflared tunnel --url` quick tunnels were
-unreliable during this verification (they register cleanly but can 404
-persistently at Cloudflare's edge — no redundancy, by design). A **named
-tunnel with an explicit `ingress:` config file** is what actually worked;
-even the ad-hoc `tunnel run --url` form failed in testing. Full write-up,
-including a `~/.cloudflared/config.yml` credentials gotcha:
+**Tunnel gotchas:** anonymous quick tunnels are unreliable for this; use a
+named tunnel with an explicit `ingress:` config. Full write-up:
 [`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 To run the client checks yourself:
