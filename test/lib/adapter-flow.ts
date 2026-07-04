@@ -1,6 +1,7 @@
 // Shared end-to-end adapter flow (contracts §9.6). Each framework adapter test
 // mounts its app + client and calls runAdapterFlow, so all three are exercised
-// identically: metadata -> register -> authorize (consent page) -> approve -> token.
+// identically: metadata -> register -> authorize (consent page) -> approve -> token,
+// plus the verification.md T1.HF identity-rejection parity matrix (HF.1–HF.3).
 
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
@@ -9,6 +10,7 @@ import type { JWK } from "jose";
 import { Bridge } from "../../src/adapters/bridge.ts";
 import { createBridgeConfig } from "../../src/config.ts";
 import { pkceChallenge } from "../../src/crypto.ts";
+import { OAuthError } from "../../src/errors.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
 
@@ -84,13 +86,11 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
   });
 
   test(`${name} adapter: rejected identity ⇒ direct 401 access_denied with §9.5 body`, async () => {
-    // contracts §9.3: identity not resolved/rejected is a DIRECT error (never a
-    // redirect — the redirect_uri is untrusted pre-validation) and §9.5 mandates
-    // the RFC 6749 §5.2 top-level {error, error_description} shape, NOT the
-    // JSON-RPC inner envelope nor a framework-shaped body. Without the adapter
-    // routing the OAuthError from resolveSubject through oauthErrorResponse,
-    // Express/Hono returned 500 internal_error and Fastify returned 401 with a
-    // Fastify body.
+    // verification.md T1.HF.1: IdentityPort returns { ok: false }. Contracts §9.3:
+    // identity not resolved/rejected is a DIRECT error (never a redirect — the
+    // redirect_uri is untrusted pre-validation) and §9.5 mandates the RFC 6749
+    // §5.2 top-level {error, error_description} shape, NOT the JSON-RPC inner
+    // envelope nor a framework-shaped body.
     const client = await mount(makeBridge(), stubIdentity);
     try {
       const auth = await client.get(`/oauth/authorize?${new URLSearchParams({
@@ -104,6 +104,53 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       assert.equal(body.error, "access_denied");
       assert.equal(typeof body.error_description, "string");
       assert.ok(body.error_description.length > 0);
+    } finally {
+      await client.close?.();
+    }
+  });
+
+  test(`${name} adapter: identity throws OAuthError ⇒ same 401 access_denied body`, async () => {
+    // verification.md T1.HF.2: IdentityPort.verify() throws an OAuthError. Must
+    // surface identically to the { ok:false } path — direct 401 with the §9.5
+    // body — not a framework-shaped response.
+    const throwing: IdentityPort = { async verify() { throw new OAuthError("access_denied", "identity blocked", 401); } };
+    const client = await mount(makeBridge(), throwing);
+    try {
+      const auth = await client.get(`/oauth/authorize?${new URLSearchParams({
+        response_type: "code", client_id: "anything", redirect_uri: REDIRECT,
+        code_challenge: pkceChallenge("correct-horse-battery-staple-0123"), code_challenge_method: "S256", scope: "mcp:read",
+      })}`, { [IDENTITY_HEADER]: "anything" });
+      assert.equal(auth.status, 401);
+      assert.equal(auth.headers.location, undefined);
+      const body = JSON.parse(auth.body);
+      assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
+      assert.equal(body.error, "access_denied");
+      assert.equal(body.error_description, "identity blocked");
+    } finally {
+      await client.close?.();
+    }
+  });
+
+  test(`${name} adapter: identity throws non-OAuth error ⇒ 500 with non-leaking top-level string body`, async () => {
+    // verification.md T1.HF.3: a non-OAuth throw inside the handler must become a
+    // 500 with a top-level string `error` body (§9.5 shape), NEVER a framework-
+    // specific envelope, and must NOT leak the thrown message (a probe with
+    // Error("TOP_SECRET_INTERNAL_DETAIL") previously echoed that string in the
+    // response on Express and Fastify).
+    const secret = "TOP_SECRET_INTERNAL_DETAIL";
+    const throwing: IdentityPort = { async verify() { throw new Error(secret); } };
+    const client = await mount(makeBridge(), throwing);
+    try {
+      const auth = await client.get(`/oauth/authorize?${new URLSearchParams({
+        response_type: "code", client_id: "anything", redirect_uri: REDIRECT,
+        code_challenge: pkceChallenge("correct-horse-battery-staple-0123"), code_challenge_method: "S256", scope: "mcp:read",
+      })}`, { [IDENTITY_HEADER]: "anything" });
+      assert.equal(auth.status, 500);
+      const body = JSON.parse(auth.body);
+      assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"], "top-level RFC 6749 §5.2 shape, not a framework envelope");
+      assert.equal(body.error, "internal_error");
+      assert.equal(typeof body.error_description, "string");
+      assert.ok(!JSON.stringify(body).includes(secret), "thrown message must not leak into the response");
     } finally {
       await client.close?.();
     }

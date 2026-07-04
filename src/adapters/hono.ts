@@ -6,8 +6,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
-import { OAuthError } from "../errors.ts";
-import { Bridge } from "./bridge.ts";
+import { asOAuth, Bridge } from "./bridge.ts";
 import { oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface HonoAdapterOptions {
@@ -53,15 +52,16 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   app.get("/oauth/jwks", async (c) => send(c, await bridge.handleJwks()));
   app.post("/oauth/register", async (c) => send(c, await bridge.handleRegister(await toNorm(c))));
   app.get("/oauth/authorize", async (c) => {
-    // Identity resolution happens before the Bridge's own try/catch (which
-    // maps OAuthError → NormResponse), so a rejected identity would otherwise
-    // surface as a framework 500. Route it through the same §9.5 path (§9.3).
+    // Identity resolution happens before the Bridge's own try/catch, so a
+    // thrown error escapes the §9.5 path. Route it through the same path the
+    // Bridge uses: asOAuth preserves an OAuthError's code/status (HF.2 ⇒ 401
+    // access_denied); anything else becomes a non-leaking 500 internal_error
+    // (verification.md HF.3). Re-throwing lets Hono shape the body and leak.
     let subject: string;
     try {
       subject = await resolveSubject(identity, c.req.header(identityHeader));
     } catch (error) {
-      if (!(error instanceof OAuthError)) throw error; // real 500
-      return send(c, oauthErrorResponse(error));
+      return send(c, oauthErrorResponse(asOAuth(error)));
     }
     return send(c, await bridge.handleAuthorize(await toNorm(c), subject));
   });

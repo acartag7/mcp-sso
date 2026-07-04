@@ -6,8 +6,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
-import { OAuthError } from "../errors.ts";
-import { Bridge } from "./bridge.ts";
+import { asOAuth, Bridge } from "./bridge.ts";
 import { headerString, oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface FastifyAdapterOptions {
@@ -43,16 +42,16 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
   app.get("/oauth/jwks", async (_req, reply) => send(reply, await bridge.handleJwks()));
   app.post("/oauth/register", async (req, reply) => send(reply, await bridge.handleRegister(toNorm(req))));
   app.get("/oauth/authorize", async (req, reply) => {
-    // Identity resolution happens before the Bridge's own try/catch (which
-    // maps OAuthError → NormResponse), so a rejected identity would otherwise
-    // surface as a 401 with Fastify's framework body, not §9.5. Route it
-    // through the same path (§9.3).
+    // Identity resolution happens before the Bridge's own try/catch, so a
+    // thrown error escapes the §9.5 path. Route it through the same path the
+    // Bridge uses: asOAuth preserves an OAuthError's code/status (HF.2 ⇒ 401
+    // access_denied); anything else becomes a non-leaking 500 internal_error
+    // (verification.md HF.3). Re-throwing lets Fastify shape the body and leak.
     let subject: string;
     try {
       subject = await resolveSubject(identity, headerString(req.headers, identityHeader));
     } catch (error) {
-      if (!(error instanceof OAuthError)) throw error; // real 500
-      await send(reply, oauthErrorResponse(error));
+      await send(reply, oauthErrorResponse(asOAuth(error)));
       return;
     }
     await send(reply, await bridge.handleAuthorize(toNorm(req), subject));
