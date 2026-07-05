@@ -212,8 +212,13 @@ deterministic time. Reference: `SystemClock` (wraps `Date.now()`).
 ```ts
 interface AuditPort { writeAuthEvent(event: AuthAuditEvent): Promise<void>; }
 ```
-Append-only, metadata-only (see §13). Reference: `noopAudit` (tests) and a
-`ConsoleAudit`. Tool-call auditing is the host app's concern, not this library's.
+Append-only, metadata-only (see §13). `noopAudit` is the test/local default.
+v0.2 ships three reference sinks (§17.7, exported from the main entry — no
+subpath/peer dep): `JsonlFileAudit(filePath)`, `WebhookAudit(url, opts)`, and
+`combineAudit(...sinks)`. All three are **fail-open**: `writeAuthEvent` never
+rejects, so an audit-write failure never blocks the auth operation (the use-cases
+`await` it with no try/catch). Tool-call auditing is the host app's concern, not
+this library's.
 
 ### 6.3 `StorePort` (the conformance boundary — see §12)
 Stores auth-code records, refresh-token families/tokens, and single-use consent
@@ -743,12 +748,18 @@ adapters.)
 
 Append-only `AuthAuditEvent`s, **metadata-only**. No token values, no
 `Authorization`/`Set-Cookie`, no request bodies; redirect URIs canonicalized to
-host. Events: `oauth.register`, `oauth.authorize.prepare`, `oauth.authorize.approve`,
-`oauth.token.authorization_code`, `oauth.token.refresh`, `oauth.revoke`,
-`auth.request`. Each carries `occurredAt`, `event`, `status: "success"|"failure"`,
-and optional `clientId`, `subject`, `resource`, `scopes`, `redirectHost`,
-`reason`. The test suite asserts that serialized audit output never contains raw
-codes, refresh tokens, or access tokens.
+host. Events (the v0.1 set plus the v0.2 additions from §17.7): `oauth.register`,
+`oauth.authorize.prepare`, `oauth.authorize.approve`, `oauth.token.authorization_code`,
+`oauth.token.refresh`, `oauth.revoke`, `auth.request`, `identity.verify`,
+`oauth.pairing.attempt`, `oauth.device.authorization`, `oauth.device.approve`,
+`oauth.token.device_code`, `oauth.token.client_credentials`, `oauth.client.provision`,
+`oauth.client.rotate_secret`, `oauth.cimd.fetch`. Each carries `occurredAt`,
+`event`, `status: "success"|"failure"`, and optional `clientId`, `subject`,
+`resource`, `scopes`, `redirectHost`, `reason`, `ip` (adapter-populated client IP;
+personal data — the deployer owns retention/redaction). The test suite asserts
+that serialized audit output never contains raw codes, refresh tokens, or access
+tokens, across every event name (the v0.2 names are exercised by synthetic
+events through each sink; the v0.1 names additionally by the live OAuth flow).
 
 ## 14. Error catalog
 
@@ -811,6 +822,12 @@ the npm artifact is cut, so the published package is never broken by `.ts` paths
 }
 ```
 
+The v0.2 reference audit sinks — `JsonlFileAudit`, `WebhookAudit`,
+`combineAudit` (§17.7) — are exported from the **root `.` entry**, not a subpath:
+they carry no runtime dependency (`node:fs` is built-in; `fetch` is native to Node
+24), so there is no optional peer dep to isolate and a single
+`import { JsonlFileAudit } from "mcp-sso"` is the intended consumer shape.
+
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —
 the install-time floor and the `docs/dependency-ledger.md` 15-day curation rule
@@ -849,7 +866,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Entra group→scope ceiling (Gate 2) | 🔒 v0.2 contract locked | §17.4 |
 | Console-pairing identity | 🔒 v0.2 contract locked | §17.5 |
 | `GenericOidcIdentity` + Google preset + GitHub port | 🔒 v0.2 contract locked | §17.6 |
-| Audit reference sinks + expanded events | 🔒 v0.2 contract locked | §17.7 |
+| Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | 🔒 v0.2 contract locked | §17.8 |
 
 **RC re-check gate:** the 2026-07-28 RC is treated as additive hardening built in
@@ -1401,6 +1418,14 @@ gate replaces no-gate).
   `./identity/github`, `./identity/console-pairing`.
 
 ### 17.7 Audit reference sinks + event coverage
+
+> **SHIPPED S1a** (`src/audit/jsonl-file.ts`, `src/audit/webhook.ts`,
+> `src/audit/combine.ts`; exported from the root entry per §15). The 9 event
+> names and `ip` field are in `src/ports/audit.ts`. The use-cases that *emit* the
+> new names land with their features (S2 identity.verify, S3 client_credentials,
+> S5 device, S6 cimd); the sinks + type are stable now so later sessions only
+> call `writeAuthEvent`. Fail-open verified: each sink's `writeAuthEvent` never
+> rejects, and `combineAudit` survives any subset of sinks rejecting.
 
 - **Decision: no new port.** `AuditPort` IS the sink boundary; a second
   `AuditSinkPort` would be indirection with no gain. v0.2 ships reference
