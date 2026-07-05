@@ -232,6 +232,21 @@ test("SECURITY (Codex round 5): a banner-write failure does not leave an unprint
   assert.equal(ok.ok, true);
 });
 
+test("SECURITY (Codex round 8): an async-rejecting output.write also prevents publishing the session", async () => {
+  // output.write is typed `unknown`; a custom output that signals failure by
+  // returning a REJECTED PROMISE must be observed (awaited), so beginSession
+  // rejects and `active` is not left published with an unprinted code.
+  let throws = true;
+  const chunks: string[] = [];
+  const output = { write(s: string): unknown { if (throws) return Promise.reject(new Error("async write failed")); chunks.push(s); return true; } };
+  const identity = createConsolePairingIdentity({ output });
+  await assert.rejects(identity.beginSession(), /async write failed/);
+  throws = false;
+  const session = await identity.beginSession();
+  const code = codesFrom(chunks.join(""))[0]!;
+  assert.equal((await identity.verify({ code, nonce: session.nonce })).ok, true);
+});
+
 test("FAIL-OPEN (§17.7): a throwing/rejecting AuditPort never breaks pairing", async () => {
   // Mirrors audit-flow.test.ts S1a.3 for the S1a sinks. pairing.verify() awaits
   // writeAuthEvent; emit() MUST swallow sink errors so a non-fail-open custom

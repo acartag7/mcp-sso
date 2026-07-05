@@ -169,16 +169,16 @@ export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): 
     const code = generatePairingCode();
     const nonce = randomBytes(18).toString("base64url");
     const expiresAtMs = clock.nowMs() + codeTtlSeconds * 1000;
-    // Print BEFORE publishing `active` so a write failure can't leave an unseen code stuck.
-    printBanner(code, expiresAtMs);
+    // Print BEFORE `active`: a write failure (sync throw OR async reject) must prevent publishing.
+    await printBanner(code, expiresAtMs);
     active = { code, nonce, expiresAtMs, wrongAttempts: 0 };
     return { nonce, expiresAt: new Date(expiresAtMs).toISOString() };
   }
 
-  function printBanner(code: string, expiresAtMs: number): void {
-    // The code is printed here (the operator reads it); the banner states the §17.5 boundary.
+  // output.write may be async/rejecting; awaiting observes it so the caller fails closed. Prints code + §17.5 boundary.
+  async function printBanner(code: string, expiresAtMs: number): Promise<void> {
     const expiry = new Date(expiresAtMs).toISOString();
-    output.write(
+    await output.write(
       `[mcp-sso] Console pairing code: ${formatPairingCode(code)}  (expires ${expiry})\n` +
       `[mcp-sso] Console pairing is for SINGLE-OPERATOR / private-console deployments only.\n` +
       `[mcp-sso] Anyone who can read this log is the operator for the code's lifetime.\n`,

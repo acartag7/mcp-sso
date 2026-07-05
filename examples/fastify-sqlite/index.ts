@@ -52,7 +52,11 @@ async function main(): Promise<void> {
   const audit = new JsonlFileAudit(auditLog);
   const pairing = createConsolePairingIdentity({ audit });
 
-  const { app } = await buildApp({ config, pairing, audit });
+  // Persist OAuth state (refresh-token families, consent JTIs, auth codes) across
+  // restarts alongside the quickstart secrets — default to a file in the quickstart
+  // dir (covered by its `*` .gitignore); OAUTH_SQLITE_FILE overrides.
+  const sqliteFile = process.env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
+  const { app } = await buildApp({ config, pairing, audit, sqliteFile });
   await app.listen({ port, host: "0.0.0.0" });
   console.error(`mcp-sso example listening on :${port}`);
   console.error(`  issuer=${config.issuer}  resource=${config.resource}`);
