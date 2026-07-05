@@ -14,8 +14,14 @@ import {
 export class MysqlStore implements StorePort {
   private closed = false;
   private readonly pool: Pool;
-  constructor(pool: Pool) {
+  private readonly ownsPool: boolean;
+  /** @param ownsPool when true, `close()` ends the pool. `createMysqlStore` sets this
+   *  for the pool it creates; a caller-supplied shared pool (`new MysqlStore(appPool)`)
+   *  defaults to false so closing the store does not tear down pools other components
+   *  still use (Codex P2). */
+  constructor(pool: Pool, ownsPool = false) {
     this.pool = pool;
+    this.ownsPool = ownsPool;
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
@@ -150,7 +156,11 @@ export class MysqlStore implements StorePort {
   }
 
   async close(): Promise<void> {
-    if (!this.closed) { this.closed = true; await this.pool.end(); }
+    if (!this.closed) {
+      this.closed = true;
+      // Only end a pool this store created; never a caller-supplied shared pool.
+      if (this.ownsPool) await this.pool.end();
+    }
   }
 
   /** §12.3 addendum 13: acquire OUTSIDE the try; begin inside behind a begun-guard;
@@ -184,11 +194,11 @@ export class MysqlStore implements StorePort {
 export async function createMysqlStore(config: string | PoolOptions): Promise<MysqlStore> {
   // typeof narrows the union so each call matches a createPool overload (else TS2769).
   const pool = typeof config === "string" ? createPool(config) : createPool(config);
-  const store = new MysqlStore(pool);
+  const store = new MysqlStore(pool, true); // store owns the pool it created -> close() ends it
   try {
     await store.migrate();
   } catch (error) {
-    // Do not leak the pool if boot-time config assertions (strict mode, collation) fail.
+    // Do not leak the pool if boot-time config assertions (strict mode, collation, engine) fail.
     try { await pool.end(); } catch { /* swallow cleanup */ }
     throw error;
   }

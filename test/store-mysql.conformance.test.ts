@@ -57,9 +57,10 @@ after(async () => {
   if (admin) await admin.end();
 });
 
-// Fresh pool/store per test (lazy pool; close() ends it). Tables already exist.
+// Fresh pool/store per test (lazy pool; close() ends it — the test owns the pool it
+// creates, so ownsPool=true). Tables already exist.
 function make(): StorePort {
-  return new MysqlStore(createPool(MYSQL_URL as string));
+  return new MysqlStore(createPool(MYSQL_URL as string), true);
 }
 
 if (RUN) {
@@ -190,6 +191,21 @@ if (RUN) {
     );
     const tables = (rows as { TABLE_NAME: string }[]).map((r) => r.TABLE_NAME);
     assert.deepEqual(tables, [...MYSQL_OAUTH_TABLES].sort());
+  });
+
+  test("MysqlStore: close() does not end a caller-owned pool (Codex P2)", async () => {
+    const pool = createPool(MYSQL_URL as string);
+    const store = new MysqlStore(pool, false); // caller owns the pool
+    await store.close();
+    try {
+      // Store is closed (ops throw)...
+      await assert.rejects(store.findRefreshToken(sha256Hex("x")), /Store is closed/);
+      // ...but the pool is still alive: a query through it succeeds.
+      const [rows] = await pool.query<RowDataPacket[]>("SELECT 1 AS ok");
+      assert.equal((rows[0] as { ok: number }).ok, 1);
+    } finally {
+      await pool.end();
+    }
   });
 
   test("MysqlStore: migrate fails closed on a non-InnoDB oauth table (Codex P2)", async () => {
