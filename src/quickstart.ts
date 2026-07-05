@@ -149,7 +149,7 @@ async function generateAndPersist(dir: string, secretsPath: string): Promise<Qui
  *  fails closed — we never parse gitignore semantics. Covers first-boot + reload. */
 const GITIGNORE_CONTENT = "*\n";
 
-async function ensureGitignore(dir: string, canCreate: boolean): Promise<void> {
+export async function ensureGitignore(dir: string, canCreate: boolean): Promise<void> {
   const path = join(dir, GITIGNORE_FILE);
   // Missing? Only CREATE one where we're allowed: a dir we just made (or our own
   // reload dir). Writing `*` into a pre-existing repo/shared dir would silently

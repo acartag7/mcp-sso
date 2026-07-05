@@ -65,6 +65,7 @@ test("integration — Cloudflare Access branch: buildExample creates the state d
     assert.equal(config.issuer, "http://localhost");
     assert.ok(existsSync(dir), "CF branch created the state dir (the regression)");
     assert.ok(existsSync(join(dir, "auth.db")), "sqlite opened auth.db in the state dir");
+    assert.ok(existsSync(join(dir, ".gitignore")), "CF branch protected the state dir from git (managed .gitignore)");
     // CF header-based identity (NOT pairing): no Cf-Access-Jwt-Assertion → 401,
     // not the 200 pairing page.
     const page = await app.inject({ method: "GET", url: AUTHORIZE_QUERY });
