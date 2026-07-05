@@ -11,13 +11,19 @@ import { headerString, oauthErrorResponse, resolveSubject, type NormRequest, typ
 
 export interface FastifyAdapterOptions {
   bridge: Bridge;
-  identity: IdentityPort;
+  /** IdentityPort for the default header-based authorize. Required unless
+   *  `skipAuthorize` is set (console pairing owns the authorize route). */
+  identity?: IdentityPort;
   /** Header carrying the upstream identity credential. Default: cf-access-jwt-assertion. */
   identityHeader?: string;
+  /** When true, GET /oauth/authorize is NOT registered — the caller mounts its
+   *  own (e.g. a console-pairing surface via handlePairingAuthorize). All other
+   *  routes are unaffected. Default false (header-based authorize). */
+  skipAuthorize?: boolean;
 }
 
 export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion" } = opts;
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false } = opts;
 
   app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
     done(null, Object.fromEntries(new URLSearchParams(String(body))));
@@ -41,19 +47,23 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
   app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (_req, reply) => send(reply, await bridge.handleProtectedResourceMetadata()));
   app.get("/oauth/jwks", async (_req, reply) => send(reply, await bridge.handleJwks()));
   app.post("/oauth/register", async (req, reply) => send(reply, await bridge.handleRegister(toNorm(req))));
-  app.get("/oauth/authorize", async (req, reply) => {
-    // Identity resolution is pre-validation. Route throws through the direct
-    // §9.5 path, stripping any redirect target a user-supplied IdentityPort put
-    // on an OAuthError and hiding non-OAuth details (verification.md HF.3).
-    let subject: string;
-    try {
-      subject = await resolveSubject(identity, headerString(req.headers, identityHeader));
-    } catch (error) {
-      await send(reply, oauthErrorResponse(asDirectOAuth(error)));
-      return;
-    }
-    await send(reply, await bridge.handleAuthorize(toNorm(req), subject));
-  });
+  if (!skipAuthorize) {
+    if (!identity) throw new Error("registerOAuthRoutes: identity is required unless skipAuthorize is set");
+    const id = identity;
+    app.get("/oauth/authorize", async (req, reply) => {
+      // Identity resolution is pre-validation. Route throws through the direct
+      // §9.5 path, stripping any redirect target a user-supplied IdentityPort put
+      // on an OAuthError and hiding non-OAuth details (verification.md HF.3).
+      let subject: string;
+      try {
+        subject = await resolveSubject(id, headerString(req.headers, identityHeader));
+      } catch (error) {
+        await send(reply, oauthErrorResponse(asDirectOAuth(error)));
+        return;
+      }
+      await send(reply, await bridge.handleAuthorize(toNorm(req), subject));
+    });
+  }
   app.post("/oauth/authorize/approve", async (req, reply) => send(reply, await bridge.handleApprove(toNorm(req))));
   app.post("/oauth/token", async (req, reply) => send(reply, await bridge.handleToken(toNorm(req))));
   app.post("/oauth/revoke", async (req, reply) => send(reply, await bridge.handleRevoke(toNorm(req))));

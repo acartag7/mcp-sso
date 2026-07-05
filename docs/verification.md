@@ -107,7 +107,10 @@ Run before S2.
 | S1b.5 | Console pairing happy path | Code is generated lazily, accepted once, authorize->token->`/mcp` succeeds. |
 | S1b.6 | Pairing wrong attempts | Five wrong attempts invalidate the code independent of `RateLimitPort`. |
 | S1b.7 | Pairing replay/expiry | Used or expired code cannot authorize. |
-| S1b.8 | Example no longer uses dev stub | `examples/fastify-sqlite` boots zero-config and completes the protected MCP flow. |
+| S1b.8 | Example no longer uses dev stub | `examples/fastify-sqlite` boots zero-config and completes the protected MCP flow. (`test/e2e-pairing.test.ts`) |
+| S1b.9 | Pairing code never in audit | The 12-char code (canonical and `XXXX-XXXX-XXXX`) appears in NO `oauth.pairing.attempt` event; `reason` is always a short enum. (`test/identity-console-pairing.test.ts`) |
+| S1b.10 | Rate-limit deny ≠ throw | A denying `RateLimitPort` blocks without bumping the attempt cap (the correct code still succeeds after a flood of denials); a throwing limiter fails open. (`test/identity-console-pairing.test.ts`) |
+| S1b.11 | Audit JSONL on a live pairing flow | `audit.jsonl` carries `oauth.pairing.attempt` + the v0.1 authorize/token events and no raw pairing code / auth code / access token. (`test/e2e-pairing.test.ts`) |
 
 ### T1.S2a — core `allowedScopes` ceiling
 

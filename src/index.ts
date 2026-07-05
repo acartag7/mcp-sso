@@ -66,6 +66,9 @@ export { type AuditPort, type AuthAuditEvent, type AuthAuditStatus, type AuthAud
 export { JsonlFileAudit, createJsonlFileAudit } from "./audit/jsonl-file.ts";
 export { WebhookAudit, createWebhookAudit, type WebhookAuditOptions } from "./audit/webhook.ts";
 export { combineAudit } from "./audit/combine.ts";
+// Quickstart secret persistence (§17.8) — dep-free boot helper (jose + node
+// builtins), so it ships from the root entry like the audit sinks.
+export { loadOrCreateQuickstartSecrets, type QuickstartSecrets, type QuickstartOptions } from "./quickstart.ts";
 export {
   type StorePort, type AuthCodeRecord, type RefreshTokenRecord,
   type SaveAuthCodeInput, type SaveRefreshTokenInput,

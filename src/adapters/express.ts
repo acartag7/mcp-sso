@@ -11,13 +11,18 @@ import { headerString, oauthErrorResponse, resolveSubject, type NormRequest, typ
 
 export interface ExpressAdapterOptions {
   bridge: Bridge;
-  identity: IdentityPort;
+  /** IdentityPort for the default header-based authorize. Required unless
+   *  `skipAuthorize` is set (console pairing owns the authorize route). */
+  identity?: IdentityPort;
   identityHeader?: string;
+  /** When true, GET /oauth/authorize is NOT registered — the caller mounts its
+   *  own. Default false. */
+  skipAuthorize?: boolean;
 }
 
 export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   const router = Router();
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion" } = opts;
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false } = opts;
 
   const toNorm = (req: Request): NormRequest => ({
     query: req.query as NormRequest["query"],
@@ -43,10 +48,14 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   router.get(`/.well-known/oauth-protected-resource${resourcePath}`, wrap(async (_req, res) => send(res, await bridge.handleProtectedResourceMetadata())));
   router.get("/oauth/jwks", wrap(async (_req, res) => send(res, await bridge.handleJwks())));
   router.post("/oauth/register", wrap(async (req, res) => send(res, await bridge.handleRegister(toNorm(req)))));
-  router.get("/oauth/authorize", wrap(async (req, res) => {
-    const subject = await resolveSubject(identity, headerString(req.headers, identityHeader));
-    send(res, await bridge.handleAuthorize(toNorm(req), subject));
-  }));
+  if (!skipAuthorize) {
+    if (!identity) throw new Error("createOAuthRouter: identity is required unless skipAuthorize is set");
+    const id = identity;
+    router.get("/oauth/authorize", wrap(async (req, res) => {
+      const subject = await resolveSubject(id, headerString(req.headers, identityHeader));
+      send(res, await bridge.handleAuthorize(toNorm(req), subject));
+    }));
+  }
   router.post("/oauth/authorize/approve", wrap(async (req, res) => send(res, await bridge.handleApprove(toNorm(req)))));
   router.post("/oauth/token", wrap(async (req, res) => send(res, await bridge.handleToken(toNorm(req)))));
   router.post("/oauth/revoke", wrap(async (req, res) => send(res, await bridge.handleRevoke(toNorm(req)))));

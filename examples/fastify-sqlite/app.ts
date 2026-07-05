@@ -1,9 +1,11 @@
-// Runnable example: Fastify + sqlite + Cloudflare Access, with a protected /mcp
-// route serving a minimal MCP server. The verify gate (test/e2e-mcp-sdk.test.ts)
-// imports buildApp() and exercises the full flow in-process; index.ts is the
-// standalone entry point (`node examples/fastify-sqlite/index.ts`).
+// Runnable example: Fastify + sqlite. The standalone entry (index.ts) wires the
+// zero-setup path — quickstart secrets (§17.8) + console pairing (§17.5) + a JSONL
+// audit sink — so the server boots with NO signing/consent env config and an
+// operator pastes a one-time code from the console. buildApp() also still supports
+// a header-based IdentityPort (used by the e2e test). The verify gate
+// (test/e2e-mcp-sdk.test.ts + test/e2e-pairing.test.ts) imports buildApp().
 
-import Fastify from "fastify";
+import Fastify, { type FastifyReply } from "fastify";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
@@ -12,16 +14,25 @@ import { OAuthError, oauthErrorBody } from "../../src/errors.ts";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { RequestAuthorizer } from "../../src/verifier.ts";
 import { SystemClock } from "../../src/ports/clock.ts";
-import { noopAudit } from "../../src/ports/audit.ts";
+import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
+import type { ConsolePairingIdentity } from "../../src/identity/console-pairing.ts";
+import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
+import type { NormRequest, NormResponse } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 
 export interface ExampleOptions {
   config: BridgeConfig;
-  identity: IdentityPort;
+  /** Header-based IdentityPort for the default authorize path (e2e-test mode). */
+  identity?: IdentityPort;
+  /** Console-pairing identity — when set, buildApp mounts the pairing authorize
+   *  surface instead of the header-based one. */
+  pairing?: ConsolePairingIdentity;
   sqliteFile?: string; // defaults to :memory:
   identityHeader?: string;
+  /** Audit sink for the Bridge + RequestAuthorizer + pairing. Default noopAudit. */
+  audit?: AuditPort;
 }
 
 /** Build the example Fastify app: OAuth routes + a protected /mcp (MCP server). */
@@ -29,10 +40,37 @@ export async function buildApp(opts: ExampleOptions) {
   const app = Fastify();
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
-  const bridge = new Bridge({ config: opts.config, store, clock, audit: noopAudit });
-  const authorizer = new RequestAuthorizer({ config: opts.config, clock, audit: noopAudit });
+  const audit: AuditPort = opts.audit ?? noopAudit;
+  const bridge = new Bridge({ config: opts.config, store, clock, audit });
+  const authorizer = new RequestAuthorizer({ config: opts.config, clock, audit });
 
-  await registerOAuthRoutes(app, { bridge, identity: opts.identity, identityHeader: opts.identityHeader });
+  const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string }): NormRequest => ({
+    query: req.query as NormRequest["query"],
+    body: req.body,
+    headers: req.headers as NormRequest["headers"],
+    ip: req.ip,
+  });
+  const sendNorm = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
+    for (const [key, value] of Object.entries(res.headers)) reply.header(key, value);
+    if (res.redirect) { await reply.redirect(res.redirect, res.status); return; }
+    reply.code(res.status).send(res.body);
+  };
+
+  if (opts.pairing) {
+    // Zero-setup mode: registerOAuthRoutes skips /oauth/authorize; we mount a
+    // GET (render pairing page) + POST (verify code → consent page) via the
+    // framework-free handlePairingAuthorize orchestrator.
+    registerOAuthRoutes(app, { bridge, skipAuthorize: true });
+    const pairing = opts.pairing;
+    app.get("/oauth/authorize", async (req, reply) => {
+      await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req as never)));
+    });
+    app.post("/oauth/authorize", async (req, reply) => {
+      await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req as never)));
+    });
+  } else {
+    registerOAuthRoutes(app, { bridge, identity: opts.identity, identityHeader: opts.identityHeader });
+  }
 
   // Protected /mcp: verify the bridge-issued access token, then delegate to an MCP server.
   app.post("/mcp", async (request, reply) => {
@@ -60,10 +98,11 @@ export async function buildApp(opts: ExampleOptions) {
     }
   });
 
-  return { app, store, close: async () => { await store.close(); } };
+  return { app, store, bridge, close: async () => { await store.close(); } };
 }
 
-/** Read config from env (used by index.ts). */
+/** Read config from env (the production path; standalone index.ts uses quickstart
+ *  secrets instead). Kept for deployers who mount signing material via env. */
 export function configFromEnv(): BridgeConfig {
   const required = ["OAUTH_ISSUER", "OAUTH_RESOURCE", "OAUTH_CONSENT_SIGNING_SECRET", "OAUTH_SIGNING_PRIVATE_JWK"];
   const missing = required.filter((k) => !process.env[k]);

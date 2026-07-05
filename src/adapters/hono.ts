@@ -11,13 +11,18 @@ import { oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse
 
 export interface HonoAdapterOptions {
   bridge: Bridge;
-  identity: IdentityPort;
+  /** IdentityPort for the default header-based authorize. Required unless
+   *  `skipAuthorize` is set (console pairing owns the authorize route). */
+  identity?: IdentityPort;
   identityHeader?: string;
+  /** When true, GET /oauth/authorize is NOT registered — the caller mounts its
+   *  own. Default false. */
+  skipAuthorize?: boolean;
 }
 
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   const app = new Hono();
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion" } = opts;
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false } = opts;
 
   const toNorm = async (c: Context): Promise<NormRequest> => {
     const ct = c.req.header("content-type") ?? "";
@@ -51,18 +56,22 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (c) => send(c, await bridge.handleProtectedResourceMetadata()));
   app.get("/oauth/jwks", async (c) => send(c, await bridge.handleJwks()));
   app.post("/oauth/register", async (c) => send(c, await bridge.handleRegister(await toNorm(c))));
-  app.get("/oauth/authorize", async (c) => {
-    // Identity resolution is pre-validation. Route throws through the direct
-    // §9.5 path, stripping any redirect target a user-supplied IdentityPort put
-    // on an OAuthError and hiding non-OAuth details (verification.md HF.3).
-    let subject: string;
-    try {
-      subject = await resolveSubject(identity, c.req.header(identityHeader));
-    } catch (error) {
-      return send(c, oauthErrorResponse(asDirectOAuth(error)));
-    }
-    return send(c, await bridge.handleAuthorize(await toNorm(c), subject));
-  });
+  if (!skipAuthorize) {
+    if (!identity) throw new Error("createOAuthApp: identity is required unless skipAuthorize is set");
+    const id = identity;
+    app.get("/oauth/authorize", async (c) => {
+      // Identity resolution is pre-validation. Route throws through the direct
+      // §9.5 path, stripping any redirect target a user-supplied IdentityPort put
+      // on an OAuthError and hiding non-OAuth details (verification.md HF.3).
+      let subject: string;
+      try {
+        subject = await resolveSubject(id, c.req.header(identityHeader));
+      } catch (error) {
+        return send(c, oauthErrorResponse(asDirectOAuth(error)));
+      }
+      return send(c, await bridge.handleAuthorize(await toNorm(c), subject));
+    });
+  }
   app.post("/oauth/authorize/approve", async (c) => send(c, await bridge.handleApprove(await toNorm(c))));
   app.post("/oauth/token", async (c) => send(c, await bridge.handleToken(await toNorm(c))));
   app.post("/oauth/revoke", async (c) => send(c, await bridge.handleRevoke(await toNorm(c))));
