@@ -199,21 +199,37 @@ test("§17.8 (Codex): a symlinked .gitignore fails closed (git does not follow s
   });
 });
 
-test("§17.8 (Codex round 4): reload re-creates a deleted .gitignore; a tampered one fails closed", async () => {
-  // The "can never be committed" guarantee holds on RELOAD too, not just first boot.
+test("§17.8 (Codex): reload requires our exact .gitignore present (deleted or tampered → fail closed)", async () => {
+  // We never CREATE a .gitignore in a dir we didn't make this process — a stray
+  // secrets.json in a repo root must not trigger a `*` write. Reload requires it
+  // already present and exact.
   await withDir(async (dir) => {
     const target = join(dir, "state");
     const first = await loadOrCreateQuickstartSecrets({ dir: target });
 
-    // .gitignore deleted after first boot → reload re-creates it and loads the key.
-    await rm(join(target, ".gitignore"), { force: true });
+    // Normal reload (our .gitignore present) → loads the key.
     const reloaded = await loadOrCreateQuickstartSecrets({ dir: target });
     assert.deepEqual(reloaded, first);
-    assert.equal(await readFile(join(target, ".gitignore"), "utf8"), "*\n", "ignore re-created on reload");
 
-    // .gitignore tampered post-boot → reload fails closed (key now committable).
+    // Deleted after first boot → fail closed (no auto-recreate; can't prove ownership).
+    await rm(join(target, ".gitignore"), { force: true });
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+
+    // Tampered → fail closed.
     await writeFile(join(target, ".gitignore"), "*.log\n", { mode: 0o600 });
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+  });
+});
+
+test("§17.8 (Codex round 7): a pre-existing dir with a stray secrets.json and no .gitignore fails closed (no write)", async () => {
+  // The load path must not write `*` into a pre-existing dir just because a
+  // (possibly malformed) secrets.json is there — that could hide a repo's tree.
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "secrets.json"), "{not json", { mode: 0o600 });
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+    await assert.rejects(stat(join(target, ".gitignore")), /ENOENT/, "did not create a .gitignore");
   });
 });
 

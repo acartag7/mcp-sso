@@ -61,9 +61,10 @@ async function loadExisting(dir: string, secretsPath: string): Promise<Quickstar
   // The "can never be committed" guarantee holds on RELOAD too: if .gitignore was
   // deleted after first boot (or the dir was restored without it), re-create it;
   // if it has been tampered with, fail closed. Runs before the secrets perm check.
-  // On reload this is our own dir (secrets.json already lives here), so a deleted
-  // .gitignore may be re-created safely.
-  await ensureGitignore(dir, true);
+  // We did NOT create this dir this process (secrets.json pre-existed), so we
+  // can't safely CREATE a .gitignore here — a stray secrets.json in a repo root
+  // must not trigger a `*` write that hides the operator's tree. Require it exact.
+  await ensureGitignore(dir, false);
   // POSIX perm check BEFORE reading: a loose-permission file is a boot failure
   // even if its contents are valid — never process a file the operator hasn't
   // locked down. Skipped on Windows (mode bits are not meaningful there).
