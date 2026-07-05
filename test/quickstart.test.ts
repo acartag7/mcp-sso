@@ -2,7 +2,7 @@
 // Verification rows S1b.1–S1b.4 + O_EXCL non-clobber + the "never ephemeral" rule.
 
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
@@ -158,54 +158,43 @@ test("O_EXCL: an existing secrets.json is loaded, never overwritten (no silent k
   });
 });
 
-test("§17.8: a pre-existing non-covering .gitignore fails closed; a covering one is accepted", async () => {
+test("§17.8: a fresh dir writes `*\n`; ANY pre-existing .gitignore fails closed (covering or not)", async () => {
+  // gitignore semantics are too rich to evaluate safely (negations, anchoring,
+  // symlinks, **, char classes) — the helper trusts ONLY the `*` it writes
+  // exclusively itself. A pre-existing .gitignore of any content fails closed.
   await withDir(async (dir) => {
     const target = join(dir, "state");
     await mkdir(target, { recursive: true });
 
-    // Non-covering .gitignore → fail closed (secrets.json would be committable).
+    // Non-covering → fail closed.
     await writeFile(join(target, ".gitignore"), "*.log\n", { mode: 0o600 });
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
 
-    // Covering .gitignore (exact secrets.json) → accepted, secrets written.
+    // "Covering" by exact name → ALSO fail closed (we do not parse content).
     await writeFile(join(target, ".gitignore"), "secrets.json\n", { mode: 0o600 });
-    const covered = await loadOrCreateQuickstartSecrets({ dir: target });
-    assert.ok(covered.consentSigningSecret.length >= 32);
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
 
-    // A blanket `*` is also accepted.
-    await rm(join(target, "secrets.json"), { force: true });
-    await writeFile(join(target, ".gitignore"), "*\n", { mode: 0o600 });
-    await loadOrCreateQuickstartSecrets({ dir: target });
+    // A negation that un-ignores the secret → fail closed.
+    await writeFile(join(target, ".gitignore"), "*\n!secrets.json\n", { mode: 0o600 });
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
 
-    // A fresh dir (no .gitignore) → writes `*` (the default path).
+    // A fresh dir (no .gitignore) → writes `*` and succeeds.
     const fresh = join(dir, "fresh");
     await loadOrCreateQuickstartSecrets({ dir: fresh });
     assert.equal(await readFile(join(fresh, ".gitignore"), "utf8"), "*\n");
   });
 });
 
-test("§17.8 (Codex P2): a `*` line followed by `!secrets.json` UN-ignores the secret → fail closed", async () => {
-  // gitignore is last-match-wins: the negation makes secrets.json committable,
-  // so a naive "any `*` line ⇒ covered" check is wrong. The helper must evaluate
-  // negations and refuse to write the key into a dir where it would be committed.
+test("§17.8 (Codex): a symlinked .gitignore fails closed (git does not follow symlinks)", async () => {
+  // git ignores symlinked .gitignore files in the working tree, so following the
+  // symlink and accepting its content would write a committable key. O_EXCL fails
+  // on the symlink without following it → fail closed.
+  if (process.platform === "win32") return; // symlink creation needs elevated perms on Windows
   await withDir(async (dir) => {
     const target = join(dir, "state");
     await mkdir(target, { recursive: true });
-    await writeFile(join(target, ".gitignore"), "*\n!secrets.json\n", { mode: 0o600 });
-    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
-  });
-});
-
-test("§17.8: `*.json` and `secrets*` patterns cover secrets.json; a slashed pattern fails closed", async () => {
-  await withDir(async (dir) => {
-    const target = join(dir, "state");
-    await mkdir(target, { recursive: true });
-    // A glob that matches secrets.json is accepted.
-    await writeFile(join(target, ".gitignore"), "*.json\n", { mode: 0o600 });
-    await loadOrCreateQuickstartSecrets({ dir: target });
-    await rm(join(target, "secrets.json"), { force: true });
-    // A slashed/anchored pattern we can't safely evaluate → fail closed.
-    await writeFile(join(target, ".gitignore"), "subdir/secrets.json\n", { mode: 0o600 });
+    await writeFile(join(dir, "fake-gitignore"), "*\n", { mode: 0o600 });
+    await symlink(join(dir, "fake-gitignore"), join(target, ".gitignore"));
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
   });
 });

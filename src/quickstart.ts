@@ -161,52 +161,23 @@ async function ensureGitignore(dir: string): Promise<void> {
   const path = join(dir, GITIGNORE_FILE);
   try {
     await writeFile(path, "*\n", { flag: "wx", mode: FILE_MODE });
-    return; // created fresh — covers everything
+    return; // created fresh — `*` covers everything
   } catch (error) {
     if (!isExist(error)) {
       throw new AuthConfigError(`quickstart: cannot write ${GITIGNORE_FILE}: ${errMsg(error)}`);
     }
-  }
-  // EEXIST: a .gitignore is already there. The guarantee only holds if it covers
-  // the secrets file; fail closed if it does not (the operator adds an entry).
-  let existing: string;
-  try {
-    existing = await readFile(path, "utf8");
-  } catch (error) {
-    throw new AuthConfigError(`quickstart: cannot read existing ${GITIGNORE_FILE}: ${errMsg(error)}`);
-  }
-  if (!gitignoreCoversSecrets(existing)) {
+    // EEXIST — a regular file OR a symlink (`wx`/O_EXCL fails on both WITHOUT
+    // following): refuse to trust OR overwrite it. git's .gitignore semantics are
+    // too rich to evaluate safely — negations (`!secrets.json`), anchoring
+    // (`!/secrets.json`), symlinks git will not follow, `**`, char classes — and
+    // each is a way the "can never be committed" guarantee silently breaks. Only
+    // the file we just created exclusively is trusted; the operator uses a fresh
+    // dir or removes the existing entry. (Never readFile it — that would follow a
+    // symlink and accept content git itself ignores.)
     throw new AuthConfigError(
-      `quickstart: ${path} exists but does not cover ${SECRETS_FILE}; add a line matching it (e.g. '*' or '${SECRETS_FILE}') before boot`,
+      `quickstart: ${path} already exists; refusing to trust or overwrite it (move or remove it, or point MCP_SSO_DIR at a fresh directory)`,
     );
   }
-}
-
-/** Would git ignore SECRETS_FILE under this .gitignore? Last-match-wins with
- *  negation support — a later `!secrets.json` UN-ignores it (the case a naive
- *  "any `*` line" check misses). Conservative: only simple slash-free globs over
- *  the basename are evaluated; unfamiliar patterns (anchored paths, `**`, char
- *  classes) are treated as non-matching so the caller fails closed rather than
- *  over-claiming coverage. */
-function gitignoreCoversSecrets(content: string): boolean {
-  let ignored = false;
-  for (const raw of content.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const negation = line.startsWith("!");
-    const pattern = negation ? line.slice(1) : line;
-    if (patternMatchesSecrets(pattern)) ignored = !negation;
-  }
-  return ignored;
-}
-
-/** Conservative basename glob match for SECRETS_FILE. Returns false for patterns
- *  we can't safely reason about, so the caller fails closed. */
-function patternMatchesSecrets(pattern: string): boolean {
-  if (pattern === "*") return true;
-  if (pattern.includes("/") || pattern.includes("**") || pattern.includes("[") || pattern.includes("\\")) return false;
-  const re = new RegExp("^" + pattern.split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
-  return re.test(SECRETS_FILE);
 }
 
 async function pathExists(p: string): Promise<boolean> {
