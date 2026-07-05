@@ -18,6 +18,7 @@ import { createBridgeConfig } from "../src/config.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import { JsonlFileAudit } from "../src/audit/jsonl-file.ts";
 import { createConsolePairingIdentity, formatPairingCode } from "../src/identity/console-pairing.ts";
+import { loadOrCreateQuickstartSecrets } from "../src/quickstart.ts";
 import type { AuthAuditEvent } from "../src/ports/audit.ts";
 import { buildApp } from "../examples/fastify-sqlite/app.ts";
 
@@ -44,7 +45,25 @@ function extractCode(text: string): string {
   return m[1]!.replace(/-/g, "");
 }
 
-test("S1b.8: zero-config pairing flow — code → consent → token → /mcp; JSONL audit has events and no secrets", async () => {
+/** A fetch shim that routes the MCP SDK client through the in-process Fastify
+ *  app (so a test can call protected /mcp without a TCP socket). */
+function sdkFetchShim(app: { inject(args: unknown): Promise<unknown> }): typeof fetch {
+  return (async (url: URL | string, init?: { method?: string; headers?: unknown; body?: unknown }): Promise<Response> => {
+    const u = url instanceof URL ? url : new URL(String(url));
+    const headers: Record<string, string> = {};
+    const src = init?.headers;
+    if (src instanceof Headers) src.forEach((v, k) => { headers[k] = v; });
+    else if (src && typeof src === "object") for (const [k, v] of Object.entries(src as Record<string, string>)) headers[k] = v;
+    const method = (init?.method ?? "POST") as "POST";
+    const payload = init?.body === undefined || init?.body === null
+      ? undefined
+      : typeof init.body === "string" ? init.body : JSON.stringify(init.body);
+    const r = await app.inject(payload === undefined ? { method, url: u.pathname + u.search, headers } : { method, url: u.pathname + u.search, headers, payload }) as unknown as { statusCode: number; headers: Record<string, string>; body: string };
+    return new Response(r.body, { status: r.statusCode, headers: r.headers });
+  }) as typeof fetch;
+}
+
+test("S1b.8: pairing flow (buildApp pairing mode) — code → consent → token → /mcp; JSONL audit has events and no secrets", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mcp-sso-e2e-pairing-"));
   try {
     const config = createBridgeConfig({
@@ -123,20 +142,7 @@ test("S1b.8: zero-config pairing flow — code → consent → token → /mcp; J
     const { access_token: accessToken } = tokenResp.json<{ access_token: string }>();
 
     // 5. Protected /mcp via the OFFICIAL MCP SDK client.
-    const fetchShim = async (url: URL | string, init?: { method?: string; headers?: unknown; body?: unknown }): Promise<Response> => {
-      const u = url instanceof URL ? url : new URL(String(url));
-      const headers: Record<string, string> = {};
-      const src = init?.headers;
-      if (src instanceof Headers) src.forEach((v, k) => { headers[k] = v; });
-      else if (src && typeof src === "object") for (const [k, v] of Object.entries(src as Record<string, string>)) headers[k] = v;
-      const method = (init?.method ?? "POST") as "POST";
-      const payload = init?.body === undefined || init?.body === null
-        ? undefined
-        : typeof init.body === "string" ? init.body : JSON.stringify(init.body);
-      const r = await app.inject(payload === undefined ? { method, url: u.pathname + u.search, headers } : { method, url: u.pathname + u.search, headers, payload }) as unknown as { statusCode: number; headers: Record<string, string>; body: string };
-      return new Response(r.body, { status: r.statusCode, headers: r.headers });
-    };
-    const transport = new StreamableHTTPClientTransport(new URL(RESOURCE), { fetch: fetchShim as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
+    const transport = new StreamableHTTPClientTransport(new URL(RESOURCE), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
     const client = new Client({ name: "verify-gate-pairing", version: "0.0.1" }, { capabilities: {} });
     await client.connect(transport);
     const result = await client.callTool({ name: "ping", arguments: {} });
@@ -212,4 +218,61 @@ test("S1b (Codex round 4): header mode without identity rejects fast (no floatin
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   await assert.rejects(buildApp({ config }), /identity is required/);
+});
+
+test("S1b.8 (zero-config boot): quickstart secrets (NO env config) drive the pairing flow and sign a token the RS accepts; reload reuses them", async () => {
+  // The honest zero-config proof the prior S1b.8 test was mislabeled as: the
+  // signing key + consent secret come from loadOrCreateQuickstartSecrets (as the
+  // standalone index.ts does), NOT inline. Proves first-boot generation, the full
+  // pairing flow under those generated keys, and restart reuse.
+  const dir = await mkdtemp(join(tmpdir(), "mcp-sso-zeroconfig-"));
+  try {
+    const stateDir = join(dir, "state");
+    const secrets = await loadOrCreateQuickstartSecrets({ dir: stateDir });
+    const config = createBridgeConfig({
+      issuer: ISSUER, resource: RESOURCE,
+      consentSigningSecret: secrets.consentSigningSecret,
+      signingPrivateJwk: secrets.signingPrivateJwk,
+      redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
+      allowedOrigins: [ISSUER], dcr: { mode: "stateless" }, dev: { allowInsecureLocalhost: true },
+      accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    });
+    const outputChunks: string[] = [];
+    const pairing = createConsolePairingIdentity({ output: { write(s: string): boolean { outputChunks.push(s); return true; } } });
+    const { app, store } = await buildApp({ config, pairing });
+
+    const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
+    const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [REDIRECT] }) });
+    const clientId = reg.json<{ client_id: string }>().client_id;
+    const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
+    const page = await app.inject({ method: "GET", url: `/oauth/authorize?${q}` });
+    const nonce = extractValue(page.body, "pairing_nonce");
+    const code = extractCode(outputChunks.join(""));
+    const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: nonce }).toString() });
+    const consentToken = extractValue(consentPage.body, "consent_token");
+    const approve = await app.inject({ method: "POST", url: "/oauth/authorize/approve", headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN }, payload: new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString() });
+    const authCode = new URL(approve.headers.location as string).searchParams.get("code");
+    const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: REDIRECT, client_id: clientId, code_verifier: verifier }).toString() });
+    const { access_token: accessToken } = tokenResp.json<{ access_token: string }>();
+
+    // Protected /mcp via the OFFICIAL MCP SDK client — the literal zero-config e2e
+    // (RequestAuthorizer + MCP transport accept the quickstart-signed token).
+    const transport = new StreamableHTTPClientTransport(new URL(RESOURCE), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
+    const client = new Client({ name: "zero-config-verify", version: "0.0.1" }, { capabilities: {} });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "ping", arguments: {} });
+    const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
+    assert.equal(text, `pong: ${SUBJECT}`);
+    await client.close();
+    await transport.close();
+
+    await app.close();
+    await store.close();
+
+    // Restart: reload reuses the SAME secrets (no silent rotation).
+    const reloaded = await loadOrCreateQuickstartSecrets({ dir: stateDir });
+    assert.deepEqual(reloaded, secrets);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

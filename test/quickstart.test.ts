@@ -124,7 +124,9 @@ test("S1b.3: POSIX group/other-readable secrets file fails closed with chmod 600
 test("S1b.4: corrupt / partial / bad-shape secrets fail closed — never an ephemeral fallback", async () => {
   await withDir(async (dir) => {
     const target = join(dir, "state");
-    await mkdir(target, { recursive: true });
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    await chmod(target, 0o700);
+    await writeFile(join(target, ".gitignore"), "*\n", { mode: 0o600 });
     const file = join(target, "secrets.json");
 
     // Unparseable JSON.
@@ -163,7 +165,8 @@ test("§17.8: fresh dir writes `*\n`; pre-existing .gitignore must be exactly ou
   // only the exact `*\n` we manage is trusted. Anything else fails closed.
   await withDir(async (dir) => {
     const target = join(dir, "state");
-    await mkdir(target, { recursive: true });
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    await chmod(target, 0o700);
 
     // Non-matching content → fail closed.
     await writeFile(join(target, ".gitignore"), "*.log\n", { mode: 0o600 });
@@ -192,7 +195,8 @@ test("§17.8 (Codex): a symlinked .gitignore fails closed (git does not follow s
   if (process.platform === "win32") return; // symlink creation needs elevated perms on Windows
   await withDir(async (dir) => {
     const target = join(dir, "state");
-    await mkdir(target, { recursive: true });
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    await chmod(target, 0o700);
     await writeFile(join(dir, "fake-gitignore"), "*\n", { mode: 0o600 });
     await symlink(join(dir, "fake-gitignore"), join(target, ".gitignore"));
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
@@ -218,6 +222,25 @@ test("§17.8 (Codex): reload requires our exact .gitignore present (deleted or t
     // Tampered → fail closed.
     await writeFile(join(target, ".gitignore"), "*.log\n", { mode: 0o600 });
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+  });
+});
+
+test("§17.8 (audit): a group/other-accessible pre-existing dir fails closed (key-substitution vector)", async () => {
+  // A 0777/0755 state dir lets another OS user replace secrets.json with their
+  // own 0600 key file (the file-mode check alone can't tell it's theirs) → the
+  // bridge would sign with the attacker's key. Require 0700.
+  if (process.platform === "win32") return;
+  await withDir(async (dir) => {
+    for (const mode of [0o755, 0o777]) {
+      const target = join(dir, `state-${mode.toString(8)}`);
+      await mkdir(target, { recursive: true, mode });
+      await chmod(target, mode); // umask-neutral
+      // Pre-seed a valid secrets.json + .gitignore so ONLY the dir mode is at fault.
+      const s = await loadOrCreateQuickstartSecrets({ dir: join(dir, "seed") });
+      await writeFile(join(target, "secrets.json"), JSON.stringify(s), { mode: 0o600 });
+      await writeFile(join(target, ".gitignore"), "*\n", { mode: 0o600 });
+      await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+    }
   });
 });
 
@@ -255,7 +278,8 @@ test("§17.8 (Codex round 7): a pre-existing dir with a stray secrets.json and n
   // (possibly malformed) secrets.json is there — that could hide a repo's tree.
   await withDir(async (dir) => {
     const target = join(dir, "state");
-    await mkdir(target, { recursive: true });
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    await chmod(target, 0o700);
     await writeFile(join(target, "secrets.json"), "{not json", { mode: 0o600 });
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
     await assert.rejects(stat(join(target, ".gitignore")), /ENOENT/, "did not create a .gitignore");
@@ -268,7 +292,8 @@ test("§17.8 (Codex round 6): a pre-existing dir without .gitignore fails closed
   // may have its .gitignore created.
   await withDir(async (dir) => {
     const target = join(dir, "state");
-    await mkdir(target, { recursive: true }); // pre-existing, no .gitignore
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    await chmod(target, 0o700); // pre-existing, no .gitignore
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
     await assert.rejects(stat(join(target, ".gitignore")), /ENOENT/, "did not create a .gitignore");
     await assert.rejects(stat(join(target, "secrets.json")), /ENOENT/, "did not write secrets");

@@ -3,14 +3,12 @@
 // consentSigningSecret } under ${dir}/secrets.json.
 //
 // SECURITY POSTURE — fail-closed, never ephemeral:
-//   - The directory is 0700, the secrets file is 0600 (O_EXCL create — never
-//     clobbers a real key), and a `.gitignore` of `*` is the only ignore content
-//     trusted. A group/other-readable secrets file is a BOOT FAILURE (skipped on
-//     Windows, where POSIX mode bits are meaningless).
-//   - FOLLOW-THE-LINK is closed everywhere: the dir, secrets.json, and .gitignore
-//     must all be REAL files/dirs (lstat/O_NOFOLLOW refuse symlinks — a symlink
-//     target escapes this dir's .gitignore protection), and file reads go through
-//     open(O_NOFOLLOW)+fstat+read-fd so there is no lstat→readFile race.
+//   - Dir 0700, secrets file 0600 (O_EXCL — never clobbers), `.gitignore` of `*`
+//     is the only ignore trusted. A group/other-accessible dir or secrets file is
+//     a BOOT FAILURE (skipped on Windows).
+//   - FOLLOW-THE-LINK closed everywhere: dir/secrets.json/.gitignore must be REAL
+//     (lstat/O_NOFOLLOW refuse symlinks); reads use open(O_NOFOLLOW)+fstat+read-fd
+//     (no lstat→readFile race).
 //   - Unwritable dir / partial write / unparseable / bad-shape ⇒ AuthConfigError.
 //     NEVER an ephemeral fallback (silent key rotation masks misconfiguration).
 //
@@ -181,8 +179,8 @@ async function ensureGitignore(dir: string, canCreate: boolean): Promise<void> {
   }
 }
 
-/** lstat the dir; reject a symlink (would route all writes/reads into its target)
- *  or a non-directory. */
+/** Reject a symlink, a non-directory, or (POSIX) a group/other-accessible mode —
+ *  a world-writable state dir lets another user swap secrets.json for their key. */
 async function assertRealDir(dir: string): Promise<void> {
   let st;
   try {
@@ -191,10 +189,13 @@ async function assertRealDir(dir: string): Promise<void> {
     throw new AuthConfigError(`quickstart: cannot stat directory ${dir}: ${errMsg(error)}`);
   }
   if (st.isSymbolicLink()) {
-    throw new AuthConfigError(`quickstart: ${dir} is a symlink; point MCP_SSO_DIR at a real directory (a symlinked dir escapes this dir's .gitignore protection)`);
+    throw new AuthConfigError(`quickstart: ${dir} is a symlink; point MCP_SSO_DIR at a real directory`);
   }
   if (!st.isDirectory()) {
     throw new AuthConfigError(`quickstart: ${dir} is not a directory`);
+  }
+  if (process.platform !== "win32" && st.mode & 0o077) {
+    throw new AuthConfigError(`quickstart: ${dir} is group/other-accessible (mode ${(st.mode & 0o777).toString(8).padStart(3, "0")}); use a fresh directory or chmod 700 ${dir}`);
   }
 }
 
