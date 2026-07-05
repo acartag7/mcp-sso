@@ -16,6 +16,7 @@ import { OAuthTokenUseCase } from "../token.ts";
 import { registerClient } from "../register.ts";
 import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "../metadata.ts";
 import { OAuthError } from "../errors.ts";
+import { assertAllowedScopesCeiling } from "../scopes.ts";
 import { renderConsentPage } from "./consent-page.ts";
 import {
   formField, formObject, headerString, oauthErrorResponse, queryString,
@@ -126,12 +127,16 @@ export class Bridge {
       throw new OAuthError("access_denied", `Identity rejected: ${result.reason}`, 401);
     }
     const subject = result.identity.subject;
-    const rawCeiling = result.identity.allowedScopes;
-    if (rawCeiling !== undefined && !(Array.isArray(rawCeiling) && rawCeiling.every((s) => typeof s === "string"))) {
+    // Fail CLOSED on a present-but-malformed ceiling (§17.4) via the shared
+    // validator (also used at the prepare core boundary). Emits a specific
+    // identity.verify reason before re-throwing.
+    let allowedScopes: string[] | undefined;
+    try {
+      allowedScopes = assertAllowedScopesCeiling(result.identity.allowedScopes);
+    } catch (error) {
       await this.emitIdentityVerify("failure", "malformed_allowed_scopes", undefined, ip);
-      throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
+      throw error;
     }
-    const allowedScopes = Array.isArray(rawCeiling) ? rawCeiling : undefined;
     await this.emitIdentityVerify("success", undefined, subject, ip);
     return { subject, allowedScopes };
   }

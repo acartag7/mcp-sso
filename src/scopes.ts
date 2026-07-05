@@ -34,6 +34,21 @@ export function scopeString(scopes: readonly string[]): string {
   return [...scopes].sort().join(" ");
 }
 
+/** Validate an identity-port `allowedScopes` ceiling (contracts §17.4). Returns
+ *  the value unchanged when it is `undefined` (no ceiling — v0.1 behavior) or a
+ *  `string[]` (any array, including `[]` = "entitled to nothing"). Throws
+ *  `access_denied` on a present-but-malformed value (non-array or non-string
+ *  elements): a malformed security input must NEVER widen to full access
+ *  (fail-closed house rule; threat-model row 22). Applied at BOTH the Bridge
+ *  boundary (`resolveIdentity`) AND the exported core use-case (`prepare`) so a
+ *  consumer calling `prepare` directly — or a custom adapter bypassing
+ *  `resolveIdentity` — cannot skip it. */
+export function assertAllowedScopesCeiling(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value) && value.every((s) => typeof s === "string")) return value;
+  throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
+}
+
 /** 403 insufficient_scope step-up if the subject lacks `required`. */
 export function requireScope(auth: AuthorizedSubject, required: string): void {
   if (!auth.scopes.includes(required)) {

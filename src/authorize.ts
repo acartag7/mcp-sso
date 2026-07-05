@@ -15,7 +15,7 @@ import {
   expiresAtIso, generateAuthorizationCode, sha256Hex,
   signConsentToken, verifyConsentToken,
 } from "./crypto.ts";
-import { normalizeScopes } from "./scopes.ts";
+import { assertAllowedScopesCeiling, normalizeScopes } from "./scopes.ts";
 import {
   assertAllowedRedirectUri, assertRedirectAllowedForClient,
 } from "./redirect.ts";
@@ -87,6 +87,9 @@ export class OAuthAuthorizationUseCase {
     try {
       // --- PRE-VALIDATION: direct errors, never redirect ---
       if (!input.subject) throw new OAuthError("access_denied", "Authenticated subject is required", 401);
+      // §17.4: fail closed on a malformed ceiling here too — prepare is exported,
+      // so a direct caller bypassing Bridge.resolveIdentity is still guarded.
+      const ceiling = assertAllowedScopesCeiling(input.allowedScopes);
       clientId = requiredStr(input.clientId, "client_id");
       redirectUri = await this.resolveRedirect(input.redirectUri, clientId);
       const state = input.state;
@@ -105,9 +108,7 @@ export class OAuthAuthorizationUseCase {
         const codeChallenge = requiredStr(input.codeChallenge, "code_challenge");
         const requested = normalizeScopes(input.scope, this.config.scopeCatalog, this.config.defaultScopes);
         // §17.4: a present ceiling (any array, incl. []) narrows requested/default
-        // scopes by intersection (RFC 6749 allows granting fewer). defaultScopes
-        // are already in `requested`, so they flow through the same intersection.
-        const ceiling = Array.isArray(input.allowedScopes) ? input.allowedScopes : undefined;
+        // scopes by intersection (defaultScopes already folded into `requested`).
         const scopes = ceiling ? requested.filter((s) => ceiling.includes(s)) : requested;
         // Empty intersection ⇒ access_denied on the redirect channel — ONLY when a
         // ceiling is present (without one, an empty requested set is unchanged v0.1

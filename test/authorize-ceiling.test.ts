@@ -19,6 +19,7 @@ import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { OAuthError } from "../src/errors.ts";
+import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
@@ -214,6 +215,19 @@ test("a present-but-malformed allowedScopes ceiling fails CLOSED (never widens �
   assert.equal(ev.status, "failure");
   assert.equal(ev.reason, "malformed_allowed_scopes");
   assert.equal(ev.ip, IP);
+});
+
+test("prepare fails closed on a malformed ceiling at the CORE boundary (direct/exported use-case — Codex P2)", async () => {
+  // OAuthAuthorizationUseCase is exported, so a consumer can call prepare()
+  // directly (or via a custom adapter that bypasses Bridge.resolveIdentity).
+  // The fail-closed guarantee must hold there too — a malformed ceiling can't
+  // widen to "no ceiling" (full requested/default scopes).
+  const ctx = setup();
+  const auth = new OAuthAuthorizationUseCase({ config: ctx.bridge.config, store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit: new MemoryAudit() });
+  await assert.rejects(
+    auth.prepare({ clientId: "c", redirectUri: REDIRECT, responseType: "code", codeChallenge: pkceChallenge("v-core-boundary-0123456789abcdef01234567"), codeChallengeMethod: "S256", subject: SUBJECT, allowedScopes: "mcp:read" as unknown as string[] }),
+    (e: unknown) => e instanceof OAuthError && e.code === "access_denied" && e.status === 401,
+  );
 });
 
 test("an empty-array ceiling denies all scopes (entitled to nothing ⇒ access_denied redirect)", async () => {
