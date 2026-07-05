@@ -121,12 +121,21 @@ function isValidSigningJwk(value: unknown): value is JWK {
 }
 
 async function generateAndPersist(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
-  // 1. mkdir 0700 (recursive; explicit chmod — mkdir's mode is masked by umask).
+  // 1. Directory: create it (recursive) or reuse it. `mkdir` returns the path of
+  //    the first directory it created, or undefined if `dir` already existed — so
+  //    we chmod ONLY a dir we just created (masking umask; we own it). Never mutate
+  //    a pre-existing directory: it may be a repo root or shared path, and force-
+  //    chmodding it to 0700 could lock other users out before later checks decide
+  //    the dir is unfit. The secrets file itself is always 0600, so its content is
+  //    protected regardless of the dir's listing perms.
+  let createdDir: string | undefined;
   try {
-    await mkdir(dir, { recursive: true });
-    if (process.platform !== "win32") await chmod(dir, DIR_MODE);
+    createdDir = await mkdir(dir, { recursive: true });
   } catch (error) {
     throw new AuthConfigError(`quickstart: cannot create directory ${dir}: ${errMsg(error)}`);
+  }
+  if (createdDir !== undefined && process.platform !== "win32") {
+    await chmod(dir, DIR_MODE);
   }
 
   // 2. .gitignore (write FIRST so the dir is never committable even if the

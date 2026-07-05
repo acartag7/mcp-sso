@@ -831,8 +831,12 @@ they carry no runtime dependency (`node:fs` is built-in; `fetch` is native to No
 Quickstart secret persistence (`loadOrCreateQuickstartSecrets`, §17.8) is
 root-exported for the same reason (it depends only on `jose` + node builtins).
 The console-pairing identity (§17.5) ships as the `./identity/console-pairing`
-subpath, parallel to the other identity ports. Deployer guidance for the audit
-sinks lives in [`docs/audit-deployment.md`](./audit-deployment.md).
+subpath, parallel to the other identity ports; its framework-free authorize
+helpers (`handlePairingAuthorize`, `renderPairingPage`) are root-exported so a
+consumer can mount the pairing surface alongside the `skipAuthorize` adapter
+option (the in-repo example imports them from source; package consumers import
+them from the root entry). Deployer guidance for the audit sinks lives in
+[`docs/audit-deployment.md`](./audit-deployment.md).
 
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —

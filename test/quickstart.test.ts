@@ -199,6 +199,21 @@ test("§17.8 (Codex): a symlinked .gitignore fails closed (git does not follow s
   });
 });
 
+test("§17.8 (Codex): a rejected pre-existing directory is not chmod-mutated", async () => {
+  // MCP_SSO_DIR may target an existing shared/project dir. chmodding it to 0700
+  // before later checks reject it would leave that path inaccessible. Only a dir
+  // we just created gets chmod'd; a pre-existing one is left untouched.
+  if (process.platform === "win32") return;
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    await mkdir(target, { recursive: true, mode: 0o755 });
+    await chmod(target, 0o755); // umask-neutral
+    await writeFile(join(target, ".gitignore"), "*.log\n", { mode: 0o600 }); // forces rejection
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+    assert.equal((await stat(target)).mode & 0o777, 0o755, "pre-existing dir perms not mutated");
+  });
+});
+
 test("unwritable directory fails closed (no ephemeral fallback)", async () => {
   await withDir(async (dir) => {
     const target = join(dir, "state");
