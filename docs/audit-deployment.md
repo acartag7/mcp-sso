@@ -7,7 +7,7 @@ retention/compliance target is **the deployer's job**. This document lays out th
 three supported paths and the honest delivery guarantees.
 
 > **tl;dr** — for any deployment that needs the events to survive, run
-> [`JsonlFileAudit`](../src/audit/jsonl-file.ts) to a local file and ship it with
+> [`JsonlFileAudit`](./contracts.md#177-audit-reference-sinks--event-coverage) to a local file and ship it with
 > a log shipper (Splunk Universal Forwarder, Vector, Fluentd). That is the only
 > path that is durable on disk; the shipper owns retry, buffering, and indexing.
 
@@ -127,11 +127,13 @@ and the other sinks still run.
 
 ## Defaults
 
-- **`noopAudit` is the library default.** `Bridge`, `RequestAuthorizer`, and the
-  console-pairing identity all default to it; you opt into a real sink at the
-  composition root. The use-cases `await` `writeAuthEvent` with no `try/catch`,
-  so a sink that rejects would turn every IO hiccup into a 500 — which is why
-  every shipped sink is fail-open by construction.
+- **`noopAudit` is the default at the composition root** — the example's
+  `buildApp()` and `createConsolePairingIdentity()` default to it. `Bridge` and
+  `RequestAuthorizer` **require `audit` explicitly** (`BridgeDeps.audit` /
+  `RequestAuthDeps.audit` are required, no fallback), so pass `noopAudit`
+  yourself if you construct them directly. The use-cases `await` `writeAuthEvent`
+  with no `try/catch`, so a sink that rejects would turn every IO hiccup into a
+  500 — which is why every shipped sink is fail-open by construction.
 - **The standalone `examples/fastify-sqlite` wires a `JsonlFileAudit`** to
   `${MCP_SSO_DIR}/audit.jsonl` so you can see events immediately on a zero-config
   boot. The example's `buildApp()` (the path the test suite drives) defaults to

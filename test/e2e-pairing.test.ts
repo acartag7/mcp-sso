@@ -17,7 +17,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { createBridgeConfig } from "../src/config.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import { JsonlFileAudit } from "../src/audit/jsonl-file.ts";
-import { createConsolePairingIdentity, formatPairingCode } from "../src/identity/console-pairing.ts";
+import { formatPairingCode } from "../src/identity/console-pairing.ts";
 import { loadOrCreateQuickstartSecrets } from "../src/quickstart.ts";
 import type { AuthAuditEvent } from "../src/ports/audit.ts";
 import { buildApp } from "../examples/fastify-sqlite/app.ts";
@@ -78,12 +78,11 @@ test("S1b.8: pairing flow (buildApp pairing mode) — code → consent → token
     const outputChunks: string[] = [];
     const auditPath = join(dir, "audit.jsonl");
     const audit = new JsonlFileAudit(auditPath);
-    const pairing = createConsolePairingIdentity({
+    const { app, store } = await buildApp({
+      config,
+      pairing: { output: { write(s: string): boolean { outputChunks.push(s); return true; } } },
       audit,
-      output: { write(s: string): boolean { outputChunks.push(s); return true; } },
     });
-
-    const { app, store } = await buildApp({ config, pairing, audit });
 
     const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
     const reg = await app.inject({
@@ -182,8 +181,7 @@ test("S1b: a wrong pairing code re-renders the pairing page (not a 401, not the 
       accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
     });
     const outputChunks: string[] = [];
-    const pairing = createConsolePairingIdentity({ output: { write(s: string): boolean { outputChunks.push(s); return true; } } });
-    const { app, store } = await buildApp({ config, pairing });
+    const { app, store } = await buildApp({ config, pairing: { output: { write(s: string): boolean { outputChunks.push(s); return true; } } } });
 
     const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [REDIRECT] }) });
     const clientId = reg.json<{ client_id: string }>().client_id;
@@ -238,8 +236,7 @@ test("S1b.8 (zero-config boot): quickstart secrets (NO env config) drive the pai
       accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
     });
     const outputChunks: string[] = [];
-    const pairing = createConsolePairingIdentity({ output: { write(s: string): boolean { outputChunks.push(s); return true; } } });
-    const { app, store } = await buildApp({ config, pairing });
+    const { app, store } = await buildApp({ config, pairing: { output: { write(s: string): boolean { outputChunks.push(s); return true; } } } });
 
     const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
     const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [REDIRECT] }) });

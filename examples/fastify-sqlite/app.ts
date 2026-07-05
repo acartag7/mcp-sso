@@ -17,7 +17,7 @@ import { SystemClock } from "../../src/ports/clock.ts";
 import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
-import type { ConsolePairingIdentity } from "../../src/identity/console-pairing.ts";
+import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import type { NormRequest, NormResponse } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
@@ -26,9 +26,11 @@ export interface ExampleOptions {
   config: BridgeConfig;
   /** Header-based IdentityPort for the default authorize path (e2e-test mode). */
   identity?: IdentityPort;
-  /** Console-pairing identity — when set, buildApp mounts the pairing authorize
-   *  surface instead of the header-based one. */
-  pairing?: ConsolePairingIdentity;
+  /** Console-pairing OPTIONS — when set, buildApp constructs the identity itself
+   *  (wiring the buildApp `audit` dep into it) and mounts the pairing authorize
+   *  surface. Passing options (not a pre-built identity) guarantees pairing audit
+   *  events are never dropped relative to the Bridge/RequestAuthorizer audit. */
+  pairing?: ConsolePairingOptions;
   sqliteFile?: string; // defaults to :memory:
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer + pairing. Default noopAudit. */
@@ -61,7 +63,7 @@ export async function buildApp(opts: ExampleOptions) {
     // GET (render pairing page) + POST (verify code → consent page) via the
     // framework-free handlePairingAuthorize orchestrator.
     await registerOAuthRoutes(app, { bridge, skipAuthorize: true });
-    const pairing = opts.pairing;
+    const pairing = createConsolePairingIdentity({ ...opts.pairing, audit });
     app.get("/oauth/authorize", async (req, reply) => {
       await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req as never)));
     });
