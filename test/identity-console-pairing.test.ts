@@ -216,6 +216,22 @@ test("SECURITY: the pairing code NEVER appears in any audit event (success or fa
   }
 });
 
+test("SECURITY (Codex round 5): a banner-write failure does not leave an unprinted code stuck", async () => {
+  // printBanner runs BEFORE `active` is published: if output.write throws, the
+  // session is never set, so the next beginSession() generates + prints a FRESH
+  // code instead of reusing one the operator never saw (stuck until expiry).
+  let throws = true;
+  const chunks: string[] = [];
+  const output = { write(s: string): boolean { if (throws) throw new Error("write failed"); chunks.push(s); return true; } };
+  const identity = createConsolePairingIdentity({ output });
+  await assert.rejects(identity.beginSession(), /write failed/);
+  throws = false; // output recovers
+  const session = await identity.beginSession();
+  const code = codesFrom(chunks.join(""))[0]!;
+  const ok = await identity.verify({ code, nonce: session.nonce });
+  assert.equal(ok.ok, true);
+});
+
 test("FAIL-OPEN (§17.7): a throwing/rejecting AuditPort never breaks pairing", async () => {
   // Mirrors audit-flow.test.ts S1a.3 for the S1a sinks. pairing.verify() awaits
   // writeAuthEvent; emit() MUST swallow sink errors so a non-fail-open custom

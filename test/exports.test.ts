@@ -6,6 +6,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  Bridge,
+  RequestAuthorizer,
   loadOrCreateQuickstartSecrets,
   handlePairingAuthorize,
   renderPairingPage,
@@ -14,7 +16,9 @@ import {
   combineAudit,
 } from "../src/index.ts";
 
-test("exports: the S1b + S1a surface is reachable from the root entry", () => {
+test("exports: the S1b + S1a + core surface is reachable from the root entry", () => {
+  assert.equal(typeof Bridge, "function", "Bridge (the central class) is root-exported");
+  assert.equal(typeof RequestAuthorizer, "function");
   assert.equal(typeof loadOrCreateQuickstartSecrets, "function");
   assert.equal(typeof handlePairingAuthorize, "function");
   assert.equal(typeof renderPairingPage, "function");

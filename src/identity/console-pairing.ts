@@ -169,14 +169,14 @@ export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): 
     const code = generatePairingCode();
     const nonce = randomBytes(18).toString("base64url");
     const expiresAtMs = clock.nowMs() + codeTtlSeconds * 1000;
-    active = { code, nonce, expiresAtMs, wrongAttempts: 0 };
+    // Print BEFORE publishing `active` so a write failure can't leave an unseen code stuck.
     printBanner(code, expiresAtMs);
+    active = { code, nonce, expiresAtMs, wrongAttempts: 0 };
     return { nonce, expiresAt: new Date(expiresAtMs).toISOString() };
   }
 
   function printBanner(code: string, expiresAtMs: number): void {
-    // The code IS deliberately printed here (the operator reads it). The banner
-    // states the deployment envelope verbatim (§17.5 trust boundary).
+    // The code is printed here (the operator reads it); the banner states the §17.5 boundary.
     const expiry = new Date(expiresAtMs).toISOString();
     output.write(
       `[mcp-sso] Console pairing code: ${formatPairingCode(code)}  (expires ${expiry})\n` +

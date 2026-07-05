@@ -74,6 +74,10 @@ export { loadOrCreateQuickstartSecrets, type QuickstartSecrets, type QuickstartO
 // and the `skipAuthorize` option on the framework adapters.
 export { handlePairingAuthorize, type PairingAuthorizeDeps } from "./adapters/pairing-flow.ts";
 export { renderPairingPage, type PairingPageInput } from "./adapters/pairing-page.ts";
+// The framework-free Bridge — the central class a consumer constructs and passes
+// to a framework adapter (root-exported so `import { Bridge } from "mcp-sso"` works;
+// previously only the adapters reached it internally).
+export { Bridge, type BridgeDeps } from "./adapters/bridge.ts";
 export {
   type StorePort, type AuthCodeRecord, type RefreshTokenRecord,
   type SaveAuthCodeInput, type SaveRefreshTokenInput,

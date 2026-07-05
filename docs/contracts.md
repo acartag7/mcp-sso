@@ -835,7 +835,9 @@ subpath, parallel to the other identity ports; its framework-free authorize
 helpers (`handlePairingAuthorize`, `renderPairingPage`) are root-exported so a
 consumer can mount the pairing surface alongside the `skipAuthorize` adapter
 option (the in-repo example imports them from source; package consumers import
-them from the root entry). Deployer guidance for the audit sinks lives in
+them from the root entry). The framework-free `Bridge` class — the central object
+a consumer constructs and passes to a framework adapter — is root-exported
+(`import { Bridge, RequestAuthorizer } from "mcp-sso"`). Deployer guidance for the audit sinks lives in
 [`docs/audit-deployment.md`](./audit-deployment.md).
 
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
