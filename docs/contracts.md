@@ -818,7 +818,8 @@ the npm artifact is cut, so the published package is never broken by `.ts` paths
   "./express":                  { "types": "./dist/adapters/express.d.ts",         "default": "./dist/adapters/express.js" },
   "./hono":                     { "types": "./dist/adapters/hono.d.ts",            "default": "./dist/adapters/hono.js" },
   "./identity/cloudflare-access": { "types": "./dist/identity/cloudflare-access.d.ts", "default": "./dist/identity/cloudflare-access.js" },
-  "./identity/entra":             { "types": "./dist/identity/entra.d.ts",             "default": "./dist/identity/entra.js" }
+  "./identity/entra":             { "types": "./dist/identity/entra.d.ts",             "default": "./dist/identity/entra.js" },
+  "./identity/console-pairing":   { "types": "./dist/identity/console-pairing.d.ts",   "default": "./dist/identity/console-pairing.js" }
 }
 ```
 
@@ -827,6 +828,17 @@ The v0.2 reference audit sinks — `JsonlFileAudit`, `WebhookAudit`,
 they carry no runtime dependency (`node:fs` is built-in; `fetch` is native to Node
 24), so there is no optional peer dep to isolate and a single
 `import { JsonlFileAudit } from "mcp-sso"` is the intended consumer shape.
+Quickstart secret persistence (`loadOrCreateQuickstartSecrets`, §17.8) is
+root-exported for the same reason (it depends only on `jose` + node builtins).
+The console-pairing identity (§17.5) ships as the `./identity/console-pairing`
+subpath, parallel to the other identity ports; its framework-free authorize
+helpers (`handlePairingAuthorize`, `renderPairingPage`) are root-exported so a
+consumer can mount the pairing surface alongside the `skipAuthorize` adapter
+option (the in-repo example imports them from source; package consumers import
+them from the root entry). The framework-free `Bridge` class — the central object
+a consumer constructs and passes to a framework adapter — is root-exported
+(`import { Bridge, RequestAuthorizer } from "mcp-sso"`). Deployer guidance for the audit sinks lives in
+[`docs/audit-deployment.md`](./audit-deployment.md).
 
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —
@@ -864,10 +876,10 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | 🔒 v0.2 contract locked | §17.2 |
 | Device authorization grant (RFC 8628) | 🔒 v0.2 contract locked | §17.3 |
 | Entra group→scope ceiling (Gate 2) | 🔒 v0.2 contract locked | §17.4 |
-| Console-pairing identity | 🔒 v0.2 contract locked | §17.5 |
+| Console-pairing identity | ✅ v0.2 shipped (S1b) — `createConsolePairingIdentity`, 12-char base-20 code, lazy/single-use/TTL/attempt-cap, `oauth.pairing.attempt` | §17.5 |
 | `GenericOidcIdentity` + Google preset + GitHub port | 🔒 v0.2 contract locked | §17.6 |
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
-| Quickstart secret persistence | 🔒 v0.2 contract locked | §17.8 |
+| Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
 
 **RC re-check gate:** the 2026-07-28 RC is treated as additive hardening built in
 now; revisit it when it finalizes (~end July 2026) before anything is called v1.0.
@@ -1308,6 +1320,17 @@ groupAuthorization?: {
 
 ### 17.5 Console-pairing identity (zero-IdP setup)
 
+> **SHIPPED S1b** (`src/identity/console-pairing.ts`, subpath
+> `./identity/console-pairing`; the example's `DEV_STUB_SUBJECT` dev bypass is
+> deleted — a real gate replaces no-gate). The framework-free authorize
+> orchestration is `handlePairingAuthorize` (`src/adapters/pairing-flow.ts`),
+> mounted via the adapters' `skipAuthorize` option; `beginSession()` generates +
+> prints the code lazily (one active code per process, reused while live), and
+> `verify({ code, nonce, ip? })` does the timing-safe check + emits
+> `oauth.pairing.attempt`. The code is NEVER audited — it is 12 chars, below the
+> 32-char redactor in `src/audit/util.ts`, so the event's `reason` is always an
+> enum literal (asserted in `test/identity-console-pairing.test.ts`).
+
 `createConsolePairingIdentity({ subject = "console-operator",
 codeTtlSeconds = 600, maxAttempts = 5, output = stderr })` — an
 `IdentityPort` for single-operator deployments: a one-time code is printed to
@@ -1337,9 +1360,13 @@ gate replaces no-gate).
   the operator. Log pipelines (docker logs, CloudWatch, Loki) EXTEND that
   boundary — codes land in them; TTL + single-use + attempt cap bound but do
   not eliminate the exposure. **Deployment envelope: single-operator/personal
-  deployments with operator-private console output. Explicit non-goal
-  everywhere else** — multi-operator or shared-log environments must use a
-  real IdP port. The printed banner and docs say exactly this.
+  deployments with operator-private console output + LOOPBACK binding.** A host
+  example binds the pairing authorize surface to `127.0.0.1` by default
+  (`defaultListenHost`); a non-loopback bind (or tunneling the loopback
+  listener publicly) exposes the surface + the attempt budget to the network and
+  is an explicit envelope breach — public/networked deployments must use a real
+  IdP port (Cloudflare Access, etc.), not pairing. The printed banner and docs
+  say exactly this.
 - Audit: `oauth.pairing.attempt` (success/failure — brute-force evidence).
 
 ### 17.6 `GenericOidcIdentity` + Google preset + dedicated GitHub port
@@ -1467,6 +1494,13 @@ gate replaces no-gate).
 
 ### 17.8 Quickstart secret persistence (auto-keygen)
 
+> **SHIPPED S1b** (`src/quickstart.ts`, root-exported). The standalone
+> `examples/fastify-sqlite` boots zero-config via
+> `loadOrCreateQuickstartSecrets`; the env-var path (`configFromEnv`) remains for
+> production. POSIX permission check, `O_EXCL` create, `0700`/`0600`, and the
+> `.gitignore` are all asserted in `test/quickstart.test.ts` (rows S1b.1–S1b.4);
+> no ephemeral fallback under any failure mode.
+
 `loadOrCreateQuickstartSecrets({ dir = "./.mcp-sso" })` →
 `{ signingPrivateJwk, consentSigningSecret }`:
 
@@ -1486,6 +1520,20 @@ gate replaces no-gate).
   material on disk, boundary = the OS user account; production belongs in
   env/secret managers. (`npx mcp-sso init` remains a possible wrapper later;
   the function is the contract.)
+- **Filesystem-trust bar (the quickstart reference — every state-dir code path
+  meets this):** writes are `0600` (files) / `0700` (dirs) with `O_EXCL` for
+  create-don't-clobber; reads of trusted content go through `open(O_NOFOLLOW |
+  O_NONBLOCK)` + `fstat` + read-fd (atomic: refuses a symlink, won't hang on a
+  FIFO/special file, no lstat→readFile race) + a perm check (`mode & 0o077`
+  fails closed, POSIX); a pre-existing dir is `assertRealDir`'d (reject symlink
+  + group/other-accessible mode); the `.gitignore` is the managed `*\n` (write
+  into a dir we created, require exact in a pre-existing one).
+- **Parity rule:** EVERY code path that creates or reads the state dir —
+  `loadOrCreateQuickstartSecrets`, the example's Cloudflare Access branch
+  (`ensureStateDir`), the sqlite store (`openSqliteStore` chmod 0600), the audit
+  sink (`JsonlFileAudit` O_NONBLOCK) — meets this bar. A control fixed in one
+  path MUST be applied to every sibling that touches the same resource (the
+  "sweep for sibling instances" discipline — global CLAUDE.md).
 
 ### 17.9 Worked-example design notes (v0.2 examples)
 

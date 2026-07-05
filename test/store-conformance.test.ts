@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -33,6 +33,9 @@ test("SqliteStore (file): persists no raw secrets and only OAuth tables", async 
     clientId: "c", subject: "s", scopes: ["mcp:read"], expiresAt,
   });
   await store.close();
+  if (process.platform !== "win32") {
+    assert.equal(statSync(file).mode & 0o777, 0o600, "sqlite file is locked to 0600 (OAuth state: subjects + token hashes)");
+  }
   const bytes = readFileSync(file);
   assert.equal(bytes.includes(Buffer.from(rawCode)), false, "raw auth code persisted");
   assert.equal(bytes.includes(Buffer.from(rawRefresh)), false, "raw refresh token persisted");
@@ -48,3 +51,10 @@ test("SqliteStore (file): persists no raw secrets and only OAuth tables", async 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
+
+test("SqliteStore: a file: URI filename is not chmod'd (URI string not passed to chmod)", async () => {
+  // chmod'ing the literal "file:..." URI string would throw ENOENT after the DB
+  // opened; URI names are detected and skipped so valid SQLite URIs work.
+  const store = openSqliteStore("file:mcp-sso-uri-test?mode=memory");
+  await store.close();
+});

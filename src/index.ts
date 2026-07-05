@@ -66,6 +66,18 @@ export { type AuditPort, type AuthAuditEvent, type AuthAuditStatus, type AuthAud
 export { JsonlFileAudit, createJsonlFileAudit } from "./audit/jsonl-file.ts";
 export { WebhookAudit, createWebhookAudit, type WebhookAuditOptions } from "./audit/webhook.ts";
 export { combineAudit } from "./audit/combine.ts";
+// Quickstart secret persistence (§17.8) — dep-free boot helper (jose + node
+// builtins), so it ships from the root entry like the audit sinks.
+export { loadOrCreateQuickstartSecrets, type QuickstartSecrets, type QuickstartOptions } from "./quickstart.ts";
+// Console-pairing authorize surface (§17.5) — framework-free, so root-exported.
+// A consumer pairs these with the `./identity/console-pairing` subpath identity
+// and the `skipAuthorize` option on the framework adapters.
+export { handlePairingAuthorize, type PairingAuthorizeDeps } from "./adapters/pairing-flow.ts";
+export { renderPairingPage, type PairingPageInput } from "./adapters/pairing-page.ts";
+// The framework-free Bridge — the central class a consumer constructs and passes
+// to a framework adapter (root-exported so `import { Bridge } from "mcp-sso"` works;
+// previously only the adapters reached it internally).
+export { Bridge, type BridgeDeps } from "./adapters/bridge.ts";
 export {
   type StorePort, type AuthCodeRecord, type RefreshTokenRecord,
   type SaveAuthCodeInput, type SaveRefreshTokenInput,

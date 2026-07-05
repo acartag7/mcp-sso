@@ -50,6 +50,10 @@
     "./identity/entra": {
       "types": "./dist/identity/entra.d.ts",
       "default": "./dist/identity/entra.js"
+    },
+    "./identity/console-pairing": {
+      "types": "./dist/identity/console-pairing.d.ts",
+      "default": "./dist/identity/console-pairing.js"
     }
   },
   "files": [

@@ -82,10 +82,12 @@ bridge mints its **own** audience-bound tokens.
     layer on top of OAuth) tokens via auth-code + PKCE, resolves the right
     tenant automatically, checks the token wasn't replayed (nonce), and
     allowlists users by their stable object ID.
-  - **Dev stub** (`DEV_STUB_SUBJECT`) — for local development only, bypasses
-    identity entirely so you can run the OAuth dance without standing up an
-    IdP. Never for production; see the caveat under [Live client
-    verification](#live-client-verification) below.
+  - **Console pairing** (`/identity/console-pairing`) — zero-setup identity for
+    single-operator deployments: a one-time code prints to the server console
+    and is pasted at the consent step. Real OAuth with **no IdP to stand up** —
+    meant to be easier than generating an API key. It replaced the old
+    `DEV_STUB_SUBJECT` dev bypass; see the single-operator boundary under
+    [Live client verification](#live-client-verification) below.
 - **Framework adapters** — `/fastify`, `/express`, `/hono`: thin route
   wiring, all logic lives in the framework-free core.
 - **Stores** — `node:sqlite` (built into Node 24, **the recommended
@@ -132,10 +134,12 @@ CF_ACCESS_AUDIENCE=... CF_ACCESS_CERTS_URL=... CF_ACCESS_ISSUER=... \
 node examples/fastify-sqlite/index.ts
 ```
 
-For local dev without Cloudflare Access, set `DEV_STUB_SUBJECT=user@localhost`
-(the identity port accepts any non-empty assertion) and
-`OAUTH_ALLOW_INSECURE_LOCALHOST=true` (http on loopback only). Then point
-Claude Code or claude.ai at `https://api.example.com/mcp`.
+For zero-setup local dev (no IdP, no signing material to generate), the
+standalone example auto-generates + persists its signing key and consent secret
+([§17.8](docs/contracts.md)) and uses console pairing ([§17.5](docs/contracts.md)):
+just `node examples/fastify-sqlite/index.ts` and paste the code printed to the
+console. (Loopback http is permitted by default; override `OAUTH_ISSUER` /
+`OAUTH_RESOURCE` to a real `https://` origin for a deployment.)
 
 ## Enterprise: the Entra DCR wall
 
@@ -178,7 +182,8 @@ tokens.
   log. Reference sinks ship and are fail-open by design: a JSONL file sink
   (`0600`, append-only, log-injection-safe), an https-only no-redirect webhook
   sink, and `combineAudit(...sinks)` fan-out — an audit-write failure never
-  blocks the auth flow.
+  blocks the auth flow. Deployer guide (three delivery paths, fail-open
+  residual): [`docs/audit-deployment.md`](docs/audit-deployment.md).
 
 ## Alternatives
 
@@ -188,7 +193,7 @@ Okta, and most enterprise SSO), that's exactly what this library does.
 
 | Project | What it is | Choose it if… |
 | --- | --- | --- |
-| **mcp-sso** (this repo) | Resource-server verifier + a DCR/PKCE/consent bridge, with pluggable identity (Cloudflare Access, Entra ID, dev stub). | Your IdP doesn't speak DCR — Entra, Okta, most enterprise SSO. |
+| **mcp-sso** (this repo) | Resource-server verifier + a DCR/PKCE/consent bridge, with pluggable identity (Cloudflare Access, Entra ID, console pairing). | Your IdP doesn't speak DCR — Entra, Okta, most enterprise SSO. |
 | [`mcp-auth`](https://github.com/mcp-auth/js) | Resource-server-only auth for Node MCP servers. | Your IdP **already** speaks DCR/OAuth 2.1 — [check the compatibility list](https://mcp-auth.dev/provider-list) — and you just need the resource-server wiring. |
 | [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | A full OAuth 2.1 authorization server for MCP; ships `client_credentials` and device-code (RFC 8628) today. | You need `client_credentials` or device-flow **today** — both are on our v0.2 roadmap (contracts locked, not yet shipped) — and are fine bringing your own storage/consent/identity model. |
 | [`workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) | Cloudflare's OAuth 2.1 provider library, KV-backed. | Your MCP server **is** a Cloudflare Worker. |
@@ -196,14 +201,10 @@ Okta, and most enterprise SSO), that's exactly what this library does.
 
 ## Roadmap — not yet shipped
 
-- **First-run console-pairing identity** — a one-time code printed to the
-  server console, pasted at consent: real OAuth with zero IdP setup, meant to
-  be *easier* than generating an API key. Replaces `DEV_STUB_SUBJECT` as the
-  quickstart path.
 - **GitHub / Google identity presets** — `GenericOidcIdentity` plus
   ready-made presets, refactoring the Entra port onto the same generic base.
-- **Quickstart ergonomics** — auto-generate the signing key + consent secret
-  on first boot (persisted, fail-closed), likely an `npx mcp-sso init`.
+- **Quickstart CLI** — an `npx mcp-sso init` wrapper around the shipped
+  `loadOrCreateQuickstartSecrets` helper (the helper itself already ships).
 - **CIMD** over the already-present SSRF-guarded `FetcherPort` boundary.
 - **`client_credentials` grant** (the official MCP extension
   `io.modelcontextprotocol/oauth-client-credentials`, for headless/M2M
@@ -236,13 +237,14 @@ a manual step, tracked here:
 | claude.ai custom connector | ✅ verified† | 2026-07-04 | named Cloudflare tunnel on a real domain; same as above |
 
 † **These two rows verify the DCR/OAuth mechanics, not the production
-identity leg.** Both ran against the example's `DEV_STUB_SUBJECT` stub,
-which **bypasses identity entirely** so the OAuth dance can complete
-without Cloudflare Access (MCP clients don't send `Cf-Access-Jwt-Assertion`
-on their own). The real Cloudflare Access identity check — header-injected,
-fail-closed — still needs its own live-client verification. Never run the
-stub against a public URL for longer than a verification window; see the
-reproduction steps below.
+identity leg.** Both originally ran against the example's `DEV_STUB_SUBJECT`
+stub (now **removed** — replaced by console pairing, [§17.5](docs/contracts.md)),
+which let the OAuth dance complete without Cloudflare Access (MCP clients don't
+send `Cf-Access-Jwt-Assertion` on their own). The console-pairing flow is covered
+by the automated e2e (`test/e2e-pairing.test.ts`); the real Cloudflare Access
+identity check — header-injected, fail-closed — still needs its own live-client
+verification. Console pairing is for single-operator/private-console deployments
+only — never expose it on a public URL; see the reproduction steps below.
 
 **Tunnel gotchas:** anonymous quick tunnels are unreliable for this; use a
 named tunnel with an explicit `ingress:` config. Full write-up:
@@ -251,20 +253,31 @@ named tunnel with an explicit `ingress:` config. Full write-up:
 To run the client checks yourself:
 
 ```bash
-# 1. Start the example locally (Claude Code can reach http://localhost directly):
-OAUTH_ISSUER=http://localhost OAUTH_RESOURCE=http://localhost/mcp \
-OAUTH_CONSENT_SIGNING_SECRET=$(openssl rand -hex 32) \
-OAUTH_SIGNING_PRIVATE_JWK='{"kty":"EC","crv":"P-256",...}' \
-OAUTH_ALLOW_INSECURE_LOCALHOST=true DEV_STUB_SUBJECT=local@dev \
+# 1. Start the example locally — zero-config: signing key + consent secret are
+#    auto-generated (§17.8) and identity is console pairing (§17.5). Paste the
+#    code printed to the console:
 node examples/fastify-sqlite/index.ts
 
 # 2a. Claude Code (local — no tunnel):
 claude mcp add --transport http my-bridge http://localhost:3000/mcp
 #   → a browser opens to the consent page; approve; the tool is callable.
 
-# 2b. claude.ai (needs a public https URL). A named Cloudflare tunnel on a
-#     domain you control is the reliable option — see docs/troubleshooting.md
-#     for why the ad-hoc `--url` forms aren't:
+# 2b. claude.ai (needs a public https URL + a REAL identity provider). A named
+#     Cloudflare tunnel on a domain you control is the reliable option — see
+#     docs/troubleshooting.md for why the ad-hoc `--url` forms aren't.
+#
+#     IMPORTANT: do NOT tunnel the zero-setup console-pairing path (step 1) for
+#     public verification — pairing is loopback / single-operator only; exposing
+#     it on a public URL breaks its trust envelope (anyone who can reach it can
+#     spend the pairing attempt budget). Use the Cloudflare Access production
+#     path instead (a real IdP gates identity):
+OAUTH_ISSUER=https://mcp-sso-verify.yourdomain.com \
+OAUTH_RESOURCE=https://mcp-sso-verify.yourdomain.com/mcp \
+OAUTH_CONSENT_SIGNING_SECRET=$(openssl rand -hex 32) \
+OAUTH_SIGNING_PRIVATE_JWK='{"kty":"EC","crv":"P-256",...}' \
+CF_ACCESS_AUDIENCE=... CF_ACCESS_CERTS_URL=... CF_ACCESS_ISSUER=... \
+node examples/fastify-sqlite/index.ts &
+cloudflared tunnel route dns <your-tunnel-id> mcp-sso-verify.yourdomain.com
 cat > tunnel-config.yml <<CFG
 tunnel: <your-tunnel-id>
 credentials-file: /path/to/<your-tunnel-id>.json
@@ -273,10 +286,7 @@ ingress:
     service: http://localhost:3000
   - service: http_status:404
 CFG
-cloudflared tunnel route dns <your-tunnel-id> mcp-sso-verify.yourdomain.com
 cloudflared tunnel --config tunnel-config.yml run
-#   → set OAUTH_ISSUER/OAUTH_RESOURCE to https://mcp-sso-verify.yourdomain.com
-#     before starting the server, so the metadata matches.
 #   → in claude.ai, add https://mcp-sso-verify.yourdomain.com/mcp as a custom
 #     connector; approve; connect.
 ```
