@@ -129,8 +129,15 @@ export class Bridge {
   }
 
   async handleRevoke(req: NormRequest): Promise<NormResponse> {
-    await this.token.revoke(formField(formObject(req.body), "token"));
-    return { status: 200, headers: { "cache-control": "no-store" }, body: {} };
+    // RFC 7009 unrecognized-token is still 200 (handled inside revoke()); this
+    // catch is for unexpected throws (e.g. store outage), which must map to the
+    // §9.5 body like every other route — never a framework-shaped error.
+    try {
+      await this.token.revoke(formField(formObject(req.body), "token"));
+      return { status: 200, headers: { "cache-control": "no-store" }, body: {} };
+    } catch (error) {
+      return oauthErrorResponse(asOAuth(error));
+    }
   }
 
   private async guard(req: NormRequest, prefix: string): Promise<void> {
