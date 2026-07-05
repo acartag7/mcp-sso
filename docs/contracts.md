@@ -715,7 +715,11 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
   so a successor committed mid-sweep can never be swept. **Pool sizing is the
   deployer's responsibility** — `createMysqlStore(config)` accepts a `mysql2`
   `PoolOptions` object (or URI string), so `connectionLimit` is set there; provision
-  it for peak refresh-rotation concurrency (the default is 10). Two performance
+  it for peak refresh-rotation concurrency (the default is 10). **Pool ownership:**
+  `createMysqlStore` owns the pool it creates (`close()` ends it); constructing
+  `new MysqlStore(appPool)` with a caller-supplied shared pool leaves ownership — and
+  the `close()` lifecycle — with the caller, so closing the store won't tear down a
+  pool other components still use. Two performance
   trade-offs are accepted as-is, both because the path is low-QPS OAuth state, not a
   hot loop: (1) `READ COMMITTED` is set per transaction (one extra ~1ms round-trip)
   because `mysql2`'s pool exposes no per-connection init hook to set it once; (2)

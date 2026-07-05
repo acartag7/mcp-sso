@@ -89,10 +89,11 @@ bridge mints its **own** audience-bound tokens.
 - **Framework adapters** — `/fastify`, `/express`, `/hono`: thin route
   wiring, all logic lives in the framework-free core.
 - **Stores** — `node:sqlite` (built into Node 24, **the recommended
-  zero-ops production store** for a single-instance MCP server) and an
-  in-memory store for tests, sharing one conformance suite (rotation
-  backfill, family-validity sweep, single-use consent JTI) that any
-  downstream SQL adapter must also pass.
+  zero-ops production store** for a single-instance MCP server), `/store/mysql`
+  (pooled `mysql2` — MySQL/MariaDB/PlanetScale-compatible, the scale path to a
+  shared DB; optional peer dep), and an in-memory store for tests, all sharing
+  one conformance suite (rotation backfill, family-validity sweep, single-use
+  consent JTI) that any further downstream SQL adapter must also pass.
 - **Supply-chain posture** — `jose` is the only runtime dependency, every
   pin is at least 15 days old before we accept it, and npm publishes run
   only through GitHub Actions with Sigstore provenance — never from a local
@@ -209,8 +210,6 @@ Okta, and most enterprise SSO), that's exactly what this library does.
   coding agent in sandboxed CI). Standard OAuth, not part of the MCP spec
   itself — a different problem than `client_credentials`, which has no human
   at all.
-- A `/store/mysql` adapter (MySQL/MariaDB/PlanetScale-compatible, protocol
-  level) as the second production store option alongside sqlite.
 
 ## Conformance
 
