@@ -21,7 +21,7 @@
 // material on disk is bounded by the OS user account; production belongs in
 // env/secret managers.
 
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { exportJWK, generateKeyPair, type JWK } from "jose";
@@ -52,12 +52,16 @@ export async function loadOrCreateQuickstartSecrets(
   const secretsPath = join(dir, SECRETS_FILE);
 
   if (await pathExists(secretsPath)) {
-    return loadExisting(secretsPath);
+    return loadExisting(dir, secretsPath);
   }
   return generateAndPersist(dir, secretsPath);
 }
 
-async function loadExisting(secretsPath: string): Promise<QuickstartSecrets> {
+async function loadExisting(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
+  // The "can never be committed" guarantee holds on RELOAD too: if .gitignore was
+  // deleted after first boot (or the dir was restored without it), re-create it;
+  // if it has been tampered with, fail closed. Runs before the secrets perm check.
+  await ensureGitignore(dir);
   // POSIX perm check BEFORE reading: a loose-permission file is a boot failure
   // even if its contents are valid — never process a file the operator hasn't
   // locked down. Skipped on Windows (mode bits are not meaningful there).
@@ -166,25 +170,49 @@ async function generateAndPersist(dir: string, secretsPath: string): Promise<Qui
   return { signingPrivateJwk, consentSigningSecret };
 }
 
+/** The exact .gitignore content the quickstart writes/manages. Anything else
+ *  (an operator's file, a negation, a symlink) fails closed — we never parse
+ *  arbitrary gitignore semantics (negations, anchoring, globs), which is a
+ *  whack-a-mole every git semantic loses. Covers BOTH first-boot and reload. */
+const GITIGNORE_CONTENT = "*\n";
+
 async function ensureGitignore(dir: string): Promise<void> {
   const path = join(dir, GITIGNORE_FILE);
+  // Missing → create it (O_EXCL; if one appears between the check and write, the
+  // EEXIST fall-through below verifies it). This re-creates a .gitignore deleted
+  // after first boot, restoring the "can never be committed" guarantee on reload.
   try {
-    await writeFile(path, "*\n", { flag: "wx", mode: FILE_MODE });
-    return; // created fresh — `*` covers everything
+    await writeFile(path, GITIGNORE_CONTENT, { flag: "wx", mode: FILE_MODE });
+    return;
   } catch (error) {
     if (!isExist(error)) {
       throw new AuthConfigError(`quickstart: cannot write ${GITIGNORE_FILE}: ${errMsg(error)}`);
     }
-    // EEXIST — a regular file OR a symlink (`wx`/O_EXCL fails on both WITHOUT
-    // following): refuse to trust OR overwrite it. git's .gitignore semantics are
-    // too rich to evaluate safely — negations (`!secrets.json`), anchoring
-    // (`!/secrets.json`), symlinks git will not follow, `**`, char classes — and
-    // each is a way the "can never be committed" guarantee silently breaks. Only
-    // the file we just created exclusively is trusted; the operator uses a fresh
-    // dir or removes the existing entry. (Never readFile it — that would follow a
-    // symlink and accept content git itself ignores.)
+  }
+  // Exists — verify it is OURS. Refuse a symlink first (lstat does NOT follow; git
+  // ignores symlinked .gitignore files, so following + accepting would write a
+  // committable key). Then require the exact content; any deviation fails closed
+  // (the operator moves the file aside or uses a fresh dir).
+  let lst;
+  try {
+    lst = await lstat(path);
+  } catch (error) {
+    throw new AuthConfigError(`quickstart: cannot lstat ${GITIGNORE_FILE}: ${errMsg(error)}`);
+  }
+  if (lst.isSymbolicLink()) {
     throw new AuthConfigError(
-      `quickstart: ${path} already exists; refusing to trust or overwrite it (move or remove it, or point MCP_SSO_DIR at a fresh directory)`,
+      `quickstart: ${path} is a symlink; git does not follow symlinked .gitignore files — replace it with a real file`,
+    );
+  }
+  let existing: string;
+  try {
+    existing = await readFile(path, "utf8");
+  } catch (error) {
+    throw new AuthConfigError(`quickstart: cannot read ${GITIGNORE_FILE}: ${errMsg(error)}`);
+  }
+  if (existing !== GITIGNORE_CONTENT) {
+    throw new AuthConfigError(
+      `quickstart: ${path} is not the quickstart-managed ignore (expected a single \`*\` line); move or remove it, or point MCP_SSO_DIR at a fresh directory`,
     );
   }
 }

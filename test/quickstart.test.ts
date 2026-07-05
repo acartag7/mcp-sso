@@ -158,25 +158,28 @@ test("O_EXCL: an existing secrets.json is loaded, never overwritten (no silent k
   });
 });
 
-test("§17.8: a fresh dir writes `*\n`; ANY pre-existing .gitignore fails closed (covering or not)", async () => {
-  // gitignore semantics are too rich to evaluate safely (negations, anchoring,
-  // symlinks, **, char classes) — the helper trusts ONLY the `*` it writes
-  // exclusively itself. A pre-existing .gitignore of any content fails closed.
+test("§17.8: fresh dir writes `*\n`; pre-existing .gitignore must be exactly ours (else fail closed)", async () => {
+  // We never parse arbitrary gitignore (negations, anchoring, globs, symlinks) —
+  // only the exact `*\n` we manage is trusted. Anything else fails closed.
   await withDir(async (dir) => {
     const target = join(dir, "state");
     await mkdir(target, { recursive: true });
 
-    // Non-covering → fail closed.
+    // Non-matching content → fail closed.
     await writeFile(join(target, ".gitignore"), "*.log\n", { mode: 0o600 });
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
 
-    // "Covering" by exact name → ALSO fail closed (we do not parse content).
+    // "Covering" by exact name but not our content → fail closed.
     await writeFile(join(target, ".gitignore"), "secrets.json\n", { mode: 0o600 });
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
 
     // A negation that un-ignores the secret → fail closed.
     await writeFile(join(target, ".gitignore"), "*\n!secrets.json\n", { mode: 0o600 });
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+
+    // Our exact content (`*\n`) from a prior partial run → accepted (recovery).
+    await writeFile(join(target, ".gitignore"), "*\n", { mode: 0o600 });
+    await loadOrCreateQuickstartSecrets({ dir: target });
 
     // A fresh dir (no .gitignore) → writes `*` and succeeds.
     const fresh = join(dir, "fresh");
@@ -186,15 +189,30 @@ test("§17.8: a fresh dir writes `*\n`; ANY pre-existing .gitignore fails closed
 });
 
 test("§17.8 (Codex): a symlinked .gitignore fails closed (git does not follow symlinks)", async () => {
-  // git ignores symlinked .gitignore files in the working tree, so following the
-  // symlink and accepting its content would write a committable key. O_EXCL fails
-  // on the symlink without following it → fail closed.
   if (process.platform === "win32") return; // symlink creation needs elevated perms on Windows
   await withDir(async (dir) => {
     const target = join(dir, "state");
     await mkdir(target, { recursive: true });
     await writeFile(join(dir, "fake-gitignore"), "*\n", { mode: 0o600 });
     await symlink(join(dir, "fake-gitignore"), join(target, ".gitignore"));
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+  });
+});
+
+test("§17.8 (Codex round 4): reload re-creates a deleted .gitignore; a tampered one fails closed", async () => {
+  // The "can never be committed" guarantee holds on RELOAD too, not just first boot.
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    const first = await loadOrCreateQuickstartSecrets({ dir: target });
+
+    // .gitignore deleted after first boot → reload re-creates it and loads the key.
+    await rm(join(target, ".gitignore"), { force: true });
+    const reloaded = await loadOrCreateQuickstartSecrets({ dir: target });
+    assert.deepEqual(reloaded, first);
+    assert.equal(await readFile(join(target, ".gitignore"), "utf8"), "*\n", "ignore re-created on reload");
+
+    // .gitignore tampered post-boot → reload fails closed (key now committable).
+    await writeFile(join(target, ".gitignore"), "*.log\n", { mode: 0o600 });
     await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
   });
 });

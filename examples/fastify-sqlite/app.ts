@@ -60,7 +60,7 @@ export async function buildApp(opts: ExampleOptions) {
     // Zero-setup mode: registerOAuthRoutes skips /oauth/authorize; we mount a
     // GET (render pairing page) + POST (verify code → consent page) via the
     // framework-free handlePairingAuthorize orchestrator.
-    registerOAuthRoutes(app, { bridge, skipAuthorize: true });
+    await registerOAuthRoutes(app, { bridge, skipAuthorize: true });
     const pairing = opts.pairing;
     app.get("/oauth/authorize", async (req, reply) => {
       await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req as never)));
@@ -69,7 +69,10 @@ export async function buildApp(opts: ExampleOptions) {
       await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req as never)));
     });
   } else {
-    registerOAuthRoutes(app, { bridge, identity: opts.identity, identityHeader: opts.identityHeader });
+    // Awaited so a missing `identity` (now optional for the pairing mode) rejects
+    // buildApp fast via registerOAuthRoutes' runtime guard, instead of becoming an
+    // unhandled rejection with a partially-registered app.
+    await registerOAuthRoutes(app, { bridge, identity: opts.identity, identityHeader: opts.identityHeader });
   }
 
   // Protected /mcp: verify the bridge-issued access token, then delegate to an MCP server.

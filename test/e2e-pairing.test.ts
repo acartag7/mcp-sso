@@ -200,3 +200,16 @@ test("S1b: a wrong pairing code re-renders the pairing page (not a 401, not the 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("S1b (Codex round 4): header mode without identity rejects fast (no floating promise)", async () => {
+  // `identity` is optional only for the pairing mode. In header mode without it,
+  // registerOAuthRoutes' runtime guard rejects and buildApp must propagate that
+  // (the call is awaited) rather than resolve with a partially-registered app.
+  const config = createBridgeConfig({
+    issuer: ISSUER, resource: RESOURCE, consentSigningSecret: "x".repeat(40), signingPrivateJwk: jwk(), signingKeyId: "k",
+    redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"], allowedOrigins: [ISSUER],
+    dcr: { mode: "stateless" }, dev: { allowInsecureLocalhost: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  await assert.rejects(buildApp({ config }), /identity is required/);
+});
