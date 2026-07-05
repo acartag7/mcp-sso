@@ -184,6 +184,32 @@ test("§17.8: a pre-existing non-covering .gitignore fails closed; a covering on
   });
 });
 
+test("§17.8 (Codex P2): a `*` line followed by `!secrets.json` UN-ignores the secret → fail closed", async () => {
+  // gitignore is last-match-wins: the negation makes secrets.json committable,
+  // so a naive "any `*` line ⇒ covered" check is wrong. The helper must evaluate
+  // negations and refuse to write the key into a dir where it would be committed.
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, ".gitignore"), "*\n!secrets.json\n", { mode: 0o600 });
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+  });
+});
+
+test("§17.8: `*.json` and `secrets*` patterns cover secrets.json; a slashed pattern fails closed", async () => {
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    await mkdir(target, { recursive: true });
+    // A glob that matches secrets.json is accepted.
+    await writeFile(join(target, ".gitignore"), "*.json\n", { mode: 0o600 });
+    await loadOrCreateQuickstartSecrets({ dir: target });
+    await rm(join(target, "secrets.json"), { force: true });
+    // A slashed/anchored pattern we can't safely evaluate → fail closed.
+    await writeFile(join(target, ".gitignore"), "subdir/secrets.json\n", { mode: 0o600 });
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+  });
+});
+
 test("unwritable directory fails closed (no ephemeral fallback)", async () => {
   await withDir(async (dir) => {
     const target = join(dir, "state");

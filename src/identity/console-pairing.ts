@@ -215,8 +215,10 @@ export function canonicalizePairingCode(input: string): string {
 }
 
 function timingSafeStringEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false; // length precheck — timingSafeEqual throws on mismatch
-  return timingSafeEqual(Buffer.from(a), Buffer.from(b)); // constant-time over equal lengths
+  // BYTE length, not JS .length: a non-ASCII nonce of matching .length (e.g. 24
+  // "é") encodes to more bytes and would otherwise make timingSafeEqual throw.
+  const ab = Buffer.from(a, "utf8"), bb = Buffer.from(b, "utf8");
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
 export function generatePairingCode(): string {

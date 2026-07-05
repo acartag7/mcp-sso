@@ -182,11 +182,31 @@ async function ensureGitignore(dir: string): Promise<void> {
   }
 }
 
-/** A blanket `*` or an exact `secrets.json` line covers the secrets file. Anything
- *  narrower fails closed — the operator makes the ignore explicit. */
+/** Would git ignore SECRETS_FILE under this .gitignore? Last-match-wins with
+ *  negation support — a later `!secrets.json` UN-ignores it (the case a naive
+ *  "any `*` line" check misses). Conservative: only simple slash-free globs over
+ *  the basename are evaluated; unfamiliar patterns (anchored paths, `**`, char
+ *  classes) are treated as non-matching so the caller fails closed rather than
+ *  over-claiming coverage. */
 function gitignoreCoversSecrets(content: string): boolean {
-  const lines = content.split(/\r?\n/).map((l) => l.trim());
-  return lines.some((l) => l === "*" || l === SECRETS_FILE);
+  let ignored = false;
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const negation = line.startsWith("!");
+    const pattern = negation ? line.slice(1) : line;
+    if (patternMatchesSecrets(pattern)) ignored = !negation;
+  }
+  return ignored;
+}
+
+/** Conservative basename glob match for SECRETS_FILE. Returns false for patterns
+ *  we can't safely reason about, so the caller fails closed. */
+function patternMatchesSecrets(pattern: string): boolean {
+  if (pattern === "*") return true;
+  if (pattern.includes("/") || pattern.includes("**") || pattern.includes("[") || pattern.includes("\\")) return false;
+  const re = new RegExp("^" + pattern.split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
+  return re.test(SECRETS_FILE);
 }
 
 async function pathExists(p: string): Promise<boolean> {

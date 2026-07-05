@@ -152,10 +152,21 @@ test("nonce binding: the correct code with the wrong nonce is rejected", async (
   const { identity, cap } = newIdentity();
   const session = await identity.beginSession();
   const code = codesFrom(cap.text())[0]!;
-  const wrongNonce = await identity.beginSession(); // would reuse — get nonce a different way
-  void wrongNonce;
   const r = await identity.verify({ code, nonce: "not-the-real-nonce-AAAAAAAAAAAAAAAA" });
   assert.equal(r.ok, false, "code cannot be consumed without its session nonce");
+});
+
+test("SECURITY: a non-ASCII nonce of matching JS length does not throw (byte-length compare)", async () => {
+  // Codex P2: a 24-char non-ASCII nonce has the same .length as the real (ASCII)
+  // nonce but more UTF-8 bytes — timingSafeEqual used to throw → 500. The byte-
+  // length precheck must reject it cleanly (fail-closed), not throw.
+  const { identity, cap } = newIdentity();
+  const session = await identity.beginSession();
+  const code = codesFrom(cap.text())[0]!;
+  const hostile = "é".repeat(session.nonce.length);
+  assert.equal(hostile.length, session.nonce.length, "same JS length, different byte length");
+  const r = await identity.verify({ code, nonce: hostile }); // must NOT throw
+  assert.equal(r.ok, false);
 });
 
 test("a bare string input (e.g. a header value) fails closed", async () => {
