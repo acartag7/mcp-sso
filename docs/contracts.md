@@ -1435,12 +1435,16 @@ gate replaces no-gate).
     `O_APPEND` writes, file created `0600`; NO rotation (logrotate is the
     deployer's).
   - `WebhookAudit(url, { timeoutMs = 5000, headers?, fetchImpl? })` — per-event
-    POST, https required (raw prefix check), redirects not followed, at-most-once
-    (no retry). Deliberately NOT behind the 17.1 SSRF guard: the URL is
-    static deployer config (trusted), and SIEM collectors legitimately live
-    on private networks — documented rationale. `fetchImpl` is an optional DI
-    seam (defaults to the global `fetch`) for test-injecting the transport
-    without an https server; not a deployer-facing knob.
+    POST, https required (raw prefix check), userinfo (`user:pass@`) rejected at
+    construction (credentials belong in `headers`; a fetch error would otherwise
+    echo the URL), redirects not followed, at-most-once (no retry). Deliberately
+    NOT behind the 17.1 SSRF guard: the URL is static deployer config (trusted),
+    and SIEM collectors legitimately live on private networks — documented
+    rationale. `fetchImpl` is an optional DI seam (defaults to the global
+    `fetch`) for test-injecting the transport without an https server; not a
+    deployer-facing knob. Error messages reaching stderr are redacted
+    (`src/audit/util.ts`) and known header values scrubbed — a transport that
+    echoes request headers/body into an Error.message cannot leak them.
   - `combineAudit(...sinks)` — fan-out; one sink's failure never stops the
     others.
 - **Failure policy:** an audit-write failure NEVER blocks the auth operation

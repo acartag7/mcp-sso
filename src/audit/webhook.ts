@@ -22,14 +22,18 @@
 //   - Fail-open: writeAuthEvent NEVER rejects (audit is evidence, not a gate).
 //   - No secret leakage on failure: the deployer's `headers` may carry a SIEM
 //     bearer token, and the payload — though metadata-only — is never echoed.
-//     stderr carries only the request's host and the error class, never headers,
-//     body, or query.
+//     The error message is NOT trusted (a fetch implementation may echo request
+//     headers/body into it); it is redacted via safeErrorMessage and the known
+//     header values are scrubbed before reaching stderr (threat-model #14). The
+//     stderr line carries the host and a redacted diagnostic, never the raw
+//     headers, body, or query.
 //
 // Testability: an optional `fetchImpl` (defaults to the global) lets tests
 // assert on init options without a real https server. It is a normal DI seam
 // (the codebase injects Redis/Pool clients the same way), not test-only surface.
 
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
+import { safeErrorMessage } from "./util.ts";
 
 export interface WebhookAuditOptions {
   /** Per-request deadline. Default 5000 ms (§17.7). */
@@ -65,6 +69,13 @@ export class WebhookAudit implements AuditPort {
       // exotic scheme slipping past `startsWith` is rejected here too.
       throw new Error("WebhookAudit: url must be https://");
     }
+    if (parsed.username || parsed.password) {
+      // Credentials embedded in the URL are a leak hazard: a fetch transport
+      // error (or any future log of the URL) would write them to stderr, and
+      // regex redaction cannot reliably catch arbitrary short `user:pass@`
+      // values. Fail closed — pass credentials via `headers` instead.
+      throw new Error("WebhookAudit: url must not contain userinfo (user:pass@); pass credentials via `headers`");
+    }
     this.url = url;
     this.host = parsed.host;
     this.timeoutMs = options.timeoutMs ?? 5000;
@@ -89,19 +100,28 @@ export class WebhookAudit implements AuditPort {
         );
       }
     } catch (error) {
-      // Timeout, DNS, connection refused, TLS — all fail-open. The message from
-      // fetch is generic (no request headers/body); host alone is safe to log.
+      // Timeout, DNS, connection refused, TLS — all fail-open. The error message
+      // is redacted (and known header values scrubbed) before reaching stderr.
       console.error(
-        `[mcp-sso] audit webhook write failed to ${this.host}: ${errorMessage(error)}`,
+        `[mcp-sso] audit webhook write failed to ${this.host}: ${this.safeError(error)}`,
       );
     }
+  }
+
+  /** Redact secret-shaped substrings from `error`, then precisely remove the
+   *  deployer's own header values (e.g. a SIEM bearer token) in case the regex
+   *  redactor missed a non-standard format. Never throws. */
+  private safeError(error: unknown): string {
+    let msg = safeErrorMessage(error);
+    for (const value of Object.values(this.headers)) {
+      if (typeof value === "string" && value.length >= 8) {
+        msg = msg.split(value).join("[redacted]");
+      }
+    }
+    return msg;
   }
 }
 
 export function createWebhookAudit(url: string, options?: WebhookAuditOptions): WebhookAudit {
   return new WebhookAudit(url, options);
-}
-
-function errorMessage(error: unknown): string {
-  return String((error as { message?: unknown } | null)?.message ?? error);
 }
