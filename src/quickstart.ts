@@ -58,29 +58,24 @@ export async function loadOrCreateQuickstartSecrets(
 }
 
 async function loadExisting(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
-  // The "can never be committed" guarantee holds on RELOAD too: if .gitignore was
-  // deleted after first boot (or the dir was restored without it), re-create it;
-  // if it has been tampered with, fail closed. Runs before the secrets perm check.
-  // We did NOT create this dir this process (secrets.json pre-existed), so we
-  // can't safely CREATE a .gitignore here — a stray secrets.json in a repo root
-  // must not trigger a `*` write that hides the operator's tree. Require it exact.
+  // Reload: we did NOT create this dir this process → require our exact `*\n`
+  // .gitignore already present (never create one here).
   await ensureGitignore(dir, false);
-  // POSIX perm check BEFORE reading: a loose-permission file is a boot failure
-  // even if its contents are valid — never process a file the operator hasn't
-  // locked down. Skipped on Windows (mode bits are not meaningful there).
-  if (process.platform !== "win32") {
-    let st;
-    try {
-      st = await stat(secretsPath);
-    } catch (error) {
-      throw new AuthConfigError(`quickstart: cannot stat ${secretsPath}: ${errMsg(error)}`);
-    }
-    if (st.mode & 0o077) {
-      const octal = (st.mode & 0o777).toString(8).padStart(3, "0");
-      throw new AuthConfigError(
-        `quickstart: ${secretsPath} is group/other-accessible (mode ${octal}); run: chmod 600 ${secretsPath}`,
-      );
-    }
+  // lstat (no follow) BEFORE read: refuse a symlinked secrets.json — the dir's `*`
+  // .gitignore covers the symlink PATH, not a target elsewhere (e.g. -> ../x),
+  // so following it would load committable key material (§17.8 violation).
+  let lst;
+  try {
+    lst = await lstat(secretsPath);
+  } catch (error) {
+    throw new AuthConfigError(`quickstart: cannot stat ${secretsPath}: ${errMsg(error)}`);
+  }
+  if (lst.isSymbolicLink()) {
+    throw new AuthConfigError(`quickstart: ${secretsPath} is a symlink; replace it with a real 0600 file (a symlink target is not protected by this dir's .gitignore)`);
+  }
+  // Perm check before read (skipped on Windows); lstat reports the file's own mode.
+  if (process.platform !== "win32" && lst.mode & 0o077) {
+    throw new AuthConfigError(`quickstart: ${secretsPath} is group/other-accessible (mode ${(lst.mode & 0o777).toString(8).padStart(3, "0")}); run: chmod 600 ${secretsPath}`);
   }
 
   let raw: string;

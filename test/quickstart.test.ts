@@ -221,6 +221,21 @@ test("§17.8 (Codex): reload requires our exact .gitignore present (deleted or t
   });
 });
 
+test("§17.8 (Codex): a symlinked secrets.json is rejected (its target is not covered by .gitignore)", async () => {
+  // The dir's `*` ignore covers the symlink PATH inside the dir, not a target
+  // elsewhere (state/secrets.json -> ../secrets.json). lstat refuses to follow.
+  if (process.platform === "win32") return;
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    const first = await loadOrCreateQuickstartSecrets({ dir: target });
+    await rm(join(target, "secrets.json"), { force: true });
+    const outside = join(dir, "real-secrets.json"); // OUTSIDE the quickstart dir
+    await writeFile(outside, JSON.stringify(first), { mode: 0o600 });
+    await symlink(outside, join(target, "secrets.json"));
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+  });
+});
+
 test("§17.8 (Codex round 7): a pre-existing dir with a stray secrets.json and no .gitignore fails closed (no write)", async () => {
   // The load path must not write `*` into a pre-existing dir just because a
   // (possibly malformed) secrets.json is there — that could hide a repo's tree.
