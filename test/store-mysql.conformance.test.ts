@@ -191,6 +191,21 @@ if (RUN) {
     const tables = (rows as { TABLE_NAME: string }[]).map((r) => r.TABLE_NAME);
     assert.deepEqual(tables, [...MYSQL_OAUTH_TABLES].sort());
   });
+
+  test("MysqlStore: migrate fails closed on a non-InnoDB oauth table (Codex P2)", async () => {
+    // CREATE TABLE IF NOT EXISTS does not change a pre-existing table's engine, so a
+    // MyISAM oauth_* table would pass the strict-mode + collation guards while breaking
+    // FOR UPDATE row locking. Convert oauth_auth_codes to MyISAM and assert migrate
+    // rejects; restore InnoDB + re-migrate in finally so later tests see a clean schema.
+    await admin!.query("ALTER TABLE oauth_auth_codes ENGINE=MyISAM");
+    try {
+      await assert.rejects(createMysqlStore(MYSQL_URL as string), /InnoDB/);
+    } finally {
+      await admin!.query("ALTER TABLE oauth_auth_codes ENGINE=InnoDB");
+      const restore = await createMysqlStore(MYSQL_URL as string);
+      await restore.close();
+    }
+  });
 }
 
 function refresh(rawToken: string, familyId: string, previousTokenHash: string | null, expiresAt: string) {

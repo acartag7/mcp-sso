@@ -71,6 +71,7 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await assertStrictMode(conn);
   for (const ddl of MIGRATIONS) await conn.query(ddl);
   await assertColumnCollations(conn);
+  await assertInnoDBEngine(conn);
 }
 
 async function assertStrictMode(conn: PoolConnection): Promise<void> {
@@ -99,6 +100,26 @@ async function assertColumnCollations(conn: PoolConnection): Promise<void> {
     const sample = drifted.slice(0, 3).map((r) => `${r.TABLE_NAME}.${r.COLUMN_NAME}=${r.COLLATION_NAME}`).join(", ");
     throw new StoreInputError(
       `oauth columns must use utf8mb4_bin collation (found non-binary: ${sample}${drifted.length > 3 ? ", ..." : ""}); a case-insensitive collation would conflate distinct hashes/identifiers.`,
+    );
+  }
+}
+
+async function assertInnoDBEngine(conn: PoolConnection): Promise<void> {
+  // rotateRefreshToken's replay defense depends on InnoDB: SELECT ... FOR UPDATE takes a
+  // real row lock and transactions are atomic. CREATE TABLE IF NOT EXISTS does NOT change
+  // a pre-existing table's engine, so a MyISAM oauth_* table (older deploy, DBA change)
+  // would pass the strict-mode + collation checks while silently breaking concurrency —
+  // two refreshes both read consumed_at IS NULL, both insert successors, both "succeed".
+  // Fail closed (Codex P2).
+  const [rows] = await conn.query<RowDataPacket[]>(
+    "SELECT TABLE_NAME, ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?) AND ENGINE IS NOT NULL AND ENGINE != 'InnoDB'",
+    [[...MYSQL_OAUTH_TABLES]],
+  );
+  const bad = rows as { TABLE_NAME: string; ENGINE: string }[];
+  if (bad.length > 0) {
+    const detail = bad.map((r) => `${r.TABLE_NAME}=${r.ENGINE}`).join(", ");
+    throw new StoreInputError(
+      `oauth tables must use the InnoDB engine (found non-InnoDB: ${detail}); row locking and transactional atomicity (rotateRefreshToken replay defense) require InnoDB.`,
     );
   }
 }
