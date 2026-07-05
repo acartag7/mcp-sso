@@ -1,31 +1,30 @@
 // Quickstart secret persistence (contracts §17.8, threat-model row 23) — the
-// zero-setup boot helper. Loads `{ signingPrivateJwk, consentSigningSecret }`
-// from `${dir}/secrets.json`, or generates them on first boot and persists with
-// tight file permissions so the dir can never leak or be committed.
+// zero-setup boot helper. Loads or generates+persists { signingPrivateJwk,
+// consentSigningSecret } under ${dir}/secrets.json.
 //
 // SECURITY POSTURE — fail-closed, never ephemeral:
-//   - POSIX: a group/other-readable secrets file is a BOOT FAILURE (the operator
-//     must `chmod 600` it); the check is skipped on Windows (POSIX mode bits are
-//     meaningless there) and that skip is documented in the thrown message.
-//   - The directory is `0700`, the file is `0600` created with `O_EXCL` (flag
-//     "wx": create-only, fail if it already exists — never clobbers a real key
-//     with a freshly-generated one), and a `.gitignore` containing `*` is written
-//     into the dir so it can never be committed by accident.
-//   - An unwritable directory, partial write, unparseable JSON, or a bad-shape
-//     file is an `AuthConfigError`. There is NEVER an ephemeral in-memory
-//     fallback: silent key rotation on restart would invalidate every outstanding
-//     token while masking the misconfiguration — the opposite of fail-closed.
+//   - The directory is 0700, the secrets file is 0600 (O_EXCL create — never
+//     clobbers a real key), and a `.gitignore` of `*` is the only ignore content
+//     trusted. A group/other-readable secrets file is a BOOT FAILURE (skipped on
+//     Windows, where POSIX mode bits are meaningless).
+//   - FOLLOW-THE-LINK is closed everywhere: the dir, secrets.json, and .gitignore
+//     must all be REAL files/dirs (lstat/O_NOFOLLOW refuse symlinks — a symlink
+//     target escapes this dir's .gitignore protection), and file reads go through
+//     open(O_NOFOLLOW)+fstat+read-fd so there is no lstat→readFile race.
+//   - Unwritable dir / partial write / unparseable / bad-shape ⇒ AuthConfigError.
+//     NEVER an ephemeral fallback (silent key rotation masks misconfiguration).
 //
-// Env-var configuration remains the primary production path; this is the
-// zero-setup path (same audience as §17.5 console pairing). Plaintext key
-// material on disk is bounded by the OS user account; production belongs in
-// env/secret managers.
+// Plaintext key material on disk is bounded by the OS user account; production
+// belongs in env/secret managers.
 
-import { chmod, lstat, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, constants as fsc, lstat, mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { exportJWK, generateKeyPair, type JWK } from "jose";
 import { AuthConfigError } from "./config.ts";
+
+// O_NOFOLLOW refuses to follow a symlink at open (POSIX). Undefined on Windows.
+const O_NOFOLLOW: number | undefined = (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW;
 
 export interface QuickstartSecrets {
   /** EC P-256 private JWK (kty/crv/d/x/y) — passes `createBridgeConfig`'s §5 check. */
@@ -58,33 +57,15 @@ export async function loadOrCreateQuickstartSecrets(
 }
 
 async function loadExisting(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
-  // Reload: we did NOT create this dir this process → require our exact `*\n`
-  // .gitignore already present (never create one here).
+  // Reload: dir + .gitignore must already be ours (we never create either here).
+  await assertRealDir(dir);
   await ensureGitignore(dir, false);
-  // lstat (no follow) BEFORE read: refuse a symlinked secrets.json — the dir's `*`
-  // .gitignore covers the symlink PATH, not a target elsewhere (e.g. -> ../x),
-  // so following it would load committable key material (§17.8 violation).
-  let lst;
-  try {
-    lst = await lstat(secretsPath);
-  } catch (error) {
-    throw new AuthConfigError(`quickstart: cannot stat ${secretsPath}: ${errMsg(error)}`);
+  // Atomic read (O_NOFOLLOW + fstat + read-fd): refuses a symlink AND can't be
+  // raced (lstat→readFile would let a swap-to-symlink slip in between).
+  const { content: raw, mode } = await readOwnedFile(secretsPath);
+  if (process.platform !== "win32" && mode & 0o077) {
+    throw new AuthConfigError(`quickstart: ${secretsPath} is group/other-accessible (mode ${(mode & 0o777).toString(8).padStart(3, "0")}); run: chmod 600 ${secretsPath}`);
   }
-  if (lst.isSymbolicLink()) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} is a symlink; replace it with a real 0600 file (a symlink target is not protected by this dir's .gitignore)`);
-  }
-  // Perm check before read (skipped on Windows); lstat reports the file's own mode.
-  if (process.platform !== "win32" && lst.mode & 0o077) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} is group/other-accessible (mode ${(lst.mode & 0o777).toString(8).padStart(3, "0")}); run: chmod 600 ${secretsPath}`);
-  }
-
-  let raw: string;
-  try {
-    raw = await readFile(secretsPath, "utf8");
-  } catch (error) {
-    throw new AuthConfigError(`quickstart: cannot read ${secretsPath}: ${errMsg(error)}`);
-  }
-
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -123,13 +104,9 @@ function isValidSigningJwk(value: unknown): value is JWK {
 }
 
 async function generateAndPersist(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
-  // 1. Directory: create it (recursive) or reuse it. `mkdir` returns the path of
-  //    the first directory it created, or undefined if `dir` already existed — so
-  //    we chmod ONLY a dir we just created (masking umask; we own it). Never mutate
-  //    a pre-existing directory: it may be a repo root or shared path, and force-
-  //    chmodding it to 0700 could lock other users out before later checks decide
-  //    the dir is unfit. The secrets file itself is always 0600, so its content is
-  //    protected regardless of the dir's listing perms.
+  // 1. Directory: mkdir returns the created path, or undefined if it pre-existed.
+  //    chmod ONLY a dir we just made (never mutate a pre-existing shared/repo dir);
+  //    a pre-existing dir must be a real directory, not a symlink (assertRealDir).
   let createdDir: string | undefined;
   try {
     createdDir = await mkdir(dir, { recursive: true });
@@ -138,6 +115,10 @@ async function generateAndPersist(dir: string, secretsPath: string): Promise<Qui
   }
   if (createdDir !== undefined && process.platform !== "win32") {
     await chmod(dir, DIR_MODE);
+  } else if (createdDir === undefined) {
+    // Pre-existing dir: must be a REAL directory, not a symlink (a symlinked dir
+    // would route every following write/read into its target).
+    await assertRealDir(dir);
   }
 
   // 2. .gitignore — write FIRST so the dir is never committable even if the
@@ -166,10 +147,8 @@ async function generateAndPersist(dir: string, secretsPath: string): Promise<Qui
   return { signingPrivateJwk, consentSigningSecret };
 }
 
-/** The exact .gitignore content the quickstart writes/manages. Anything else
- *  (an operator's file, a negation, a symlink) fails closed — we never parse
- *  arbitrary gitignore semantics (negations, anchoring, globs), which is a
- *  whack-a-mole every git semantic loses. Covers BOTH first-boot and reload. */
+/** The exact .gitignore content trusted. Anything else (negation, symlink, custom)
+ *  fails closed — we never parse gitignore semantics. Covers first-boot + reload. */
 const GITIGNORE_CONTENT = "*\n";
 
 async function ensureGitignore(dir: string, canCreate: boolean): Promise<void> {
@@ -192,30 +171,55 @@ async function ensureGitignore(dir: string, canCreate: boolean): Promise<void> {
       }
     }
   }
-  // Exists (or just appeared) — verify it is OURS. Refuse a symlink first (lstat
-  // does NOT follow; git ignores symlinked .gitignore files). Then require the
-  // exact content; any deviation fails closed.
-  let lst;
-  try {
-    lst = await lstat(path);
-  } catch (error) {
-    throw new AuthConfigError(`quickstart: cannot lstat ${GITIGNORE_FILE}: ${errMsg(error)}`);
-  }
-  if (lst.isSymbolicLink()) {
-    throw new AuthConfigError(
-      `quickstart: ${path} is a symlink; git does not follow symlinked .gitignore files — replace it with a real file`,
-    );
-  }
-  let existing: string;
-  try {
-    existing = await readFile(path, "utf8");
-  } catch (error) {
-    throw new AuthConfigError(`quickstart: cannot read ${GITIGNORE_FILE}: ${errMsg(error)}`);
-  }
+  // Exists (or just appeared) — verify it is OURS via an atomic read (O_NOFOLLOW
+  // refuses a symlink; read-fd can't be raced). Require the exact `*\n` content.
+  const { content: existing } = await readOwnedFile(path);
   if (existing !== GITIGNORE_CONTENT) {
     throw new AuthConfigError(
       `quickstart: ${path} is not the quickstart-managed ignore (expected a single \`*\` line); move or remove it, or point MCP_SSO_DIR at a fresh directory`,
     );
+  }
+}
+
+/** lstat the dir; reject a symlink (would route all writes/reads into its target)
+ *  or a non-directory. */
+async function assertRealDir(dir: string): Promise<void> {
+  let st;
+  try {
+    st = await lstat(dir);
+  } catch (error) {
+    throw new AuthConfigError(`quickstart: cannot stat directory ${dir}: ${errMsg(error)}`);
+  }
+  if (st.isSymbolicLink()) {
+    throw new AuthConfigError(`quickstart: ${dir} is a symlink; point MCP_SSO_DIR at a real directory (a symlinked dir escapes this dir's .gitignore protection)`);
+  }
+  if (!st.isDirectory()) {
+    throw new AuthConfigError(`quickstart: ${dir} is not a directory`);
+  }
+}
+
+/** O_NOFOLLOW + fstat + read-fd: atomic (no lstat→readFile race), refuses a
+ *  symlink. Windows has no O_NOFOLLOW → lstat+read fallback. Returns content+mode. */
+async function readOwnedFile(path: string): Promise<{ content: string; mode: number }> {
+  if (O_NOFOLLOW === undefined) {
+    const st = await lstat(path);
+    if (st.isSymbolicLink()) throw new AuthConfigError(`quickstart: ${path} is a symlink`);
+    return { content: await readFile(path, "utf8"), mode: st.mode };
+  }
+  let fh;
+  try {
+    fh = await open(path, O_NOFOLLOW | fsc.O_RDONLY);
+  } catch (error) {
+    throw new AuthConfigError(`quickstart: cannot open ${path} (symlink or missing): ${errMsg(error)}`);
+  }
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) throw new AuthConfigError(`quickstart: ${path} is not a regular file`);
+    const buf = Buffer.alloc(st.size);
+    if (st.size > 0) await fh.read(buf, 0, st.size, 0);
+    return { content: buf.toString("utf8"), mode: st.mode };
+  } finally {
+    await fh.close();
   }
 }
 

@@ -221,6 +221,20 @@ test("§17.8 (Codex): reload requires our exact .gitignore present (deleted or t
   });
 });
 
+test("§17.8 (audit): a symlinked DIRECTORY is rejected (operations must not land in its target)", async () => {
+  // If MCP_SSO_DIR (or ./.mcp-sso) is a symlink, mkdir/join/writeFile all follow
+  // it → we'd operate inside the target, writing the `*` .gitignore into an
+  // unrelated tree and loading secrets from it. assertRealDir refuses it.
+  if (process.platform === "win32") return;
+  await withDir(async (dir) => {
+    const real = join(dir, "real-dir");
+    await mkdir(real, { recursive: true });
+    const link = join(dir, "link");
+    await symlink(real, link);
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: link }), AuthConfigError);
+  });
+});
+
 test("§17.8 (Codex): a symlinked secrets.json is rejected (its target is not covered by .gitignore)", async () => {
   // The dir's `*` ignore covers the symlink PATH inside the dir, not a target
   // elsewhere (state/secrets.json -> ../secrets.json). lstat refuses to follow.
