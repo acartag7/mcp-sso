@@ -6,6 +6,8 @@
 // (test/e2e-mcp-sdk.test.ts + test/e2e-pairing.test.ts) imports buildApp().
 
 import Fastify, { type FastifyReply } from "fastify";
+import { chmod, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
@@ -15,7 +17,10 @@ import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { RequestAuthorizer } from "../../src/verifier.ts";
 import { SystemClock } from "../../src/ports/clock.ts";
 import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
+import { JsonlFileAudit } from "../../src/audit/jsonl-file.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
+import { loadOrCreateQuickstartSecrets } from "../../src/quickstart.ts";
+import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
 import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
@@ -107,23 +112,98 @@ export async function buildApp(opts: ExampleOptions) {
 }
 
 /** Read config from env (the production path; standalone index.ts uses quickstart
- *  secrets instead). Kept for deployers who mount signing material via env. */
-export function configFromEnv(): BridgeConfig {
+ *  secrets instead). Accepts an env object so the wiring is testable without
+ *  mutating the real process.env. */
+export function configFromEnv(env: Record<string, string | undefined> = process.env): BridgeConfig {
   const required = ["OAUTH_ISSUER", "OAUTH_RESOURCE", "OAUTH_CONSENT_SIGNING_SECRET", "OAUTH_SIGNING_PRIVATE_JWK"];
-  const missing = required.filter((k) => !process.env[k]);
+  const missing = required.filter((k) => !env[k]);
   if (missing.length) throw new Error(`Missing env: ${missing.join(", ")}`);
   return createBridgeConfig({
-    issuer: process.env.OAUTH_ISSUER!,
-    resource: process.env.OAUTH_RESOURCE!,
-    consentSigningSecret: process.env.OAUTH_CONSENT_SIGNING_SECRET!,
-    signingPrivateJwk: JSON.parse(process.env.OAUTH_SIGNING_PRIVATE_JWK!) as never,
-    signingKeyId: process.env.OAUTH_SIGNING_KEY_ID || undefined,
-    redirectAllowlist: (process.env.OAUTH_REDIRECT_ALLOWLIST ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-    scopeCatalog: (process.env.OAUTH_SCOPE_CATALOG ?? "mcp:read,mcp:write").split(",").map((s) => s.trim()).filter(Boolean),
-    defaultScopes: (process.env.OAUTH_DEFAULT_SCOPES ?? "mcp:read").split(",").map((s) => s.trim()).filter(Boolean),
-    allowedOrigins: (process.env.OAUTH_ALLOWED_ORIGINS ?? process.env.OAUTH_ISSUER!).split(",").map((s) => s.trim()).filter(Boolean),
+    issuer: env.OAUTH_ISSUER!,
+    resource: env.OAUTH_RESOURCE!,
+    consentSigningSecret: env.OAUTH_CONSENT_SIGNING_SECRET!,
+    signingPrivateJwk: JSON.parse(env.OAUTH_SIGNING_PRIVATE_JWK!) as never,
+    signingKeyId: env.OAUTH_SIGNING_KEY_ID || undefined,
+    redirectAllowlist: (env.OAUTH_REDIRECT_ALLOWLIST ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    scopeCatalog: (env.OAUTH_SCOPE_CATALOG ?? "mcp:read,mcp:write").split(",").map((s) => s.trim()).filter(Boolean),
+    defaultScopes: (env.OAUTH_DEFAULT_SCOPES ?? "mcp:read").split(",").map((s) => s.trim()).filter(Boolean),
+    allowedOrigins: (env.OAUTH_ALLOWED_ORIGINS ?? env.OAUTH_ISSUER!).split(",").map((s) => s.trim()).filter(Boolean),
     dcr: { mode: "stateless" },
-    dev: process.env.OAUTH_ALLOW_INSECURE_LOCALHOST === "true" ? { allowInsecureLocalhost: true } : undefined,
+    dev: env.OAUTH_ALLOW_INSECURE_LOCALHOST === "true" ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+function isLoopback(url: string): boolean {
+  try { return LOOPBACK_HOSTS.has(new URL(url).hostname); } catch { return false; }
+}
+function listEnv(env: Record<string, string | undefined>, k: string, def: string): string[] {
+  return (env[k] ?? def).split(",").map((s) => s.trim()).filter(Boolean);
+}
+function mustEnv(env: Record<string, string | undefined>, k: string): string {
+  const v = env[k];
+  if (!v) throw new Error(`Missing env: ${k}`);
+  return v;
+}
+
+/** Ensure the state dir exists (the zero-setup branch creates it via quickstart;
+ *  the Cloudflare Access branch does not — both sqlite open and audit append need
+ *  the parent dir to exist). Only chmod a dir we just created. */
+async function ensureStateDir(dir: string): Promise<void> {
+  const created = await mkdir(dir, { recursive: true });
+  if (created !== undefined && process.platform !== "win32") await chmod(dir, 0o700);
+}
+
+/** The standalone entry's wiring, factored out so it can be integration-tested
+ *  without `app.listen()`. Selects the documented Cloudflare Access production
+ *  path when CF_ACCESS_AUDIENCE is set; otherwise the zero-setup path (quickstart
+ *  secrets + console pairing). Returns the built app (+ store/config/dir). */
+export async function buildExample(env: Record<string, string | undefined> = process.env): Promise<{
+  app: ReturnType<typeof Fastify>;
+  store: ReturnType<typeof openSqliteStore>;
+  config: BridgeConfig;
+  dir: string;
+}> {
+  const dir = env.MCP_SSO_DIR ?? "./.mcp-sso";
+  const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
+  const audit = new JsonlFileAudit(join(dir, "audit.jsonl"));
+
+  if (env.CF_ACCESS_AUDIENCE) {
+    // PRODUCTION: Cloudflare Access + env signing material. This branch does NOT
+    // run the quickstart helper, so create the state dir explicitly (sqlite open +
+    // audit append otherwise fail on the missing parent).
+    await ensureStateDir(dir);
+    const config = configFromEnv(env);
+    const identity = createCloudflareAccessIdentity({
+      audience: mustEnv(env, "CF_ACCESS_AUDIENCE"),
+      certsUrl: mustEnv(env, "CF_ACCESS_CERTS_URL"),
+      issuer: mustEnv(env, "CF_ACCESS_ISSUER"),
+      emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
+    });
+    const { app, store } = await buildApp({ config, identity, audit, sqliteFile });
+    return { app, store, config, dir };
+  }
+
+  // ZERO-SETUP: quickstart secrets (creates the dir, secrets, .gitignore) + console
+  // pairing. buildApp takes pairing OPTIONS and wires `audit` into the identity.
+  const secrets = await loadOrCreateQuickstartSecrets({ dir });
+  const port = Number(env.PORT ?? 3000);
+  const issuer = env.OAUTH_ISSUER ?? `http://localhost:${port}`;
+  const resource = env.OAUTH_RESOURCE ?? `http://localhost:${port}/mcp`;
+  const config = createBridgeConfig({
+    issuer,
+    resource,
+    consentSigningSecret: secrets.consentSigningSecret,
+    signingPrivateJwk: secrets.signingPrivateJwk,
+    redirectAllowlist: listEnv(env, "OAUTH_REDIRECT_ALLOWLIST", ""),
+    scopeCatalog: listEnv(env, "OAUTH_SCOPE_CATALOG", "mcp:read,mcp:write"),
+    defaultScopes: listEnv(env, "OAUTH_DEFAULT_SCOPES", "mcp:read"),
+    allowedOrigins: listEnv(env, "OAUTH_ALLOWED_ORIGINS", issuer),
+    dcr: { mode: "stateless" },
+    dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  const { app, store } = await buildApp({ config, pairing: {}, audit, sqliteFile });
+  return { app, store, config, dir };
 }
