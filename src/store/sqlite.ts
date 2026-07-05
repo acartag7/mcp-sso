@@ -170,11 +170,12 @@ export class SqliteStore implements StorePort {
 
 export function openSqliteStore(filename: string): SqliteStore {
   const db = new DatabaseSync(filename);
-  // The OAuth state file holds subject identities, client_ids, granted scopes, and
-  // SHA-256 token/code hashes. node:sqlite creates it at the umask default (often
-  // 0644); lock it to 0600 to match secrets.json/audit.jsonl. Idempotent — also
-  // upgrades an existing file on each open. Fail-closed if the chmod fails.
-  if (filename !== ":memory:" && process.platform !== "win32") {
+  // node:sqlite creates the OAuth state file at the umask default (often 0644);
+  // lock it to 0600 (matches secrets.json/audit.jsonl). Idempotent. Fail-closed.
+  // Skipped for :memory:, Windows, and SQLite URI names (file:...) — chmod on a
+  // URI string fails; URI users manage their own path.
+  const isUri = filename.startsWith("file:");
+  if (filename !== ":memory:" && !isUri && process.platform !== "win32") {
     try {
       chmodSync(filename, 0o600);
     } catch (error) {

@@ -262,9 +262,22 @@ node examples/fastify-sqlite/index.ts
 claude mcp add --transport http my-bridge http://localhost:3000/mcp
 #   → a browser opens to the consent page; approve; the tool is callable.
 
-# 2b. claude.ai (needs a public https URL). A named Cloudflare tunnel on a
-#     domain you control is the reliable option — see docs/troubleshooting.md
-#     for why the ad-hoc `--url` forms aren't:
+# 2b. claude.ai (needs a public https URL + a REAL identity provider). A named
+#     Cloudflare tunnel on a domain you control is the reliable option — see
+#     docs/troubleshooting.md for why the ad-hoc `--url` forms aren't.
+#
+#     IMPORTANT: do NOT tunnel the zero-setup console-pairing path (step 1) for
+#     public verification — pairing is loopback / single-operator only; exposing
+#     it on a public URL breaks its trust envelope (anyone who can reach it can
+#     spend the pairing attempt budget). Use the Cloudflare Access production
+#     path instead (a real IdP gates identity):
+OAUTH_ISSUER=https://mcp-sso-verify.yourdomain.com \
+OAUTH_RESOURCE=https://mcp-sso-verify.yourdomain.com/mcp \
+OAUTH_CONSENT_SIGNING_SECRET=$(openssl rand -hex 32) \
+OAUTH_SIGNING_PRIVATE_JWK='{"kty":"EC","crv":"P-256",...}' \
+CF_ACCESS_AUDIENCE=... CF_ACCESS_CERTS_URL=... CF_ACCESS_ISSUER=... \
+node examples/fastify-sqlite/index.ts &
+cloudflared tunnel route dns <your-tunnel-id> mcp-sso-verify.yourdomain.com
 cat > tunnel-config.yml <<CFG
 tunnel: <your-tunnel-id>
 credentials-file: /path/to/<your-tunnel-id>.json
@@ -273,10 +286,7 @@ ingress:
     service: http://localhost:3000
   - service: http_status:404
 CFG
-cloudflared tunnel route dns <your-tunnel-id> mcp-sso-verify.yourdomain.com
 cloudflared tunnel --config tunnel-config.yml run
-#   → set OAUTH_ISSUER/OAUTH_RESOURCE to https://mcp-sso-verify.yourdomain.com
-#     before starting the server, so the metadata matches.
 #   → in claude.ai, add https://mcp-sso-verify.yourdomain.com/mcp as a custom
 #     connector; approve; connect.
 ```

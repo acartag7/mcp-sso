@@ -51,3 +51,10 @@ test("SqliteStore (file): persists no raw secrets and only OAuth tables", async 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
+
+test("SqliteStore: a file: URI filename is not chmod'd (URI string not passed to chmod)", async () => {
+  // chmod'ing the literal "file:..." URI string would throw ENOENT after the DB
+  // opened; URI names are detected and skipped so valid SQLite URIs work.
+  const store = openSqliteStore("file:mcp-sso-uri-test?mode=memory");
+  await store.close();
+});
