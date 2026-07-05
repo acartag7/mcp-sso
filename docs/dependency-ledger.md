@@ -5,8 +5,8 @@
 > before every publish. Companion to `docs/contracts.md` §15 and
 > `docs/threat-model.md` ("Implementation gates").
 >
-> **Today:** 2026-07-04. **15-day cutoff:** a pin is acceptable only if published
-> on or before **2026-06-19** (≥15 days old).
+> **Today:** 2026-07-06. **15-day cutoff:** a pin is acceptable only if published
+> on or before **2026-06-21** (≥15 days old).
 
 ## The 15-day rule and `minimumReleaseAge`
 
