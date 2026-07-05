@@ -1360,9 +1360,13 @@ gate replaces no-gate).
   the operator. Log pipelines (docker logs, CloudWatch, Loki) EXTEND that
   boundary — codes land in them; TTL + single-use + attempt cap bound but do
   not eliminate the exposure. **Deployment envelope: single-operator/personal
-  deployments with operator-private console output. Explicit non-goal
-  everywhere else** — multi-operator or shared-log environments must use a
-  real IdP port. The printed banner and docs say exactly this.
+  deployments with operator-private console output + LOOPBACK binding.** A host
+  example binds the pairing authorize surface to `127.0.0.1` by default
+  (`defaultListenHost`); a non-loopback bind (or tunneling the loopback
+  listener publicly) exposes the surface + the attempt budget to the network and
+  is an explicit envelope breach — public/networked deployments must use a real
+  IdP port (Cloudflare Access, etc.), not pairing. The printed banner and docs
+  say exactly this.
 - Audit: `oauth.pairing.attempt` (success/failure — brute-force evidence).
 
 ### 17.6 `GenericOidcIdentity` + Google preset + dedicated GitHub port
@@ -1516,6 +1520,20 @@ gate replaces no-gate).
   material on disk, boundary = the OS user account; production belongs in
   env/secret managers. (`npx mcp-sso init` remains a possible wrapper later;
   the function is the contract.)
+- **Filesystem-trust bar (the quickstart reference — every state-dir code path
+  meets this):** writes are `0600` (files) / `0700` (dirs) with `O_EXCL` for
+  create-don't-clobber; reads of trusted content go through `open(O_NOFOLLOW |
+  O_NONBLOCK)` + `fstat` + read-fd (atomic: refuses a symlink, won't hang on a
+  FIFO/special file, no lstat→readFile race) + a perm check (`mode & 0o077`
+  fails closed, POSIX); a pre-existing dir is `assertRealDir`'d (reject symlink
+  + group/other-accessible mode); the `.gitignore` is the managed `*\n` (write
+  into a dir we created, require exact in a pre-existing one).
+- **Parity rule:** EVERY code path that creates or reads the state dir —
+  `loadOrCreateQuickstartSecrets`, the example's Cloudflare Access branch
+  (`ensureStateDir`), the sqlite store (`openSqliteStore` chmod 0600), the audit
+  sink (`JsonlFileAudit` O_NONBLOCK) — meets this bar. A control fixed in one
+  path MUST be applied to every sibling that touches the same resource (the
+  "sweep for sibling instances" discipline — global CLAUDE.md).
 
 ### 17.9 Worked-example design notes (v0.2 examples)
 
