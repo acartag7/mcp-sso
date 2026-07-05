@@ -111,6 +111,15 @@ export async function buildApp(opts: ExampleOptions) {
   return { app, store, bridge, close: async () => { await store.close(); } };
 }
 
+/** Default listen host by mode. Console pairing binds LOOPBACK by default (its
+ *  trust envelope is "whoever can read the process's stderr IS the operator" —
+ *  a non-loopback bind exposes the pairing authorize surface + the printed-code
+ *  attempt budget to the network). The Cloudflare/proxy path binds 0.0.0.0
+ *  (fronted by CF / a reverse proxy). HOST env overrides either. */
+export function defaultListenHost(env: Record<string, string | undefined> = process.env): string {
+  return env.CF_ACCESS_AUDIENCE ? "0.0.0.0" : "127.0.0.1";
+}
+
 /** Read config from env (the production path; standalone index.ts uses quickstart
  *  secrets instead). Accepts an env object so the wiring is testable without
  *  mutating the real process.env. */

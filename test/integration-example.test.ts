@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { JWK } from "jose";
 import { AuthConfigError } from "../src/config.ts";
-import { buildExample } from "../examples/fastify-sqlite/app.ts";
+import { buildExample, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
 
 function jwk(): JWK {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -95,6 +95,14 @@ test("integration — Cloudflare Access branch rejects a group/other-accessible 
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test("integration — listen host: pairing binds loopback; Cloudflare binds 0.0.0.0 (HOST overrides)", () => {
+  // Pairing's trust envelope is single-operator/private-console: the authorize
+  // surface + the printed-code attempt budget must not be exposed to the network
+  // by default. CF/proxy is externally bound (fronted by CF / a reverse proxy).
+  assert.equal(defaultListenHost({}), "127.0.0.1", "pairing mode → loopback");
+  assert.equal(defaultListenHost({ CF_ACCESS_AUDIENCE: "x" }), "0.0.0.0", "CF mode → all interfaces");
 });
 
 test("integration — OAUTH_SQLITE_FILE overrides the default auth.db location (both branches)", async () => {
