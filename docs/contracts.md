@@ -1434,11 +1434,13 @@ gate replaces no-gate).
     (JSON encoding escapes newlines ⇒ log-injection-safe by construction),
     `O_APPEND` writes, file created `0600`; NO rotation (logrotate is the
     deployer's).
-  - `WebhookAudit(url, { timeoutMs = 5000, headers? })` — per-event POST,
-    https required (raw prefix check), redirects not followed, at-most-once
+  - `WebhookAudit(url, { timeoutMs = 5000, headers?, fetchImpl? })` — per-event
+    POST, https required (raw prefix check), redirects not followed, at-most-once
     (no retry). Deliberately NOT behind the 17.1 SSRF guard: the URL is
     static deployer config (trusted), and SIEM collectors legitimately live
-    on private networks — documented rationale.
+    on private networks — documented rationale. `fetchImpl` is an optional DI
+    seam (defaults to the global `fetch`) for test-injecting the transport
+    without an https server; not a deployer-facing knob.
   - `combineAudit(...sinks)` — fan-out; one sink's failure never stops the
     others.
 - **Failure policy:** an audit-write failure NEVER blocks the auth operation
