@@ -5,11 +5,12 @@
 
 import type { BridgeConfig } from "../config.ts";
 import type { ClockPort } from "../ports/clock.ts";
-import type { AuditPort } from "../ports/audit.ts";
+import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { StorePort } from "../ports/store.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
 import type { ApplicationType } from "../ports/client-store.ts";
+import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
 import { OAuthAuthorizationUseCase, type PreparedConsent } from "../authorize.ts";
 import { OAuthTokenUseCase } from "../token.ts";
 import { registerClient } from "../register.ts";
@@ -76,8 +77,11 @@ export class Bridge {
     }
   }
 
-  /** GET /oauth/authorize. `subject` is resolved by the adapter via its IdentityPort. */
-  async handleAuthorize(req: NormRequest, subject: string): Promise<NormResponse> {
+  /** GET /oauth/authorize. `identity` ({ subject, allowedScopes? }) is resolved
+   *  by the adapter via its IdentityPort — or by Bridge.resolveIdentity, which
+   *  also emits the identity.verify audit event (§17.4 item 4). The bare-string
+   *  form is removed (§17.4 item 3): the ceiling must travel the whole path. */
+  async handleAuthorize(req: NormRequest, identity: { subject: string; allowedScopes?: string[] }): Promise<NormResponse> {
     try {
       const prepared: PreparedConsent = await this.auth.prepare({
         clientId: queryString(req.query, "client_id"),
@@ -88,12 +92,52 @@ export class Bridge {
         resource: queryString(req.query, "resource"),
         scope: queryString(req.query, "scope"),
         state: queryString(req.query, "state"),
-        subject,
+        subject: identity.subject,
+        allowedScopes: identity.allowedScopes,
       });
       return { status: 200, headers: { ...CONSENT_HEADERS }, body: renderConsentPage(this.config, prepared) };
     } catch (error) {
       return oauthErrorResponse(asOAuth(error));
     }
+  }
+
+  /** Resolve a verified identity via the IdentityPort and emit the identity.verify
+   *  audit event (§17.4 item 4 / §17.7). Fail-closed: { ok:false } ⇒ 401
+   *  access_denied DIRECT (redirect_uri is untrusted pre-validation). A thrown
+   *  error propagates RAW so the adapter's direct-error mapping (HF.1–HF.3,
+   *  redirect stripped, no internal leak) is unchanged. The port's `reason` is
+   *  carried as the audit reason (Entra-specific reasons land in S2b). The
+   *  console-pairing path does NOT use this — it emits oauth.pairing.attempt.
+   *  A present-but-malformed allowedScopes ceiling (non-array / non-string
+   *  elements — a port bug) fails CLOSED: it must never widen to full access
+   *  (fail-closed house rule; threat-model row 22 ceiling-bypass class). An
+   *  empty array is a valid "entitled to nothing" ceiling (prepare's empty
+   *  intersection denies). undefined ⇒ no ceiling (v0.1 behavior). */
+  async resolveIdentity(identity: IdentityPort, input: unknown, ip?: string): Promise<{ subject: string; allowedScopes?: string[] }> {
+    let result: IdentityResult;
+    try {
+      result = await identity.verify(input);
+    } catch (error) {
+      await this.emitIdentityVerify("failure", error instanceof OAuthError ? error.code : "internal_error", undefined, ip);
+      throw error;
+    }
+    if (!result.ok) {
+      await this.emitIdentityVerify("failure", result.reason, undefined, ip);
+      throw new OAuthError("access_denied", `Identity rejected: ${result.reason}`, 401);
+    }
+    const subject = result.identity.subject;
+    const rawCeiling = result.identity.allowedScopes;
+    if (rawCeiling !== undefined && !(Array.isArray(rawCeiling) && rawCeiling.every((s) => typeof s === "string"))) {
+      await this.emitIdentityVerify("failure", "malformed_allowed_scopes", undefined, ip);
+      throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
+    }
+    const allowedScopes = Array.isArray(rawCeiling) ? rawCeiling : undefined;
+    await this.emitIdentityVerify("success", undefined, subject, ip);
+    return { subject, allowedScopes };
+  }
+
+  private async emitIdentityVerify(status: AuthAuditStatus, reason: string | undefined, subject: string | undefined, ip: string | undefined): Promise<void> {
+    await this.audit.writeAuthEvent({ occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "identity.verify", status, subject, reason, ip });
   }
 
   async handleApprove(req: NormRequest): Promise<NormResponse> {

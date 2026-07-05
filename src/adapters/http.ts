@@ -6,7 +6,6 @@ import type { BridgeConfig } from "../config.ts";
 import { originOf } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildErrorRedirect, buildUnauthorizedChallenge } from "../challenge.ts";
-import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
 
 export interface NormRequest {
   query: Record<string, string | string[] | undefined>;
@@ -65,16 +64,6 @@ export function oauthErrorResponse(error: OAuthError, challengeConfig?: { config
     headers["www-authenticate"] = buildUnauthorizedChallenge(challengeConfig.config, { scope: challengeConfig.scope, error: error.code, errorDescription: error.message });
   }
   return { status: error.status, headers, body: oauthErrorBody(error) };
-}
-
-/** Resolve a verified subject via the IdentityPort, or throw access_denied (401,
- *  direct — pre-validation). Used by the adapter before calling Bridge.authorize. */
-export async function resolveSubject(identity: IdentityPort, input: unknown): Promise<string> {
-  const result: IdentityResult = await identity.verify(input);
-  if (!result.ok) {
-    throw new OAuthError("access_denied", `Identity rejected: ${result.reason}`, 401);
-  }
-  return result.identity.subject;
 }
 
 /** Same-origin issuer origin, for the consent-page CSRF/Origin check. */

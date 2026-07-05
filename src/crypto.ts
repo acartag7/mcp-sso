@@ -26,6 +26,11 @@ export interface ConsentRequestClaims {
   state?: string;
   /** Verified subject (resolved by the IdentityPort before prepare()). */
   subject: string;
+  /** Authorization ceiling (contracts §17.4). Carried in the consent JWT as the
+   *  `allowed_scopes` claim so `approve` re-intersects from the VERIFIED token,
+   *  not from client-resupplied input. Undefined when the identity port set no
+   *  ceiling (old behavior: no narrowing). */
+  allowedScopes?: string[];
 }
 
 export interface AccessTokenClaims {
@@ -95,6 +100,7 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
     code_challenge: claims.codeChallenge,
     code_challenge_method: claims.codeChallengeMethod,
     state: claims.state,
+    allowed_scopes: claims.allowedScopes?.length ? scopeString(claims.allowedScopes) : undefined,
   }).setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(config.issuer)
     .setAudience(CONSENT_AUDIENCE)
@@ -192,6 +198,9 @@ function keyId(config: BridgeConfig): string | undefined {
 function consentClaims(payload: JWTPayload): ConsentRequestClaims {
   if (payload.typ !== CONSENT_TYP) throw new Error("wrong token type");
   const scopes = typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [];
+  const allowedScopes = typeof payload.allowed_scopes === "string" && payload.allowed_scopes.trim()
+    ? payload.allowed_scopes.split(/\s+/)
+    : undefined;
   return {
     clientId: requiredString(payload.client_id, "client_id"),
     redirectUri: requiredString(payload.redirect_uri, "redirect_uri"),
@@ -201,6 +210,7 @@ function consentClaims(payload: JWTPayload): ConsentRequestClaims {
     codeChallengeMethod: "S256",
     state: stringClaim(payload.state),
     subject: requiredString(payload.sub, "sub"),
+    allowedScopes,
   };
 }
 
