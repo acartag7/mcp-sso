@@ -81,6 +81,27 @@ test("bridge: full OAuth flow (metadata -> register -> authorize -> approve -> t
   assert.equal(revoked.status, 200);
 });
 
+test("bridge: handleRevoke maps an unexpected store throw to the §9.5 500 body (no internals leaked)", async () => {
+  // Sibling of the HOTFIX HF.3 guarantee: hono/fastify send handleRevoke's
+  // response verbatim (no wrapping catch), so a store outage on the revoke
+  // path must produce the same non-leaking §9.5 shape as every other route —
+  // never a framework-shaped body echoing the thrown message.
+  const secret = "TOP_SECRET_INTERNAL_DETAIL";
+  const store = new MemoryStore();
+  store.findRefreshToken = async () => { throw new Error(secret); };
+  const bridge = new Bridge({ config: config(), store, clock: new FakeClock(NOW_MS), audit: new MemoryAudit() });
+  const res = await bridge.handleRevoke(req({ body: { token: "rt_anything" } }));
+  assert.equal(res.status, 500);
+  const body = res.body as Record<string, unknown>;
+  assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
+  assert.equal(body.error, "internal_error");
+  assert.ok(!JSON.stringify(body).includes(secret), "thrown message must not leak into the response");
+
+  // RFC 7009 semantics unchanged by the catch: an unrecognized token is still 200.
+  const unrecognized = await setup().bridge.handleRevoke(req({ body: { token: "rt_unknown" } }));
+  assert.equal(unrecognized.status, 200);
+});
+
 test("bridge: pre-validation redirect error is a direct 400 (no Location)", async () => {
   const ctx = setup();
   const res = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: "https://evil.test/cb", code_challenge: pkceChallenge("v-123456789012345678901234567890123"), code_challenge_method: "S256" } }), SUBJECT);
