@@ -223,3 +223,25 @@ test("WebhookAudit: a fetch error echoing secrets is redacted from stderr (diagn
   assert.equal(stderr.includes(longToken), false, "long opaque token leaked (prefix form)");
   assert.ok(stderr.includes("upstream said"), "a benign diagnostic was preserved");
 });
+
+test("WebhookAudit: credential-bearing query string in the URL is scrubbed from stderr", async () => {
+  // A query param can carry a credential (e.g. ?access_token=…). The regex
+  // redactor does NOT catch `access_token=` (the `_` defeats the \b token
+  // boundary), so the configured query value is scrubbed precisely here.
+  const secretValue = "abcdef0123456789secretTOKEN";
+  const sink = new WebhookAudit(`https://siem.test/ingest?access_token=${secretValue}`, {
+    fetchImpl: (async () => {
+      throw new Error(`TypeError: fetch failed for https://siem.test/ingest?access_token=${secretValue}`);
+    }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes(secretValue), false, "query-string credential leaked to stderr");
+  assert.equal(stderr.includes("access_token=" + secretValue), false, "access_token pair leaked");
+  assert.ok(stderr.length > 0, "the failure was still surfaced");
+});

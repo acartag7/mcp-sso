@@ -1443,8 +1443,10 @@ gate replaces no-gate).
     rationale. `fetchImpl` is an optional DI seam (defaults to the global
     `fetch`) for test-injecting the transport without an https server; not a
     deployer-facing knob. Error messages reaching stderr are redacted
-    (`src/audit/util.ts`) and known header values scrubbed — a transport that
-    echoes request headers/body into an Error.message cannot leak them.
+    (`src/audit/util.ts`) and the configured header values and URL query-string
+    params scrubbed — a transport that echoes request headers, the URL, or a
+    credential-bearing query (`?access_token=…`) into an Error.message cannot
+    leak them.
   - `combineAudit(...sinks)` — fan-out; one sink's failure never stops the
     others.
 - **Failure policy:** an audit-write failure NEVER blocks the auth operation

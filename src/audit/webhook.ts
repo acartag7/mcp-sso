@@ -51,6 +51,13 @@ export class WebhookAudit implements AuditPort {
   private readonly timeoutMs: number;
   private readonly headers: Record<string, string>;
   private readonly fetchImpl: typeof fetch;
+  /** Secret-shaped tokens derived from the configured URL's query string, scrubbed
+   *  from any transport error before it reaches stderr. A deployer may legitimately
+   *  route via query params, but those params can also carry credentials
+   *  (`?access_token=…`); the regex redactor does not catch `access_token=` (the
+   *  `_` before `token` defeats the `\b` boundary), so the configured values are
+   *  removed precisely here. (Userinfo is rejected outright at construction.) */
+  private readonly querySecrets: string[];
 
   constructor(url: string, options: WebhookAuditOptions = {}) {
     // RAW prefix check FIRST — fail-closed before any URL parsing. Rejects
@@ -78,6 +85,7 @@ export class WebhookAudit implements AuditPort {
     }
     this.url = url;
     this.host = parsed.host;
+    this.querySecrets = collectQuerySecrets(parsed);
     this.timeoutMs = options.timeoutMs ?? 5000;
     this.headers = { "Content-Type": "application/json", ...options.headers };
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -109,8 +117,9 @@ export class WebhookAudit implements AuditPort {
   }
 
   /** Redact secret-shaped substrings from `error`, then precisely remove the
-   *  deployer's own header values (e.g. a SIEM bearer token) in case the regex
-   *  redactor missed a non-standard format. Never throws. */
+   *  deployer's own header values (e.g. a SIEM bearer token) and configured
+   *  query-string params in case the regex redactor missed a non-standard
+   *  format. Never throws. */
   private safeError(error: unknown): string {
     let msg = safeErrorMessage(error);
     for (const value of Object.values(this.headers)) {
@@ -118,8 +127,25 @@ export class WebhookAudit implements AuditPort {
         msg = msg.split(value).join("[redacted]");
       }
     }
+    for (const token of this.querySecrets) {
+      msg = msg.split(token).join("[redacted]");
+    }
     return msg;
   }
+}
+
+/** Tokens scrubbed from transport diagnostics: the full query string, each
+ *  `key=value` pair (handles a pair echoed without the leading `?`), and any
+ *  non-trivial value (handles a value echoed alone). Short tokens (<4 chars)
+ *  are skipped to avoid mangling diagnostics. */
+function collectQuerySecrets(url: URL): string[] {
+  if (!url.search) return [];
+  const tokens: string[] = [url.search];
+  for (const [k, v] of url.searchParams.entries()) {
+    tokens.push(`${k}=${v}`);
+    if (v.length >= 8) tokens.push(v);
+  }
+  return tokens.filter((t) => t.length >= 4);
 }
 
 export function createWebhookAudit(url: string, options?: WebhookAuditOptions): WebhookAudit {

@@ -94,7 +94,7 @@ Run before S2.
 | S1a.4 | `WebhookAudit` POST behavior via injected transport stub | Body is the exact event JSON with merged headers; `redirect:"manual"`; a never-settling stub times out via `AbortSignal.timeout`; the sink never rejects and is at-most-once. (The https-only design rejects a plain-http loopback server at construction, and trusting a self-signed loopback cert would need an out-of-dep undici dispatcher; the `fetchImpl` DI seam — the codebase's pattern, cf. Redis stubs — is the test transport.) |
 | S1a.5 | `WebhookAudit("http://...")` and userinfo URLs | Constructor rejects non-https config AND URLs containing `user:pass@` userinfo (credentials belong in `headers`; a fetch error would otherwise echo the URL into stderr). |
 | S1a.6 | New v0.2 event names | Every new event name has a dedicated pure serialization test across both sinks. |
-| S1a.7 | Sink stderr never leaks secrets | An IO/transport error whose message carries a Bearer token, a long opaque run, or a known header value is redacted before reaching stderr; benign diagnostics are preserved. (`test/audit-util.test.ts` + jsonl/webhook stderr-capture tests) |
+| S1a.7 | Sink stderr never leaks secrets | An IO/transport error whose message carries a Bearer token, a long opaque run, a known header value, or a credential-bearing URL query string (`?access_token=…`) is redacted before reaching stderr; benign diagnostics are preserved. (`test/audit-util.test.ts` + jsonl/webhook stderr-capture tests) |
 
 ### T1.S1b — quickstart secrets and console pairing
 
