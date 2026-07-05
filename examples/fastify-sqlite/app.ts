@@ -19,7 +19,7 @@ import { SystemClock } from "../../src/ports/clock.ts";
 import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
 import { JsonlFileAudit } from "../../src/audit/jsonl-file.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
-import { loadOrCreateQuickstartSecrets, ensureGitignore } from "../../src/quickstart.ts";
+import { loadOrCreateQuickstartSecrets, ensureGitignore, assertRealDir } from "../../src/quickstart.ts";
 import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
 import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
@@ -147,14 +147,19 @@ function mustEnv(env: Record<string, string | undefined>, k: string): string {
   return v;
 }
 
-/** Ensure the state dir exists AND is protected from git (the zero-setup branch
- *  gets both from loadOrCreateQuickstartSecrets; the Cloudflare Access branch does
- *  not). Creates the dir 0700 if absent, and writes the managed `*` .gitignore
- *  into a dir we just made — or requires it already present + exact in a pre-
- *  existing dir (so auth.db / audit.jsonl can never be committed). */
+/** Ensure the state dir exists AND meets the full security bar — same bar the
+ *  zero-setup branch gets from loadOrCreateQuickstartSecrets. Creates the dir 0700
+ *  if absent; for a pre-existing dir, rejects a symlink or group/other-accessible
+ *  mode (another local user could otherwise replace auth.db with state they
+ *  control). Writes the managed `*` .gitignore into a dir we just made (or
+ *  requires it already present + exact) so auth.db / audit.jsonl can't be committed. */
 async function ensureStateDir(dir: string): Promise<void> {
   const created = await mkdir(dir, { recursive: true });
-  if (created !== undefined && process.platform !== "win32") await chmod(dir, 0o700);
+  if (created !== undefined) {
+    if (process.platform !== "win32") await chmod(dir, 0o700);
+  } else {
+    await assertRealDir(dir); // pre-existing: real dir, not a symlink, not group/other-accessible
+  }
   await ensureGitignore(dir, created !== undefined);
 }
 

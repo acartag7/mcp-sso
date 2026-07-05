@@ -181,7 +181,7 @@ export async function ensureGitignore(dir: string, canCreate: boolean): Promise<
 
 /** Reject a symlink, a non-directory, or (POSIX) a group/other-accessible mode —
  *  a world-writable state dir lets another user swap secrets.json for their key. */
-async function assertRealDir(dir: string): Promise<void> {
+export async function assertRealDir(dir: string): Promise<void> {
   let st;
   try {
     st = await lstat(dir);

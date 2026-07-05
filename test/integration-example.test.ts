@@ -8,11 +8,12 @@
 
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { JWK } from "jose";
+import { AuthConfigError } from "../src/config.ts";
 import { buildExample } from "../examples/fastify-sqlite/app.ts";
 
 function jwk(): JWK {
@@ -72,6 +73,25 @@ test("integration — Cloudflare Access branch: buildExample creates the state d
     assert.equal(page.statusCode, 401);
     await app.close();
     await store.close();
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — Cloudflare Access branch rejects a group/other-accessible pre-existing state dir", async () => {
+  // A world-writable MCP_SSO_DIR lets another local user replace auth.db with
+  // OAuth state they control. The CF branch must mirror quickstart's assertRealDir.
+  if (process.platform === "win32") return;
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-cf-unsafe-"));
+  const dir = join(base, "state");
+  mkdirSync(dir, { recursive: true, mode: 0o777 });
+  chmodSync(dir, 0o777);
+  writeFileSync(join(dir, ".gitignore"), "*\n", { mode: 0o600 }); // valid ignore → only the dir mode is at fault
+  try {
+    await assert.rejects(
+      buildExample({ MCP_SSO_DIR: dir, CF_ACCESS_AUDIENCE: "https://cf.test/aud" }),
+      AuthConfigError,
+    );
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
