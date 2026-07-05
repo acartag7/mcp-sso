@@ -4,6 +4,7 @@
 // findGrantedScopes (reads active refresh records — no grant table).
 
 import { DatabaseSync } from "node:sqlite";
+import { chmodSync } from "node:fs";
 import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
@@ -169,6 +170,17 @@ export class SqliteStore implements StorePort {
 
 export function openSqliteStore(filename: string): SqliteStore {
   const db = new DatabaseSync(filename);
+  // The OAuth state file holds subject identities, client_ids, granted scopes, and
+  // SHA-256 token/code hashes. node:sqlite creates it at the umask default (often
+  // 0644); lock it to 0600 to match secrets.json/audit.jsonl. Idempotent — also
+  // upgrades an existing file on each open. Fail-closed if the chmod fails.
+  if (filename !== ":memory:" && process.platform !== "win32") {
+    try {
+      chmodSync(filename, 0o600);
+    } catch (error) {
+      throw new Error(`sqlite: cannot lock ${filename} to 0600: ${(error as Error).message}`);
+    }
+  }
   migrateSqliteStore(db);
   return new SqliteStore(db);
 }
