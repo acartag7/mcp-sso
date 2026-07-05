@@ -175,7 +175,10 @@ tokens.
   loopback rules for native/local clients) — stops an open-redirect
   takeover of the auth flow.
 - **Audit logging is metadata-only** — no tokens or codes ever land in a
-  log.
+  log. Reference sinks ship and are fail-open by design: a JSONL file sink
+  (`0600`, append-only, log-injection-safe), an https-only no-redirect webhook
+  sink, and `combineAudit(...sinks)` fan-out — an audit-write failure never
+  blocks the auth flow.
 
 ## Alternatives
 
