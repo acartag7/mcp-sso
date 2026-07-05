@@ -217,6 +217,19 @@ test("§17.8 (Codex round 4): reload re-creates a deleted .gitignore; a tampered
   });
 });
 
+test("§17.8 (Codex round 6): a pre-existing dir without .gitignore fails closed (won't nuke a repo)", async () => {
+  // Writing a fresh `*` .gitignore into an existing repo/shared dir would ignore
+  // the operator's whole tree. Refuse: only a dir we created (or our reload dir)
+  // may have its .gitignore created.
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    await mkdir(target, { recursive: true }); // pre-existing, no .gitignore
+    await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
+    await assert.rejects(stat(join(target, ".gitignore")), /ENOENT/, "did not create a .gitignore");
+    await assert.rejects(stat(join(target, "secrets.json")), /ENOENT/, "did not write secrets");
+  });
+});
+
 test("§17.8 (Codex): a rejected pre-existing directory is not chmod-mutated", async () => {
   // MCP_SSO_DIR may target an existing shared/project dir. chmodding it to 0700
   // before later checks reject it would leave that path inaccessible. Only a dir

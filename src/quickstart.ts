@@ -61,7 +61,9 @@ async function loadExisting(dir: string, secretsPath: string): Promise<Quickstar
   // The "can never be committed" guarantee holds on RELOAD too: if .gitignore was
   // deleted after first boot (or the dir was restored without it), re-create it;
   // if it has been tampered with, fail closed. Runs before the secrets perm check.
-  await ensureGitignore(dir);
+  // On reload this is our own dir (secrets.json already lives here), so a deleted
+  // .gitignore may be re-created safely.
+  await ensureGitignore(dir, true);
   // POSIX perm check BEFORE reading: a loose-permission file is a boot failure
   // even if its contents are valid — never process a file the operator hasn't
   // locked down. Skipped on Windows (mode bits are not meaningful there).
@@ -142,13 +144,11 @@ async function generateAndPersist(dir: string, secretsPath: string): Promise<Qui
     await chmod(dir, DIR_MODE);
   }
 
-  // 2. .gitignore (write FIRST so the dir is never committable even if the
-  //    secrets write fails partway). On a fresh dir this writes `*`. If a
-  //    .gitignore already exists (MCP_SSO_DIR pointed at a pre-existing dir),
-  //    fail CLOSED unless it already covers secrets.json — the §17.8 "can never
-  //    be committed" guarantee is unconditional, mirroring the dir-perm correction
-  //    above; never silently degrade it.
-  await ensureGitignore(dir);
+  // 2. .gitignore — write FIRST so the dir is never committable even if the
+  //    secrets write fails partway. Only CREATE one in a dir we just made: writing
+  //    `*` into a pre-existing repo/shared dir would silently ignore the operator's
+  //    whole tree. A pre-existing dir must already carry our exact `*\n` ignore.
+  await ensureGitignore(dir, createdDir !== undefined);
 
   // 3. Generate the material: EC P-256 keypair (extractable so we can export the
   //    private JWK) + a 48-byte base64url consent secret (64 chars, > 32).
@@ -176,23 +176,29 @@ async function generateAndPersist(dir: string, secretsPath: string): Promise<Qui
  *  whack-a-mole every git semantic loses. Covers BOTH first-boot and reload. */
 const GITIGNORE_CONTENT = "*\n";
 
-async function ensureGitignore(dir: string): Promise<void> {
+async function ensureGitignore(dir: string, canCreate: boolean): Promise<void> {
   const path = join(dir, GITIGNORE_FILE);
-  // Missing → create it (O_EXCL; if one appears between the check and write, the
-  // EEXIST fall-through below verifies it). This re-creates a .gitignore deleted
-  // after first boot, restoring the "can never be committed" guarantee on reload.
-  try {
-    await writeFile(path, GITIGNORE_CONTENT, { flag: "wx", mode: FILE_MODE });
-    return;
-  } catch (error) {
-    if (!isExist(error)) {
-      throw new AuthConfigError(`quickstart: cannot write ${GITIGNORE_FILE}: ${errMsg(error)}`);
+  // Missing? Only CREATE one where we're allowed: a dir we just made (or our own
+  // reload dir). Writing `*` into a pre-existing repo/shared dir would silently
+  // ignore the operator's whole tree — fail closed there instead.
+  if (!(await pathExists(path))) {
+    if (!canCreate) {
+      throw new AuthConfigError(
+        `quickstart: ${dir} already exists and has no quickstart ${GITIGNORE_FILE}; refusing to create a \`*\` ignore in an existing directory (point MCP_SSO_DIR at a fresh directory)`,
+      );
+    }
+    try {
+      await writeFile(path, GITIGNORE_CONTENT, { flag: "wx", mode: FILE_MODE });
+      return;
+    } catch (error) {
+      if (!isExist(error)) {
+        throw new AuthConfigError(`quickstart: cannot write ${GITIGNORE_FILE}: ${errMsg(error)}`);
+      }
     }
   }
-  // Exists — verify it is OURS. Refuse a symlink first (lstat does NOT follow; git
-  // ignores symlinked .gitignore files, so following + accepting would write a
-  // committable key). Then require the exact content; any deviation fails closed
-  // (the operator moves the file aside or uses a fresh dir).
+  // Exists (or just appeared) — verify it is OURS. Refuse a symlink first (lstat
+  // does NOT follow; git ignores symlinked .gitignore files). Then require the
+  // exact content; any deviation fails closed.
   let lst;
   try {
     lst = await lstat(path);
