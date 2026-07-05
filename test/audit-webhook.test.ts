@@ -69,6 +69,25 @@ test("WebhookAudit: constructor rejects a malformed https URL that fails new URL
   assert.throws(() => new WebhookAudit("https://", { fetchImpl: makeFetch("ok", { calls: [] }) }), /valid absolute https/);
 });
 
+test("WebhookAudit: constructor rejects userinfo (user:pass@) — credentials belong in headers, not the URL", () => {
+  // Node's fetch throws on userinfo with a TypeError whose message echoes the
+  // full URL; if the URL reached the catch, the credentials would land in stderr
+  // (and regex redaction cannot reliably catch short `user:pass@` values). Fail
+  // closed at construction.
+  const fetchImpl = makeFetch("ok", { calls: [] });
+  for (const bad of [
+    "https://user:pass@siem.test/ingest",
+    "https://:pass@siem.test/ingest",
+    "https://user@siem.test/ingest",
+  ]) {
+    assert.throws(
+      () => new WebhookAudit(bad, { fetchImpl }),
+      /userinfo/i,
+      `expected userinfo rejection for ${bad}`,
+    );
+  }
+});
+
 test("WebhookAudit: per-event POST is application/json with merged headers", async () => {
   const state = { calls: [] as Recorded[] };
   const sink = new WebhookAudit("https://siem.test/ingest", {
@@ -177,4 +196,30 @@ test("WebhookAudit: non-2xx stderr never contains the SIEM bearer token or paylo
   assert.equal(stderr.includes(siemToken), false, "SIEM bearer token leaked to stderr on non-2xx");
   assert.equal(stderr.includes("LEAKED_REFRESH_TOKEN_VALUE"), false, "payload leaked to stderr on non-2xx");
   assert.ok(stderr.includes("503"), "the non-2xx status was surfaced");
+});
+
+test("WebhookAudit: a fetch error echoing secrets is redacted from stderr (diagnostic preserved)", async () => {
+  // The transport may throw an Error whose message echoes request headers/body
+  // (a custom fetchImpl, or a fetch variant). The sink must redact BOTH the
+  // regex patterns (Bearer/long-opaque) AND the exact known header value
+  // (header scrub), while keeping a benign diagnostic so the failure is visible.
+  const siemToken = "Bearer siem-secret-DO-NOT-LEAK";
+  const longToken = "rt_" + "x".repeat(48);
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    headers: { Authorization: siemToken },
+    fetchImpl: (async () => {
+      throw new Error(`upstream said: ${siemToken} ${longToken} details-more`);
+    }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes(siemToken), false, "SIEM bearer token (header value) leaked");
+  assert.equal(stderr.includes("x".repeat(48)), false, "long opaque token leaked");
+  assert.equal(stderr.includes(longToken), false, "long opaque token leaked (prefix form)");
+  assert.ok(stderr.includes("upstream said"), "a benign diagnostic was preserved");
 });

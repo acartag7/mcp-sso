@@ -26,6 +26,7 @@
 
 import { appendFile } from "node:fs/promises";
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
+import { safeErrorMessage } from "./util.ts";
 
 export class JsonlFileAudit implements AuditPort {
   private readonly filePath: string;
@@ -48,10 +49,12 @@ export class JsonlFileAudit implements AuditPort {
       // flag "a" = O_APPEND | O_WRONLY | O_CREAT; mode 0o600 applied at creation.
       await appendFile(this.filePath, line, { flag: "a", mode: 0o600 });
     } catch (error) {
-      // Fail-open: never reject. No secret can appear here — the payload is
-      // metadata-only and `error` is an IO message (no tokens cross this path).
+      // Fail-open: never reject. The error message is NOT trusted to be
+      // secret-free (an fs error includes the configured path; a future field's
+      // toJSON could put anything in an Error.message), so it is redacted via
+      // safeErrorMessage before reaching stderr (threat-model #14).
       console.error(
-        `[mcp-sso] audit jsonl write failed (${this.eventLabel(event)}): ${errorMessage(error)}`,
+        `[mcp-sso] audit jsonl write failed (${this.eventLabel(event)}): ${safeErrorMessage(error)}`,
       );
     }
   }
@@ -64,8 +67,4 @@ export class JsonlFileAudit implements AuditPort {
 
 export function createJsonlFileAudit(filePath: string): JsonlFileAudit {
   return new JsonlFileAudit(filePath);
-}
-
-function errorMessage(error: unknown): string {
-  return String((error as { message?: unknown } | null)?.message ?? error);
 }

@@ -4,12 +4,19 @@
 // auth flow is never blocked by an IO error).
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { JsonlFileAudit } from "../src/audit/jsonl-file.ts";
 import type { AuthAuditEvent } from "../src/ports/audit.ts";
+
+function captureConsoleError(): { messages: string[]; restore: () => void } {
+  const original = console.error;
+  const messages: string[] = [];
+  console.error = (...args: unknown[]) => { messages.push(args.map(String).join(" ")); };
+  return { messages, restore: () => { console.error = original; } };
+}
 
 let counter = 0;
 function tmpFile(dir: string): string {
@@ -98,9 +105,31 @@ test("JsonlFileAudit: never rejects (fail-open) on an unwritable path", async ()
     // A path inside a path component that is itself a file (not a dir) cannot be
     // opened/created — appendFile rejects. The sink must swallow it.
     const blockingFile = join(dir, "iamfile");
-    await (await import("node:fs/promises")).writeFile(blockingFile, "x");
+    await writeFile(blockingFile, "x");
     const sink = new JsonlFileAudit(join(blockingFile, "audit.jsonl"));
     await assert.doesNotReject(() => sink.writeAuthEvent({ ...baseEvent }));
+  });
+});
+
+test("JsonlFileAudit: stderr from an IO failure never leaks a secret-shaped string", async () => {
+  await withDir(async (dir) => {
+    const blockingFile = join(dir, "iamfile");
+    await writeFile(blockingFile, "x");
+    // A long opaque token in the filename stands in for any secret-shaped
+    // string an error message might carry (the fs error includes the full
+    // configured path). Redaction must scrub it before it reaches stderr.
+    const secret = "RTSECRET_" + "A".repeat(48);
+    const sink = new JsonlFileAudit(join(blockingFile, `audit-${secret}.jsonl`));
+    const captured = captureConsoleError();
+    try {
+      await sink.writeAuthEvent({ ...baseEvent }); // ENOTDIR -> fail-open
+    } finally {
+      captured.restore();
+    }
+    const stderr = captured.messages.join("\n");
+    assert.equal(stderr.includes(secret), false, "secret-shaped path component leaked to stderr");
+    assert.equal(stderr.includes("A".repeat(48)), false, "long opaque run leaked to stderr");
+    assert.ok(stderr.length > 0, "the IO failure was still surfaced");
   });
 });
 
