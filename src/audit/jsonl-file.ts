@@ -24,9 +24,15 @@
 // next write lands in the new file. A held file handle would keep writing the
 // renamed inode; this design does not.
 
-import { appendFile } from "node:fs/promises";
+import { open, constants as fsc } from "node:fs/promises";
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
 import { safeErrorMessage } from "./util.ts";
+
+// O_NONBLOCK stops open() blocking on a FIFO/special file at the audit path (a
+// plain O_WRONLY open on a FIFO waits for a reader — that would hang the awaited
+// writeAuthEvent and break fail-open). POSIX; 0 where undefined (Windows).
+const O_NONBLOCK: number = (fsc as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
+const APPEND_FLAGS: number = fsc.O_WRONLY | fsc.O_APPEND | fsc.O_CREAT | O_NONBLOCK;
 
 export class JsonlFileAudit implements AuditPort {
   private readonly filePath: string;
@@ -46,8 +52,15 @@ export class JsonlFileAudit implements AuditPort {
       // writeAuthEvent MUST NEVER reject (§17.7; cf. WebhookAudit's full-body
       // wrap). Defense-in-depth: AuthAuditEvent is flat primitives today.
       const line = `${JSON.stringify(event)}\n`;
-      // flag "a" = O_APPEND | O_WRONLY | O_CREAT; mode 0o600 applied at creation.
-      await appendFile(this.filePath, line, { flag: "a", mode: 0o600 });
+      // Open+write+close per event (rotation-robust: the path is re-resolved each
+      // write, so a logrotate rename+recreate is followed). O_APPEND | O_CREAT,
+      // 0600 at creation, O_NONBLOCK so a FIFO at the path can't hang the open.
+      const fh = await open(this.filePath, APPEND_FLAGS, 0o600);
+      try {
+        await fh.write(line);
+      } finally {
+        await fh.close();
+      }
     } catch (error) {
       // Fail-open: never reject. The error message is NOT trusted to be
       // secret-free (an fs error includes the configured path; a future field's

@@ -21,8 +21,9 @@ import { join } from "node:path";
 import { exportJWK, generateKeyPair, type JWK } from "jose";
 import { AuthConfigError } from "./config.ts";
 
-// O_NOFOLLOW refuses to follow a symlink at open (POSIX). Undefined on Windows.
+// O_NOFOLLOW refuses symlinks; O_NONBLOCK stops a FIFO/special file hanging open.
 const O_NOFOLLOW: number | undefined = (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW;
+const O_NONBLOCK: number = (fsc as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
 
 export interface QuickstartSecrets {
   /** EC P-256 private JWK (kty/crv/d/x/y) — passes `createBridgeConfig`'s §5 check. */
@@ -199,8 +200,7 @@ export async function assertRealDir(dir: string): Promise<void> {
   }
 }
 
-/** O_NOFOLLOW + fstat + read-fd: atomic (no lstat→readFile race), refuses a
- *  symlink. Windows has no O_NOFOLLOW → lstat+read fallback. Returns content+mode. */
+/** O_NOFOLLOW + fstat + read-fd: atomic, refuses symlinks/FIFOs (O_NONBLOCK). Windows → lstat+read. */
 async function readOwnedFile(path: string): Promise<{ content: string; mode: number }> {
   if (O_NOFOLLOW === undefined) {
     const st = await lstat(path);
@@ -209,13 +209,13 @@ async function readOwnedFile(path: string): Promise<{ content: string; mode: num
   }
   let fh;
   try {
-    fh = await open(path, O_NOFOLLOW | fsc.O_RDONLY);
+    fh = await open(path, O_NOFOLLOW | fsc.O_RDONLY | O_NONBLOCK);
   } catch (error) {
     throw new AuthConfigError(`quickstart: cannot open ${path} (symlink or missing): ${errMsg(error)}`);
   }
   try {
     const st = await fh.stat();
-    if (!st.isFile()) throw new AuthConfigError(`quickstart: ${path} is not a regular file`);
+    if (!st.isFile()) throw new AuthConfigError(`quickstart: ${path} is not a regular file (FIFO/device rejected)`);
     const buf = Buffer.alloc(st.size);
     if (st.size > 0) await fh.read(buf, 0, st.size, 0);
     return { content: buf.toString("utf8"), mode: st.mode };

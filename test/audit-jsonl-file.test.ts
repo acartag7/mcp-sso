@@ -4,6 +4,7 @@
 // auth flow is never blocked by an IO error).
 
 import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -152,4 +153,24 @@ test("JsonlFileAudit: constructor rejects a non-string / empty filePath", () => 
   assert.throws(() => new JsonlFileAudit(""));
   // @ts-expect-error — runtime guard against a non-string
   assert.throws(() => new JsonlFileAudit(undefined));
+});
+
+test("JsonlFileAudit: a FIFO at the audit path does not hang (open nonblocking → fail-open)", async () => {
+  // open(O_WRONLY) on a FIFO blocks until a reader appears; without O_NONBLOCK the
+  // awaited writeAuthEvent would hang the auth flow. O_NONBLOCK makes open return
+  // (ENXIO, no reader) and the fail-open catch resolves writeAuthEvent normally.
+  if (process.platform === "win32") return;
+  const dir = await mkdtemp(join(tmpdir(), "mcp-sso-fifo-audit-"));
+  try {
+    const fifo = join(dir, "audit.fifo");
+    execSync(`mkfifo '${fifo}'`);
+    const sink = new JsonlFileAudit(fifo);
+    const result = await Promise.race([
+      sink.writeAuthEvent({ occurredAt: "2026-07-06T00:00:00.000Z", event: "auth.request", status: "success" }).then(() => "resolved" as const),
+      new Promise<"HUNG">((r) => setTimeout(() => r("HUNG"), 2000)),
+    ]);
+    assert.equal(result, "resolved", "writeAuthEvent must resolve (fail-open), not hang on a FIFO");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

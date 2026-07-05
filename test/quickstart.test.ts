@@ -2,6 +2,7 @@
 // Verification rows S1b.1–S1b.4 + O_EXCL non-clobber + the "never ephemeral" rule.
 
 import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
 import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -241,6 +242,25 @@ test("§17.8 (audit): a group/other-accessible pre-existing dir fails closed (ke
       await writeFile(join(target, ".gitignore"), "*\n", { mode: 0o600 });
       await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: target }), AuthConfigError);
     }
+  });
+});
+
+test("§17.8: a FIFO named secrets.json is rejected without hanging (open nonblocking + isFile)", async () => {
+  // open(O_RDONLY) on a FIFO blocks until a writer appears; without O_NONBLOCK the
+  // boot would hang. The hang-guard fails the test if it ever regresses.
+  if (process.platform === "win32") return;
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    await chmod(target, 0o700);
+    await writeFile(join(target, ".gitignore"), "*\n", { mode: 0o600 }); // so only the FIFO is at fault
+    const fifo = join(target, "secrets.json");
+    execSync(`mkfifo '${fifo}'`);
+    const result = await Promise.race([
+      loadOrCreateQuickstartSecrets({ dir: target }).then(() => "resolved" as const, (e) => e),
+      new Promise<"HUNG">((r) => setTimeout(() => r("HUNG"), 2000)),
+    ]);
+    assert.ok(result instanceof AuthConfigError, `expected fast AuthConfigError, got: ${typeof result === "string" ? result : result.message}`);
   });
 });
 
