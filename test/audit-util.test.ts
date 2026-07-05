@@ -28,6 +28,22 @@ test("redactSecrets: strips token=/secret=/password= assignments", () => {
   }
 });
 
+test("redactSecrets: strips underscored OAuth compound keys (access_token, refresh_token, id_token, client_secret)", () => {
+  // \b before token/secret does not match after `_`, so these previously leaked.
+  // The lookbehind treats `_`/`-` as separators. Short values must also go.
+  const cases: Array<[string, string]> = [
+    ["access_token=abc123SECRET", "abc123SECRET"],
+    ["refresh_token=rt_xyzVALUE", "rt_xyzVALUE"],
+    ["id_token=eyJpayloadVALUE", "eyJpayloadVALUE"],
+    ["client_secret=shh", "shh"],
+    ["access-token=dash-val-HERE", "dash-val-HERE"],
+  ];
+  for (const [raw, secret] of cases) {
+    const out = redactSecrets(raw);
+    assert.equal(out.includes(secret), false, `${raw}: value '${secret}' leaked (got: ${out})`);
+  }
+});
+
 test("redactSecrets: strips long opaque runs (tokens/hashes) but not short identifiers", () => {
   const token = "rt." + "a".repeat(48) + "." + "b".repeat(48);
   const out = redactSecrets(`refresh ${token} rejected`);
@@ -62,6 +78,20 @@ test("safeErrorMessage: handles non-Error throws and never throws itself", () =>
   assert.equal(safeErrorMessage(null), "unknown error");
   assert.equal(safeErrorMessage("plain string"), "plain string");
   assert.ok(safeErrorMessage({}).length > 0);
+});
+
+test("safeErrorMessage: never throws on a hostile error (throwing message/name getter or toString)", () => {
+  // A deployer-supplied fetchImpl (or a throwing toJSON) could yield a value
+  // whose .message getter or .toString throws. safeErrorMessage must NOT
+  // propagate that — both sinks call it inside their catch, so a throw would
+  // reject writeAuthEvent and turn an audit write into an auth 500.
+  const hostileGetter = {
+    get message() { throw new Error("boom in message getter"); },
+    get name() { throw new Error("boom in name getter"); },
+  };
+  assert.equal(safeErrorMessage(hostileGetter), "unknown error");
+  const hostileToString = { toString() { throw new Error("toString boom"); } };
+  assert.equal(safeErrorMessage(hostileToString), "unknown error");
 });
 
 test("safeErrorMessage: a long opaque password embedded in a userinfo URL is redacted", () => {

@@ -245,3 +245,13 @@ test("WebhookAudit: credential-bearing query string in the URL is scrubbed from 
   assert.equal(stderr.includes("access_token=" + secretValue), false, "access_token pair leaked");
   assert.ok(stderr.length > 0, "the failure was still surfaced");
 });
+
+test("WebhookAudit: never rejects when the transport throws a hostile error (throwing message getter)", async () => {
+  // The fail-open invariant must hold even when the caught value is hostile —
+  // a .message getter that throws must not escape the catch via safeErrorMessage.
+  const hostile = { get message() { throw new Error("getter boom"); } };
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    fetchImpl: (async () => { throw hostile; }) as typeof fetch,
+  });
+  await assert.doesNotReject(() => sink.writeAuthEvent({ ...baseEvent }));
+});
