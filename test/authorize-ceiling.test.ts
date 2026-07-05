@@ -230,6 +230,34 @@ test("prepare fails closed on a malformed ceiling at the CORE boundary (direct/e
   );
 });
 
+test("a whitespace-bearing ceiling entry is rejected (Codex P1: blocks the JWT round-trip resurrection escalation)", async () => {
+  const ctx = setup();
+  // ["mcp:read", "mcp:write mcp:admin"] — the composite entry would serialize
+  // into the space-joined allowed_scopes claim and re-split at approve into a
+  // discrete mcp:admin, widening the ceiling and letting a prior mcp:admin grant
+  // resurrect (threat-model row 22). Rejected at the boundary before it can
+  // corrupt the token — at BOTH resolveIdentity and the exported prepare.
+  const port: IdentityPort = { async verify() { return { ok: true, identity: { subject: SUBJECT, allowedScopes: ["mcp:read", "mcp:write mcp:admin"] } }; } };
+  await assert.rejects(
+    ctx.bridge.resolveIdentity(port, ID_GOOD, IP),
+    (e: unknown) => e instanceof OAuthError && e.code === "access_denied" && e.status === 401,
+  );
+  const auth = new OAuthAuthorizationUseCase({ config: ctx.bridge.config, store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit: new MemoryAudit() });
+  await assert.rejects(
+    auth.prepare({ clientId: "c", redirectUri: REDIRECT, responseType: "code", codeChallenge: pkceChallenge("v-ws-core-0123456789abcdef01234567890123"), codeChallengeMethod: "S256", subject: SUBJECT, allowedScopes: ["mcp:read mcp:admin"] }),
+    (e: unknown) => e instanceof OAuthError && e.code === "access_denied" && e.status === 401,
+  );
+});
+
+test("an empty-string ceiling entry is rejected (not a valid scope token)", async () => {
+  const ctx = setup();
+  const port: IdentityPort = { async verify() { return { ok: true, identity: { subject: SUBJECT, allowedScopes: ["mcp:read", ""] } }; } };
+  await assert.rejects(
+    ctx.bridge.resolveIdentity(port, ID_GOOD, IP),
+    (e: unknown) => e instanceof OAuthError && e.code === "access_denied" && e.status === 401,
+  );
+});
+
 test("an empty-array ceiling denies all scopes (entitled to nothing ⇒ access_denied redirect)", async () => {
   const ctx = setup();
   const clientId = await register(ctx);
