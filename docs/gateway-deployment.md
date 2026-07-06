@@ -128,10 +128,23 @@ and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
      `Proxy-Authorization`). Prefer an explicit allowlist of forwarded headers
      over pass-through-minus-blocklist — an allowlist fails closed when a new
      header appears.
-   - Forward `mcp-session-id` and `mcp-protocol-version` in both directions
-     if the backend is stateful, and `Last-Event-ID` on GET — the transport
-     resumes a broken SSE stream via `GET` + `Last-Event-ID`, so an
-     allowlist that omits it silently breaks resumability.
+   - **Your forward-allowlist must carry the transport's required headers, or
+     you break interop.** Stripping client auth (above) means an *allowlist* —
+     so it must explicitly include the headers Streamable HTTP requires, not
+     just the session/resume ones:
+     - `MCP-Protocol-Version` — the client MUST send it on **every** request
+       after init, stateful or not; if the gateway drops it the backend
+       **assumes `2025-03-26`** and can behave differently than the client
+       negotiated. Forward it unconditionally (both directions).
+     - `Accept` — the client MUST send `application/json, text/event-stream`
+       on POST and `text/event-stream` on GET; strip it and a strict backend
+       rejects the POST or disables SSE. Forward it (and `Content-Type:
+       application/json` on POST) as request essentials.
+     - `mcp-session-id` — forward both directions **when the backend is
+       stateful** (it assigns the id at init and expects it echoed).
+     - `Last-Event-ID` on GET — the transport resumes a broken SSE stream via
+       `GET` + `Last-Event-ID`, so an allowlist that omits it silently breaks
+       resumability.
    - Stream SSE responses through; do not buffer them.
 2. **Facade** (you own the tool surface). Run your own `McpServer` whose
    tools call the backend API directly. More code, full control: validate
