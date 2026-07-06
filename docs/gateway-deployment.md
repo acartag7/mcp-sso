@@ -52,12 +52,27 @@ and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
 > the header is absent, so `resolveIdentity` fails `entra_id_token_missing`
 > and the user gets a **direct 401, not an Entra sign-in**. Driving the Entra
 > redirect dance yourself is deployer code — `createEntraIdentity` exposes
-> `getAuthorizationUrl` + `exchangeCodeForToken` (with nonce handling) for a
-> custom `/oauth/authorize` + callback wrapper that ends by handing the
-> id_token to the bridge. Pick one before shipping: front the gateway with an
-> assertion-injecting proxy (header model, zero extra code), or compose the
-> redirect wrapper. The three `/mcp` shapes below are orthogonal to this
-> choice.
+> `getAuthorizationUrl` (put a per-request `nonce` on it) and
+> `exchangeCodeForToken` for a custom `/oauth/authorize` + callback wrapper.
+>
+> **Do not finish that wrapper by re-injecting the id_token into the header
+> path.** `bridge.resolveIdentity` calls `verify(idToken)` with **no**
+> `expectedNonce`, and the Entra port only checks the nonce when the caller
+> passes one — so the header route validates `iss`/`aud`/signature but
+> **never binds the id_token to the login request**, leaving id_token
+> replay/injection open. The wrapper must instead: (1) persist the `nonce` it
+> put on `getAuthorizationUrl`, bound to the request (signed `state` or a
+> server-side session keyed by `state`); (2) after `exchangeCodeForToken`,
+> call the concrete `entra.verify(idToken, { expectedNonce })` **itself**;
+> (3) only on `ok` call `bridge.handleAuthorize(req, { subject, allowedScopes
+> })` with the verified subject. Because this bypasses `resolveIdentity`, the
+> wrapper also owns the `identity.verify` **audit event** (and any
+> `allowedScopes` ceiling handling) that `resolveIdentity` would otherwise
+> emit — don't silently drop it.
+>
+> Pick one before shipping: front the gateway with an assertion-injecting
+> proxy (header model, zero extra code), or compose the redirect wrapper. The
+> three `/mcp` shapes below are orthogonal to this choice.
 
 1. **Transparent proxy** (least code, backend tools appear as-is). After
    `authorizer.authorize({...})` accepts the bearer token, forward the
