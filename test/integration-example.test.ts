@@ -168,12 +168,23 @@ function sdkFetchShim(app: { inject(args: unknown): Promise<unknown> }): typeof 
   }) as typeof fetch;
 }
 
+/** Race a promise against a hard deadline (reject after `ms` with `label`). The MCP
+ *  SDK transport overrides requestInit.signal with its own AbortController.signal, so
+ *  the abort lever is transport.close() (in the caller's finally), not a bounded
+ *  requestInit.signal. (Sweep of the Codex P2 on the full-flow driver.) */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
 async function callProtectedMcp(app: { inject(args: unknown): Promise<unknown> }, resource: string, accessToken: string, expectedSubject: string): Promise<void> {
   const transport = new StreamableHTTPClientTransport(new URL(resource), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
   const client = new Client({ name: "int-entry-flow", version: "0.0.1" }, { capabilities: {} });
   try {
-    await client.connect(transport);
-    const result = await client.callTool({ name: "ping", arguments: {} });
+    await withTimeout(client.connect(transport), 10_000, "MCP client connect");
+    const result = await withTimeout(client.callTool({ name: "ping", arguments: {} }), 10_000, "MCP client callTool");
     const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
     assert.equal(text, `pong: ${expectedSubject}`, "the entry-resolved subject reached /mcp");
   } finally {

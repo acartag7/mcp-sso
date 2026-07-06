@@ -98,6 +98,17 @@ function freePort(): Promise<number> {
 
 interface Resp { status: number; headers: Record<string, string>; body: string; location: string | undefined }
 
+/** Race a promise against a hard deadline (reject after `ms` with `label`). For the
+ *  MCP SDK client ops: its transport overrides requestInit.signal with its own
+ *  AbortController.signal, so the abort lever is transport.close() (in the caller's
+ *  finally), not a bounded requestInit.signal. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
 function httpCall(base: string, method: string, path: string, headers: Record<string, string>, body?: string): Promise<Resp> {
   return new Promise((resolve, reject) => {
     const url = new URL(base + path);
@@ -255,14 +266,24 @@ async function driveRoundTrip(base: string, issuer: string, origin: string, opts
   const { access_token: accessToken, refresh_token: refreshToken } = JSON.parse(token.body) as { access_token: string; refresh_token: string };
 
   // Protected /mcp via the OFFICIAL MCP SDK client against the real socket (no fetch shim).
+  // Hang-guard: the SDK transport builds its OWN AbortController.signal into each fetch
+  // init, which (per createFetchWithInit's {...baseInit, ...init} merge) OVERRIDES
+  // requestInit.signal — so a bounded requestInit.signal would NOT abort the fetch.
+  // Instead, race the SDK ops against a deadline and close() the transport in finally
+  // (close() aborts the controller → aborts the in-flight fetch → frees the socket).
+  // Without this, a /mcp handler that accepts and never completes hangs CI (node --test
+  // has no per-test timeout). (Codex P2.)
   const transport = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
   const client = new Client({ name: "int-full-flow", version: "0.0.1" }, { capabilities: {} });
-  await client.connect(transport);
-  const result = await client.callTool({ name: "ping", arguments: {} });
-  const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
-  assert.equal(text, `pong: ${SUBJECT}`, "bridge-minted token carried the verified subject to /mcp");
-  await client.close();
-  await transport.close();
+  try {
+    await withTimeout(client.connect(transport), 10_000, "MCP client connect");
+    const result = await withTimeout(client.callTool({ name: "ping", arguments: {} }), 10_000, "MCP client callTool");
+    const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
+    assert.equal(text, `pong: ${SUBJECT}`, "bridge-minted token carried the verified subject to /mcp");
+  } finally {
+    await client.close();
+    await transport.close();
+  }
 
   // Refresh rotates the token.
   const refreshed = await http.postForm(base, "/oauth/token", { grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId });
