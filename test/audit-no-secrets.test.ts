@@ -23,6 +23,7 @@ const ALL_EVENTS: AuthAuditEventName[] = [
   "identity.verify", "oauth.pairing.attempt", "oauth.device.authorization",
   "oauth.device.approve", "oauth.token.device_code", "oauth.token.client_credentials",
   "oauth.client.provision", "oauth.client.rotate_secret", "oauth.cimd.fetch",
+  "oauth.upstream.callback",
 ];
 
 const SECRET_KEYS = ["authorization", "cookie", "set-cookie", "access_token", "refresh_token", "code", "token"];

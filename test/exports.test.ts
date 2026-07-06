@@ -16,6 +16,9 @@ import {
   JsonlFileAudit,
   WebhookAudit,
   combineAudit,
+  createUpstreamRedirectFlow,
+  type UpstreamRedirectFlow,
+  type RedirectIdentityPort,
 } from "../src/index.ts";
 
 test("exports: the S1b + S1a + core surface is reachable from the root entry", () => {
@@ -27,6 +30,9 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   assert.equal(typeof JsonlFileAudit, "function");
   assert.equal(typeof WebhookAudit, "function");
   assert.equal(typeof combineAudit, "function");
+  assert.equal(typeof createUpstreamRedirectFlow, "function", "createUpstreamRedirectFlow (§17.11) is root-exported");
+  void (null as unknown as UpstreamRedirectFlow); // type reachable
+  void (null as unknown as RedirectIdentityPort); // type reachable
 });
 
 test("exports: renderPairingPage emits the nonce + round-tripped OAuth params, never a code", () => {
@@ -55,4 +61,14 @@ test("exports: the ./identity/console-pairing subpath is mapped to its source-of
   // subpath promises (ties the export string to real source, not a dangling entry).
   const src = readFileSync(fileURLToPath(new URL("../src/identity/console-pairing.ts", import.meta.url)), "utf8");
   assert.ok(/export function createConsolePairingIdentity/.test(src), "source-of-truth exports createConsolePairingIdentity");
+});
+
+test("exports: the §17.11 redirect-flow identity is re-exported from the ./identity/entra subpath source", () => {
+  // createEntraRedirectIdentity lives in entra-redirect.ts but must be importable
+  // via the ./identity/entra subpath (entra.ts re-exports it). Ties the re-export
+  // line to real source so a rename/removal can't silently break consumers.
+  const entraSrc = readFileSync(fileURLToPath(new URL("../src/identity/entra.ts", import.meta.url)), "utf8");
+  assert.ok(/createEntraRedirectIdentity/.test(entraSrc), "entra.ts re-exports createEntraRedirectIdentity for the subpath");
+  const redirectSrc = readFileSync(fileURLToPath(new URL("../src/identity/entra-redirect.ts", import.meta.url)), "utf8");
+  assert.ok(/export function createEntraRedirectIdentity/.test(redirectSrc), "source-of-truth exports createEntraRedirectIdentity");
 });
