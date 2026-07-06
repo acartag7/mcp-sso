@@ -1746,10 +1746,20 @@ between a bridge and its flow — omitting audit must be a visible, deliberate
 `noopAudit` at the call site, never an accident.
 
 Boot validation (all `AuthConfigError`, fail-closed): `callbackPath` is a
-**plain pathname** — starts with `/` and contains no `?`, `#`, whitespace, or
-control characters (framework routes match by pathname, so a query-bearing
-"path" would register a route the real callback request never hits) — and is
-none of the reserved routes (`/oauth/authorize`, `/oauth/authorize/approve`,
+**plain pathname** — starts with `/`; contains no `?`, `#`, `%`, `\`,
+whitespace, or control characters (framework routes match by pathname, so a
+query-bearing "path" would register a route the real callback request never
+hits; percent-encoding and backslashes have no business in a configured route
+and are rejected outright rather than decoded); has no empty (`//`) or dot
+(`.`/`..`) segments; and `new URL(issuerOrigin + callbackPath).pathname` MUST
+equal the configured string exactly. The character checks run on the RAW
+string BEFORE any URL parsing (the §17.1 dot-segment lesson: WHATWG parsers
+normalize `/%2e%2e/` away, so a post-parse check cannot see it), and the
+normalized-equality check catches whatever survives — otherwise a path like
+`/foo/%2e%2e/oauth/token` registers one route while browsers deliver the
+callback to a reserved one. The reserved-route comparison runs on this
+validated literal, which the checks above make identical to its normalized
+form. `callbackPath` must be none of the reserved routes (`/oauth/authorize`, `/oauth/authorize/approve`,
 `/oauth/token`, `/oauth/register`, `/oauth/revoke`, `/oauth/jwks`, anything
 under `/.well-known/`, or the resource path); `identity.redirectUri` contains
 no query or fragment and `=== issuerOrigin(config) + callbackPath` exactly;
