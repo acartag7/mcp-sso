@@ -81,12 +81,18 @@ agent, each added only by the people who need it. The supported topology:
 - Adding backend N+1 is a config change, not a code change: same image, new
   hostname, new resource, new backend credential.
 
-**Never share a store or signing material between bridge instances.** Store
-rows (refresh-token families, consent JTIs) are not issuer-scoped: two
-bridges sharing one database *and* one signing key would let a refresh token
-issued by gateway A be redeemed at gateway B — minting a validly-signed token
-for the wrong audience and silently defeating the isolation above. One store
-(file or database/schema) and one signing key **per bridge**.
+**Never share a store between bridge instances.** Refresh-token acceptance
+is entirely store-scoped: the token is an opaque string looked up by hash
+and rotated (`rotateRefreshToken`), with a client binding against the
+*stored* record — no issuer or resource check, and no signature involved in
+acceptance. So two bridges sharing one database let a refresh token issued
+by gateway A be redeemed at gateway B, which then mints a token **validly
+signed with B's own key for B's audience** — silently defeating the
+isolation above. Sharing signing material is *not* required for this break;
+store separation is the load-bearing control. One store (file or
+database/schema) per bridge. Use separate signing keys per bridge too, as
+independent hygiene: it doesn't substitute for store separation, but it
+keeps a key compromise contained to one gateway.
 
 ## Kubernetes notes
 
