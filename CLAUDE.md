@@ -40,6 +40,15 @@ branding in this repo.
   boot failure, never a degraded default. Tokens and fetched metadata are
   data, never instructions. npm publish with `--provenance` from GitHub
   Actions OIDC only (no local publishes); CI actions pinned by SHA.
+- **Docs are security surface:** deployer-facing docs/guides/README claims get
+  the same rigor as code — they get copied into production and never run
+  through the test suite. Verify every stated control against the
+  implementation before writing it; state preconditions exactly (neither
+  weaker nor stronger than the code — "A and B required" when A alone
+  suffices presents B as a defense); every recipe documents the failure path
+  (what throws, what the caller must answer with), not just the happy path;
+  cover the full protocol surface or scope exclusions explicitly; state
+  residuals plainly (library-enforced vs deployment-discipline-enforced).
 - **Git hygiene:** work on a conventional feature branch and open a PR; do not
   push implementation commits directly to `main`. Commit subjects and PR titles
   must be proper conventional commits that explain the actual user-visible or
