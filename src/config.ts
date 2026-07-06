@@ -14,6 +14,15 @@ export interface DevOptions {
   allowInsecureLocalhost: boolean;
 }
 
+/** Opt-in to the `client_credentials` grant surface (contracts §17.2). When
+ *  enabled the bridge accepts machine-client provisioning and (in S3b) the
+ *  token grant. Fail-closed boot rule: enabling requires `dcr.mode === "stored"`
+ *  — machine clients are persisted into the ClientStore, so stateless DCR
+ *  (which persists nothing) cannot support them. */
+export interface ClientCredentialsOptions {
+  enabled: boolean;
+}
+
 export interface BridgeConfig {
   issuer: string;
   resource: string;
@@ -26,6 +35,7 @@ export interface BridgeConfig {
   allowedOrigins: string[];
   dcr: DcrMode;
   dev?: DevOptions;
+  clientCredentials?: ClientCredentialsOptions;
   accessTokenTtlSeconds: number;
   refreshTokenTtlSeconds: number;
   consentTokenTtlSeconds: number;
@@ -49,7 +59,7 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "issuer", "resource", "consentSigningSecret", "signingPrivateJwk",
   "signingKeyId", "redirectAllowlist", "scopeCatalog", "defaultScopes",
-  "allowedOrigins", "dcr", "dev",
+  "allowedOrigins", "dcr", "dev", "clientCredentials",
   "accessTokenTtlSeconds", "refreshTokenTtlSeconds", "consentTokenTtlSeconds",
   "authorizationCodeTtlSeconds",
 ]);
@@ -94,6 +104,17 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   }
   if (input.dcr.mode === "stored" && !input.dcr.store) {
     throw new AuthConfigError("dcr.mode 'stored' requires a ClientStore");
+  }
+  if (input.clientCredentials !== undefined) {
+    if (typeof input.clientCredentials !== "object" || input.clientCredentials === null
+      || typeof input.clientCredentials.enabled !== "boolean") {
+      throw new AuthConfigError("clientCredentials must be { enabled: boolean }");
+    }
+    // §17.2: machine clients are persisted into the ClientStore, so the grant
+    // surface is meaningless (and dangerous to advertise) without stored DCR.
+    if (input.clientCredentials.enabled && input.dcr.mode !== "stored") {
+      throw new AuthConfigError("clientCredentials.enabled requires dcr.mode 'stored' (machine clients are provisioned into the ClientStore — §17.2)");
+    }
   }
   if (input.dev?.allowInsecureLocalhost === true) {
     // Defense-in-depth advisory (threat-model #16): the loopback-only check above

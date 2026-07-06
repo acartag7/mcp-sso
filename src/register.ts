@@ -21,6 +21,13 @@ export interface RegisterDeps {
 export interface RegisterInput {
   redirectUris?: string[];
   applicationType?: ApplicationType;
+  /** RFC 7591 client-metadata fields that signal a MACHINE client (§17.2). Open
+   *  registration rejects `token_endpoint_auth_method` other than `"none"` and
+   *  any `grant_types` containing `client_credentials` so the open endpoint can
+   *  NEVER mint a secret-bearing client. Passed through here only to be
+   *  validated and rejected — they are never persisted. */
+  tokenEndpointAuthMethod?: string;
+  grantTypes?: string[];
 }
 
 export interface RegisteredClient {
@@ -33,12 +40,32 @@ export interface RegisteredClient {
 export async function registerClient(deps: RegisterDeps, input: RegisterInput): Promise<RegisteredClient> {
   const { config, clock, audit } = deps;
   try {
+    // §17.2: reject machine-shaped registrations FIRST. Open DCR must never mint
+    // a secret-bearing (machine) client — only out-of-band provisioning can.
+    if (input.tokenEndpointAuthMethod !== undefined && input.tokenEndpointAuthMethod !== "none") {
+      throw new OAuthError(
+        "invalid_client_metadata",
+        "token_endpoint_auth_method other than 'none' is not accepted via open registration (§17.2)",
+      );
+    }
+    if (input.grantTypes?.includes("client_credentials")) {
+      throw new OAuthError(
+        "invalid_client_metadata",
+        "grant_types containing client_credentials is not accepted via open registration (§17.2)",
+      );
+    }
     const redirectUris = arrayOfStrings(input.redirectUris);
     if (redirectUris.length === 0) throw new OAuthError("invalid_request", "redirect_uris is required");
     for (const uri of redirectUris) assertAllowedRedirectUri(uri, config.redirectAllowlist);
     const applicationType: ApplicationType = input.applicationType ?? "web";
     if (applicationType !== "native" && applicationType !== "web") {
-      throw new OAuthError("invalid_request", "application_type must be 'native' or 'web'");
+      // application_type is client metadata (RFC 7591 §3.1); an invalid value —
+      // including "machine", which is a §17.2 machine-shape signal — is
+      // invalid_client_metadata, grouped with the machine-shape rejections above.
+      throw new OAuthError(
+        "invalid_client_metadata",
+        "application_type must be 'native' or 'web'; machine clients are provisioned out-of-band (§17.2)",
+      );
     }
     const clientId = `mcpdc_${cryptoRandom()}`;
     const issuedAt = Math.floor(clock.nowMs() / 1000);
