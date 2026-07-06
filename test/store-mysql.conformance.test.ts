@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { before, after, beforeEach, test } from "node:test";
-import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
+import { createPool, type Pool, type PoolConnection, type RowDataPacket } from "mysql2/promise";
 import type { StorePort } from "../src/ports/store.ts";
 import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
@@ -20,6 +20,13 @@ import { runStoreConformance } from "./lib/store-conformance.ts";
 const RUN_INTEGRATION = process.env.RUN_INTEGRATION === "true";
 const MYSQL_URL = process.env.MYSQL_URL;
 const RUN = !!MYSQL_URL;
+
+// node --test runs test files CONCURRENTLY in separate processes against this SAME
+// CI database. integration-full-flow.test.ts runs a full /mcp round-trip through a
+// real express mount against MysqlStore here too; this file's beforeEach DELETE-all
+// could wipe that flow's rows mid-flight. Both files take this named advisory lock
+// for their whole lifetime so they serialize (CI is sacred — no cross-file flakes).
+const OAUTH_LOCK_NAME = "mcp_sso_oauth_lock";
 
 if (RUN_INTEGRATION && !MYSQL_URL) {
   // B3: in the integration CI job (RUN_INTEGRATION set), a missing MYSQL_URL must RED,
@@ -34,10 +41,20 @@ const LATER = "2026-07-03T12:05:00.000Z";
 const FUTURE = "2026-07-03T13:00:00.000Z";
 
 let admin: Pool | undefined;
+let lockConn: PoolConnection | undefined;
 
 before(async () => {
   if (!RUN) return;
   admin = createPool(MYSQL_URL as string);
+  // Hold the named lock on a DEDICATED connection for this file's lifetime so the
+  // concurrent integration-full-flow mysql round-trip can't race this file's
+  // beforeEach DELETE-all (and vice versa). GET_LOCK is per-connection, so the
+  // connection is kept (not released) until `after`.
+  lockConn = await admin.getConnection();
+  // 120s must exceed the worst-case runtime of the sibling integration-full-flow
+  // mysql test (it waits for THIS file's whole-suite duration under the same lock).
+  const [rows] = await lockConn.query<RowDataPacket[]>("SELECT GET_LOCK(?, 120) AS ok", [OAUTH_LOCK_NAME]);
+  assert.equal((rows[0] as { ok: number }).ok, 1, `could not acquire ${OAUTH_LOCK_NAME}`);
   // Migrate once (also runs the boot-time strict-mode + collation assertions).
   const setupStore = await createMysqlStore(MYSQL_URL as string);
   await setupStore.close();
@@ -54,6 +71,10 @@ beforeEach(async () => {
 });
 
 after(async () => {
+  if (lockConn) {
+    try { await lockConn.query("SELECT RELEASE_LOCK(?)", [OAUTH_LOCK_NAME]); } catch { /* pool ending below anyway */ }
+    lockConn.release();
+  }
   if (admin) await admin.end();
 });
 
