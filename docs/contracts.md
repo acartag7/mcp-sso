@@ -1223,7 +1223,11 @@ in this flow."* Decisions:
   scope tokens; `verifyMachineClientSecret` validates the secret slots but NOT
   `allowedScopes`, so a custom/migrated store returning a valid-secret record
   with a malformed/missing/empty ceiling fails closed as `invalid_client`
-  (never a raw `TypeError`/500, never an empty-scope token).
+  (never a raw `TypeError`/500, never an empty-scope token). The `mcc_`
+  clientId prefix — the RS's machine-vs-user distinguishability signal
+  (RFC 9700 §4.15.1) — is likewise re-checked at grant time: a custom/migrated
+  store returning a machine record whose id lacks the prefix fails closed as
+  `invalid_client` (no JWT `sub` collision with a human/`mcpdc_` subject).
   `resource` if present MUST equal `config.resource` (`invalid_target`). Mint
   an access token with `sub = client_id`
   (RFC 9068 §2.2) and the existing `client_id` claim; **NO refresh token**

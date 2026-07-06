@@ -166,8 +166,8 @@ export class OAuthTokenUseCase {
       const ok = await verifyMachineClientSecret({ store: clientStore, catalog: this.config.scopeCatalog, clock: this.clock, audit: this.audit }, clientId, clientSecret);
       if (!ok) throw new OAuthError("invalid_client", "Client authentication failed", 401);
       const client = await clientStore.find(clientId);
-      if (!client || client.applicationType !== "machine") throw new OAuthError("invalid_client", "Client authentication failed", 401);
-      // verify doesn't validate allowedScopes: a malformed/missing/empty ceiling ⇒ invalid_client (not 500/empty-scope).
+      // verify validates secret slots only; the grant defends the mcc_ sub-prefix (RS distinguishability) + the allowedScopes ceiling ⇒ invalid_client.
+      if (!client || client.applicationType !== "machine" || !clientId.startsWith("mcc_")) throw new OAuthError("invalid_client", "Client authentication failed", 401);
       if (!Array.isArray(client.allowedScopes) || client.allowedScopes.length === 0 || !client.allowedScopes.every((s) => typeof s === "string" && isScopeToken(s))) throw new OAuthError("invalid_client", "Machine client record has a malformed allowedScopes ceiling", 401);
       const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, this.config.scopeCatalog);
       if (input.resource !== undefined && input.resource !== this.config.resource) throw new OAuthError("invalid_target", "resource does not match the configured resource");

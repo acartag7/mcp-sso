@@ -252,6 +252,22 @@ test("catalog drift (Codex P2): a ceiling scope removed from the live catalog is
   assert.equal((explicit.body as { error: string }).error, "invalid_scope");
 });
 
+test("non-mcc machine clientId (Codex P2 #3): a machine record whose id lacks the mcc_ prefix ⇒ invalid_client (no sub collision)", async () => {
+  // A custom/migrated store could persist a machine record under a non-mcc id; the
+  // grant must not sign it (the JWT sub would collide with a human/mcpdc_ subject and
+  // break the RS's machine-vs-user distinguishability, RFC 9700 §4.15.1).
+  const ctx = setup(true);
+  const secret = "mcs_" + "N".repeat(43);
+  await ctx.clientStore.save({
+    clientId: "mcpdc_impostor", redirectUris: [], applicationType: "machine", issuedAtEpoch: Math.floor(NOW_MS / 1000),
+    allowedScopes: ["mcp:read"], secrets: [{ hash: sha256Hex(secret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
+  });
+  const res = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcpdc_impostor", secret) }, body: grantBody({}) }));
+  assert.equal(res.status, 401);
+  assert.equal((res.body as { error: string }).error, "invalid_client");
+  assert.equal("scope" in (res.body as object), false, "no token minted with a colliding sub");
+});
+
 test("poisoned allowedScopes ceiling (Codex P2 #2): malformed/empty/missing ⇒ invalid_client 401, never 500 or empty-scope", async () => {
   // verifyMachineClientSecret validates secret slots but NOT allowedScopes, so a
   // custom/migrated store returning a valid-secret record with a broken ceiling
