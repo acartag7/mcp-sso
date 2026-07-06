@@ -62,7 +62,9 @@ and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
    - **Never forward the client's `Authorization` header upstream** — replace
      it with the backend credential.
    - Forward `mcp-session-id` and `mcp-protocol-version` in both directions
-     if the backend is stateful.
+     if the backend is stateful, and `Last-Event-ID` on GET — the transport
+     resumes a broken SSE stream via `GET` + `Last-Event-ID`, so an
+     allowlist that omits it silently breaks resumability.
    - Stream SSE responses through; do not buffer them.
 2. **Facade** (you own the tool surface). Run your own `McpServer` whose
    tools call the backend API directly. More code, full control: validate
@@ -121,10 +123,15 @@ Each gateway is a small Deployment + Service + Ingress + Secret:
 
 - **Size**: one Node ≥24 process; the hot path is one ES256 verify per `/mcp`
   call. `requests: 100m/128Mi, limits: 500m/256Mi` is comfortable.
-- **Secrets**: signing JWK, consent secret, and the backend credential as
-  Kubernetes Secrets exposed as env vars, wired into `createBridgeConfig`.
-  The quickstart file helper (§17.8) is the *local zero-setup* path — do not
-  use it in a pod.
+- **Secrets**: all three live as Kubernetes Secrets exposed as env vars, but
+  they take **two separate paths in code**: the signing JWK and consent
+  secret go into `createBridgeConfig`; the backend credential is read and
+  validated separately at boot into the `getBackendCredential()` closure and
+  **must never be placed in the `createBridgeConfig` input** —
+  `BridgeConfig` has no backend-credential field, and extra keys currently
+  survive onto the frozen public `bridge.config` object, which is passed
+  around the whole app. The quickstart file helper (§17.8) is the *local
+  zero-setup* path — do not use it in a pod.
 - **Replicas × store**: the sqlite store means **one replica** with the file
   on a PVC — never `emptyDir`: refresh tokens are long-lived sessions, and
   losing the file on a reschedule logs every user out. For ≥2 replicas or
