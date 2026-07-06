@@ -75,7 +75,23 @@ and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
    JSON-RPC `method` is `tools/call`, check the tool name against the
    caller's granted scopes before forwarding.
 
-Start with (1); move to (2)/(3) when per-team restrictions matter.
+**Scope gates are NOT a per-user entitlement boundary by themselves.** With
+the shipped identity ports (Entra, Cloudflare Access, console pairing),
+token scopes are whatever the client *requests* from the deployment-wide
+`scopeCatalog` and the user consents to — none of the shipped ports supplies
+an `allowedScopes` ceiling, so **any** authorized user can request and
+approve `splunk:admin` and then pass `requireScope`. Scope gating in (2)/(3)
+therefore buys least-privilege hygiene (an agent that only asked for
+`splunk:read` cannot call admin tools), not team-level restrictions. To make
+scopes an entitlement boundary, an identity must supply the §17.4
+`allowedScopes` ceiling (the enforcement engine is shipped): today that
+means wrapping a shipped port with your own producer (e.g. derive the
+ceiling from your own group lookup); the built-in Entra group→scope producer
+is on the roadmap.
+
+Start with (1); move to (2)/(3) when tool-level control matters — and pair
+them with an `allowedScopes` producer when the control must be per-user or
+per-team rather than per-request.
 
 ## Multiple backends: one gateway per MCP
 
