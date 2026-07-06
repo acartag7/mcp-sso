@@ -356,14 +356,13 @@ test("integration — Cloudflare Access branch: full header flow through the ent
   }
 });
 
-test("integration — /mcp Origin gate (MCP Streamable HTTP DNS-rebinding MUST): foreign Origin ⇒ 403 before auth; absent/allowlisted ⇒ proceed to the bearer check", async () => {
+test("integration — /mcp Origin gate (MCP Streamable HTTP DNS-rebinding MUST): foreign Origin ⇒ 403 before parsing/auth on ALL methods; absent/allowlisted ⇒ proceed", async () => {
   // The MCP Streamable HTTP transport says servers MUST validate `Origin` on every
-  // connection (403 when present but not allowlisted). The example enforces it
-  // IN-HANDLER, BEFORE authorize(): a foreign Origin is rejected with 403 and never
-  // reaches the resource-server leg (no WWW-Authenticate challenge), while an
-  // absent Origin (MCP clients are not browsers) or an allowlisted Origin proceeds
-  // to the bearer check and returns 401 here (no token). The 403-vs-401 split on a
-  // token-less request is the proof the gate precedes authorization.
+  // connection. The example enforces it in an onRequest hook scoped to /mcp — BEFORE
+  // body parsing and for EVERY method (POST/GET/DELETE) — so a foreign Origin is
+  // 403'd before authorize() AND before Fastify's body parser (a malformed/oversized
+  // body with a foreign Origin still gets 403, not 400/413), while an absent Origin
+  // (MCP clients are not browsers) or an allowlisted Origin proceeds to 401 (no token).
   const ORIGIN = "http://localhost:3000";
   const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-origin-"));
   const dir = join(base, "state");
@@ -376,6 +375,18 @@ test("integration — /mcp Origin gate (MCP Streamable HTTP DNS-rebinding MUST):
       const evil = await app.inject({ method: "POST", url: "/mcp", headers: { "content-type": "application/json", origin: "https://evil.test" }, payload: init });
       assert.equal(evil.statusCode, 403, "foreign Origin rejected before authorization");
       assert.doesNotMatch(evil.headers["www-authenticate"] ?? "", /resource_metadata=/, "Origin gate fires before the authorize leg — no challenge");
+
+      // Foreign Origin on GET and DELETE ⇒ 403 too — the hook is method-agnostic, not
+      // a POST-handler-only check.
+      const evilGet = await app.inject({ method: "GET", url: "/mcp", headers: { origin: "https://evil.test" } });
+      assert.equal(evilGet.statusCode, 403, "foreign Origin rejected on GET (method coverage)");
+      const evilDelete = await app.inject({ method: "DELETE", url: "/mcp", headers: { origin: "https://evil.test" } });
+      assert.equal(evilDelete.statusCode, 403, "foreign Origin rejected on DELETE (method coverage)");
+
+      // Foreign Origin beats body parsing: malformed JSON with a foreign Origin gets
+      // 403, not Fastify's 400 body-parse error.
+      const evilBadBody = await app.inject({ method: "POST", url: "/mcp", headers: { "content-type": "application/json", origin: "https://evil.test" }, payload: "{not valid json" });
+      assert.equal(evilBadBody.statusCode, 403, "foreign Origin rejected before body parsing (malformed JSON ⇒ 403, not 400)");
 
       // Allowlisted Origin ⇒ proceeds to the bearer check ⇒ 401 + challenge.
       const allowlisted = await app.inject({ method: "POST", url: "/mcp", headers: { "content-type": "application/json", origin: ORIGIN }, payload: init });

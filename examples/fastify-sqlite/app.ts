@@ -82,36 +82,35 @@ export async function buildApp(opts: ExampleOptions) {
     await registerOAuthRoutes(app, { bridge, identity: opts.identity, identityHeader: opts.identityHeader });
   }
 
-  // Protected /mcp: verify the bridge-issued access token, then delegate to an MCP server.
-  app.post("/mcp", async (request, reply) => {
-    // Origin validation — MCP Streamable HTTP transport DNS-rebinding protection.
-    // Servers MUST validate the `Origin` header on every connection; a PRESENT,
-    // non-allowlisted Origin is rejected with 403 (the SDK's own behavior and the
-    // prescription in `docs/gateway-deployment.md`, which states it "before
-    // anything else"). Enforced HERE, in-handler and BEFORE `authorize()`, NOT via the SDK
-    // transport's `enableDnsRebindingProtection`/`allowedOrigins` options: those
-    // are off by default (and `@deprecated` — the SDK itself says to use external
-    // middleware for this), and they run INSIDE `transport.handleRequest()` below
-    // — i.e. AFTER the bearer check — so they could not satisfy "before anything
-    // else" (a foreign Origin would still trigger a full token verify + 401
-    // challenge first). `RequestAuthorizer`
-    // checks bearer + scopes only; the Origin gate on this deployer-owned endpoint
-    // is ours regardless. Bearer auth blunts the practical rebinding risk (a
-    // rebound browser request carries no token), but the MUST is unconditional and
-    // this is the only defense on any surface later exposed unauthenticated. MCP
-    // clients are not browsers, so an ABSENT Origin is the normal case and
-    // proceeds; a PRESENT Origin must match `config.allowedOrigins` (defaults to
-    // the issuer origin) or the server's own origin `originOf(issuer)` — which
-    // normalizes a trailing-slash/path issuer so a browser's serialized Origin
-    // (scheme://host[:port]) is admitted rather than 403'd on a string mismatch.
-    // Mirrors `src/authorize.ts` `assertOrigin`; like it, `allowedOrigins` entries
-    // are matched exactly (not normalized) — set them as clean origins.
+  // Origin gate — MCP Streamable HTTP transport DNS-rebinding protection (servers
+  // MUST validate the `Origin` header on every connection; reject a present,
+  // non-allowlisted Origin). Scoped to /mcp and placed in an onRequest hook so it
+  // runs BEFORE body parsing and for EVERY method (POST/GET/DELETE) — NOT inside
+  // the POST handler, where Fastify's body parser would already have read/rejected
+  // the body (a foreign-Origin POST with malformed/oversized JSON would get
+  // Fastify's 400/413, not this 403 gate), and where GET/DELETE /mcp would bypass
+  // it entirely. Done here, not via the SDK transport's
+  // enableDnsRebindingProtection/allowedOrigins: those are off by default +
+  // @deprecated, and run INSIDE transport.handleRequest() (after the bearer
+  // check), so they can't satisfy "before anything else" (docs/gateway-deployment.md).
+  // An ABSENT Origin proceeds (MCP clients are not browsers); a PRESENT Origin must
+  // match config.allowedOrigins (defaults to the issuer) or the server's own origin
+  // originOf(issuer) — which normalizes a trailing-slash/path issuer (mirrors
+  // src/authorize.ts assertOrigin; like it, allowedOrigins entries are matched
+  // exactly, not normalized). The OAuth routes have their own origin handling, so
+  // this hook is scoped to /mcp only.
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.url.split("?")[0] !== "/mcp") return; // OAuth routes manage their own Origin
     const rawOrigin = request.headers.origin;
     const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
     if (origin !== undefined && !opts.config.allowedOrigins.includes(origin) && origin !== originOf(opts.config.issuer)) {
       reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
       return;
     }
+  });
+
+  // Protected /mcp: verify the bridge-issued access token, then delegate to an MCP server.
+  app.post("/mcp", async (request, reply) => {
     let auth;
     try {
       auth = await authorizer.authorize({ authorization: request.headers.authorization });

@@ -142,19 +142,9 @@ const http = {
  *  undefined ⇒ the SDK reads the raw stream (hono native path); a parsed body ⇒
  *  the SDK uses it directly (express.json path, no double-read). */
 async function serveMcp(req: IncomingMessage, res: ServerResponse, parsedBody: unknown, authorizer: RequestAuthorizer, config: BridgeConfig): Promise<void> {
-  // Origin gate — mirrors examples/fastify-sqlite/app.ts's /mcp handler (this
-  // helper exists to exercise that handler across express/hono on real sockets).
-  // MCP Streamable HTTP transport MUST: validate Origin on every connection, 403
-  // when present but not allowlisted, BEFORE the bearer check. Admits the issuer
-  // origin (originOf) too, exactly like the example + assertOrigin. See the
-  // example handler for why this is in-handler (not the SDK transport option).
-  const rawOrigin = req.headers.origin;
-  const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-  if (origin !== undefined && !config.allowedOrigins.includes(origin) && origin !== originOf(config.issuer)) {
-    res.writeHead(403, { "content-type": "application/json" });
-    res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null }));
-    return;
-  }
+  // The Origin gate lives at the MOUNT layer (express middleware before
+  // express.json; hono createServer before serveMcp) so it runs before body
+  // parsing and for all methods — mirroring the example's onRequest hook.
   let auth: { subject: string };
   try {
     auth = await authorizer.authorize({ authorization: req.headers.authorization });
@@ -196,6 +186,19 @@ interface Mount { base: string; close(): Promise<void> }
  *  transport handles them directly with the express.json()-parsed body. */
 async function mountExpress(bridge: Bridge, authorizer: RequestAuthorizer, config: BridgeConfig, port: number): Promise<Mount> {
   const app = express();
+  // Origin gate (mirrors the example's /mcp onRequest hook) — BEFORE express.json
+  // so a foreign /mcp Origin is 403'd before the body parser runs, and method-
+  // agnostic so it covers GET/DELETE /mcp too, not just the POST route.
+  app.use((req, res, next) => {
+    if (req.path !== "/mcp") return next();
+    const rawOrigin = req.headers.origin;
+    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
+    if (origin !== undefined && !config.allowedOrigins.includes(origin) && origin !== originOf(config.issuer)) {
+      res.status(403).type("application/json").send(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null }));
+      return;
+    }
+    next();
+  });
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
   app.use("/", createOAuthRouter({ bridge, identity: stubIdentity }));
@@ -214,6 +217,15 @@ async function mountHono(bridge: Bridge, authorizer: RequestAuthorizer, config: 
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
     if (url.pathname === "/mcp") {
+      // Origin gate (mirrors the example's onRequest hook) — before serveMcp reads
+      // the body and for every method, so a foreign Origin is 403'd before processing.
+      const rawOrigin = req.headers.origin;
+      const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
+      if (origin !== undefined && !config.allowedOrigins.includes(origin) && origin !== originOf(config.issuer)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null }));
+        return;
+      }
       void serveMcp(req, res, undefined, authorizer, config);
       return;
     }
@@ -380,11 +392,13 @@ test("integration — /mcp without a token: 401 + RFC 9728 resource_metadata cha
   }
 });
 
-test("integration — /mcp Origin gate: foreign Origin ⇒ 403 before auth; absent/allowlisted ⇒ proceed (express + hono, real socket)", async () => {
-  // serveMcp mirrors the example /mcp handler, including the in-handler Origin
-  // gate (MCP Streamable HTTP DNS-rebinding MUST). Driven over a real socket on
-  // both adapters: foreign Origin ⇒ 403 with no challenge (authorize never ran);
-  // allowlisted/absent Origin ⇒ proceeds to the bearer check ⇒ 401.
+test("integration — /mcp Origin gate: foreign Origin ⇒ 403 before parsing/auth on ALL methods; absent/allowlisted ⇒ proceed (express + hono, real socket)", async () => {
+  // The Origin gate mirrors the example's /mcp onRequest hook at the MOUNT layer
+  // (express middleware before express.json; hono createServer before serveMcp), so
+  // it runs before body parsing and for every method. Driven over a real socket on
+  // both adapters: foreign Origin ⇒ 403 (no challenge — authorize never ran) on
+  // POST/GET/DELETE and even on a malformed-body POST (beats the parser); allowlisted
+  // /absent Origin ⇒ proceeds to the bearer check ⇒ 401 + the resource_metadata challenge.
   const init = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "x", version: "0" } }, id: 1 });
   for (const mountFn of [mountExpress, mountHono]) {
     const port = await freePort();
@@ -398,11 +412,26 @@ test("integration — /mcp Origin gate: foreign Origin ⇒ 403 before auth; abse
       assert.equal(evil.status, 403, "foreign Origin rejected before authorization");
       assert.doesNotMatch(evil.headers["www-authenticate"] ?? "", /resource_metadata=/, "no challenge — gate fired before authorize");
 
+      // Method coverage: foreign Origin on GET/DELETE ⇒ 403 too (the gate is method-agnostic).
+      const evilGet = await httpCall(base, "GET", "/mcp", { origin: "https://evil.test" });
+      assert.equal(evilGet.status, 403, "foreign Origin rejected on GET");
+      const evilDelete = await httpCall(base, "DELETE", "/mcp", { origin: "https://evil.test" });
+      assert.equal(evilDelete.status, 403, "foreign Origin rejected on DELETE");
+
+      // Parser-beats: a malformed JSON body with a foreign Origin gets 403, not the
+      // framework's 400 body-parse error (the gate runs before express.json / stream read).
+      const evilBadBody = await httpCall(base, "POST", "/mcp", { "content-type": "application/json", origin: "https://evil.test" }, "{not valid json");
+      assert.equal(evilBadBody.status, 403, "foreign Origin rejected before body parsing");
+
+      // Allowlisted Origin ⇒ proceeds to the bearer check ⇒ 401 + challenge.
       const allowlisted = await httpCall(base, "POST", "/mcp", { "content-type": "application/json", origin: base }, init);
       assert.equal(allowlisted.status, 401, "allowlisted Origin proceeds to the bearer check");
+      assert.match(allowlisted.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/, "reached the resource-server leg");
 
+      // Absent Origin ⇒ proceeds to the bearer check ⇒ 401 + challenge.
       const absent = await httpCall(base, "POST", "/mcp", { "content-type": "application/json" }, init);
       assert.equal(absent.status, 401, "absent Origin proceeds to the bearer check");
+      assert.match(absent.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/, "reached the resource-server leg");
     } finally {
       await mount.close();
       await store.close();
