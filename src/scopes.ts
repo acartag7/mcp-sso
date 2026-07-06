@@ -34,6 +34,30 @@ export function scopeString(scopes: readonly string[]): string {
   return [...scopes].sort().join(" ");
 }
 
+/** RFC 6749 §3.3 `scope-token = 1*NQCHAR` — no space, no `"`, no `\`, no control
+ *  chars. Each ceiling entry must be a single token so the space-joined
+ *  `allowed_scopes` JWT claim round-trips losslessly through `split(/\s+/)`. */
+const SCOPE_TOKEN_RE = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
+
+/** Validate an identity-port `allowedScopes` ceiling (contracts §17.4). Returns
+ *  the value unchanged when it is `undefined` (no ceiling — v0.1 behavior) or a
+ *  `string[]` of single scope tokens (any array, including `[]` = "entitled to
+ *  nothing"). Throws `access_denied` on a present-but-malformed value: a
+ *  non-array, or any entry that is not a single RFC 6749 scope token (non-string,
+ *  empty, or whitespace/control/quote-bearing). A whitespace-bearing entry would
+ *  otherwise serialize into the space-delimited `allowed_scopes` claim and
+ *  re-split into discrete scopes at `approve`, widening the ceiling there and
+ *  letting a prior grant resurrect a scope the prepare-time ceiling never held
+ *  (threat-model row 22; Codex P1). Applied at BOTH the Bridge boundary
+ *  (`resolveIdentity`) AND the exported core use-case (`prepare`) so a consumer
+ *  calling `prepare` directly — or a custom adapter bypassing `resolveIdentity` —
+ *  cannot skip it. */
+export function assertAllowedScopesCeiling(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value) && value.every((s) => typeof s === "string" && SCOPE_TOKEN_RE.test(s))) return value;
+  throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
+}
+
 /** 403 insufficient_scope step-up if the subject lacks `required`. */
 export function requireScope(auth: AuthorizedSubject, required: string): void {
   if (!auth.scopes.includes(required)) {

@@ -326,7 +326,10 @@ validates an access token and vice-versa).
 Short-lived JWT binding one authorize request to a single approval. Claims:
 `iss`=issuer, `aud`=`"mcp-sso/consent"`, `sub`=verified subject,
 `client_id`, `redirect_uri`, `resource`, `scope` (space-joined), `code_challenge`,
-`code_challenge_method`=`"S256"`, `state`?, `jti` (random, single-use), `iat`,
+`code_challenge_method`=`"S256"`, `state`?, `allowed_scopes`? (space-joined
+identity ceiling — §17.4; present only when the resolved identity supplied an
+`allowedScopes` ceiling, so `approve` re-intersects from the *verified token*
+rather than client-resupplied input), `jti` (random, single-use), `iat`,
 `exp`. Verified with `algorithms: ["HS256"]`, pinned iss+aud, clock from
 `ClockPort`. **Single-use:** the `jti` is consumed atomically on approve (§12
 `consumeConsentJti`); a replay is rejected with `invalid_grant`.
@@ -476,7 +479,7 @@ two error channels, split by whether the `redirect_uri` is trusted yet:
   fix #5.)
 
 **`prepare({ clientId, redirectUri, responseType, codeChallenge,
-codeChallengeMethod, resource?, scope?, state?, subject })`** → `PreparedConsent`:
+codeChallengeMethod, resource?, scope?, state?, subject, allowedScopes? })`** → `PreparedConsent`:
 1. `subject` REQUIRED (the adapter/`IdentityPort` resolves it before calling
    `prepare`). No subject ⇒ `access_denied` 401 **direct**, never a placeholder.
 2. `client_id` present and `redirect_uri` valid per §10 — else **direct**
@@ -485,12 +488,18 @@ codeChallengeMethod, resource?, scope?, state?, subject })`** → `PreparedConse
    `config.resource` when omitted and MUST equal `config.resource` when present**
    (else `invalid_target`); `scope` normalized per §11 (else `invalid_scope`);
    PKCE `code_challenge_method=S256` + challenge present (else `invalid_request`).
-4. **Scope accumulation *(RC item (c)) — stored-DCR mode only.*** Load
+4. **Scope ceiling *(§17.4, shipped S2a).*** When the resolved identity supplied
+   an `allowedScopes` ceiling, the requested scopes (and `defaultScopes`, when no
+   `scope` was requested) are **narrowed by intersection** with it; an **empty
+   intersection ⇒ `access_denied`** over the redirect channel. The ceiling is
+   embedded in the consent-token claims (§7.1 `allowed_scopes`). Without a
+   ceiling this step is a no-op (v0.1 behavior, including an empty requested set).
+5. **Scope accumulation *(RC item (c)) — stored-DCR mode only.*** Load
    `priorScopes = findGrantedScopes(subject, clientId, now)` (the union of scopes
    on this `(subject, clientId)`'s active refresh tokens). In **stateless mode**
    `priorScopes = []` — client_ids are ephemeral/unverified, so a grant keyed by
    them is meaningless; stateless authorizations stand alone.
-5. Sign the consent token (§7.1), audit, and return
+6. Sign the consent token (§7.1), audit, and return
    `{ consentToken, …claims, priorScopes, requestedScopes }`. The consent page
    renders the **delta** = `requestedScopes − priorScopes` as "new" (rendering is
    an adapter concern, Phase 3; the core supplies both sets).
@@ -505,8 +514,10 @@ codeChallengeMethod, resource?, scope?, state?, subject })`** → `PreparedConse
   `invalid_grant` **direct** — an integrity failure, not a user-facing denial).
 - **Mint the code with the accumulated scopes** — in stored mode the union of
   `requestedScopes + priorScopes`; in stateless mode exactly the requested scopes.
-  Then 302 to `redirect_uri?code=…&iss=<issuer>[&state=…]` (RFC 9207 `iss`,
-  RC item (a)).
+  When the verified consent token carries an `allowedScopes` ceiling (§17.4), that
+  union is **re-intersected against it** — accumulated prior grants cannot
+  resurrect a scope a since-removed group granted. Then 302 to
+  `redirect_uri?code=…&iss=<issuer>[&state=…]` (RFC 9207 `iss`, RC item (a)).
 
 ### 9.4 Token
 `POST /oauth/token`, `cache-control: no-store`. Response:
@@ -875,7 +886,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | 🔒 v0.2 contract locked | §17.2 |
 | Device authorization grant (RFC 8628) | 🔒 v0.2 contract locked | §17.3 |
-| Entra group→scope ceiling (Gate 2) | 🔒 v0.2 contract locked | §17.4 |
+| Entra group→scope ceiling (Gate 2) | ⏳ v0.2 core `allowedScopes` plumbing shipped (S2a); Entra group→scope mapping pending (S2b) | §17.4 |
 | Console-pairing identity | ✅ v0.2 shipped (S1b) — `createConsolePairingIdentity`, 12-char base-20 code, lazy/single-use/TTL/attempt-cap, `oauth.pairing.attempt` | §17.5 |
 | `GenericOidcIdentity` + Google preset + GitHub port | 🔒 v0.2 contract locked | §17.6 |
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
@@ -1224,6 +1235,24 @@ MCP spec.
   (approved/denied), `oauth.token.device_code`.
 
 ### 17.4 Entra group-based authorization (Gate 2 becomes a scope ceiling)
+
+> **SHIPPED S2a — IdP-agnostic `allowedScopes` ceiling plumbing (core).** The
+> scope-ceiling *engine* is implemented and shipped: `IdentityClaims.allowedScopes?`,
+> `Bridge.resolveIdentity(identity, input, ip?)` (replaces the `resolveSubject`
+> helper and emits `identity.verify` — implemented as a Bridge method rather than
+> the http.ts free function, so all three adapters share one DRY emission path),
+> `Bridge.handleAuthorize(req, { subject, allowedScopes? })`
+> (bare-string form removed), `AuthorizeRequestInput.allowedScopes?`,
+> `ConsentRequestClaims.allowedScopes?` carried as the consent-JWT `allowed_scopes`
+> claim, `prepare` narrows requested/default scopes by intersection (empty ⇒
+> `access_denied` on the redirect channel), and `approve` re-intersects
+> `union(requested, priorScopes)` against the ceiling read from the *verified
+> consent token* (prior grants cannot resurrect a since-removed-group scope).
+> Refresh is not re-checked. **No shipped identity port sets `allowedScopes` yet,
+> so v0.1 behavior is unchanged unless a port supplies a ceiling.** The
+> Entra-specific group→scope *producer* of the ceiling (mapping, overage
+> fail-closed, `entra_groups_overage`/`entra_no_groups` reasons) remains **S2b,
+> pending** — the bullets below describe that pending producer.
 
 Entra-specific by design (the owner's real deployment; do not generalize
 prematurely). Facts verified against Microsoft Learn 2026-07-04: JWT group

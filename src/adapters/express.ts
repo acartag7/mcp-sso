@@ -7,7 +7,7 @@ import type { Request, Response } from "express";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
-import { headerString, oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
+import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface ExpressAdapterOptions {
   bridge: Bridge;
@@ -52,8 +52,8 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
     if (!identity) throw new Error("createOAuthRouter: identity is required unless skipAuthorize is set");
     const id = identity;
     router.get("/oauth/authorize", wrap(async (req, res) => {
-      const subject = await resolveSubject(id, headerString(req.headers, identityHeader));
-      send(res, await bridge.handleAuthorize(toNorm(req), subject));
+      const identityResolved = await bridge.resolveIdentity(id, headerString(req.headers, identityHeader), req.ip);
+      send(res, await bridge.handleAuthorize(toNorm(req), identityResolved));
     }));
   }
   router.post("/oauth/authorize/approve", wrap(async (req, res) => send(res, await bridge.handleApprove(toNorm(req)))));

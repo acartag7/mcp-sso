@@ -15,7 +15,7 @@ import {
   expiresAtIso, generateAuthorizationCode, sha256Hex,
   signConsentToken, verifyConsentToken,
 } from "./crypto.ts";
-import { normalizeScopes } from "./scopes.ts";
+import { assertAllowedScopesCeiling, normalizeScopes } from "./scopes.ts";
 import {
   assertAllowedRedirectUri, assertRedirectAllowedForClient,
 } from "./redirect.ts";
@@ -39,6 +39,10 @@ export interface AuthorizeRequestInput {
   state?: string;
   /** Verified subject (resolved by the IdentityPort before prepare). REQUIRED. */
   subject?: string;
+  /** Authorization ceiling from the resolved identity (contracts §17.4). When
+   *  present, requested/default scopes are narrowed by intersection and the
+   *  ceiling is embedded in the consent token for `approve` to re-intersect. */
+  allowedScopes?: string[];
 }
 
 export interface PreparedConsent extends ConsentRequestClaims {
@@ -83,6 +87,9 @@ export class OAuthAuthorizationUseCase {
     try {
       // --- PRE-VALIDATION: direct errors, never redirect ---
       if (!input.subject) throw new OAuthError("access_denied", "Authenticated subject is required", 401);
+      // §17.4: fail closed on a malformed ceiling here too — prepare is exported,
+      // so a direct caller bypassing Bridge.resolveIdentity is still guarded.
+      const ceiling = assertAllowedScopesCeiling(input.allowedScopes);
       clientId = requiredStr(input.clientId, "client_id");
       redirectUri = await this.resolveRedirect(input.redirectUri, clientId);
       const state = input.state;
@@ -99,16 +106,27 @@ export class OAuthAuthorizationUseCase {
           throw new OAuthError("invalid_request", "PKCE code_challenge_method must be S256");
         }
         const codeChallenge = requiredStr(input.codeChallenge, "code_challenge");
-        const scopes = normalizeScopes(input.scope, this.config.scopeCatalog, this.config.defaultScopes);
-        claims = { clientId, redirectUri, resource, scopes, codeChallenge, codeChallengeMethod: "S256", state, subject: input.subject };
+        const requested = normalizeScopes(input.scope, this.config.scopeCatalog, this.config.defaultScopes);
+        // §17.4: a present ceiling (any array, incl. []) narrows requested/default
+        // scopes by intersection (defaultScopes already folded into `requested`).
+        const scopes = ceiling ? requested.filter((s) => ceiling.includes(s)) : requested;
+        // Empty intersection ⇒ access_denied on the redirect channel — ONLY when a
+        // ceiling is present (without one, an empty requested set is unchanged v0.1
+        // behavior, e.g. scopeless authorize with empty defaultScopes).
+        if (ceiling && scopes.length === 0) {
+          throw new OAuthError("access_denied", "No requested scopes are within the authorized ceiling");
+        }
+        claims = { clientId, redirectUri, resource, scopes, codeChallenge, codeChallengeMethod: "S256", state, subject: input.subject, allowedScopes: ceiling };
       } catch (error) {
         if (error instanceof OAuthError && !error.redirect) throw withRedirect(error, redirectUri, state);
         throw error;
       }
 
-      const priorScopes = this.config.dcr.mode === "stored"
+      const rawPrior = this.config.dcr.mode === "stored"
         ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString())
         : [];
+      // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
+      const priorScopes = claims.allowedScopes ? rawPrior.filter((s) => claims.allowedScopes!.includes(s)) : rawPrior;
       const consentToken = await signConsentToken(claims, this.config, this.clock);
       await this.auditSuccess(AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject: input.subject });
       return { consentToken, ...claims, priorScopes };
@@ -141,7 +159,10 @@ export class OAuthAuthorizationUseCase {
       const priorScopes = this.config.dcr.mode === "stored"
         ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(this.clock.nowMs()).toISOString())
         : [];
-      const scopes = dedupe([...consent.scopes, ...priorScopes]);
+      const union = dedupe([...consent.scopes, ...priorScopes]);
+      // §17.4: re-intersect the union against the ceiling from the VERIFIED
+      // consent token — prior grants can't resurrect a removed-group scope.
+      const scopes = consent.allowedScopes ? union.filter((s) => consent.allowedScopes!.includes(s)) : union;
 
       const code = generateAuthorizationCode();
       await this.store.saveAuthCode({

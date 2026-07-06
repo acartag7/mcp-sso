@@ -50,10 +50,12 @@ export async function handlePairingAuthorize(
     if (result.ok) {
       // bridge.handleAuthorize validates the params and renders the consent page
       // (or returns an OAuth error response if they are invalid — its own try/catch).
+      // Pass the resolved identity object so any allowedScopes ceiling travels
+      // through (console-pairing sets none today — old no-ceiling behavior).
       const synthetic: NormRequest = {
         query: { ...oauthParams }, body: undefined, headers: req.headers, ip: req.ip,
       };
-      return bridge.handleAuthorize(synthetic, result.identity.subject);
+      return bridge.handleAuthorize(synthetic, { subject: result.identity.subject, allowedScopes: result.identity.allowedScopes });
     }
     // Failure: the code may be invalidated (expiry / attempts exhausted), so
     // beginSession() reprints a fresh one when needed; the form round-trips so

@@ -56,7 +56,7 @@ test("bridge: full OAuth flow (metadata -> register -> authorize -> approve -> t
   assert.equal(reg.status, 201);
   const clientId = (reg.body as { client_id: string }).client_id;
 
-  const page = await b.handleAuthorize(req({ query: { response_type: "code", client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read mcp:write", state: "s1" } }), SUBJECT);
+  const page = await b.handleAuthorize(req({ query: { response_type: "code", client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read mcp:write", state: "s1" } }), { subject: SUBJECT });
   assert.equal(page.status, 200);
   assert.match(String(page.body), /<html/);
   assert.match(String(page.body), /Approve/);
@@ -104,14 +104,14 @@ test("bridge: handleRevoke maps an unexpected store throw to the §9.5 500 body 
 
 test("bridge: pre-validation redirect error is a direct 400 (no Location)", async () => {
   const ctx = setup();
-  const res = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: "https://evil.test/cb", code_challenge: pkceChallenge("v-123456789012345678901234567890123"), code_challenge_method: "S256" } }), SUBJECT);
+  const res = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: "https://evil.test/cb", code_challenge: pkceChallenge("v-123456789012345678901234567890123"), code_challenge_method: "S256" } }), { subject: SUBJECT });
   assert.equal(res.status, 400);
   assert.equal(res.redirect, undefined);
 });
 
 test("bridge: post-validation scope error is a 302 to redirect_uri?error=invalid_scope", async () => {
   const ctx = setup();
-  const res = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: REDIRECT, code_challenge: pkceChallenge("v-123456789012345678901234567890123"), code_challenge_method: "S256", scope: "mcp:admin", state: "s" } }), SUBJECT);
+  const res = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: REDIRECT, code_challenge: pkceChallenge("v-123456789012345678901234567890123"), code_challenge_method: "S256", scope: "mcp:admin", state: "s" } }), { subject: SUBJECT });
   assert.equal(res.status, 302);
   const u = new URL(res.headers.location as string);
   assert.equal(u.searchParams.get("error"), "invalid_scope");
@@ -128,7 +128,7 @@ test("bridge: cross-origin approve is a direct 403 (no redirect)", async () => {
 test("bridge: Deny redirects access_denied (fix #5)", async () => {
   const ctx = setup();
   const verifier = "v-12345678901234567890123456789012345678";
-  const page = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", state: "deny" } }), SUBJECT);
+  const page = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", state: "deny" } }), { subject: SUBJECT });
   const consentToken = extractConsentToken(String(page.body));
   const res = await ctx.bridge.handleApprove(req({ body: { consent_token: consentToken, approved: "false" }, headers: { origin: "https://auth.test" } }));
   assert.equal(res.status, 302);

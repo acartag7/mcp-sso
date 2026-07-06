@@ -7,7 +7,7 @@ import type { Context } from "hono";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
-import { oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
+import { oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface HonoAdapterOptions {
   bridge: Bridge;
@@ -63,13 +63,14 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       // Identity resolution is pre-validation. Route throws through the direct
       // §9.5 path, stripping any redirect target a user-supplied IdentityPort put
       // on an OAuthError and hiding non-OAuth details (verification.md HF.3).
-      let subject: string;
+      // bridge.resolveIdentity also emits the identity.verify audit event.
+      let identityResolved: { subject: string; allowedScopes?: string[] };
       try {
-        subject = await resolveSubject(id, c.req.header(identityHeader));
+        identityResolved = await bridge.resolveIdentity(id, c.req.header(identityHeader), c.req.header("x-forwarded-for") ?? "unknown");
       } catch (error) {
         return send(c, oauthErrorResponse(asDirectOAuth(error)));
       }
-      return send(c, await bridge.handleAuthorize(await toNorm(c), subject));
+      return send(c, await bridge.handleAuthorize(await toNorm(c), identityResolved));
     });
   }
   app.post("/oauth/authorize/approve", async (c) => send(c, await bridge.handleApprove(await toNorm(c))));

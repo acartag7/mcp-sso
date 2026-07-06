@@ -3,9 +3,8 @@
 > Who is allowed to use a `mcp-sso`-protected MCP server, and **where** each
 > part of that decision is enforced. `docs/contracts.md` defines the exact
 > schemas; this document explains the model so a deployer can pick the right
-> knob. Sections marked **[v0.2 contract]** are locked design
-> (contracts §17) that is not implemented yet; everything else describes
-> shipped v0.1 behavior.
+> knob. Sections marked **[v0.2]** are locked design (contracts §17) that is
+> not implemented yet; everything else describes shipped behavior.
 
 ## The chain, end to end
 
@@ -69,20 +68,49 @@ overly wide Access group silently widens access. A short allowlist in the
 bridge's own config is reviewable in the same pull request as the rest of the
 deployment and fails closed independently.
 
-### Group-based scope mapping **[v0.2 contract — contracts §17.4]**
+### Scope ceiling — the IdP-agnostic engine **[shipped — contracts §17.4]**
 
-The v0.2 extension turns Gate 2 from a yes/no gate into a **scope ceiling**:
-Entra group memberships (immutable group object IDs) map to sets of scopes,
-and a subject can never be granted a scope outside the union of their matched
-groups. Requested scopes are narrowed to the ceiling; an empty intersection is
-`access_denied`. Overage-truncated group claims fail closed. Exact semantics,
-config shape, and failure modes are in contracts §17.4; attacker analysis in
-`docs/threat-model.md`.
+Gate 2 can be more than a yes/no gate: an identity port may attach an
+`allowedScopes` **ceiling** to the resolved identity, and the authorize flow
+then guarantees a subject is never granted a scope outside that ceiling. The
+engine is IdP-agnostic and shipped:
+
+- At `/oauth/authorize`, requested scopes (and `defaultScopes`, when no scope is
+  requested) are **narrowed by intersection** with the ceiling. The consent page
+  and the minted token reflect the narrowed set — RFC 6749 permits granting
+  fewer scopes than requested, so an un-entitled scope is simply dropped rather
+  than failing the whole request.
+- An **empty intersection is `access_denied`** over the redirect channel (the
+  redirect URI is already validated by then, so the client sees "you declined"
+  semantics, not a dead error page).
+- The ceiling travels the consent JWT (`allowed_scopes` claim), and at **approve
+  the accumulated `union(requested, priorScopes)` is re-intersected** against the
+  ceiling read from the *verified token* — so a prior grant cannot resurrect a
+  scope a since-removed group granted. (`defaultScopes` pass through the same
+  intersection.)
+- Refresh is **not** re-checked (there is no identity at refresh); removing a
+  group takes effect at the next full authorize. Shorten
+  `refreshTokenTtlSeconds` or revoke the family for faster cutoff.
+
+Today no shipped identity port sets `allowedScopes`, so behavior is unchanged
+from v0.1 unless a port supplies a ceiling.
+
+### Entra group→scope mapping **[v0.2 — contracts §17.4, pending]**
+
+The producer of the ceiling for enterprise Entra deployments: Entra group
+memberships (immutable group object IDs) map to sets of scopes, the union of
+which becomes the `allowedScopes` ceiling above. A subject can never be granted
+a scope outside the union of their matched groups; overage-truncated group
+claims fail closed. Exact config shape, combination model (union), and failure
+modes (`entra_groups_overage`, `entra_no_groups`) are in contracts §17.4;
+attacker analysis in `docs/threat-model.md` (row 22).
 
 ## What neither gate decides
 
 - **Scopes actually granted** come from client request + user consent
-  (contracts §9.3, §11), bounded by the v0.2 group ceiling once shipped.
+  (contracts §9.3, §11), bounded by an identity-port `allowedScopes` ceiling
+  when one is supplied (contracts §17.4 — the engine is shipped; the Entra
+  group→scope producer is pending).
 - **Per-call authorization** is the resource server's `requireScope`
   (contracts §8.3) — a valid token without the needed scope gets a 403
   step-up, not access.

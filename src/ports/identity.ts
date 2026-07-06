@@ -6,6 +6,11 @@
 
 export interface IdentityClaims {
   subject: string;
+  /** Optional authorization ceiling (contracts §17.4): when present, the
+   *  authorize flow narrows requested/default scopes to this set by
+   *  intersection (empty ⇒ access_denied). Set by an identity port from an
+   *  IdP-specific source (e.g. Entra group→scope mapping); any port may set it. */
+  allowedScopes?: string[];
   /** Optional verified attributes (e.g. email, oid, tid) the host may carry. */
   claims?: Record<string, unknown>;
 }

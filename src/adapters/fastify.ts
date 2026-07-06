@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
-import { headerString, oauthErrorResponse, resolveSubject, type NormRequest, type NormResponse } from "./http.ts";
+import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface FastifyAdapterOptions {
   bridge: Bridge;
@@ -54,14 +54,15 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
       // Identity resolution is pre-validation. Route throws through the direct
       // §9.5 path, stripping any redirect target a user-supplied IdentityPort put
       // on an OAuthError and hiding non-OAuth details (verification.md HF.3).
-      let subject: string;
+      // bridge.resolveIdentity also emits the identity.verify audit event.
+      let identityResolved: { subject: string; allowedScopes?: string[] };
       try {
-        subject = await resolveSubject(id, headerString(req.headers, identityHeader));
+        identityResolved = await bridge.resolveIdentity(id, headerString(req.headers, identityHeader), req.ip);
       } catch (error) {
         await send(reply, oauthErrorResponse(asDirectOAuth(error)));
         return;
       }
-      await send(reply, await bridge.handleAuthorize(toNorm(req), subject));
+      await send(reply, await bridge.handleAuthorize(toNorm(req), identityResolved));
     });
   }
   app.post("/oauth/authorize/approve", async (req, reply) => send(reply, await bridge.handleApprove(toNorm(req))));
