@@ -104,8 +104,18 @@ export function assertGroupAuthorizationMapping(
       assertMappedScope(scope, key, scopeCatalog);
     }
   }
-  for (const scope of groupAuth.baseScopes ?? []) {
-    assertBaseScope(scope, scopeCatalog);
+  // baseScopes MUST be undefined or a string[]. A string (e.g. "mcp:read" from a
+  // JSON typo) is iterable, so `for...of` would silently walk its characters —
+  // each a valid single-char scope token — and computeGroupScopes would build a
+  // nonsensical char-by-char ceiling. Reject at boot (Codex P2).
+  const baseScopes = groupAuth.baseScopes;
+  if (baseScopes !== undefined) {
+    if (!Array.isArray(baseScopes)) {
+      throw new AuthConfigError("groupAuthorization.baseScopes must be a string[] (or omitted) — a string is iterated char-by-char, producing a nonsensical ceiling");
+    }
+    for (const scope of baseScopes) {
+      assertBaseScope(scope, scopeCatalog);
+    }
   }
 }
 

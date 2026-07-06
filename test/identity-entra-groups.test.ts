@@ -170,6 +170,17 @@ test("assertGroupAuthorizationMapping: rejects empty / non-string baseScopes", (
   assert.throws(() => assertGroupAuthorizationMapping({ mapping: { [READERS]: ["mcp:read"] }, baseScopes: [false as unknown as string] }), AuthConfigError);
 });
 
+test("assertGroupAuthorizationMapping: rejects a non-array baseScopes (string iterates char-by-char — Codex P2)", () => {
+  // baseScopes: "mcp:read" is iterable; without an Array guard, for..of walks it
+  // as ['m','c','p',':','r','e','a','d'] and each char is a valid single-token
+  // scope, so boot would accept it and computeGroupScopes would build a nonsense
+  // ceiling. Must throw regardless of whether scopeCatalog is supplied.
+  assert.throws(() => assertGroupAuthorizationMapping({ mapping: { [READERS]: ["mcp:read"] }, baseScopes: "mcp:read" as unknown as string[] }), AuthConfigError);
+  assert.throws(() => assertGroupAuthorizationMapping({ mapping: { [READERS]: ["mcp:read"] }, baseScopes: "mcp:read" as unknown as string[] }, ["mcp:read"]), AuthConfigError);
+  // undefined baseScopes is the legitimate "omitted" path.
+  assert.doesNotThrow(() => assertGroupAuthorizationMapping({ mapping: { [READERS]: ["mcp:read"] } }));
+});
+
 test("assertGroupAuthorizationMapping: rejects a non-token scope value (NQCHAR round-trip guard — PR #8 sibling)", () => {
   // A space-bearing mapping value like "mcp:read mcp:admin" would serialize into
   // the space-joined allowed_scopes claim and re-split at approve, widening the
