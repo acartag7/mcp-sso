@@ -20,9 +20,23 @@
 //   4. Confirm a user from a NON-allowed tid is rejected (entra_bad_tid).
 //   5. Confirm the bridge then mints its OWN token (the Entra token is not
 //      forwarded to any MCP client).
+//   6. (groupAuthorization) In the app manifest set `groupMembershipClaims` to
+//      emit group OBJECT IDs — "ApplicationGroup" (direct membership, solves
+//      overage for the mapping use case; requires Entra P1) or "SecurityGroup"
+//      (transitive). Mapping keys MUST be the group object IDs (GUIDs), never
+//      display names (a documented spoof vector — boot-rejected).
+//   7. Confirm a user whose groups map to a subset of scopeCatalog receives
+//      exactly the intersected scopes in the bridge token; a user in zero
+//      mapped groups (with empty baseScopes) is rejected (entra_no_groups).
+//   8. Confirm an overage (>200-group) token fails closed (entra_groups_overage)
+//      and that the `_claim_sources` endpoint URL is NEVER fetched. Remedy:
+//      switch the manifest to "ApplicationGroup" or reduce group sprawl.
+//   9. Guest/B2B users: group-claim behavior is UNVERIFIED in Microsoft's docs —
+//      confirm a guest's membership resolves as expected before relying on it.
 
 import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWTPayload } from "jose";
 import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
+import { type GroupAuthorization, assertGroupAuthorizationMapping, resolveGroupCeiling } from "./entra-groups.ts";
 
 export interface EntraConfig {
   tenantId: string;
@@ -39,9 +53,25 @@ export interface EntraConfig {
   subjectAllowlist?: string[];
   /** Opt-in: also match the allowlist against preferred_username/email. Default false. */
   allowMutableClaims?: boolean;
+  /** Opt-in group→scope authorization ceiling (contracts §17.4). When set, a
+   *  subject's granted scopes are capped by the union of their matched Entra
+   *  groups' mapped scopes plus `baseScopes`. Boot-rejects non-GUID keys and
+   *  empty scope values; mapped/base scopes must be ⊆ `scopeCatalog` when that
+   *  is passed to `createEntraIdentity`. */
+  groupAuthorization?: GroupAuthorization;
 }
 
-type EntraPayload = JWTPayload & { oid?: string; email?: string; preferred_username?: string; tid?: string };
+type EntraPayload = JWTPayload & {
+  oid?: string; email?: string; preferred_username?: string; tid?: string;
+  /** Group object IDs (GUIDs) when configured and ≤200 groups. */
+  groups?: unknown;
+  /** Access-token overage marker (defensively checked on id_tokens). */
+  hasgroups?: unknown;
+  /** id_token overage marker: `{ groups: "<sourceName>" }`. */
+  _claim_names?: unknown;
+  /** Read-nowhere — the `_claim_sources` endpoint URL is NEVER dereferenced. */
+  _claim_sources?: unknown;
+};
 
 const ENTRA_BASE = "https://login.microsoftonline.com";
 
@@ -125,10 +155,17 @@ export function validateEntraIdToken(payload: EntraPayload, config: EntraConfig,
   if (config.subjectAllowlist && config.subjectAllowlist.length > 0 && !subjectAllowed(payload, config.subjectAllowlist, config.allowMutableClaims)) {
     return { ok: false, reason: "entra_subject_not_allowed" };
   }
-  return {
-    ok: true,
-    identity: { subject, claims: { oid: payload.oid, email: payload.email ?? payload.preferred_username, tid: payload.tid, expiresAt: payload.exp } },
-  };
+  const claims = { oid: payload.oid, email: payload.email ?? payload.preferred_username, tid: payload.tid, expiresAt: payload.exp };
+  // §17.4: when group→scope mapping is configured, resolve the ceiling from the
+  // VERIFIED payload (signature already checked by the caller). Unconfigured ⇒
+  // unchanged v0.1 behavior (no ceiling). Overage/no-groups fail CLOSED here so
+  // the bridge's resolveIdentity emits identity.verify with the Entra reason.
+  if (config.groupAuthorization) {
+    const ceiling = resolveGroupCeiling(payload, config.groupAuthorization);
+    if (!ceiling.ok) return ceiling; // entra_groups_overage | entra_no_groups
+    return { ok: true, identity: { subject, allowedScopes: ceiling.allowedScopes, claims } };
+  }
+  return { ok: true, identity: { subject, claims } };
 }
 
 /** Case-insensitive allowlist match. Matches the immutable `oid` by default; only
@@ -170,9 +207,16 @@ export interface EntraIdentity {
 }
 
 /** Build the Entra identity port. `verify` takes a raw id_token string; the adapter
- *  drives getAuthorizationUrl + exchangeCodeForToken for the redirect dance. */
-export function createEntraIdentity(config: EntraConfig): EntraIdentity {
+ *  drives getAuthorizationUrl + exchangeCodeForToken for the redirect dance.
+ *  `opts.scopeCatalog` is the wiring-time junction where the Entra group mapping
+ *  and the bridge catalog meet: when supplied, the mapped/base scopes are
+ *  validated ⊆ scopeCatalog at boot (§17.4). Omit it only if the deployer
+ *  validates the subset elsewhere — passing it is recommended. */
+export function createEntraIdentity(config: EntraConfig, opts?: { scopeCatalog?: readonly string[] }): EntraIdentity {
   assertHttpsRaw(ENTRA_BASE, "entra base");
+  // §17.4 boot validation: GUID-only keys, non-empty scope values (+ subset ⊆
+  // catalog when supplied). Fail closed at construction, never a silent default.
+  assertGroupAuthorizationMapping(config.groupAuthorization, opts?.scopeCatalog);
   const jwks = createRemoteJWKSet(new URL(entraJwksUrl(config.tenantId)), { cacheMaxAge: 5 * 60 * 1000 });
   return {
     getAuthorizationUrl: (req) => getAuthorizationUrl(config, req),
@@ -197,3 +241,6 @@ function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JOSEError) return "entra_token_invalid";
   return "entra_verify_failed";
 }
+
+// Public group-authorization API (§17.4) re-exported for the ./identity/entra subpath.
+export { type GroupAuthorization, assertGroupAuthorizationMapping, resolveGroupCeiling } from "./entra-groups.ts";
