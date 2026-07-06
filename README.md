@@ -154,6 +154,12 @@ for the client. It verifies the upstream identity — Cloudflare Access or
 Entra ID today, a generic OIDC port on the roadmap — and issues its own
 tokens.
 
+The most common production shape — an SSO gateway in front of an internal
+MCP server that only understands a static API key, so the key never reaches
+a user — is documented in
+[`docs/gateway-deployment.md`](docs/gateway-deployment.md), including the
+one-gateway-per-backend topology and Kubernetes notes.
+
 ## Security is the product
 
 - **Fail-closed everywhere** — ambiguous config, a missing identity, an

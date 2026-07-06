@@ -1,0 +1,133 @@
+# Gateway deployment — SSO in front of token-only MCP servers
+
+> The most common production shape for `mcp-sso`: an internal MCP server (or
+> plain API) that only understands a **static credential** — an API key, a
+> bearer token — needs to be shared with many people, and nobody wants to
+> hand that credential out. You put a small **gateway** in front: users
+> authenticate through your real IdP (Entra, Cloudflare Access, console
+> pairing), the gateway verifies its own short-lived tokens on `/mcp`, and
+> the static credential is injected **server-side only** — it never reaches
+> an MCP client, a laptop, or a config file.
+>
+> Everything on this page uses shipped APIs. A worked `examples/` gateway is
+> planned (contracts §17.9); this guide documents the pattern itself.
+
+## The shape
+
+```
+coding agent ──OAuth (DCR + PKCE)──▶ gateway (mcp-sso) ──▶ upstream IdP (login)
+     │                                    │
+     └── /mcp + bridge-minted token ──▶ RequestAuthorizer
+                                          │  valid ⇒ forward with the
+                                          ▼  backend credential injected
+                                    internal MCP server / API
+```
+
+- The agent adds the **gateway's** URL. RFC 9728 metadata tells it where to
+  register (DCR) and authorize; the browser leg goes through your IdP.
+- The bridge mints its own audience-bound tokens (§7.2). IdP tokens never
+  pass through to the client — token passthrough is forbidden by the MCP
+  spec, and by this library's design.
+- The backend credential is read **once at boot** from the environment into a
+  closure, is never logged, audited, placed in token claims, or returned to
+  any client, and a missing credential is a **boot failure** (fail-closed,
+  §5). Give it a single accessor (`getBackendCredential()`) so the swap to a
+  secret-manager fetch later is one function.
+
+## The `/mcp` handler: three shapes
+
+The library gives you the auth surface (metadata routes, register/authorize/
+token/revoke via `registerOAuthRoutes`/`createOAuthRouter`/`createOAuthApp`,
+and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
+
+1. **Transparent proxy** (least code, backend tools appear as-is). MCP over
+   Streamable HTTP is JSON-RPC POSTs: after `authorizer.authorize({...})`
+   accepts the bearer token, forward the request body to the internal MCP
+   endpoint and relay the response. Rules that matter:
+   - **Never forward the client's `Authorization` header upstream** — replace
+     it with the backend credential.
+   - Forward `mcp-session-id` and `mcp-protocol-version` in both directions
+     if the backend is stateful.
+   - Stream SSE responses through; do not buffer them.
+2. **Facade** (you own the tool surface). Run your own `McpServer` whose
+   tools call the backend API directly. More code, full control: validate
+   inputs, expose only the operations users should have, and gate tools by
+   the token's scopes (`requireScope`, §8) — e.g. `splunk:read` for search
+   tools, `splunk:admin` for the rest.
+3. **Proxy + tool gate** (the cheap middle). Proxy as in (1), but when the
+   JSON-RPC `method` is `tools/call`, check the tool name against the
+   caller's granted scopes before forwarding.
+
+Start with (1); move to (2)/(3) when per-team restrictions matter.
+
+## Multiple backends: one gateway per MCP
+
+Users usually want `splunk`, `tool4`, … as **separate servers** in their
+agent, each added only by the people who need it. The supported topology:
+
+- **One bridge = one `resource` = one audience, by design.** Run one gateway
+  deployment per backend, each on its own hostname
+  (`splunk-mcp.example.com/mcp`, `tool4-mcp.example.com/mcp`). This is the
+  configuration verified live with real MCP clients.
+- What that buys you: **audience isolation**. Tokens are minted with
+  `aud = resource` and verified fail-closed (§7.2), so a token stolen from
+  the Splunk gateway is rejected outright by every other gateway.
+- Path-mounted resources (`resource: https://example.com/splunk/mcp`) are
+  supported at the metadata level — the adapters register the RFC 9728
+  path-inserted PRM route automatically — but hosting several *bridges*
+  behind one origin means ingress-routing each bridge's OAuth and well-known
+  routes too. Prefer subdomains unless you have a hard single-origin
+  requirement.
+- Adding backend N+1 is a config change, not a code change: same image, new
+  hostname, new resource, new backend credential.
+
+**Never share a store or signing material between bridge instances.** Store
+rows (refresh-token families, consent JTIs) are not issuer-scoped: two
+bridges sharing one database *and* one signing key would let a refresh token
+issued by gateway A be redeemed at gateway B — minting a validly-signed token
+for the wrong audience and silently defeating the isolation above. One store
+(file or database/schema) and one signing key **per bridge**.
+
+## Kubernetes notes
+
+Each gateway is a small Deployment + Service + Ingress + Secret:
+
+- **Size**: one Node ≥24 process; the hot path is one ES256 verify per `/mcp`
+  call. `requests: 100m/128Mi, limits: 500m/256Mi` is comfortable.
+- **Secrets**: signing JWK, consent secret, and the backend credential as
+  Kubernetes Secrets exposed as env vars, wired into `createBridgeConfig`.
+  The quickstart file helper (§17.8) is the *local zero-setup* path — do not
+  use it in a pod.
+- **Replicas × store**: the sqlite store means **one replica** with the file
+  on a PVC — never `emptyDir`: refresh tokens are long-lived sessions, and
+  losing the file on a reschedule logs every user out. For ≥2 replicas or
+  clean rolling updates, use `/store/mysql` (+ `/rate-limit/redis` so limits
+  are shared) — then all replicas share rotation/consent state correctly.
+- **Probes**: `GET /.well-known/oauth-authorization-server` — unauthenticated,
+  cheap, and because config validation is fail-closed at boot, a
+  misconfigured pod never becomes Ready.
+- **Shutdown**: handle SIGTERM in *your* entrypoint (close the server, then
+  the store) so rolling updates drain in-flight requests.
+- **Network**: terminate TLS at the ingress; the pod listens on `0.0.0.0`
+  with `issuer`/`resource` set to the public https URL. Add a NetworkPolicy
+  so only the gateway can reach the backend — the static credential is then
+  useless even to someone who finds the backend's internal address.
+
+## Who is allowed in
+
+Two gates, documented in [`authorization.md`](authorization.md): the primary
+gate lives at your IdP (Entra app assignment / Conditional Access, or
+Cloudflare Access policy), and `mcp-sso`'s own allowlist
+(`subjectAllowlist` / `emailAllowlist`) is defense-in-depth on top. With
+`createEntraIdentity`, subjects key on the immutable `oid`. The
+`allowedScopes` ceiling engine (§17.4) is shipped; the Entra group→scope
+producer that feeds it is on the roadmap.
+
+## Audit
+
+Wire `combineAudit(new JsonlFileAudit(...), new WebhookAudit(...))` into the
+Bridge and `RequestAuthorizer` — sinks, delivery trade-offs, and the
+fail-open residual are covered in
+[`audit-deployment.md`](audit-deployment.md). A webhook sink pointed at your
+SIEM's HTTP collector gives the security team the full auth trail (metadata
+only — never token values) with no extra moving parts.
