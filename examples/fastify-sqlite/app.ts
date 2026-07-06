@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
-import { createBridgeConfig, type BridgeConfig } from "../../src/config.ts";
+import { createBridgeConfig, originOf, type BridgeConfig } from "../../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../../src/errors.ts";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { RequestAuthorizer } from "../../src/verifier.ts";
@@ -81,6 +81,33 @@ export async function buildApp(opts: ExampleOptions) {
     // unhandled rejection with a partially-registered app.
     await registerOAuthRoutes(app, { bridge, identity: opts.identity, identityHeader: opts.identityHeader });
   }
+
+  // Origin gate — MCP Streamable HTTP transport DNS-rebinding protection (servers
+  // MUST validate the `Origin` header on every connection; reject a present,
+  // non-allowlisted Origin). Scoped to /mcp and placed in an onRequest hook so it
+  // runs BEFORE body parsing and for EVERY method (POST/GET/DELETE) — NOT inside
+  // the POST handler, where Fastify's body parser would already have read/rejected
+  // the body (a foreign-Origin POST with malformed/oversized JSON would get
+  // Fastify's 400/413, not this 403 gate), and where GET/DELETE /mcp would bypass
+  // it entirely. Done here, not via the SDK transport's
+  // enableDnsRebindingProtection/allowedOrigins: those are off by default +
+  // @deprecated, and run INSIDE transport.handleRequest() (after the bearer
+  // check), so they can't satisfy "before anything else" (docs/gateway-deployment.md).
+  // An ABSENT Origin proceeds (MCP clients are not browsers); a PRESENT Origin must
+  // match config.allowedOrigins (defaults to the issuer) or the server's own origin
+  // originOf(issuer) — which normalizes a trailing-slash/path issuer (mirrors
+  // src/authorize.ts assertOrigin; like it, allowedOrigins entries are matched
+  // exactly, not normalized). The OAuth routes have their own origin handling, so
+  // this hook is scoped to /mcp only.
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.url.split("?")[0] !== "/mcp") return; // OAuth routes manage their own Origin
+    const rawOrigin = request.headers.origin;
+    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
+    if (origin !== undefined && !opts.config.allowedOrigins.includes(origin) && origin !== originOf(opts.config.issuer)) {
+      reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
+      return;
+    }
+  });
 
   // Protected /mcp: verify the bridge-issued access token, then delegate to an MCP server.
   app.post("/mcp", async (request, reply) => {
