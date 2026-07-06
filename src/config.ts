@@ -15,10 +15,10 @@ export interface DevOptions {
 }
 
 /** Opt-in to the `client_credentials` grant surface (contracts §17.2). When
- *  enabled the bridge accepts machine-client provisioning and (in S3b) the
- *  token grant. Fail-closed boot rule: enabling requires `dcr.mode === "stored"`
- *  — machine clients are persisted into the ClientStore, so stateless DCR
- *  (which persists nothing) cannot support them. */
+ *  enabled the bridge accepts machine-client provisioning and the
+ *  `/oauth/token` client_credentials grant. Fail-closed boot rule: enabling
+ *  requires `dcr.mode === "stored"` — machine clients are persisted into the
+ *  ClientStore, so stateless DCR (which persists nothing) cannot support them. */
 export interface ClientCredentialsOptions {
   enabled: boolean;
 }

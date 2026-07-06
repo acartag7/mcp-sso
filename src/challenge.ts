@@ -31,6 +31,16 @@ export function buildUnauthorizedChallenge(config: BridgeConfig, opts: Challenge
   return params.join(", ");
 }
 
+/** Build the `WWW-Authenticate: Basic` challenge for a failed client_credentials
+ *  client authentication (contracts §17.2: "WWW-Authenticate: Basic when Basic
+ *  was attempted"). Distinct from {@link buildUnauthorizedChallenge} (the Bearer
+ *  challenge for the `/mcp` resource surface): the token endpoint challenges the
+ *  *client*, not the bearer. Realm = the AS issuer (RFC 7617 realm is opaque;
+ *  the issuer is a stable AS identifier). `charset="UTF-8"` per RFC 7617 §2.1. */
+export function buildBasicClientChallenge(config: BridgeConfig): string {
+  return `Basic realm="${escapeQuoted(config.issuer)}", charset="UTF-8"`;
+}
+
 /** Build an RFC 6749 §4.1.2.1 error redirect: redirect_uri?error=…&state=…
  *  (&error_description). The redirect_uri MUST already be §10-validated by the
  *  caller (the authorize use-case tags post-validation errors with it). */

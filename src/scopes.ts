@@ -69,6 +69,26 @@ export function assertAllowedScopesCeiling(value: unknown): string[] | undefined
   throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
 }
 
+/** §17.2 client_credentials scope resolution: the requested scope MUST be a
+ *  subset of the client's `allowedScopes` ceiling (fixed at provisioning, so it
+ *  can never be widened at the token endpoint); omitted/empty ⇒ the full ceiling
+ *  (RFC 6749 §3.3 default — the client is entitled to everything it provisioned
+ *  for). A requested scope outside the ceiling ⇒ `invalid_scope`. De-dupes,
+ *  preserves request order. Unlike {@link normalizeScopes} this resolves against
+ *  the per-client ceiling, not the deployment-wide catalog. */
+export function resolveClientCredentialsScope(requested: string | undefined, ceiling: readonly string[]): string[] {
+  if (requested === undefined || requested.trim() === "") return [...ceiling];
+  const allowed = new Set(ceiling);
+  const out: string[] = [];
+  for (const token of requested.split(/\s+/).filter(Boolean)) {
+    if (!allowed.has(token)) {
+      throw new OAuthError("invalid_scope", "Requested scope exceeds the client's allowedScopes");
+    }
+    if (!out.includes(token)) out.push(token);
+  }
+  return out.length > 0 ? out : [...ceiling];
+}
+
 /** 403 insufficient_scope step-up if the subject lacks `required`. */
 export function requireScope(auth: AuthorizedSubject, required: string): void {
   if (!auth.scopes.includes(required)) {
