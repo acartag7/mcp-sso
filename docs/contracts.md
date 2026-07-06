@@ -1219,6 +1219,11 @@ in this flow."* Decisions:
   client was provisioned is never minted — the persisted ceiling is not the
   whole truth, so drift surfaces as `invalid_scope` until the client is
   re-provisioned (the same discipline a drifted user refresh token imposes).
+  The stored ceiling is itself validated at grant time — a non-empty array of
+  scope tokens; `verifyMachineClientSecret` validates the secret slots but NOT
+  `allowedScopes`, so a custom/migrated store returning a valid-secret record
+  with a malformed/missing/empty ceiling fails closed as `invalid_client`
+  (never a raw `TypeError`/500, never an empty-scope token).
   `resource` if present MUST equal `config.resource` (`invalid_target`). Mint
   an access token with `sub = client_id`
   (RFC 9068 §2.2) and the existing `client_id` claim; **NO refresh token**

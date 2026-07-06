@@ -252,6 +252,28 @@ test("catalog drift (Codex P2): a ceiling scope removed from the live catalog is
   assert.equal((explicit.body as { error: string }).error, "invalid_scope");
 });
 
+test("poisoned allowedScopes ceiling (Codex P2 #2): malformed/empty/missing ⇒ invalid_client 401, never 500 or empty-scope", async () => {
+  // verifyMachineClientSecret validates secret slots but NOT allowedScopes, so a
+  // custom/migrated store returning a valid-secret record with a broken ceiling
+  // must fail closed at the grant (invalid_client) — not throw a raw TypeError
+  // (mapped to 500) or mint a token with an empty scope string.
+  const ctx = setup(true);
+  const secret = "mcs_" + "P".repeat(43);
+  const hash = sha256Hex(secret);
+  const epoch = Math.floor(NOW_MS / 1000);
+  const poisoned = (allowedScopes: unknown): ClientRegistration => ({
+    clientId: "mcc_poison", redirectUris: [], applicationType: "machine", issuedAtEpoch: epoch,
+    secrets: [{ hash, createdAtEpoch: epoch }], allowedScopes: allowedScopes as string[],
+  });
+  for (const bad of [undefined, [], "mcp:read", ["mcp:read", 123], [""]]) {
+    await ctx.clientStore.save(poisoned(bad));
+    const res = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcc_poison", secret) }, body: grantBody({}) }));
+    assert.equal(res.status, 401, `expected 401 (not 500/empty) for allowedScopes=${JSON.stringify(bad)}`);
+    assert.equal((res.body as { error: string }).error, "invalid_client", `expected invalid_client for allowedScopes=${JSON.stringify(bad)}`);
+    assert.equal("scope" in (res.body as object), false, "no token minted");
+  }
+});
+
 test("resource mismatch ⇒ invalid_target 400; omitted resource is accepted (audience-bound anyway)", async () => {
   const ctx = setup(true);
   const c = await provision(ctx);
