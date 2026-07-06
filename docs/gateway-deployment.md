@@ -177,6 +177,20 @@ Each gateway is a small Deployment + Service + Ingress + Secret:
   losing the file on a reschedule logs every user out. For ≥2 replicas or
   clean rolling updates, use `/store/mysql` (+ `/rate-limit/redis` so limits
   are shared) — then all replicas share rotation/consent state correctly.
+- **Stored DCR needs a *second* shared store.** `/store/mysql` shares the
+  `StorePort` (auth codes, refresh tokens, consent, granted scopes) — but
+  **not** dynamic client registrations. With `dcr.mode: "stored"`, registered
+  clients are written to a separate `dcr.store` (`ClientStore`) at
+  registration and read back at authorize-time (`resolveRedirect`); the
+  shipped stores implement `StorePort` only, and the reference `ClientStore`
+  is **in-memory**. So on ≥2 replicas with a per-pod `ClientStore`, a client
+  that registers on pod A is rejected `invalid_client` when its authorize
+  lands on pod B, even though MySQL and Redis are shared. For multi-replica
+  stored DCR, back the `ClientStore` with the same shared database too — a
+  deployer-supplied adapter today, since no shipped store implements it.
+  Otherwise use `dcr.mode: "stateless"`, which keeps no per-client state
+  (redirect URIs validated against the global allowlist, no lookup) and is
+  multi-replica-safe as shipped.
 - **Probes**: `GET /.well-known/oauth-authorization-server` — unauthenticated,
   cheap, and because config validation is fail-closed at boot, a
   misconfigured pod never becomes Ready.
