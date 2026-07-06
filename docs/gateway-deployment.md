@@ -71,6 +71,20 @@ and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
      has built-in options for this (`enableDnsRebindingProtection`,
      `allowedOrigins`) — off by default; turn them on or enforce the check
      yourself before proxying.
+   - **Strip the client `Authorization` header before forwarding.** Once
+     `authorize()` succeeds the inbound `Authorization: Bearer …` has done
+     its job; it still carries the **bridge-minted per-user token**. Injecting
+     the backend credential is not enough — if you inject it in a *different*
+     header (`X-API-Key`, a query param) or merge headers without replacing
+     `Authorization`, that per-user token rides along to the backend and into
+     its access logs. Those tokens are `aud`-bound to *this* gateway, so a
+     backend (or anyone reading its logs) can **replay them against `/mcp` as
+     that user until they expire**. Delete or overwrite `Authorization` on the
+     forwarded request; never let a client credential reach the backend. Same
+     rule for any other client-supplied auth header (`Cookie`,
+     `Proxy-Authorization`). Prefer an explicit allowlist of forwarded headers
+     over pass-through-minus-blocklist — an allowlist fails closed when a new
+     header appears.
    - Forward `mcp-session-id` and `mcp-protocol-version` in both directions
      if the backend is stateful, and `Last-Event-ID` on GET — the transport
      resumes a broken SSE stream via `GET` + `Last-Event-ID`, so an
