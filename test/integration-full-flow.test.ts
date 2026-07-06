@@ -438,35 +438,41 @@ if (MYSQL_URL) {
     // Acquire the named lock on a DEDICATED connection (GET_LOCK is per-connection;
     // the conformance file holds the same lock for its lifetime, so this blocks
     // until that file finishes — no concurrent DELETE can wipe this flow's rows).
+    // The pool is closed in an OUTER finally so a failure at ANY step — getConnection,
+    // GET_LOCK, or the ok===1 assert (lock not granted / held past 120s by the sibling)
+    // — still ends the pool; otherwise mysql2's open socket keeps the event loop alive
+    // and node --test hangs after reporting the failure. (Codex P2.)
     const lockPool = createPool(MYSQL_URL as string);
-    const conn = await lockPool.getConnection();
-    const [lockRows] = await conn.query("SELECT GET_LOCK(?, 120) AS ok", [LOCK_NAME]);
-    assert.equal((lockRows as Array<{ ok: number }>)[0]?.ok, 1, `acquired ${LOCK_NAME}`);
     try {
-      // Migrate (+ boot-time strict-mode/collation asserts) on the shared DB.
-      const migrator = await createMysqlStore(MYSQL_URL as string);
-      await migrator.close();
-
-      const port = await freePort();
-      const base = `http://127.0.0.1:${port}`;
-      const config = makeConfig({ resource: `${base}/mcp`, issuer: base });
-      const pool = createPool(MYSQL_URL as string);
-      const store = new MysqlStore(pool, true); // ownsPool: close() ends it
-      const { bridge, authorizer } = deps(config, store);
-      const mount = await mountExpress(bridge, authorizer, config, port);
+      const conn = await lockPool.getConnection();
       try {
-        await driveRoundTrip(mount.base, base, base, { full: true });
+        const [lockRows] = await conn.query("SELECT GET_LOCK(?, 120) AS ok", [LOCK_NAME]);
+        assert.equal((lockRows as Array<{ ok: number }>)[0]?.ok, 1, `acquired ${LOCK_NAME}`);
+
+        // Migrate (+ boot-time strict-mode/collation asserts) on the shared DB.
+        const migrator = await createMysqlStore(MYSQL_URL as string);
+        await migrator.close();
+
+        const port = await freePort();
+        const base = `http://127.0.0.1:${port}`;
+        const config = makeConfig({ resource: `${base}/mcp`, issuer: base });
+        const pool = createPool(MYSQL_URL as string);
+        const store = new MysqlStore(pool, true); // ownsPool: close() ends it
+        const { bridge, authorizer } = deps(config, store);
+        const mount = await mountExpress(bridge, authorizer, config, port);
+        try {
+          await driveRoundTrip(mount.base, base, base, { full: true });
+        } finally {
+          await mount.close();
+          await store.close();
+        }
       } finally {
-        await mount.close();
-        await store.close();
+        // Error-tolerant release: if the dedicated connection died mid-test,
+        // RELEASE_LOCK throws — swallow it so the pool close below always runs.
+        try { await conn.query("SELECT RELEASE_LOCK(?)", [LOCK_NAME]); } catch { /* pool ending below anyway */ }
+        try { conn.release(); } catch { /* already released */ }
       }
     } finally {
-      // Error-tolerant cleanup (parity with the conformance file): if the dedicated
-      // connection died mid-test, RELEASE_LOCK throws — swallow it so lockPool.end()
-      // ALWAYS runs, or the pool's open sockets keep the event loop alive and the
-      // test process never exits.
-      try { await conn.query("SELECT RELEASE_LOCK(?)", [LOCK_NAME]); } catch { /* pool ending below anyway */ }
-      try { conn.release(); } catch { /* already released */ }
       await lockPool.end();
     }
   });

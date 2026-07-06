@@ -81,11 +81,18 @@ function killHard(child: ChildProcess): void {
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 }
 
+/** fetch with a hard deadline: if the spawned server accepts the socket but a route
+ *  never completes, an unbounded fetch would hang CI (node --test has no per-test
+ *  timeout). AbortSignal.timeout rejects after 10s. (Codex P2: bare fetches.) */
+async function fetchBounded(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
+}
+
 async function assertWellKnownServed(base: string): Promise<void> {
-  const prm = await fetch(`${base}/.well-known/oauth-protected-resource`);
+  const prm = await fetchBounded(`${base}/.well-known/oauth-protected-resource`);
   assert.equal(prm.status, 200);
   assert.equal(typeof (await prm.json() as { resource: unknown }).resource, "string", "PRM has a resource");
-  const as = await fetch(`${base}/.well-known/oauth-authorization-server`);
+  const as = await fetchBounded(`${base}/.well-known/oauth-authorization-server`);
   assert.equal(as.status, 200);
   assert.equal(typeof (await as.json() as { issuer: unknown }).issuer, "string", "AS metadata has an issuer");
 }
@@ -116,7 +123,7 @@ test("integration — spawned index.ts: readiness, .well-known served, /mcp 401+
     await assertWellKnownServed(base);
 
     // /mcp with no token → 401 + the RFC 9728 resource_metadata challenge (fix #1).
-    const mcp = await fetch(`${base}/mcp`, {
+    const mcp = await fetchBounded(`${base}/mcp`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "x", version: "0" } }, id: 1 }),
