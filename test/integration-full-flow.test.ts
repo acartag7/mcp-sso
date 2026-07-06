@@ -145,11 +145,12 @@ async function serveMcp(req: IncomingMessage, res: ServerResponse, parsedBody: u
   // Origin gate — mirrors examples/fastify-sqlite/app.ts's /mcp handler (this
   // helper exists to exercise that handler across express/hono on real sockets).
   // MCP Streamable HTTP transport MUST: validate Origin on every connection, 403
-  // when present but not allowlisted, BEFORE the bearer check. See the example
-  // handler for why this is in-handler (not the SDK transport option).
+  // when present but not allowlisted, BEFORE the bearer check. Admits the issuer
+  // origin (originOf) too, exactly like the example + assertOrigin. See the
+  // example handler for why this is in-handler (not the SDK transport option).
   const rawOrigin = req.headers.origin;
   const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-  if (origin !== undefined && !config.allowedOrigins.includes(origin)) {
+  if (origin !== undefined && !config.allowedOrigins.includes(origin) && origin !== originOf(config.issuer)) {
     res.writeHead(403, { "content-type": "application/json" });
     res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null }));
     return;

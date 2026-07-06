@@ -394,3 +394,35 @@ test("integration — /mcp Origin gate (MCP Streamable HTTP DNS-rebinding MUST):
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("integration — /mcp Origin gate admits the issuer origin even when allowedOrigins carries the raw (un-normalized) issuer (trailing slash)", async () => {
+  // Regression for the normalization gap: allowedOrigins defaults to the RAW
+  // OAUTH_ISSUER string, but a browser serializes Origin to scheme://host[:port]
+  // (no trailing slash/path). An issuer set with a trailing slash would make the
+  // gate 403 a same-origin browser request on a string mismatch — while the
+  // consent approve flow (src/authorize.ts assertOrigin) admits it via
+  // originOf(issuer). The gate mirrors assertOrigin: originOf(issuer) is admitted.
+  const ISSUER = "http://localhost:3000/"; // trailing slash — a common misconfig
+  const BROWSER_ORIGIN = "http://localhost:3000"; // what a browser sends (== originOf(issuer))
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-origin-norm-"));
+  const dir = join(base, "state");
+  const init = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "x", version: "0" } }, id: 1 });
+  try {
+    // allowedOrigins defaults to [ISSUER] = ["http://localhost:3000/"] (raw, slash).
+    const { app, store, config } = await buildExample({ MCP_SSO_DIR: dir, OAUTH_ISSUER: ISSUER, OAUTH_RESOURCE: "http://localhost:3000/mcp" });
+    assert.deepEqual(config.allowedOrigins, [ISSUER], "allowedOrigins is the raw, trailing-slash issuer (not normalized)");
+    try {
+      // Browser sends the normalized origin. Without originOf(issuer) admission this
+      // is 403 (string mismatch); with it, the gate admits it → proceeds to the
+      // bearer check → 401 (no token).
+      const res = await app.inject({ method: "POST", url: "/mcp", headers: { "content-type": "application/json", origin: BROWSER_ORIGIN }, payload: init });
+      assert.equal(res.statusCode, 401, "issuer origin admitted despite the raw allowedOrigins mismatch (originOf normalization) → reached the bearer check");
+      assert.match(res.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/, "reached the resource-server leg, not the 403 Origin gate");
+    } finally {
+      await app.close();
+      await store.close();
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});

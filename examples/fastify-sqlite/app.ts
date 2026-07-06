@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
-import { createBridgeConfig, type BridgeConfig } from "../../src/config.ts";
+import { createBridgeConfig, originOf, type BridgeConfig } from "../../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../../src/errors.ts";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { RequestAuthorizer } from "../../src/verifier.ts";
@@ -101,10 +101,14 @@ export async function buildApp(opts: ExampleOptions) {
     // this is the only defense on any surface later exposed unauthenticated. MCP
     // clients are not browsers, so an ABSENT Origin is the normal case and
     // proceeds; a PRESENT Origin must match `config.allowedOrigins` (defaults to
-    // the issuer origin).
+    // the issuer origin) or the server's own origin `originOf(issuer)` — which
+    // normalizes a trailing-slash/path issuer so a browser's serialized Origin
+    // (scheme://host[:port]) is admitted rather than 403'd on a string mismatch.
+    // Mirrors `src/authorize.ts` `assertOrigin`; like it, `allowedOrigins` entries
+    // are matched exactly (not normalized) — set them as clean origins.
     const rawOrigin = request.headers.origin;
     const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-    if (origin !== undefined && !opts.config.allowedOrigins.includes(origin)) {
+    if (origin !== undefined && !opts.config.allowedOrigins.includes(origin) && origin !== originOf(opts.config.issuer)) {
       reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
       return;
     }
