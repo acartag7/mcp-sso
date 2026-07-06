@@ -13,7 +13,7 @@ enforced at three different places:
 
 ```
 who can authenticate?          Gate 1 — your IdP (Entra / Cloudflare Access)
-who does the bridge accept?    Gate 2 — mcp-sso allowlists (+ group mapping, v0.2)
+who does the bridge accept?    Gate 2 — mcp-sso allowlists (+ Entra group→scope mapping, shipped §17.4)
 what does this client get?     consent — the user approves requested scopes
 what does this token allow?    RS check — requireScope on each /mcp call
 ```
@@ -92,25 +92,68 @@ engine is IdP-agnostic and shipped:
   group takes effect at the next full authorize. Shorten
   `refreshTokenTtlSeconds` or revoke the family for faster cutoff.
 
-Today no shipped identity port sets `allowedScopes`, so behavior is unchanged
-from v0.1 unless a port supplies a ceiling.
+No shipped identity port sets `allowedScopes` except Entra (below), so behavior
+is unchanged from v0.1 unless a port supplies a ceiling.
 
-### Entra group→scope mapping **[v0.2 — contracts §17.4, pending]**
+### Entra group→scope mapping **[shipped S2b — contracts §17.4]**
 
 The producer of the ceiling for enterprise Entra deployments: Entra group
 memberships (immutable group object IDs) map to sets of scopes, the union of
 which becomes the `allowedScopes` ceiling above. A subject can never be granted
-a scope outside the union of their matched groups; overage-truncated group
-claims fail closed. Exact config shape, combination model (union), and failure
-modes (`entra_groups_overage`, `entra_no_groups`) are in contracts §17.4;
-attacker analysis in `docs/threat-model.md` (row 22).
+a scope outside the union of their matched groups (+ `baseScopes`); overage
+-truncated group claims fail closed. Config lives on `EntraConfig.groupAuthorization`
+(`src/identity/entra-groups.ts`, pure; wired in `src/identity/entra.ts`):
+
+```ts
+groupAuthorization: {
+  mapping: { "11111111-1111-1111-1111-111111111111": ["mcp:read", "mcp:write"] },
+  baseScopes: ["mcp:read"], // scopes every authenticated subject gets; default []
+}
+```
+
+- **GUID-only keys** (display names are a documented spoof vector — any user can
+  create a duplicate-named group; boot-rejected). Matching is case-insensitive.
+- **Union** of `baseScopes` and every matched group's mapped scopes — no tier
+  precedence, order-independent.
+- **GUID-only keys** (display names are a documented spoof vector — any user can
+  create a duplicate-named group; boot-rejected; duplicate case-insensitive keys
+  rejected). Matching is case-insensitive. Each mapped/base scope value must be a
+  single RFC 6749 scope token (whitespace/quote/control chars are boot-rejected —
+  they would corrupt the space-joined `allowed_scopes` JWT round-trip).
+- **Union** of `baseScopes` and every matched group's mapped scopes — no tier
+  precedence, order-independent.
+- **Overage fails closed** (`entra_groups_overage`): when the `groups` claim is
+  absent and an overage marker (`_claim_names.groups` or `hasgroups`) is present.
+  The `_claim_sources` endpoint URL is **never** dereferenced — a URL inside a
+  token is data, not instructions. Remedy: set `groupMembershipClaims` to
+  `ApplicationGroup` in the app manifest (direct membership, solves overage for
+  the mapping use case; requires Entra P1) or reduce group sprawl.
+- **No usable groups ⇒ distinct fail-closed reasons.** No `groups` claim at all
+  + empty `baseScopes` ⇒ `entra_no_groups` (likely a `groupMembershipClaims`
+  misconfiguration). A `groups` claim present but every group unmapped + empty
+  `baseScopes` ⇒ `entra_no_mapped_groups` (a deployer *mapping* gap — add the
+  group GUID to `mapping` or grant `baseScopes`). Both deny; the reason names
+  the likely knob.
+- **Nested-group semantics.** `groupMembershipClaims: "SecurityGroup"` emits
+  *transitive* (nested) membership — a user in "Staff → Engineering" matches a
+  mapping for "Engineering". `"ApplicationGroup"` is *direct-only* — nested
+  memberships are invisible to the ceiling (a deployer caveat: a mapping that
+  "should" match via nesting silently won't). Choose `SecurityGroup` if you rely
+  on nesting; watch for the 200-group cap that triggers overage either way.
+- The mapped/base ⊆ `scopeCatalog` subset check runs at
+  `createEntraIdentity(config, { scopeCatalog })` — pass the catalog when
+  constructing the port so a mapping typo fails loudly at boot.
+
+Exact contract in §17.4; attacker analysis in `docs/threat-model.md` (row 22).
+**Live-tenant verification (incl. guest/B2B + overage) is owner-pending** — see
+the manual checklist at the top of `src/identity/entra.ts`.
 
 ## What neither gate decides
 
 - **Scopes actually granted** come from client request + user consent
   (contracts §9.3, §11), bounded by an identity-port `allowedScopes` ceiling
-  when one is supplied (contracts §17.4 — the engine is shipped; the Entra
-  group→scope producer is pending).
+  when one is supplied (contracts §17.4 — the engine and the Entra group→scope
+  producer are both shipped).
 - **Per-call authorization** is the resource server's `requireScope`
   (contracts §8.3) — a valid token without the needed scope gets a 403
   step-up, not access.
@@ -124,7 +167,7 @@ attacker analysis in `docs/threat-model.md` (row 22).
 | Restrict which humans can sign in at all | Gate 1: Entra app assignment / Conditional Access, or the Cloudflare Access policy |
 | Enforce MFA / device posture / location | Gate 1 (IdP policy) — mcp-sso cannot see these signals |
 | Pin an exact set of permitted users in code review | Gate 2: `subjectAllowlist` (Entra `oid`) / `emailAllowlist` (Cloudflare Access) |
-| Give different users different permission levels | **[v0.2]** Gate 2 group→scope mapping (contracts §17.4) |
+| Give different users different permission levels | Gate 2 Entra group→scope mapping (contracts §17.4 — shipped) |
 | Limit what a specific MCP client may do | Scope catalog + consent; `requireScope` at the resource |
 | Cut off a stolen refresh token | Revocation (RFC 7009) / family replay detection — not an identity gate |
 

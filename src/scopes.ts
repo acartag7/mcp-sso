@@ -39,6 +39,17 @@ export function scopeString(scopes: readonly string[]): string {
  *  `allowed_scopes` JWT claim round-trips losslessly through `split(/\s+/)`. */
 const SCOPE_TOKEN_RE = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
 
+/** Test a single string against RFC 6749 §3.3 `scope-token` (1*NQCHAR).
+ *  Exported so identity-port ceiling producers (e.g. Entra group→scope mapping,
+ *  the S3 client_credentials per-client ceiling, the S5 device-consent ceiling)
+ *  can validate deployer config at BOOT against the same shape the JWT
+ *  round-trip requires — a malformed entry (whitespace/quote/control) would
+ *  otherwise serialize into the space-joined `allowed_scopes` claim, re-split at
+ *  `approve`, and widen the ceiling (threat-model row 22; Codex P1 on PR #8). */
+export function isScopeToken(value: string): boolean {
+  return SCOPE_TOKEN_RE.test(value);
+}
+
 /** Validate an identity-port `allowedScopes` ceiling (contracts §17.4). Returns
  *  the value unchanged when it is `undefined` (no ceiling — v0.1 behavior) or a
  *  `string[]` of single scope tokens (any array, including `[]` = "entitled to
@@ -54,7 +65,7 @@ const SCOPE_TOKEN_RE = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
  *  cannot skip it. */
 export function assertAllowedScopesCeiling(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
-  if (Array.isArray(value) && value.every((s) => typeof s === "string" && SCOPE_TOKEN_RE.test(s))) return value;
+  if (Array.isArray(value) && value.every((s) => typeof s === "string" && isScopeToken(s))) return value;
   throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
 }
 

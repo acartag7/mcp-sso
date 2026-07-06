@@ -886,7 +886,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | 🔒 v0.2 contract locked | §17.2 |
 | Device authorization grant (RFC 8628) | 🔒 v0.2 contract locked | §17.3 |
-| Entra group→scope ceiling (Gate 2) | ⏳ v0.2 core `allowedScopes` plumbing shipped (S2a); Entra group→scope mapping pending (S2b) | §17.4 |
+| Entra group→scope ceiling (Gate 2) | ✅ v0.2 shipped (S2a core `allowedScopes` engine + S2b Entra group→scope producer) | §17.4 |
 | Console-pairing identity | ✅ v0.2 shipped (S1b) — `createConsolePairingIdentity`, 12-char base-20 code, lazy/single-use/TTL/attempt-cap, `oauth.pairing.attempt` | §17.5 |
 | `GenericOidcIdentity` + Google preset + GitHub port | 🔒 v0.2 contract locked | §17.6 |
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
@@ -1248,11 +1248,29 @@ MCP spec.
 > `access_denied` on the redirect channel), and `approve` re-intersects
 > `union(requested, priorScopes)` against the ceiling read from the *verified
 > consent token* (prior grants cannot resurrect a since-removed-group scope).
-> Refresh is not re-checked. **No shipped identity port sets `allowedScopes` yet,
-> so v0.1 behavior is unchanged unless a port supplies a ceiling.** The
-> Entra-specific group→scope *producer* of the ceiling (mapping, overage
-> fail-closed, `entra_groups_overage`/`entra_no_groups` reasons) remains **S2b,
-> pending** — the bullets below describe that pending producer.
+> Refresh is not re-checked. **No shipped identity port sets `allowedScopes`
+> except Entra (see below), so v0.1 behavior is unchanged unless a port supplies
+> a ceiling.**
+>
+> **SHIPPED S2b — the Entra group→scope *producer*.** `EntraConfig.groupAuthorization`
+> (`mapping: Record<GUID, string[]>` + `baseScopes?`) ships in
+> `src/identity/entra-groups.ts` (pure, JWKS-free, unit-testable) wired into
+> `src/identity/entra.ts`. GUID-only mapping keys, non-empty scope values, and
+> duplicate (case-insensitive) keys are boot-rejected (`AuthConfigError`); the
+> mapped/base ⊆ `scopeCatalog` subset check runs at
+> `createEntraIdentity(config, { scopeCatalog })` — the construction-time
+> junction where both the Entra mapping and the bridge catalog are in scope (the
+> shipped `registerOAuthRoutes` takes an opaque `IdentityPort` and does not see
+> the EntraConfig; S2a kept the engine IdP-agnostic, so the port-construction
+> call is the honest, enforceable junction — one extra arg). The verified
+> `groups` claim is unioned with `baseScopes` into the ceiling; overage (`groups`
+> absent + `_claim_names.groups` or `hasgroups`) fails closed with
+> `entra_groups_overage` and `_claim_sources` is NEVER dereferenced; no groups +
+> empty `baseScopes` fails with `entra_no_groups`. Reasons flow through
+> `Bridge.resolveIdentity`'s `identity.verify` emission (S2a). Gates green
+> (typecheck · lines · 244/244 test · build). **Live-tenant verification (incl.
+> guest/B2B + overage) is owner-pending** — manual checklist at the top of
+> `src/identity/entra.ts`.
 
 Entra-specific by design (the owner's real deployment; do not generalize
 prematurely). Facts verified against Microsoft Learn 2026-07-04: JWT group
@@ -1272,11 +1290,24 @@ groupAuthorization?: {
 }
 ```
 
-- Boot validation: every `mapping` key must be GUID-shaped (display names
-  rejected — fail-closed against the documented spoofing vector); scope
-  values non-empty. The adapter wiring (`registerOAuthRoutes`), which sees
-  both configs, MUST additionally validate every mapped scope ⊆
-  `scopeCatalog` (`AuthConfigError`).
+- Boot validation (shipped S2b, `assertGroupAuthorizationMapping`): every
+  `mapping` key must be GUID-shaped (display names rejected — fail-closed
+  against the documented spoofing vector; case-insensitive, duplicate keys
+  rejected), scope values non-empty AND each a single RFC 6749 scope token
+  (`isScopeToken` / `SCOPE_TOKEN_RE` from `scopes.ts` — a whitespace/quote/
+  control-bearing value is rejected so it cannot corrupt the space-joined
+  `allowed_scopes` JWT round-trip; the boot-layer instance the PR #8 sweep left
+  open). The mapped/base ⊆ `scopeCatalog` subset check runs at
+  `createEntraIdentity(config, { scopeCatalog })` — the composition root where
+  both the Entra mapping and the bridge catalog are in scope. (The original
+  wording pointed at `registerOAuthRoutes`; the shipped S2a adapter takes an
+  opaque `IdentityPort` and does not see the `EntraConfig`, so port construction
+  is the honest, enforceable junction. A mapped scope absent from the catalog can
+  never be granted anyway — the engine intersects against catalog-validated
+  requested scopes — so the subset check is a deployer foot gun guard surfacing
+  misconfiguration loudly at boot, not a security boundary. The separate
+  `scopeCatalog`/`defaultScopes` entry shape-validation is a tracked backlog
+  item, NOT bundled here.)
 - **Combination model: UNION.** A subject's scope ceiling
   `allowedScopes = baseScopes ∪ ⋃ mapping[g]` over every group GUID `g` in
   the verified `groups` claim that has a mapping entry. No tier precedence,
@@ -1290,11 +1321,17 @@ groupAuthorization?: {
   application"** (`groupMembershipClaims: "ApplicationGroup"`) — caveats
   recorded: requires Entra P1, direct membership only, no nesting — or reduce
   group sprawl.
-- **No groups claim at all** (not configured in the app manifest, or the user
-  is in zero groups) ⇒ ceiling = `baseScopes`; if that is empty ⇒ fail with
-  `entra_no_groups` (likely `groupMembershipClaims` misconfiguration —
-  documented). Nested groups: the `SecurityGroup` claim is transitive;
-  `ApplicationGroup` is direct-only (deployer caveat in
+- **No usable groups ⇒ fail closed with a reason that names the likely knob.**
+  No `groups` claim at all (not configured in the app manifest, or the user is
+  in zero groups) + empty `baseScopes` ⇒ `entra_no_groups` (likely a
+  `groupMembershipClaims` misconfiguration). A `groups` claim IS present but
+  every group is unmapped + empty `baseScopes` ⇒ `entra_no_mapped_groups` (a
+  deployer *mapping* gap, not a manifest problem — the distinct reason points
+  the operator at `groupAuthorization.mapping` rather than the Entra app
+  manifest; audit fidelity for a product whose wedge is auditable execution).
+  Both are entitled-to-nothing and fail closed; non-empty `baseScopes` resolves
+  to the baseline ceiling instead. Nested groups: the `SecurityGroup` claim is
+  transitive; `ApplicationGroup` is direct-only (deployer caveat in
   `docs/authorization.md`).
 - **Graph API fallback: DEFERRED (explicit decision).** The designed
   extension point is `POST /users/{oid}/checkMemberGroups` (≤20 group IDs per
@@ -1344,8 +1381,10 @@ groupAuthorization?: {
   `refreshTokenTtlSeconds` or revoke families.
 - Guest (B2B) behavior is UNVERIFIED in Microsoft's docs — added to the Entra
   live-verification checklist rather than assumed.
-- **Audit:** new event `identity.verify` (success/failure + reason, incl.
-  `entra_groups_overage`) — failed-login evidence for enterprises.
+- **Audit:** event `identity.verify` (emitted by `Bridge.resolveIdentity`,
+  S2a; success/failure + reason) carries the Entra reasons
+  `entra_groups_overage`, `entra_no_groups`, and `entra_no_mapped_groups` —
+  failed-login evidence for enterprises.
 
 ### 17.5 Console-pairing identity (zero-IdP setup)
 
