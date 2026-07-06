@@ -143,11 +143,25 @@ agent, each added only by the people who need it. The supported topology:
   `aud = resource` and verified fail-closed (§7.2), so a token stolen from
   the Splunk gateway is rejected outright by every other gateway.
 - Path-mounted resources (`resource: https://example.com/splunk/mcp`) are
-  supported at the metadata level — the adapters register the RFC 9728
-  path-inserted PRM route automatically — but hosting several *bridges*
-  behind one origin means ingress-routing each bridge's OAuth and well-known
-  routes too. Prefer subdomains unless you have a hard single-origin
-  requirement.
+  served at the metadata level — the adapters register the RFC 9728
+  path-inserted PRM route (`/.well-known/oauth-protected-resource/splunk/mcp`)
+  automatically — but that route being **served** is not the same as it being
+  **advertised**. The `WWW-Authenticate` challenge always points clients at
+  the origin-**root** PRM URL (`buildUnauthorizedChallenge` →
+  `protectedResourceMetadataUrl`, which drops the resource path,
+  `src/challenge.ts`). A client follows `resource_metadata` from the
+  challenge, so with two bridges under one origin **both** `/mcp` challenges
+  advertise the *same* root metadata route — whichever bridge owns
+  `/.well-known/oauth-protected-resource` wins, and a client hitting the other
+  backend discovers the **wrong** issuer/resource, then gets its token
+  rejected fail-closed at the audience check. Serving the path-inserted route
+  and ingress-routing the OAuth/well-known paths is necessary but **not
+  sufficient**: single-origin multi-bridge also needs custom challenge
+  routing that overrides `resource_metadata` per bridge to point at each
+  bridge's path-inserted PRM. **Prefer subdomains** — one origin per bridge
+  makes the built-in root challenge correct and is the only multi-bridge shape
+  verified live. Reserve single-origin for a hard requirement, and expect to
+  own the per-bridge challenge/metadata routing yourself.
 - Adding backend N+1 is a config change, not a code change: same image, new
   hostname, new resource, new backend credential.
 
