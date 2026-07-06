@@ -133,7 +133,13 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   // cannot satisfy "before anything else". Absent Origin proceeds (MCP clients are
   // not browsers); a present Origin must match config.allowedOrigins or originOf(issuer).
   app.addHook("onRequest", async (request, reply) => {
-    if (request.url.split("?")[0] !== "/mcp") return; // OAuth routes manage their own Origin
+    // PARSE the pathname (don't string-compare request.url): an absolute-form
+    // request-target (`POST http://host/mcp`) routes here with request.url = the full
+    // URL, so a raw `!== "/mcp"` check would skip the Origin gate. Same normalization
+    // as the backend's auth gate (sibling-sweep).
+    let mcpPath: string;
+    try { mcpPath = new URL(request.url, "http://localhost").pathname; } catch { mcpPath = request.url; }
+    if (mcpPath !== "/mcp") return; // OAuth routes manage their own Origin
     const rawOrigin = request.headers.origin;
     const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
     if (origin !== undefined && !opts.config.allowedOrigins.includes(origin) && origin !== originOf(opts.config.issuer)) {

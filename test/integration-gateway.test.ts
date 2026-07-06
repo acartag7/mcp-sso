@@ -375,3 +375,28 @@ test("integration — gateway: an absolute-form request-target cannot redirect t
   }
 });
 
+test("integration — gateway backend: an absolute-form request-target cannot bypass the backend's static-credential gate (Codex P1)", async () => {
+  // The backend's auth gate must apply to /mcp regardless of request-target form.
+  // An absolute-form target (`POST http://host/mcp`) routes to the /mcp handler with
+  // request.url = the full URL; a raw `request.url === "/mcp"` check would SKIP the
+  // gate, letting anyone who can reach the backend bypass BACKEND_API_KEY. The fix
+  // parses the pathname. Reach the backend DIRECTLY (not via the gateway), no
+  // Authorization — it must still be 401'd.
+  const h = await buildHarness();
+  try {
+    const backendPort = Number(new URL(h.backendUrl).port);
+    const body = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "x", version: "0" } }, id: 1 });
+    const res = await withTimeout(sendRaw(backendPort, [
+      "POST http://attacker.invalid/mcp HTTP/1.1",
+      `Host: 127.0.0.1:${backendPort}`,
+      "Content-Type: application/json",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "Connection: close",
+      "", body,
+    ]), 5_000, "absolute-form direct-to-backend POST (no key)");
+    assert.equal(res.status, 401, "absolute-form request-target did NOT bypass the backend credential gate");
+  } finally {
+    await h.cleanup();
+  }
+});
+

@@ -62,9 +62,14 @@ export async function buildBackend(opts: BackendOptions): Promise<BuiltBackend> 
   // Token-only gate on EVERY /mcp method. The gateway injects the key; a direct
   // (non-proxied) call without it is rejected — defense-in-depth, since only the
   // gateway can reach this backend in the intended topology (NetworkPolicy +
-  // loopback bind keep it private).
+  // loopback bind keep it private). The pathname is PARSED (not a raw string check
+  // on request.url): an absolute-form request-target (`POST http://host/mcp`) still
+  // routes here while request.url is the full URL, so `request.url === "/mcp"` would
+  // skip the gate and bypass the credential check. Normalize first.
   app.addHook("onRequest", async (request, reply) => {
-    if (request.url.split("?")[0] !== "/mcp") return;
+    let pathname: string;
+    try { pathname = new URL(request.url, "http://localhost").pathname; } catch { return; }
+    if (pathname !== "/mcp") return;
     const raw = request.headers.authorization;
     const got = Array.isArray(raw) ? raw[0] : raw;
     if (got !== `Bearer ${opts.apiKey}`) {
