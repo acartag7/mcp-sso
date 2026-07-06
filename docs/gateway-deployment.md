@@ -60,15 +60,24 @@ and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
 > `expectedNonce`, and the Entra port only checks the nonce when the caller
 > passes one — so the header route validates `iss`/`aud`/signature but
 > **never binds the id_token to the login request**, leaving id_token
-> replay/injection open. The wrapper must instead: (1) persist the `nonce` it
-> put on `getAuthorizationUrl`, bound to the request (signed `state` or a
-> server-side session keyed by `state`); (2) after `exchangeCodeForToken`,
-> call the concrete `entra.verify(idToken, { expectedNonce })` **itself**;
-> (3) only on `ok` call `bridge.handleAuthorize(req, { subject, allowedScopes
-> })` with the verified subject. Because this bypasses `resolveIdentity`, the
-> wrapper also owns the `identity.verify` **audit event** (and any
-> `allowedScopes` ceiling handling) that `resolveIdentity` would otherwise
-> emit — don't silently drop it.
+> replay/injection open. The wrapper straddles two OAuth legs and must carry
+> state across the Entra round-trip. Concretely: (1) at `/oauth/authorize`,
+> persist — keyed by the Entra `state` — the **entire original MCP authorize
+> query** (`client_id`, `redirect_uri`, `response_type`, `code_challenge`
+> (+`_method`), `resource`, `scope`, and the client's own `state`) **plus**
+> the `nonce` and the Entra PKCE `code_verifier`, then redirect to
+> `getAuthorizationUrl`; (2) on the callback — whose request contains only
+> Entra's `code`/`state`, **not** any MCP params — look up that record,
+> `exchangeCodeForToken`, and call the concrete
+> `entra.verify(idToken, { expectedNonce })` **itself**; (3) only on `ok`,
+> **reconstruct** a request whose `query` is the stored MCP authorize params
+> and call `bridge.handleAuthorize(reconstructed, { subject, allowedScopes })`
+> — `handleAuthorize` reads `client_id`/`redirect_uri`/`code_challenge`/… from
+> `req.query` (`bridge.ts`), so handing it the bare callback request yields a
+> direct OAuth error, not a consent page. Because this bypasses
+> `resolveIdentity`, the wrapper also owns the `identity.verify` **audit
+> event** (and any `allowedScopes` ceiling handling) that `resolveIdentity`
+> would otherwise emit — don't silently drop it.
 >
 > Pick one before shipping: front the gateway with an assertion-injecting
 > proxy (header model, zero extra code), or compose the redirect wrapper. The
