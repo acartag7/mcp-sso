@@ -98,6 +98,19 @@ and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
 3. **Proxy + tool gate** (the cheap middle). Proxy as in (1), but when the
    JSON-RPC `method` is `tools/call`, check the tool name against the
    caller's granted scopes before forwarding.
+   - **Don't assume the POST body is a single object.** A gate that keys on
+     `body.method === "tools/call"` reads `undefined` when the body is a
+     JSON-RPC **batch array** and, on the default forward path, proxies the
+     whole batch **unchecked** — an admin `tools/call` buried in the array
+     slips past the scope gate. This is fail-open, so the client's shape
+     decides your enforcement. The current MCP spec (`2025-06-18`, what the
+     SDK negotiates) *removed* JSON-RPC batching, so the tightest stance is to
+     **reject a top-level array** with a JSON-RPC error before forwarding. If
+     you must serve legacy (`2025-03-26`) batching clients, normalize the body
+     to an array and gate **every** request in it, denying the **entire**
+     batch on any unauthorized entry — never split it and forward the allowed
+     subset. Same care for a single `tools/call` with an unexpected shape:
+     default to deny, not forward.
 
 **Scope gates are NOT a per-user entitlement boundary by themselves.** With
 the shipped identity ports (Entra, Cloudflare Access, console pairing),
