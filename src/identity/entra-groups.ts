@@ -55,22 +55,32 @@ export interface GroupClaimSource {
 }
 
 /** Boot-validate a group-authorization mapping (contracts §17.4). Throws
-  *  `AuthConfigError` (never degrades to a silent default) on: a non-GUID
-  *  mapping key (the display-name spoof vector), an empty/non-string scope
-  *  value, a duplicate (case-insensitive) mapping key, or — when `scopeCatalog`
-  *  is supplied — any mapped/base scope not in the catalog. The catalog subset
-  *  check is the wiring-time gate: it runs where both the Entra mapping and the
-  *  bridge `scopeCatalog` are known (the `createEntraIdentity` composition
-  *  point), not inside `registerOAuthRoutes` (which sees only an opaque
-  *  `IdentityPort` — the ceiling is IdP-agnostic by S2a design). A mapped scope
-  *  absent from the catalog can never be granted anyway (the engine intersects
+  *  `AuthConfigError` (never degrades to a silent default) on: a falsy/non-object
+  *  `groupAuthorization` (null/false/0/""/array/primitive — only `undefined` is
+  *  the legitimate "absent" sentinel), a non-GUID mapping key (the display-name
+  *  spoof vector), an empty/non-string scope value, a duplicate (case-insensitive)
+  *  mapping key, or — when `scopeCatalog` is supplied — any mapped/base scope not
+  *  in the catalog. The catalog subset check is the wiring-time gate: it runs
+  *  where both the Entra mapping and the bridge `scopeCatalog` are known (the
+  *  `createEntraIdentity` composition point), not inside `registerOAuthRoutes`
+  *  (which sees only an opaque `IdentityPort` — the ceiling is IdP-agnostic by
+  *  S2a design). A mapped scope absent from the catalog can never be granted
+  *  anyway (the engine intersects
   *  against catalog-validated requested scopes), so this is a deployer footgun
   *  guard surfacing a misconfiguration loudly at boot. */
 export function assertGroupAuthorizationMapping(
   groupAuth: GroupAuthorization | undefined,
   scopeCatalog?: readonly string[],
 ): void {
-  if (!groupAuth) return;
+  // Only the canonical "absent" sentinel (undefined) bypasses validation. A
+  // falsy/malformed value reaching here from JS/JSON config (null, false, 0, "",
+  // an array, a primitive) MUST be rejected — treating it as absent would run
+  // the Entra port with NO allowedScopes ceiling and grant the full catalog, a
+  // fail-open for the shipped Gate 2 control (Codex P2). null !== undefined.
+  if (groupAuth === undefined) return;
+  if (groupAuth === null || typeof groupAuth !== "object" || Array.isArray(groupAuth)) {
+    throw new AuthConfigError("groupAuthorization must be an object (or omitted) — a falsy/malformed value never degrades to a silent no-ceiling default");
+  }
   const mapping = groupAuth.mapping;
   if (mapping === null || typeof mapping !== "object" || Array.isArray(mapping)) {
     throw new AuthConfigError("groupAuthorization.mapping must be a Record<GUID, string[]>");

@@ -214,6 +214,26 @@ test("assertGroupAuthorizationMapping: undefined groupAuth is a no-op (v0.1 path
   assert.doesNotThrow(() => assertGroupAuthorizationMapping(undefined, ["mcp:read"]));
 });
 
+test("assertGroupAuthorizationMapping: falsy/non-object groupAuth is REJECTED (only undefined bypasses — Codex P2)", () => {
+  // A null/false/0/"" reaching here from JS/JSON config must NOT be treated as
+  // "absent" — that would run the port with no ceiling and grant the full catalog
+  // (fail-open for the Gate 2 control). Only undefined is the absent sentinel.
+  for (const bad of [null, false, 0, "", "nope", 42, []]) {
+    assert.throws(
+      () => assertGroupAuthorizationMapping(bad as unknown as GroupAuthorization, ["mcp:read"]),
+      AuthConfigError,
+      `falsy/non-object value ${JSON.stringify(bad)} must be rejected`,
+    );
+  }
+});
+
+test("createEntraIdentity: boot-rejects a falsy groupAuthorization (null never degrades to no-ceiling)", () => {
+  assert.throws(() => createEntraIdentity({ ...CONFIG, groupAuthorization: null as unknown as GroupAuthorization }), AuthConfigError);
+  assert.throws(() => createEntraIdentity({ ...CONFIG, groupAuthorization: false as unknown as GroupAuthorization }), AuthConfigError);
+  // undefined remains the legitimate "not configured" path (no ceiling, v0.1).
+  assert.equal(typeof createEntraIdentity({ ...CONFIG, groupAuthorization: undefined }).verify, "function");
+});
+
 test("assertGroupAuthorizationMapping: empty mapping is allowed (everyone falls back to baseScopes)", () => {
   assert.doesNotThrow(() => assertGroupAuthorizationMapping({ mapping: {}, baseScopes: ["mcp:read"] }, ["mcp:read"]));
 });
