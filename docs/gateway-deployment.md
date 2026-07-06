@@ -40,10 +40,25 @@ The library gives you the auth surface (metadata routes, register/authorize/
 token/revoke via `registerOAuthRoutes`/`createOAuthRouter`/`createOAuthApp`,
 and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
 
-1. **Transparent proxy** (least code, backend tools appear as-is). MCP over
-   Streamable HTTP is JSON-RPC POSTs: after `authorizer.authorize({...})`
-   accepts the bearer token, forward the request body to the internal MCP
-   endpoint and relay the response. Rules that matter:
+1. **Transparent proxy** (least code, backend tools appear as-is). After
+   `authorizer.authorize({...})` accepts the bearer token, forward the
+   request to the internal MCP endpoint and relay the response. Rules that
+   matter:
+   - **The failure path is load-bearing.** `authorize()` *throws* on a
+     missing/invalid/expired token — it does not build the response. Your
+     handler must catch and answer with the OAuthError's status, a
+     `WWW-Authenticate` header from `buildUnauthorizedChallenge(config,
+     { scope, error, errorDescription })` (root export), and a JSON-RPC
+     error body — exactly as `examples/fastify-sqlite/app.ts`'s `/mcp`
+     handler does (contracts §8.2/§9.6). Without the
+     `resource_metadata=...` challenge, MCP clients cannot discover the
+     protected-resource metadata and **never start the OAuth flow at all**.
+   - **Proxy the whole endpoint, not just POST.** The Streamable HTTP
+     transport uses `POST` (JSON-RPC), `GET` (server-initiated SSE streams /
+     resume), and `DELETE` (session termination). Forward all three with the
+     same bearer check and challenge-on-failure; if the backend doesn't use
+     the GET/DELETE flows, return an explicit 405 rather than silently
+     dropping them.
    - **Never forward the client's `Authorization` header upstream** — replace
      it with the backend credential.
    - Forward `mcp-session-id` and `mcp-protocol-version` in both directions
