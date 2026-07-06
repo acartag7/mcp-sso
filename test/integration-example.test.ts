@@ -12,7 +12,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { JWK } from "jose";
+import { exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { pkceChallenge } from "../src/crypto.ts";
 import { AuthConfigError } from "../src/config.ts";
 import { buildExample, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
 
@@ -113,6 +116,226 @@ test("integration — OAUTH_SQLITE_FILE overrides the default auth.db location (
     await buildExample({ MCP_SSO_DIR: dir, OAUTH_SQLITE_FILE: customDb });
     assert.ok(existsSync(customDb), "OAUTH_SQLITE_FILE honored (custom db created)");
   } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Flow-level entry wiring (the boot-level tests above stop at GET /authorize).
+// These drive register → authorize → (pairing or CF header) → consent → approve
+// → token → protected /mcp → refresh through buildExample — the actual index.ts
+// path. Both catch the S1b wiring-bug class (branch routing, sqliteFile, dir
+// creation) at the flow level, not just boot.
+// ---------------------------------------------------------------------------
+
+const FLOW_REDIRECT = "http://localhost:4321/callback";
+
+function extractValue(html: string, name: string): string {
+  const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
+  assert.ok(m?.[1], `hidden field ${name} not found`);
+  return m[1] as string;
+}
+
+/** Parse a fastify inject response body. (buildExample's app is typed as
+ *  ReturnType<typeof Fastify>, whose inject reply's .json() is untyped — so parse
+ *  the body explicitly.) */
+function json<T>(res: { body: unknown }): T {
+  assert.equal(typeof res.body, "string", "inject response body is a string");
+  return JSON.parse(res.body as string) as T;
+}
+
+function extractPairingCode(text: string): string {
+  const m = /code: ([BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4})/.exec(text);
+  assert.ok(m?.[1], "pairing code not printed");
+  return m[1]!.replace(/-/g, "");
+}
+
+/** Route the official MCP SDK client through the in-process Fastify app (so a test
+ *  can call protected /mcp without a TCP socket). Mirrors e2e-pairing's shim. */
+function sdkFetchShim(app: { inject(args: unknown): Promise<unknown> }): typeof fetch {
+  return (async (url: URL | string, init?: { method?: string; headers?: unknown; body?: unknown }): Promise<Response> => {
+    const u = url instanceof URL ? url : new URL(String(url));
+    const headers: Record<string, string> = {};
+    const src = init?.headers;
+    if (src instanceof Headers) src.forEach((v, k) => { headers[k] = v; });
+    else if (src && typeof src === "object") for (const [k, v] of Object.entries(src as Record<string, string>)) headers[k] = v;
+    const method = (init?.method ?? "POST") as "POST";
+    const payload = init?.body === undefined || init?.body === null
+      ? undefined
+      : typeof init.body === "string" ? init.body : JSON.stringify(init.body);
+    const r = await app.inject(payload === undefined ? { method, url: u.pathname + u.search, headers } : { method, url: u.pathname + u.search, headers, payload }) as unknown as { statusCode: number; headers: Record<string, string>; body: string };
+    return new Response(r.body, { status: r.statusCode, headers: r.headers });
+  }) as typeof fetch;
+}
+
+async function callProtectedMcp(app: { inject(args: unknown): Promise<unknown> }, resource: string, accessToken: string, expectedSubject: string): Promise<void> {
+  const transport = new StreamableHTTPClientTransport(new URL(resource), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
+  const client = new Client({ name: "int-entry-flow", version: "0.0.1" }, { capabilities: {} });
+  try {
+    await client.connect(transport);
+    const result = await client.callTool({ name: "ping", arguments: {} });
+    const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
+    assert.equal(text, `pong: ${expectedSubject}`, "the entry-resolved subject reached /mcp");
+  } finally {
+    await client.close();
+    await transport.close();
+  }
+}
+
+test("integration — zero-setup branch: full flow through the entry (pairing code from stderr → token → /mcp → refresh)", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-zsflow-"));
+  const dir = join(base, "state"); // does NOT exist — buildExample must create it
+  const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
+  const ORIGIN = "http://localhost:3000";
+  try {
+    const { app, store, config } = await buildExample({
+      MCP_SSO_DIR: dir,
+      OAUTH_ISSUER: ORIGIN,
+      OAUTH_RESOURCE: `${ORIGIN}/mcp`,
+      OAUTH_REDIRECT_ALLOWLIST: FLOW_REDIRECT,
+    });
+    try {
+      const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [FLOW_REDIRECT] }) });
+      assert.equal(reg.statusCode, 201);
+      const clientId = json<{ client_id: string }>(reg).client_id;
+      const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: FLOW_REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
+
+      // GET /authorize renders the pairing page; the code is printed to process.stderr
+      // (buildExample passes pairing:{}, so ConsolePairingOptions.output defaults to
+      // process.stderr — no env seam). Capture by wrapping process.stderr.write and
+      // restore in finally so a failure can't corrupt the run's stderr. node --test
+      // runs each file in its own process, so this never touches another file's stderr.
+      let code: string;
+      let pairingNonce: string;
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      const chunks: string[] = [];
+      process.stderr.write = ((s: string | Uint8Array): boolean => {
+        chunks.push(typeof s === "string" ? s : Buffer.from(s).toString());
+        return true;
+      }) as typeof process.stderr.write;
+      try {
+        const pairingPage = await app.inject({ method: "GET", url: `/oauth/authorize?${q}` });
+        assert.equal(pairingPage.statusCode, 200);
+        assert.match(pairingPage.body, /Pair this device/);
+        pairingNonce = extractValue(pairingPage.body, "pairing_nonce");
+        code = extractPairingCode(chunks.join(""));
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+
+      // POST the pasted code + nonce → consent page.
+      const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: pairingNonce }).toString() });
+      assert.equal(consentPage.statusCode, 200);
+      assert.match(consentPage.body, /Authorize access/);
+      const consentToken = extractValue(consentPage.body, "consent_token");
+
+      // Approve → 302 with an auth code.
+      const approve = await app.inject({ method: "POST", url: "/oauth/authorize/approve", headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN }, payload: new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString() });
+      assert.equal(approve.statusCode, 302);
+      const authCode = new URL(approve.headers.location as string).searchParams.get("code");
+      assert.ok(authCode);
+
+      // Exchange → tokens.
+      const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: FLOW_REDIRECT, client_id: clientId, code_verifier: verifier }).toString() });
+      assert.equal(tokenResp.statusCode, 200);
+      const { access_token: accessToken, refresh_token: refreshToken } = json<{ access_token: string; refresh_token: string }>(tokenResp);
+
+      // Protected /mcp via the OFFICIAL MCP SDK client — the pairing-resolved
+      // subject ("console-operator") reaches /mcp through the entry wiring.
+      await callProtectedMcp(app, config.resource, accessToken, "console-operator");
+
+      // Refresh rotates.
+      const refreshed = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId }).toString() });
+      assert.equal(refreshed.statusCode, 200);
+      assert.notEqual(json<{ refresh_token: string }>(refreshed).refresh_token, refreshToken);
+    } finally {
+      await app.close();
+      await store.close();
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — Cloudflare Access branch: full header flow through the entry (in-test JWKS + signed RS256 Access JWT, zero real network) → token → /mcp → refresh", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-cfflow-"));
+  const dir = join(base, "state");
+  const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
+  const ORIGIN = "http://localhost";
+  const CERTS_URL = "https://cf.test/certs";
+  const CF_ISSUER = "https://cf.test";
+  const CF_AUDIENCE = "https://cf.test/aud";
+
+  // RSA keypair for the CF Access JWT: the public half is served as JWKS at the
+  // https certsUrl (stubbed globalThis.fetch), the private half signs the assertion.
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const publicJwk = { ...(await exportJWK(publicKey)), kid: "cf-test-key", alg: "RS256", use: "sig" };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: URL | Request | string): Promise<Response> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url === CERTS_URL) return new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+  try {
+    const signingKey = jwk(); // the bridge's own ES256 access-token key (from env)
+    const { app, store, config } = await buildExample({
+      MCP_SSO_DIR: dir,
+      CF_ACCESS_AUDIENCE: CF_AUDIENCE,
+      CF_ACCESS_CERTS_URL: CERTS_URL,
+      CF_ACCESS_ISSUER: CF_ISSUER,
+      OAUTH_ISSUER: ORIGIN,
+      OAUTH_RESOURCE: `${ORIGIN}/mcp`,
+      OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+      OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(signingKey),
+      OAUTH_REDIRECT_ALLOWLIST: FLOW_REDIRECT,
+      OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+    });
+    assert.equal(config.issuer, ORIGIN);
+    try {
+      const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [FLOW_REDIRECT] }) });
+      assert.equal(reg.statusCode, 201);
+      const clientId = json<{ client_id: string }>(reg).client_id;
+
+      // A valid CF Access JWT (RS256, matching the served JWKS; aud/iss/exp per the
+      // port's checks). Sent in the cf-access-jwt-assertion header → resolveIdentity.
+      const now = Math.floor(Date.now() / 1000);
+      const cfJwt = await new SignJWT({ email: "operator@cf.test", sub: "cf-operator" })
+        .setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "cf-test-key" })
+        .setIssuer(CF_ISSUER).setAudience(CF_AUDIENCE).setIssuedAt(now).setExpirationTime(now + 3600)
+        .sign(privateKey);
+
+      const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: FLOW_REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
+      const authPage = await app.inject({ method: "GET", url: `/oauth/authorize?${q}`, headers: { "cf-access-jwt-assertion": cfJwt } });
+      assert.equal(authPage.statusCode, 200, "CF identity accepted → consent page (NOT 401, NOT the pairing page)");
+      assert.match(authPage.body, /Authorize access/);
+      const consentToken = extractValue(authPage.body, "consent_token");
+
+      const approve = await app.inject({ method: "POST", url: "/oauth/authorize/approve", headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN }, payload: new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString() });
+      assert.equal(approve.statusCode, 302);
+      const authCode = new URL(approve.headers.location as string).searchParams.get("code");
+      assert.ok(authCode);
+
+      const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: FLOW_REDIRECT, client_id: clientId, code_verifier: verifier }).toString() });
+      assert.equal(tokenResp.statusCode, 200);
+      const { access_token: accessToken, refresh_token: refreshToken } = json<{ access_token: string; refresh_token: string }>(tokenResp);
+
+      // The CF-resolved subject (sub) reaches /mcp through the entry wiring.
+      await callProtectedMcp(app, config.resource, accessToken, "cf-operator");
+
+      const refreshed = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId }).toString() });
+      assert.equal(refreshed.statusCode, 200);
+      assert.notEqual(json<{ refresh_token: string }>(refreshed).refresh_token, refreshToken);
+
+      // A WRONG-audience CF JWT is rejected (the CF port's own gate, through the entry).
+      const badAud = await new SignJWT({ email: "operator@cf.test", sub: "cf-operator" }).setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "cf-test-key" }).setIssuer(CF_ISSUER).setAudience("https://evil.test").setIssuedAt(now).setExpirationTime(now + 3600).sign(privateKey);
+      const rejected = await app.inject({ method: "GET", url: `/oauth/authorize?${q}`, headers: { "cf-access-jwt-assertion": badAud } });
+      assert.equal(rejected.statusCode, 401, "CF JWT with the wrong audience is rejected (fail-closed)");
+    } finally {
+      await app.close();
+      await store.close();
+    }
+  } finally {
+    globalThis.fetch = realFetch;
     rmSync(base, { recursive: true, force: true });
   }
 });
