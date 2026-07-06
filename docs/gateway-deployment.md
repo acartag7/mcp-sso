@@ -94,6 +94,12 @@ database/schema) per bridge. Use separate signing keys per bridge too, as
 independent hygiene: it doesn't substitute for store separation, but it
 keeps a key compromise contained to one gateway.
 
+*Residual, stated plainly: this isolation is enforced by deployment
+discipline, not by the library — store records are not issuer-scoped today.
+Issuer-scoped records (closing cross-bridge redemption in code) are a
+candidate hardening tracked for a potential multi-resource bridge; until
+then, the one-store-per-bridge rule is the control.*
+
 ## Kubernetes notes
 
 Each gateway is a small Deployment + Service + Ingress + Secret:
