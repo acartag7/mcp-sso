@@ -16,12 +16,14 @@ async function main(): Promise<void> {
   const { app, config } = await buildExample(process.env);
   const port = Number(process.env.PORT ?? 3000);
   const host = process.env.HOST ?? defaultListenHost(process.env);
-  // Warn if console pairing (single-operator envelope) is bound off-loopback.
-  if (!process.env.CF_ACCESS_AUDIENCE && host !== "127.0.0.1" && host !== "localhost") {
-    console.error(`[mcp-sso] WARNING: console pairing is bound to ${host} (non-loopback). The pairing code is the identity gate — anyone who can reach this port can attempt it. Pairing is for single-operator / private-console deployments only; use the Cloudflare Access path for network-exposed deployments.`);
+  // Warn if console pairing (single-operator envelope) is bound off-loopback. The
+  // Cloudflare Access AND Entra redirect paths are network-bound (a real IdP is the
+  // gate), so the warning fires only for the pairing path.
+  if (!process.env.CF_ACCESS_AUDIENCE && !process.env.ENTRA_TENANT_ID && host !== "127.0.0.1" && host !== "localhost") {
+    console.error(`[mcp-sso] WARNING: console pairing is bound to ${host} (non-loopback). The pairing code is the identity gate — anyone who can reach this port can attempt it. Pairing is for single-operator / private-console deployments only; use the Cloudflare Access or Entra path for network-exposed deployments.`);
   }
   await app.listen({ port, host });
-  const mode = process.env.CF_ACCESS_AUDIENCE ? "Cloudflare Access" : "console pairing";
+  const mode = process.env.ENTRA_TENANT_ID ? "Entra redirect" : process.env.CF_ACCESS_AUDIENCE ? "Cloudflare Access" : "console pairing";
   console.error(`mcp-sso example listening on ${host}:${port}  (identity: ${mode})`);
   console.error(`  issuer=${config.issuer}  resource=${config.resource}`);
 }
