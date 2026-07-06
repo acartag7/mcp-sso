@@ -300,6 +300,17 @@ test("verifyMachineClientSecret: malformed / poisoned records fail closed (false
   }
 });
 
+test("verifyMachineClientSecret: a 64-char NON-ASCII hash (byte-length mismatch) fails closed, no throw", async () => {
+  // Codex P2: a corrupted stored hash that is 64 JS chars but multibyte (>64 bytes)
+  // must NOT make timingSafeEqual throw ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH.
+  const h = harness();
+  await h.store.save({
+    clientId: "m4", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1,
+    allowedScopes: ["mcp:read"], secrets: [{ hash: "é".repeat(64), createdAtEpoch: 1 }],
+  });
+  assert.equal(await verifyMachineClientSecret(h.deps, "m4", "mcs_" + "A".repeat(43)), false);
+});
+
 // ---------- audit (no secret / no hash leak) ----------
 
 test("audit: provision + rotate emit metadata-only events (no secret, no hash, no mcs_)", async () => {

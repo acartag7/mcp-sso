@@ -26,6 +26,10 @@ const MAX_ACTIVE_SECRETS = 2;
 /** Never-matching 64-char digest that pads verify's loop to a fixed width. */
 const ZERO_HASH = "0".repeat(64);
 
+/** Stored-hash shape: 64 lowercase hex chars (sha256Hex output). Anything else is
+ *  a corrupted record, excluded before compare so `timingSafeEqual` never throws. */
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+
 export interface MachineClientDeps {
   store: ClientStore;
   /** `config.scopeCatalog` — allowedScopes is validated against this. */
@@ -110,11 +114,10 @@ export async function provisionMachineClient(
   }
 }
 
-/** Rotate a machine client's secret. Demotes the currently-live secret to a
- *  `now + graceSeconds` grace window, adds the new live secret, and trims the
- *  record to exactly the permitted active set (≤ 2 unexpired; exactly one
- *  live). Returns the new secret ONCE. Unknown / non-machine clientId ⇒
- *  `invalid_client`. */
+/** Rotate a machine client's secret: demote the live secret to a
+ *  `now + graceSeconds` grace window, add the new live secret, and trim to the
+ *  permitted active set (≤ 2 unexpired; one live). Returns the new secret ONCE.
+ *  Unknown / non-machine / malformed-record clientId ⇒ `invalid_client` (401). */
 export async function rotateMachineClientSecret(
   deps: MachineClientDeps,
   clientId: string,
@@ -151,38 +154,31 @@ export async function rotateMachineClientSecret(
 }
 
 /** Timing-safe verification primitive the §9.4 client_credentials grant (S3b)
- *  composes into client authentication. SHA-256s the presented secret and
- *  constant-time compares it against the active (unexpired) stored hashes.
- *  Uniform-work + fail-closed: the secret is hashed BEFORE the store lookup
- *  (no client-existence oracle); every path runs the SAME fixed two-comparison
- *  loop (no early-return slot signal); a missing/non-machine/malformed record
- *  (the deployer-implemented ClientStore bypasses the type layer at runtime) or
- *  a > 2-active (poisoned) record ⇒ `false`, never thrown. */
+ *  composes into client authentication. Uniform-work + fail-closed: the secret
+ *  is hashed BEFORE the lookup (no client-existence oracle); every path runs the
+ *  same fixed two-comparison loop (no slot/active-count signal); a missing /
+ *  non-machine / malformed / >2-active (poisoned) record ⇒ `false`, never thrown. */
 export async function verifyMachineClientSecret(
   deps: MachineClientDeps,
   clientId: string,
   presentedSecret: string,
 ): Promise<boolean> {
   if (typeof presentedSecret !== "string" || presentedSecret.length === 0) return false;
-  // Hash FIRST, unconditionally (the caller's own input leaks nothing) so the
-  // dominant post-lookup cost is the same for every clientId.
   const presented = sha256Hex(presentedSecret);
   const client = await deps.store.find(clientId);
   const now = epochSeconds(deps.clock);
-  // Active = well-formed + unexpired, only for a real machine record. Unknown /
-  // non-machine / malformed ⇒ []; > 2 active (poisoned, §17.2) ⇒ [] (fail closed).
+  // Active = well-formed (64-hex) + unexpired, only for a real machine record;
+  // anything else, or > 2 active (poisoned, §17.2), ⇒ [] (fail closed).
   let active: string[] = [];
   if (client?.applicationType === "machine" && Array.isArray(client.secrets)) {
     active = client.secrets
       .filter((s): s is ClientSecret => s !== null && typeof s === "object"
-        && typeof s.hash === "string"
+        && typeof s.hash === "string" && SHA256_HEX_RE.test(s.hash)
         && (s.expiresAtEpoch === undefined || typeof s.expiresAtEpoch === "number"))
       .filter((s) => s.expiresAtEpoch === undefined || s.expiresAtEpoch > now)
       .map((s) => s.hash);
     if (active.length > MAX_ACTIVE_SECRETS) active = [];
   }
-  // Fixed two-comparison loop on every path (padded with a never-matching dummy)
-  // so timing is independent of active count.
   let matched = false;
   for (let i = 0; i < MAX_ACTIVE_SECRETS; i++) {
     if (timingSafeHexEqual(presented, active[i] ?? ZERO_HASH)) matched = true;
@@ -230,9 +226,15 @@ function validateAllowedScopes(input: unknown, catalog: readonly string[]): stri
   return out;
 }
 
+/** Constant-time digest equality. Compares BYTE length (not JS-char length): a
+ *  corrupted hash that is 64 code units but non-ASCII would otherwise make
+ *  timingSafeEqual throw — so this never throws. Belt-and-suspenders behind the
+ *  64-hex filter. */
 function timingSafeHexEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
 }
 
 function isPositiveInteger(value: number): boolean {
