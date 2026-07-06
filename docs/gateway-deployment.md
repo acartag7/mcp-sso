@@ -40,6 +40,25 @@ The library gives you the auth surface (metadata routes, register/authorize/
 token/revoke via `registerOAuthRoutes`/`createOAuthRouter`/`createOAuthApp`,
 and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
 
+> **The browser login leg is not always wired for you — it depends on the
+> identity port.** The shipped `/oauth/authorize` handler is *header-driven*:
+> it reads one header (`identityHeader`, default `cf-access-jwt-assertion`)
+> and passes it to your `IdentityPort.verify`. That is complete **only when a
+> fronting layer has already completed the login and injected the identity
+> assertion** — the Cloudflare Access model (Access does the browser leg at
+> its edge and injects `Cf-Access-Jwt-Assertion`), or any reverse proxy that
+> injects an id_token into that header. With `createEntraIdentity` and **no**
+> such fronting injection there is no login: `verify` wants a raw `id_token`,
+> the header is absent, so `resolveIdentity` fails `entra_id_token_missing`
+> and the user gets a **direct 401, not an Entra sign-in**. Driving the Entra
+> redirect dance yourself is deployer code — `createEntraIdentity` exposes
+> `getAuthorizationUrl` + `exchangeCodeForToken` (with nonce handling) for a
+> custom `/oauth/authorize` + callback wrapper that ends by handing the
+> id_token to the bridge. Pick one before shipping: front the gateway with an
+> assertion-injecting proxy (header model, zero extra code), or compose the
+> redirect wrapper. The three `/mcp` shapes below are orthogonal to this
+> choice.
+
 1. **Transparent proxy** (least code, backend tools appear as-is). After
    `authorizer.authorize({...})` accepts the bearer token, forward the
    request to the internal MCP endpoint and relay the response. Rules that
