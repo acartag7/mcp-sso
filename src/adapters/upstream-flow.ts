@@ -16,9 +16,9 @@ import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
-import { AuthConfigError, originOf, pathAfterOrigin } from "../config.ts";
+import { AuthConfigError, originOf, pathAfterOrigin, type BridgeConfig } from "../config.ts";
 import { OAuthError } from "../errors.ts";
-import { assertAllowedRedirectUri } from "../redirect.ts";
+import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "../redirect.ts";
 import { pkceChallenge } from "../crypto.ts";
 import { queryString, type NormRequest, type NormResponse } from "./http.ts";
 import {
@@ -90,7 +90,12 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       }
       const clientId = queryString(req.query, "client_id");
       if (!clientId) return directErrorResponse("invalid_request", "client_id is required"); // step 3
-      assertAllowedRedirectUri(queryString(req.query, "redirect_uri") ?? "", bridge.config.redirectAllowlist); // §10 pre-validation (throws ⇒ outer catch ⇒ direct 4xx)
+      // §10 pre-validation — the redirect_uri signed into the flow cookie must be
+      // validated to the MODE-APPROPRIATE policy so the callback's redirect-channel
+      // errors (rows 7/8/10/11, which fire before bridge.handleAuthorize→prepare)
+      // only ever target a §10-validated URI. Mirrors authorize.ts resolveRedirect:
+      // stored mode ⇒ §10.2 per-client (resolve the client first); stateless ⇒ §10.1.
+      await resolveAuthorizeRedirect(bridge.config, clientId, queryString(req.query, "redirect_uri") ?? "");
       const params = gatherOAuthParams(req); // step 4
       const state = randomToken(), nonce = randomToken(), codeVerifier = randomToken();
       const jti = `upf_${randomToken()}`;
@@ -158,6 +163,20 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
 
 function randomToken(): string {
   return randomBytes(32).toString("base64url");
+}
+
+/** Mode-appropriate §10 redirect validation at authorize — mirrors authorize.ts
+ *  resolveRedirect. Stored mode resolves the client and applies the per-client
+ *  policy (§10.2); stateless applies the global allowlist (§10.1). Throws a
+ *  direct OAuthError (invalid_client / invalid_redirect_uri). */
+async function resolveAuthorizeRedirect(config: BridgeConfig, clientId: string, redirectUri: string): Promise<void> {
+  if (config.dcr.mode === "stored") {
+    const client = await config.dcr.store.find(clientId);
+    if (!client) throw new OAuthError("invalid_client", "Unknown client_id", 401);
+    assertRedirectAllowedForClient(redirectUri, client);
+    return;
+  }
+  assertAllowedRedirectUri(redirectUri, config.redirectAllowlist);
 }
 
 function gatherOAuthParams(req: NormRequest): Record<string, string> {

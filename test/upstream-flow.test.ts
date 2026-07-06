@@ -13,6 +13,7 @@ import { decodeJwt, generateKeyPair, SignJWT, type JWK } from "jose";
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { RedirectExchangeResult, RedirectIdentityPort } from "../src/ports/identity.ts";
+import type { ClientStore, ClientRegistration } from "../src/ports/client-store.ts";
 import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { createUpstreamRedirectFlow } from "../src/adapters/upstream-flow.ts";
@@ -61,6 +62,21 @@ function config(loopback = false): BridgeConfig {
   });
 }
 function cookieName(c: BridgeConfig): string { return new URL(c.issuer).protocol === "https:" ? "__Host-mcp-sso-upstream" : "mcp-sso-upstream"; }
+class InMemoryClientStore implements ClientStore {
+  private readonly m = new Map<string, ClientRegistration>();
+  async save(c: ClientRegistration): Promise<void> { this.m.set(c.clientId, c); }
+  async find(clientId: string): Promise<ClientRegistration | null> { return this.m.get(clientId) ?? null; }
+}
+function storedConfig(store: ClientStore): BridgeConfig {
+  return createBridgeConfig({
+    issuer: ISSUER, resource: RESOURCE,
+    consentSigningSecret: "test-consent-secret-with-enough-entropy-0123456789",
+    signingPrivateJwk: jwk(), signingKeyId: "k",
+    redirectAllowlist: [CLIENT_REDIRECT], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
+    allowedOrigins: [ISSUER], dcr: { mode: "stored", store },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+}
 
 interface FakeId { identity: RedirectIdentityPort; exchangeCalls: () => number; lastArgs: () => { code: string; codeVerifier: string; nonce: string } | undefined; set: (r: RedirectExchangeResult | "throw") => void; }
 function fakeIdentity(c: BridgeConfig): FakeId {
@@ -248,6 +264,31 @@ test("authorize: missing client_id => direct 400; bad redirect_uri => direct 4xx
   const r2 = await flow.handleAuthorize(req(q2));
   assert.equal((r2.body as { error: string }).error, "invalid_redirect_uri");
   assert.equal(r2.status, 400); assert.equal(r2.headers["set-cookie"], undefined);
+});
+
+test("authorize (stored-DCR): step 3 validates redirect_uri PER-CLIENT (§10.2) before signing the flow cookie — closes the cross-client error-redirect gap", async () => {
+  // The callback's redirect-channel errors (rows 7/8/10/11) fire before
+  // bridge.handleAuthorize→prepare, so the redirect_uri signed into the flow cookie
+  // must already be §10.2-valid (not just globally §10.1-valid) in stored mode.
+  const clients = new InMemoryClientStore();
+  await clients.save({ clientId: "client-A", redirectUris: [CLIENT_REDIRECT], applicationType: "web", issuedAtEpoch: 1 });
+  const c = storedConfig(clients); const { flow } = makeFlow(c, fakeIdentity(c));
+  // registered client + its own redirect_uri => 302 + cookie
+  const ok = await flow.handleAuthorize(req(authorizeQuery("client-A")));
+  assert.equal(ok.status, 302);
+  assert.ok((ok.headers["set-cookie"] ?? "").startsWith("__Host-mcp-sso-upstream="));
+  // registered client + a GLOBALLY-allowlisted but NOT-per-client-registered URI
+  // (https://claude.ai is a built-in default origin) => invalid_redirect_uri, no cookie
+  const q = authorizeQuery("client-A"); q.redirect_uri = "https://claude.ai/cb";
+  const bad = await flow.handleAuthorize(req(q));
+  assert.equal((bad.body as { error: string }).error, "invalid_redirect_uri");
+  assert.equal(bad.headers["set-cookie"], undefined, "no flow cookie signed for a per-client-invalid redirect");
+  // unknown client_id => invalid_client (direct 401), no cookie
+  const q2 = authorizeQuery("client-UNKNOWN");
+  const unk = await flow.handleAuthorize(req(q2));
+  assert.equal((unk.body as { error: string }).error, "invalid_client");
+  assert.equal(unk.status, 401);
+  assert.equal(unk.headers["set-cookie"], undefined);
 });
 
 test("authorize: success => 302 to the IdP with Set-Cookie; nothing persisted server-side", async () => {
