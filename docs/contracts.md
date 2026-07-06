@@ -176,6 +176,13 @@ interface BridgeConfig {
 
 **Boot validation (all throw `AuthConfigError`, never warn):**
 
+- The input admits **only** the `BridgeConfig` fields enumerated above — no
+  other own property (string- or symbol-keyed). Any extra key is a boot
+  `AuthConfigError` **naming the offending key**. The frozen `bridge.config`
+  object is the thing passed to every adapter and consent renderer, so a value a
+  JS/cast-TS caller parked on the input — e.g. a backend API key, or a typo like
+  `issuers` — would otherwise ship on that public object. Park secrets in your
+  own closure; do not put them in the `createBridgeConfig` input.
 - `issuer` and `resource` are absolute `https://` URLs (the bridge does not run
   over plain http in production). Their **origins** are computed once and reused.
   **Local-dev escape hatch:** `dev.allowInsecureLocalhost` permits `http://`
