@@ -84,6 +84,30 @@ export async function buildApp(opts: ExampleOptions) {
 
   // Protected /mcp: verify the bridge-issued access token, then delegate to an MCP server.
   app.post("/mcp", async (request, reply) => {
+    // Origin validation — MCP Streamable HTTP transport DNS-rebinding protection.
+    // Servers MUST validate the `Origin` header on every connection; a PRESENT,
+    // non-allowlisted Origin is rejected with 403 (the SDK's own behavior and the
+    // prescription in `docs/gateway-deployment.md`, which states it "before
+    // anything else"). Enforced HERE, in-handler and BEFORE `authorize()`, NOT via the SDK
+    // transport's `enableDnsRebindingProtection`/`allowedOrigins` options: those
+    // are off by default (and `@deprecated` — the SDK itself says to use external
+    // middleware for this), and they run INSIDE `transport.handleRequest()` below
+    // — i.e. AFTER the bearer check — so they could not satisfy "before anything
+    // else" (a foreign Origin would still trigger a full token verify + 401
+    // challenge first). `RequestAuthorizer`
+    // checks bearer + scopes only; the Origin gate on this deployer-owned endpoint
+    // is ours regardless. Bearer auth blunts the practical rebinding risk (a
+    // rebound browser request carries no token), but the MUST is unconditional and
+    // this is the only defense on any surface later exposed unauthenticated. MCP
+    // clients are not browsers, so an ABSENT Origin is the normal case and
+    // proceeds; a PRESENT Origin must match `config.allowedOrigins` (defaults to
+    // the issuer origin).
+    const rawOrigin = request.headers.origin;
+    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
+    if (origin !== undefined && !opts.config.allowedOrigins.includes(origin)) {
+      reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
+      return;
+    }
     let auth;
     try {
       auth = await authorizer.authorize({ authorization: request.headers.authorization });

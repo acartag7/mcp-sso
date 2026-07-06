@@ -142,6 +142,18 @@ const http = {
  *  undefined ⇒ the SDK reads the raw stream (hono native path); a parsed body ⇒
  *  the SDK uses it directly (express.json path, no double-read). */
 async function serveMcp(req: IncomingMessage, res: ServerResponse, parsedBody: unknown, authorizer: RequestAuthorizer, config: BridgeConfig): Promise<void> {
+  // Origin gate — mirrors examples/fastify-sqlite/app.ts's /mcp handler (this
+  // helper exists to exercise that handler across express/hono on real sockets).
+  // MCP Streamable HTTP transport MUST: validate Origin on every connection, 403
+  // when present but not allowlisted, BEFORE the bearer check. See the example
+  // handler for why this is in-handler (not the SDK transport option).
+  const rawOrigin = req.headers.origin;
+  const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
+  if (origin !== undefined && !config.allowedOrigins.includes(origin)) {
+    res.writeHead(403, { "content-type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null }));
+    return;
+  }
   let auth: { subject: string };
   try {
     auth = await authorizer.authorize({ authorization: req.headers.authorization });
@@ -360,6 +372,36 @@ test("integration — /mcp without a token: 401 + RFC 9728 resource_metadata cha
       const res = await httpCall(base, "POST", "/mcp", { "content-type": "application/json" }, JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "x", version: "0" } }, id: 1 }));
       assert.equal(res.status, 401);
       assert.match(res.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/);
+    } finally {
+      await mount.close();
+      await store.close();
+    }
+  }
+});
+
+test("integration — /mcp Origin gate: foreign Origin ⇒ 403 before auth; absent/allowlisted ⇒ proceed (express + hono, real socket)", async () => {
+  // serveMcp mirrors the example /mcp handler, including the in-handler Origin
+  // gate (MCP Streamable HTTP DNS-rebinding MUST). Driven over a real socket on
+  // both adapters: foreign Origin ⇒ 403 with no challenge (authorize never ran);
+  // allowlisted/absent Origin ⇒ proceeds to the bearer check ⇒ 401.
+  const init = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "x", version: "0" } }, id: 1 });
+  for (const mountFn of [mountExpress, mountHono]) {
+    const port = await freePort();
+    const base = `http://127.0.0.1:${port}`;
+    const config = makeConfig({ resource: `${base}/mcp`, issuer: base });
+    const store = new MemoryStore();
+    const { bridge, authorizer } = deps(config, store);
+    const mount = await mountFn(bridge, authorizer, config, port);
+    try {
+      const evil = await httpCall(base, "POST", "/mcp", { "content-type": "application/json", origin: "https://evil.test" }, init);
+      assert.equal(evil.status, 403, "foreign Origin rejected before authorization");
+      assert.doesNotMatch(evil.headers["www-authenticate"] ?? "", /resource_metadata=/, "no challenge — gate fired before authorize");
+
+      const allowlisted = await httpCall(base, "POST", "/mcp", { "content-type": "application/json", origin: base }, init);
+      assert.equal(allowlisted.status, 401, "allowlisted Origin proceeds to the bearer check");
+
+      const absent = await httpCall(base, "POST", "/mcp", { "content-type": "application/json" }, init);
+      assert.equal(absent.status, 401, "absent Origin proceeds to the bearer check");
     } finally {
       await mount.close();
       await store.close();

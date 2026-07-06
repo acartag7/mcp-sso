@@ -179,8 +179,8 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-async function callProtectedMcp(app: { inject(args: unknown): Promise<unknown> }, resource: string, accessToken: string, expectedSubject: string): Promise<void> {
-  const transport = new StreamableHTTPClientTransport(new URL(resource), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
+async function callProtectedMcp(app: { inject(args: unknown): Promise<unknown> }, resource: string, accessToken: string, expectedSubject: string, extraHeaders: Record<string, string> = {}): Promise<void> {
+  const transport = new StreamableHTTPClientTransport(new URL(resource), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}`, ...extraHeaders } } });
   const client = new Client({ name: "int-entry-flow", version: "0.0.1" }, { capabilities: {} });
   try {
     await withTimeout(client.connect(transport), 10_000, "MCP client connect");
@@ -254,6 +254,11 @@ test("integration — zero-setup branch: full flow through the entry (pairing co
       // Protected /mcp via the OFFICIAL MCP SDK client — the pairing-resolved
       // subject ("console-operator") reaches /mcp through the entry wiring.
       await callProtectedMcp(app, config.resource, accessToken, "console-operator");
+      // A PRESENT, allowlisted Origin on /mcp is admitted by the Origin gate: the
+      // full SDK round-trip still succeeds (the MCP client sends no Origin by
+      // default; this injects the allowlisted one to exercise the gate's admit
+      // path, not only the absent-Origin path every other call proves).
+      await callProtectedMcp(app, config.resource, accessToken, "console-operator", { origin: ORIGIN });
 
       // Refresh rotates.
       const refreshed = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId }).toString() });
@@ -347,6 +352,45 @@ test("integration — Cloudflare Access branch: full header flow through the ent
     }
   } finally {
     globalThis.fetch = realFetch;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — /mcp Origin gate (MCP Streamable HTTP DNS-rebinding MUST): foreign Origin ⇒ 403 before auth; absent/allowlisted ⇒ proceed to the bearer check", async () => {
+  // The MCP Streamable HTTP transport says servers MUST validate `Origin` on every
+  // connection (403 when present but not allowlisted). The example enforces it
+  // IN-HANDLER, BEFORE authorize(): a foreign Origin is rejected with 403 and never
+  // reaches the resource-server leg (no WWW-Authenticate challenge), while an
+  // absent Origin (MCP clients are not browsers) or an allowlisted Origin proceeds
+  // to the bearer check and returns 401 here (no token). The 403-vs-401 split on a
+  // token-less request is the proof the gate precedes authorization.
+  const ORIGIN = "http://localhost:3000";
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-origin-"));
+  const dir = join(base, "state");
+  const init = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "x", version: "0" } }, id: 1 });
+  try {
+    const { app, store } = await buildExample({ MCP_SSO_DIR: dir, OAUTH_ISSUER: ORIGIN, OAUTH_RESOURCE: `${ORIGIN}/mcp` });
+    try {
+      // Foreign Origin ⇒ 403, and the resource-server challenge is NOT emitted
+      // (authorize() never ran).
+      const evil = await app.inject({ method: "POST", url: "/mcp", headers: { "content-type": "application/json", origin: "https://evil.test" }, payload: init });
+      assert.equal(evil.statusCode, 403, "foreign Origin rejected before authorization");
+      assert.doesNotMatch(evil.headers["www-authenticate"] ?? "", /resource_metadata=/, "Origin gate fires before the authorize leg — no challenge");
+
+      // Allowlisted Origin ⇒ proceeds to the bearer check ⇒ 401 + challenge.
+      const allowlisted = await app.inject({ method: "POST", url: "/mcp", headers: { "content-type": "application/json", origin: ORIGIN }, payload: init });
+      assert.equal(allowlisted.statusCode, 401, "allowlisted Origin proceeds to the bearer check");
+      assert.match(allowlisted.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/, "reached the resource-server leg");
+
+      // Absent Origin (non-browser client — the normal MCP case) ⇒ proceeds ⇒ 401.
+      const absent = await app.inject({ method: "POST", url: "/mcp", headers: { "content-type": "application/json" }, payload: init });
+      assert.equal(absent.statusCode, 401, "absent Origin proceeds to the bearer check");
+      assert.match(absent.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/, "reached the resource-server leg");
+    } finally {
+      await app.close();
+      await store.close();
+    }
+  } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
