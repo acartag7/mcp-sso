@@ -7,8 +7,9 @@
 > handling, egress, or the build/publish pipeline.
 >
 > Status: **v0.1 shipped + v0.2 contracts locked 2026-07-04** (threats 17–25
-> below cover the locked-but-unimplemented contracts in `contracts.md` §17).
-> Companion to `docs/contracts.md`.
+> below cover the locked-but-unimplemented contracts in `contracts.md` §17;
+> threats 29–33, added 2026-07-06, cover the locked §17.11 upstream
+> redirect-leg orchestrator). Companion to `docs/contracts.md`.
 
 ## Assets
 
@@ -28,6 +29,9 @@
   signing material on disk, guarded by file permissions.
 - ***(v0.2)* The group→scope mapping config** — its integrity decides
   privilege tiers (GUID-keyed by contract).
+- ***(v0.2, §17.11)* The upstream flow cookie** — signed bearer of one
+  in-flight redirect flow (upstream state/nonce/PKCE verifier + the
+  round-tripped client params); single-use, 600 s TTL, browser-held.
 
 ## Trust boundaries
 
@@ -116,7 +120,7 @@
 | 1 | Steal/replay an access token | Spoofing / Elevation | Short TTL; audience fail-closed; alg pin; `cache-control: no-store` on token responses | A stolen access token is valid until `exp` (no introspection/revocation of live access tokens in v0.1) — accepted given short TTL |
 | 2 | Steal/replay a refresh token | Spoofing / Elevation | Rotation marks consumed; replay ⇒ family revoked; RFC 6749 §6 client binding; rotation backfill blocks poisoning | None beyond the race window (reuse revokes immediately) |
 | 3 | Forge a token (key compromise / `none`-alg) | Spoofing | ES256/HS256 alg pin; key separation; key strength boot checks | A compromised signing key = total break; mitigated by supply-chain + ops hygiene |
-| 4 | CSRF an `approve` to mint a code | Tampering | Core `origin` check (fail-closed); single-use consent JTI (primary). The consent token travels as a hidden form field — the library never sets a cookie; the optional `mcp_idp_consent` cookie read in `handleApprove` is a deployer seam, and cookie attributes (HttpOnly/Secure/SameSite) are the deployer's responsibility if used | None meaningful |
+| 4 | CSRF an `approve` to mint a code | Tampering | Core `origin` check (fail-closed); single-use consent JTI (primary). The consent token travels as a hidden form field — **the consent surface sets no cookie**; the optional `mcp_idp_consent` cookie read in `handleApprove` is a deployer seam, and cookie attributes (HttpOnly/Secure/SameSite) are the deployer's responsibility if used. *(The §17.11 upstream redirect flow sets its own, separate signed flow cookie with library-defined attributes — rows 29–33; it never touches the consent surface.)* | None meaningful |
 | 5 | Open-redirect / redirect_uri abuse | Spoofing / Elevation | Anchored allowlist (§10); error redirects target only validated redirect_uris | None (a redirect can only go to a §10-validated URI) |
 | 6 | Token substitution across resources | Elevation | Audience fail-closed (§7.2) | None |
 | 7 | PRM/metadata substitution (client-side) | Spoofing | https-only (TLS); RFC 9728 §3.3 client validates `resource` matches; bridge emits `resource`=config | MITM on non-TLS — excluded by https-only (loopback dev aside) |
@@ -141,6 +145,11 @@
 | 26 | *(v0.2, shipped S1b)* FIFO/special-file boot/audit hang | DoS | `open(O_NOFOLLOW \| O_NONBLOCK)` + `fstat().isFile()` on quickstart reads (`secrets.json`, `.gitignore`) and the JSONL audit sink's append open — a FIFO at the path returns immediately instead of blocking until a writer appears; non-regular files are rejected. `openSqliteStore` opens O_RDWR (no block) and fails closed (SQLITE_IOERR) on a FIFO | None — the parity rule (§17.8) keeps every state-file open non-blocking |
 | 27 | *(v0.2, shipped S1b)* Non-loopback pairing binding (envelope breach) | Spoofing / Elevation | `defaultListenHost` binds console pairing to `127.0.0.1` by default (the trust envelope is "whoever reads the process's stderr IS the operator"); Cloudflare/proxy binds `0.0.0.0`; `HOST` overrides + a loud stderr warning if pairing is bound off-loopback | An operator who sets `HOST=0.0.0.0` or tunnels the loopback listener publicly exposes the pairing surface + the attempt budget — bounded by maxAttempts/TTL, but the envelope is breached; documented, not mitigated |
 | 28 | *(v0.2, shipped S1b)* State-dir trust-bar divergence across code paths | Elevation / Info disclosure | The §17.8 parity rule: every path that creates/reads the state dir (quickstart, the example CF branch `ensureStateDir`, the sqlite store, the audit sink) meets the full bar — `assertRealDir`, `ensureGitignore`, `0600`/`0700`, `O_NOFOLLOW`+`O_NONBLOCK` reads — and a control fixed in one path is swept into every sibling (global CLAUDE.md "sweep for sibling instances") | Recurrence is process-disciplined (the sweep rule), not mechanistically enforced — a future code path added without the sweep could diverge; caught by review + the dedicated integration round |
+| 29 | *(v0.2, §17.11 locked)* Upstream login-CSRF / session fixation — an attacker delivers *their* callback URL (or initiates a flow) into a victim's browser so the victim consents on the attacker's upstream identity | Spoofing / Tampering | 256-bit upstream `state` bound to the initiating browser via the signed `HttpOnly`/`SameSite=Lax` flow cookie; timing-safe state compare, mismatch ⇒ direct 400 (never redirect); consent page delivered ONLY as the direct response to the cookie-bearing callback (the §17.11 same-browser binding) | None meaningful — the callback is inert in any browser that did not initiate the flow |
+| 30 | *(v0.2, §17.11 locked)* Callback replay (reused callback URL, stolen scrollback/history) | Spoofing / Tampering | Single-use flow `jti` (`upf_…`) consumed via the conformance-tested consent-JTI registry BEFORE any IdP-error handling or code exchange; the IdP's own code single-use is the second layer; cookie cleared on every callback completion | Per-process memory store detects replay per instance only — multi-replica deployments need the shared (mysql) store, same class as consent JTIs; bounded by the 600 s flow TTL |
+| 31 | *(v0.2, §17.11 locked)* Upstream authorization-code injection/substitution (a stolen or attacker-obtained code redeemed inside another flow) | Spoofing / Elevation | Mandatory upstream PKCE S256 — the verifier lives only in the victim flow's cookie, so a foreign code fails the exchange; OIDC `nonce` binds the id_token to the same flow; both values are orchestrator-generated CSPRNG 256-bit | Providers with no id_token (the future §17.6 GitHub port) lack the nonce layer — state + upstream PKCE remain; documented per-port, never silent |
+| 32 | *(v0.2, §17.11 locked)* Attacker-influenced IdP callback params abused for open redirect / error-echo injection | Spoofing / Info disclosure | Upstream `error`/`error_description` are mapped to a fixed enum with fixed description strings and NEVER echoed; redirects go only to the §10-validated `redirect_uri` inside the *signed* flow context; `state`/`code`/id_tokens never logged — audit carries enum reasons only | None (row 5's invariant extends: a redirect only ever targets a §10-validated URI) |
+| 33 | *(v0.2, §17.11 locked)* Flow-cookie theft or tampering (the cookie carries the upstream PKCE verifier + round-tripped client params) | Tampering / Info disclosure | HS256 signature (consent secret, `aud`-pinned `mcp-sso/upstream-flow` — cannot be replayed as a consent token or vice-versa); tampering ⇒ signature failure ⇒ direct 400; `HttpOnly` + `Secure`/`__Host-` on https; 600 s TTL; single-use jti; upstream tokens never enter the cookie | A full browser/endpoint compromise exposes only the in-flight flow (bounded by TTL + single-use); the cookie is signed, not encrypted — the browser's owner can read their own flow params, which is by design |
 
 ## Implementation gates
 
@@ -211,3 +220,12 @@
   per-instance.** The pairing and device-flow attempt caps hold per process;
   horizontally scaled deployments need the §17.10 distributed limiter to keep
   the full brute-force budget.
+- ***(v0.2, accepted by contract — §17.11)* Upstream-flow replay detection is
+  store-scoped, and abandoned flows are invisible.** The flow cookie's
+  single-use `jti` is consumed through the store: with the per-process memory
+  store behind multiple replicas, a callback replay is detected per instance
+  only (the shared mysql store closes this — same class as consent JTIs). An
+  initiated-but-abandoned flow leaves no server-side trace (the cookie simply
+  expires) — accepted as the cost of the stateless-cookie decision; the
+  `upstream:<ip>` rate-limit key bounds flow-initiation abuse, and every
+  callback outcome is audited (`oauth.upstream.callback`).
