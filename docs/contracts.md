@@ -8,7 +8,8 @@
 > disagree, this document wins until one of them is deliberately changed.
 >
 > Status: **v0.1 shipped** (`mcp-sso@0.1.1` on npm) + **v0.2 contracts locked
-> 2026-07-04 (§17, pre-implementation)**. Spec conformance target: **MCP
+> 2026-07-04 (§17, pre-implementation; §17.11 added 2026-07-06)**. Spec
+> conformance target: **MCP
 > Authorization 2025-11-25** (the stable spec clients implement), with the
 > **2026-07-28 RC** hardening items built in now because all are
 > backward-compatible additions.
@@ -260,7 +261,10 @@ root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
   bridge then issues its OWN audience-bound tokens (no passthrough).
 
 `GenericOidcIdentity`, the Google preset, the dedicated GitHub port, and the
-console-pairing port are v0.2 scope — contracts locked in §17.5–§17.6.
+console-pairing port are v0.2 scope — contracts locked in §17.5–§17.6. The
+**upstream redirect-leg orchestrator** (`RedirectIdentityPort` +
+`createUpstreamRedirectFlow` — the mounted browser-redirect flow the Entra
+primitives currently leave to the host) is locked in **§17.11**.
 Cloudflare Access and Entra's concrete shapes were fixed in Phase 3; the
 boundary itself was stated at Phase 2 so the core never depends on a specific
 IdP. The v0.2 group-authorization extension (`IdentityClaims.allowedScopes`
@@ -764,7 +768,8 @@ host. Events (the v0.1 set plus the v0.2 additions from §17.7): `oauth.register
 `oauth.token.refresh`, `oauth.revoke`, `auth.request`, `identity.verify`,
 `oauth.pairing.attempt`, `oauth.device.authorization`, `oauth.device.approve`,
 `oauth.token.device_code`, `oauth.token.client_credentials`, `oauth.client.provision`,
-`oauth.client.rotate_secret`, `oauth.cimd.fetch`. Each carries `occurredAt`,
+`oauth.client.rotate_secret`, `oauth.cimd.fetch`, and (§17.11, lands with the
+upstream-redirect implementation) `oauth.upstream.callback`. Each carries `occurredAt`,
 `event`, `status: "success"|"failure"`, and optional `clientId`, `subject`,
 `resource`, `scopes`, `redirectHost`, `reason`, `ip` (adapter-populated client IP;
 personal data — the deployer owns retention/redaction). The test suite asserts
@@ -802,7 +807,12 @@ an OAuth response.
 (bad PKCE), and `server_error` are delivered as **302 to `redirect_uri?error=…`**
 when they occur after `client_id` + `redirect_uri` validate. `invalid_redirect_uri`,
 a missing `client_id`, identity failure, `invalid_origin`, and consent-token
-integrity failures are always **direct 4xx**.
+integrity failures are always **direct 4xx**. *(§17.11 extension:* on the
+upstream redirect flow, an identity rejection at the **callback** occurs after
+the `redirect_uri` was validated and integrity-protected in the signed flow
+context, so it redirects as `access_denied`; flow-binding/integrity failures
+there — missing/invalid/expired/replayed flow cookie, state mismatch, missing
+code — remain direct 4xx.)*
 
 ## 15. Package & export map
 
@@ -889,6 +899,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Entra group→scope ceiling (Gate 2) | ✅ v0.2 shipped (S2a core `allowedScopes` engine + S2b Entra group→scope producer) | §17.4 |
 | Console-pairing identity | ✅ v0.2 shipped (S1b) — `createConsolePairingIdentity`, 12-char base-20 code, lazy/single-use/TTL/attempt-cap, `oauth.pairing.attempt` | §17.5 |
 | `GenericOidcIdentity` + Google preset + GitHub port | 🔒 v0.2 contract locked | §17.6 |
+| Upstream redirect-leg orchestrator (`RedirectIdentityPort` + flow cookie) | 🔒 contract locked 2026-07-06 | §17.11 |
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
 
@@ -1639,6 +1650,342 @@ dep through the §15 ledger process (15-day rule). The hot path runs the script 
 hash crosses the wire); on `NOSCRIPT` (Redis restart or `SCRIPT FLUSH`) it falls
 back to `EVAL`, which re-loads the script for next time. Atomicity and fail-open
 are identical either way.
+
+### 17.11 Upstream redirect-leg orchestrator (locked 2026-07-06)
+
+The framework-free orchestrator for **redirect-based upstream IdPs** — the
+`pairing-flow.ts`-style sibling that turns the shipped Entra *primitives*
+(`getAuthorizationUrl`, `exchangeCodeForToken`, `verify` — §6.5) into a mounted
+flow: GET `/oauth/authorize` → persist flow state → 302 to the IdP → callback →
+validate → exchange → verify → `bridge.handleAuthorize` → consent page. Today a
+deployer must hand-write this dance (state CSRF binding, nonce/id_token replay,
+callback validation — the highest-risk per-deployment code in the system); every
+live-verified row so far ran via Cloudflare Access, whose edge did the browser
+leg. One orchestrator serves Entra now and the §17.6 ports
+(GenericOidc/Google/GitHub) later.
+
+**Port surface — `RedirectIdentityPort` (new, in `ports/identity.ts`):**
+
+```ts
+interface RedirectIdentityPort {
+  /** The exact redirect URI registered at the IdP. Boot-asserted equal to
+   *  issuerOrigin(config) + callbackPath — the callback is served by the same
+   *  app at the issuer origin, and a mismatch is silent breakage at the IdP. */
+  redirectUri: string;
+  buildAuthorizationUrl(req: {
+    state: string; nonce: string;
+    codeChallenge: string; codeChallengeMethod: "S256";
+  }): string;
+  /** Exchange the code and verify the resulting identity. MUST bind the
+   *  id_token to `nonce` when the provider issues id_tokens (OIDC); a provider
+   *  with no id_token (the §17.6 GitHub port) verifies identity via its REST
+   *  calls and reports through the same result type — that gap is documented
+   *  per-port, never silent. */
+  exchangeAndVerify(args: {
+    code: string; codeVerifier: string; nonce: string;
+  }): Promise<RedirectExchangeResult>;
+}
+
+type RedirectExchangeResult =
+  | { ok: true; identity: IdentityClaims }
+  /** Transport/protocol failure — non-200, timeout, malformed body, missing
+   *  id_token (for a provider that issues them). No identity decision made. */
+  | { ok: false; kind: "exchange_failed"; reason: string }
+  /** Verified-context denial — bad iss/aud/tid/nonce, allowlist, group
+   *  rejection. An identity decision WAS made: the user is refused. */
+  | { ok: false; kind: "identity_rejected"; reason: string };
+```
+
+A **throw** from `exchangeAndVerify` is always classified `exchange_failed`
+(unexpected infrastructure failure — one deterministic rule, so the two
+failure channels below can never depend on which exception a port happened to
+raise); `identity_rejected` exists only as an explicit returned value.
+
+The **orchestrator** (not the port) generates `state`, `nonce`, and the PKCE
+verifier/challenge — uniform CSPRNG entropy guarantees, 32 random bytes
+base64url each. Entra ships `createEntraRedirectIdentity(config, opts?)`
+(subpath `./identity/entra`) wrapping the existing primitives — the current
+`EntraIdentity` API is unchanged. Its default token-endpoint transport is the
+global `fetch` against the hardcoded `https://login.microsoftonline.com`
+endpoint with a 10 s `AbortSignal.timeout` deadline (deployer-trusted endpoint,
+deliberately NOT the §17.1 SSRF guard — same rationale as §17.6 discovery); the
+transport stays injectable for tests. It requests upstream scope
+`openid profile email` exactly — **no `offline_access`**: the bridge discards
+the upstream token response, so requesting a long-lived upstream refresh token
+it will never use violates least-grant.
+
+**Factory — `createUpstreamRedirectFlow` (new, `src/adapters/upstream-flow.ts`,
+root-exported like `handlePairingAuthorize`):**
+
+```ts
+createUpstreamRedirectFlow({
+  bridge: Bridge;
+  identity: RedirectIdentityPort;
+  store: StorePort;           // REQUIRED — the SAME instance the Bridge uses
+  clock: ClockPort;           // REQUIRED — the same instance the Bridge uses
+  audit: AuditPort;           // REQUIRED — the Bridge's sink (pass noopAudit only deliberately)
+  rateLimit?: RateLimitPort;  // default noopRateLimit — mirrors BridgeDeps exactly
+  callbackPath?: string;      // default "/oauth/callback"
+  flowTtlSeconds?: number;    // default 600
+}) → UpstreamRedirectFlow    // { handleAuthorize(req), handleCallback(req), callbackPath }
+```
+
+The flow's mandatory controls (the `upstream:<ip>` rate-limit guard, the
+single-use jti via `consumeConsentJti`, `ClockPort` time for the flow JWT, and
+the `oauth.upstream.callback` emission) need these ports **explicitly**: the
+`Bridge` deliberately keeps its own deps private (only `config` is public, which
+also supplies `consentSigningSecret`/`issuer` here), and this contract adds NO
+new Bridge surface. The composition root already holds `BridgeDeps` — it passes
+the same instances to both, and the factory's required/optional split
+**mirrors `BridgeDeps` exactly** (`store`/`clock`/`audit` required,
+`rateLimit` optional defaulting to no-op): `store` because flow jti rows must
+live in the same store as the consent JTIs (`sweepExpired` coverage +
+multi-replica replay scope), and `clock`/`audit` because making them
+defaultable would let a forgotten argument silently split time and evidence
+between a bridge and its flow — omitting audit must be a visible, deliberate
+`noopAudit` at the call site, never an accident.
+
+Boot validation (all `AuthConfigError`, fail-closed): `callbackPath` is a
+**plain pathname** — starts with `/` and contains no `?`, `#`, whitespace, or
+control characters (framework routes match by pathname, so a query-bearing
+"path" would register a route the real callback request never hits) — and is
+none of the reserved routes (`/oauth/authorize`, `/oauth/authorize/approve`,
+`/oauth/token`, `/oauth/register`, `/oauth/revoke`, `/oauth/jwks`, anything
+under `/.well-known/`, or the resource path); `identity.redirectUri` contains
+no query or fragment and `=== issuerOrigin(config) + callbackPath` exactly;
+`flowTtlSeconds` is a positive integer ≤ 3600. Both handlers are GET-only and
+speak `NormRequest`/`NormResponse` (§9.6) — no new runtime deps (jose + core).
+
+**Cross-redirect state: a signed flow cookie (DECIDED — not StorePort
+records).** The flow context crosses the redirect as an HS256-signed JWT in a
+cookie, single-used through the existing consent-JTI registry:
+
+- *Why a cookie is required regardless:* binding the callback to the browser
+  that initiated the flow (login-CSRF/session-fixation defense, and the
+  same-browser guarantee below) needs a **browser-held secret**. Server-side
+  records keyed by `state` cannot provide that — anyone who obtains a callback
+  URL could complete the flow in a victim's browser. Given the cookie is
+  mandatory, a parallel StorePort record (new methods + conformance rows +
+  three store migrations) would duplicate state the cookie carries statelessly.
+- *Single-use without new store surface:* the flow JWT's `jti` (prefix `upf_`,
+  32 random bytes base64url — namespaced so it can never collide with consent
+  JTIs) is consumed via the shipped `consumeConsentJti(jti, expiresAtIso)`
+  (§12: true on first use, false on replay; swept by `sweepExpired`).
+  Multi-replica deployments on a shared store (mysql) get cross-replica replay
+  detection for free; the per-process memory store detects replay per instance
+  only (same residual class as consent JTIs — threat model).
+- A store failure during consumption propagates as a direct 500 per §9.5
+  (consistent with `handleApprove`) — never fail-open.
+
+**Flow JWT (the cookie value):** header `{alg:"HS256", typ:"JWT"}`; claims
+`iss`=issuer, `aud`=**`"mcp-sso/upstream-flow"`**, `jti` (`upf_…`, single-use),
+`iat`, `exp`=`iat`+`flowTtlSeconds`, `state` (upstream state, 32B base64url),
+`nonce` (32B base64url), `code_verifier` (the **upstream** PKCE verifier, RFC
+7636 43-char base64url), and `params` — the round-tripped client OAuth params,
+exactly the `OAUTH_PARAM_KEYS` set (`response_type`, `client_id`,
+`redirect_uri`, `code_challenge`, `code_challenge_method`, `resource`, `scope`,
+`state`; string values only, absent keys omitted). Verified with
+`algorithms: ["HS256"]`, pinned `iss`+`aud`, clock from `ClockPort`.
+**Signing key: `consentSigningSecret`** (decided): one deployment secret that
+already crosses replicas; cross-type replay is impossible because both
+verifiers pin distinct `aud` values (`mcp-sso/consent` vs
+`mcp-sso/upstream-flow`), and a hypothetical flow-JWT forgery is strictly
+weaker than the consent-token forgery the same secret already implies (a flow
+token asserts no subject — identity still comes from the IdP exchange). The
+§7 HS256/ES256 key separation is unchanged. The JWT is signed, **not
+encrypted**: the browser's owner can read their own in-flight params and PKCE
+verifier; the verifier's only power is redeeming the code bound to this same
+browser's flow. Naming note: `state`/`nonce`/`code_verifier` here are the
+**upstream (bridge→IdP) leg's** values; the *client's* `state` and
+`code_challenge` ride untouched inside `params` (two independent PKCE pairs —
+see below).
+
+**Cookie profile (this library sets its FIRST cookie here — threat-model row 4
+amended accordingly).** Decided at boot from the issuer origin scheme:
+
+- https issuer: name **`__Host-mcp-sso-upstream`**, attributes
+  `Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=<flowTtlSeconds>`. Per the
+  `__Host-` prefix rules (RFC 6265bis): `Path` MUST be exactly `/`, `Secure`
+  MUST be present, and the `Domain` attribute MUST NOT be set — on the
+  clearing `Set-Cookie` too, or browsers treat it as a different cookie.
+- http loopback issuer (legal only under §5 `dev.allowInsecureLocalhost`):
+  name `mcp-sso-upstream`, same attributes minus `Secure` (the `__Host-`
+  prefix requires `Secure`); still no `Domain`, still `Path=/`.
+
+`SameSite=Lax` is load-bearing: the callback is a top-level cross-site GET
+navigation from the IdP, which Lax permits while still blocking cross-site
+subresource/POST delivery — this is also why the flow **locks the query
+response mode** (`response_mode=query` for Entra; a form_post-style callback
+would arrive cookieless under Lax and MUST NOT be used). `HttpOnly` keeps the
+PKCE verifier out of script reach. The cookie is cleared (`Max-Age=0`, same
+attributes) on every callback response that had a readable cookie — success or
+failure. One flow per browser: a second authorize overwrites the cookie
+(last-writer-wins); the superseded flow's callback then fails the state match
+(direct 400). If the serialized `Set-Cookie` value would exceed **4096 bytes**,
+`handleAuthorize` fails direct `invalid_request` (oversized client params).
+
+**`flow.handleAuthorize(req)` (GET `/oauth/authorize`):**
+
+1. `RateLimitPort` guard, key **`upstream:<ip>`** (extends the §6.7 key set;
+   same advisory posture — `false` ⇒ 429, thrown ⇒ fail-open). Rationale: each
+   initiated flow authorizes at most one outbound token-endpoint call at the
+   callback, so limiting initiation bounds exchange amplification.
+2. Any `OAUTH_PARAM_KEYS` parameter present **more than once** (array-valued
+   in `NormRequest.query`) ⇒ **direct 400 `invalid_request`** before any
+   cookie is set — RFC 6749 §3.1 forbids repeated request parameters, and
+   silently picking first/last would make parameter-pollution behavior
+   adapter-dependent.
+3. `client_id` present and `redirect_uri` passes §10 — else **direct 4xx**
+   (§9.3 pre-validation; `invalid_request` / `invalid_redirect_uri`). No other
+   param is validated here (DECIDED): `prepare` (§9.3) stays the single source
+   of truth for `response_type`/scope/PKCE validation — a malformed request
+   costs one IdP round-trip and then errors on the proper §9.3 channel,
+   instead of this leg growing a drift-prone duplicate validator.
+4. Generate `state`/`nonce`/verifier+challenge, sign the flow JWT, `Set-Cookie`,
+   302 to `identity.buildAuthorizationUrl(...)`. Nothing is persisted
+   server-side at this step; an abandoned flow is just an expired cookie.
+
+**`flow.handleCallback(req)` (GET `callbackPath`) — validation order and
+failure table.** The redirect channel becomes available only because the
+`redirect_uri` inside the *verified* flow JWT already passed §10 at authorize
+time; any failure to establish that context is a **direct 4xx, never a
+redirect**:
+
+| # | Condition | Channel | Error / audit reason |
+|---|---|---|---|
+| 1 | `state`/`code`/`error`/`error_description` present more than once (RFC 6749 §3.1 — no first/last picking) | direct 400 `invalid_request` | `duplicate_params` |
+| 2 | flow cookie absent | direct 400 `invalid_request` | `flow_cookie_missing` |
+| 3 | flow JWT signature/`iss`/`aud` invalid | direct 400 `invalid_request` | `flow_cookie_invalid` |
+| 4 | flow JWT expired | direct 400 `invalid_request` | `flow_expired` |
+| 5 | `state` query param absent or ≠ JWT `state` (timing-safe compare; length mismatch fails) | direct 400 `invalid_request` | `state_mismatch` |
+| 6 | `jti` already consumed (callback replay) | direct 400 `invalid_request` | `flow_replayed` |
+| 7 | IdP `error` param ∈ `access_denied`/`consent_required`/`interaction_required`/`login_required` | **302 redirect** `access_denied` | `upstream_denied` |
+| 8 | IdP `error` param = anything else | **302 redirect** `server_error` | `upstream_error` |
+| 9 | no `code` param (and no `error`) | direct 400 `invalid_request` | `missing_code` |
+| 10 | `exchangeAndVerify` returns `kind: "exchange_failed"` **or throws** (non-200, timeout, malformed body, missing id_token from an id_token-issuing provider) | **302 redirect** `server_error` | `exchange_failed` |
+| 11 | `exchangeAndVerify` returns `kind: "identity_rejected"` (id_token invalid, nonce mismatch, tid/allowlist/group rejection) | **302 redirect** `access_denied` | `identity_rejected` (detail in `identity.verify`) |
+| 12 | `bridge.handleAuthorize` errors | its own §9.3 channels | unchanged |
+| 13 | success | 200 consent page | — |
+
+The `jti` is consumed at step 6 — before the IdP `error` branch and before the
+exchange — so a callback URL is single-use as a whole and a replay can never
+trigger a second outbound exchange. Redirect-channel errors carry **fixed**
+`error_description` strings ("upstream identity provider denied the request",
+"upstream identity provider error", "upstream identity verification failed");
+the IdP's own `error`/`error_description` values are **attacker-influenceable
+query params and are never echoed** into the redirect, response body, or logs.
+The final redirect's `state` is the *client's* state from the verified
+`params`, never attacker input. An RFC 9207 `iss` param on the upstream
+callback is not validated in this release (DECIDED): mix-up defense applies to
+clients talking to multiple ASes; a flow instance has exactly ONE upstream IdP,
+and state+nonce+PKCE bind the callback to it. Revisit at §17.6 (S4a) if a
+generic deployment ever configures interchangeable upstreams.
+
+**§9.3 extension (explicit deviation):** §9.3 routes identity failure as a
+direct 401 because it normally occurs *pre*-validation. On this flow the
+identity outcome arrives *after* the `redirect_uri` was §10-validated and
+integrity-protected, so a verified-context identity rejection (row 11) uses the
+**redirect channel with `access_denied`** — the clean RFC 6749 §4.1.2.1 answer
+an MCP client can render ("denied") — while every flow-binding/integrity
+failure (rows 1–6, 9) stays direct. Threat row 5's invariant holds: a redirect
+is only ever issued to a §10-validated URI. §14's redirect-vs-direct note is
+amended to match.
+
+**Upstream PKCE (bridge→IdP leg): REQUIRED.** The orchestrator always generates
+a verifier/challenge pair and always passes the challenge to
+`buildAuthorizationUrl` (S256 only). This is the **second, independent** PKCE
+pair in the system: the *client's* pair (client ↔ bridge, verified by the
+bridge at `/oauth/token` — §7.5) rides opaquely in `params`; the *upstream*
+pair (bridge ↔ IdP, verifier in the flow cookie) binds the IdP's code to this
+browser's flow — an injected/stolen code cannot be redeemed inside a foreign
+flow because the exchange presents the wrong verifier. `nonce` provides the
+same binding at the id_token layer. A provider that cannot accept PKCE may
+ignore the challenge only under §17.6's loud opt-out
+(`allowProviderWithoutPkce`); Entra supports it unconditionally.
+
+**Same-browser binding (the confused-deputy closure — REQUIRED).** §7.1's
+consent token is only as strong as the path that delivers it: the consent page
+(carrying the single-use consent token) MUST be returned **only as the direct
+HTTP response to the callback request that presented a valid flow cookie** —
+never via a second redirect, an intermediate retrievable URL, or any other
+channel. Chain: the flow cookie binds initiate→callback to one browser; the
+consent token binds callback→approve within that browser (Origin check +
+single-use JTI, §9.3); both hops are single-use. This closes the
+session-binding residual: the browser that approves consent is
+cryptographically the browser that just authenticated at the IdP.
+
+**Upstream token handling (existing rule, restated as binding here):** the
+id_token is verified and then discarded; any `access_token`/`refresh_token` in
+the IdP's token response is **discarded immediately — never stored, logged,
+audited, forwarded, or placed in the flow cookie**. The bridge mints its own
+audience-bound tokens (§1). The verified identity — including any
+`allowedScopes` ceiling a port derives (Entra groups, §17.4) — is handed to
+`bridge.handleAuthorize(synthetic, { subject, allowedScopes? })` with the
+synthetic request's `query` reconstructed from the verified `params`
+(pairing-flow precedent), so the §17.4 ceiling plumbing applies unchanged.
+
+**Audit.** One new event name: **`oauth.upstream.callback`** (added to §13 and
+`AuthAuditEventName` at implementation) — emitted on **every** callback outcome
+with `status` success/failure and `reason` from the fixed enum in the failure
+table; optional `clientId` (from `params`) and `ip`. `identity.verify` is
+emitted whenever an identity **decision was reached** — `ok: true` (success)
+and `kind: "identity_rejected"` (failure, with the port's reason) — with the
+same shape and semantics as `Bridge.resolveIdentity`'s emission (S2a);
+`exchange_failed` reaches no identity decision, so it emits only the
+`oauth.upstream.callback` failure, never a spurious `identity.verify`. Whether
+the implementation routes through `resolveIdentity` internally or emits
+directly is an implementation choice; the observable events are identical. The authorize
+(redirect-out) leg is deliberately not audited: it carries no identity, and the
+flow is evidenced at the callback (an abandoned flow is an expired cookie the
+server never sees — a documented, trivial blind spot of the cookie decision).
+**Never logged or audited, anywhere:** `state`, `nonce`, `code`, id_tokens,
+upstream tokens, the PKCE verifiers, or the flow cookie value — audit carries
+enum reasons and metadata only (§13).
+
+**Adapter wiring.** `FastifyAdapterOptions`/`ExpressAdapterOptions`/
+`HonoAdapterOptions` gain `upstream?: UpstreamRedirectFlow`. When set: GET
+`/oauth/authorize` → `upstream.handleAuthorize`, GET `upstream.callbackPath` →
+`upstream.handleCallback`; all other routes unchanged. Exactly one authorize
+mode per adapter instance — `upstream` is mutually exclusive with `identity`/
+`identityHeader` (header-driven) and with `skipAuthorize` (pairing); any
+combination throws at registration (fail-closed, mirrors the existing
+`skipAuthorize` guard). The example's `buildExample` gains an Entra-redirect
+branch (env-selected, e.g. `ENTRA_TENANT_ID`/`ENTRA_CLIENT_ID`/
+`ENTRA_REDIRECT_URI`) alongside the CF and pairing branches;
+`defaultListenHost` maps it to `0.0.0.0` (CF-class network deployment — the
+real IdP is the gate, unlike pairing's loopback envelope).
+
+**Deployment envelope / callback exposure (§17.5-style guidance):** this flow
+is *designed* for network exposure — the upstream IdP (plus Gate 1, Entra app
+assignment/Conditional Access) is the authentication gate. The callback URL
+registered at the IdP MUST be the public https `issuerOrigin + callbackPath`
+(Entra itself refuses plain-http redirect URIs off-loopback); http is legal
+only on loopback under the §5 dev flag, where the cookie drops `Secure`/
+`__Host-`. The docs state the failure path exactly: a redirect-URI mismatch
+surfaces as the IdP's own error page (never a bridge redirect), and the §10
+allowlist still governs the *client-facing* redirect leg independently.
+
+**Alternatives considered (recorded, rejected):**
+
+- **StorePort flow records** — rejected as the state carrier: browser binding
+  needs a cookie regardless (above), and records would add store surface
+  (methods, conformance rows, three adapters) to duplicate what the signed
+  cookie carries statelessly. Single-use still uses the store (JTI registry) —
+  the one property a cookie cannot self-enforce.
+- **Fronting with oauth2-proxy feeding the header-driven authorize** — rejected
+  as the recommended posture: default proxy-injected headers are NETWORK trust
+  (the CF port verifies a *signed* assertion; oauth2-proxy's default headers
+  are not signed), a forwarded upstream id_token breaks nonce binding (the
+  bridge did not mint the nonce), and `/oauth/register`+`/oauth/token`+
+  `/.well-known/*` would need skip-auth carve-outs where an over-broad regex
+  is an auth bypass. Kept as comparison material, not a supported recipe.
+
+**Out of scope (this contract):** the generic-OIDC port itself (§17.6, S4a —
+it will *implement* `RedirectIdentityPort`), any change to the Entra
+primitives' behavior, `client_credentials`/device flow (§17.2/§17.3), IdP
+logout/re-auth prompting (`prompt`/`login_hint` passthrough), and multiple
+simultaneous upstream IdPs on one bridge instance (exactly one
+`RedirectIdentityPort` per flow/adapter).
 
 ## 18. Contract-change protocol
 
