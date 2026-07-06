@@ -259,11 +259,14 @@ Each gateway is a small Deployment + Service + Ingress + Secret:
   they take **two separate paths in code**: the signing JWK and consent
   secret go into `createBridgeConfig`; the backend credential is read and
   validated separately at boot into the `getBackendCredential()` closure and
-  **must never be placed in the `createBridgeConfig` input** —
-  `BridgeConfig` has no backend-credential field, and extra keys currently
-  survive onto the frozen public `bridge.config` object, which is passed
-  around the whole app. The quickstart file helper (§17.8) is the *local
-  zero-setup* path — do not use it in a pod.
+  **must never be placed in the `createBridgeConfig` input**.
+  `BridgeConfig` has no backend-credential field, and `createBridgeConfig`
+  **rejects unknown keys with a boot `AuthConfigError` naming the offending
+  key** (contracts §5) — so a backend credential (or any other extra key)
+  parked on the input fails the boot instead of reaching the frozen public
+  `bridge.config` object that is passed around the whole app. Park it in the
+  `getBackendCredential()` closure. The quickstart file helper (§17.8) is the
+  *local zero-setup* path — do not use it in a pod.
 - **Replicas × store**: the sqlite store means **one replica** with the file
   on a PVC — never `emptyDir`: refresh tokens are long-lived sessions, and
   losing the file on a reschedule logs every user out. For ≥2 replicas or

@@ -6,7 +6,7 @@ import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import {
-  type BridgeConfig, AuthConfigError, createBridgeConfig, originOf,
+  type BridgeConfig, AuthConfigError, createBridgeConfig, originOf, KNOWN_CONFIG_KEYS,
 } from "../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../src/errors.ts";
 import { pkceChallenge, verifyAccessToken } from "../src/crypto.ts";
@@ -325,6 +325,51 @@ test("config fail-closed: https-only, secret length, key shape, catalog, default
   const dev = createBridgeConfig({ ...base, issuer: "http://localhost", resource: "http://localhost/mcp", dev: { allowInsecureLocalhost: true } });
   assert.equal(originOf(dev.resource), "http://localhost");
   assert.throws(() => createBridgeConfig({ ...base, issuer: "http://api.test", dev: { allowInsecureLocalhost: true } }), AuthConfigError); // non-loopback
+});
+
+test("config fail-closed: unknown top-level keys rejected with the key named", () => {
+  const base = baseInput();
+
+  // Unknown string key (e.g. a backend credential a caller parked on the input).
+  // The error must NAME the key so a JS/cast-TS caller can fix it without guessing.
+  let caught: unknown;
+  assert.throws(
+    () => createBridgeConfig({ ...base, backendApiKey: "TOP_SECRET_BACKEND_CSENTIAL" } as BridgeConfig),
+    (e: unknown) => { caught = e; return e instanceof AuthConfigError && /unknown BridgeConfig key "backendApiKey"/.test((e as Error).message); },
+  );
+  // The message names the key but must NOT echo the secret VALUE — errors get logged.
+  assert.equal(
+    /TOP_SECRET_BACKEND_CSENTIAL/.test((caught as Error).message), false,
+    "the secret value must not be echoed in the AuthConfigError message",
+  );
+
+  // A typo'd real key is also caught (the message must name it).
+  assert.throws(
+    () => createBridgeConfig({ ...base, issuers: base.issuer } as BridgeConfig),
+    (e: unknown) => e instanceof AuthConfigError && /unknown BridgeConfig key "issuers"/.test((e as Error).message),
+  );
+
+  // A symbol-keyed value would survive the `{ ...input }` spread onto the frozen
+  // public object, so it must be rejected too.
+  const secret = Symbol("backendApiKey");
+  assert.throws(
+    () => createBridgeConfig({ ...base, [secret]: "TOP_SECRET" } as BridgeConfig),
+    (e: unknown) => e instanceof AuthConfigError && /Symbol\(backendApiKey\)/.test((e as Error).message),
+  );
+});
+
+test("config fail-closed: a parked secret never reaches the frozen bridge.config", () => {
+  // Constructing WITH an extra key throws (previous test); a successfully-built
+  // config therefore cannot carry one. Pin the surface against the source of
+  // truth: every own key is a real BridgeConfig field, no symbol survived the
+  // spread, and the specific secret name is absent. (baseInput omits the optional
+  // `dev`, so it is correctly absent here — a key is present iff the caller set it.)
+  const config = createBridgeConfig(baseInput());
+  assert.equal(Object.isFrozen(config), true);
+  assert.equal("backendApiKey" in config, false);
+  const unknown = Object.keys(config).filter((k) => !KNOWN_CONFIG_KEYS.has(k));
+  assert.deepEqual(unknown, [], "frozen bridge.config carries a key outside BridgeConfig");
+  assert.deepEqual(Reflect.ownKeys(config).filter((k) => typeof k === "symbol"), []);
 });
 
 test("oauthErrorBody is RFC 6749 §5.2 shape (top-level error string)", () => {

@@ -38,11 +38,41 @@ export class AuthConfigError extends Error {
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+/** Every accepted top-level `BridgeConfig` key, in lockstep with the interface
+ *  above. `createBridgeConfig` rejects any other own property (string OR symbol)
+ *  so a value — e.g. a backend credential — parked on the input can never ship
+ *  on the public frozen `bridge.config` object (contracts §5). If you add a
+ *  field to `BridgeConfig`, add it here too: a stale set (new field not yet
+ *  listed) makes that field REJECTED at every caller — failing closed, the safe
+ *  direction — until you add it. Exported so tests can assert "no key outside
+ *  this set survives" against the source of truth. */
+export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "issuer", "resource", "consentSigningSecret", "signingPrivateJwk",
+  "signingKeyId", "redirectAllowlist", "scopeCatalog", "defaultScopes",
+  "allowedOrigins", "dcr", "dev",
+  "accessTokenTtlSeconds", "refreshTokenTtlSeconds", "consentTokenTtlSeconds",
+  "authorizationCodeTtlSeconds",
+]);
+
 /** Validate and freeze a BridgeConfig. Throws AuthConfigError on any problem —
  *  it never degrades to a silent default. The dev escape hatch, when accepted,
  *  emits an advisory warning (see below). The returned object is the only thing
  *  use-cases accept. */
 export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
+  // Fail-closed (contracts §5): reject unknown own keys FIRST. `Reflect.ownKeys`
+  // covers string AND symbol keys — the latter would survive the `{ ...input }`
+  // spread below, so a symbol-keyed secret would otherwise reach the frozen
+  // public object. The error names the offending key so a JS/cast-TS caller can
+  // fix the typo without guessing.
+  for (const key of Reflect.ownKeys(input)) {
+    if (typeof key === "symbol" || !KNOWN_CONFIG_KEYS.has(key)) {
+      throw new AuthConfigError(
+        `unknown BridgeConfig key "${String(key)}": only the BridgeConfig fields are accepted (contracts §5). ` +
+          `A value parked here — e.g. a backend API key — would ship on the public frozen bridge.config object ` +
+          `passed to every adapter and renderer; keep secrets in your own closure, not in the config input.`,
+      );
+    }
+  }
   validateUrl(input, "issuer", input.issuer);
   validateUrl(input, "resource", input.resource);
   if (input.consentSigningSecret.trim().length < 32) {
