@@ -1706,16 +1706,35 @@ root-exported like `handlePairingAuthorize`):**
 createUpstreamRedirectFlow({
   bridge: Bridge;
   identity: RedirectIdentityPort;
+  store: StorePort;           // REQUIRED — the SAME instance the Bridge uses
+  clock?: ClockPort;          // default SystemClock — pass the Bridge's if one was injected
+  audit?: AuditPort;          // default noopAudit — pass the Bridge's sink
+  rateLimit?: RateLimitPort;  // default noopRateLimit — pass the Bridge's limiter
   callbackPath?: string;      // default "/oauth/callback"
   flowTtlSeconds?: number;    // default 600
 }) → UpstreamRedirectFlow    // { handleAuthorize(req), handleCallback(req), callbackPath }
 ```
 
-Boot validation (all `AuthConfigError`, fail-closed): `callbackPath` starts with
-`/` and is none of the reserved routes (`/oauth/authorize`,
-`/oauth/authorize/approve`, `/oauth/token`, `/oauth/register`, `/oauth/revoke`,
-`/oauth/jwks`, anything under `/.well-known/`, or the resource path);
-`identity.redirectUri === issuerOrigin(config) + callbackPath` exactly;
+The flow's mandatory controls (the `upstream:<ip>` rate-limit guard, the
+single-use jti via `consumeConsentJti`, `ClockPort` time for the flow JWT, and
+the `oauth.upstream.callback` emission) need these ports **explicitly**: the
+`Bridge` deliberately keeps its own deps private (only `config` is public, which
+also supplies `consentSigningSecret`/`issuer` here), and this contract adds NO
+new Bridge surface. The composition root already holds `BridgeDeps` — it passes
+the same instances to both. For `store` this is REQUIRED (flow jti rows must
+live in the same store as the consent JTIs so `sweepExpired` covers them and
+multi-replica replay scope matches); for `clock`/`audit`/`rateLimit` it is
+required whenever the Bridge got a non-default one (a flow on a different clock
+or audit sink than its bridge would split time and evidence).
+
+Boot validation (all `AuthConfigError`, fail-closed): `callbackPath` is a
+**plain pathname** — starts with `/` and contains no `?`, `#`, whitespace, or
+control characters (framework routes match by pathname, so a query-bearing
+"path" would register a route the real callback request never hits) — and is
+none of the reserved routes (`/oauth/authorize`, `/oauth/authorize/approve`,
+`/oauth/token`, `/oauth/register`, `/oauth/revoke`, `/oauth/jwks`, anything
+under `/.well-known/`, or the resource path); `identity.redirectUri` contains
+no query or fragment and `=== issuerOrigin(config) + callbackPath` exactly;
 `flowTtlSeconds` is a positive integer ≤ 3600. Both handlers are GET-only and
 speak `NormRequest`/`NormResponse` (§9.6) — no new runtime deps (jose + core).
 
