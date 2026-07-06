@@ -363,6 +363,7 @@ test("integration — gateway: an absolute-form request-target cannot redirect t
       `Host: 127.0.0.1:${port}`,
       `Authorization: Bearer ${accessToken}`,
       "Content-Type: application/json",
+      "Accept: application/json, text/event-stream",
       `Content-Length: ${Buffer.byteLength(body)}`,
       "Connection: close",
       "", body,
@@ -370,6 +371,12 @@ test("integration — gateway: an absolute-form request-target cannot redirect t
     assert.equal(h.received.length, before + 1, "absolute-form request-target forwarded to the TRUSTED backend, not the attacker host");
     assert.equal(h.received.at(-1)?.authorization, `Bearer ${BACKEND_KEY}`, "backend credential injected at the trusted backend (not exfiltrated to the attacker host)");
     assert.notEqual(res.status, 502, "the forward succeeded against the trusted backend (not a backend-unreachable 502)");
+    // The absolute-form target must also keep the body on the gateway's RAW path
+    // through the JSON parser (P2): a raw `req.url === "/mcp"` would JSON-parse it and
+    // forward "[object Object]", so the proxied initialize would fail. The backend
+    // handled it — 200 with a JSON-RPC result.
+    assert.equal(res.status, 200, "absolute-form proxied initialize succeeded (body forwarded raw, not garbled)");
+    assert.match(res.raw, /"result"/, "the backend's initialize result came back through the gateway");
   } finally {
     await h.cleanup();
   }

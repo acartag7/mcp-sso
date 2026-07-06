@@ -117,9 +117,13 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
 
   // Transparent proxy forwards the RAW /mcp body (do not re-serialize MCP JSON-RPC);
   // OAuth routes (/oauth/register) still receive a parsed object. This parser
-  // overrides Fastify's built-in application/json handler and dispatches by URL.
+  // overrides Fastify's built-in application/json handler and dispatches by URL —
+  // using isMcpPath (pathname parse) so an absolute-form request-target is still
+  // recognized as /mcp (a raw `=== "/mcp"` would JSON-parse it, forwarding
+  // "[object Object]" and letting a tokenless malformed body trip Fastify's 400
+  // before the 401 challenge).
   app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
-    if (req.url.split("?")[0] === "/mcp") done(null, body); // raw string — forwarded verbatim
+    if (isMcpPath(req.url)) done(null, body); // raw string — forwarded verbatim
     else { try { done(null, JSON.parse(String(body))); } catch (err) { done(err as Error, undefined); } }
   });
 
@@ -133,13 +137,11 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   // cannot satisfy "before anything else". Absent Origin proceeds (MCP clients are
   // not browsers); a present Origin must match config.allowedOrigins or originOf(issuer).
   app.addHook("onRequest", async (request, reply) => {
-    // PARSE the pathname (don't string-compare request.url): an absolute-form
+    // isMcpPath PARSES the pathname (don't string-compare request.url): an absolute-form
     // request-target (`POST http://host/mcp`) routes here with request.url = the full
     // URL, so a raw `!== "/mcp"` check would skip the Origin gate. Same normalization
-    // as the backend's auth gate (sibling-sweep).
-    let mcpPath: string;
-    try { mcpPath = new URL(request.url, "http://localhost").pathname; } catch { mcpPath = request.url; }
-    if (mcpPath !== "/mcp") return; // OAuth routes manage their own Origin
+    // as the backend's auth gate (sibling-sweep) + the JSON parser above.
+    if (!isMcpPath(request.url)) return; // OAuth routes manage their own Origin
     const rawOrigin = request.headers.origin;
     const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
     if (origin !== undefined && !opts.config.allowedOrigins.includes(origin) && origin !== originOf(opts.config.issuer)) {
@@ -259,6 +261,16 @@ function readHeader(headers: Record<string, unknown>, name: string): string | un
  *  fetch to an attacker host. */
 function safeQuery(requestUrl: string, backendUrl: string): string {
   try { return new URL(requestUrl, backendUrl).search; } catch { return ""; }
+}
+
+/** True if the inbound request targets /mcp. PARSES the pathname (not a raw string
+ *  check on request.url) so it holds for an absolute-form request-target
+ *  (`POST http://host/mcp`), which Fastify still routes to /mcp with request.url =
+ *  the full URL. Shared by the Origin gate AND the JSON body parser so /mcp is
+ *  treated consistently regardless of request-target form (the absolute-form string
+ *  check is a repeated footgun — centralized here). */
+function isMcpPath(requestUrl: string): boolean {
+  try { return new URL(requestUrl, "http://localhost").pathname === "/mcp"; } catch { return false; }
 }
 
 // --- env helpers (trivial; inlined rather than imported to keep the example readable) ---
