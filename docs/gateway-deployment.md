@@ -59,8 +59,18 @@ and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
      same bearer check and challenge-on-failure; if the backend doesn't use
      the GET/DELETE flows, return an explicit 405 rather than silently
      dropping them.
-   - **Never forward the client's `Authorization` header upstream** — replace
-     it with the backend credential.
+   - **Validate `Origin` before anything else.** The MCP Streamable HTTP
+     transport says servers MUST validate the `Origin` header on all
+     incoming connections and return 403 when it is present but not
+     allowlisted (DNS-rebinding protection). `RequestAuthorizer` checks the
+     bearer token and scopes only — the Origin check on the deployer-owned
+     `/mcp` endpoint is yours. Bearer auth blunts rebinding in practice (a
+     rebound browser request carries no token), but the spec requirement is
+     unconditional and it is the *only* defense on any surface you later
+     expose unauthenticated. The MCP SDK's `StreamableHTTPServerTransport`
+     has built-in options for this (`enableDnsRebindingProtection`,
+     `allowedOrigins`) — off by default; turn them on or enforce the check
+     yourself before proxying.
    - Forward `mcp-session-id` and `mcp-protocol-version` in both directions
      if the backend is stateful, and `Last-Event-ID` on GET — the transport
      resumes a broken SSE stream via `GET` + `Last-Event-ID`, so an
