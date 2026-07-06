@@ -7,6 +7,7 @@ import type { Context } from "hono";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
+import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface HonoAdapterOptions {
@@ -18,11 +19,15 @@ export interface HonoAdapterOptions {
   /** When true, GET /oauth/authorize is NOT registered — the caller mounts its
    *  own. Default false. */
   skipAuthorize?: boolean;
+  /** §17.11 upstream redirect-flow orchestrator. When set, GET /oauth/authorize
+   *  → upstream.handleAuthorize and GET upstream.callbackPath → upstream.handleCallback.
+   *  Mutually exclusive with `identity`/`identityHeader` and `skipAuthorize`. */
+  upstream?: UpstreamRedirectFlow;
 }
 
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   const app = new Hono();
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false } = opts;
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
 
   const toNorm = async (c: Context): Promise<NormRequest> => {
     const ct = c.req.header("content-type") ?? "";
@@ -33,7 +38,18 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
     } catch { body = undefined; }
     const headers: NormRequest["headers"] = {};
     c.req.raw.headers.forEach((value, key) => { headers[key] = value; });
-    return { query: c.req.query() as NormRequest["query"], body, headers, ip: c.req.header("x-forwarded-for") ?? "unknown" };
+    // Parse the raw query so repeated keys survive as arrays — Hono's c.req.query()
+    // collapses duplicates to the first value, which would defeat the RFC 6749 §3.1
+    // duplicate-param checks (contracts §17.11 authorize step 2 / callback row 1).
+    // Single-valued params stay strings (unchanged behavior for every other route).
+    const query: NormRequest["query"] = {};
+    for (const [k, v] of new URL(c.req.raw.url, "http://localhost").searchParams.entries()) {
+      const ex = query[k];
+      if (ex === undefined) query[k] = v;
+      else if (Array.isArray(ex)) ex.push(v);
+      else query[k] = [ex, v];
+    }
+    return { query, body, headers, ip: c.req.header("x-forwarded-for") ?? "unknown" };
   };
   // Build a standard Response directly: hono route handlers accept a Response,
   // and this sidesteps hono's strict RedirectStatusCode/ContentfulStatusCode unions
@@ -56,8 +72,15 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (c) => send(c, await bridge.handleProtectedResourceMetadata()));
   app.get("/oauth/jwks", async (c) => send(c, await bridge.handleJwks()));
   app.post("/oauth/register", async (c) => send(c, await bridge.handleRegister(await toNorm(c))));
-  if (!skipAuthorize) {
-    if (!identity) throw new Error("createOAuthApp: identity is required unless skipAuthorize is set");
+  if (upstream && (identity || skipAuthorize)) {
+    throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  }
+  if (upstream) {
+    const up = upstream;
+    app.get("/oauth/authorize", async (c) => send(c, await up.handleAuthorize(await toNorm(c))));
+    app.get(up.callbackPath, async (c) => send(c, await up.handleCallback(await toNorm(c))));
+  } else if (!skipAuthorize) {
+    if (!identity) throw new Error("createOAuthApp: identity is required unless skipAuthorize or upstream is set");
     const id = identity;
     app.get("/oauth/authorize", async (c) => {
       // Identity resolution is pre-validation. Route throws through the direct

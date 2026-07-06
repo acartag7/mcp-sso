@@ -7,6 +7,7 @@ import type { Request, Response } from "express";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
+import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface ExpressAdapterOptions {
@@ -18,11 +19,15 @@ export interface ExpressAdapterOptions {
   /** When true, GET /oauth/authorize is NOT registered — the caller mounts its
    *  own. Default false. */
   skipAuthorize?: boolean;
+  /** §17.11 upstream redirect-flow orchestrator. When set, GET /oauth/authorize
+   *  → upstream.handleAuthorize and GET upstream.callbackPath → upstream.handleCallback.
+   *  Mutually exclusive with `identity`/`identityHeader` and `skipAuthorize`. */
+  upstream?: UpstreamRedirectFlow;
 }
 
 export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   const router = Router();
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false } = opts;
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
 
   const toNorm = (req: Request): NormRequest => ({
     query: req.query as NormRequest["query"],
@@ -48,8 +53,15 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   router.get(`/.well-known/oauth-protected-resource${resourcePath}`, wrap(async (_req, res) => send(res, await bridge.handleProtectedResourceMetadata())));
   router.get("/oauth/jwks", wrap(async (_req, res) => send(res, await bridge.handleJwks())));
   router.post("/oauth/register", wrap(async (req, res) => send(res, await bridge.handleRegister(toNorm(req)))));
-  if (!skipAuthorize) {
-    if (!identity) throw new Error("createOAuthRouter: identity is required unless skipAuthorize is set");
+  if (upstream && (identity || skipAuthorize)) {
+    throw new Error("createOAuthRouter: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  }
+  if (upstream) {
+    const up = upstream;
+    router.get("/oauth/authorize", wrap(async (req, res) => send(res, await up.handleAuthorize(toNorm(req)))));
+    router.get(up.callbackPath, wrap(async (req, res) => send(res, await up.handleCallback(toNorm(req)))));
+  } else if (!skipAuthorize) {
+    if (!identity) throw new Error("createOAuthRouter: identity is required unless skipAuthorize or upstream is set");
     const id = identity;
     router.get("/oauth/authorize", wrap(async (req, res) => {
       const identityResolved = await bridge.resolveIdentity(id, headerString(req.headers, identityHeader), req.ip);

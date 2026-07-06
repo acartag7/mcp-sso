@@ -244,3 +244,5 @@ function jwtErrorReason(error: unknown): string {
 
 // Public group-authorization API (§17.4) re-exported for the ./identity/entra subpath.
 export { type GroupAuthorization, assertGroupAuthorizationMapping, resolveGroupCeiling } from "./entra-groups.ts";
+// §17.11 redirect-flow identity (createEntraRedirectIdentity) re-exported for the ./identity/entra subpath.
+export { createEntraRedirectIdentity, type EntraRedirectOptions } from "./entra-redirect.ts";

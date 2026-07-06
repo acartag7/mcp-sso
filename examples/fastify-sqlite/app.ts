@@ -21,9 +21,11 @@ import { JsonlFileAudit } from "../../src/audit/jsonl-file.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
 import { loadOrCreateQuickstartSecrets, ensureGitignore, assertRealDir } from "../../src/quickstart.ts";
 import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
-import type { IdentityPort } from "../../src/ports/identity.ts";
+import { createEntraRedirectIdentity } from "../../src/identity/entra-redirect.ts";
+import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identity.ts";
 import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
+import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
 import type { NormRequest, NormResponse } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 
@@ -36,6 +38,10 @@ export interface ExampleOptions {
    *  surface. Passing options (not a pre-built identity) guarantees pairing audit
    *  events are never dropped relative to the Bridge/RequestAuthorizer audit. */
   pairing?: ConsolePairingOptions;
+  /** §17.11 upstream redirect-flow identity + callback config. When set, buildApp
+   *  builds `createUpstreamRedirectFlow` with the SAME store/clock/audit the
+   *  Bridge uses (the composition root passes the shared instances — §17.11). */
+  upstream?: { identity: RedirectIdentityPort; callbackPath?: string; flowTtlSeconds?: number };
   sqliteFile?: string; // defaults to :memory:
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer + pairing. Default noopAudit. */
@@ -63,7 +69,16 @@ export async function buildApp(opts: ExampleOptions) {
     reply.code(res.status).send(res.body);
   };
 
-  if (opts.pairing) {
+  if (opts.upstream) {
+    // §17.11 upstream redirect-flow mode: the bridge delegates /oauth/authorize +
+    // the callback to the orchestrator, built here with the SAME store/clock/audit
+    // the Bridge uses (the composition root owns the shared instances).
+    const upstream = createUpstreamRedirectFlow({
+      bridge, identity: opts.upstream.identity, store, clock, audit,
+      callbackPath: opts.upstream.callbackPath, flowTtlSeconds: opts.upstream.flowTtlSeconds,
+    });
+    await registerOAuthRoutes(app, { bridge, upstream });
+  } else if (opts.pairing) {
     // Zero-setup mode: registerOAuthRoutes skips /oauth/authorize; we mount a
     // GET (render pairing page) + POST (verify code → consent page) via the
     // framework-free handlePairingAuthorize orchestrator.
@@ -141,10 +156,12 @@ export async function buildApp(opts: ExampleOptions) {
 /** Default listen host by mode. Console pairing binds LOOPBACK by default (its
  *  trust envelope is "whoever can read the process's stderr IS the operator" —
  *  a non-loopback bind exposes the pairing authorize surface + the printed-code
- *  attempt budget to the network). The Cloudflare/proxy path binds 0.0.0.0
- *  (fronted by CF / a reverse proxy). HOST env overrides either. */
+ *  attempt budget to the network). The Cloudflare/proxy path AND the Entra
+ *  redirect-flow path bind 0.0.0.0 (network deployment — the real IdP is the
+ *  gate, unlike pairing's loopback envelope; the callback must be reachable by
+ *  the IdP). HOST env overrides either. */
 export function defaultListenHost(env: Record<string, string | undefined> = process.env): string {
-  return env.CF_ACCESS_AUDIENCE ? "0.0.0.0" : "127.0.0.1";
+  return (env.CF_ACCESS_AUDIENCE || env.ENTRA_TENANT_ID) ? "0.0.0.0" : "127.0.0.1";
 }
 
 /** Read config from env (the production path; standalone index.ts uses quickstart
@@ -213,6 +230,29 @@ export async function buildExample(env: Record<string, string | undefined> = pro
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
   const audit = new JsonlFileAudit(join(dir, "audit.jsonl"));
 
+  if (env.ENTRA_TENANT_ID) {
+    // §17.11 PRODUCTION: Entra redirect-flow. The upstream IdP (Entra app
+    // assignment / Conditional Access) is the auth gate, so this is network-bound
+    // (0.0.0.0) like Cloudflare — NOT loopback. ENTRA_REDIRECT_URI's pathname is
+    // the callbackPath; createUpstreamRedirectFlow boot-asserts it equals
+    // originOf(OAUTH_ISSUER) + callbackPath (a mismatch is silent breakage at the
+    // IdP, so it fails closed at boot). The bridge's own signing material still
+    // comes from OAUTH_* env (configFromEnv).
+    await ensureStateDir(dir);
+    const config = configFromEnv(env);
+    const redirectUri = mustEnv(env, "ENTRA_REDIRECT_URI");
+    const callbackPath = new URL(redirectUri).pathname;
+    const identity = createEntraRedirectIdentity({
+      tenantId: mustEnv(env, "ENTRA_TENANT_ID"),
+      clientId: mustEnv(env, "ENTRA_CLIENT_ID"),
+      clientSecret: env.ENTRA_CLIENT_SECRET,
+      redirectUri,
+      allowedTenantIds: listEnv(env, "ENTRA_ALLOWED_TENANT_IDS", ""),
+      subjectAllowlist: listEnv(env, "ENTRA_SUBJECT_ALLOWLIST", ""),
+    }, { scopeCatalog: config.scopeCatalog });
+    const { app, store } = await buildApp({ config, upstream: { identity, callbackPath }, audit, sqliteFile });
+    return { app, store, config, dir };
+  }
   if (env.CF_ACCESS_AUDIENCE) {
     // PRODUCTION: Cloudflare Access + env signing material. This branch does NOT
     // run the quickstart helper, so create the state dir explicitly (sqlite open +

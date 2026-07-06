@@ -937,7 +937,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Entra group→scope ceiling (Gate 2) | ✅ v0.2 shipped (S2a core `allowedScopes` engine + S2b Entra group→scope producer) | §17.4 |
 | Console-pairing identity | ✅ v0.2 shipped (S1b) — `createConsolePairingIdentity`, 12-char base-20 code, lazy/single-use/TTL/attempt-cap, `oauth.pairing.attempt` | §17.5 |
 | `GenericOidcIdentity` + Google preset + GitHub port | 🔒 v0.2 contract locked | §17.6 |
-| Upstream redirect-leg orchestrator (`RedirectIdentityPort` + flow cookie) | 🔒 contract locked 2026-07-06 | §17.11 |
+| Upstream redirect-leg orchestrator (`RedirectIdentityPort` + flow cookie) | ✅ v0.2 shipped — `createUpstreamRedirectFlow` + `createEntraRedirectIdentity`, signed flow cookie (HS256 consent secret, aud `mcp-sso/upstream-flow`, single-use `upf_` jti), 13-row callback failure table, `oauth.upstream.callback` audit | §17.11 |
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
 

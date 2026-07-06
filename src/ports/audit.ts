@@ -26,7 +26,8 @@ export type AuthAuditEventName =
   | "oauth.token.client_credentials"
   | "oauth.client.provision"
   | "oauth.client.rotate_secret"
-  | "oauth.cimd.fetch";
+  | "oauth.cimd.fetch"
+  | "oauth.upstream.callback";
 
 export interface AuthAuditEvent {
   occurredAt: string;

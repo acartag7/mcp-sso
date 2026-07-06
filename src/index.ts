@@ -84,6 +84,11 @@ export { loadOrCreateQuickstartSecrets, type QuickstartSecrets, type QuickstartO
 // and the `skipAuthorize` option on the framework adapters.
 export { handlePairingAuthorize, type PairingAuthorizeDeps } from "./adapters/pairing-flow.ts";
 export { renderPairingPage, type PairingPageInput } from "./adapters/pairing-page.ts";
+// Upstream redirect-leg orchestrator (§17.11) — framework-free, so root-exported.
+// A consumer pairs `createUpstreamRedirectFlow` with a `RedirectIdentityPort`
+// (e.g. createEntraRedirectIdentity via ./identity/entra) and the `upstream`
+// option on the framework adapters.
+export { createUpstreamRedirectFlow, type UpstreamRedirectFlow, type UpstreamFlowDeps } from "./adapters/upstream-flow.ts";
 // The framework-free Bridge — the central class a consumer constructs and passes
 // to a framework adapter (root-exported so `import { Bridge } from "mcp-sso"` works;
 // previously only the adapters reached it internally).
@@ -97,6 +102,6 @@ export {
   type ClientStore, type ClientRegistration, type ApplicationType,
   type ClientSecret, type UserClientRegistration, type MachineClientRegistration,
 } from "./ports/client-store.ts";
-export { type IdentityPort, type IdentityClaims, type IdentityResult } from "./ports/identity.ts";
+export { type IdentityPort, type IdentityClaims, type IdentityResult, type RedirectIdentityPort, type RedirectExchangeResult } from "./ports/identity.ts";
 export { type FetcherPort, type FetchInit, type FetchResult } from "./ports/fetcher.ts";
 export { type RateLimitPort, noopRateLimit } from "./ports/rate-limit.ts";
