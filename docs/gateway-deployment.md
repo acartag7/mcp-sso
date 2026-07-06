@@ -4,10 +4,19 @@
 > plain API) that only understands a **static credential** — an API key, a
 > bearer token — needs to be shared with many people, and nobody wants to
 > hand that credential out. You put a small **gateway** in front: users
-> authenticate through your real IdP (Entra, Cloudflare Access, console
-> pairing), the gateway verifies its own short-lived tokens on `/mcp`, and
-> the static credential is injected **server-side only** — it never reaches
-> an MCP client, a laptop, or a config file.
+> authenticate through your real IdP (Entra, Cloudflare Access, any OIDC),
+> the gateway verifies its own short-lived tokens on `/mcp`, and the static
+> credential is injected **server-side only** — it never reaches an MCP
+> client, a laptop, or a config file.
+>
+> **Console pairing is not an SSO option for this shape.** The shipped
+> console-pairing port is single-operator by design — reading the process's
+> stderr *is* the trust boundary, and every successful pairing mints the same
+> `console-operator` subject (`src/identity/console-pairing.ts`). In a
+> many-people gateway it gives every user who can see the log the *same*
+> identity, erasing per-user audit attribution and entitlement separation.
+> Use it for local/single-operator dev only; for real multi-user access use
+> an IdP-backed port.
 >
 > Everything on this page uses shipped APIs. A worked `examples/` gateway is
 > planned (contracts §17.9); this guide documents the pattern itself.
