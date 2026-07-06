@@ -18,8 +18,12 @@
 > Use it for local/single-operator dev only; for real multi-user access use
 > an IdP-backed port.
 >
-> Everything on this page uses shipped APIs. A worked `examples/` gateway is
-> planned (contracts §17.9); this guide documents the pattern itself.
+> Everything on this page uses shipped APIs, and a runnable worked example now lives
+> at [`examples/api-key-gateway/`](../examples/api-key-gateway) — mcp-sso as the SSO
+> front door for a token-only stub backend MCP server, with the backend credential
+> injected server-side and a full proxied round trip covered by
+> `test/integration-gateway.test.ts`. This guide documents the pattern itself — the
+> rules the example implements, rule for rule.
 
 ## The shape
 
@@ -59,43 +63,44 @@ and `RequestAuthorizer` for the resource check). The `/mcp` body is yours:
 > injects an id_token into that header. With `createEntraIdentity` and **no**
 > such fronting injection there is no login: `verify` wants a raw `id_token`,
 > the header is absent, so `resolveIdentity` fails `entra_id_token_missing`
-> and the user gets a **direct 401, not an Entra sign-in**. Driving the Entra
-> redirect dance yourself is deployer code — `createEntraIdentity` exposes
-> `getAuthorizationUrl` (put a per-request `nonce` on it) and
-> `exchangeCodeForToken` for a custom `/oauth/authorize` + callback wrapper.
+> and the user gets a **direct 401, not an Entra sign-in**.
 >
-> **Do not finish that wrapper by re-injecting the id_token into the header
-> path.** `bridge.resolveIdentity` calls `verify(idToken)` with **no**
-> `expectedNonce`, and the Entra port only checks the nonce when the caller
-> passes one — so the header route validates `iss`/`aud`/signature but
-> **never binds the id_token to the login request**, leaving id_token
-> replay/injection open. The wrapper straddles two OAuth legs and must carry
-> state across the Entra round-trip. Concretely: (1) at `/oauth/authorize`,
-> persist — keyed by the Entra `state` — the **entire original MCP authorize
-> query** (`client_id`, `redirect_uri`, `response_type`, `code_challenge`
-> (+`_method`), `resource`, `scope`, and the client's own `state`) **plus**
-> the `nonce` and the Entra PKCE `code_verifier`, then redirect to
-> `getAuthorizationUrl`; (2) on the callback — whose request contains only
-> Entra's `code`/`state`, **not** any MCP params — look up that record,
-> `exchangeCodeForToken`, and call the concrete
-> `entra.verify(idToken, { expectedNonce })` **itself**; (3) only on `ok`,
-> **reconstruct** a request whose `query` is the stored MCP authorize params
-> and call `bridge.handleAuthorize(reconstructed, { subject, allowedScopes })`
-> — `handleAuthorize` reads `client_id`/`redirect_uri`/`code_challenge`/… from
-> `req.query` (`bridge.ts`), so handing it the bare callback request yields a
-> direct OAuth error, not a consent page. Because this bypasses
-> `resolveIdentity`, the wrapper also owns the `identity.verify` **audit
-> event** (and any `allowedScopes` ceiling handling) that `resolveIdentity`
-> would otherwise emit — don't silently drop it.
+> **Two supported ways to supply that login leg:**
+> 1. **Assertion-injecting proxy (header model, zero code).** Front the gateway
+>    with Cloudflare Access — or any reverse proxy that injects a verified
+>    id_token into `identityHeader`. The shipped `/oauth/authorize` does the rest.
+> 2. **The shipped redirect orchestrator (§17.11).** For an IdP that speaks
+>    OIDC redirect (Entra today; generic OIDC / Google / GitHub are on the
+>    roadmap), build a `RedirectIdentityPort` — `createEntraRedirectIdentity`
+>    (`src/identity/entra-redirect.ts`) for Entra — pass it to
+>    `createUpstreamRedirectFlow` (`src/adapters/upstream-flow.ts`), and hand
+>    the result to the adapter's `upstream` option
+>    (`registerOAuthRoutes(app, { bridge, upstream })`). The orchestrator owns
+>    the WHOLE dance turnkey: per-flow `state`/`nonce`/upstream PKCE, a signed
+>    same-browser flow cookie carrying the original MCP authorize params,
+>    callback validation + `exchangeCodeForToken` + `verify` (with the `nonce`
+>    bound to the login), then `bridge.handleAuthorize` with the identity's
+>    `allowedScopes` ceiling, consent delivery, and the `identity.verify` +
+>    `oauth.upstream.callback` audit events. Both examples
+>    (`examples/fastify-sqlite`, `examples/api-key-gateway`) wire it when
+>    `ENTRA_TENANT_ID` is set — copy that; do not hand-roll the redirect dance.
 >
-> Pick one before shipping: front the gateway with an assertion-injecting
-> proxy (header model, zero extra code), or compose the redirect wrapper. The
-> three `/mcp` shapes below are orthogonal to this choice.
+> **If you hand-roll anyway, do NOT finish by re-injecting the id_token into the
+> header path.** `bridge.resolveIdentity` calls `verify(idToken)` with **no**
+> `expectedNonce`, so the header route validates `iss`/`aud`/signature but
+> never binds the id_token to the login request — leaving id_token
+> replay/injection open. The shipped orchestrator avoids exactly this by
+> calling `verify(idToken, { expectedNonce })` itself, on the callback leg. The
+> residual only exists for a hand-rolled wrapper — which is why the orchestrator
+> exists; prefer it.
+>
+> The three `/mcp` shapes below are orthogonal to this choice.
 
 1. **Transparent proxy** (least code, backend tools appear as-is). After
    `authorizer.authorize({...})` accepts the bearer token, forward the
-   request to the internal MCP endpoint and relay the response. Rules that
-   matter:
+   request to the internal MCP endpoint and relay the response. (The reference
+   implementation is [`examples/api-key-gateway/app.ts`](../examples/api-key-gateway/app.ts)'s
+   `/mcp` handler — every rule below is implemented there.) Rules that matter:
    - **The failure path is load-bearing.** `authorize()` *throws* on a
      missing/invalid/expired token — it does not build the response. Your
      handler must catch and answer with the OAuthError's status, a

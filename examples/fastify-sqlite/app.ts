@@ -205,8 +205,12 @@ function mustEnv(env: Record<string, string | undefined>, k: string): string {
  *  if absent; for a pre-existing dir, rejects a symlink or group/other-accessible
  *  mode (another local user could otherwise replace auth.db with state they
  *  control). Writes the managed `*` .gitignore into a dir we just made (or
- *  requires it already present + exact) so auth.db / audit.jsonl can't be committed. */
-async function ensureStateDir(dir: string): Promise<void> {
+ *  requires it already present + exact) so auth.db / audit.jsonl can't be committed.
+ *
+ *  Exported so the api-key-gateway example reuses the SAME fs-trust bar (the
+ *  sibling-sweep rule — a control fixed in one path MUST be applied to every
+ *  path that touches the state dir), not a second copy that could drift. */
+export async function ensureStateDir(dir: string): Promise<void> {
   const created = await mkdir(dir, { recursive: true });
   if (created !== undefined) {
     if (process.platform !== "win32") await chmod(dir, 0o700);
