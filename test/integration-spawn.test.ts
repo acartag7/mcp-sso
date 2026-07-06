@@ -90,14 +90,26 @@ async function assertWellKnownServed(base: string): Promise<void> {
   assert.equal(typeof (await as.json() as { issuer: unknown }).issuer, "string", "AS metadata has an issuer");
 }
 
+/** Build a hermetic env for the spawned example: inherit a working runtime env
+ *  (PATH/HOME/…), then SWEEP every OAUTH_* and CF_ACCESS_* var so ambient shell
+ *  config can't make buildExample boot with a different issuer/resource/scope
+ *  catalog (or fail validation) before the readiness check. `overrides` then pins
+ *  exactly the inputs the test wants. (Codex P2: spreading raw process.env leaked
+ *  the developer's OAUTH_* into the child.) */
+function childEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of Object.keys(env)) if (k.startsWith("OAUTH_") || k.startsWith("CF_ACCESS_")) delete env[k];
+  return Object.assign(env, overrides);
+}
+
 test("integration — spawned index.ts: readiness, .well-known served, /mcp 401+challenge, SIGTERM exits", async () => {
   const port = await freePort();
   const tmp = await mkdtemp(join(tmpdir(), "mcp-sso-spawn-"));
   const dir = join(tmp, "state"); // does NOT exist — buildExample creates it fresh (quickstart refuses an existing dir with no .gitignore)
   const base = `http://127.0.0.1:${port}`;
-  // Inherit a working env, force the zero-setup branch + our port/dir. Pin HOST so
-  // an ambient HOST (e.g. a developer's HOST=0.0.0.0) can't break the readiness regex.
-  const env = { ...process.env, MCP_SSO_DIR: dir, PORT: String(port), HOST: "127.0.0.1", CF_ACCESS_AUDIENCE: "" };
+  // Hermetic env: zero-setup branch (CF_ACCESS_AUDIENCE="" is falsy) + our port/dir,
+  // pinned HOST so the readiness regex matches, and no ambient OAUTH_*/CF_ACCESS_*.
+  const env = childEnv({ MCP_SSO_DIR: dir, PORT: String(port), HOST: "127.0.0.1", CF_ACCESS_AUDIENCE: "" });
   const child = spawn("node", [ENTRY], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
   try {
     await waitForStderr(child, new RegExp(`mcp-sso example listening on 127\\.0\\.0\\.1:${port}`), 15_000);
@@ -130,7 +142,7 @@ test("integration — spawned index.ts: HOST=0.0.0.0 prints the off-loopback pai
   const port = await freePort();
   const tmp = await mkdtemp(join(tmpdir(), "mcp-sso-spawn-warn-"));
   const dir = join(tmp, "state"); // does NOT exist — buildExample creates it
-  const env = { ...process.env, MCP_SSO_DIR: dir, PORT: String(port), HOST: "0.0.0.0", CF_ACCESS_AUDIENCE: "" };
+  const env = childEnv({ MCP_SSO_DIR: dir, PORT: String(port), HOST: "0.0.0.0", CF_ACCESS_AUDIENCE: "" });
   const child = spawn("node", [ENTRY], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
   try {
     const stderr = await waitForStderr(child, /mcp-sso example listening on 0\.0\.0\.0:/, 15_000);
