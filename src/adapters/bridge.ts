@@ -71,7 +71,13 @@ export class Bridge {
       const body = formObject(req.body);
       const redirectUris = stringArray(body.redirect_uris);
       const applicationType = formField(body, "application_type") as ApplicationType | undefined;
-      const registered = await registerClient({ config: this.config, clock: this.clock, audit: this.audit }, { redirectUris, applicationType });
+      // §17.2 machine-shape signals — parsed only so registerClient can REJECT them.
+      const tokenEndpointAuthMethod = formField(body, "token_endpoint_auth_method");
+      const grantTypes = stringArray(body.grant_types);
+      const registered = await registerClient(
+        { config: this.config, clock: this.clock, audit: this.audit },
+        { redirectUris, applicationType, tokenEndpointAuthMethod, grantTypes },
+      );
       return { status: 201, headers: { "cache-control": "no-store" }, body: registered };
     } catch (error) {
       return oauthErrorResponse(asOAuth(error));

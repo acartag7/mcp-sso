@@ -242,20 +242,45 @@ alone.)
 
 ### 6.4 `ClientStore` (stored-DCR mode only — fix #4)
 ```ts
-interface ClientRegistration {
+type ApplicationType = "native" | "web" | "machine";   // "machine" added §17.2
+
+interface ClientSecret {                               // §17.2 machine only
+  hash: string;                 // unsalted SHA-256 hex of the secret string
+  createdAtEpoch: number;       // UTC seconds
+  expiresAtEpoch?: number;      // UTC seconds; undefined = live until rotated
+}
+
+interface UserClientRegistration {
   clientId: string;
-  redirectUris: string[];
+  redirectUris: string[];        // ≥1, validated via §10
   applicationType: "native" | "web";   // RC item (b)
   issuedAtEpoch: number;
 }
+interface MachineClientRegistration {
+  clientId: string;             // "mcc_<random>" — sub prefix marks machine tokens
+  redirectUris: string[];       // always [] — machine clients have no redirect
+  applicationType: "machine";
+  issuedAtEpoch: number;
+  name?: string;                // deployer-supplied display label (unverified)
+  allowedScopes: string[];      // ⊆ scopeCatalog, validated at provisioning
+  secrets: ClientSecret[];      // ≤ 2 unexpired ("active"); see §17.2 rotation
+}
+type ClientRegistration = UserClientRegistration | MachineClientRegistration;
+
 interface ClientStore {
   save(client: ClientRegistration): Promise<void>;
   find(clientId: string): Promise<ClientRegistration | null>;
 }
 ```
 Required only when `dcr.mode === "stored"`. Reference: in-memory map (Phase 2);
-a persisted adapter is deployment-specific. `applicationType` drives the
-per-client redirect policy (§10).
+a persisted adapter is deployment-specific. The `applicationType` discriminant
+selects the record shape and drives the per-client redirect policy (§10):
+`native`/`web` are user clients (§9.2 DCR, §10.2 redirect policy); `machine`
+records are provisioned out-of-band (§17.2) and carry `allowedScopes` +
+`secrets` instead of redirect URIs. A discriminated union (not optional fields)
+makes "a machine record MUST carry `allowedScopes` + `secrets`" a compile-time
+guarantee — there is no optional-field state where a machine record silently
+lacks its secret set.
 
 ### 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's
@@ -467,6 +492,12 @@ and optional `application_type` (`"native"` | `"web"`, default `"web"`).
   — native ⇒ RFC 8252 loopback any-port, web ⇒ https exact. This is the RC-aligned
   path: native and web clients get the right redirect handling by type, instead of
   loopback-for-everyone.
+- **Machine-shape rejection (§17.2).** Open registration can NEVER mint a
+  secret-bearing (machine) client: a request naming
+  `token_endpoint_auth_method` other than `"none"`, or a `grant_types`
+  containing `client_credentials`, is rejected with `invalid_client_metadata`
+  (400) in BOTH modes. `application_type: "machine"` is likewise not a valid
+  DCR value. Machine clients are provisioned out-of-band only.
 
 ### 9.3 Authorize + consent
 
@@ -1116,13 +1147,33 @@ in this flow."* Decisions:
   (`invalid_client_metadata`). Otherwise anyone on the internet could mint
   themselves a secret. Config: `clientCredentials?: { enabled: boolean }`;
   boot `AuthConfigError` if enabled with `dcr.mode !== "stored"`.
-- **Provisioning API (library function, not an endpoint):**
-  `provisionMachineClient(store, { name?, allowedScopes, secretTtlSeconds? })`
-  → `{ clientId, clientSecret }`. `clientId` = `mcc_<random>` — the prefix is
-  enforced, giving a namespace disjoint from human subjects and from `mcpdc_`
-  ids (RFC 9700 §4.15.1: the AS MUST let the RS distinguish machine tokens
-  from user tokens; here `sub` starting `mcc_` ⇔ machine). The secret is
-  returned ONCE and never retrievable.
+- **Provisioning API (library functions, not endpoints).** The provisioning
+  use-cases take a deps object — `{ store, catalog, clock, audit }` — so they
+  can validate `allowedScopes` against `scopeCatalog` (item below), stamp
+  epochs, and emit audit without hidden globals (same deps-first shape as
+  `registerClient`). `catalog` is `config.scopeCatalog`; `store` is the stored
+  `ClientStore`.
+  - `provisionMachineClient(deps, { name?, allowedScopes, secretTtlSeconds? })`
+    → `{ clientId, clientSecret }`. `clientId` = `mcc_<random>` — the prefix is
+    enforced, giving a namespace disjoint from human subjects and from `mcpdc_`
+    ids (RFC 9700 §4.15.1: the AS MUST let the RS distinguish machine tokens
+    from user tokens; here `sub` starting `mcc_` ⇔ machine). The secret is
+    returned ONCE and never retrievable. `allowedScopes` MUST be a non-empty
+    subset of `catalog` (each entry a single RFC 6749 scope token; unknown or
+    malformed ⇒ `invalid_scope`) — the per-client ceiling is fixed at
+    provisioning, so a later catalog narrowing cannot silently widen a machine
+    client. `secretTtlSeconds?` (positive integer), when given, sets the
+    provisioned secret's `expiresAtEpoch = now + ttl` (a bounded-lifetime
+    first secret); omitted ⇒ the secret is live until rotated.
+  - `rotateMachineClientSecret(deps, clientId, { graceSeconds = 86400 })` →
+    `{ clientSecret }` (see Rotation below).
+  - `verifyMachineClientSecret(deps, clientId, presentedSecret)` → `boolean`:
+    the timing-safe comparison primitive the token endpoint (§9.4
+    client_credentials grant, S3b) composes into client authentication. Finds
+    the machine client, SHA-256s the presented secret, and constant-time
+    compares it against each **unexpired** stored hash (expired entries
+    skipped). Non-machine / unknown `clientId` ⇒ `false` (never throws — the
+    grant maps the boolean to `invalid_client`).
 - **`ClientStore` extension:** `applicationType` gains `"machine"`; machine
   records carry `allowedScopes: string[]` (validated ⊆ `scopeCatalog` at
   wiring) and `secrets: Array<{ hash, createdAtEpoch, expiresAtEpoch? }>`
@@ -1161,10 +1212,18 @@ in this flow."* Decisions:
   "Bearer", expires_in, scope }` — no `refresh_token` member at all, not an
   optional one, so an accidental `refresh_token: undefined` is
   unrepresentable. The token endpoint returns one or the other by grant type.
-- **Rotation:** `rotateMachineClientSecret(store, clientId, { graceSeconds =
-  86400 })` — adds the new secret, expires the old at `now + grace` (the
-  two-active-secrets overlap pattern, per Okta/Entra practice; RFC 7592 is
-  Experimental and hard-cutover, not used). Verification accepts any
+- **Rotation:** `rotateMachineClientSecret(deps, clientId, { graceSeconds =
+  86400 })` — adds the new secret (live, no `expiresAtEpoch`), expires the
+  currently-live secret at `now + grace` (the two-active-secrets overlap
+  pattern, per Okta/Entra practice; RFC 7592 is Experimental and
+  hard-cutover, not used). The record's `secrets` array is then **exactly**
+  the permitted active set: the new live secret plus at most one grace secret
+  (the latest-expiring); any older/expired (`expiresAtEpoch ≤ now`) entry is
+  dropped so the array never exceeds two unexpired hashes. So a rotation from
+  a single-secret record yields `[{old, expiresAt=now+grace}, {new}]`; a
+  second rotation before the first grace elapses supersedes the prior grace
+  secret (its overlap is cut) to hold the two-active cap. Unknown clientId or
+  a non-machine clientId ⇒ `invalid_client`. Verification accepts any
   unexpired stored hash.
 - **Audit:** `oauth.token.client_credentials`, `oauth.client.provision`,
   `oauth.client.rotate_secret` — clientId/scopes metadata only; never a secret
@@ -1172,6 +1231,16 @@ in this flow."* Decisions:
 - The MCP `initialize`-handshake extension advertisement
   (`capabilities.extensions`) is the host app's/example's concern, not the
   bridge's.
+- **Concurrency residual (deployment-discipline-enforced).** Provisioning and
+  rotation are non-atomic read-modify-write sequences over the deployer-supplied
+  `ClientStore` (`find` → compute → `save`); the port has no compare-and-swap
+  primitive. Two concurrent rotations on the same clientId race last-write-wins
+  and can silently discard one just-minted secret (an operational hazard, not a
+  security breach — the persisted state is always a valid ≤2-active set and no
+  secret is leaked). These are low-frequency out-of-band admin operations;
+  single-operator provisioning is safe. A multi-instance deployment using a
+  shared store MUST serialize rotations (or the port gains a CAS primitive —
+  recorded for S3b, where token-issuance atomicity raises the same shape).
 
 ### 17.3 Device authorization grant (RFC 8628)
 

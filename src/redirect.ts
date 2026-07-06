@@ -63,6 +63,14 @@ export function assertAllowedRedirectUri(value: string, allowlist: string[]): st
  *            match a registered loopback URI (port ignored);
  *   web    → https only, exact match against a registered redirect_uri. */
 export function assertRedirectAllowedForClient(redirectUri: string, client: ClientRegistration): string {
+  // §17.2: machine clients have no redirect (redirectUris is []) and are rejected
+  // at /oauth/authorize (invalid_client). Guarded here too as defense-in-depth so
+  // any path that resolves a redirect for a stored client fails closed loudly
+  // (with the contract's error code) rather than falling through the native
+  // branch. Also makes the function exhaustive over ApplicationType.
+  if (client.applicationType === "machine") {
+    throw new OAuthError("invalid_client", "Machine clients cannot use the authorization-code flow", 401);
+  }
   let url: URL;
   try {
     url = new URL(redirectUri);

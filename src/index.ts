@@ -4,8 +4,8 @@
 // and identity ports arrive in Phase 3. See docs/contracts.md.
 
 export {
-  type BridgeConfig, type DcrMode, type DevOptions, AuthConfigError,
-  createBridgeConfig, originOf, pathAfterOrigin,
+  type BridgeConfig, type DcrMode, type DevOptions, type ClientCredentialsOptions,
+  AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin,
 } from "./config.ts";
 
 export {
@@ -59,6 +59,16 @@ export {
   type RegisterDeps, type RegisterInput, type RegisteredClient, registerClient,
 } from "./register.ts";
 
+// Machine-client provisioning primitives (§17.2). Library functions, not
+// endpoints: machine clients are provisioned out-of-band. The client_credentials
+// token grant that consumes these records lands in S3b.
+export {
+  type MachineClientDeps, type ProvisionMachineClientInput,
+  type ProvisionedMachineClient, type RotateSecretOptions, type RotatedSecret,
+  DEFAULT_ROTATION_GRACE_SECONDS,
+  provisionMachineClient, rotateMachineClientSecret, verifyMachineClientSecret,
+} from "./machine-client.ts";
+
 export { type ClockPort, SystemClock } from "./ports/clock.ts";
 export { type AuditPort, type AuthAuditEvent, type AuthAuditStatus, type AuthAuditEventName, noopAudit } from "./ports/audit.ts";
 // v0.2 reference audit sinks (§17.7). Dep-free (node:fs + global fetch), so they
@@ -83,7 +93,10 @@ export {
   type SaveAuthCodeInput, type SaveRefreshTokenInput,
   StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
 } from "./ports/store.ts";
-export { type ClientStore, type ClientRegistration, type ApplicationType } from "./ports/client-store.ts";
+export {
+  type ClientStore, type ClientRegistration, type ApplicationType,
+  type ClientSecret, type UserClientRegistration, type MachineClientRegistration,
+} from "./ports/client-store.ts";
 export { type IdentityPort, type IdentityClaims, type IdentityResult } from "./ports/identity.ts";
 export { type FetcherPort, type FetchInit, type FetchResult } from "./ports/fetcher.ts";
 export { type RateLimitPort, noopRateLimit } from "./ports/rate-limit.ts";
