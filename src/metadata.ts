@@ -8,8 +8,14 @@ import type { BridgeConfig } from "./config.ts";
 import { originOf, pathAfterOrigin } from "./config.ts";
 import { publicJwk } from "./crypto.ts";
 
-/** RFC 8414 authorization-server metadata. Includes RC item (a): the iss flag. */
+/** RFC 8414 authorization-server metadata. Includes RC item (a): the iss flag.
+ *  The `client_credentials` grant and its confidential-client auth methods are
+ *  advertised ONLY when `config.clientCredentials.enabled` (contracts §17.2) — a
+ *  disabled grant is never advertised, so discovery can't steer a client to a
+ *  surface the bridge would reject with `unsupported_grant_type`. `"none"` is
+ *  always advertised: the user grants use PKCE public clients. */
 export function authorizationServerMetadata(config: BridgeConfig): Record<string, unknown> {
+  const ccEnabled = config.clientCredentials?.enabled === true;
   return {
     issuer: config.issuer,
     authorization_endpoint: `${config.issuer}/oauth/authorize`,
@@ -18,9 +24,13 @@ export function authorizationServerMetadata(config: BridgeConfig): Record<string
     registration_endpoint: `${config.issuer}/oauth/register`,
     revocation_endpoint: `${config.issuer}/oauth/revoke`,
     response_types_supported: ["code"],
-    grant_types_supported: ["authorization_code", "refresh_token"],
+    grant_types_supported: ccEnabled
+      ? ["authorization_code", "refresh_token", "client_credentials"]
+      : ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none"],
+    token_endpoint_auth_methods_supported: ccEnabled
+      ? ["none", "client_secret_basic", "client_secret_post"]
+      : ["none"],
     scopes_supported: config.scopeCatalog,
     authorization_response_iss_parameter_supported: true,
   };

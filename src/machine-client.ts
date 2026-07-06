@@ -1,7 +1,7 @@
 // Machine-client provisioning primitives (contracts §17.2). Library functions,
 // NOT endpoints: machine clients are provisioned OUT-OF-BAND, never via open
 // `/oauth/register`. The `/oauth/token` client_credentials grant that CONSUMES
-// these records is S3b; S3a ships provisioning + the timing-safe verify primitive.
+// these records (`exchangeClientCredentials`) composes `verifyMachineClientSecret`.
 //
 // Secret (§17.2): `mcs_` + base64url(32) = 256 bits. Stored as UNSALTED SHA-256
 // hex only (RFC 6819 §5.1.4.1.3 salts LOW-entropy creds; a 256-bit random secret

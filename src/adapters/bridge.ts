@@ -12,11 +12,13 @@ import { noopRateLimit } from "../ports/rate-limit.ts";
 import type { ApplicationType } from "../ports/client-store.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
 import { OAuthAuthorizationUseCase, type PreparedConsent } from "../authorize.ts";
-import { OAuthTokenUseCase } from "../token.ts";
+import { OAuthTokenUseCase, type UserTokenResponse, type MachineTokenResponse } from "../token.ts";
 import { registerClient } from "../register.ts";
 import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "../metadata.ts";
 import { OAuthError } from "../errors.ts";
 import { assertAllowedScopesCeiling } from "../scopes.ts";
+import { isBasicAttempt } from "../client-auth.ts";
+import { buildBasicClientChallenge } from "../challenge.ts";
 import { renderConsentPage } from "./consent-page.ts";
 import {
   formField, formObject, headerString, oauthErrorResponse, queryString,
@@ -167,19 +169,35 @@ export class Bridge {
   }
 
   async handleToken(req: NormRequest): Promise<NormResponse> {
+    const authorization = headerString(req.headers, "authorization");
     try {
       await this.guard(req, "token");
       const body = formObject(req.body);
       const grantType = formField(body, "grant_type");
-      const response = grantType === "refresh_token"
-        ? await this.token.refresh({ grantType, refreshToken: formField(body, "refresh_token"), clientId: formField(body, "client_id") })
-        : await this.token.exchangeAuthorizationCode({
+      let response: UserTokenResponse | MachineTokenResponse;
+      if (grantType === "refresh_token") {
+        response = await this.token.refresh({ grantType, refreshToken: formField(body, "refresh_token"), clientId: formField(body, "client_id") });
+      } else if (grantType === "client_credentials") {
+        response = await this.token.exchangeClientCredentials({
+          grantType, authorization, clientId: formField(body, "client_id"), clientSecret: formField(body, "client_secret"),
+          scope: formField(body, "scope"), resource: formField(body, "resource"),
+        });
+      } else {
+        response = await this.token.exchangeAuthorizationCode({
           grantType, code: formField(body, "code"), redirectUri: formField(body, "redirect_uri"),
           clientId: formField(body, "client_id"), codeVerifier: formField(body, "code_verifier"),
         });
+      }
       return { status: 200, headers: { "cache-control": "no-store", "pragma": "no-cache" }, body: response };
     } catch (error) {
-      return oauthErrorResponse(asOAuth(error));
+      // §17.2: failed Basic client auth ⇒ WWW-Authenticate: Basic (a
+      // client_secret_post failure does not earn the Basic challenge).
+      const oauth = asOAuth(error);
+      const res = oauthErrorResponse(oauth);
+      if (oauth.code === "invalid_client" && oauth.status === 401 && isBasicAttempt(authorization)) {
+        res.headers["www-authenticate"] = buildBasicClientChallenge(this.config);
+      }
+      return res;
     }
   }
 

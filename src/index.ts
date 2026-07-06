@@ -13,7 +13,7 @@ export {
 } from "./errors.ts";
 
 export {
-  type AuthorizedSubject, normalizeScopes, scopeString, requireScope,
+  type AuthorizedSubject, normalizeScopes, resolveClientCredentialsScope, scopeString, requireScope,
 } from "./scopes.ts";
 
 export {
@@ -30,7 +30,7 @@ export {
 } from "./redirect.ts";
 
 export {
-  type ChallengeOptions, buildUnauthorizedChallenge, buildErrorRedirect,
+  type ChallengeOptions, buildUnauthorizedChallenge, buildBasicClientChallenge, buildErrorRedirect,
   protectedResourceMetadataUrl,
 } from "./challenge.ts";
 
@@ -38,6 +38,10 @@ export {
   authorizationServerMetadata, protectedResourceMetadata,
   protectedResourceMetadataUrls, jwks,
 } from "./metadata.ts";
+
+// Confidential-client authentication helpers (§17.2 / RFC 6749 §2.3.1). The
+// client_credentials grant composes these; a custom adapter may reuse them.
+export { parseBasicAuth, isBasicAttempt } from "./client-auth.ts";
 
 export {
   type OAuthAuthorizationDeps, type AuthorizeRequestInput,
@@ -47,7 +51,9 @@ export {
 
 export {
   type OAuthTokenDeps, type AuthorizationCodeGrantInput,
-  type RefreshGrantInput, type TokenResponse, OAuthTokenUseCase,
+  type RefreshGrantInput, type ClientCredentialsGrantInput,
+  type UserTokenResponse, type MachineTokenResponse, type TokenResponse,
+  OAuthTokenUseCase,
 } from "./token.ts";
 
 export {
@@ -61,7 +67,7 @@ export {
 
 // Machine-client provisioning primitives (§17.2). Library functions, not
 // endpoints: machine clients are provisioned out-of-band. The client_credentials
-// token grant that consumes these records lands in S3b.
+// token grant that consumes these records is `OAuthTokenUseCase.exchangeClientCredentials`.
 export {
   type MachineClientDeps, type ProvisionMachineClientInput,
   type ProvisionedMachineClient, type RotateSecretOptions, type RotatedSecret,
