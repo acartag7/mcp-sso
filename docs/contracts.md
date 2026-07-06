@@ -1211,10 +1211,16 @@ in this flow."* Decisions:
   method) is DEFERRED with 17.1's confidential-CIMD — recorded, not forgotten;
   the secret-based path is extension-compliant.
 - **Grant semantics:** authenticate the client (failure ⇒ `invalid_client`
-  401, `WWW-Authenticate: Basic` when Basic was attempted); `scope` normalized
-  against the client's `allowedScopes` (omitted ⇒ the full allowed set —
-  RFC 6749 §3.3 default); `resource` if present MUST equal `config.resource`
-  (`invalid_target`). Mint an access token with `sub = client_id`
+  401, `WWW-Authenticate: Basic` when Basic was attempted); `scope` validated
+  against BOTH the client's `allowedScopes` ceiling AND the live `scopeCatalog`
+  (a scope outside either ⇒ `invalid_scope`); omitted ⇒ the full allowed set
+  (RFC 6749 §3.3 default). The catalog check matches the user-grant fail-closed
+  gate (`normalizeScopes`): a scope removed from the catalog AFTER a machine
+  client was provisioned is never minted — the persisted ceiling is not the
+  whole truth, so drift surfaces as `invalid_scope` until the client is
+  re-provisioned (the same discipline a drifted user refresh token imposes).
+  `resource` if present MUST equal `config.resource` (`invalid_target`). Mint
+  an access token with `sub = client_id`
   (RFC 9068 §2.2) and the existing `client_id` claim; **NO refresh token**
   (RFC 6749 §4.4.3 SHOULD NOT — the client holds a durable credential; a
   refresh token is a second bearer secret with zero benefit). **This requires

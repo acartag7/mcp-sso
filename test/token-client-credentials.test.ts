@@ -17,7 +17,7 @@ import type { NormRequest } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { RequestAuthorizer } from "../src/verifier.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
-import { verifyAccessToken } from "../src/crypto.ts";
+import { verifyAccessToken, sha256Hex } from "../src/crypto.ts";
 import { authorizationServerMetadata } from "../src/metadata.ts";
 import { OAuthError } from "../src/errors.ts";
 import { parseBasicAuth } from "../src/client-auth.ts";
@@ -227,6 +227,29 @@ test("scope outside the ceiling ⇒ invalid_scope 400", async () => {
   const res = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader(c.clientId, c.clientSecret) }, body: grantBody({ scope: "mcp:admin" }) }));
   assert.equal(res.status, 400);
   assert.equal((res.body as { error: string }).error, "invalid_scope");
+});
+
+test("catalog drift (Codex P2): a ceiling scope removed from the live catalog is never minted (fail-closed, matches user grants)", async () => {
+  // Simulate a record provisioned BEFORE the catalog was narrowed: persisted
+  // ceiling includes a scope (mcp:legacy) no longer in the running catalog.
+  const ctx = setup(true); // catalog = [mcp:read, mcp:write, mcp:admin]
+  const driftedSecret = "mcs_" + "Z".repeat(43);
+  await ctx.clientStore.save({
+    clientId: "mcc_drifted", redirectUris: [], applicationType: "machine", issuedAtEpoch: Math.floor(NOW_MS / 1000),
+    allowedScopes: ["mcp:read", "mcp:legacy"], secrets: [{ hash: sha256Hex(driftedSecret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
+  });
+  // Omitted scope ⇒ the full ceiling, which includes the drifted mcp:legacy ⇒ invalid_scope.
+  const omitted = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcc_drifted", driftedSecret) }, body: grantBody({}) }));
+  assert.equal(omitted.status, 400);
+  assert.equal((omitted.body as { error: string }).error, "invalid_scope");
+  // Requesting only the still-valid scope succeeds (the catalog check passes for mcp:read).
+  const requested = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcc_drifted", driftedSecret) }, body: grantBody({ scope: "mcp:read" }) }));
+  assert.equal(requested.status, 200);
+  assert.equal((requested.body as { scope: string }).scope, "mcp:read");
+  // Requesting the drifted scope explicitly is also rejected.
+  const explicit = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcc_drifted", driftedSecret) }, body: grantBody({ scope: "mcp:legacy" }) }));
+  assert.equal(explicit.status, 400);
+  assert.equal((explicit.body as { error: string }).error, "invalid_scope");
 });
 
 test("resource mismatch ⇒ invalid_target 400; omitted resource is accepted (audience-bound anyway)", async () => {

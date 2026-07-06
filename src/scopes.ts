@@ -69,24 +69,27 @@ export function assertAllowedScopesCeiling(value: unknown): string[] | undefined
   throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
 }
 
-/** §17.2 client_credentials scope resolution: the requested scope MUST be a
- *  subset of the client's `allowedScopes` ceiling (fixed at provisioning, so it
- *  can never be widened at the token endpoint); omitted/empty ⇒ the full ceiling
- *  (RFC 6749 §3.3 default — the client is entitled to everything it provisioned
- *  for). A requested scope outside the ceiling ⇒ `invalid_scope`. De-dupes,
- *  preserves request order. Unlike {@link normalizeScopes} this resolves against
- *  the per-client ceiling, not the deployment-wide catalog. */
-export function resolveClientCredentialsScope(requested: string | undefined, ceiling: readonly string[]): string[] {
-  if (requested === undefined || requested.trim() === "") return [...ceiling];
-  const allowed = new Set(ceiling);
+/** §17.2 client_credentials scope resolution: the granted scope MUST be a subset
+ *  of BOTH the client's `allowedScopes` ceiling (the cap fixed at provisioning)
+ *  AND the live `scopeCatalog`. Omitted/empty ⇒ the full ceiling (RFC 6749 §3.3
+ *  default). A scope outside the ceiling, OR no longer in the catalog, ⇒
+ *  `invalid_scope`. The catalog check is the same fail-closed gate
+ *  {@link normalizeScopes} applies to user grants: a scope removed from the
+ *  catalog AFTER a machine client was provisioned is never minted (the persisted
+ *  record is not re-validated at provisioning only), so drift surfaces as
+ *  invalid_scope until the client is re-provisioned — the same discipline a
+ *  drifted user refresh token imposes. De-dupes, preserves request order. */
+export function resolveClientCredentialsScope(requested: string | undefined, ceiling: readonly string[], catalog: readonly string[]): string[] {
+  const ceilingSet = new Set(ceiling);
+  const catalogSet = new Set(catalog);
+  const requestedList = requested === undefined || requested.trim() === "" ? [...ceiling] : requested.split(/\s+/).filter(Boolean);
   const out: string[] = [];
-  for (const token of requested.split(/\s+/).filter(Boolean)) {
-    if (!allowed.has(token)) {
-      throw new OAuthError("invalid_scope", "Requested scope exceeds the client's allowedScopes");
-    }
+  for (const token of requestedList) {
+    if (!ceilingSet.has(token)) throw new OAuthError("invalid_scope", "Requested scope exceeds the client's allowedScopes");
+    if (!catalogSet.has(token)) throw new OAuthError("invalid_scope", "Requested scope is not in the current scopeCatalog");
     if (!out.includes(token)) out.push(token);
   }
-  return out.length > 0 ? out : [...ceiling];
+  return out;
 }
 
 /** 403 insufficient_scope step-up if the subject lacks `required`. */

@@ -169,7 +169,7 @@ export class OAuthTokenUseCase {
       if (!ok) throw new OAuthError("invalid_client", "Client authentication failed", 401);
       const client = await clientStore.find(clientId);
       if (!client || client.applicationType !== "machine") throw new OAuthError("invalid_client", "Client authentication failed", 401);
-      const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes);
+      const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, this.config.scopeCatalog);
       if (input.resource !== undefined && input.resource !== this.config.resource) throw new OAuthError("invalid_target", "resource does not match the configured resource");
       const accessToken = await signAccessToken({ subject: clientId, clientId, scopes }, this.config, this.clock);
       await this.audit.writeAuthEvent({
