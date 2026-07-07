@@ -39,10 +39,10 @@ with a live client is the open work the `⬜` rows track.
 | local stub identity | Official MCP SDK client | register→authorize→token→`/mcp`→refresh→replay-revoke→revoke | ✅ | 2026-07-04 | `test/e2e-mcp-sdk.test.ts` (automated; the current equivalent suite stays green). Stub identity; **not** a real-IdP identity leg. |
 | local stub identity | Claude Code | consent (correct scopes) + `ping` round-trip | ✅† | 2026-07-04 | `claude mcp add --transport http` against local `http://localhost`. Originally ran against `DEV_STUB_SUBJECT` (since removed — replaced by console pairing). Mechanics only. |
 | local stub identity | claude.ai (custom connector) | consent (correct scopes) + `ping` round-trip | ✅† | 2026-07-04 | Via a **named Cloudflare tunnel** (transport) on a real domain — see [`troubleshooting.md`](troubleshooting.md) for why ad-hoc `--url` tunnels are unreliable. Originally ran against `DEV_STUB_SUBJECT`. Mechanics only. |
-| Cloudflare Access (production identity leg) | Claude Code | full flow against CF-Access-injected identity | ⬜ | — | Owner-run checklist A. The header-injected, fail-closed CF Access identity check has never been driven by a live client. |
+| Cloudflare Access (production identity leg) | Claude Code (CLI), Codex CLI, claude.ai, ChatGPT, Official MCP SDK client | full flow against CF-Access-injected identity; fail-closed on policy, allowlist, and bypass | ✅ | 2026-07-07 | `examples/fastify-sqlite` behind a named cloudflared tunnel on `mcp-sso.<zone>` (team `arnoldcartagena`). Driven against **five live clients** — Claude Code (CLI), Codex CLI, claude.ai (custom connector), ChatGPT (custom connector), and the official `@modelcontextprotocol/sdk` client — each completing register→authorize (CF Access OTP)→consent→token→`/mcp` `ping` with the bridge token `sub` = the CF opaque `sub` (UUID `f74dc462-…`, **not** the email; `pong` echoes it); each minted a distinct DCR `client_id` (audited; the clientId→client-name mapping is owner-asserted — the audit carries opaque clientIds with no `software_id`/user-agent field — and shows 9 registrations / 6 completers, the gap being re-runs and one abandoned attempt, not 9 distinct clients). The Codex CLI authorize URL carried the RFC 9728 `resource` parameter (observed in its login URL; per-client `resource`-sending for the other four was not separately verified — the audit's `resource` field is server-defaulted from `OAUTH_RESOURCE`, so it cannot prove any individual client's PRM behavior). Denied (non-policy) email is blocked at the CF Access edge — "That account does not have access", no OTP issued, never reaches the gateway (observed at the CF sign-in screen; by design there is no audit row for this — the block is upstream of the gateway). Removing the admitted email from `CF_ACCESS_EMAIL_ALLOWLIST` while keeping it in the Access policy → `access_jwt_email_not_allowed` (audit-confirmed; non-empty list — the empty-list foot-gun was avoided). Direct no-auth `POST /mcp` → 401 + `WWW-Authenticate resource_metadata`; direct `GET /oauth/authorize` with no `Cf-Access-Jwt-Assertion` → `access_jwt_missing`. **Caveat:** the CF Access app MUST be path-scoped to `/oauth/authorize*` — a whole-hostname app also gates `/mcp`+`/oauth/token` and breaks the client (see checklist A). Wrong-`aud` Access JWT rejection not separately live-driven here; covered by the unit suite (`access_jwt_bad_claim`) + jose exact-`aud` match. |
 | Entra ID (redirect flow, §17.11) | Claude Code | full flow against Entra identity | ⬜ | — | Owner-run checklist B. Needs `createEntraRedirectIdentity` (shipped) + a real Entra app. |
 | Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | full flow against Entra identity | ⬜ | — | Owner-run checklist B (claude.ai variant). |
-| Cloudflare Access **or** Entra | ChatGPT custom connector | consent + tool round-trip | ⬜ | — | Owner-run checklist C. ChatGPT has not been driven against mcp-sso at all yet; pick CF Access or Entra as the identity backend when you run it. |
+| Cloudflare Access | ChatGPT custom connector | consent + tool round-trip | ✅ | 2026-07-07 | Same CF Access deployment as the row above (`mcp-sso.<zone>`). ChatGPT's custom connector completed register→authorize (CF Access OTP)→consent→token→`/mcp` `ping`; bridge `sub` = the CF opaque `sub` (`f74dc462-…`). Entra × ChatGPT remains ⬜. |
 | console pairing / Cloudflare Access / Entra | **api-key-gateway example** (this repo) | full proxied round trip: client → gateway → token-only backend | ⬜ | — | Owner-run checklist D. The example + its automated integration test shipped; the live-client run is owner-pending. |
 
 ### † Dagger note (the four 2026-07-04 rows)
@@ -53,8 +53,9 @@ OAuth dance complete with no real identity provider (MCP clients don't send
 `Cf-Access-Jwt-Assertion` on their own). `DEV_STUB_SUBJECT` is now **removed** —
 replaced by console pairing ([§17.5](contracts.md)) — and the same DCR/OAuth
 mechanics are covered by the automated e2e (`test/e2e-pairing.test.ts`). The real
-Cloudflare Access identity check — header-injected, fail-closed — still needs its
-own live-client verification (checklist A). Console pairing is for
+Cloudflare Access identity check — header-injected, fail-closed — is now live-verified
+across Claude Code (CLI), Codex CLI, claude.ai, ChatGPT, and the official MCP SDK
+client (matrix row above, 2026-07-07). Console pairing is for
 single-operator/private-console deployments only; **never expose it on a public URL**
 (it erases per-user attribution — see [`gateway-deployment.md`](gateway-deployment.md)).
 
@@ -70,6 +71,23 @@ the observed result (and any caveat) back into the matrix row above.
 The goal: prove a real MCP client completes the flow when Cloudflare Access — not a
 local stub — is the identity source, and that a user NOT in the Access policy is
 rejected.
+
+**Create the Access application path-scoped to `/oauth/authorize*` — not the whole
+hostname.** CF Access is the assertion-injecting proxy for the *browser authorize leg
+only*: it must inject `Cf-Access-Jwt-Assertion` on `/oauth/authorize` (the consent
+`/oauth/authorize/approve` is authenticated by the signed `consent_token`, not the CF
+JWT — gating it under `/oauth/authorize*` is optional session-coherence defense-in-depth,
+not required for the flow). The API paths the MCP client calls server-side —
+`/.well-known/*`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`, and `/mcp` (which
+is protected by the bridge's own audience-bound token) — must stay **public**. A
+whole-hostname Access app gates `/mcp` and `/oauth/token` too, so the client's
+no-cookie requests get a login redirect instead of reaching the verifier and the flow
+cannot complete. (Verified the hard way on 2026-07-07: a whole-hostname app returned
+`302 → login` on every path; rescoping to `/oauth/authorize` + `/oauth/authorize/approve`
+left only the authorize leg gated and the flow completed.) Two capture landmines when
+filling the env below: `CF_ACCESS_ISSUER` is `https://<team>.cloudflareaccess.com` with
+**no trailing slash** (jose matches `iss` exactly); `CF_ACCESS_AUDIENCE` is the app's
+hex **AUD tag**, not the hostname.
 
 ```bash
 # 1. Real signing material + the Cloudflare Access production path on a public https origin:
