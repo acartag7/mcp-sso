@@ -187,8 +187,15 @@ function cached(map: WeakMap<JWK, Promise<ImportedKey>>, jwk: JWK, load: () => P
   return p;
 }
 
+// Same fix-#6 discipline for the HS256 consent key: encode once per (frozen) config.
+const consentSecretCache = new WeakMap<BridgeConfig, Uint8Array>();
 function consentSecret(config: BridgeConfig): Uint8Array {
-  return new TextEncoder().encode(config.consentSigningSecret);
+  let secret = consentSecretCache.get(config);
+  if (!secret) {
+    secret = new TextEncoder().encode(config.consentSigningSecret);
+    consentSecretCache.set(config, secret);
+  }
+  return secret;
 }
 
 function keyId(config: BridgeConfig): string | undefined {
