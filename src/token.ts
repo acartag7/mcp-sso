@@ -1,6 +1,4 @@
-// OAuthTokenUseCase — auth-code exchange, refresh rotation, revocation
-// (contracts §9.4). Refresh enforces RFC 6749 §6 client binding (mismatch revokes
-// the family). Revoke follows RFC 7009: always succeeds, unknown token is a no-op.
+// OAuthTokenUseCase — auth-code exchange, refresh rotation, revocation (contracts §9.4). Refresh enforces RFC 6749 §6 client binding (mismatch revokes the family); revoke follows RFC 7009 (always succeeds; unknown token is a no-op).
 
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
@@ -95,8 +93,9 @@ export class OAuthTokenUseCase {
         clientId: record.clientId, subject: record.subject, scopes: record.scopes,
         expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
       });
+      const response = await this.tokenResponse(record, refreshToken);
       await this.auditToken("oauth.token.authorization_code", "success", record);
-      return await this.tokenResponse(record, refreshToken);
+      return response;
     } catch (error) {
       await this.auditFailure("oauth.token.authorization_code", error, input.clientId);
       throw error;
@@ -134,8 +133,9 @@ export class OAuthTokenUseCase {
         await this.store.revokeRefreshTokenFamily(familyId, new Date(this.clock.nowMs()).toISOString());
         throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
       }
+      const response = await this.tokenResponse(rotated, nextRaw);
       await this.auditToken("oauth.token.refresh", "success", rotated);
-      return await this.tokenResponse(rotated, nextRaw);
+      return response;
     } catch (error) {
       await this.auditFailure("oauth.token.refresh", error, input.clientId);
       throw error;

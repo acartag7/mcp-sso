@@ -17,6 +17,26 @@ const NOW = Math.floor(Date.parse("2026-07-03T12:00:00.000Z") / 1000);
 // deterministic and independent of the wall clock.
 const AT = { currentDate: new Date(NOW * 1000) };
 
+test("createCloudflareAccessIdentity rejects an empty audience (fail-closed: jose skips the value match on a falsy audience)", () => {
+  assert.throws(
+    () => createCloudflareAccessIdentity({ audience: "", certsUrl: CONFIG.certsUrl, issuer: CONFIG.issuer }),
+    /audience is required/,
+  );
+});
+
+test("verifyCloudflareAccessToken also rejects an empty audience (direct-library reuse — Codex P2 on PR #26)", async () => {
+  // A VALID CF token (correct signature/iss/aud/email). Without the guard, jose with
+  // audience:"" enforces aud-presence but skips the value match → accepts it (the bug).
+  const { publicKey, privateKey } = await generateKeyPair("RS256");
+  const token = await new SignJWT({ sub: "sub-1", email: "user@example.com" })
+    .setProtectedHeader({ alg: "RS256" })
+    .setIssuer(CONFIG.issuer).setAudience("aud-123").setIssuedAt(NOW).setExpirationTime(NOW + 3600)
+    .sign(privateKey);
+  const result = await verifyCloudflareAccessToken(token, publicKey, { ...CONFIG, audience: "" });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, "access_jwt_verify_failed");
+});
+
 test("emailAllowed: case-insensitive, trimmed, rejects empty", () => {
   assert.equal(emailAllowed("user@example.com", ["user@example.com"]), true);
   assert.equal(emailAllowed("USER@Example.com", ["user@example.com"]), true);
