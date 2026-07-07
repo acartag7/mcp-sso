@@ -287,7 +287,7 @@ Resolves a **verified subject** from an inbound authorize request. The core's
 `authorize` use-case takes a required `subject: string`; the adapter/composition
 root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
 - **CloudflareAccessIdentity** — verifies `Cf-Access-Jwt-Assertion` (RS256 against
-  CF JWKS, aud/iss checked), subject = verified email.
+  CF JWKS, aud/iss checked), subject = the token's `sub` (a stable CF identity id; `email` the fallback — opaque-`sub`-first, matching the Entra `oid`-first sibling; CF carries the email in a separate claim, so do not key on email).
 - **EntraIdentity** — upstream OIDC auth-code+PKCE against Entra v2.0; ONE app
   registration for the bridge; validate iss/aud/tid; map oid/email → subject. The
   bridge then issues its OWN audience-bound tokens (no passthrough).

@@ -1,6 +1,9 @@
 // CloudflareAccessIdentity — verifies a Cloudflare Access JWT
-// (`Cf-Access-Jwt-Assertion`) so the OAuth subject is the real authenticated email,
-// not a placeholder. RS256 against Cloudflare's public JWKS, aud/iss/exp checked.
+// (`Cf-Access-Jwt-Assertion`) so the OAuth subject is the token's real `sub` (a
+// stable CF identity id; `email` is the fallback), not a placeholder — opaque-
+// `sub`-first, like the Entra `oid`-first sibling. CF carries the email in a
+// separate claim; do NOT key on email. RS256 against Cloudflare's public JWKS,
+// aud/iss/exp checked.
 // The email ALLOWLIST (who may mint a token) is enforced by the CF Zero Trust app
 // policy by default; an optional emailAllowlist adds a defense-in-depth second gate.
 //
