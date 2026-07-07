@@ -1,0 +1,32 @@
+# mcp-sso
+
+> OAuth 2.1 for remote MCP servers: a spec-correct resource-server verifier
+> (RFC 9728, WWW-Authenticate, fail-closed audience checks) plus a small
+> AS-lite bridge that speaks DCR + PKCE + consent to MCP clients while a
+> pluggable upstream IdP (Cloudflare Access, Entra ID, console pairing) stays
+> the identity source. The bridge mints its own audience-bound tokens; upstream
+> tokens never pass through. OAuth in the MCP server, not an API key in the
+> client's config.
+
+## Overview
+
+- [README](README.md): What the library is, what ships today, quickstart, the API-key-gateway shape, machine-to-machine (`client_credentials`), alternatives table, and roadmap.
+- [docs/contracts.md](docs/contracts.md): The full contract surface — ports, schemas, error shapes, and the §16 spec-conformance matrix (RFC 9728/8414/7591/7009/8707/9207, PKCE, redirect policy). Read before changing any port/schema/error.
+- [docs/threat-model.md](docs/threat-model.md): STRIDE threat table, the refresh-token replay-detection control, accepted boundaries, and implementation gates. The security-product source of truth.
+
+## Guides
+
+- [docs/gateway-deployment.md](docs/gateway-deployment.md): SSO-in-front-of-a-token-only-backend pattern — the one-gateway-per-backend topology, server-side-only credential injection, and Kubernetes notes (signing material vs. backend credential take separate code paths).
+- [docs/authorization.md](docs/authorization.md): Where IdP-side access control (Entra app assignment / Conditional Access, Cloudflare Access policy) ends and mcp-sso's defense-in-depth gates (subject allowlists, group→scope ceilings) begin.
+- [docs/audit-deployment.md](docs/audit-deployment.md): Audit-logging deployer guide — JSONL file sink, https-only no-redirect webhook sink, `combineAudit` fan-out, and the fail-open residual.
+- [docs/troubleshooting.md](docs/troubleshooting.md): Tunnel gotchas, identity-provider failure modes, and client-integration debugging notes.
+- [docs/live-verification.md](docs/live-verification.md): The provider × client verification matrix (the single source of truth) and per-provider owner-run checklists for real MCP clients (claude.ai, ChatGPT, Claude Code, curl).
+
+## Reference
+
+- [docs/dependency-ledger.md](docs/dependency-ledger.md): Every pinned dependency with version + publish date, enforcing the 15-day minimum-release-age rule and the `jose`-only runtime-dep policy.
+
+## Examples
+
+- [examples/fastify-sqlite](examples/fastify-sqlite): Full reference app — the bridge wired to Fastify + the recommended `node:sqlite` store, serving a minimal protected `/mcp`; identity selected by env (Cloudflare Access, Entra ID, or zero-setup console pairing). Start here for local dev.
+- [examples/api-key-gateway](examples/api-key-gateway): mcp-sso as the SSO front door for a token-only stub backend MCP server — backend credential isolated behind a `getBackendCredential()` closure, transparent-proxy rules (Origin validation, header allowlisting, client-`Authorization` stripping, SSE streaming) implemented and asserted.
