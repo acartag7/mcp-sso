@@ -71,6 +71,7 @@ export async function verifyCloudflareAccessToken(
   options?: CloudflareAccessVerifyOptions,
 ): Promise<IdentityResult> {
   try {
+    if (!config.audience) throw new Error("audience is required"); // fail-closed sibling of the factory guard: an empty audience lets jose skip the value match
     const { payload } = await jwtVerify<AccessJwtPayload>(token, key, {
       algorithms: ["RS256"],
       audience: config.audience,
