@@ -227,15 +227,22 @@ present to click a consent screen. Implements the official MCP extension
 Machine clients are **provisioned out-of-band** by an operator. Out-of-band
 means there is no HTTP endpoint for this at all: you run
 `provisionMachineClient` yourself — an admin script, a REPL, your own
-provisioning tooling — as code with direct access to the same `ClientStore`
-the bridge uses (the same sqlite file or MySQL database). The record lands in
-the shared store; the secret is returned once, to whoever ran the script. The
-open `/oauth/register` endpoint rejects machine-shaped registrations by design
+provisioning tooling — constructed with the same `ClientStore` instance (or
+one reading the same database) that the bridge is configured with, so the
+record your script saves is the record the token endpoint later reads. Note
+that `ClientStore` is a two-method port (`save`/`find`) **you implement
+against your own database** — the shipped `/store/sqlite` and `/store/mysql`
+adapters cover the OAuth `StorePort` (codes, refresh tokens, consent JTIs)
+and do NOT provide a `ClientStore`. Machine-client records must survive
+restarts, so back the port with real persistence (a one-table JSON store is
+enough). The secret is returned once, to whoever ran the script. The open
+`/oauth/register` endpoint rejects machine-shaped registrations by design
 (the MCP extension itself states DCR is not used for this grant — and an HTTP
 provisioning surface handing out durable secrets would be an attack surface).
-Requirements: stored-DCR mode (`dcr: { mode: "stored", store }`) and the
-explicit opt-in `clientCredentials: { enabled: true }` in `createBridgeConfig`
-— a disabled grant is never advertised in the discovery metadata.
+Requirements: stored-DCR mode (`dcr: { mode: "stored", store }` — the
+`ClientStore` above) and the explicit opt-in
+`clientCredentials: { enabled: true }` in `createBridgeConfig` — a disabled
+grant is never advertised in the discovery metadata.
 
 ```ts
 import { provisionMachineClient, noopAudit } from "mcp-sso";
