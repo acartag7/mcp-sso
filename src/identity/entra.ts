@@ -185,7 +185,7 @@ export type EntraVerifyKey = Awaited<ReturnType<typeof importJWK>>;
 
 export interface EntraVerifyOptions {
   currentDate?: Date;
-  /** If set, the id_token's `nonce` claim must equal this (OIDC request binding). */
+  /** If set, the id_token's `nonce` claim must equal this (OIDC request binding). If UNSET — e.g. header-driven deployments where a fronting proxy delivers the id_token — the token is NOT replay-bound here; the proxy that minted the nonce owns replay protection (threat-model row 12). */
   expectedNonce?: string;
 }
 
