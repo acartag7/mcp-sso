@@ -218,6 +218,7 @@ export class OAuthTokenUseCase {
   }
 
   private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string): Promise<UserTokenResponse> {
+    if (record.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace"); // legacy pre-guard records must not mint mcc_ user tokens
     const scopes = normalizeScopes(record.scopes, this.config.scopeCatalog, this.config.defaultScopes);
     const accessToken = await signAccessToken({ subject: record.subject, clientId: record.clientId, scopes }, this.config, this.clock);
     return {

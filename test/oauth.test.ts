@@ -9,7 +9,7 @@ import {
   type BridgeConfig, AuthConfigError, createBridgeConfig, originOf, KNOWN_CONFIG_KEYS,
 } from "../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../src/errors.ts";
-import { pkceChallenge, verifyAccessToken } from "../src/crypto.ts";
+import { pkceChallenge, sha256Hex, verifyAccessToken } from "../src/crypto.ts";
 import { requireScope } from "../src/scopes.ts";
 import { buildUnauthorizedChallenge } from "../src/challenge.ts";
 import {
@@ -300,6 +300,32 @@ test("prepare rejects a subject in the reserved mcc_ machine namespace (RFC 9700
       codeChallenge: pkceChallenge("verifier-12345678901234567890"), codeChallengeMethod: "S256", subject: "mcc_impostor",
     }),
     (e: unknown) => e instanceof OAuthError && e.code === "access_denied" && e.status === 401 && !e.redirect,
+  );
+  await ctx.store.close();
+});
+
+test("token issuance rejects a LEGACY stored grant whose subject is in the reserved mcc_ namespace (both paths)", async () => {
+  const ctx = setup();
+  const verifier = "verifier-12345678901234567890";
+  // A stored auth code minted by a pre-guard version with an mcc_ subject:
+  await ctx.store.saveAuthCode({
+    codeHash: sha256Hex("legacy-code"), clientId: "client-1", subject: "mcc_legacy",
+    redirectUri: REDIRECT, resource: ctx.config.resource, scopes: ["mcp:read"],
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256", expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  await assert.rejects(
+    ctx.token.exchangeAuthorizationCode({ grantType: "authorization_code", code: "legacy-code", redirectUri: REDIRECT, clientId: "client-1", codeVerifier: verifier }),
+    (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant",
+  );
+  // A legacy refresh record with an mcc_ subject must not mint on rotation either:
+  const rawRefresh = "rt.fam-legacy.secret-1234567890";
+  await ctx.store.saveRefreshToken({
+    tokenHash: sha256Hex(rawRefresh), familyId: "fam-legacy", previousTokenHash: null,
+    clientId: "client-1", subject: "mcc_legacy", scopes: ["mcp:read"], expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  await assert.rejects(
+    ctx.token.refresh({ grantType: "refresh_token", refreshToken: rawRefresh, clientId: "client-1" }),
+    (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant",
   );
   await ctx.store.close();
 });

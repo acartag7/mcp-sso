@@ -274,8 +274,9 @@ durable credential): request a new token when `expires_in` lapses. Rotate
 secrets with `rotateMachineClientSecret` (up to two active secrets with a grace
 overlap, default 24 h, so deploys don't race the rotation). The token's `sub`
 is the `mcc_…` client id, and the prefix is reserved in both directions — a
-user-grant subject starting `mcc_` is rejected at authorize — so a resource
-server can safely classify `sub` by prefix.
+user-grant subject starting `mcc_` is rejected at authorize and re-checked at
+token issuance (so a stored grant from an older version can't slip through) —
+so a resource server can safely classify `sub` by prefix.
 Full contract: [`docs/contracts.md`](docs/contracts.md) §17.2 / §9.4.
 
 ## Enterprise: the Entra DCR wall
