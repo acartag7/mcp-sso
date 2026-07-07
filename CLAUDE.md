@@ -58,6 +58,43 @@ branding in this repo.
 - License: MIT. Repo is private until v0.1; treat every commit as
   will-be-public (no secrets, no internal references).
 
+## Always-check list (every PR — each item exists because a review round caught the real defect it describes)
+
+1. **Claims-vs-enforcement.** Every guarantee sentence in README/docs/contracts
+   ("never", "cannot", "always", "safely", "only", "rejected", "enforced") must
+   trace to enforcing code or a test. Mechanically, before pushing any
+   doc-touching diff:
+   `git diff | grep "^+" | grep -iE "never|always|cannot|enforced|rejected|only|must|guarantee|safely"`
+   and verify each hit against a file:line. When enforcement is a few lines,
+   ADD the enforcement instead of softening the sentence. A claim naming a
+   function must name the function that actually does the work (verifying
+   wrapper vs pure validator).
+2. **Review rounds include a claims dimension.** Reviewers find wrong code by
+   default, not missing code — so alongside the defect-hunting reviewers, one
+   reviewer gets the extracted guarantee list (from contracts/README) for the
+   files under review and must return the enforcing file:line per claim, or a
+   finding. NON-NEGOTIABLE for CIMD (§17.1) — that contract is entirely
+   MUST-level guarantees (SSRF blocklists, DNS pinning, redirect-following
+   forbidden, byte/time caps); every one gets a traced enforcement point AND a
+   negative test before the session is called done.
+3. **Sibling sweep = exhaustive grep, never an eyeball pass.** This repo's
+   recurring sibling axes: the 3 adapters (fastify/express/hono), the 3 stores
+   (memory/sqlite/mysql — parity via the SHARED conformance suite, never a
+   store-specific test), example vs library, quickstart path vs deployment
+   branch, and **entry-point guard vs stored-state** — a guard at
+   prepare/register always has a sibling for records already in the store.
+4. **Guards run before side effects.** A rejection must not leave state:
+   check ordering against store writes and success-audit emits. A success
+   audit followed by a failure for the same operation means the guard is in
+   the wrong place.
+5. **Mutation-verify every fix.** Revert the fix in isolation — exactly its
+   regression tests must go red. COMMIT before running mutation reverts;
+   never a bare `git checkout -- .` with uncommitted work in the tree.
+6. **Gates + release floor.** typecheck · check:lines · test · build on every
+   push; `npm pack --dry-run` (dist + docs + README + LICENSE only) before any
+   release; the merge gate on reviewed PRs is the review bot's
+   "Reviewed commit: <head sha>" marker — never a silence window.
+
 ## Verify before claiming done
 
 Run the real flow, not just unit tests: register → authorize (through the
