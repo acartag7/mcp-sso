@@ -36,7 +36,7 @@ export interface ConsentRequestClaims {
 export interface AccessTokenClaims {
   subject: string;
   clientId: string;
-  scopes: string[];
+  scopes: string[]; machine?: boolean; // client_credentials grant ⇒ mints the gty marker claim (§17.2)
 }
 
 export interface VerifiedAccessToken {
@@ -127,7 +127,7 @@ export async function verifyConsentToken(token: string, config: BridgeConfig, cl
 export async function signAccessToken(claims: AccessTokenClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
   const now = nowSeconds(clock);
   const key = await signKey(config);
-  return await new SignJWT({ client_id: claims.clientId, scope: scopeString(claims.scopes) })
+  return await new SignJWT({ client_id: claims.clientId, scope: scopeString(claims.scopes), ...(claims.machine ? { gty: "client_credentials" } : {}) })
     .setProtectedHeader({ alg: "ES256", kid: keyId(config), typ: "JWT" })
     .setIssuer(config.issuer)
     .setSubject(claims.subject)
@@ -146,7 +146,9 @@ export async function verifyAccessToken(token: string, config: BridgeConfig, clo
       audience: config.resource,
       currentDate: new Date(clock.nowMs()),
     });
-    return accessClaims(payload);
+    const claims = accessClaims(payload);
+    if (claims.subject.startsWith("mcc_") && !(claims.clientId === claims.subject && payload.gty === "client_credentials")) throw new Error("reserved-namespace sub without machine binding"); // machine tokens carry sub===client_id AND the gty marker (§17.2); anything else = pre-guard masquerade
+    return claims;
   } catch {
     throw new OAuthError("invalid_token", "Bearer token is invalid", 401);
   }

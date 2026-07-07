@@ -533,8 +533,15 @@ two error channels, split by whether the `redirect_uri` is trusted yet:
 
 - **Direct HTTP error (NEVER redirect)** — pre-validation failures where the
   redirect destination is untrusted: identity not resolved/rejected (the resource
-  owner could not be authenticated), missing `client_id`, and `redirect_uri`
-  failing §10. Also, at `approve`: a CSRF/`origin` failure (`invalid_origin`) and
+  owner could not be authenticated), a subject in the reserved `mcc_` machine
+  namespace (RFC 9700 §4.15.1 — user grants must never mint a `sub` an RS would
+  classify as a machine token; enforced at `prepare`, the choke point every
+  user grant passes through, and re-checked in the §9.4 grant handlers BEFORE
+  any side effect so a legacy stored code/refresh record from a pre-guard
+  deployment cannot keep minting: a legacy code is burned (single-use) but no
+  refresh token is saved and no success is audited; a legacy refresh record's
+  WHOLE family is revoked — `invalid_grant` either way), missing `client_id`,
+  and `redirect_uri` failing §10. Also, at `approve`: a CSRF/`origin` failure (`invalid_origin`) and
   consent-token integrity failures (replay/invalid/expired). These throw
   `OAuthError`; the adapter answers a direct 4xx with the §9.5 body (no `Location`).
 - **Redirect to `redirect_uri?error=<code>[&state=…][&error_description=…]`** —
@@ -1206,7 +1213,28 @@ in this flow."* Decisions:
     → `{ clientId, clientSecret }`. `clientId` = `mcc_<random>` — the prefix is
     enforced, giving a namespace disjoint from human subjects and from `mcpdc_`
     ids (RFC 9700 §4.15.1: the AS MUST let the RS distinguish machine tokens
-    from user tokens; here `sub` starting `mcc_` ⇔ machine). The secret is
+    from user tokens; here `sub` starting `mcc_` ⇔ machine — made sound in
+    BOTH directions by `prepare` rejecting any user-grant subject that starts
+    with `mcc_` (§9.3 direct-error list) AND by the token grant handlers
+    (code-exchange and refresh) rejecting a stored record whose subject is in
+    the reserved namespace with `invalid_grant` BEFORE any side effect — the
+    exchange saves no refresh token and audits no success (the single-use
+    code is burned); the refresh path revokes the legacy family outright so
+    it stops rotating — so neither a live IdP-supplied subject nor a legacy
+    stored grant from a pre-guard deployment can impersonate the machine
+    namespace, and the audit/refresh ledger reflects only real issuance —
+    THIRD enforcement point: machine access tokens mint a
+    `gty: "client_credentials"` marker claim, and `verifyAccessToken`
+    accepts an `mcc_` `sub` ONLY with `sub == client_id` (RFC 9068 §2.2)
+    AND that marker. The pair is required because stateless-DCR clients
+    choose their own `client_id`, so `sub == client_id` alone could be
+    satisfied by a pre-guard human token; the marker cannot, since only the
+    machine grant mints it and the grant first ships in the SAME release as
+    the marker (no legitimate unmarked machine token can exist from any
+    published version — and any from pre-release `main` expires within
+    `accessTokenTtlSeconds`). Residual: an RS that decodes these JWTs
+    WITHOUT mcp-sso's verifier must classify by the same pair, never the
+    `sub` prefix alone — stated in the README). The secret is
     returned ONCE and never retrievable. `allowedScopes` MUST be a non-empty
     subset of `catalog` (each entry a single RFC 6749 scope token; unknown or
     malformed ⇒ `invalid_scope`) — the per-client ceiling is fixed at

@@ -16,9 +16,7 @@ import {
   signConsentToken, verifyConsentToken,
 } from "./crypto.ts";
 import { assertAllowedScopesCeiling, normalizeScopes } from "./scopes.ts";
-import {
-  assertAllowedRedirectUri, assertRedirectAllowedForClient,
-} from "./redirect.ts";
+import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "./redirect.ts";
 import { buildErrorRedirect } from "./challenge.ts";
 
 export interface OAuthAuthorizationDeps {
@@ -87,6 +85,7 @@ export class OAuthAuthorizationUseCase {
     try {
       // --- PRE-VALIDATION: direct errors, never redirect ---
       if (!input.subject) throw new OAuthError("access_denied", "Authenticated subject is required", 401);
+      if (input.subject.startsWith("mcc_")) throw new OAuthError("access_denied", "Subject uses the reserved machine-client namespace", 401); // RFC 9700 §4.15.1: sub-prefix classification stays sound
       // §17.4: fail closed on a malformed ceiling here too — prepare is exported,
       // so a direct caller bypassing Bridge.resolveIdentity is still guarded.
       const ceiling = assertAllowedScopesCeiling(input.allowedScopes);

@@ -9,7 +9,7 @@ import {
   type BridgeConfig, AuthConfigError, createBridgeConfig, originOf, KNOWN_CONFIG_KEYS,
 } from "../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../src/errors.ts";
-import { pkceChallenge, verifyAccessToken } from "../src/crypto.ts";
+import { pkceChallenge, sha256Hex, signAccessToken, verifyAccessToken } from "../src/crypto.ts";
 import { requireScope } from "../src/scopes.ts";
 import { buildUnauthorizedChallenge } from "../src/challenge.ts";
 import {
@@ -289,6 +289,68 @@ test("Deny redirects access_denied without consuming the consent jti (fix #5)", 
   // the consent jti was NOT consumed: the same token can still be approved
   const approved = await ctx.auth.approve({ consentToken: prepared.consentToken, approved: true, origin: "https://auth.test" });
   assert.ok(approved.code, "Deny did not consume the consent token");
+  await ctx.store.close();
+});
+
+test("prepare rejects a subject in the reserved mcc_ machine namespace (RFC 9700 distinguishability, both directions)", async () => {
+  const ctx = setup();
+  await assert.rejects(
+    ctx.auth.prepare({
+      clientId: "client-1", redirectUri: REDIRECT, responseType: "code",
+      codeChallenge: pkceChallenge("verifier-12345678901234567890"), codeChallengeMethod: "S256", subject: "mcc_impostor",
+    }),
+    (e: unknown) => e instanceof OAuthError && e.code === "access_denied" && e.status === 401 && !e.redirect,
+  );
+  await ctx.store.close();
+});
+
+test("verifier accepts an mcc_ sub only with sub==client_id AND the gty marker — pre-upgrade tokens can't masquerade as machine", async () => {
+  const ctx = setup();
+  const isInvalidToken = (e: unknown): boolean => e instanceof OAuthError && e.code === "invalid_token" && e.status === 401;
+  // Pre-guard HUMAN token, mcc_ subject, foreign client_id: rejected.
+  const forged = await signAccessToken({ subject: "mcc_impostor", clientId: "mcpdc_human1", scopes: ["mcp:read"] }, ctx.config, ctx.clock);
+  await assert.rejects(verifyAccessToken(forged, ctx.config, ctx.clock), isInvalidToken);
+  // Stateless-DCR masquerade: the client CHOSE client_id === the mcc_ subject, but no gty marker: rejected.
+  const statelessForged = await signAccessToken({ subject: "mcc_alice", clientId: "mcc_alice", scopes: ["mcp:read"] }, ctx.config, ctx.clock);
+  await assert.rejects(verifyAccessToken(statelessForged, ctx.config, ctx.clock), isInvalidToken);
+  // A legitimate machine token (sub === client_id + the gty marker only the machine grant mints) verifies.
+  const machine = await signAccessToken({ subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], machine: true }, ctx.config, ctx.clock);
+  assert.equal((await verifyAccessToken(machine, ctx.config, ctx.clock)).subject, "mcc_svc1");
+  await ctx.store.close();
+});
+
+test("token issuance rejects a LEGACY stored grant whose subject is in the reserved mcc_ namespace (both paths)", async () => {
+  const ctx = setup();
+  const verifier = "verifier-12345678901234567890";
+  // A stored auth code minted by a pre-guard version with an mcc_ subject:
+  await ctx.store.saveAuthCode({
+    codeHash: sha256Hex("legacy-code"), clientId: "client-1", subject: "mcc_legacy",
+    redirectUri: REDIRECT, resource: ctx.config.resource, scopes: ["mcp:read"],
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256", expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  await assert.rejects(
+    ctx.token.exchangeAuthorizationCode({ grantType: "authorization_code", code: "legacy-code", redirectUri: REDIRECT, clientId: "client-1", codeVerifier: verifier }),
+    (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant",
+  );
+  const nowIso = new Date(NOW_MS).toISOString();
+  // No side effects: the rejection saved NO refresh token for the legacy subject.
+  assert.deepEqual(await ctx.store.findGrantedScopes("mcc_legacy", "client-1", nowIso), []);
+  // A legacy refresh record with an mcc_ subject must not mint on rotation either
+  // (family id must satisfy parseRefreshFamilyId: >=16 chars of [A-Za-z0-9_-]):
+  const legacyFamily = "famlegacy0123456789";
+  const rawRefresh = `rt.${legacyFamily}.secret-1234567890`;
+  await ctx.store.saveRefreshToken({
+    tokenHash: sha256Hex(rawRefresh), familyId: legacyFamily, previousTokenHash: null,
+    clientId: "client-1", subject: "mcc_legacy", scopes: ["mcp:read"], expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  await assert.rejects(
+    ctx.token.refresh({ grantType: "refresh_token", refreshToken: rawRefresh, clientId: "client-1" }),
+    (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant",
+  );
+  // The legacy family was revoked outright (rotation side effects undone at the ledger level)...
+  assert.deepEqual(await ctx.store.findGrantedScopes("mcc_legacy", "client-1", nowIso), []);
+  // ...and the audit trail shows NO success for the reserved subject — only failures.
+  assert.ok(ctx.audit.events.every((e) => !(e.subject === "mcc_legacy" && e.status === "success")), "no success event for a reserved-namespace subject");
   await ctx.store.close();
 });
 
