@@ -292,6 +292,30 @@ test("Deny redirects access_denied without consuming the consent jti (fix #5)", 
   await ctx.store.close();
 });
 
+test("token issuance: a mint failure audits failure-only, never success-then-failure (always-check #4)", async () => {
+  const ctx = setup();
+  // A shape-valid-but-invalid signing key: createBridgeConfig accepts it (presence
+  // check only), but jose importJWK rejects it at first signAccessToken → mint throws.
+  const badConfig = createBridgeConfig({
+    issuer: "https://auth.test", resource: "https://api.test/mcp",
+    consentSigningSecret: "test-consent-secret-with-enough-entropy",
+    signingPrivateJwk: { kty: "EC", crv: "P-256", x: "x", y: "y", d: "d", alg: "ES256", kid: "bad" } as JWK,
+    signingKeyId: "bad", redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
+    allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  const badToken = new OAuthTokenUseCase({ config: badConfig, store: ctx.store, clock: ctx.clock, audit: ctx.audit });
+  const verifier = "valid-verifier-123456789012345678901234567890123";
+  const { code } = await approveCode(ctx, verifier, "mcp:read"); // real-key auth mints a valid code
+  await assert.rejects(
+    badToken.exchangeAuthorizationCode({ grantType: "authorization_code", code, redirectUri: REDIRECT, clientId: "client-1", codeVerifier: verifier }),
+  );
+  const events = ctx.audit.events.filter((e) => e.event === "oauth.token.authorization_code");
+  assert.equal(events.length, 1, "exactly ONE audit event (the failure) — no success-then-failure");
+  assert.equal(events[0]?.status, "failure");
+  await ctx.store.close();
+});
+
 test("prepare rejects a subject in the reserved mcc_ machine namespace (RFC 9700 distinguishability, both directions)", async () => {
   const ctx = setup();
   await assert.rejects(
@@ -321,7 +345,7 @@ test("verifier accepts an mcc_ sub only with sub==client_id AND the gty marker �
 
 test("token issuance rejects a LEGACY stored grant whose subject is in the reserved mcc_ namespace (both paths)", async () => {
   const ctx = setup();
-  const verifier = "verifier-12345678901234567890";
+  const verifier = "valid-verifier-123456789012345678901234567890123";
   // A stored auth code minted by a pre-guard version with an mcc_ subject:
   await ctx.store.saveAuthCode({
     codeHash: sha256Hex("legacy-code"), clientId: "client-1", subject: "mcc_legacy",

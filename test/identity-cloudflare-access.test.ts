@@ -17,6 +17,13 @@ const NOW = Math.floor(Date.parse("2026-07-03T12:00:00.000Z") / 1000);
 // deterministic and independent of the wall clock.
 const AT = { currentDate: new Date(NOW * 1000) };
 
+test("createCloudflareAccessIdentity rejects an empty audience (fail-closed: jose skips the value match on a falsy audience)", () => {
+  assert.throws(
+    () => createCloudflareAccessIdentity({ audience: "", certsUrl: CONFIG.certsUrl, issuer: CONFIG.issuer }),
+    /audience is required/,
+  );
+});
+
 test("emailAllowed: case-insensitive, trimmed, rejects empty", () => {
   assert.equal(emailAllowed("user@example.com", ["user@example.com"]), true);
   assert.equal(emailAllowed("USER@Example.com", ["user@example.com"]), true);

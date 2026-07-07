@@ -87,6 +87,7 @@ export async function verifyCloudflareAccessToken(
 /** Build a CloudflareAccess IdentityPort. `input` is the raw JWT string; the JWKS
  *  is fetched (and cached) from the https certsUrl. */
 export function createCloudflareAccessIdentity(config: CloudflareAccessConfig): IdentityPort {
+  if (!config.audience) throw new Error("audience is required (a non-empty CF Access AUD tag) — an empty audience lets jose enforce aud-presence but skip the value match, accepting any CF JWT regardless of app");
   assertHttpsTrustRoot(config.certsUrl, "certsUrl");
   assertHttpsTrustRoot(config.issuer, "issuer");
   const jwks = createRemoteJWKSet(new URL(config.certsUrl), { cacheMaxAge: 5 * 60 * 1000 });
