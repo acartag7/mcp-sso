@@ -273,10 +273,17 @@ or one later removed from the deployment's `scopeCatalog` — is `invalid_scope`
 durable credential): request a new token when `expires_in` lapses. Rotate
 secrets with `rotateMachineClientSecret` (up to two active secrets with a grace
 overlap, default 24 h, so deploys don't race the rotation). The token's `sub`
-is the `mcc_…` client id, and the prefix is reserved in both directions — a
-user-grant subject starting `mcc_` is rejected at authorize and re-checked at
-token issuance (so a stored grant from an older version can't slip through) —
-so a resource server can safely classify `sub` by prefix.
+is the `mcc_…` client id, and the prefix is reserved in both directions —
+enforced at three points: a user-grant subject starting `mcc_` is rejected at
+authorize, re-checked at token issuance (a stored grant from an older version
+can't slip through), and mcp-sso's own verifier rejects any `mcc_` `sub` whose
+`client_id` doesn't equal it (machine tokens always carry `sub == client_id`,
+RFC 9068 — so even a still-valid access token minted by a pre-0.2.0 version
+can't masquerade). If a third-party resource server reads these JWTs directly
+instead of using mcp-sso's verifier, it should apply the same
+`sub == client_id` check for machine classification — or, after upgrading from
+a version that allowed `mcc_` human subjects, wait out `accessTokenTtlSeconds`
+before trusting the prefix alone.
 Full contract: [`docs/contracts.md`](docs/contracts.md) §17.2 / §9.4.
 
 ## Enterprise: the Entra DCR wall

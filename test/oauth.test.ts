@@ -9,7 +9,7 @@ import {
   type BridgeConfig, AuthConfigError, createBridgeConfig, originOf, KNOWN_CONFIG_KEYS,
 } from "../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../src/errors.ts";
-import { pkceChallenge, sha256Hex, verifyAccessToken } from "../src/crypto.ts";
+import { pkceChallenge, sha256Hex, signAccessToken, verifyAccessToken } from "../src/crypto.ts";
 import { requireScope } from "../src/scopes.ts";
 import { buildUnauthorizedChallenge } from "../src/challenge.ts";
 import {
@@ -301,6 +301,20 @@ test("prepare rejects a subject in the reserved mcc_ machine namespace (RFC 9700
     }),
     (e: unknown) => e instanceof OAuthError && e.code === "access_denied" && e.status === 401 && !e.redirect,
   );
+  await ctx.store.close();
+});
+
+test("verifier rejects an mcc_ sub whose client_id doesn't match — a pre-upgrade access token can't masquerade as machine", async () => {
+  const ctx = setup();
+  // A still-valid access token minted by a pre-guard version for a HUMAN subject in the reserved namespace:
+  const forged = await signAccessToken({ subject: "mcc_impostor", clientId: "mcpdc_human1", scopes: ["mcp:read"] }, ctx.config, ctx.clock);
+  await assert.rejects(
+    verifyAccessToken(forged, ctx.config, ctx.clock),
+    (e: unknown) => e instanceof OAuthError && e.code === "invalid_token" && e.status === 401,
+  );
+  // A legitimate machine token (sub === client_id, RFC 9068 §2.2) still verifies.
+  const machine = await signAccessToken({ subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"] }, ctx.config, ctx.clock);
+  assert.equal((await verifyAccessToken(machine, ctx.config, ctx.clock)).subject, "mcc_svc1");
   await ctx.store.close();
 });
 

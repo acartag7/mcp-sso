@@ -146,7 +146,9 @@ export async function verifyAccessToken(token: string, config: BridgeConfig, clo
       audience: config.resource,
       currentDate: new Date(clock.nowMs()),
     });
-    return accessClaims(payload);
+    const claims = accessClaims(payload);
+    if (claims.subject.startsWith("mcc_") && claims.clientId !== claims.subject) throw new Error("reserved-namespace sub without machine binding"); // machine tokens carry sub===client_id (RFC 9068 §2.2); anything else = pre-guard masquerade (§17.2)
+    return claims;
   } catch {
     throw new OAuthError("invalid_token", "Bearer token is invalid", 401);
   }

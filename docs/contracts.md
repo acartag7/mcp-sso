@@ -1222,7 +1222,16 @@ in this flow."* Decisions:
     code is burned); the refresh path revokes the legacy family outright so
     it stops rotating — so neither a live IdP-supplied subject nor a legacy
     stored grant from a pre-guard deployment can impersonate the machine
-    namespace, and the audit/refresh ledger reflects only real issuance). The secret is
+    namespace, and the audit/refresh ledger reflects only real issuance —
+    THIRD enforcement point: `verifyAccessToken` rejects an `mcc_` `sub`
+    whose `client_id` claim does not equal it; machine tokens always carry
+    `sub == client_id` (RFC 9068 §2.2) and DCR client ids are
+    `mcpdc_`-prefixed (no collision), so even an ALREADY-ISSUED stateless
+    access token from a pre-guard deployment cannot masquerade through
+    mcp-sso's verifier for its residual `accessTokenTtlSeconds`; residual: an
+    RS that decodes these JWTs WITHOUT mcp-sso's verifier must apply the same
+    `sub == client_id` check or wait out the access-token TTL post-upgrade,
+    stated in the README). The secret is
     returned ONCE and never retrievable. `allowedScopes` MUST be a non-empty
     subset of `catalog` (each entry a single RFC 6749 scope token; unknown or
     malformed ⇒ `invalid_scope`) — the per-client ceiling is fixed at
