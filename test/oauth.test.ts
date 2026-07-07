@@ -292,6 +292,18 @@ test("Deny redirects access_denied without consuming the consent jti (fix #5)", 
   await ctx.store.close();
 });
 
+test("prepare rejects a subject in the reserved mcc_ machine namespace (RFC 9700 distinguishability, both directions)", async () => {
+  const ctx = setup();
+  await assert.rejects(
+    ctx.auth.prepare({
+      clientId: "client-1", redirectUri: REDIRECT, responseType: "code",
+      codeChallenge: pkceChallenge("verifier-12345678901234567890"), codeChallengeMethod: "S256", subject: "mcc_impostor",
+    }),
+    (e: unknown) => e instanceof OAuthError && e.code === "access_denied" && e.status === 401 && !e.redirect,
+  );
+  await ctx.store.close();
+});
+
 test("approve without an explicit approved:true is a Deny at the CORE layer (§9.3 fail-closed)", async () => {
   const ctx = setup();
   const prepared = await ctx.auth.prepare({

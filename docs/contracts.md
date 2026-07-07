@@ -533,7 +533,10 @@ two error channels, split by whether the `redirect_uri` is trusted yet:
 
 - **Direct HTTP error (NEVER redirect)** — pre-validation failures where the
   redirect destination is untrusted: identity not resolved/rejected (the resource
-  owner could not be authenticated), missing `client_id`, and `redirect_uri`
+  owner could not be authenticated), a subject in the reserved `mcc_` machine
+  namespace (RFC 9700 §4.15.1 — user grants must never mint a `sub` an RS would
+  classify as a machine token; enforced at `prepare`, the choke point every
+  user grant passes through), missing `client_id`, and `redirect_uri`
   failing §10. Also, at `approve`: a CSRF/`origin` failure (`invalid_origin`) and
   consent-token integrity failures (replay/invalid/expired). These throw
   `OAuthError`; the adapter answers a direct 4xx with the §9.5 body (no `Location`).
@@ -1206,7 +1209,10 @@ in this flow."* Decisions:
     → `{ clientId, clientSecret }`. `clientId` = `mcc_<random>` — the prefix is
     enforced, giving a namespace disjoint from human subjects and from `mcpdc_`
     ids (RFC 9700 §4.15.1: the AS MUST let the RS distinguish machine tokens
-    from user tokens; here `sub` starting `mcc_` ⇔ machine). The secret is
+    from user tokens; here `sub` starting `mcc_` ⇔ machine — made sound in
+    BOTH directions by `prepare` rejecting any user-grant subject that starts
+    with `mcc_`, §9.3 direct-error list, so an IdP-supplied subject cannot
+    impersonate the machine namespace). The secret is
     returned ONCE and never retrievable. `allowedScopes` MUST be a non-empty
     subset of `catalog` (each entry a single RFC 6749 scope token; unknown or
     malformed ⇒ `invalid_scope`) — the per-client ceiling is fixed at
