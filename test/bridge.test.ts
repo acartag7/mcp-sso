@@ -137,6 +137,25 @@ test("bridge: Deny redirects access_denied (fix #5)", async () => {
   assert.equal(u.searchParams.get("state"), "deny");
 });
 
+test("bridge: approve WITHOUT an approved field is a Deny, never an auto-approve (§9.3 fail-closed)", async () => {
+  const ctx = setup();
+  const verifier = "v-12345678901234567890123456789012345678";
+  const page = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", state: "noval" } }), { subject: SUBJECT });
+  const consentToken = extractConsentToken(String(page.body));
+  // No `approved` key at all — and a malformed one — must both deny.
+  for (const body of [{ consent_token: consentToken }, { consent_token: consentToken, approved: "yes" }]) {
+    const res = await ctx.bridge.handleApprove(req({ body, headers: { origin: "https://auth.test" } }));
+    assert.equal(res.status, 302);
+    const u = new URL(res.headers.location as string);
+    assert.equal(u.searchParams.get("error"), "access_denied");
+    assert.equal(u.searchParams.get("code"), null, "no code minted");
+  }
+  // The explicit Approve still works afterwards (deny does not consume the jti).
+  const ok = await ctx.bridge.handleApprove(req({ body: { consent_token: consentToken, approved: "true" }, headers: { origin: "https://auth.test" } }));
+  assert.equal(ok.status, 302);
+  assert.ok(new URL(ok.headers.location as string).searchParams.get("code"), "explicit approve mints a code");
+});
+
 test("bridge: rate-limit (fix #7) returns 429 when the port denies", async () => {
   const deny: RateLimitPort = { async check(): Promise<boolean> { return false; } };
   const ctx = setup(deny);

@@ -23,11 +23,20 @@ export interface HonoAdapterOptions {
    *  → upstream.handleAuthorize and GET upstream.callbackPath → upstream.handleCallback.
    *  Mutually exclusive with `identity`/`identityHeader` and `skipAuthorize`. */
   upstream?: UpstreamRedirectFlow;
+  /** Client-IP extractor for the rate-limit key (§6.7) and the audit `ip` field.
+   *  Hono has no framework-validated `req.ip` (fastify/express key on theirs,
+   *  gated by trustProxy config), so the deployer supplies one wired to their
+   *  actual topology — e.g. the rightmost trusted X-Forwarded-For hop, or the
+   *  runtime's connection info. Default: no IP — every request shares the one
+   *  "unknown" rate-limit bucket (collectively throttled, never bypassable) and
+   *  audit events omit `ip`. The adapter NEVER reads X-Forwarded-For on its
+   *  own: an attacker-chosen header must not select the rate-limit bucket. */
+  clientIp?: (c: Context) => string | undefined;
 }
 
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   const app = new Hono();
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, clientIp } = opts;
 
   const toNorm = async (c: Context): Promise<NormRequest> => {
     const ct = c.req.header("content-type") ?? "";
@@ -49,7 +58,7 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       else if (Array.isArray(ex)) ex.push(v);
       else query[k] = [ex, v];
     }
-    return { query, body, headers, ip: c.req.header("x-forwarded-for") ?? "unknown" };
+    return { query, body, headers, ip: clientIp?.(c) };
   };
   // Build a standard Response directly: hono route handlers accept a Response,
   // and this sidesteps hono's strict RedirectStatusCode/ContentfulStatusCode unions
@@ -89,7 +98,7 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       // bridge.resolveIdentity also emits the identity.verify audit event.
       let identityResolved: { subject: string; allowedScopes?: string[] };
       try {
-        identityResolved = await bridge.resolveIdentity(id, c.req.header(identityHeader), c.req.header("x-forwarded-for") ?? "unknown");
+        identityResolved = await bridge.resolveIdentity(id, c.req.header(identityHeader), clientIp?.(c));
       } catch (error) {
         return send(c, oauthErrorResponse(asDirectOAuth(error)));
       }

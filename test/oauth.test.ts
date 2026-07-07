@@ -292,6 +292,22 @@ test("Deny redirects access_denied without consuming the consent jti (fix #5)", 
   await ctx.store.close();
 });
 
+test("approve without an explicit approved:true is a Deny at the CORE layer (§9.3 fail-closed)", async () => {
+  const ctx = setup();
+  const prepared = await ctx.auth.prepare({
+    clientId: "client-1", redirectUri: REDIRECT, responseType: "code",
+    codeChallenge: pkceChallenge("verifier-12345678901234567890"), codeChallengeMethod: "S256", state: "absent-state", subject: SUBJECT,
+  });
+  // approved absent (undefined) must deny — not fall through to code issuance.
+  const denied: ApproveResult = await ctx.auth.approve({ consentToken: prepared.consentToken, origin: "https://auth.test" });
+  assert.equal(denied.code, undefined);
+  assert.equal(new URL(denied.redirectTo).searchParams.get("error"), "access_denied");
+  // and the jti was not consumed: an explicit approve still succeeds.
+  const approved = await ctx.auth.approve({ consentToken: prepared.consentToken, approved: true, origin: "https://auth.test" });
+  assert.ok(approved.code, "absent-field deny did not consume the consent token");
+  await ctx.store.close();
+});
+
 test("scope accumulation: re-authorize unions with active grants (stored mode, RC c)", async () => {
   const ctx = setup({ dcr: { mode: "stored", store: new InMemoryClientStore() } });
   const reg = await registerClient({ config: ctx.config, clock: ctx.clock, audit: ctx.audit }, { redirectUris: [REDIRECT], applicationType: "web" });

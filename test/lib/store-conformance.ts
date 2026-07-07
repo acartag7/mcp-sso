@@ -69,6 +69,34 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: a successor-hash collision returns null and leaves the predecessor unconsumed (§12.2 invariant 8)`, async () => {
+    const store = make();
+    await store.saveRefreshToken(refresh("col-orig", "fam-col", null, FUTURE));
+    await store.saveRefreshToken(refresh("col-existing", "fam-col-other", null, FUTURE)); // hash collides with the successor below
+    // Rotate "col-orig" but supply a successor tokenHash that already exists -> null.
+    const rotated = await store.rotateRefreshToken(sha256Hex("col-orig"), {
+      ...refresh("col-next", "fam-col", sha256Hex("col-orig"), FUTURE), tokenHash: sha256Hex("col-existing"),
+    }, NOW);
+    assert.equal(rotated, null, "collision -> null");
+    // The predecessor must STILL be consumable: the failed rotation did not consume it.
+    const retry = await store.rotateRefreshToken(sha256Hex("col-orig"), refresh("col-ok", "fam-col", sha256Hex("col-orig"), FUTURE), LATER);
+    assert.ok(retry, "predecessor survives the failed rotation");
+    await store.close();
+  });
+
+  test(`${label}: saveRefreshToken rejects a duplicate tokenHash — never a silent overwrite (§12.2 invariant 8)`, async () => {
+    const store = make();
+    await store.saveRefreshToken(refresh("dup", "fam-dup", null, FUTURE));
+    await store.rotateRefreshToken(sha256Hex("dup"), refresh("dup-2", "fam-dup", sha256Hex("dup"), FUTURE), NOW);
+    // Re-saving the consumed hash must reject; an overwrite would rebuild the row
+    // with consumedAt:null, resurrecting it and erasing the replay signal.
+    await assert.rejects(store.saveRefreshToken(refresh("dup", "fam-dup", null, FUTURE)));
+    // The replay signal survived: replaying the consumed token still revokes the family.
+    assert.equal(await store.rotateRefreshToken(sha256Hex("dup"), refresh("dup-3", "fam-dup", sha256Hex("dup"), FUTURE), LATER), null);
+    assert.equal(await store.rotateRefreshToken(sha256Hex("dup-2"), refresh("dup-4", "fam-dup", sha256Hex("dup-2"), FUTURE), LATER), null, "family revoked by the replay");
+    await store.close();
+  });
+
   test(`${label}: rejects expired refresh tokens and closes idempotently`, async () => {
     const store = make();
     await store.saveRefreshToken(refresh("exp", "fam-e", null, PAST));
