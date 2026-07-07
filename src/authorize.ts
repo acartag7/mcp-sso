@@ -142,8 +142,8 @@ export class OAuthAuthorizationUseCase {
       const token = requiredStr(input.consentToken, "consent_token");
       const consent = await verifyConsentToken(token, this.config, this.clock);
 
-      // Deny: redirect access_denied WITHOUT consuming the JTI (fix #5).
-      if (input.approved === false) {
+      // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
+      if (input.approved !== true) {
         const redirectTo = buildErrorRedirect(consent.redirectUri, "access_denied", consent.state);
         await this.auditFailure(AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject);
         return { redirectTo, state: consent.state };

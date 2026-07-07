@@ -233,8 +233,8 @@ export function asDirectOAuth(error: unknown): OAuthError {
   return new OAuthError(mapped.code, mapped.message, mapped.status);
 }
 
-function parseApproved(raw: unknown): boolean | undefined {
-  return raw === false || raw === "false" ? false : true;
+function parseApproved(raw: unknown): boolean {
+  return raw === true || raw === "true"; // fail-closed (§9.3): absent/malformed never auto-approves
 }
 
 function stringArray(value: unknown): string[] {

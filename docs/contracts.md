@@ -349,6 +349,16 @@ behind a reverse proxy/tunnel is the proxy's address, not the client's. The
 composition root MUST configure the framework to trust the proxy hop
 (`trustProxy`/`trust proxy`) so `req.ip` is the real client — otherwise all proxied
 traffic is attributed to one IP and the limiter is ineffective.
+**Hono has no framework `req.ip`:** the hono adapter takes an explicit
+`clientIp?: (c: Context) => string | undefined` option and NEVER reads
+`X-Forwarded-For` (or any other client-supplied header) on its own — an
+attacker-controlled header must not select the rate-limit bucket
+(bucket-per-request = limiter bypass) or forge the audit `ip`. Without
+`clientIp`, requests carry no IP: the limiter keys everything into the one
+shared `unknown` bucket (collectively throttled, never bypassable) and audit
+events omit `ip`. A deployer behind a trusted proxy supplies an extractor
+wired to their actual topology (e.g. the rightmost trusted `X-Forwarded-For`
+hop, or the runtime's connection info).
 
 ## 7. Crypto & token contracts
 
@@ -549,10 +559,15 @@ codeChallengeMethod, resource?, scope?, state?, subject, allowedScopes? })`** �
 **`approve({ consentToken, approved?, origin? })`** → `{ redirectTo, code?, state? }`:
 - **CSRF/`origin`** must be the issuer origin or in `allowedOrigins` — else
   `invalid_origin` 403 **direct** (a foreign origin is never redirected anywhere).
-- **`approved === false` ⇒ Deny:** the consent token is **not** consumed; redirect
-  to `redirect_uri?error=access_denied&state=…` (the user declined). *(Fix #5 —
-  the source's unreachable Deny path; the UI button is Phase 3.)*
-- Otherwise verify the consent token and **consume its single-use `jti`** (replay ⇒
+- **Only `approved === true` approves (fail-closed):** anything else — `false`,
+  absent, or malformed — ⇒ Deny: the consent token is **not** consumed; redirect
+  to `redirect_uri?error=access_denied&state=…`. The adapter's form parsing is
+  equally strict (only `true`/`"true"` approves) so a POST missing the
+  `approved` field can never auto-approve at either layer. *(Fix #5 — the
+  source's unreachable Deny path; the UI button is Phase 3. Hardened 2026-07-07:
+  the original text keyed Deny on `approved === false`, which made the ABSENT
+  case an approval — a fail-open default on the consent decision.)*
+- On approval, verify the consent token and **consume its single-use `jti`** (replay ⇒
   `invalid_grant` **direct** — an integrity failure, not a user-facing denial).
 - **Mint the code with the accumulated scopes** — in stored mode the union of
   `requestedScopes + priorScopes`; in stateless mode exactly the requested scopes.
@@ -740,6 +755,15 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
    and not expired at `nowIso`. It is a **read over existing records — there is no
    grant table**. Returns `[]` when no active token exists (a first authorization
    therefore grants exactly the requested scopes).
+8. **Token-hash preexistence (collision parity):** `rotateRefreshToken` whose
+   `next.tokenHash` already exists returns `null` WITHOUT consuming the
+   predecessor (the failed rotation is retryable — matches the SQL stores'
+   check-before-update), and `saveRefreshToken` with an already-stored
+   `tokenHash` **rejects** — it never silently overwrites. An overwrite would
+   rebuild the row with `consumedAt: null`, resurrecting a consumed token and
+   erasing the family's replay signal. Practically unreachable under SHA-256,
+   but all reference stores must agree (parity by fixture — this invariant was
+   previously asserted for MySQL only, and `MemoryStore` silently diverged).
 
 ### 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`) — in-process maps; dev/test only, labeled loud.

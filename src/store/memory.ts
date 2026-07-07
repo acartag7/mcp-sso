@@ -45,6 +45,10 @@ export class MemoryStore implements StorePort {
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
     validateRefreshToken(input);
+    // §12.2 invariant 8: never silently overwrite — an overwrite would rebuild
+    // the row with consumedAt:null, resurrecting a consumed token (parity with
+    // the SQL stores' PRIMARY KEY rejection).
+    if (this.refreshTokens.has(input.tokenHash)) throw new StoreInputError("tokenHash already exists");
     this.families.set(input.familyId, this.families.get(input.familyId) ?? null);
     this.refreshTokens.set(input.tokenHash, { ...input, consumedAt: null });
   }
@@ -59,6 +63,9 @@ export class MemoryStore implements StorePort {
       return null;
     }
     if (current.expiresAt <= nowIso || next.familyId !== current.familyId) return null;
+    // §12.2 invariant 8: successor-hash collision ⇒ null WITHOUT consuming the
+    // predecessor (mirrors sqlite's check-before-update / mysql's insert-first).
+    if (this.refreshTokens.has(next.tokenHash)) return null;
     current.consumedAt = nowIso;
     // Fix #3 backfill: successor takes clientId/subject/scopes from the consumed row.
     await this.saveRefreshToken({ ...next, clientId: current.clientId, subject: current.subject, scopes: current.scopes });
