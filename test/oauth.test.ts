@@ -304,16 +304,17 @@ test("prepare rejects a subject in the reserved mcc_ machine namespace (RFC 9700
   await ctx.store.close();
 });
 
-test("verifier rejects an mcc_ sub whose client_id doesn't match — a pre-upgrade access token can't masquerade as machine", async () => {
+test("verifier accepts an mcc_ sub only with sub==client_id AND the gty marker — pre-upgrade tokens can't masquerade as machine", async () => {
   const ctx = setup();
-  // A still-valid access token minted by a pre-guard version for a HUMAN subject in the reserved namespace:
+  const isInvalidToken = (e: unknown): boolean => e instanceof OAuthError && e.code === "invalid_token" && e.status === 401;
+  // Pre-guard HUMAN token, mcc_ subject, foreign client_id: rejected.
   const forged = await signAccessToken({ subject: "mcc_impostor", clientId: "mcpdc_human1", scopes: ["mcp:read"] }, ctx.config, ctx.clock);
-  await assert.rejects(
-    verifyAccessToken(forged, ctx.config, ctx.clock),
-    (e: unknown) => e instanceof OAuthError && e.code === "invalid_token" && e.status === 401,
-  );
-  // A legitimate machine token (sub === client_id, RFC 9068 §2.2) still verifies.
-  const machine = await signAccessToken({ subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"] }, ctx.config, ctx.clock);
+  await assert.rejects(verifyAccessToken(forged, ctx.config, ctx.clock), isInvalidToken);
+  // Stateless-DCR masquerade: the client CHOSE client_id === the mcc_ subject, but no gty marker: rejected.
+  const statelessForged = await signAccessToken({ subject: "mcc_alice", clientId: "mcc_alice", scopes: ["mcp:read"] }, ctx.config, ctx.clock);
+  await assert.rejects(verifyAccessToken(statelessForged, ctx.config, ctx.clock), isInvalidToken);
+  // A legitimate machine token (sub === client_id + the gty marker only the machine grant mints) verifies.
+  const machine = await signAccessToken({ subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], machine: true }, ctx.config, ctx.clock);
   assert.equal((await verifyAccessToken(machine, ctx.config, ctx.clock)).subject, "mcc_svc1");
   await ctx.store.close();
 });

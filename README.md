@@ -166,7 +166,10 @@ by environment: Cloudflare Access (`CF_ACCESS_*` — Cloudflare injects
 `Cf-Access-Jwt-Assertion`, the bridge verifies it), Microsoft Entra ID
 (`ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET` /
 `ENTRA_REDIRECT_URI` — the mounted redirect orchestrator drives the browser
-leg), or zero-setup console pairing when neither is set.
+leg), or zero-setup console pairing when neither is set. Both IdP branches
+also require the four `OAUTH_*` bridge variables shown below — only the
+pairing branch auto-generates its signing material; the IdP branches fail at
+boot with `Missing env` without them.
 
 <details>
 <summary>Cloudflare Access invocation (full env)</summary>
@@ -276,14 +279,14 @@ overlap, default 24 h, so deploys don't race the rotation). The token's `sub`
 is the `mcc_…` client id, and the prefix is reserved in both directions —
 enforced at three points: a user-grant subject starting `mcc_` is rejected at
 authorize, re-checked at token issuance (a stored grant from an older version
-can't slip through), and mcp-sso's own verifier rejects any `mcc_` `sub` whose
-`client_id` doesn't equal it (machine tokens always carry `sub == client_id`,
-RFC 9068 — so even a still-valid access token minted by a pre-0.2.0 version
-can't masquerade). If a third-party resource server reads these JWTs directly
-instead of using mcp-sso's verifier, it should apply the same
-`sub == client_id` check for machine classification — or, after upgrading from
-a version that allowed `mcc_` human subjects, wait out `accessTokenTtlSeconds`
-before trusting the prefix alone.
+can't slip through), and mcp-sso's own verifier accepts an `mcc_` `sub` only
+when the token also carries `sub == client_id` (RFC 9068) **and** the
+`gty: "client_credentials"` marker claim that only the machine grant mints —
+so even a still-valid access token minted by a pre-0.2.0 version can't
+masquerade, including in stateless-DCR mode where a client picks its own
+`client_id`. A third-party resource server reading these JWTs directly should
+classify machine tokens by the same pair (`gty` marker + `sub == client_id`),
+never by the `sub` prefix alone.
 Full contract: [`docs/contracts.md`](docs/contracts.md) §17.2 / §9.4.
 
 ## Enterprise: the Entra DCR wall

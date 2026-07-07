@@ -172,7 +172,7 @@ export class OAuthTokenUseCase {
       if (!Array.isArray(client.allowedScopes) || client.allowedScopes.length === 0 || !client.allowedScopes.every((s) => typeof s === "string" && isScopeToken(s))) throw new OAuthError("invalid_client", "Machine client record has a malformed allowedScopes ceiling", 401);
       const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, this.config.scopeCatalog);
       if (input.resource !== undefined && input.resource !== this.config.resource) throw new OAuthError("invalid_target", "resource does not match the configured resource");
-      const accessToken = await signAccessToken({ subject: clientId, clientId, scopes }, this.config, this.clock);
+      const accessToken = await signAccessToken({ subject: clientId, clientId, scopes, machine: true }, this.config, this.clock);
       await this.audit.writeAuthEvent({
         occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "success",
         clientId, subject: clientId, scopes, resource: this.config.resource,

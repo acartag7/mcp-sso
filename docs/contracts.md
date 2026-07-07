@@ -1223,15 +1223,18 @@ in this flow."* Decisions:
     it stops rotating — so neither a live IdP-supplied subject nor a legacy
     stored grant from a pre-guard deployment can impersonate the machine
     namespace, and the audit/refresh ledger reflects only real issuance —
-    THIRD enforcement point: `verifyAccessToken` rejects an `mcc_` `sub`
-    whose `client_id` claim does not equal it; machine tokens always carry
-    `sub == client_id` (RFC 9068 §2.2) and DCR client ids are
-    `mcpdc_`-prefixed (no collision), so even an ALREADY-ISSUED stateless
-    access token from a pre-guard deployment cannot masquerade through
-    mcp-sso's verifier for its residual `accessTokenTtlSeconds`; residual: an
-    RS that decodes these JWTs WITHOUT mcp-sso's verifier must apply the same
-    `sub == client_id` check or wait out the access-token TTL post-upgrade,
-    stated in the README). The secret is
+    THIRD enforcement point: machine access tokens mint a
+    `gty: "client_credentials"` marker claim, and `verifyAccessToken`
+    accepts an `mcc_` `sub` ONLY with `sub == client_id` (RFC 9068 §2.2)
+    AND that marker. The pair is required because stateless-DCR clients
+    choose their own `client_id`, so `sub == client_id` alone could be
+    satisfied by a pre-guard human token; the marker cannot, since only the
+    machine grant mints it and the grant first ships in the SAME release as
+    the marker (no legitimate unmarked machine token can exist from any
+    published version — and any from pre-release `main` expires within
+    `accessTokenTtlSeconds`). Residual: an RS that decodes these JWTs
+    WITHOUT mcp-sso's verifier must classify by the same pair, never the
+    `sub` prefix alone — stated in the README). The secret is
     returned ONCE and never retrievable. `allowedScopes` MUST be a non-empty
     subset of `catalog` (each entry a single RFC 6749 scope token; unknown or
     malformed ⇒ `invalid_scope`) — the per-client ceiling is fixed at
