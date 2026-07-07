@@ -317,16 +317,25 @@ test("token issuance rejects a LEGACY stored grant whose subject is in the reser
     ctx.token.exchangeAuthorizationCode({ grantType: "authorization_code", code: "legacy-code", redirectUri: REDIRECT, clientId: "client-1", codeVerifier: verifier }),
     (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant",
   );
-  // A legacy refresh record with an mcc_ subject must not mint on rotation either:
-  const rawRefresh = "rt.fam-legacy.secret-1234567890";
+  const nowIso = new Date(NOW_MS).toISOString();
+  // No side effects: the rejection saved NO refresh token for the legacy subject.
+  assert.deepEqual(await ctx.store.findGrantedScopes("mcc_legacy", "client-1", nowIso), []);
+  // A legacy refresh record with an mcc_ subject must not mint on rotation either
+  // (family id must satisfy parseRefreshFamilyId: >=16 chars of [A-Za-z0-9_-]):
+  const legacyFamily = "famlegacy0123456789";
+  const rawRefresh = `rt.${legacyFamily}.secret-1234567890`;
   await ctx.store.saveRefreshToken({
-    tokenHash: sha256Hex(rawRefresh), familyId: "fam-legacy", previousTokenHash: null,
+    tokenHash: sha256Hex(rawRefresh), familyId: legacyFamily, previousTokenHash: null,
     clientId: "client-1", subject: "mcc_legacy", scopes: ["mcp:read"], expiresAt: "2099-01-01T00:00:00.000Z",
   });
   await assert.rejects(
     ctx.token.refresh({ grantType: "refresh_token", refreshToken: rawRefresh, clientId: "client-1" }),
     (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant",
   );
+  // The legacy family was revoked outright (rotation side effects undone at the ledger level)...
+  assert.deepEqual(await ctx.store.findGrantedScopes("mcc_legacy", "client-1", nowIso), []);
+  // ...and the audit trail shows NO success for the reserved subject — only failures.
+  assert.ok(ctx.audit.events.every((e) => !(e.subject === "mcc_legacy" && e.status === "success")), "no success event for a reserved-namespace subject");
   await ctx.store.close();
 });
 

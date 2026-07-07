@@ -7,10 +7,7 @@ import type { AuditPort } from "./ports/audit.ts";
 import type { AuthCodeRecord, RefreshTokenRecord, StorePort } from "./ports/store.ts";
 import type { BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
-import {
-  expiresAtIso, generateRefreshToken, parseRefreshFamilyId, sha256Hex,
-  signAccessToken, verifyPkceS256,
-} from "./crypto.ts";
+import { expiresAtIso, generateRefreshToken, parseRefreshFamilyId, sha256Hex, signAccessToken, verifyPkceS256 } from "./crypto.ts";
 import { isScopeToken, normalizeScopes, resolveClientCredentialsScope, scopeString } from "./scopes.ts";
 import { verifyMachineClientSecret } from "./machine-client.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
@@ -57,8 +54,7 @@ export interface UserTokenResponse {
   scope: string;
 }
 
-/** Backward-compatible alias (v0.1 published this name). §17.2 splits this into
- *  {@link UserTokenResponse} vs {@link MachineTokenResponse}. */
+/** Backward-compatible alias (v0.1 name); §17.2 split it into User vs Machine responses. */
 export type TokenResponse = UserTokenResponse;
 
 /** §17.2 machine-grant response: NO `refresh_token` member (not optional) — the
@@ -90,6 +86,7 @@ export class OAuthTokenUseCase {
         throw new OAuthError("unsupported_grant_type", "grant_type is not supported");
       }
       const record = await this.consumeValidCode(input);
+      if (record.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace"); // pre-side-effect (§9.3): code burned, NO refresh token saved, no success audited
       const refreshToken = generateRefreshToken();
       const familyId = parseRefreshFamilyId(refreshToken);
       if (!familyId) throw new OAuthError("server_error", "Refresh token generation failed", 500);
@@ -132,6 +129,10 @@ export class OAuthTokenUseCase {
       if (!input.clientId || input.clientId !== rotated.clientId) {
         await this.store.revokeRefreshTokenFamily(familyId, new Date(this.clock.nowMs()).toISOString());
         throw new OAuthError("invalid_grant", "Refresh token client binding is invalid");
+      }
+      if (rotated.subject.startsWith("mcc_")) { // pre-success-audit (§9.3): revoke the legacy family outright — it can never mint
+        await this.store.revokeRefreshTokenFamily(familyId, new Date(this.clock.nowMs()).toISOString());
+        throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
       }
       await this.auditToken("oauth.token.refresh", "success", rotated);
       return await this.tokenResponse(rotated, nextRaw);
@@ -218,7 +219,6 @@ export class OAuthTokenUseCase {
   }
 
   private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string): Promise<UserTokenResponse> {
-    if (record.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace"); // legacy pre-guard records must not mint mcc_ user tokens
     const scopes = normalizeScopes(record.scopes, this.config.scopeCatalog, this.config.defaultScopes);
     const accessToken = await signAccessToken({ subject: record.subject, clientId: record.clientId, scopes }, this.config, this.clock);
     return {

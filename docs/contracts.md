@@ -536,10 +536,12 @@ two error channels, split by whether the `redirect_uri` is trusted yet:
   owner could not be authenticated), a subject in the reserved `mcc_` machine
   namespace (RFC 9700 §4.15.1 — user grants must never mint a `sub` an RS would
   classify as a machine token; enforced at `prepare`, the choke point every
-  user grant passes through, and re-checked at user-token issuance (§9.4) so a
-  legacy stored code/refresh record from a pre-guard deployment cannot keep
-  minting — `invalid_grant`), missing `client_id`, and `redirect_uri`
-  failing §10. Also, at `approve`: a CSRF/`origin` failure (`invalid_origin`) and
+  user grant passes through, and re-checked in the §9.4 grant handlers BEFORE
+  any side effect so a legacy stored code/refresh record from a pre-guard
+  deployment cannot keep minting: a legacy code is burned (single-use) but no
+  refresh token is saved and no success is audited; a legacy refresh record's
+  WHOLE family is revoked — `invalid_grant` either way), missing `client_id`,
+  and `redirect_uri` failing §10. Also, at `approve`: a CSRF/`origin` failure (`invalid_origin`) and
   consent-token integrity failures (replay/invalid/expired). These throw
   `OAuthError`; the adapter answers a direct 4xx with the §9.5 body (no `Location`).
 - **Redirect to `redirect_uri?error=<code>[&state=…][&error_description=…]`** —
@@ -1213,12 +1215,14 @@ in this flow."* Decisions:
     ids (RFC 9700 §4.15.1: the AS MUST let the RS distinguish machine tokens
     from user tokens; here `sub` starting `mcc_` ⇔ machine — made sound in
     BOTH directions by `prepare` rejecting any user-grant subject that starts
-    with `mcc_` (§9.3 direct-error list) AND by user-token issuance
-    (`tokenResponse`, both the code-exchange and refresh paths) rejecting a
-    stored record whose subject is in the reserved namespace with
-    `invalid_grant` — so neither a live IdP-supplied subject nor a legacy
+    with `mcc_` (§9.3 direct-error list) AND by the token grant handlers
+    (code-exchange and refresh) rejecting a stored record whose subject is in
+    the reserved namespace with `invalid_grant` BEFORE any side effect — the
+    exchange saves no refresh token and audits no success (the single-use
+    code is burned); the refresh path revokes the legacy family outright so
+    it stops rotating — so neither a live IdP-supplied subject nor a legacy
     stored grant from a pre-guard deployment can impersonate the machine
-    namespace). The secret is
+    namespace, and the audit/refresh ledger reflects only real issuance). The secret is
     returned ONCE and never retrievable. `allowedScopes` MUST be a non-empty
     subset of `catalog` (each entry a single RFC 6749 scope token; unknown or
     malformed ⇒ `invalid_scope`) — the per-client ceiling is fixed at
