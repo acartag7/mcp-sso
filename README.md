@@ -149,11 +149,11 @@ what mcp-sso is for.
 
 ## Status
 
-mcp-sso is live-verified against real MCP clients (Claude Code, Codex CLI,
-claude.ai, ChatGPT, the official MCP SDK) and a real Cloudflare Access tenant.
-The full provider × client matrix — what's ✅ vs. what's still ⬜ (Entra, the
-gateway example) — lives in [`docs/live-verification.md`](docs/live-verification.md),
-the single source of truth.
+mcp-sso is live-verified against real MCP clients — Claude Code, Codex CLI,
+claude.ai, ChatGPT, and the official MCP SDK on a real Cloudflare Access tenant,
+plus Entra ID (redirect flow) with Claude Code and Claude Desktop in a real
+enterprise deployment. The full provider × client matrix lives in
+[`docs/live-verification.md`](docs/live-verification.md).
 
 ## Roadmap (v0.3)
 
