@@ -91,11 +91,21 @@
     "ioredis": ">=5"
   },
   "peerDependenciesMeta": {
-    "fastify": { "optional": true },
-    "express": { "optional": true },
-    "hono": { "optional": true },
-    "mysql2": { "optional": true },
-    "ioredis": { "optional": true }
+    "fastify": {
+      "optional": true
+    },
+    "express": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    }
   },
   "keywords": [
     "mcp",
@@ -108,7 +118,13 @@
     "cloudflare-access",
     "entra",
     "pkce",
-    "jose"
+    "jose",
+    "dcr",
+    "dynamic-client-registration",
+    "sso",
+    "gateway",
+    "rfc9728",
+    "entra-id"
   ],
   "homepage": "https://github.com/acartag7/mcp-sso",
   "repository": {
