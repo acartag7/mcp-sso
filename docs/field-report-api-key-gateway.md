@@ -51,7 +51,10 @@ upstream proxying with the outbound target pinned to trusted config, and the
 1. **Do not forward upstream 401/403 challenges to MCP clients.** An upstream
    auth failure (wrong/expired backend key) is a server-side fault — relaying it
    as a 401 makes the client think *its* token is bad and re-run the entire
-   OAuth login for nothing. Translate upstream 401/403 → 502.
+   OAuth login for nothing. Translate upstream 401/403 → 502. (The shipped
+   `examples/api-key-gateway/` does not implement this yet — it relays
+   `backendResp.status` verbatim. This was deployment-specific code in the field.
+   Tracked in [issue #35](https://github.com/acartag7/mcp-sso/issues/35).)
 2. **Use sqlite (or mysql), not memory, for DCR/auth state.** The memory store
    wipes registrations on restart, so clients silently re-DCR on every boot.
    Fine for a spike; not fine when you're debugging auth flows and restarting
