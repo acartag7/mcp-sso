@@ -17,13 +17,14 @@ Remote MCP servers need auth. The default is a static API key pasted into every
 client config — no expiry, no per-user identity, no revocation short of rotating
 the one shared secret. It's what leaks in a `git add .` or a support screenshot.
 
-The MCP spec's answer is OAuth 2.1. But here's the catch: MCP clients
-(Claude Code, claude.ai, ChatGPT) need **Dynamic Client Registration (DCR)** to
-self-onboard — the client registers itself at the identity provider automatically.
-The identity providers you actually have at work — **Entra ID, Cloudflare Access,
-and most enterprise SSO — don't expose a DCR endpoint your client can call.** So
-OAuth *should* just work… and it doesn't. You're left hand-rolling OAuth glue per
-deployment, or breaking every MCP client.
+The MCP spec's answer is OAuth 2.1. But here's the catch: the clean self-onboarding —
+paste a URL and the client connects — depends on **Dynamic Client Registration
+(DCR)**: the client registers itself at the identity provider automatically, no
+manual setup. The identity providers you actually have at work — **Entra ID,
+Cloudflare Access, and most enterprise SSO — don't expose a DCR endpoint your
+client can call.** So the paste-a-URL experience should just work… and against
+enterprise IdPs, it doesn't. You're left hand-rolling OAuth glue per deployment,
+or settling for manual registration that breaks the self-onboarding.
 
 **mcp-sso is the bridge.** It speaks DCR, PKCE, and consent to the MCP client;
 your IdP stays the identity source of truth; it mints its **own** audience-bound
