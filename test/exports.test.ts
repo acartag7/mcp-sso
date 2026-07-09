@@ -21,6 +21,8 @@ import {
   type RedirectIdentityPort,
 } from "../src/index.ts";
 
+const pkgPath = fileURLToPath(new URL("../package.json", import.meta.url));
+
 test("exports: the S1b + S1a + core surface is reachable from the root entry", () => {
   assert.equal(typeof Bridge, "function", "Bridge (the central class) is root-exported");
   assert.equal(typeof RequestAuthorizer, "function");
@@ -51,7 +53,6 @@ test("exports: the ./identity/console-pairing subpath is mapped to its source-of
   // The subpath EXPORT STRING was never asserted: a rename/removal in package.json
   // (while the source still exports the factory) would silently break consumers who
   // import via the subpath. Resolve the exports map entry and cross-check the source.
-  const pkgPath = fileURLToPath(new URL("../package.json", import.meta.url));
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { exports: Record<string, { types: string; default: string }> };
   const sub = pkg.exports["./identity/console-pairing"];
   assert.ok(sub, "./identity/console-pairing subpath is present in package.json exports");
@@ -71,4 +72,26 @@ test("exports: the §17.11 redirect-flow identity is re-exported from the ./iden
   assert.ok(/createEntraRedirectIdentity/.test(entraSrc), "entra.ts re-exports createEntraRedirectIdentity for the subpath");
   const redirectSrc = readFileSync(fileURLToPath(new URL("../src/identity/entra-redirect.ts", import.meta.url)), "utf8");
   assert.ok(/export function createEntraRedirectIdentity/.test(redirectSrc), "source-of-truth exports createEntraRedirectIdentity");
+});
+
+test("exports: the ./identity/generic-oidc subpath is mapped to its source-of-truth (S4a)", () => {
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { exports: Record<string, { types: string; default: string }> };
+  const sub = pkg.exports["./identity/generic-oidc"];
+  assert.ok(sub, "./identity/generic-oidc subpath is present in package.json exports");
+  assert.equal(sub.types, "./dist/identity/generic-oidc.d.ts", "subpath types target");
+  assert.equal(sub.default, "./dist/identity/generic-oidc.js", "subpath default target");
+  const src = readFileSync(fileURLToPath(new URL("../src/identity/generic-oidc.ts", import.meta.url)), "utf8");
+  assert.ok(/export async function createGenericOidcIdentity/.test(src), "source-of-truth exports createGenericOidcIdentity");
+  assert.ok(/createGenericOidcRedirectIdentity/.test(src), "generic-oidc.ts re-exports createGenericOidcRedirectIdentity for the subpath");
+});
+
+test("exports: the ./identity/google subpath is mapped to its source-of-truth (S4a)", () => {
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { exports: Record<string, { types: string; default: string }> };
+  const sub = pkg.exports["./identity/google"];
+  assert.ok(sub, "./identity/google subpath is present in package.json exports");
+  assert.equal(sub.types, "./dist/identity/google.d.ts", "subpath types target");
+  assert.equal(sub.default, "./dist/identity/google.js", "subpath default target");
+  const src = readFileSync(fileURLToPath(new URL("../src/identity/google.ts", import.meta.url)), "utf8");
+  assert.ok(/export async function createGoogleIdentity/.test(src), "source-of-truth exports createGoogleIdentity");
+  assert.ok(/export async function createGoogleRedirectIdentity/.test(src), "source-of-truth exports createGoogleRedirectIdentity");
 });

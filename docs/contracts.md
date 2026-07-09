@@ -292,8 +292,9 @@ root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
   registration for the bridge; validate iss/aud/tid; map oid/email → subject. The
   bridge then issues its OWN audience-bound tokens (no passthrough).
 
-`GenericOidcIdentity`, the Google preset, the dedicated GitHub port, and the
-console-pairing port are v0.2 scope — contracts locked in §17.5–§17.6. The
+`GenericOidcIdentity` and the Google preset ship as `RedirectIdentityPort`s
+(S4a); the dedicated GitHub port and the console-pairing port are covered in
+§17.5–§17.6 (console-pairing shipped S1b; GitHub still locked). The
 **upstream redirect-leg orchestrator** (`RedirectIdentityPort` +
 `createUpstreamRedirectFlow` — the mounted browser-redirect flow the Entra
 primitives currently leave to the host) is locked in **§17.11**.
@@ -985,7 +986,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Device authorization grant (RFC 8628) | 🔒 v0.2 contract locked | §17.3 |
 | Entra group→scope ceiling (Gate 2) | ✅ v0.2 shipped (S2a core `allowedScopes` engine + S2b Entra group→scope producer) | §17.4 |
 | Console-pairing identity | ✅ v0.2 shipped (S1b) — `createConsolePairingIdentity`, 12-char base-20 code, lazy/single-use/TTL/attempt-cap, `oauth.pairing.attempt` | §17.5 |
-| `GenericOidcIdentity` + Google preset + GitHub port | 🔒 v0.2 contract locked | §17.6 |
+| `GenericOidcIdentity` + Google preset + GitHub port | ✅ v0.2 shipped (S4a) — GenericOidcIdentity + Google preset as `RedirectIdentityPort`s (discovery + manual endpoints, multi-audience reject, at_hash, iat required); GitHub port still 🔒 locked (separate dedicated port) | §17.6 |
 | Upstream redirect-leg orchestrator (`RedirectIdentityPort` + flow cookie) | ✅ v0.2 shipped — `createUpstreamRedirectFlow` + `createEntraRedirectIdentity`, signed flow cookie (HS256 consent secret, aud `mcp-sso/upstream-flow`, single-use `upf_` jti), 13-row callback failure table, `oauth.upstream.callback` audit | §17.11 |
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
@@ -1626,6 +1627,18 @@ gate replaces no-gate).
 
 ### 17.6 `GenericOidcIdentity` + Google preset + dedicated GitHub port
 
+> **SHIPPED S4a (generic + Google):** `createGenericOidcIdentity` +
+> `createGenericOidcRedirectIdentity`, and the Google preset
+> (`createGoogleIdentity` + `createGoogleRedirectIdentity`), ship as
+> `RedirectIdentityPort`s consumed by the §17.11 orchestrator. They are
+> unit/flow-verified only (synthetic RS256/ES256 id_tokens through the real
+> `validateGenericOidcIdToken`/`validateGoogleIdToken` → bridge path); a real
+> live sign-in is owner-pending (manual checklist at the top of each source
+> file). The dedicated GitHub port stays 🔒 locked (its own port — no OIDC
+> discovery, no id_token; identity via the REST API). Setup guides:
+> [`docs/identity/generic-oidc.md`](./identity/generic-oidc.md),
+> [`docs/identity/google.md`](./identity/google.md).
+
 **`createGenericOidcIdentity(config)`** — the missing generic port:
 
 - Config: `issuer` (https, the exact-match anchor), `clientId`,
@@ -1644,14 +1657,34 @@ gate replaces no-gate).
   documented rationale. Redirects on the discovery fetch: not followed
   (fail closed).
 - **id_token validation:** `iss` exact-match; `aud` must contain `clientId`
-  and multiple-audience tokens are rejected outright (fail-closed
-  simplification of OIDC Core §3.1.3.7); `exp`/`iat` via jose with
-  `ClockPort`; algorithms pinned to `{RS256, ES256}` ∩ the provider's
-  advertised set; **nonce always sent, always verified** (once sent, OIDC
+  and multiple-audience tokens are rejected outright (a single-element
+  `[clientId]` array is accepted; an array with any second audience is
+  rejected before the contains-check — fail-closed simplification of OIDC
+  Core §3.1.3.7; the check lives in the pure validator, NOT jose's
+  `audience` option, which accepts multi-audience tokens); `exp` **and**
+  `iat` presence required (OIDC Core §2 mandates `iat`; jose validates
+  `exp`/`nbf` against the clock but does **not** validate `iat`'s value, so
+  the pure validator asserts both claims' *presence* — a deliberate tightening
+  over the Entra `exp`-only check; the Entra public API is unchanged. A
+  far-future `iat` is **not** separately rejected: `exp` bounds the token's
+  lifetime, and rejecting `iat`-ahead-of-now would break legit issuers with
+  clock skew — accepting it gives an attacker who can already sign nothing
+  beyond what `exp` already grants);
+  algorithms pinned to `{RS256, ES256}` ∩ the provider's advertised
+  `id_token_signing_alg_values_supported` — a **missing** advertised set
+  defaults to `{RS256, ES256}` (don't over-reject providers that omit the
+  metadata), but a **present** set with an empty intersection boot-FAILS
+  (no usable alg); **nonce always sent, always verified** (once sent, OIDC
   Core makes the claim mandatory — missing/mismatch is a hard failure);
-  `at_hash` validated if present, absence accepted (code flow). Subject =
-  `sub`, keyed as `(issuer, sub)`; email is a display attribute, never the
-  identity key.
+  `at_hash` validated when present **in the code flow** (the access_token is
+  available). Subject = `sub`, keyed as `(issuer, sub)`; email is a display
+  attribute, never the identity key.
+  - **`at_hash` header-mode residual:** when a raw id_token is verified
+    standalone with no `access_token` (header mode), `at_hash` — if present
+    — is **skipped**, not rejected: there is no access_token to hash it
+    against. This is the same residual class as the header-mode nonce
+    (threat-model row 12): the fronting proxy owns the access_token binding.
+    Never computed against `undefined`.
 - **PKCE:** always S256. If discovery omits `code_challenge_methods_supported`
   (per RFC 8414 that means no PKCE support), boot FAILS unless the deployer
   sets `allowProviderWithoutPkce: true` (state + nonce + client secret still

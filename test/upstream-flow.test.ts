@@ -732,6 +732,28 @@ test("entra-redirect: a JWKS-fetch outage (network) is exchange_failed, NOT iden
   } finally { globalThis.fetch = realFetch; }
 });
 
+test("entra-redirect: a JWKS HTTP 500 (jose throws base JOSEError, code ERR_JOSE_GENERIC) is exchange_failed, NOT identity_rejected (sibling sweep of the S4a generic-port fix)", async () => {
+  const tenantId = "11111111-2222-3333-4444-555555555555"; const clientId = "cid";
+  const c: BridgeConfig = config();
+  const redirectUri = `${originOf(c.issuer)}${CALLBACK_PATH}`;
+  const { privateKey } = await generateKeyPair("RS256");
+  const now = Math.floor(NOW_MS / 1000);
+  const idToken = await new SignJWT({ oid: "entra-user-oid", tid: tenantId, nonce: "N1" }).setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "k1" }).setIssuer(entraIssuer(tenantId)).setAudience(clientId).setIssuedAt(now).setExpirationTime(now + 3600).sign(privateKey);
+  const transport = { async postForm(): Promise<{ status: number; text(): Promise<string> }> { return { status: 200, text: async () => JSON.stringify({ id_token: idToken }) }; } };
+  const realFetch = globalThis.fetch;
+  // jose's fetchJwks throws the BASE JOSEError (code ERR_JOSE_GENERIC) on a non-200
+  // JWKS — before the jwtErrorReason fix this hit `entra_token_invalid` ⇒
+  // identity_rejected (a false "user refused"); now it routes to `entra_verify_failed`
+  // ⇒ exchange_failed (no identity decision — §17.11).
+  globalThis.fetch = (async () => new Response("upstream gone", { status: 500 })) as typeof fetch;
+  try {
+    const id = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport });
+    const r = await id.exchangeAndVerify({ code: "c", codeVerifier: "v".repeat(43), nonce: "N1" });
+    assert.equal(r.ok, false, "verify did not succeed (JWKS returned 500)");
+    if (!r.ok) assert.equal(r.kind, "exchange_failed", "a JWKS HTTP 500 is infrastructure ⇒ exchange_failed (never identity_rejected)");
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test("entra-redirect: re-exported from the ./identity/entra subpath source (createEntraRedirectIdentity)", async () => {
   const mod = await import("../src/identity/entra.ts");
   assert.equal(typeof mod.createEntraRedirectIdentity, "function");

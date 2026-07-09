@@ -37,6 +37,7 @@
 import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWTPayload } from "jose";
 import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
 import { type GroupAuthorization, assertGroupAuthorizationMapping, resolveGroupCeiling } from "./entra-groups.ts";
+import { assertHttpsRaw } from "./util.ts";
 
 export interface EntraConfig {
   tenantId: string;
@@ -75,9 +76,6 @@ type EntraPayload = JWTPayload & {
 
 const ENTRA_BASE = "https://login.microsoftonline.com";
 
-function assertHttpsRaw(value: string, label: string): void {
-  if (!value.startsWith("https://")) throw new Error(`${label} must be an https:// URL`);
-}
 export function entraIssuer(tenantId: string): string { return `${ENTRA_BASE}/${tenantId}/v2.0`; }
 export function entraAuthorizeEndpoint(tenantId: string): string { return `${ENTRA_BASE}/${tenantId}/oauth2/v2.0/authorize`; }
 export function entraTokenEndpoint(tenantId: string): string { return `${ENTRA_BASE}/${tenantId}/oauth2/v2.0/token`; }
@@ -238,6 +236,9 @@ function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JWTClaimValidationFailed) return "entra_bad_claim";
   if (error instanceof errors.JOSEAlgNotAllowed) return "entra_unsupported_alg";
   if (error instanceof errors.JWKSNoMatchingKey) return "entra_unknown_key";
+  // JWKS-fetch transport failures (base JOSEError non-200/malformed + JWKSTimeout) ⇒ entra_verify_failed ⇒ exchange_failed (§17.11). Sibling of generic-oidc.ts.
+  if (error instanceof errors.JWKSTimeout) return "entra_verify_failed";
+  if (error instanceof errors.JOSEError && error.code === "ERR_JOSE_GENERIC") return "entra_verify_failed";
   if (error instanceof errors.JOSEError) return "entra_token_invalid";
   return "entra_verify_failed";
 }
