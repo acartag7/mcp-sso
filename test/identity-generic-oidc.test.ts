@@ -45,10 +45,19 @@ const b64u = (obj: unknown): string => Buffer.from(JSON.stringify(obj)).toString
 
 // --- pure validator -----------------------------------------------------------
 
-test("validateGenericOidcIdToken: happy path + subject = sub", () => {
+test("validateGenericOidcIdToken: happy path + subject canonicalized as (issuer, sub)", () => {
   const r = validateGenericOidcIdToken(payload(), CONFIG);
   assert.equal(r.ok, true);
-  assert.equal(r.ok && r.identity.subject, "sub-123");
+  assert.equal(r.ok && r.identity.subject, `${ISSUER}|sub-123`);
+});
+
+test("validateGenericOidcIdToken: subject is namespaced by issuer (same sub + different issuer ⇒ different keys)", () => {
+  // defends a stored-DCR store reused after changing issuers: approve keys grants by
+  // the subject string, so a colliding opaque sub must not inherit another issuer's grants.
+  const otherIssuer: GenericOidcConfig = { ...CONFIG, issuer: "https://other-idp.test", endpoints: { authorizationEndpoint: "https://other-idp.test/auth", tokenEndpoint: "https://other-idp.test/token", jwksUri: "https://other-idp.test/jwks" } };
+  const a = validateGenericOidcIdToken(payload(), CONFIG);
+  const b = validateGenericOidcIdToken(payload({ iss: "https://other-idp.test" }), otherIssuer);
+  assert.notEqual(a.ok && a.identity.subject, b.ok && b.identity.subject);
 });
 
 test("validateGenericOidcIdToken: iss exact-match; aud contains clientId; multi-audience rejected", () => {
@@ -111,8 +120,10 @@ test("validateGenericOidcIdToken: sub required; allowlist (sub + verified-email 
 });
 
 test("subjectAllowedGeneric + resolveAllowedAlgs units", () => {
-  assert.equal(subjectAllowedGeneric("S1", undefined, false, ["s1"], false), true);
-  assert.equal(subjectAllowedGeneric("S1", "e@x.test", true, ["e@x.test"], true), true); // verified email
+  // sub is matched EXACTLY (opaque, case-sensitive) — `S1` does NOT match `s1`.
+  assert.equal(subjectAllowedGeneric("s1", undefined, false, ["s1"], false), true);
+  assert.equal(subjectAllowedGeneric("S1", undefined, false, ["s1"], false), false);
+  assert.equal(subjectAllowedGeneric("S1", "e@x.test", true, ["e@x.test"], true), true); // verified email (case-insensitive)
   assert.equal(subjectAllowedGeneric("S1", "e@x.test", false, ["e@x.test"], true), false); // unverified email
   assert.deepEqual(resolveAllowedAlgs(undefined), ["RS256", "ES256"]); // missing metadata ⇒ default pin
   assert.deepEqual(resolveAllowedAlgs(["RS256", "PS256"]), ["RS256"]); // intersect
@@ -261,7 +272,7 @@ test("createGenericOidcRedirectIdentity: exchangeAndVerify outcome mapping (exch
   });
   const ok = await port2.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
   assert.equal(ok.ok, true);
-  assert.equal(ok.ok && ok.identity.subject, "sub-123");
+  assert.equal(ok.ok && ok.identity.subject, `${ISSUER}|sub-123`);
   assert.equal(JSON.stringify(ok.ok ? ok.identity : {}).includes("SECRET_ATK"), false, "access_token must not leak into IdentityClaims");
 
   // exchange_failed: token endpoint non-200
@@ -337,6 +348,14 @@ test("createGenericOidcIdentity: rejects an empty clientId (the aud check would 
 test("createGenericOidcIdentity: rejects a defined-but-blank clientSecret (no silent public-client downgrade)", async () => {
   await assert.rejects(createGenericOidcIdentity({ ...CONFIG, clientSecret: "" }));
   await assert.rejects(createGenericOidcIdentity({ ...CONFIG, clientSecret: "   " }));
+});
+
+test("createGenericOidcIdentity: scopes must be non-blank + include openid (or omitted for the default)", async () => {
+  await assert.rejects(createGenericOidcIdentity({ ...CONFIG, scopes: "" }));
+  await assert.rejects(createGenericOidcIdentity({ ...CONFIG, scopes: "   " }));
+  await assert.rejects(createGenericOidcIdentity({ ...CONFIG, scopes: "profile email" })); // no openid ⇒ no id_token
+  const id = await createGenericOidcIdentity({ ...CONFIG, scopes: "openid email" });
+  assert.match(id.getAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c" }), /scope=openid\+email/);
 });
 
 test("validateGenericOidcIdToken: at_hash present + accessToken but no alg ⇒ fail-closed (cannot compute)", () => {

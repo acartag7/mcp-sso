@@ -1680,7 +1680,12 @@ gate replaces no-gate).
   (no usable alg); **nonce always sent, always verified** (once sent, OIDC
   Core makes the claim mandatory — missing/mismatch is a hard failure);
   `at_hash` validated when present **in the code flow** (the access_token is
-  available). Subject = `sub`, keyed as `(issuer, sub)`; email is a display
+  available). Subject = `sub`, canonicalized to `${issuer}|${sub}` as the bridge
+  subject string — the bridge keys granted scopes by the subject string, so an
+  opaque `sub` that collides across issuers (e.g. a stored-DCR store reused after
+  changing issuers) must not inherit another issuer's grants. (Entra `oid` / CF
+  `sub` are globally-unique GUID/UUID; a generic `sub` is not, hence the issuer
+  namespace. The optional `subjectAllowlist` matches the raw `sub` claim.) Email is a display
   attribute, never the identity key.
   - **`at_hash` header-mode residual:** when a raw id_token is verified
     standalone with no `access_token` (header mode), `at_hash` — if present

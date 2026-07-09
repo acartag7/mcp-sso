@@ -115,7 +115,7 @@ export function getAuthorizationUrl(config: GenericOidcConfig, resolved: Resolve
     response_type: "code",
     redirect_uri: config.redirectUri,
     response_mode: "query",
-    scope: req.scope ?? config.scopes ?? "openid profile email",
+    scope: (req.scope && req.scope.trim()) ? req.scope : (config.scopes ?? "openid profile email"),
     state: req.state,
     nonce: req.nonce,
     code_challenge: req.codeChallenge,
@@ -221,8 +221,8 @@ export async function createGenericOidcIdentity(config: GenericOidcConfig, opts?
   assertHttpsRaw(config.issuer, "issuer");
   if (typeof config.clientId !== "string" || !config.clientId.trim()) throw new Error("generic_oidc_bad_config: clientId is required (an empty clientId makes the aud check vacuous)");
   if (typeof config.redirectUri !== "string" || !config.redirectUri.trim()) throw new Error("generic_oidc_bad_config: redirectUri is required");
-  // A defined-but-blank clientSecret would silently downgrade a confidential client to public — fail closed.
   if (config.clientSecret !== undefined && !config.clientSecret.trim()) throw new Error("generic_oidc_bad_config: clientSecret must be a non-empty string if set (an empty value would silently use public-client auth)");
+  if (config.scopes !== undefined && (!config.scopes.trim() || !config.scopes.split(/\s+/).includes("openid"))) throw new Error("generic_oidc_bad_config: scopes must be a non-empty, space-separated list including 'openid' (omit for the default 'openid profile email')");
   const resolved = await resolveEndpoints(config, opts?.discoveryFetch);
   const jwks = createRemoteJWKSet(new URL(resolved.jwksUri), { cacheMaxAge: 5 * 60 * 1000 });
   const validate = opts?.validate ?? ((p, o) => validateGenericOidcIdToken(p, config, o));

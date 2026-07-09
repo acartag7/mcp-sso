@@ -29,7 +29,7 @@ function gp(overrides: Record<string, unknown> = {}): GoogleIdTokenPayload {
 test("validateGoogleIdToken: happy path; subject = sub", () => {
   const r = validateGoogleIdToken(gp(), CONFIG);
   assert.equal(r.ok, true);
-  assert.equal(r.ok && r.identity.subject, "google-sub-123");
+  assert.equal(r.ok && r.identity.subject, `${GOOGLE_ISSUER}|google-sub-123`);
 });
 
 test("validateGoogleIdToken: strict iss — schemeless variant rejected", () => {
@@ -104,7 +104,7 @@ test("verifyGoogleIdToken: RS256 accept + Google hd/email_verified shaping", asy
   const token = await new SignJWT(claims).setProtectedHeader({ alg: "RS256", typ: "JWT" }).sign(privateKey);
   const r = await verifyGoogleIdToken(token, publicKey, { ...CONFIG, hostedDomain: "example.com" }, { currentDate: now });
   assert.equal(r.ok, true);
-  assert.equal(r.ok && r.identity.subject, "g-1");
+  assert.equal(r.ok && r.identity.subject, `${GOOGLE_ISSUER}|g-1`);
   assert.equal(r.ok && r.identity.claims?.email, "u@example.com"); // verified ⇒ surfaced
   // hd mismatch ⇒ identity_rejected
   const bad = await verifyGoogleIdToken(token, publicKey, { ...CONFIG, hostedDomain: "other.com" }, { currentDate: now });

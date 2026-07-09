@@ -89,8 +89,9 @@ function normalizeAud(aud: JWTPayload["aud"]): string[] | null {
   return null;
 }
 
-/** Case-insensitive, trimmed membership. Matches `sub` always; matches a
- *  verified email only when `allowEmail && emailVerified` (strict `=== true`). */
+/** Allowlist membership. `sub` is an opaque, case-sensitive identifier — matched
+ *  EXACTLY (no trim/lower; normalizing would let `alice` match an entry for `Alice`).
+ *  A verified email is matched case-insensitively (RFC 5321) only when allowed. */
 export function subjectAllowedGeneric(
   sub: string,
   email: string | undefined,
@@ -98,9 +99,11 @@ export function subjectAllowedGeneric(
   allowlist: string[],
   allowEmail: boolean,
 ): boolean {
-  const norm = (s: string): string => s.trim().toLowerCase();
-  if (allowlist.some((entry) => norm(entry) === norm(sub))) return true;
-  if (allowEmail && emailVerified && email !== undefined && allowlist.some((entry) => norm(entry) === norm(email))) return true;
+  if (allowlist.includes(sub)) return true;
+  if (allowEmail && emailVerified && email !== undefined) {
+    const e = email.trim().toLowerCase();
+    if (allowlist.some((entry) => entry.trim().toLowerCase() === e)) return true;
+  }
   return false;
 }
 
@@ -143,7 +146,12 @@ export function validateGenericOidcIdToken(
   return {
     ok: true,
     identity: {
-      subject: payload.sub,
+      // Canonicalize as (issuer, sub): the bridge keys granted scopes by the
+      // subject string, so an opaque `sub` that collides across issuers (e.g. a
+      // stored-DCR store reused after changing issuers) must not inherit another
+      // issuer's grants. Entra oid / CF sub are globally-unique (GUID/UUID); a
+      // generic `sub` is not, so it is namespaced with the configured issuer.
+      subject: `${config.issuer}|${payload.sub}`,
       claims: {
         email,
         emailVerified: payload.email_verified === true,
