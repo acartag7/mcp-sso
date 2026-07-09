@@ -103,6 +103,11 @@ test("validateGenericOidcIdToken: sub required; allowlist (sub + verified-email 
   // sub-in-list always accepts regardless of email_verified
   const allowBoth: GenericOidcConfig = { ...CONFIG, subjectAllowlist: ["sub-123"], allowEmailAllowlist: true };
   assert.equal(validateGenericOidcIdToken(payload({ email_verified: false }), allowBoth).ok, true);
+  // a non-string email (e.g. 123) does NOT throw — it just doesn't match ⇒ fail-closed
+  // identity_rejected (subject_not_allowed), not exchange_failed.
+  const r = validateGenericOidcIdToken(payload({ sub: "s", email: 123, email_verified: true }), { ...CONFIG, subjectAllowlist: ["user@example.com"], allowEmailAllowlist: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.ok === false && r.reason, "generic_oidc_subject_not_allowed");
 });
 
 test("subjectAllowedGeneric + resolveAllowedAlgs units", () => {

@@ -131,8 +131,12 @@ export function validateGenericOidcIdToken(
     if (computed === null || computed !== payload.at_hash) return { ok: false, reason: "generic_oidc_bad_at_hash" };
   }
   if (typeof payload.sub !== "string" || !payload.sub) return { ok: false, reason: "generic_oidc_no_subject" };
+  // `email` is an untrusted claim — a non-string value (e.g. 123, {}) would otherwise
+  // reach subjectAllowedGeneric's .trim() and throw ⇒ exchange_failed; coerce to
+  // string|undefined before matching or surfacing it.
+  const email = typeof payload.email === "string" ? payload.email : undefined;
   if (config.subjectAllowlist && config.subjectAllowlist.length > 0) {
-    if (!subjectAllowedGeneric(payload.sub, payload.email, payload.email_verified === true, config.subjectAllowlist, config.allowEmailAllowlist === true)) {
+    if (!subjectAllowedGeneric(payload.sub, email, payload.email_verified === true, config.subjectAllowlist, config.allowEmailAllowlist === true)) {
       return { ok: false, reason: "generic_oidc_subject_not_allowed" };
     }
   }
@@ -141,7 +145,7 @@ export function validateGenericOidcIdToken(
     identity: {
       subject: payload.sub,
       claims: {
-        email: payload.email,
+        email,
         emailVerified: payload.email_verified === true,
         issuer: config.issuer,
         expiresAt: payload.exp,
