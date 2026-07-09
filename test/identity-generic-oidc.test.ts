@@ -163,6 +163,16 @@ test("getAuthorizationUrl: PKCE S256, required nonce, response_mode=query, state
   assert.equal(url.includes("client_secret"), false);
 });
 
+test("getAuthorizationUrl: preserves an existing authorization_endpoint query (no second '?')", () => {
+  const withQuery: ResolvedEndpoints = { ...RESOLVED, authorizationEndpoint: `${ISSUER}/oauth2/authorize?tenant=acme` };
+  const u = new URL(getAuthorizationUrl(CONFIG, withQuery, { state: "s1", nonce: "n1", codeChallenge: "cc" }));
+  assert.equal(u.searchParams.get("tenant"), "acme", "existing endpoint query preserved");
+  assert.equal(u.searchParams.get("client_id"), CLIENT_ID);
+  assert.equal(u.searchParams.get("state"), "s1");
+  assert.equal(u.searchParams.get("nonce"), "n1");
+  assert.equal(u.searchParams.get("code_challenge_method"), "S256");
+});
+
 test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; missing id_token/access_token reject (OIDC §3.1.3.3)", async () => {
   const ok: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); } }; } };
   const tokens = await exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, ok);
@@ -341,6 +351,15 @@ test("exchangeCodeForToken: client_secret_basic sends an Authorization header (s
   const expected = `Basic ${Buffer.from(`${CLIENT_ID}:shh`).toString("base64")}`;
   assert.equal(seenHeaders?.authorization, expected);
   assert.equal(seenBody?.get("client_secret"), null, "the secret is NOT in the body under client_secret_basic");
+});
+
+test("exchangeCodeForToken: client_secret_basic form-encodes the credentials (RFC 6749 §2.3.1)", async () => {
+  let seenHeaders: Record<string, string> | undefined;
+  const transport: GenericOidcTokenTransport = { async postForm(_u, _b, h) { seenHeaders = h; return { status: 200, async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); } }; } };
+  const basicResolved: ResolvedEndpoints = { ...RESOLVED, tokenAuthMethod: "client_secret_basic" };
+  await exchangeCodeForToken({ issuer: ISSUER, clientId: "a:b+c", clientSecret: "s s%", redirectUri: REDIRECT_URI, endpoints: MANUAL }, basicResolved, { code: "c", codeVerifier: "v" }, transport);
+  const expected = `Basic ${Buffer.from(`${encodeURIComponent("a:b+c")}:${encodeURIComponent("s s%")}`).toString("base64")}`;
+  assert.equal(seenHeaders?.authorization, expected);
 });
 
 test("resolveEndpoints: token-endpoint auth method — honors advertised, OIDC-default basic when omitted, boot-fails on neither", async () => {

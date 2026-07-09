@@ -84,10 +84,11 @@ export function validateGoogleIdToken(
   };
   const result = validateGenericOidcIdToken(payload, genericConfig, opts);
   if (!result.ok) return result;
-  if (config.hostedDomain) {
-    // Domains are case-insensitive — normalize both sides (mirrors the
-    // case-insensitive subjectAllowedGeneric comparison on the same config).
+  // hostedDomain configured ⇒ the Workspace gate is ON. A defined-but-blank value
+  // is a misconfig (e.g. an empty env var) that must NOT silently disable the gate.
+  if (config.hostedDomain !== undefined) {
     const expected = config.hostedDomain.trim().toLowerCase();
+    if (!expected) return { ok: false, reason: "google_bad_hosted_domain" };
     const actual = typeof payload.hd === "string" ? payload.hd.trim().toLowerCase() : null;
     if (actual !== expected) {
       return { ok: false, reason: typeof payload.hd === "string" ? "google_bad_hosted_domain" : "google_missing_hosted_domain" };
@@ -124,6 +125,9 @@ export async function verifyGoogleIdToken(
 export async function createGoogleIdentity(config: GoogleConfig, opts?: { discoveryFetch?: DiscoveryTransport }): Promise<GenericOidcIdentity> {
   if (typeof config.clientSecret !== "string" || !config.clientSecret) {
     throw new Error("google_client_secret_required: Google requires a client secret (its token auth methods are secret-based; the docs' newer 'Optional' marking is unverified — treated as required)");
+  }
+  if (config.hostedDomain !== undefined && !config.hostedDomain.trim()) {
+    throw new Error("google_bad_config: hostedDomain must be a non-empty string (a blank value would silently disable the Workspace gate)");
   }
   assertHttpsRaw(GOOGLE_ISSUER, "google issuer");
   const genericConfig: GenericOidcConfig = {

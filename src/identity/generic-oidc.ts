@@ -14,20 +14,13 @@
 // pure validator alone. Header mode (raw id_token, no nonce/access_token) skips
 // nonce + at_hash (documented residual; the fronting proxy owns replay binding).
 //
-// --- Manual checklist: live-issuer verification (cannot be automated; run before
-//   claiming the generic port works end-to-end) ---
-//   1. Register ONE client at the issuer: redirect URI = the bridge's OIDC
-//      callback URL; allow PKCE (public) OR create a client secret; expose
-//      openid/profile/email.
-//   2. GET /oauth/authorize 302s to the IdP (confirm discovery resolved the right
-//      authorization_endpoint; manual mode: confirm the endpoints match).
-//   3. After login the callback validates (state/nonce/single-use jti), exchanges
-//      the code, verifies the id_token (iss exact-match, aud=clientId, NO
-//      multi-audience, iat+exp, nonce, at_hash when present); subject = stable sub.
-//   4. Approve → the bridge mints its OWN token; the IdP tokens are discarded
-//      (never stored/logged/audited/forwarded).
-//   5. Negatives: a multi-audience id_token (generic_oidc_multi_audience), a
-//      non-allowlisted subject, or a bad iss/nonce/at_hash is rejected.
+// --- Manual checklist: live-issuer verification (run before claiming live; the
+//   expanded steps are in docs/identity/generic-oidc.md) ---
+//   1. Register one client: redirect URI = the bridge callback; PKCE or a secret; openid/profile/email.
+//   2. GET /oauth/authorize 302s to the IdP; after login the callback validates (state/nonce/jti),
+//      exchanges, verifies (iss/aud/multi-aud/iat+exp/nonce/at_hash); subject = stable sub.
+//   3. Approve → the bridge mints its OWN token; IdP tokens discarded (never logged/forwarded).
+//   4. Negatives: a multi-aud id_token, a non-allowlisted subject, or a bad iss/nonce/at_hash ⇒ rejected.
 
 import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWK } from "jose";
 import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
@@ -128,7 +121,10 @@ export function getAuthorizationUrl(config: GenericOidcConfig, resolved: Resolve
     code_challenge: req.codeChallenge,
     code_challenge_method: req.codeChallengeMethod ?? "S256",
   });
-  return `${resolved.authorizationEndpoint}?${params.toString()}`;
+  // Append via URL so an endpoint query (e.g. ?tenant=...) is preserved (no 2nd `?`).
+  const url = new URL(resolved.authorizationEndpoint);
+  for (const [k, v] of params.entries()) url.searchParams.set(k, v);
+  return url.toString();
 }
 
 /** Exchange the code at the token endpoint; returns id_token + access_token (at_hash only, then discarded). */
@@ -147,9 +143,11 @@ export async function exchangeCodeForToken(
   });
   const headers: Record<string, string> = {};
   if (config.clientSecret) {
-    // basic ⇒ Authorization header (RFC 6749 §2.3.1; secret never in body), post ⇒ form field.
-    if (resolved.tokenAuthMethod === "client_secret_basic") headers.authorization = `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`;
-    else body.set("client_secret", config.clientSecret);
+    // basic ⇒ Authorization header (RFC 6749 §2.3.1 form-encodes each cred; secret never in body), post ⇒ field.
+    if (resolved.tokenAuthMethod === "client_secret_basic") {
+      const userpass = `${encodeURIComponent(config.clientId)}:${encodeURIComponent(config.clientSecret)}`;
+      headers.authorization = `Basic ${Buffer.from(userpass).toString("base64")}`;
+    } else body.set("client_secret", config.clientSecret);
   }
   const resp = await transport.postForm(resolved.tokenEndpoint, body, headers);
   if (resp.status !== 200) throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${resp.status}`);

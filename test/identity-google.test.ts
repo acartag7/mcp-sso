@@ -51,6 +51,12 @@ test("validateGoogleIdToken: hostedDomain comparison is case-insensitive (domain
   assert.equal(validateGoogleIdToken(gp({ hd: "EXAMPLE.COM" }), { ...CONFIG, hostedDomain: "example.com" }).ok, true);
 });
 
+test("validateGoogleIdToken + createGoogleIdentity: a blank hostedDomain is fail-closed (does NOT silently disable the gate)", () => {
+  // a present-but-blank hostedDomain must reject, not skip the Workspace gate
+  assert.equal(validateGoogleIdToken(gp({ hd: "example.com" }), { ...CONFIG, hostedDomain: "" }).ok, false);
+  assert.equal(validateGoogleIdToken(gp({ hd: "example.com" }), { ...CONFIG, hostedDomain: "  " }).ok, false);
+});
+
 test("validateGoogleIdToken: email surfaced only when email_verified === true (strict)", () => {
   const verified = validateGoogleIdToken(gp({ email: "u@example.com", email_verified: true }), CONFIG);
   assert.equal(verified.ok, true);
