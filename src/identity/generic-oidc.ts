@@ -107,9 +107,9 @@ export interface GenericOidcIdentityOpts {
   validate?: (payload: GenericOidcIdTokenPayload, opts: GenericOidcValidateOpts) => IdentityResult;
 }
 
-/** Build the IdP authorization URL (auth-code + PKCE S256 + nonce); no client_secret
- *  here (confidential clients present it at the token endpoint). */
 export function getAuthorizationUrl(config: GenericOidcConfig, resolved: ResolvedEndpoints, req: GenericOidcAuthorizeRequest): string {
+  // PKCE is always S256 (§17.6) — reject any runtime override (e.g. `as any` "plain").
+  if (req.codeChallengeMethod !== undefined && req.codeChallengeMethod !== "S256") throw new Error("generic_oidc_bad_config: codeChallengeMethod must be S256 (PKCE plain/other rejected — §17.6)");
   const params = new URLSearchParams({
     client_id: config.clientId,
     response_type: "code",
@@ -121,7 +121,7 @@ export function getAuthorizationUrl(config: GenericOidcConfig, resolved: Resolve
     code_challenge: req.codeChallenge,
     code_challenge_method: req.codeChallengeMethod ?? "S256",
   });
-  // Append via URL so an endpoint query (e.g. ?tenant=...) is preserved (no 2nd `?`).
+  // Build via URL so an endpoint that already carries a query is preserved (no 2nd `?`).
   const url = new URL(resolved.authorizationEndpoint);
   for (const [k, v] of params.entries()) url.searchParams.set(k, v);
   return url.toString();

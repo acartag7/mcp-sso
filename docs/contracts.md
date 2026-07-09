@@ -58,10 +58,11 @@ spec).
 memory + sqlite + mysql reference adapters and a shared conformance suite, and the
 identity-port boundary.
 
-**v0.1 does NOT include:** multi-tenant/SaaS, UI beyond the consent page,
-generic-OIDC-provider ambitions (`GenericOidcIdentity` — Cloudflare Access and
-Entra are the only concrete identity ports today), token introspection, or the
-CIMD implementation (its port boundary is defined now; impl is v0.2). Framework
+**v0.1 did NOT include:** multi-tenant/SaaS, UI beyond the consent page,
+generic-OIDC-provider support (the `GenericOidcIdentity` port + Google preset
+landed in v0.2/S4a; v0.1 shipped only Cloudflare Access + Entra as concrete
+identity ports), token introspection, or the CIMD implementation (its port
+boundary is defined now; impl is v0.2). Framework
 adapters (`/fastify` `/express` `/hono`), the Cloudflare Access/Entra identity
 ports, and a runnable example were originally Phase 3/4 scope and have since
 shipped — see §16 for the current conformance matrix and `docs/threat-model.md`
@@ -928,7 +929,9 @@ the npm artifact is cut, so the published package is never broken by `.ts` paths
   "./hono":                     { "types": "./dist/adapters/hono.d.ts",            "default": "./dist/adapters/hono.js" },
   "./identity/cloudflare-access": { "types": "./dist/identity/cloudflare-access.d.ts", "default": "./dist/identity/cloudflare-access.js" },
   "./identity/entra":             { "types": "./dist/identity/entra.d.ts",             "default": "./dist/identity/entra.js" },
-  "./identity/console-pairing":   { "types": "./dist/identity/console-pairing.d.ts",   "default": "./dist/identity/console-pairing.js" }
+  "./identity/console-pairing":   { "types": "./dist/identity/console-pairing.d.ts",   "default": "./dist/identity/console-pairing.js" },
+  "./identity/generic-oidc":      { "types": "./dist/identity/generic-oidc.d.ts",      "default": "./dist/identity/generic-oidc.js" },
+  "./identity/google":            { "types": "./dist/identity/google.d.ts",            "default": "./dist/identity/google.js" }
 }
 ```
 

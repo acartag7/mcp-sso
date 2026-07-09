@@ -29,6 +29,11 @@ test("getAuthorizationUrl: tenant-derived, PKCE S256, optional nonce", () => {
   assert.match(withNonce, /nonce=n-1/);
 });
 
+test("getAuthorizationUrl: PKCE S256 is enforced on the primitive (a non-S256 method is rejected, not honored)", () => {
+  // an `as any` "plain" must throw at the primitive (sibling of the generic port), not serialize it.
+  assert.throws(() => getAuthorizationUrl(CONFIG, { state: "s1", codeChallenge: "c", codeChallengeMethod: "plain" } as never));
+});
+
 test("validateEntraIdToken: single-tenant iss/aud/tid/exp gates + subject extraction", () => {
   assert.equal(validateEntraIdToken(payload() as never, CONFIG).ok, true);
   assert.equal(validateEntraIdToken(payload({ iss: "https://evil/v2.0" }) as never, CONFIG).ok, false); // bad iss

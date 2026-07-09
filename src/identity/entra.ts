@@ -92,6 +92,7 @@ export interface EntraAuthorizeRequest {
 
 /** Build the Entra v2.0 authorization URL (auth-code + PKCE S256). */
 export function getAuthorizationUrl(config: EntraConfig, req: EntraAuthorizeRequest): string {
+  if (req.codeChallengeMethod !== undefined && req.codeChallengeMethod !== "S256") throw new Error("entra_bad_config: codeChallengeMethod must be S256 (PKCE plain/other rejected — sibling of generic-oidc)");
   const params = new URLSearchParams({
     client_id: config.clientId,
     response_type: "code",
@@ -230,7 +231,6 @@ export function createEntraIdentity(config: EntraConfig, opts?: { scopeCatalog?:
     },
   };
 }
-
 function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JWTExpired) return "entra_token_expired";
   if (error instanceof errors.JWTClaimValidationFailed) return "entra_bad_claim";

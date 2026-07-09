@@ -178,6 +178,12 @@ test("getAuthorizationUrl: preserves an existing authorization_endpoint query (n
   assert.equal(u.searchParams.get("code_challenge_method"), "S256");
 });
 
+test("getAuthorizationUrl: PKCE S256 is enforced on the primitive (a non-S256 method is rejected, never honored)", () => {
+  assert.match(getAuthorizationUrl(CONFIG, RESOLVED, { state: "s", nonce: "n", codeChallenge: "c" }), /code_challenge_method=S256/);
+  // an `as any` "plain" must throw at the primitive, not serialize code_challenge_method=plain.
+  assert.throws(() => getAuthorizationUrl(CONFIG, RESOLVED, { state: "s", nonce: "n", codeChallenge: "c", codeChallengeMethod: "plain" } as never));
+});
+
 test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; missing id_token/access_token reject (OIDC §3.1.3.3)", async () => {
   const ok: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); } }; } };
   const tokens = await exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, ok);
