@@ -198,6 +198,16 @@ replay-bound:
 The §17.11 redirect orchestrator does NOT carry this residual: it mints and
 validates its own nonce (row 31).
 
+**Generic-OIDC / Google `at_hash` residual (same class).** The §17.6 generic +
+Google ports validate `at_hash` when it is present **in the code flow** (the
+access_token just exchanged is available to hash it against). In header mode — a
+raw id_token verified standalone with no access_token — `at_hash`, if present, is
+**skipped, not rejected**: there is no access_token to bind it to, exactly as
+there is no nonce to bind to. The redirect flow (the primary path for these
+ports) always has the access_token and always validates `at_hash` when present;
+the residual is header-mode-only and is owned by the fronting proxy, like the
+nonce residual above.
+
 ### Row 18 — machine-client secret enforcement
 
 - **Out-of-band provisioning only.** Open DCR can NEVER mint a secret-bearing

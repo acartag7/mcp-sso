@@ -54,6 +54,14 @@
     "./identity/console-pairing": {
       "types": "./dist/identity/console-pairing.d.ts",
       "default": "./dist/identity/console-pairing.js"
+    },
+    "./identity/generic-oidc": {
+      "types": "./dist/identity/generic-oidc.d.ts",
+      "default": "./dist/identity/generic-oidc.js"
+    },
+    "./identity/google": {
+      "types": "./dist/identity/google.d.ts",
+      "default": "./dist/identity/google.js"
     }
   },
   "files": [

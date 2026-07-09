@@ -58,10 +58,11 @@ spec).
 memory + sqlite + mysql reference adapters and a shared conformance suite, and the
 identity-port boundary.
 
-**v0.1 does NOT include:** multi-tenant/SaaS, UI beyond the consent page,
-generic-OIDC-provider ambitions (`GenericOidcIdentity` — Cloudflare Access and
-Entra are the only concrete identity ports today), token introspection, or the
-CIMD implementation (its port boundary is defined now; impl is v0.2). Framework
+**v0.1 did NOT include:** multi-tenant/SaaS, UI beyond the consent page,
+generic-OIDC-provider support (the `GenericOidcIdentity` port + Google preset
+landed in v0.2/S4a; v0.1 shipped only Cloudflare Access + Entra as concrete
+identity ports), token introspection, or the CIMD implementation (its port
+boundary is defined now; impl is v0.2). Framework
 adapters (`/fastify` `/express` `/hono`), the Cloudflare Access/Entra identity
 ports, and a runnable example were originally Phase 3/4 scope and have since
 shipped — see §16 for the current conformance matrix and `docs/threat-model.md`
@@ -292,8 +293,9 @@ root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
   registration for the bridge; validate iss/aud/tid; map oid/email → subject. The
   bridge then issues its OWN audience-bound tokens (no passthrough).
 
-`GenericOidcIdentity`, the Google preset, the dedicated GitHub port, and the
-console-pairing port are v0.2 scope — contracts locked in §17.5–§17.6. The
+`GenericOidcIdentity` and the Google preset ship as `RedirectIdentityPort`s
+(S4a); the dedicated GitHub port and the console-pairing port are covered in
+§17.5–§17.6 (console-pairing shipped S1b; GitHub still locked). The
 **upstream redirect-leg orchestrator** (`RedirectIdentityPort` +
 `createUpstreamRedirectFlow` — the mounted browser-redirect flow the Entra
 primitives currently leave to the host) is locked in **§17.11**.
@@ -927,7 +929,9 @@ the npm artifact is cut, so the published package is never broken by `.ts` paths
   "./hono":                     { "types": "./dist/adapters/hono.d.ts",            "default": "./dist/adapters/hono.js" },
   "./identity/cloudflare-access": { "types": "./dist/identity/cloudflare-access.d.ts", "default": "./dist/identity/cloudflare-access.js" },
   "./identity/entra":             { "types": "./dist/identity/entra.d.ts",             "default": "./dist/identity/entra.js" },
-  "./identity/console-pairing":   { "types": "./dist/identity/console-pairing.d.ts",   "default": "./dist/identity/console-pairing.js" }
+  "./identity/console-pairing":   { "types": "./dist/identity/console-pairing.d.ts",   "default": "./dist/identity/console-pairing.js" },
+  "./identity/generic-oidc":      { "types": "./dist/identity/generic-oidc.d.ts",      "default": "./dist/identity/generic-oidc.js" },
+  "./identity/google":            { "types": "./dist/identity/google.d.ts",            "default": "./dist/identity/google.js" }
 }
 ```
 
@@ -985,7 +989,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Device authorization grant (RFC 8628) | 🔒 v0.2 contract locked | §17.3 |
 | Entra group→scope ceiling (Gate 2) | ✅ v0.2 shipped (S2a core `allowedScopes` engine + S2b Entra group→scope producer) | §17.4 |
 | Console-pairing identity | ✅ v0.2 shipped (S1b) — `createConsolePairingIdentity`, 12-char base-20 code, lazy/single-use/TTL/attempt-cap, `oauth.pairing.attempt` | §17.5 |
-| `GenericOidcIdentity` + Google preset + GitHub port | 🔒 v0.2 contract locked | §17.6 |
+| `GenericOidcIdentity` + Google preset + GitHub port | ✅ v0.2 shipped (S4a) — GenericOidcIdentity + Google preset as `RedirectIdentityPort`s (discovery + manual endpoints, multi-audience reject, at_hash, iat required); GitHub port still 🔒 locked (separate dedicated port) | §17.6 |
 | Upstream redirect-leg orchestrator (`RedirectIdentityPort` + flow cookie) | ✅ v0.2 shipped — `createUpstreamRedirectFlow` + `createEntraRedirectIdentity`, signed flow cookie (HS256 consent secret, aud `mcp-sso/upstream-flow`, single-use `upf_` jti), 13-row callback failure table, `oauth.upstream.callback` audit | §17.11 |
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
@@ -1626,6 +1630,18 @@ gate replaces no-gate).
 
 ### 17.6 `GenericOidcIdentity` + Google preset + dedicated GitHub port
 
+> **SHIPPED S4a (generic + Google):** `createGenericOidcIdentity` +
+> `createGenericOidcRedirectIdentity`, and the Google preset
+> (`createGoogleIdentity` + `createGoogleRedirectIdentity`), ship as
+> `RedirectIdentityPort`s consumed by the §17.11 orchestrator. They are
+> unit/flow-verified only (synthetic RS256/ES256 id_tokens through the real
+> `validateGenericOidcIdToken`/`validateGoogleIdToken` → bridge path); a real
+> live sign-in is owner-pending (manual checklist at the top of each source
+> file). The dedicated GitHub port stays 🔒 locked (its own port — no OIDC
+> discovery, no id_token; identity via the REST API). Setup guides:
+> [`docs/identity/generic-oidc.md`](./identity/generic-oidc.md),
+> [`docs/identity/google.md`](./identity/google.md).
+
 **`createGenericOidcIdentity(config)`** — the missing generic port:
 
 - Config: `issuer` (https, the exact-match anchor), `clientId`,
@@ -1644,18 +1660,49 @@ gate replaces no-gate).
   documented rationale. Redirects on the discovery fetch: not followed
   (fail closed).
 - **id_token validation:** `iss` exact-match; `aud` must contain `clientId`
-  and multiple-audience tokens are rejected outright (fail-closed
-  simplification of OIDC Core §3.1.3.7); `exp`/`iat` via jose with
-  `ClockPort`; algorithms pinned to `{RS256, ES256}` ∩ the provider's
-  advertised set; **nonce always sent, always verified** (once sent, OIDC
+  and multiple-audience tokens are rejected outright (a single-element
+  `[clientId]` array is accepted; an array with any second audience is
+  rejected before the contains-check — fail-closed simplification of OIDC
+  Core §3.1.3.7; the check lives in the pure validator, NOT jose's
+  `audience` option, which accepts multi-audience tokens); `exp` **and**
+  `iat` presence required (OIDC Core §2 mandates `iat`; jose validates
+  `exp`/`nbf` against the clock but does **not** validate `iat`'s value, so
+  the pure validator asserts both claims' *presence* — a deliberate tightening
+  over the Entra `exp`-only check; the Entra public API is unchanged. A
+  far-future `iat` is **not** separately rejected: `exp` bounds the token's
+  lifetime, and rejecting `iat`-ahead-of-now would break legit issuers with
+  clock skew — accepting it gives an attacker who can already sign nothing
+  beyond what `exp` already grants);
+  algorithms pinned to `{RS256, ES256}` ∩ the provider's advertised
+  `id_token_signing_alg_values_supported` — a **missing** advertised set
+  defaults to `{RS256, ES256}` (don't over-reject providers that omit the
+  metadata), but a **present** set with an empty intersection boot-FAILS
+  (no usable alg); **nonce always sent, always verified** (once sent, OIDC
   Core makes the claim mandatory — missing/mismatch is a hard failure);
-  `at_hash` validated if present, absence accepted (code flow). Subject =
-  `sub`, keyed as `(issuer, sub)`; email is a display attribute, never the
-  identity key.
+  `at_hash` validated when present **in the code flow** (the access_token is
+  available). Subject = `sub`, canonicalized to `${issuer}|${sub}` as the bridge
+  subject string — the bridge keys granted scopes by the subject string, so an
+  opaque `sub` that collides across issuers (e.g. a stored-DCR store reused after
+  changing issuers) must not inherit another issuer's grants. (Entra `oid` / CF
+  `sub` are globally-unique GUID/UUID; a generic `sub` is not, hence the issuer
+  namespace. The optional `subjectAllowlist` matches the raw `sub` claim.) Email is a display
+  attribute, never the identity key.
+  - **`at_hash` header-mode residual:** when a raw id_token is verified
+    standalone with no `access_token` (header mode), `at_hash` — if present
+    — is **skipped**, not rejected: there is no access_token to hash it
+    against. This is the same residual class as the header-mode nonce
+    (threat-model row 12): the fronting proxy owns the access_token binding.
+    Never computed against `undefined`.
 - **PKCE:** always S256. If discovery omits `code_challenge_methods_supported`
   (per RFC 8414 that means no PKCE support), boot FAILS unless the deployer
   sets `allowProviderWithoutPkce: true` (state + nonce + client secret still
   bind the flow; the flag is loud).
+- **Token-endpoint client auth (confidential clients):** the secret is sent by the
+  method resolved from discovery `token_endpoint_auth_methods_supported` —
+  `client_secret_post` when supported (else `client_secret_basic`), boot-failing if
+  neither is advertised for a confidential client. Omitting the field defaults to
+  `client_secret_basic` (OIDC Discovery §3). A deployer may force either via
+  `tokenEndpointAuthMethod`. Public clients (no secret) are unaffected (PKCE only).
 - **Google preset** (`createGoogleIdentity`): the generic port pinned to
   `https://accounts.google.com` + discovery; `clientSecret` REQUIRED
   (Google's advertised token auth methods are secret-based only; its docs'

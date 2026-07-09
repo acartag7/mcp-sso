@@ -13,6 +13,7 @@
 
 import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWTPayload } from "jose";
 import type { IdentityClaims, IdentityPort, IdentityResult } from "../ports/identity.ts";
+import { assertHttpsRaw } from "./util.ts";
 
 export interface CloudflareAccessConfig {
   audience: string;
@@ -89,8 +90,8 @@ export async function verifyCloudflareAccessToken(
  *  is fetched (and cached) from the https certsUrl. */
 export function createCloudflareAccessIdentity(config: CloudflareAccessConfig): IdentityPort {
   if (!config.audience) throw new Error("audience is required (a non-empty CF Access AUD tag) — an empty audience lets jose enforce aud-presence but skip the value match, accepting any CF JWT regardless of app");
-  assertHttpsTrustRoot(config.certsUrl, "certsUrl");
-  assertHttpsTrustRoot(config.issuer, "issuer");
+  assertHttpsRaw(config.certsUrl, "certsUrl");
+  assertHttpsRaw(config.issuer, "issuer");
   const jwks = createRemoteJWKSet(new URL(config.certsUrl), { cacheMaxAge: 5 * 60 * 1000 });
   const verifyOptions = { algorithms: ["RS256"], audience: config.audience, clockTolerance: 60, issuer: config.issuer };
   return {
@@ -106,14 +107,10 @@ export function createCloudflareAccessIdentity(config: CloudflareAccessConfig): 
   };
 }
 
-/** Raw `^https://` prefix check BEFORE `new URL()` (addendum 11): Node's lenient
- *  URL parser normalizes `https:/host` into a valid-looking URL, so an http JWKS
- *  would otherwise slip through → MITM substitutes signing keys → total auth bypass. */
-export function assertHttpsTrustRoot(value: string, label: string): void {
-  if (!value.startsWith("https://")) {
-    throw new Error(`${label} must be an https:// URL (http trust roots allow key substitution)`);
-  }
-}
+/** Raw `^https://` prefix check BEFORE `new URL()` (addendum 11). Hoisted to
+ *  `./util.ts` so every identity port enforces the same logic; re-exported under
+ *  this name for back-compat with consumers that import it from this subpath. */
+export { assertHttpsRaw as assertHttpsTrustRoot } from "./util.ts";
 
 function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JWTExpired) return "access_jwt_expired";
