@@ -83,6 +83,10 @@ pinned to a SHA whose tag is ≥15 days old at pin time):
 - `actions/checkout` — shallow checkout.
 - `actions/setup-node` — Node 24 + cache.
 - `pnpm/action-setup` — pnpm via corepack (matches `packageManager`).
+- `acartag7/engineering-os/process-guard` — the Engineering OS artifact-chain
+  guard (freeze-hash / mixed-diff / stage-artifact) in `.github/workflows/ci.yml`.
+  Pinned to `b483fa418ffa8122588fdfa87c36f40f6908c06f` (published 2026-07-09).
+  **First-party — documented exception to the 15-day floor (see below).**
 - npm publish step runs `npm publish --provenance` under the GitHub Actions OIDC
   token (**no `NPM_TOKEN` with publish rights, no local publishes**).
 
@@ -121,6 +125,17 @@ one-time, explicitly-owner-approved exception to rule 3, not a new precedent: it
 carries no provenance attestation and is not the v0.1.0 release artifact. Every
 publish from `v0.1.0` onward goes through GitHub Actions via OIDC Trusted
 Publishing (`.github/workflows/publish.yml`), with `--provenance` intact.
+
+**Documented exception (2026-07-09):** the `acartag7/engineering-os/process-guard`
+action is pinned to `b483fa418ffa8122588fdfa87c36f40f6908c06f`, a same-day `main`
+commit published 2026-07-09 — younger than the 15-day floor. This is a deliberate,
+owner-approved exception. The action is **first-party**: same owner (`acartag7`)
+as this repo, authored and controlled by the repo owner. The age floor exists to
+blunt *third-party* supply-chain risk — a compromised upstream release is usually
+caught and yanked within days — and mitigates nothing for self-owned code. The pin
+is still immutable by commit SHA (a moved tag can't repoint it) and changes only
+via deliberate batched SHA-bump sweeps per the engineering-os versioning policy. No
+tag/release is used because none exists and a SHA pin is stricter regardless.
 
 ## Consuming this package under a `minimumReleaseAge` floor
 
