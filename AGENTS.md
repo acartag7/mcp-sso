@@ -60,7 +60,11 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 - `pnpm test` — `node --test`.
 - `pnpm run build` — `rm -rf dist && tsc -p tsconfig.build.json`.
 - `npm pack --dry-run` — before any release: the tarball must contain **dist + docs + README + LICENSE only.**
-- **Gates on every push:** typecheck · `check:lines` · test · build · `process-guard`.
+- **Gates on every push:** typecheck · `check:lines` · test · build.
+- **Gates on every PR (additionally):** `process-guard` (artifact chain:
+  freeze-hash · mixed-diff · stage-artifact). It runs on PRs only — there is no
+  base ref to diff against on a push; direct pushes to `main` are blocked by
+  branch protection.
 - **Local guard hook (one-time):** `git config core.hooksPath .githooks` wires
   `.githooks/pre-commit`, a local mirror of the CI `process-guard` check (it
   locates an `engineering-os` checkout via `$ENGINEERING_OS_DIR`, a sibling
