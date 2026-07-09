@@ -163,7 +163,7 @@ test("getAuthorizationUrl: PKCE S256, required nonce, response_mode=query, state
   assert.equal(url.includes("client_secret"), false);
 });
 
-test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; missing id_token rejects", async () => {
+test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; missing id_token/access_token reject (OIDC §3.1.3.3)", async () => {
   const ok: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); } }; } };
   const tokens = await exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, ok);
   assert.equal(tokens.id_token, "idt");
@@ -172,6 +172,9 @@ test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; mi
   await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, badStatus));
   const noIdToken: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ access_token: "atk" }); } }; } };
   await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, noIdToken));
+  // access_token is REQUIRED in the code flow (guarantees a present at_hash is validated).
+  const noAccessToken: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: "idt" }); } }; } };
+  await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, noAccessToken), /access_token/);
 });
 
 // --- resolveEndpoints (discover + manual) -----------------------------------
@@ -257,7 +260,7 @@ test("createGenericOidcRedirectIdentity: exchangeAndVerify outcome mapping (exch
   // identity_rejected: bad iss (verified-context denial)
   const portBadIss = await createGenericOidcRedirectIdentity(CONFIG, {
     verifyKey: rsa.publicKey, currentDate: now,
-    transport: { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: await signClaim({ iss: "https://evil.test", nonce: "n" }) }); } }; } },
+    transport: { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: await signClaim({ iss: "https://evil.test", nonce: "n" }), access_token: "atk" }); } }; } },
   });
   const ir = await portBadIss.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
   assert.ok(!ir.ok && ir.kind === "identity_rejected");
@@ -265,7 +268,7 @@ test("createGenericOidcRedirectIdentity: exchangeAndVerify outcome mapping (exch
   // identity_rejected: nonce mismatch
   const portBadNonce = await createGenericOidcRedirectIdentity(CONFIG, {
     verifyKey: rsa.publicKey, currentDate: now,
-    transport: { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: await signClaim({ nonce: "other" }) }); } }; } },
+    transport: { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: await signClaim({ nonce: "other" }), access_token: "atk" }); } }; } },
   });
   const irn = await portBadNonce.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
   assert.ok(!irn.ok && irn.kind === "identity_rejected");
@@ -322,7 +325,7 @@ test("verifyGenericOidcIdToken: a far-future iat is ACCEPTED (exp bounds the tok
 
 test("exchangeCodeForToken: a confidential client sends client_secret in the body", async () => {
   let seen: URLSearchParams | undefined;
-  const transport: GenericOidcTokenTransport = { async postForm(_url, body) { seen = body; return { status: 200, async text() { return JSON.stringify({ id_token: "idt" }); } }; } };
+  const transport: GenericOidcTokenTransport = { async postForm(_url, body) { seen = body; return { status: 200, async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); } }; } };
   await exchangeCodeForToken({ ...CONFIG, clientSecret: "shh" }, RESOLVED, { code: "c", codeVerifier: "v" }, transport);
   assert.equal(seen?.get("client_secret"), "shh");
 });
@@ -337,7 +340,7 @@ test("createGenericOidcRedirectIdentity: a JWKS HTTP 500 (jose base JOSEError, E
   const rsa = await generateKeyPair("RS256");
   const now = new Date(NOW * 1000);
   const idToken = await sign({ iss: ISSUER, aud: CLIENT_ID, sub: "s", exp: NOW + 3600, iat: NOW, nonce: "n" }, "RS256", rsa.privateKey);
-  const transport: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: idToken }); } }; } };
+  const transport: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: idToken, access_token: "atk" }); } }; } };
   const realFetch = globalThis.fetch;
   // The JWKS path is live (no verifyKey); jose throws base JOSEError on a non-200
   // JWKS. Before the jwtErrorReason fix this was generic_oidc_token_invalid ⇒
@@ -350,4 +353,16 @@ test("createGenericOidcRedirectIdentity: a JWKS HTTP 500 (jose base JOSEError, E
     assert.equal(r.ok, false, "verify did not succeed (JWKS returned 500)");
     assert.ok(!r.ok && r.kind === "exchange_failed", "a JWKS HTTP 500 is infrastructure ⇒ exchange_failed (never identity_rejected)");
   } finally { globalThis.fetch = realFetch; }
+});
+
+test("createGenericOidcRedirectIdentity: code-flow response with at_hash but NO access_token ⇒ exchange_failed (fail-closed — Codex P2: at_hash must be validatable, never header-mode-skipped in the code flow)", async () => {
+  const rsa = await generateKeyPair("RS256");
+  const now = new Date(NOW * 1000);
+  const idToken = await sign({ iss: ISSUER, aud: CLIENT_ID, sub: "s", exp: NOW + 3600, iat: NOW, nonce: "n", at_hash: "somehash" }, "RS256", rsa.privateKey);
+  const port = await createGenericOidcRedirectIdentity(CONFIG, {
+    verifyKey: rsa.publicKey, currentDate: now,
+    transport: { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: idToken }); } }; } }, // no access_token
+  });
+  const r = await port.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+  assert.ok(!r.ok && r.kind === "exchange_failed", "missing access_token in the code flow ⇒ exchange_failed (never accepted/skipped)");
 });

@@ -76,15 +76,15 @@ export interface GenericOidcAuthorizeRequest {
 
 export interface GenericOidcTokenResponse {
   id_token: string;
-  /** Present in the code flow — used for `at_hash`, then discarded. */
-  access_token?: string;
+  /** REQUIRED in the code flow (§3.1.3.3) — for `at_hash`, then discarded. Requiring
+   *  it guarantees a present at_hash is validated (no header-mode skip in code flow). */
+  access_token: string;
 }
 
 /** A concrete verification key (CryptoKey/Uint8Array/JWK) or the JWKS resolver.
- *  Derived from jose's helpers rather than naming `CryptoKey` (a global whose
- *  type-availability depends on the lib / @types/node variant). The resolver is
- *  callable, so `typeof key === "function"` distinguishes it (jose's two
- *  `jwtVerify` overloads: a concrete key vs a getKey resolver). */
+ *  Derived from jose's helpers (not the `CryptoKey` global, whose type-availability
+ *  depends on the lib). The resolver is callable, so `typeof key === "function"`
+ *  distinguishes it (jose's two `jwtVerify` overloads: concrete key vs getKey). */
 type VerifyKey = Uint8Array | JWK | Awaited<ReturnType<typeof importJWK>> | ReturnType<typeof createRemoteJWKSet>;
 export type GenericOidcVerifyKey = Awaited<ReturnType<typeof importJWK>>;
 
@@ -151,14 +151,16 @@ export async function exchangeCodeForToken(
   if (resp.status !== 200) throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${resp.status}`);
   const parsed = JSON.parse(await resp.text()) as Partial<GenericOidcTokenResponse>;
   if (!parsed.id_token) throw new Error("generic_oidc_exchange_failed: token response missing id_token");
+  // access_token is REQUIRED in the code flow (OIDC §3.1.3.3) — requiring it also
+  // guarantees a present at_hash is validated (no header-mode skip in the code flow).
+  if (typeof parsed.access_token !== "string" || !parsed.access_token) throw new Error("generic_oidc_exchange_failed: token response missing access_token (required in the OIDC code flow)");
   return { id_token: parsed.id_token, access_token: parsed.access_token };
 }
 
-/** Shared jose-verify + pure-validate seam (used by the generic identity, the
- *  standalone verifier, AND the Google preset). iss/aud/multi-aud live in the
- *  `validate` callback (NOT jose's options — jose's `audience` accepts multi-aud);
- *  jose enforces the alg pin + exp/iat values. A non-JOSEError throw (JWKS-fetch
- *  network failure) funnels to `generic_oidc_verify_failed` ⇒ exchange_failed. */
+/** Shared jose-verify + pure-validate seam (generic identity, standalone verifier,
+ *  Google preset). iss/aud/multi-aud live in `validate` (NOT jose's options — its
+ *  `audience` accepts multi-aud); jose enforces the alg pin. JWKS-fetch failures ⇒
+ *  `generic_oidc_verify_failed` ⇒ exchange_failed. */
 export interface VerifyIdTokenArgs {
   allowedAlgs: string[];
   validate: (payload: GenericOidcIdTokenPayload, opts: GenericOidcValidateOpts) => IdentityResult;
@@ -238,12 +240,6 @@ export async function createGenericOidcIdentity(config: GenericOidcConfig, opts?
 }
 
 // Re-exports for the ./identity/generic-oidc subpath.
-export {
-  validateGenericOidcIdToken, computeAtHash, subjectAllowedGeneric, resolveAllowedAlgs,
-  type GenericOidcIdTokenPayload, type GenericOidcValidateOpts, type GenericOidcClaimConfig,
-} from "./generic-oidc-claims.ts";
-export {
-  resolveEndpoints, defaultTokenTransport, defaultDiscoveryTransport,
-  type ResolvedEndpoints, type DiscoveryTransport, type GenericOidcTokenTransport,
-} from "./generic-oidc-discovery.ts";
+export { validateGenericOidcIdToken, computeAtHash, subjectAllowedGeneric, resolveAllowedAlgs, type GenericOidcIdTokenPayload, type GenericOidcValidateOpts, type GenericOidcClaimConfig } from "./generic-oidc-claims.ts";
+export { resolveEndpoints, defaultTokenTransport, defaultDiscoveryTransport, type ResolvedEndpoints, type DiscoveryTransport, type GenericOidcTokenTransport } from "./generic-oidc-discovery.ts";
 export { createGenericOidcRedirectIdentity, type GenericOidcRedirectOpts } from "./generic-oidc-redirect.ts";
