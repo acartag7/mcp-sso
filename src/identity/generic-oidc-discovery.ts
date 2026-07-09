@@ -101,12 +101,24 @@ function asStringArray(value: unknown, label: string): string[] | undefined {
   return value;
 }
 
+/** Raw `^https://` check (addendum 11 — BEFORE `new URL()`, which normalizes
+ *  `https:/host`) AND a structural parse: a value like `https://` (no host) must
+ *  fail at boot, not surface at the first authorize/exchange, since discovery +
+ *  manual endpoint metadata is untrusted (§17.6 promises endpoint validation as a
+ *  boot failure). */
+function assertValidHttpsEndpoint(value: string, label: string): void {
+  assertHttpsRaw(value, label);
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error(`generic_oidc_bad_config: ${label} must be a valid https URL`); }
+  if (url.protocol !== "https:" || !url.hostname) throw new Error(`generic_oidc_bad_config: ${label} must be a valid https URL with a hostname`);
+}
+
 /** Resolve the token-endpoint auth method for a confidential client. Honors the
  *  provider's advertised `token_endpoint_auth_methods_supported` so a basic-only
- *  issuer is not sent a `client_secret_post` body it would reject (the OIDC
- *  default when the field is omitted is `client_secret_basic`). A public client
- *  sends no secret, so the method is moot. A deployer override is trusted.
- *  Manual mode passes no advertised set ⇒ defaults to post (overridable). */
+ *  issuer is not sent a `client_secret_post` body it would reject. When no method
+ *  is advertised (discovery omitted OR manual mode) the OIDC default
+ *  `client_secret_basic` (RFC 6749 §2.3.1) is used — consistent across both modes.
+ *  A public client sends no secret, so the method is moot. A deployer override is trusted. */
 export function resolveTokenAuthMethod(
   clientSecret: string | undefined,
   override: TokenAuthMethod | undefined,
@@ -114,7 +126,7 @@ export function resolveTokenAuthMethod(
 ): TokenAuthMethod {
   if (!clientSecret) return "client_secret_post";
   if (override) return override;
-  if (advertised === undefined) return "client_secret_post";
+  if (advertised === undefined) return "client_secret_basic"; // OIDC default (discovery omitted + manual)
   if (advertised.includes("client_secret_post")) return "client_secret_post";
   if (advertised.includes("client_secret_basic")) return "client_secret_basic";
   throw new Error("generic_oidc_no_supported_auth_method: the token endpoint advertises neither client_secret_post nor client_secret_basic (required for a confidential client)");
@@ -128,7 +140,7 @@ export async function resolveEndpoints(
   transport?: DiscoveryTransport,
 ): Promise<ResolvedEndpoints> {
   if (config.endpoints === "discover") {
-    assertHttpsRaw(config.issuer, "issuer");
+    assertValidHttpsEndpoint(config.issuer, "issuer");
     const discoveryUrl = config.issuer.replace(/\/+$/, "") + "/.well-known/openid-configuration";
     const fetcher = transport ?? defaultDiscoveryTransport;
     const resp = await fetcher.get(discoveryUrl);
@@ -141,9 +153,9 @@ export async function resolveEndpoints(
     const authorizationEndpoint = stringField(doc.authorization_endpoint, "authorization_endpoint");
     const tokenEndpoint = stringField(doc.token_endpoint, "token_endpoint");
     const jwksUri = stringField(doc.jwks_uri, "jwks_uri");
-    assertHttpsRaw(authorizationEndpoint, "authorization_endpoint");
-    assertHttpsRaw(tokenEndpoint, "token_endpoint");
-    assertHttpsRaw(jwksUri, "jwks_uri");
+    assertValidHttpsEndpoint(authorizationEndpoint, "authorization_endpoint");
+    assertValidHttpsEndpoint(tokenEndpoint, "token_endpoint");
+    assertValidHttpsEndpoint(jwksUri, "jwks_uri");
     const allowedAlgs = resolveAllowedAlgs(asStringArray(doc.id_token_signing_alg_values_supported, "id_token_signing_alg_values_supported"));
     const methods = asStringArray(doc.code_challenge_methods_supported, "code_challenge_methods_supported") ?? [];
     if (!methods.includes("S256")) {
@@ -152,14 +164,13 @@ export async function resolveEndpoints(
       }
       console.warn("[mcp-sso] generic OIDC provider does not advertise PKCE S256; proceeding with allowProviderWithoutPkce=true. PKCE is a recommended code-injection defense — prefer a provider that supports it.");
     }
-    // token_endpoint_auth_methods_supported omitted ⇒ OIDC default client_secret_basic.
-    const tokenAuthMethod = resolveTokenAuthMethod(config.clientSecret, config.tokenEndpointAuthMethod, asStringArray(doc.token_endpoint_auth_methods_supported, "token_endpoint_auth_methods_supported") ?? ["client_secret_basic"]);
+    const tokenAuthMethod = resolveTokenAuthMethod(config.clientSecret, config.tokenEndpointAuthMethod, asStringArray(doc.token_endpoint_auth_methods_supported, "token_endpoint_auth_methods_supported"));
     return { authorizationEndpoint, tokenEndpoint, jwksUri, allowedAlgs, tokenAuthMethod };
   }
-  // Manual mode: no fetch; https-check each endpoint; default alg pin; no PKCE check.
-  assertHttpsRaw(config.endpoints.authorizationEndpoint, "authorizationEndpoint");
-  assertHttpsRaw(config.endpoints.tokenEndpoint, "tokenEndpoint");
-  assertHttpsRaw(config.endpoints.jwksUri, "jwksUri");
+  // Manual mode: no fetch; validate each endpoint URL; default alg pin; no PKCE check.
+  assertValidHttpsEndpoint(config.endpoints.authorizationEndpoint, "authorizationEndpoint");
+  assertValidHttpsEndpoint(config.endpoints.tokenEndpoint, "tokenEndpoint");
+  assertValidHttpsEndpoint(config.endpoints.jwksUri, "jwksUri");
   return {
     authorizationEndpoint: config.endpoints.authorizationEndpoint,
     tokenEndpoint: config.endpoints.tokenEndpoint,

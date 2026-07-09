@@ -418,6 +418,15 @@ test("resolveEndpoints: token-endpoint auth method — honors advertised, OIDC-d
   assert.equal((await resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc()))).tokenAuthMethod, "client_secret_post");
   // deployer override is trusted
   assert.equal((await resolveEndpoints({ issuer: ISSUER, endpoints: "discover", clientSecret: "shh", tokenEndpointAuthMethod: "client_secret_basic" }, fakeDiscovery(discoveryDoc({ token_endpoint_auth_methods_supported: ["client_secret_post"] })))).tokenAuthMethod, "client_secret_basic");
+  // manual mode + confidential + no override ⇒ OIDC default Basic (consistent with discovery-omitted)
+  assert.equal((await resolveEndpoints({ issuer: ISSUER, endpoints: MANUAL, clientSecret: "shh" })).tokenAuthMethod, "client_secret_basic");
+});
+
+test("resolveEndpoints: malformed endpoint URLs (no host) boot-fail in both modes (not just the https prefix)", async () => {
+  // "https://" is not a valid URL (no host) — fails at boot, not at the first authorize/exchange.
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ authorization_endpoint: "https://" }))));
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: { authorizationEndpoint: "https://", tokenEndpoint: MANUAL.tokenEndpoint, jwksUri: MANUAL.jwksUri } }));
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: { authorizationEndpoint: MANUAL.authorizationEndpoint, tokenEndpoint: "https://", jwksUri: MANUAL.jwksUri } }));
 });
 
 test("resolveEndpoints: every http endpoint rejected across both modes (addendum 11 exhaustive — discovery token_endpoint + manual tokenEndpoint/jwksUri)", async () => {
