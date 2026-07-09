@@ -152,7 +152,7 @@ export async function exchangeCodeForToken(
   const resp = await transport.postForm(resolved.tokenEndpoint, body, headers);
   if (resp.status !== 200) throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${resp.status}`);
   const parsed = JSON.parse(await resp.text()) as Partial<GenericOidcTokenResponse>;
-  if (!parsed.id_token) throw new Error("generic_oidc_exchange_failed: token response missing id_token");
+  if (typeof parsed.id_token !== "string" || !parsed.id_token) throw new Error("generic_oidc_exchange_failed: token response missing id_token");
   // access_token is REQUIRED in the code flow (OIDC §3.1.3.3) — requiring it also
   // guarantees a present at_hash is validated (no header-mode skip in the code flow).
   if (typeof parsed.access_token !== "string" || !parsed.access_token) throw new Error("generic_oidc_exchange_failed: token response missing access_token (required in the OIDC code flow)");
@@ -221,6 +221,8 @@ export async function createGenericOidcIdentity(config: GenericOidcConfig, opts?
   assertHttpsRaw(config.issuer, "issuer");
   if (typeof config.clientId !== "string" || !config.clientId.trim()) throw new Error("generic_oidc_bad_config: clientId is required (an empty clientId makes the aud check vacuous)");
   if (typeof config.redirectUri !== "string" || !config.redirectUri.trim()) throw new Error("generic_oidc_bad_config: redirectUri is required");
+  // A defined-but-blank clientSecret would silently downgrade a confidential client to public — fail closed.
+  if (config.clientSecret !== undefined && !config.clientSecret.trim()) throw new Error("generic_oidc_bad_config: clientSecret must be a non-empty string if set (an empty value would silently use public-client auth)");
   const resolved = await resolveEndpoints(config, opts?.discoveryFetch);
   const jwks = createRemoteJWKSet(new URL(resolved.jwksUri), { cacheMaxAge: 5 * 60 * 1000 });
   const validate = opts?.validate ?? ((p, o) => validateGenericOidcIdToken(p, config, o));

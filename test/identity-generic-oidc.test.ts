@@ -185,6 +185,9 @@ test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; mi
   // access_token is REQUIRED in the code flow (guarantees a present at_hash is validated).
   const noAccessToken: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: "idt" }); } }; } };
   await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, noAccessToken), /access_token/);
+  // a non-string id_token (e.g. {}) is truthy but invalid — reject at the exchange.
+  const nonStringIdToken: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: {}, access_token: "atk" }); } }; } };
+  await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, nonStringIdToken));
 });
 
 // --- resolveEndpoints (discover + manual) -----------------------------------
@@ -318,6 +321,11 @@ test("createUpstreamRedirectFlow: accepts a generic redirect identity whose redi
 test("createGenericOidcIdentity: rejects an empty clientId (the aud check would be vacuous) + empty redirectUri", async () => {
   await assert.rejects(createGenericOidcIdentity({ ...CONFIG, clientId: "" }));
   await assert.rejects(createGenericOidcIdentity({ ...CONFIG, redirectUri: "" }));
+});
+
+test("createGenericOidcIdentity: rejects a defined-but-blank clientSecret (no silent public-client downgrade)", async () => {
+  await assert.rejects(createGenericOidcIdentity({ ...CONFIG, clientSecret: "" }));
+  await assert.rejects(createGenericOidcIdentity({ ...CONFIG, clientSecret: "   " }));
 });
 
 test("validateGenericOidcIdToken: at_hash present + accessToken but no alg ⇒ fail-closed (cannot compute)", () => {
