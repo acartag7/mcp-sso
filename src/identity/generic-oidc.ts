@@ -66,7 +66,6 @@ export interface GenericOidcAuthorizeRequest {
   nonce: string;
   codeChallenge: string;
   codeChallengeMethod?: "S256";
-  scope?: string;
 }
 
 export interface GenericOidcTokenResponse {
@@ -115,7 +114,7 @@ export function getAuthorizationUrl(config: GenericOidcConfig, resolved: Resolve
     response_type: "code",
     redirect_uri: config.redirectUri,
     response_mode: "query",
-    scope: (req.scope && req.scope.trim()) ? req.scope : (config.scopes ?? "openid profile email"),
+    scope: config.scopes ?? "openid profile email",
     state: req.state,
     nonce: req.nonce,
     code_challenge: req.codeChallenge,
