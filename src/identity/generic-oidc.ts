@@ -38,7 +38,7 @@ import {
 } from "./generic-oidc-claims.ts";
 import {
   resolveEndpoints, defaultTokenTransport,
-  type GenericOidcEndpoints, type GenericOidcTokenTransport, type DiscoveryTransport, type ResolvedEndpoints,
+  type GenericOidcEndpoints, type GenericOidcTokenTransport, type DiscoveryTransport, type ResolvedEndpoints, type TokenAuthMethod,
 } from "./generic-oidc-discovery.ts";
 
 export type { GenericOidcEndpoints, GenericOidcManualEndpoints } from "./generic-oidc-discovery.ts";
@@ -50,6 +50,8 @@ export interface GenericOidcConfig {
   clientId: string;
   /** Confidential-client secret. Omit for a public client (PKCE only). */
   clientSecret?: string;
+  /** Override the token-endpoint auth method for a confidential client. */
+  tokenEndpointAuthMethod?: TokenAuthMethod;
   /** The bridge's OIDC callback URL (registered at the IdP). */
   redirectUri: string;
   /** "discover" (fetch OIDC discovery at boot) or manual endpoints (zero fetch). */
@@ -76,15 +78,13 @@ export interface GenericOidcAuthorizeRequest {
 
 export interface GenericOidcTokenResponse {
   id_token: string;
-  /** REQUIRED in the code flow (§3.1.3.3) — for `at_hash`, then discarded. Requiring
+  /** REQUIRED in the code flow (§3.1.3.3) — for `at_hash`, then discarded; requiring
    *  it guarantees a present at_hash is validated (no header-mode skip in code flow). */
   access_token: string;
 }
 
-/** A concrete verification key (CryptoKey/Uint8Array/JWK) or the JWKS resolver.
- *  Derived from jose's helpers (not the `CryptoKey` global, whose type-availability
- *  depends on the lib). The resolver is callable, so `typeof key === "function"`
- *  distinguishes it (jose's two `jwtVerify` overloads: concrete key vs getKey). */
+/** A concrete key (CryptoKey/Uint8Array/JWK) or the JWKS resolver (derived from
+ *  jose's helpers; `typeof key === "function"` picks the getKey overload). */
 type VerifyKey = Uint8Array | JWK | Awaited<ReturnType<typeof importJWK>> | ReturnType<typeof createRemoteJWKSet>;
 export type GenericOidcVerifyKey = Awaited<ReturnType<typeof importJWK>>;
 
@@ -114,8 +114,8 @@ export interface GenericOidcIdentityOpts {
   validate?: (payload: GenericOidcIdTokenPayload, opts: GenericOidcValidateOpts) => IdentityResult;
 }
 
-/** Build the IdP authorization URL (auth-code + PKCE S256 + nonce). No
- *  client_secret here (confidential clients present it at the token endpoint). */
+/** Build the IdP authorization URL (auth-code + PKCE S256 + nonce); no client_secret
+ *  here (confidential clients present it at the token endpoint). */
 export function getAuthorizationUrl(config: GenericOidcConfig, resolved: ResolvedEndpoints, req: GenericOidcAuthorizeRequest): string {
   const params = new URLSearchParams({
     client_id: config.clientId,
@@ -131,8 +131,7 @@ export function getAuthorizationUrl(config: GenericOidcConfig, resolved: Resolve
   return `${resolved.authorizationEndpoint}?${params.toString()}`;
 }
 
-/** Exchange the code at the token endpoint. Returns id_token + access_token (the
- *  access_token is used for `at_hash` only, then discarded). */
+/** Exchange the code at the token endpoint; returns id_token + access_token (at_hash only, then discarded). */
 export async function exchangeCodeForToken(
   config: GenericOidcConfig,
   resolved: ResolvedEndpoints,
@@ -146,8 +145,13 @@ export async function exchangeCodeForToken(
     redirect_uri: config.redirectUri,
     code_verifier: args.codeVerifier,
   });
-  if (config.clientSecret) body.set("client_secret", config.clientSecret);
-  const resp = await transport.postForm(resolved.tokenEndpoint, body);
+  const headers: Record<string, string> = {};
+  if (config.clientSecret) {
+    // basic ⇒ Authorization header (RFC 6749 §2.3.1; secret never in body), post ⇒ form field.
+    if (resolved.tokenAuthMethod === "client_secret_basic") headers.authorization = `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`;
+    else body.set("client_secret", config.clientSecret);
+  }
+  const resp = await transport.postForm(resolved.tokenEndpoint, body, headers);
   if (resp.status !== 200) throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${resp.status}`);
   const parsed = JSON.parse(await resp.text()) as Partial<GenericOidcTokenResponse>;
   if (!parsed.id_token) throw new Error("generic_oidc_exchange_failed: token response missing id_token");

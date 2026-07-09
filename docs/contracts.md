@@ -1689,6 +1689,12 @@ gate replaces no-gate).
   (per RFC 8414 that means no PKCE support), boot FAILS unless the deployer
   sets `allowProviderWithoutPkce: true` (state + nonce + client secret still
   bind the flow; the flag is loud).
+- **Token-endpoint client auth (confidential clients):** the secret is sent by the
+  method resolved from discovery `token_endpoint_auth_methods_supported` —
+  `client_secret_post` when supported (else `client_secret_basic`), boot-failing if
+  neither is advertised for a confidential client. Omitting the field defaults to
+  `client_secret_basic` (OIDC Discovery §3). A deployer may force either via
+  `tokenEndpointAuthMethod`. Public clients (no secret) are unaffected (PKCE only).
 - **Google preset** (`createGoogleIdentity`): the generic port pinned to
   `https://accounts.google.com` + discovery; `clientSecret` REQUIRED
   (Google's advertised token auth methods are secret-based only; its docs'

@@ -36,7 +36,7 @@ const MANUAL = {
   jwksUri: `${ISSUER}/jwks`,
 };
 const CONFIG: GenericOidcConfig = { issuer: ISSUER, clientId: CLIENT_ID, redirectUri: REDIRECT_URI, endpoints: MANUAL };
-const RESOLVED: ResolvedEndpoints = { ...MANUAL, allowedAlgs: ["RS256", "ES256"] };
+const RESOLVED: ResolvedEndpoints = { ...MANUAL, allowedAlgs: ["RS256", "ES256"], tokenAuthMethod: "client_secret_post" };
 
 function payload(overrides: Record<string, unknown> = {}): GenericOidcIdTokenPayload {
   return { iss: ISSUER, aud: CLIENT_ID, sub: "sub-123", exp: NOW + 3600, iat: NOW, ...overrides } as GenericOidcIdTokenPayload;
@@ -328,6 +328,35 @@ test("exchangeCodeForToken: a confidential client sends client_secret in the bod
   const transport: GenericOidcTokenTransport = { async postForm(_url, body) { seen = body; return { status: 200, async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); } }; } };
   await exchangeCodeForToken({ ...CONFIG, clientSecret: "shh" }, RESOLVED, { code: "c", codeVerifier: "v" }, transport);
   assert.equal(seen?.get("client_secret"), "shh");
+});
+
+test("exchangeCodeForToken: client_secret_basic sends an Authorization header (secret never in the body)", async () => {
+  let seenHeaders: Record<string, string> | undefined;
+  let seenBody: URLSearchParams | undefined;
+  const transport: GenericOidcTokenTransport = {
+    async postForm(_url, body, headers) { seenHeaders = headers; seenBody = body; return { status: 200, async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); } }; },
+  };
+  const basicResolved: ResolvedEndpoints = { ...RESOLVED, tokenAuthMethod: "client_secret_basic" };
+  await exchangeCodeForToken({ ...CONFIG, clientSecret: "shh" }, basicResolved, { code: "c", codeVerifier: "v" }, transport);
+  const expected = `Basic ${Buffer.from(`${CLIENT_ID}:shh`).toString("base64")}`;
+  assert.equal(seenHeaders?.authorization, expected);
+  assert.equal(seenBody?.get("client_secret"), null, "the secret is NOT in the body under client_secret_basic");
+});
+
+test("resolveEndpoints: token-endpoint auth method — honors advertised, OIDC-default basic when omitted, boot-fails on neither", async () => {
+  const confidential = (doc?: Record<string, unknown>) => resolveEndpoints({ issuer: ISSUER, endpoints: "discover", clientSecret: "shh" }, doc ? fakeDiscovery(doc) : undefined);
+  // advertised only basic ⇒ basic
+  assert.equal((await confidential(discoveryDoc({ token_endpoint_auth_methods_supported: ["client_secret_basic"] }))).tokenAuthMethod, "client_secret_basic");
+  // advertised post+basic ⇒ post (preferred)
+  assert.equal((await confidential(discoveryDoc({ token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"] }))).tokenAuthMethod, "client_secret_post");
+  // omitted ⇒ OIDC default basic
+  assert.equal((await confidential(discoveryDoc())).tokenAuthMethod, "client_secret_basic");
+  // advertised neither (e.g. private_key_jwt only) ⇒ boot-fail for a confidential client
+  await assert.rejects(confidential(discoveryDoc({ token_endpoint_auth_methods_supported: ["private_key_jwt"] })));
+  // public client (no secret) ⇒ post (moot)
+  assert.equal((await resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc()))).tokenAuthMethod, "client_secret_post");
+  // deployer override is trusted
+  assert.equal((await resolveEndpoints({ issuer: ISSUER, endpoints: "discover", clientSecret: "shh", tokenEndpointAuthMethod: "client_secret_basic" }, fakeDiscovery(discoveryDoc({ token_endpoint_auth_methods_supported: ["client_secret_post"] })))).tokenAuthMethod, "client_secret_basic");
 });
 
 test("resolveEndpoints: every http endpoint rejected across both modes (addendum 11 exhaustive — discovery token_endpoint + manual tokenEndpoint/jwksUri)", async () => {
