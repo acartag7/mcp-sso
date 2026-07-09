@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Engineering OS process-guard — local mirror of the CI check.
+#
+# Runs the same freeze-hash / mixed-diff / stage-artifact checks that CI enforces,
+# so a frozen-test edit or a mixed diff is caught before it leaves your machine.
+# CI (.github/workflows/ci.yml -> process-guard) is the real wall; this is early
+# feedback only.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+#
+# The guard's check.mjs lives in the engineering-os repo, not here. We locate a
+# local checkout via, in order:
+#   1. $ENGINEERING_OS_DIR
+#   2. a sibling ../engineering-os next to this repo
+#   3. ~/project/engineering-os
+# If none is found we WARN and allow the commit — a hook that hard-blocks on
+# missing tooling is worse than no hook (CI still enforces the real check).
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+candidates=()
+[ -n "${ENGINEERING_OS_DIR:-}" ] && candidates+=("$ENGINEERING_OS_DIR")
+candidates+=("$repo_root/../engineering-os" "$HOME/project/engineering-os")
+
+check_script=""
+for dir in "${candidates[@]}"; do
+  if [ -f "$dir/process-guard/scripts/check.mjs" ]; then
+    check_script="$dir/process-guard/scripts/check.mjs"
+    break
+  fi
+done
+
+if [ -z "$check_script" ]; then
+  echo "warning: engineering-os checkout not found (set ENGINEERING_OS_DIR, or clone" >&2
+  echo "         it next to this repo / at ~/project/engineering-os) — skipping the" >&2
+  echo "         local process-guard check. CI still enforces it on the PR." >&2
+  exit 0
+fi
+
+# Same inputs as the CI job (.github/workflows/ci.yml -> process-guard).
+export PG_BASE_REF="${PG_BASE_REF:-origin/main}"
+export PG_ACCEPTANCE_DIR="${PG_ACCEPTANCE_DIR:-test/acceptance}"
+export PG_SRC_PATHS="${PG_SRC_PATHS:-src/}"
+export PG_CONTRACT_PATHS="${PG_CONTRACT_PATHS:-docs/contracts.md}"
+
+exec node "$check_script"

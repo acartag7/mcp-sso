@@ -72,3 +72,23 @@ jobs:
       # Build smoke: the published artifact (tsc -> dist) must compile.
       - name: build smoke
         run: pnpm build
+
+  # Engineering OS artifact-chain guard (freeze-hash · mixed-diff · stage-artifact).
+  # Runs only on pull_request: it diffs against the PR base branch, and github.base_ref
+  # is empty on push events. The repo predates the pipeline, so a committed
+  # .process-guard-exempt marker keeps stage-artifact quiet until the first frozen
+  # acceptance suite lands (the marker is a named gap in every audit).
+  process-guard:
+    name: process-guard
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 — the guard needs full history to compute the merge-base.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (2026-06-18)
+        with:
+          fetch-depth: 0
+      - uses: acartag7/engineering-os/process-guard@b483fa418ffa8122588fdfa87c36f40f6908c06f # main (2026-07-09)
+        with:
+          base-ref: origin/${{ github.base_ref }}
+          src-paths: src/
+          contract-paths: docs/contracts.md
