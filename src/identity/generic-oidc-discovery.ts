@@ -104,14 +104,19 @@ function asStringArray(value: unknown, label: string): string[] | undefined {
 
 /** Raw `^https://` check (addendum 11 — BEFORE `new URL()`, which normalizes
  *  `https:/host`) AND a structural parse: a value like `https://` (no host) must
- *  fail at boot, not surface at the first authorize/exchange, since discovery +
- *  manual endpoint metadata is untrusted (§17.6 promises endpoint validation as a
- *  boot failure). */
-function assertValidHttpsEndpoint(value: string, label: string): void {
+ *  fail at boot, not surface at the first authorize/exchange. Applies to the issuer
+ *  (the exact-match OIDC trust root) + every endpoint, in discovery AND manual mode. */
+export function assertValidHttpsEndpoint(value: string, label: string): void {
   assertHttpsRaw(value, label);
   let url: URL;
   try { url = new URL(value); } catch { throw new Error(`generic_oidc_bad_config: ${label} must be a valid https URL`); }
   if (url.protocol !== "https:" || !url.hostname) throw new Error(`generic_oidc_bad_config: ${label} must be a valid https URL with a hostname`);
+}
+
+/** application/x-www-form-urlencoded for a single value (RFC 6749 §2.3.1
+ *  client_secret_basic): like encodeURIComponent except space ⇒ '+' (not %20). */
+export function formUrlEncode(s: string): string {
+  return encodeURIComponent(s).replace(/%20/g, "+");
 }
 
 /** Resolve the token-endpoint auth method for a confidential client. Honors the

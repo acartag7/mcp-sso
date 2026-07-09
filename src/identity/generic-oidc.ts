@@ -24,13 +24,12 @@
 
 import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWK } from "jose";
 import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
-import { assertHttpsRaw } from "./util.ts";
 import {
   validateGenericOidcIdToken, resolveAllowedAlgs,
   type GenericOidcIdTokenPayload, type GenericOidcValidateOpts,
 } from "./generic-oidc-claims.ts";
 import {
-  resolveEndpoints, defaultTokenTransport,
+  resolveEndpoints, defaultTokenTransport, assertValidHttpsEndpoint, formUrlEncode,
   type GenericOidcEndpoints, type GenericOidcTokenTransport, type DiscoveryTransport, type ResolvedEndpoints, type TokenAuthMethod,
 } from "./generic-oidc-discovery.ts";
 
@@ -144,7 +143,7 @@ export async function exchangeCodeForToken(
   if (config.clientSecret) {
     // basic ⇒ Authorization header (RFC 6749 §2.3.1 form-encodes each cred; secret never in body), post ⇒ field.
     if (resolved.tokenAuthMethod === "client_secret_basic") {
-      const userpass = `${encodeURIComponent(config.clientId)}:${encodeURIComponent(config.clientSecret)}`;
+      const userpass = `${formUrlEncode(config.clientId)}:${formUrlEncode(config.clientSecret)}`;
       headers.authorization = `Basic ${Buffer.from(userpass).toString("base64")}`;
     } else body.set("client_secret", config.clientSecret);
   }
@@ -216,7 +215,7 @@ export async function verifyGenericOidcIdToken(token: string, key: VerifyKey, co
 
 /** Build the generic OIDC identity port (async: discovery is a boot fetch). */
 export async function createGenericOidcIdentity(config: GenericOidcConfig, opts?: GenericOidcIdentityOpts): Promise<GenericOidcIdentity> {
-  assertHttpsRaw(config.issuer, "issuer");
+  assertValidHttpsEndpoint(config.issuer, "issuer");
   if (typeof config.clientId !== "string" || !config.clientId.trim()) throw new Error("generic_oidc_bad_config: clientId is required (an empty clientId makes the aud check vacuous)");
   if (typeof config.redirectUri !== "string" || !config.redirectUri.trim()) throw new Error("generic_oidc_bad_config: redirectUri is required");
   if (config.clientSecret !== undefined && !config.clientSecret.trim()) throw new Error("generic_oidc_bad_config: clientSecret must be a non-empty string if set (an empty value would silently use public-client auth)");

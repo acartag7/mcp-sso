@@ -349,6 +349,10 @@ test("createGenericOidcIdentity: rejects an empty clientId (the aud check would 
   await assert.rejects(createGenericOidcIdentity({ ...CONFIG, redirectUri: "" }));
 });
 
+test("createGenericOidcIdentity: rejects a malformed manual-mode issuer structurally (the exact-match trust root)", async () => {
+  await assert.rejects(createGenericOidcIdentity({ ...CONFIG, issuer: "https://" })); // no host
+});
+
 test("createGenericOidcIdentity: rejects a defined-but-blank clientSecret (no silent public-client downgrade)", async () => {
   await assert.rejects(createGenericOidcIdentity({ ...CONFIG, clientSecret: "" }));
   await assert.rejects(createGenericOidcIdentity({ ...CONFIG, clientSecret: "   " }));
@@ -395,13 +399,16 @@ test("exchangeCodeForToken: client_secret_basic sends an Authorization header (s
   assert.equal(seenBody?.get("client_secret"), null, "the secret is NOT in the body under client_secret_basic");
 });
 
-test("exchangeCodeForToken: client_secret_basic form-encodes the credentials (RFC 6749 §2.3.1)", async () => {
+test("exchangeCodeForToken: client_secret_basic form-encodes the credentials (RFC 6749 §2.3.1 — space ⇒ '+')", async () => {
   let seenHeaders: Record<string, string> | undefined;
   const transport: GenericOidcTokenTransport = { async postForm(_u, _b, h) { seenHeaders = h; return { status: 200, async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); } }; } };
   const basicResolved: ResolvedEndpoints = { ...RESOLVED, tokenAuthMethod: "client_secret_basic" };
   await exchangeCodeForToken({ issuer: ISSUER, clientId: "a:b+c", clientSecret: "s s%", redirectUri: REDIRECT_URI, endpoints: MANUAL }, basicResolved, { code: "c", codeVerifier: "v" }, transport);
-  const expected = `Basic ${Buffer.from(`${encodeURIComponent("a:b+c")}:${encodeURIComponent("s s%")}`).toString("base64")}`;
+  // application/x-www-form-urlencoded: space ⇒ '+' (not %20)
+  const enc = (s: string): string => encodeURIComponent(s).replace(/%20/g, "+");
+  const expected = `Basic ${Buffer.from(`${enc("a:b+c")}:${enc("s s%")}`).toString("base64")}`;
   assert.equal(seenHeaders?.authorization, expected);
+  assert.ok(enc("s s%").includes("+"), "the space in the secret form-encodes to '+' (not %20)");
 });
 
 test("resolveEndpoints: token-endpoint auth method — honors advertised, OIDC-default basic when omitted, boot-fails on neither", async () => {
