@@ -244,6 +244,10 @@ test("resolveEndpoints: discover boot failures (issuer mismatch, http endpoints,
   // missing alg metadata ⇒ default pin; empty intersection ⇒ throw
   assert.deepEqual((await resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ id_token_signing_alg_values_supported: undefined })))).allowedAlgs, ["RS256", "ES256"]);
   await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ id_token_signing_alg_values_supported: ["HS256"] }))));
+  // present-but-MALFORMED security arrays ⇒ boot-fail (not silently defaulted)
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ id_token_signing_alg_values_supported: ["RS256", 7] }))));
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover", clientSecret: "s" }, fakeDiscovery(discoveryDoc({ token_endpoint_auth_methods_supported: ["client_secret_basic", 5] }))));
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ code_challenge_methods_supported: "S256" })))); // not an array
 });
 
 test("resolveEndpoints: manual-mode http endpoint boot-fails (addendum 11 not discovery-scoped)", async () => {

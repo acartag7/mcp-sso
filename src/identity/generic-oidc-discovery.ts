@@ -89,9 +89,16 @@ function stringField(value: unknown, label: string): string {
   if (typeof value !== "string" || !value) throw new Error(`generic_oidc_discovery_failed: discovery document missing ${label}`);
   return value;
 }
-function asStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value.every((v) => typeof v === "string") ? value : undefined;
+/** Parse an OPTIONAL discovery string-array. Truly absent (undefined/null) ⇒
+ *  undefined (callers default). Present-but-malformed (not an array, or an array
+ *  with non-string entries) ⇒ throw — fetched metadata is untrusted, and a
+ *  malformed security field (e.g. `id_token_signing_alg_values_supported: ["HS256", 7]`)
+ *  must fail closed at boot, not silently collapse to the default. */
+function asStringArray(value: unknown, label: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new Error(`generic_oidc_discovery_failed: discovery '${label}' must be an array when present`);
+  if (!value.every((v) => typeof v === "string")) throw new Error(`generic_oidc_discovery_failed: discovery '${label}' must contain only strings`);
+  return value;
 }
 
 /** Resolve the token-endpoint auth method for a confidential client. Honors the
@@ -137,8 +144,8 @@ export async function resolveEndpoints(
     assertHttpsRaw(authorizationEndpoint, "authorization_endpoint");
     assertHttpsRaw(tokenEndpoint, "token_endpoint");
     assertHttpsRaw(jwksUri, "jwks_uri");
-    const allowedAlgs = resolveAllowedAlgs(asStringArray(doc.id_token_signing_alg_values_supported));
-    const methods = asStringArray(doc.code_challenge_methods_supported) ?? [];
+    const allowedAlgs = resolveAllowedAlgs(asStringArray(doc.id_token_signing_alg_values_supported, "id_token_signing_alg_values_supported"));
+    const methods = asStringArray(doc.code_challenge_methods_supported, "code_challenge_methods_supported") ?? [];
     if (!methods.includes("S256")) {
       if (!config.allowProviderWithoutPkce) {
         throw new Error("generic_oidc_no_pkce: discovery does not advertise PKCE S256 (code_challenge_methods_supported omits S256 — RFC 8414 ⇒ no PKCE); set allowProviderWithoutPkce to proceed (state + nonce + client secret still bind the flow)");
@@ -146,7 +153,7 @@ export async function resolveEndpoints(
       console.warn("[mcp-sso] generic OIDC provider does not advertise PKCE S256; proceeding with allowProviderWithoutPkce=true. PKCE is a recommended code-injection defense — prefer a provider that supports it.");
     }
     // token_endpoint_auth_methods_supported omitted ⇒ OIDC default client_secret_basic.
-    const tokenAuthMethod = resolveTokenAuthMethod(config.clientSecret, config.tokenEndpointAuthMethod, asStringArray(doc.token_endpoint_auth_methods_supported) ?? ["client_secret_basic"]);
+    const tokenAuthMethod = resolveTokenAuthMethod(config.clientSecret, config.tokenEndpointAuthMethod, asStringArray(doc.token_endpoint_auth_methods_supported, "token_endpoint_auth_methods_supported") ?? ["client_secret_basic"]);
     return { authorizationEndpoint, tokenEndpoint, jwksUri, allowedAlgs, tokenAuthMethod };
   }
   // Manual mode: no fetch; https-check each endpoint; default alg pin; no PKCE check.
