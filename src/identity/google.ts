@@ -84,6 +84,12 @@ export function validateGoogleIdToken(
   };
   const result = validateGenericOidcIdToken(payload, genericConfig, opts);
   if (!result.ok) return result;
+  // Google's `sub` is a stable, globally-unique numeric id — return it raw (the Google contract
+  // says subject = sub). The generic validator namespaces opaque subs as `${issuer}|${sub}` to
+  // defend cross-issuer collisions; Google's sub needs no namespace, so unwrap it (the generic
+  // validator already confirmed payload.sub is a non-empty string).
+  if (typeof payload.sub !== "string") return { ok: false, reason: "generic_oidc_no_subject" };
+  let identity = { ...result.identity, subject: payload.sub };
   // hostedDomain configured ⇒ the Workspace gate is ON. A defined-but-blank value
   // is a misconfig (e.g. an empty env var) that must NOT silently disable the gate.
   if (config.hostedDomain !== undefined) {
@@ -95,7 +101,6 @@ export function validateGoogleIdToken(
     }
   }
   // email surfaced only when email_verified === true (strict).
-  let identity = result.identity;
   if (payload.email_verified !== true && identity.claims && "email" in identity.claims) {
     const claims = { ...identity.claims };
     delete claims.email;

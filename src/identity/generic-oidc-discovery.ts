@@ -95,7 +95,8 @@ function stringField(value: unknown, label: string): string {
  *  malformed security field (e.g. `id_token_signing_alg_values_supported: ["HS256", 7]`)
  *  must fail closed at boot, not silently collapse to the default. */
 function asStringArray(value: unknown, label: string): string[] | undefined {
-  if (value === undefined || value === null) return undefined;
+  if (value === undefined) return undefined; // truly absent (key not in the doc) ⇒ callers default
+  // null (explicit) or non-array or array-with-non-strings ⇒ malformed ⇒ fail closed
   if (!Array.isArray(value)) throw new Error(`generic_oidc_discovery_failed: discovery '${label}' must be an array when present`);
   if (!value.every((v) => typeof v === "string")) throw new Error(`generic_oidc_discovery_failed: discovery '${label}' must contain only strings`);
   return value;
@@ -125,6 +126,11 @@ export function resolveTokenAuthMethod(
   advertised: string[] | undefined,
 ): TokenAuthMethod {
   if (!clientSecret) return "client_secret_post";
+  // A misspelled override (e.g. "basic", "client-secret-basic") must fail at boot, not silently
+  // fall through to client_secret_post (exchangeCodeForToken only special-cases client_secret_basic).
+  if (override !== undefined && override !== "client_secret_post" && override !== "client_secret_basic") {
+    throw new Error("generic_oidc_bad_config: tokenEndpointAuthMethod must be 'client_secret_post' or 'client_secret_basic'");
+  }
   if (override) return override;
   if (advertised === undefined) return "client_secret_basic"; // OIDC default (discovery omitted + manual)
   if (advertised.includes("client_secret_post")) return "client_secret_post";
@@ -145,7 +151,11 @@ export async function resolveEndpoints(
     const fetcher = transport ?? defaultDiscoveryTransport;
     const resp = await fetcher.get(discoveryUrl);
     if (resp.status !== 200) throw new Error(`generic_oidc_discovery_failed: discovery fetch returned HTTP ${resp.status} (redirects are not followed)`);
-    const doc = await resp.json() as Record<string, unknown>;
+    const docRaw = await resp.json();
+    // Fetched metadata is untrusted: a non-object doc (JSON null/array/primitive) must fail closed,
+    // not crash on `doc.issuer` or best-effort parse (fail-closed on untrusted input).
+    if (docRaw === null || typeof docRaw !== "object" || Array.isArray(docRaw)) throw new Error("generic_oidc_discovery_failed: discovery document must be a JSON object");
+    const doc = docRaw as Record<string, unknown>;
     const docIssuer = doc.issuer;
     if (typeof docIssuer !== "string" || docIssuer !== config.issuer) {
       throw new Error("generic_oidc_discovery_issuer_mismatch: the document's `issuer` must exactly equal the configured issuer (OIDC Discovery §4.3)");

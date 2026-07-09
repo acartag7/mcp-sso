@@ -429,6 +429,22 @@ test("resolveEndpoints: malformed endpoint URLs (no host) boot-fail in both mode
   await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: { authorizationEndpoint: MANUAL.authorizationEndpoint, tokenEndpoint: "https://", jwksUri: MANUAL.jwksUri } }));
 });
 
+test("fail-closed sweep: null discovery arrays, non-object doc, bad override, bad subjectAllowlist", async () => {
+  // explicit null security arrays ⇒ boot-fail (not treated as omitted)
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ id_token_signing_alg_values_supported: null as never }))));
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover", clientSecret: "s" }, fakeDiscovery(discoveryDoc({ token_endpoint_auth_methods_supported: null as never }))));
+  // non-object discovery doc (JSON null / array) ⇒ boot-fail (not a crash)
+  const nullDoc: DiscoveryTransport = { async get() { return { status: 200, async json() { return null; } }; } };
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, nullDoc));
+  const arrayDoc: DiscoveryTransport = { async get() { return { status: 200, async json() { return []; } }; } };
+  await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, arrayDoc));
+  // misspelled tokenEndpointAuthMethod override ⇒ boot-fail (not a silent fall-through to post)
+  await assert.rejects(createGenericOidcIdentity({ ...CONFIG, clientSecret: "s", tokenEndpointAuthMethod: "basic" as never }));
+  // subjectAllowlist must be an array of strings (a non-array / non-string entry would crash the matcher)
+  await assert.rejects(createGenericOidcIdentity({ ...CONFIG, subjectAllowlist: "sub-123" as never }));
+  await assert.rejects(createGenericOidcIdentity({ ...CONFIG, subjectAllowlist: ["ok", 5] as never }));
+});
+
 test("resolveEndpoints: every http endpoint rejected across both modes (addendum 11 exhaustive — discovery token_endpoint + manual tokenEndpoint/jwksUri)", async () => {
   await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ token_endpoint: "http://insecure.test/token" }))));
   await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: { authorizationEndpoint: MANUAL.authorizationEndpoint, tokenEndpoint: "http://insecure.test/token", jwksUri: MANUAL.jwksUri } }));

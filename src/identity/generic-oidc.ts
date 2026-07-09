@@ -160,9 +160,8 @@ export async function exchangeCodeForToken(
 }
 
 /** Shared jose-verify + pure-validate seam (generic identity, standalone verifier,
- *  Google preset). iss/aud/multi-aud live in `validate` (NOT jose's options — its
- *  `audience` accepts multi-aud); jose enforces the alg pin. JWKS-fetch failures ⇒
- *  `generic_oidc_verify_failed` ⇒ exchange_failed. */
+ *  Google preset). iss/aud/multi-aud live in `validate` (NOT jose's `audience`,
+ *  which accepts multi-aud); jose enforces the alg pin; JWKS-fetch failures ⇒ exchange_failed. */
 export interface VerifyIdTokenArgs {
   allowedAlgs: string[];
   validate: (payload: GenericOidcIdTokenPayload, opts: GenericOidcValidateOpts) => IdentityResult;
@@ -223,6 +222,7 @@ export async function createGenericOidcIdentity(config: GenericOidcConfig, opts?
   if (typeof config.redirectUri !== "string" || !config.redirectUri.trim()) throw new Error("generic_oidc_bad_config: redirectUri is required");
   if (config.clientSecret !== undefined && !config.clientSecret.trim()) throw new Error("generic_oidc_bad_config: clientSecret must be a non-empty string if set (an empty value would silently use public-client auth)");
   if (config.scopes !== undefined && (!config.scopes.trim() || !config.scopes.split(/\s+/).includes("openid"))) throw new Error("generic_oidc_bad_config: scopes must be a non-empty, space-separated list including 'openid' (omit for the default 'openid profile email')");
+  if (config.subjectAllowlist !== undefined && (!Array.isArray(config.subjectAllowlist) || !config.subjectAllowlist.every((e) => typeof e === "string"))) throw new Error("generic_oidc_bad_config: subjectAllowlist must be an array of strings");
   const resolved = await resolveEndpoints(config, opts?.discoveryFetch);
   const jwks = createRemoteJWKSet(new URL(resolved.jwksUri), { cacheMaxAge: 5 * 60 * 1000 });
   const validate = opts?.validate ?? ((p, o) => validateGenericOidcIdToken(p, config, o));
