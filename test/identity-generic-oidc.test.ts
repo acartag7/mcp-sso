@@ -384,6 +384,7 @@ test("exchangeCodeForToken: a confidential client sends client_secret in the bod
   const transport: GenericOidcTokenTransport = { async postForm(_url, body) { seen = body; return { status: 200, async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); } }; } };
   await exchangeCodeForToken({ ...CONFIG, clientSecret: "shh" }, RESOLVED, { code: "c", codeVerifier: "v" }, transport);
   assert.equal(seen?.get("client_secret"), "shh");
+  assert.equal(seen?.get("client_id"), CLIENT_ID, "post: client_id IS in the body");
 });
 
 test("exchangeCodeForToken: client_secret_basic sends an Authorization header (secret never in the body)", async () => {
@@ -397,6 +398,7 @@ test("exchangeCodeForToken: client_secret_basic sends an Authorization header (s
   const expected = `Basic ${Buffer.from(`${CLIENT_ID}:shh`).toString("base64")}`;
   assert.equal(seenHeaders?.authorization, expected);
   assert.equal(seenBody?.get("client_secret"), null, "the secret is NOT in the body under client_secret_basic");
+  assert.equal(seenBody?.get("client_id"), null, "client_id is NOT in the body under client_secret_basic (it's in the header — RFC 6749 §2.3.1)");
 });
 
 test("exchangeCodeForToken: client_secret_basic form-encodes the credentials (RFC 6749 §2.3.1 — space ⇒ '+')", async () => {

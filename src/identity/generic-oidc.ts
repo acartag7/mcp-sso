@@ -133,19 +133,18 @@ export async function exchangeCodeForToken(
   transport: GenericOidcTokenTransport,
 ): Promise<GenericOidcTokenResponse> {
   const body = new URLSearchParams({
-    client_id: config.clientId,
     grant_type: "authorization_code",
     code: args.code,
     redirect_uri: config.redirectUri,
     code_verifier: args.codeVerifier,
   });
   const headers: Record<string, string> = {};
-  if (config.clientSecret) {
-    // basic ⇒ Authorization header (RFC 6749 §2.3.1 form-encodes each cred; secret never in body), post ⇒ field.
-    if (resolved.tokenAuthMethod === "client_secret_basic") {
-      const userpass = `${formUrlEncode(config.clientId)}:${formUrlEncode(config.clientSecret)}`;
-      headers.authorization = `Basic ${Buffer.from(userpass).toString("base64")}`;
-    } else body.set("client_secret", config.clientSecret);
+  if (config.clientSecret && resolved.tokenAuthMethod === "client_secret_basic") {
+    // basic ⇒ clientId + secret in the Authorization header ONLY (RFC 6749 §2.3.1) — not duplicated in the body.
+    headers.authorization = `Basic ${Buffer.from(`${formUrlEncode(config.clientId)}:${formUrlEncode(config.clientSecret)}`).toString("base64")}`;
+  } else {
+    body.set("client_id", config.clientId); // public + post: client identification lives in the body
+    if (config.clientSecret) body.set("client_secret", config.clientSecret); // post
   }
   const resp = await transport.postForm(resolved.tokenEndpoint, body, headers);
   if (resp.status !== 200) throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${resp.status}`);
