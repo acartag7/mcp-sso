@@ -60,7 +60,12 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 - `pnpm test` — `node --test`.
 - `pnpm run build` — `rm -rf dist && tsc -p tsconfig.build.json`.
 - `npm pack --dry-run` — before any release: the tarball must contain **dist + docs + README + LICENSE only.**
-- **Gates on every push:** typecheck · `check:lines` · test · build.
+- **Gates on every push:** typecheck · `check:lines` · test · build · `process-guard`.
+- **Local guard hook (one-time):** `git config core.hooksPath .githooks` wires
+  `.githooks/pre-commit`, a local mirror of the CI `process-guard` check (it
+  locates an `engineering-os` checkout via `$ENGINEERING_OS_DIR`, a sibling
+  `../engineering-os`, or `~/project/engineering-os`, and no-ops with a warning if
+  none is found). CI is the real wall; the hook is early feedback.
 
 ## 5. Non-negotiable invariants (the agent cannot infer these)
 
@@ -134,3 +139,37 @@ describes:
 Run the real flow, not just unit tests: register → authorize (through the
 identity port) → token → call a protected `/mcp` with the **official MCP SDK
 client** → refresh → replay-detection (family revocation observed) → revoke.
+
+## This repo is governed (Engineering OS)
+
+This section is complementary to — never in conflict with — the house rules
+above; where they overlap, they agree (fail-closed, allowlists, contract-first).
+`docs/contracts.md` remains this repo's contract source of truth.
+
+tier: S
+Reference: https://github.com/acartag7/engineering-os
+
+Non-negotiables — CI enforces these; this block just saves you a red build:
+
+- Acceptance tests under `test/acceptance/` are FROZEN. Editing any of them turns
+  CI red (hash check). Turn finished phases on via `test/acceptance/phases.json`
+  only. If a test looks wrong: STOP and report. That's a contract change, not a
+  patch. *(No acceptance suite exists yet — the repo carries a
+  `.process-guard-exempt` marker that suppresses only the stage-artifact check
+  until the first frozen suite lands; `freeze-hash` and `mixed-diff` run now.)*
+- Contract first: `docs/contracts.md` wins over the code and over your inference.
+  Never implement while the contract has open decisions or points at files
+  outside this repo.
+- Trust-boundary decisions are allowlists, never blocklists. Empty config counts
+  as missing config: fail closed. Type-check every externally-sourced value
+  before using it. Malformed input fails closed, never best-effort.
+- Build the least machinery the contract asks for. No unrequested parsers,
+  validators, or abstractions. If the simple approach feels insufficient, stop
+  and ask — don't build.
+- After fixing any defect, sweep sibling code paths BEFORE re-requesting review.
+  Partial fixes are the top review-round multiplier.
+- Never weaken a check to get green. Never push to protected branches. PRs carry
+  a `Spec: <path>` trailer and conventional commit subjects.
+- Review verifies; it never discovers. If review is teaching us what the spec
+  should have said, say so — that's a process failure to record, not a grind to
+  endure.
