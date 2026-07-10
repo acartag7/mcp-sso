@@ -64,8 +64,8 @@ point the client at a public `https` URL — see
 ## What it works with
 
 - **Identity providers:** Cloudflare Access, Microsoft Entra ID (redirect flow +
-  group→scope authorization), zero-setup console pairing. *(Generic OIDC, Google,
-  GitHub presets — v0.3.)*
+  group→scope authorization), Google + generic OIDC sign-in, zero-setup console
+  pairing. *(GitHub preset — v0.3.)*
 - **Frameworks:** fastify, express, hono — thin adapters; all logic is in the
   framework-free core.
 - **Stores:** `node:sqlite` (recommended, zero-ops), `mysql2`, in-memory — one
@@ -155,9 +155,10 @@ what mcp-sso is for.
 ## Status
 
 mcp-sso is live-verified against real MCP clients — Claude Code, Codex CLI,
-claude.ai, ChatGPT, and the official MCP SDK on a real Cloudflare Access tenant,
-plus Entra ID (redirect flow) with Claude Code and Claude Desktop in a real
-enterprise deployment. The full provider × client matrix lives in
+claude.ai, ChatGPT, and the official MCP SDK on a real Cloudflare Access tenant;
+Entra ID (redirect flow) with Claude Code and Claude Desktop in a real
+enterprise deployment; and Google sign-in with Claude Code and the official MCP
+SDK. The full provider × client matrix lives in
 [`docs/live-verification.md`](docs/live-verification.md).
 
 ## Roadmap (v0.3)
