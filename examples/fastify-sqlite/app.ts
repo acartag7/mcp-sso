@@ -23,10 +23,13 @@
 //                     "mcp-sso/identity/generic-oidc" (createGenericOidcRedirectIdentity)
 //                     "mcp-sso/identity/console-pairing" (createConsolePairingIdentity)
 //
-// Everything else this example uses — Bridge, RequestAuthorizer, createBridgeConfig,
-// buildUnauthorizedChallenge, OAuthError, SystemClock, JsonlFileAudit, originOf,
-// loadOrCreateQuickstartSecrets, handlePairingAuthorize, createUpstreamRedirectFlow —
-// imports from the root: `import { ... } from "mcp-sso"`.
+// Root-exported from `mcp-sso` (consumers import these from the root, not `../../src`):
+//   Bridge, RequestAuthorizer, createBridgeConfig, buildUnauthorizedChallenge, OAuthError,
+//   SystemClock, JsonlFileAudit, originOf, loadOrCreateQuickstartSecrets,
+//   handlePairingAuthorize, createUpstreamRedirectFlow, isMcpPath.
+// NOT exported — internal helpers a package consumer replicating this example must
+// reimplement until the DX export surface firms up (see src/index.ts + contracts §15):
+//   NormRequest / NormResponse, assertCallbackPath, ensureGitignore, assertRealDir.
 
 import Fastify, { type FastifyReply } from "fastify";
 import { chmod, mkdir } from "node:fs/promises";
