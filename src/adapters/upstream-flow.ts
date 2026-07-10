@@ -140,9 +140,9 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       const code = queryString(req.query, "code");
       if (!code) { await emit("failure", "missing_code", clientId); return clear(directErrorResponse("invalid_request", "missing authorization code")); } // row 9
       let exchange; // rows 10/11: exchange + verify (a throw is always exchange_failed)
-      try { exchange = await identity.exchangeAndVerify({ code, codeVerifier: claims.codeVerifier, nonce: claims.nonce }); } catch { await emit("failure", "exchange_failed", clientId); return clear(redirectErrorResponse(clientRedirectUri, "server_error", clientState, "upstream identity provider error")); }
+      try { exchange = await identity.exchangeAndVerify({ code, codeVerifier: claims.codeVerifier, nonce: claims.nonce }); } catch (e) { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", clientId, String((e as Error | undefined)?.message ?? e)); await emit("failure", "exchange_failed", clientId); return clear(redirectErrorResponse(clientRedirectUri, "server_error", clientState, "upstream identity provider error")); }
       if (!exchange.ok) {
-        if (exchange.kind === "exchange_failed") { await emit("failure", "exchange_failed", clientId); return clear(redirectErrorResponse(clientRedirectUri, "server_error", clientState, "upstream identity provider error")); }
+        if (exchange.kind === "exchange_failed") { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", clientId, exchange.reason); await emit("failure", "exchange_failed", clientId); return clear(redirectErrorResponse(clientRedirectUri, "server_error", clientState, "upstream identity provider error")); }
         await emitIdentityVerify("failure", exchange.reason, undefined, ip); await emit("failure", "identity_rejected", clientId); return clear(redirectErrorResponse(clientRedirectUri, "access_denied", clientState, "upstream identity verification failed")); // row 11 (§9.3 extension)
       }
       await emitIdentityVerify("success", undefined, exchange.identity.subject, ip); // identity decision reached
