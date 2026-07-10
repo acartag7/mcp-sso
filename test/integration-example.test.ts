@@ -17,7 +17,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { pkceChallenge } from "../src/crypto.ts";
 import { AuthConfigError } from "../src/config.ts";
-import { buildExample, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
+import { buildExample, createOidcUpstreamFromEnv, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
+import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 
 function jwk(): JWK {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -155,6 +156,72 @@ test("integration — Google branch rejects a malformed email-allowlist opt-in i
     assert.equal(existsSync(dir), false, "malformed opt-in fails before state-dir creation");
   } finally {
     rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — Google/generic env wiring defaults to the shipped production factories (stubbed discovery, no network)", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: URL | Request | string): Promise<Response> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const issuer = url.startsWith("https://accounts.google.com/") ? "https://accounts.google.com" : "https://issuer.test";
+    return new Response(JSON.stringify({
+      issuer,
+      authorization_endpoint: `${issuer}/authorize`,
+      token_endpoint: `${issuer}/token`,
+      jwks_uri: `${issuer}/jwks`,
+      code_challenge_methods_supported: ["S256"],
+      id_token_signing_alg_values_supported: ["RS256"],
+      token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const google = await createOidcUpstreamFromEnv({
+      GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret",
+      GOOGLE_REDIRECT_URI: "https://bridge.test/google/callback",
+    });
+    assert.ok(google);
+    assert.equal(google.callbackPath, "/google/callback");
+    assert.equal(new URL(google.identity.buildAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c", codeChallengeMethod: "S256" })).origin, "https://accounts.google.com");
+
+    const generic = await createOidcUpstreamFromEnv({
+      OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client",
+      OIDC_REDIRECT_URI: "https://bridge.test/oidc/callback",
+    });
+    assert.ok(generic);
+    assert.equal(generic.callbackPath, "/oidc/callback");
+    assert.equal(new URL(generic.identity.buildAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c", codeChallengeMethod: "S256" })).origin, "https://issuer.test");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("integration — gateway Google branch boot failures also occur before state-dir creation", async () => {
+  const cases = [
+    { name: "missing secret", env: {}, pattern: /Missing env: GOOGLE_CLIENT_SECRET/ },
+    { name: "malformed boolean", env: { GOOGLE_CLIENT_SECRET: "google-secret", GOOGLE_ALLOW_EMAIL_ALLOWLIST: "yes" }, pattern: /Invalid env: GOOGLE_ALLOW_EMAIL_ALLOWLIST/ },
+  ];
+  for (const c of cases) {
+    const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-gateway-google-${c.name.replace(" ", "-")}-`));
+    const dir = join(base, "state");
+    try {
+      await assert.rejects(
+        buildGatewayExample({
+          MCP_SSO_DIR: dir,
+          GOOGLE_CLIENT_ID: "google-client",
+          GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback",
+          OAUTH_ISSUER: "http://localhost:3000",
+          OAUTH_RESOURCE: "http://localhost:3000/mcp",
+          OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+          OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+          OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+          ...c.env,
+        }, { backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused" }),
+        c.pattern,
+      );
+      assert.equal(existsSync(dir), false, `${c.name}: gateway fails before state-dir creation`);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   }
 });
 

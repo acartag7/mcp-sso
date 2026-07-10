@@ -219,6 +219,48 @@ function factories(subject: string): { identityFactories: OidcIdentityFactories;
   };
 }
 
+test("integration — branch precedence remains Entra → Cloudflare → Google → generic OIDC → pairing", async () => {
+  const allProvidersBase = mkdtempSync(join(tmpdir(), "mcp-sso-int-precedence-entra-"));
+  const cfBase = mkdtempSync(join(tmpdir(), "mcp-sso-int-precedence-cf-"));
+  const allStub = factories("unused");
+  try {
+    const { app, store } = await buildExample({
+      ...bridgeEnv(join(allProvidersBase, "state")),
+      ENTRA_TENANT_ID: TENANT, ENTRA_CLIENT_ID: CLIENT_ID, ENTRA_REDIRECT_URI: `${TEST_ORIGIN}/entra/callback`,
+      CF_ACCESS_AUDIENCE: "cf-aud", CF_ACCESS_CERTS_URL: "https://cf.test/certs", CF_ACCESS_ISSUER: "https://cf.test",
+      GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret", GOOGLE_REDIRECT_URI: `${TEST_ORIGIN}/google/callback`,
+      OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client", OIDC_REDIRECT_URI: `${TEST_ORIGIN}/oidc/callback`,
+    }, allStub.identityFactories);
+    try {
+      const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [FLOW_REDIRECT] }) });
+      const clientId = json<{ client_id: string }>(reg).client_id;
+      const query = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: FLOW_REDIRECT, code_challenge: "x".repeat(43), code_challenge_method: "S256", scope: "mcp:read" });
+      const authorize = await app.inject({ method: "GET", url: `/oauth/authorize?${query}` });
+      assert.equal(authorize.statusCode, 302);
+      assert.match(authorize.headers.location, /^https:\/\/login\.microsoftonline\.com\//, "Entra remains the highest-precedence branch");
+      assert.equal(allStub.capture.google, undefined);
+      assert.equal(allStub.capture.genericOidc, undefined);
+    } finally { await app.close(); await store.close(); }
+
+    const cfStub = factories("unused");
+    const built = await buildExample({
+      ...bridgeEnv(join(cfBase, "state")),
+      CF_ACCESS_AUDIENCE: "cf-aud", CF_ACCESS_CERTS_URL: "https://cf.test/certs", CF_ACCESS_ISSUER: "https://cf.test",
+      GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret", GOOGLE_REDIRECT_URI: `${TEST_ORIGIN}/google/callback`,
+      OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client", OIDC_REDIRECT_URI: `${TEST_ORIGIN}/oidc/callback`,
+    }, cfStub.identityFactories);
+    try {
+      const response = await built.app.inject({ method: "GET", url: "/oauth/authorize?client_id=c&redirect_uri=http://localhost:4321/callback" });
+      assert.equal(response.statusCode, 401, "Cloudflare remains ahead of Google/generic OIDC (missing assertion rejects)");
+      assert.equal(cfStub.capture.google, undefined);
+      assert.equal(cfStub.capture.genericOidc, undefined);
+    } finally { await built.app.close(); await built.store.close(); }
+  } finally {
+    rmSync(allProvidersBase, { recursive: true, force: true });
+    rmSync(cfBase, { recursive: true, force: true });
+  }
+});
+
 const TEST_ORIGIN = "http://localhost:3000";
 const INIT_BODY = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "x", version: "0" } }, id: 1 });
 
