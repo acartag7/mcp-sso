@@ -222,6 +222,7 @@ function factories(subject: string): { identityFactories: OidcIdentityFactories;
 test("integration — branch precedence remains Entra → Cloudflare → Google → generic OIDC → pairing", async () => {
   const allProvidersBase = mkdtempSync(join(tmpdir(), "mcp-sso-int-precedence-entra-"));
   const cfBase = mkdtempSync(join(tmpdir(), "mcp-sso-int-precedence-cf-"));
+  const googleBase = mkdtempSync(join(tmpdir(), "mcp-sso-int-precedence-google-"));
   const allStub = factories("unused");
   try {
     const { app, store } = await buildExample({
@@ -255,9 +256,21 @@ test("integration — branch precedence remains Entra → Cloudflare → Google 
       assert.equal(cfStub.capture.google, undefined);
       assert.equal(cfStub.capture.genericOidc, undefined);
     } finally { await built.app.close(); await built.store.close(); }
+
+    const googleStub = factories("unused");
+    const googleBuilt = await buildExample({
+      ...bridgeEnv(join(googleBase, "state")),
+      GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret", GOOGLE_REDIRECT_URI: `${TEST_ORIGIN}/google/callback`,
+      OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client", OIDC_REDIRECT_URI: `${TEST_ORIGIN}/oidc/callback`,
+    }, googleStub.identityFactories);
+    try {
+      assert.equal(googleStub.capture.google?.clientId, "google-client", "Google remains ahead of generic OIDC when both are configured");
+      assert.equal(googleStub.capture.genericOidc, undefined, "generic OIDC factory is not constructed when Google wins");
+    } finally { await googleBuilt.app.close(); await googleBuilt.store.close(); }
   } finally {
     rmSync(allProvidersBase, { recursive: true, force: true });
     rmSync(cfBase, { recursive: true, force: true });
+    rmSync(googleBase, { recursive: true, force: true });
   }
 });
 
