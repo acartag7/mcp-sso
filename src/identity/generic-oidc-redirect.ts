@@ -15,6 +15,7 @@
 import type { IdentityClaims, RedirectExchangeResult, RedirectIdentityPort } from "../ports/identity.ts";
 import { createGenericOidcIdentity, type GenericOidcConfig, type GenericOidcIdentity, type GenericOidcVerifyOpts } from "./generic-oidc.ts";
 import type { DiscoveryTransport, GenericOidcTokenTransport } from "./generic-oidc-discovery.ts";
+import { redactForStderr } from "../audit/util.ts";
 
 export interface GenericOidcRedirectOpts {
   discoveryFetch?: DiscoveryTransport;
@@ -50,7 +51,7 @@ export function wrapRedirectIdentity(
         // Transport/protocol failure (non-200, timeout, malformed body, missing id_token) —
         // no identity decision. Propagate the primitive's cause (carries the upstream error
         // code) so upstream-flow logs it instead of a fixed generic string.
-        return { ok: false, kind: "exchange_failed", reason: String((e as Error | undefined)?.message ?? e).slice(0, 200).replace(/[\r\n]+/g, " ") };
+        return { ok: false, kind: "exchange_failed", reason: redactForStderr(e) };
       }
       const result = await base.verify(tokens.id_token, {
         expectedNonce: nonce, accessToken: tokens.access_token,

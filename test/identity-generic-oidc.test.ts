@@ -309,6 +309,16 @@ test("createGenericOidcRedirectIdentity: exchangeAndVerify outcome mapping (exch
   const et = await portThrow.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
   assert.ok(!et.ok && et.kind === "exchange_failed");
 
+  // exchange_failed: a hostile non-Error throw (no toString) still classifies as
+  // exchange_failed, never throws out of the wrapper — the never-throw contract
+  // (a custom transport can't regress the throw⇒exchange_failed outcome).
+  const portHostile = await createGenericOidcRedirectIdentity(CONFIG, {
+    verifyKey: rsa.publicKey, currentDate: now,
+    transport: { async postForm() { throw Object.create(null); } },
+  });
+  const hb = await portHostile.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+  assert.ok(!hb.ok && hb.kind === "exchange_failed", "a hostile throw still classifies as exchange_failed (wrapper never throws)");
+
   // identity_rejected: bad iss (verified-context denial)
   const portBadIss = await createGenericOidcRedirectIdentity(CONFIG, {
     verifyKey: rsa.publicKey, currentDate: now,
