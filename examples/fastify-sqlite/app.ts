@@ -4,6 +4,29 @@
 // operator pastes a one-time code from the console. buildApp() also still supports
 // a header-based IdentityPort (used by the e2e test). The verify gate
 // (test/e2e-mcp-sdk.test.ts + test/e2e-pairing.test.ts) imports buildApp().
+//
+// CONSUMER IMPORT MAP — this example imports mcp-sso's source directly
+// (`../../src/...`) because it lives in-repo and tests the unbuilt source. A
+// package consumer imports the SAME symbols from the PUBLISHED entry points
+// (full map: docs/contracts.md §15). Most symbols come from the root; the
+// non-root ones, and the one subpath gotcha:
+//
+//   stores:           "mcp-sso/store/sqlite"  (openSqliteStore)
+//                     "mcp-sso/store/memory"  (createMemoryStore)
+//                     "mcp-sso/store/mysql"   (createMysqlStore)
+//   fastify adapter:  "mcp-sso/fastify"       (registerOAuthRoutes)
+//                     ← NOT "mcp-sso/adapters/fastify" (that's the in-repo source
+//                       path; the published subpath drops the "adapters/" segment)
+//   identities:       "mcp-sso/identity/cloudflare-access" (createCloudflareAccessIdentity)
+//                     "mcp-sso/identity/entra"        (createEntraRedirectIdentity)
+//                     "mcp-sso/identity/google"       (createGoogleRedirectIdentity)
+//                     "mcp-sso/identity/generic-oidc" (createGenericOidcRedirectIdentity)
+//                     "mcp-sso/identity/console-pairing" (createConsolePairingIdentity)
+//
+// Everything else this example uses — Bridge, RequestAuthorizer, createBridgeConfig,
+// buildUnauthorizedChallenge, OAuthError, SystemClock, JsonlFileAudit, originOf,
+// loadOrCreateQuickstartSecrets, handlePairingAuthorize, createUpstreamRedirectFlow —
+// imports from the root: `import { ... } from "mcp-sso"`.
 
 import Fastify, { type FastifyReply } from "fastify";
 import { chmod, mkdir } from "node:fs/promises";
