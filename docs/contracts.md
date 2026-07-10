@@ -7,12 +7,13 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and this document
 > disagree, this document wins until one of them is deliberately changed.
 >
-> Status: **v0.1 shipped** (`mcp-sso@0.1.1` on npm) + **v0.2 contracts locked
+> Status: **v0.2 shipped** (`mcp-sso@0.2.0` on npm) + **v0.2 contracts locked
 > 2026-07-04 (§17, pre-implementation; §17.11 added 2026-07-06)**. Spec
-> conformance target: **MCP
-> Authorization 2025-11-25** (the stable spec clients implement), with the
-> **2026-07-28 RC** hardening items built in now because all are
-> backward-compatible additions.
+> conformance target: **MCP Authorization 2025-11-25** (the stable spec
+> clients implement); the next spec version is **final on 2026-07-28** (its
+> RC was locked 2026-05-21) — its backward-compatible hardening items (e.g.
+> RFC 9207 `iss`) are built in now, and the spec-release gate re-verifies
+> this document against the published final text.
 
 ## Contents
 
@@ -2228,6 +2229,28 @@ primitives' behavior, `client_credentials`/device flow (§17.2/§17.3), IdP
 logout/re-auth prompting (`prompt`/`login_hint` passthrough), and multiple
 simultaneous upstream IdPs on one bridge instance (exactly one
 `RedirectIdentityPort` per flow/adapter).
+
+**ID-JAG adjacency (recorded 2026-07-10; posture: TRACK).** The MCP
+Enterprise-Managed Authorization extension (Stable 2026-06-18,
+modelcontextprotocol/ext-auth) defines ID-JAG — the Identity Assertion JWT
+Authorization Grant (draft-ietf-oauth-identity-assertion-authz-grant,
+WG-adopted, pre-WGLC; informally "Cross-App Access"): the client obtains an
+IdP-issued assertion via RFC 8693 token exchange and redeems it at the MCP AS
+under RFC 7523 jwt-bearer; the AS validates it against the IdP's JWKS and
+mints an audience-restricted token, advertising
+`urn:ietf:params:oauth:grant-profile:id-jag` in
+`authorization_grant_profiles_supported`. This is the spec-native sibling of
+this section's flow for ENTERPRISE-MANAGED clients: it replaces the
+interactive browser leg + consent page with IdP-admin policy, and requires
+client-side token exchange plus IdP-side issuance — as of 2026-07-10 shipped
+only as Claude EMA beta / VS Code Preview on Okta Early Access; no IdP this
+library's deployments use (Entra, Cloudflare Access) issues ID-JAGs. It does
+NOT replace the AS itself (assertion validation, audience-bound minting,
+refresh rotation, and audit land HERE if adopted), the RS verifier,
+registration (§17.1/§9.2), client_credentials (§17.2), pairing (§17.5), or
+the gateway pattern. No contract change now; escalation triggers live in the
+project roadmap. Any future id-jag leg is a NEW §17.x contract through the
+§18 protocol, never an amendment to this section's flow.
 
 ## 18. Contract-change protocol
 
