@@ -26,7 +26,7 @@ import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identit
 import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
-import type { NormRequest, NormResponse } from "../../src/adapters/http.ts";
+import { isMcpPath, type NormRequest, type NormResponse } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 
 export interface ExampleOptions {
@@ -115,7 +115,7 @@ export async function buildApp(opts: ExampleOptions) {
   // exactly, not normalized). The OAuth routes have their own origin handling, so
   // this hook is scoped to /mcp only.
   app.addHook("onRequest", async (request, reply) => {
-    if (request.url.split("?")[0] !== "/mcp") return; // OAuth routes manage their own Origin
+    if (!isMcpPath(request.url)) return; // OAuth routes manage their own Origin; isMcpPath parses the pathname (absolute-form-safe)
     const rawOrigin = request.headers.origin;
     const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
     if (origin !== undefined && !opts.config.allowedOrigins.includes(origin) && origin !== originOf(opts.config.issuer)) {

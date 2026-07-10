@@ -51,6 +51,21 @@ export function formObject(body: unknown): Record<string, unknown> {
   return typeof body === "object" && body !== null && !Array.isArray(body) ? body as Record<string, unknown> : {};
 }
 
+/** True when an inbound request targets `/mcp`. PARSES the pathname rather than a
+ *  raw string check on `request.url`, so it holds for an absolute-form
+ *  request-target (`POST http://host/mcp HTTP/1.1`), which a framework still
+ *  routes to `/mcp` while `request.url` is the full URL — a raw `=== "/mcp"` (or
+ *  `.split("?")[0]`) misses that form and skips the gate. Centralized here so the
+ *  examples' Origin gate + JSON body parser treat `/mcp` consistently regardless
+ *  of request-target form (the absolute-form string check is a recurring footgun). */
+export function isMcpPath(requestUrl: string): boolean {
+  try {
+    return new URL(requestUrl, "http://localhost").pathname === "/mcp";
+  } catch {
+    return false;
+  }
+}
+
 /** Map an OAuthError to a normalized response: a redirect-tagged error ⇒ 302 to
  *  redirect_uri?error=…; otherwise a direct status with the RFC 6749 §5.2 body.
  *  `challengeConfig` adds the §8.2 WWW-Authenticate challenge on 401 (the /mcp

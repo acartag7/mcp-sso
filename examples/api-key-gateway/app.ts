@@ -32,7 +32,7 @@ import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identit
 import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
-import type { NormRequest, NormResponse } from "../../src/adapters/http.ts";
+import { isMcpPath, type NormRequest, type NormResponse } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 // Reuse the fastify-sqlite example's env-wiring + fs-trust helpers rather than
 // duplicate them — ensureStateDir is the security-critical state-dir bar (the
@@ -261,16 +261,6 @@ function readHeader(headers: Record<string, unknown>, name: string): string | un
  *  fetch to an attacker host. */
 function safeQuery(requestUrl: string, backendUrl: string): string {
   try { return new URL(requestUrl, backendUrl).search; } catch { return ""; }
-}
-
-/** True if the inbound request targets /mcp. PARSES the pathname (not a raw string
- *  check on request.url) so it holds for an absolute-form request-target
- *  (`POST http://host/mcp`), which Fastify still routes to /mcp with request.url =
- *  the full URL. Shared by the Origin gate AND the JSON body parser so /mcp is
- *  treated consistently regardless of request-target form (the absolute-form string
- *  check is a repeated footgun — centralized here). */
-function isMcpPath(requestUrl: string): boolean {
-  try { return new URL(requestUrl, "http://localhost").pathname === "/mcp"; } catch { return false; }
 }
 
 // --- env helpers (trivial; inlined rather than imported to keep the example readable) ---
