@@ -54,5 +54,13 @@ export function safeErrorMessage(error: unknown): string {
  *  lines (log injection), bounds length, then redacts secret-shaped substrings via
  *  `redactSecrets` (§17.7, threat-model #14). Best-effort, over-broad by design. */
 export function redactForStderr(input: unknown): string {
-  return redactSecrets(String(input ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 200).trim());
+  // Never throws — callers log inside their own catch (upstream-flow's exchange
+  // catch), so a throw here (a hostile .message getter / toString on a thrown
+  // value) would regress the §17.11 contract that any exchangeAndVerify throw is
+  // classified exchange_failed. Mirrors safeErrorMessage's never-throw contract.
+  try {
+    return redactSecrets(String(input ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 200).trim());
+  } catch {
+    return "[redacted]";
+  }
 }

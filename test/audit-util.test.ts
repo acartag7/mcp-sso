@@ -115,3 +115,13 @@ test("redactForStderr: strips control chars (log-injection safe) and redacts sec
   assert.equal(secret.includes("supersecretvalueXYZ"), false, "secret leaked to stderr");
   assert.ok(secret.includes("[redacted]"), "redaction marker present");
 });
+
+test("redactForStderr: never throws on a hostile value (throwing message getter / toString)", () => {
+  // upstream-flow logs inside its exchange catch, so a throw here would regress the
+  // §17.11 contract that any exchangeAndVerify throw is classified exchange_failed.
+  const hostileGetter = { get message() { throw new Error("boom in message getter"); }, toString() { throw new Error("toString boom"); } };
+  const out = redactForStderr(hostileGetter);
+  assert.equal(typeof out, "string");
+  assert.ok(out.length > 0, "fell back to a fixed string instead of throwing");
+  assert.equal(redactForStderr(undefined), "", "undefined passes through (String('') )");
+});
