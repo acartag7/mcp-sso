@@ -14,11 +14,12 @@
 // Ordered most-specific first. Each replaces its match with "[redacted]".
 const SECRET_PATTERNS = [
   /Bearer\s+[A-Za-z0-9._~+/=-]+/gi, // RFC 6750 bearer credentials
-  // Authorization header with scheme + credentials (Basic/Digest/…). The assignment
-  // pattern below stops at whitespace, so "Authorization: Basic <base64(id:secret)>"
-  // would leave the (short, <32) encoded client_secret_basic creds on stderr. Run
-  // BEFORE the assignment pattern so it consumes scheme + creds together.
-  /(?<![A-Za-z0-9])authorization\s*[:]\s*[A-Za-z][A-Za-z0-9._-]*\s+[^\s"'&,;]+/gi,
+  // Authorization scheme + credentials (Basic/Digest/…), in ANY form a transport's
+  // stringifier emits: `:` header, `=` assignment, or JSON-quoted key. The assignment
+  // pattern below stops at whitespace, so without this the (short, <32) encoded
+  // client_secret_basic creds leak. Runs BEFORE the assignment pattern so it consumes
+  // scheme + creds together.
+  /(?<![A-Za-z0-9])authorization\s*["']?\s*[=:]\s*["']?\s*[A-Za-z][A-Za-z0-9._-]*\s+[^\s"'&,;]+/gi,
   // key=value assignments. The lookbehind — NOT \b — treats `_` and `-` as
   // separators, so underscored OAuth compound keys also match: access_token=,
   // refresh_token=, id_token=, client_secret=. (\b would not match after `_`.)

@@ -163,3 +163,13 @@ test("redactSecrets: strips quoted JSON keys (code / access_token in a JSON-shap
   assert.equal(out.includes("ATKshort"), false, "JSON access_token value leaked");
   assert.ok(out.includes("[redacted]"), "redaction marker present");
 });
+
+test("redactSecrets: consumes Basic scheme + creds in header / assignment / JSON forms", () => {
+  // A transport's stringifier emits the Authorization header in any of these shapes;
+  // the scheme + creds must be consumed together or the short (<32) base64
+  // client_secret_basic credential leaks past the assignment pattern (stops at whitespace).
+  const creds = Buffer.from("mcpdc_id:shh").toString("base64"); // short (<32) so the opaque-run rule doesn't catch it
+  for (const raw of [`Authorization: Basic ${creds}`, `authorization=Basic ${creds}`, `{"authorization":"Basic ${creds}"}`]) {
+    assert.equal(redactSecrets(raw).includes(creds), false, `${raw}: Basic credentials leaked`);
+  }
+});
