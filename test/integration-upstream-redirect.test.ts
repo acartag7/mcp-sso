@@ -28,28 +28,22 @@ import { buildBackend } from "../examples/api-key-gateway/backend.ts";
 function jwk(): JWK { const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" }); return { ...privateKey.export({ format: "jwk" }) } as JWK; }
 function json<T>(res: { body: unknown }): T { assert.equal(typeof res.body, "string", "inject body is a string"); return JSON.parse(res.body as string) as T; }
 function extractValue(html: string, name: string): string { const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html); assert.ok(m?.[1], `hidden field ${name} not found`); return m[1]!; }
-
-function sdkFetchShim(app: { inject(args: unknown): Promise<unknown> }): typeof fetch {
-  return (async (url: URL | string, init?: { method?: string; headers?: unknown; body?: unknown }): Promise<Response> => {
-    const u = url instanceof URL ? url : new URL(String(url));
-    const headers: Record<string, string> = {};
-    const src = init?.headers;
-    if (src instanceof Headers) src.forEach((v, k) => { headers[k] = v; });
-    else if (src && typeof src === "object") for (const [k, v] of Object.entries(src as Record<string, string>)) headers[k] = v;
-    const method = (init?.method ?? "POST") as "POST";
-    const payload = init?.body === undefined || init?.body === null ? undefined : typeof init.body === "string" ? init.body : JSON.stringify(init.body);
-    const r = await app.inject(payload === undefined ? { method, url: u.pathname + u.search, headers } : { method, url: u.pathname + u.search, headers, payload }) as unknown as { statusCode: number; headers: Record<string, string>; body: string };
-    return new Response(r.body, { status: r.statusCode, headers: r.headers });
-  }) as typeof fetch;
-}
+const networkFetch = globalThis.fetch.bind(globalThis) as typeof fetch;
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => { const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms); p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); }); });
 }
 async function callProtectedMcp(
-  app: { inject(args: unknown): Promise<unknown> }, resource: string, accessToken: string,
+  app: { listen(opts: { port: number; host: string }): Promise<string> }, resource: string, accessToken: string,
   toolName: string, expectedText: string | RegExp,
 ): Promise<void> {
-  const transport = new StreamableHTTPClientTransport(new URL(resource), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
+  // Use a real loopback socket for the official SDK call. Fastify's app.inject()
+  // socket is a light-my-request mock without destroySoon(); the SDK's Hono node
+  // adapter schedules incoming-body cleanup and calls that method 500 ms later,
+  // creating post-test uncaught exceptions on Linux. The OAuth/browser legs stay
+  // in-process; this final protected MCP call is closer to production and has a
+  // real Node socket lifecycle.
+  const address = await app.listen({ port: 0, host: "127.0.0.1" });
+  const transport = new StreamableHTTPClientTransport(new URL(new URL(resource).pathname, address), { fetch: networkFetch, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
   const client = new Client({ name: "int-upstream-flow", version: "0.0.1" }, { capabilities: {} });
   try {
     await withTimeout(client.connect(transport), 10_000, "MCP client connect");
@@ -290,7 +284,7 @@ function bridgeEnv(dir: string): Record<string, string> {
 }
 
 async function driveStubbedUpstreamFlow(args: {
-  app: { inject(input: unknown): Promise<unknown> };
+  app: { inject(input: unknown): Promise<unknown>; listen(opts: { port: number; host: string }): Promise<string> };
   resource: string;
   callbackPath: string;
   provider: string;
