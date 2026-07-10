@@ -116,9 +116,9 @@ test("integration — spawned index.ts: readiness, .well-known served, /mcp 401+
   const tmp = await mkdtemp(join(tmpdir(), "mcp-sso-spawn-"));
   const dir = join(tmp, "state"); // does NOT exist — buildExample creates it fresh (quickstart refuses an existing dir with no .gitignore)
   const base = `http://127.0.0.1:${port}`;
-  // Hermetic env: zero-setup branch (CF_ACCESS_AUDIENCE="" is falsy) + our port/dir,
-  // pinned HOST so the readiness regex matches, and no ambient OAUTH_*/CF_ACCESS_*.
-  const env = childEnv({ MCP_SSO_DIR: dir, PORT: String(port), HOST: "127.0.0.1", CF_ACCESS_AUDIENCE: "" });
+  // Hermetic env: zero-setup branch (all provider selectors are absent) + our
+  // port/dir, pinned HOST, and no ambient OAUTH_*/provider config.
+  const env = childEnv({ MCP_SSO_DIR: dir, PORT: String(port), HOST: "127.0.0.1" });
   const child = spawn("node", [ENTRY], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
   try {
     await waitForStderr(child, new RegExp(`mcp-sso example listening on 127\\.0\\.0\\.1:${port}`), 15_000);
@@ -151,7 +151,7 @@ test("integration — spawned index.ts: HOST=0.0.0.0 prints the off-loopback pai
   const port = await freePort();
   const tmp = await mkdtemp(join(tmpdir(), "mcp-sso-spawn-warn-"));
   const dir = join(tmp, "state"); // does NOT exist — buildExample creates it
-  const env = childEnv({ MCP_SSO_DIR: dir, PORT: String(port), HOST: "0.0.0.0", CF_ACCESS_AUDIENCE: "" });
+  const env = childEnv({ MCP_SSO_DIR: dir, PORT: String(port), HOST: "0.0.0.0" });
   const child = spawn("node", [ENTRY], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
   try {
     const stderr = await waitForStderr(child, /mcp-sso example listening on 0\.0\.0\.0:/, 15_000);
