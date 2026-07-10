@@ -125,3 +125,12 @@ test("redactForStderr: never throws on a hostile value (throwing message getter 
   assert.ok(out.length > 0, "fell back to a fixed string instead of throwing");
   assert.equal(redactForStderr(undefined), "", "undefined passes through (String('') )");
 });
+
+test("redactForStderr: redacts BEFORE bounding — a long opaque token near the cap is not fragmented past the threshold", () => {
+  // slice-before-redact would cut a ≥32-char opaque token below the threshold and
+  // leak the fragment; redact-then-bound redacts the full token first.
+  const token = "SECRET" + "t".repeat(60); // 66-char opaque run starting at char 180 (past the 200 cap)
+  const out = redactForStderr("x".repeat(180) + token);
+  assert.equal(out.includes("SECRET"), false, "opaque token leaked — bounded before redaction fragmented it below the threshold");
+  assert.equal(out.includes(token), false, "full token leaked");
+});

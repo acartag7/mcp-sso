@@ -58,8 +58,10 @@ export function redactForStderr(input: unknown): string {
   // catch), so a throw here (a hostile .message getter / toString on a thrown
   // value) would regress the §17.11 contract that any exchangeAndVerify throw is
   // classified exchange_failed. Mirrors safeErrorMessage's never-throw contract.
+  // Redact BEFORE bounding: a secret starting near the cap must be fully matched
+  // (≥32 chars) before slice() can fragment it below the opaque-token threshold.
   try {
-    return redactSecrets(String(input ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 200).trim());
+    return redactSecrets(String(input ?? "").replace(/[\x00-\x1f\x7f]+/g, " ")).slice(0, 200).trim();
   } catch {
     return "[redacted]";
   }
