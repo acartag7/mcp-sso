@@ -106,10 +106,11 @@ export function createEntraRedirectIdentity(
       let idToken: string;
       try {
         idToken = await exchangeCodeForToken(config, { code, codeVerifier }, transport);
-      } catch {
-        // Transport/protocol failure (non-200, timeout, malformed body, missing
-        // id_token) — no identity decision was made.
-        return { ok: false, kind: "exchange_failed", reason: "entra_exchange_failed" };
+      } catch (e) {
+        // Transport/protocol failure (non-200, timeout, malformed body, missing id_token) —
+        // no identity decision. Propagate the primitive's cause (carries the upstream error
+        // code) so upstream-flow logs it instead of a fixed generic string.
+        return { ok: false, kind: "exchange_failed", reason: String((e as Error | undefined)?.message ?? e).slice(0, 200).replace(/[\r\n]+/g, " ") };
       }
       const result = opts?.verifyKey
         ? await verifyEntraIdToken(idToken, opts.verifyKey, config, { expectedNonce: nonce, currentDate: opts.currentDate })

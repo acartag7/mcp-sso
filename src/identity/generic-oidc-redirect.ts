@@ -46,10 +46,11 @@ export function wrapRedirectIdentity(
       let tokens: { id_token: string; access_token?: string };
       try {
         tokens = await base.exchangeCodeForToken({ code, codeVerifier }, opts.transport);
-      } catch {
-        // Transport/protocol failure (non-200, timeout, malformed body, missing
-        // id_token) — no identity decision was made.
-        return { ok: false, kind: "exchange_failed", reason: "generic_oidc_exchange_failed" };
+      } catch (e) {
+        // Transport/protocol failure (non-200, timeout, malformed body, missing id_token) —
+        // no identity decision. Propagate the primitive's cause (carries the upstream error
+        // code) so upstream-flow logs it instead of a fixed generic string.
+        return { ok: false, kind: "exchange_failed", reason: String((e as Error | undefined)?.message ?? e).slice(0, 200).replace(/[\r\n]+/g, " ") };
       }
       const result = await base.verify(tokens.id_token, {
         expectedNonce: nonce, accessToken: tokens.access_token,

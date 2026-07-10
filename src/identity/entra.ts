@@ -126,7 +126,7 @@ export async function exchangeCodeForToken(
     ...(config.clientSecret ? { client_secret: config.clientSecret } : { scope: "openid profile email" }),
   });
   const resp = await transport.postForm(entraTokenEndpoint(config.tenantId), body);
-  if (resp.status !== 200) throw new Error(`entra token exchange failed: HTTP ${resp.status}`);
+  if (resp.status !== 200) { let detail = ""; try { const e = JSON.parse(await resp.text()) as { error?: unknown; error_description?: unknown }; if (typeof e.error === "string") detail = `: ${e.error}${typeof e.error_description === "string" ? ` — ${String(e.error_description).slice(0, 160).replace(/[\r\n]+/g, " ")}` : ""}`; } catch { /* non-JSON error body — the HTTP status is the detail */ } throw new Error(`entra token exchange failed: HTTP ${resp.status}${detail}`); }
   const parsed = JSON.parse(await resp.text()) as { id_token?: string };
   if (!parsed.id_token) throw new Error("entra token exchange returned no id_token");
   return parsed.id_token;

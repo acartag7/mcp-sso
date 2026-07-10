@@ -292,6 +292,15 @@ test("createGenericOidcRedirectIdentity: exchangeAndVerify outcome mapping (exch
   assert.equal(ef.ok, false);
   assert.ok(!ef.ok && ef.kind === "exchange_failed");
 
+  // exchange_failed: the upstream error code propagates through the wrapper (operability —
+  // upstream-flow logs exchange.reason; the cause must not be swallowed at the wrapper).
+  const portInvalidClient = await createGenericOidcRedirectIdentity(CONFIG, {
+    verifyKey: rsa.publicKey, currentDate: now,
+    transport: { async postForm() { return { status: 401, async text() { return JSON.stringify({ error: "invalid_client", error_description: "Unauthorized" }); } }; } },
+  });
+  const ic = await portInvalidClient.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+  assert.ok(!ic.ok && ic.kind === "exchange_failed" && ic.reason.includes("invalid_client"), "wrapper propagates the upstream error code into exchange.reason");
+
   // exchange_failed: transport throws
   const portThrow = await createGenericOidcRedirectIdentity(CONFIG, {
     verifyKey: rsa.publicKey, currentDate: now,
