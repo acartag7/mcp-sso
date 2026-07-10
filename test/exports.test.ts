@@ -17,6 +17,7 @@ import {
   WebhookAudit,
   combineAudit,
   createUpstreamRedirectFlow,
+  isMcpPath,
   type UpstreamRedirectFlow,
   type RedirectIdentityPort,
 } from "../src/index.ts";
@@ -33,6 +34,7 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   assert.equal(typeof WebhookAudit, "function");
   assert.equal(typeof combineAudit, "function");
   assert.equal(typeof createUpstreamRedirectFlow, "function", "createUpstreamRedirectFlow (§17.11) is root-exported");
+  assert.equal(typeof isMcpPath, "function", "isMcpPath (/mcp Origin-gate path check) is root-exported");
   void (null as unknown as UpstreamRedirectFlow); // type reachable
   void (null as unknown as RedirectIdentityPort); // type reachable
 });
