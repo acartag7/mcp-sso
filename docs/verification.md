@@ -316,6 +316,37 @@ Minimum evidence per live row:
 5. Pass/fail for each scenario named in the Tier-3 row.
 6. Exact caveat if any step was skipped, simulated, or only partially verified.
 
+## Spec-release re-verification (due 2026-07-28)
+
+MANUAL maintainer checklist — not automated, not CI-enforced. Execute on or
+after 2026-07-28 (the MCP Authorization spec's final-publication date; its
+release candidate locked 2026-05-21). This checklist BLOCKS any release
+whose docs or marketing claim conformance with the 2026-07-28 final spec
+text until every row below is checked off.
+
+- [ ] **(a) DCR deprecation wording.** Confirm the published final spec
+  retains the Dynamic Client Registration deprecation language from the RC
+  draft changelog: "Deprecate the OAuth 2.0 Dynamic Client Registration
+  Protocol (RFC7591)... It remains available for backwards compatibility."
+  This wording entered the draft AFTER the RC lock (PR #2858, merged
+  2026-06-04), so it must be re-confirmed against the final text, not
+  assumed to have carried over unchanged.
+- [ ] **(b) CIMD normative level + draft revision.** Confirm Client ID
+  Metadata Documents remain a SHOULD in the final spec, and record which
+  CIMD draft revision the final spec cites. The spec currently cites draft
+  `-00`; this repo's §17.1 already builds to the stricter `-01`; `-02`
+  (published 2026-07-06) was reviewed 2026-07-10 and is already satisfied by
+  the existing implementation.
+- [ ] **(c) RFC 9207 `iss` + `application_type`.** Confirm the final spec's
+  normative level for the RFC 9207 `iss` parameter (the draft has it as
+  SHOULD, with a signposted future MUST) and confirm `/oauth/register`
+  tolerates the new client-side `application_type` MUST introduced by
+  SEP-837.
+- [ ] **(d) Record the outcome.** Update the `docs/contracts.md` status line
+  (§0) and the §16 conformance matrix if any of (a)-(c) moved between draft
+  and final; otherwise record "no change" with the date this checklist was
+  run.
+
 ## Done rules
 
 Per build session:

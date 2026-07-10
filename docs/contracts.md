@@ -12,8 +12,11 @@
 > conformance target: **MCP Authorization 2025-11-25** (the stable spec
 > clients implement); the next spec version is **final on 2026-07-28** (its
 > RC was locked 2026-05-21) — its backward-compatible hardening items (e.g.
-> RFC 9207 `iss`) are built in now, and the spec-release gate re-verifies
-> this document against the published final text.
+> RFC 9207 `iss`) are built in now. Before any release claims conformance
+> with the 2026-07-28 final text, the manual maintainer checklist in
+> [`docs/verification.md` — "Spec-release re-verification (due
+> 2026-07-28)"](verification.md#spec-release-re-verification-due-2026-07-28)
+> MUST be completed.
 
 ## Contents
 
