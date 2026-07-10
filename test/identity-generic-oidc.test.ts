@@ -210,6 +210,10 @@ test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; mi
   // a non-string id_token (e.g. {}) is truthy but invalid — reject at the exchange.
   const nonStringIdToken: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: {}, access_token: "atk" }); } }; } };
   await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, nonStringIdToken));
+  // operability: the upstream OAuth error code (+ a bounded, newline-stripped description) now
+  // travels in the thrown error so upstream-flow can log it — it was previously discarded.
+  const invalidClient: GenericOidcTokenTransport = { async postForm() { return { status: 401, async text() { return JSON.stringify({ error: "invalid_client", error_description: "Unauthorized" }); } }; } };
+  await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, invalidClient), /HTTP 401: invalid_client — Unauthorized/);
 });
 
 // --- resolveEndpoints (discover + manual) -----------------------------------
