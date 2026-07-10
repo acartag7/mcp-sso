@@ -134,3 +134,14 @@ test("redactForStderr: redacts BEFORE bounding — a long opaque token near the 
   assert.equal(out.includes("SECRET"), false, "opaque token leaked — bounded before redaction fragmented it below the threshold");
   assert.equal(out.includes(token), false, "full token leaked");
 });
+
+test("redactSecrets: strips OAuth authorization-code request fields (code=, code_verifier=)", () => {
+  // §17.11: authorization codes + PKCE verifiers are never logged. A transport that
+  // echoes the failed token-request body would otherwise leak them — they are short /
+  // dotted, so the opaque-run rule does not catch them.
+  const body = "grant_type=authorization_code&code=ac_ABC.def-123&code_verifier=dBjfrN3";
+  const out = redactSecrets(body);
+  assert.equal(out.includes("ac_ABC.def-123"), false, "authorization code leaked");
+  assert.equal(out.includes("dBjfrN3"), false, "code_verifier leaked");
+  assert.ok(out.includes("[redacted]"), "redaction marker present");
+});
