@@ -145,3 +145,12 @@ test("redactSecrets: strips OAuth authorization-code request fields (code=, code
   assert.equal(out.includes("dBjfrN3"), false, "code_verifier leaked");
   assert.ok(out.includes("[redacted]"), "redaction marker present");
 });
+
+test("redactSecrets: strips Authorization: Basic credentials (short base64 id:secret)", () => {
+  // The assignment pattern stops at whitespace, so "Authorization: Basic <b64>" would
+  // leave the (short, <32) encoded client_secret_basic creds on stderr.
+  const creds = Buffer.from("mcpdc_id:shh").toString("base64"); // short (<32) so the opaque-run rule doesn't catch it
+  const out = redactSecrets(`exchange failed: Authorization: Basic ${creds}`);
+  assert.equal(out.includes(creds), false, "Basic credentials leaked (assignment pattern stopped at whitespace)");
+  assert.ok(out.includes("[redacted]"), "redaction marker present");
+});
