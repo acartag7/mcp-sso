@@ -214,6 +214,11 @@ test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; mi
   // travels in the thrown error so upstream-flow can log it — it was previously discarded.
   const invalidClient: GenericOidcTokenTransport = { async postForm() { return { status: 401, async text() { return JSON.stringify({ error: "invalid_client", error_description: "Unauthorized" }); } }; } };
   await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, invalidClient), /HTTP 401: invalid_client — Unauthorized/);
+  // a long error_description is NOT pre-truncated at 160 here — a pre-redaction slice
+  // would fragment a secret below the redaction threshold; redaction happens at the
+  // stderr choke point (redactForStderr, redact-then-bound).
+  const longDesc: GenericOidcTokenTransport = { async postForm() { return { status: 401, async text() { return JSON.stringify({ error: "invalid_client", error_description: "Z".repeat(200) }); } }; } };
+  await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, longDesc), (e: Error) => e.message.includes("Z".repeat(180)), "description was pre-sliced at 160 (fragments a secret before redaction)");
 });
 
 // --- resolveEndpoints (discover + manual) -----------------------------------

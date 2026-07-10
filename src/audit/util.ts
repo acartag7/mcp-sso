@@ -22,11 +22,11 @@ const SECRET_PATTERNS = [
   // key=value assignments. The lookbehind — NOT \b — treats `_` and `-` as
   // separators, so underscored OAuth compound keys also match: access_token=,
   // refresh_token=, id_token=, client_secret=. (\b would not match after `_`.)
-  /(?<![A-Za-z0-9])(token|secret|secrets|password|passwd|api[_-]?key|apikey|authorization)\s*[=:]\s*["']?[^\s"'&,;]+/gi,
+  /(?<![A-Za-z0-9])(token|secret|secrets|password|passwd|api[_-]?key|apikey|authorization)\s*["']?\s*[=:]\s*["']?[^\s"'&,;]+/gi,
   // OAuth authorization-code request fields (§17.11: codes + PKCE verifiers are never
   // logged). A transport that echoes the failed token-request body would otherwise leak
   // them — they are short / dotted, so the opaque-run rule below does not catch them.
-  /(?<![A-Za-z0-9_])(code_verifier|code)\s*[=:]\s*["']?[^\s"'&,;]+/gi,
+  /(?<![A-Za-z0-9_])(code_verifier|code)\s*["']?\s*[=:]\s*["']?[^\s"'&,;]+/gi,
   // Long opaque runs — refresh/access tokens, hashes, generated secrets. ISO
   // timestamps (contains ':' '.') and short hostnames do not match.
   /[A-Za-z0-9_-]{32,}/g,

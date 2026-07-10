@@ -154,3 +154,12 @@ test("redactSecrets: strips Authorization: Basic credentials (short base64 id:se
   assert.equal(out.includes(creds), false, "Basic credentials leaked (assignment pattern stopped at whitespace)");
   assert.ok(out.includes("[redacted]"), "redaction marker present");
 });
+
+test("redactSecrets: strips quoted JSON keys (code / access_token in a JSON-shaped diagnostic)", () => {
+  // The key=value patterns must handle JSON's quoted-key form ("key":"value"), not
+  // just form-encoded (key=value), or short values in a thrown JSON diagnostic survive.
+  const out = redactSecrets('exchange failed: {"code":"ac_ABC.def-123","access_token":"ATKshort"}');
+  assert.equal(out.includes("ac_ABC.def-123"), false, "JSON code value leaked");
+  assert.equal(out.includes("ATKshort"), false, "JSON access_token value leaked");
+  assert.ok(out.includes("[redacted]"), "redaction marker present");
+});
