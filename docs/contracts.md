@@ -7,13 +7,15 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and this document
 > disagree, this document wins until one of them is deliberately changed.
 >
-> Status: **v0.2 shipped** (`mcp-sso@0.2.0` on npm) + **v0.2 contracts locked
-> 2026-07-04 (§17, pre-implementation; §17.11 added 2026-07-06)**. Spec
-> conformance target: **MCP Authorization 2025-11-25** (the stable spec
-> clients implement); the next spec version is **final on 2026-07-28** (its
-> RC was locked 2026-05-21) — its backward-compatible hardening items (e.g.
-> RFC 9207 `iss`) are built in now. Before any release claims conformance
-> with the 2026-07-28 final text, the manual maintainer checklist in
+> Status: **v0.2.0 shipped (interim)** (`mcp-sso@0.2.0` on npm) + **v0.2
+> feature contracts locked 2026-07-04 (§17, pre-implementation; §17.11 added
+> 2026-07-06 — CIMD §17.1, device flow §17.3, and the GitHub port §17.6 are
+> contract-locked, not yet implemented)**. Spec conformance target: **MCP
+> Authorization 2025-11-25** (the stable spec clients implement); the next
+> spec version is **final on 2026-07-28** (its RC was locked 2026-05-21) —
+> the RC's backward-compatible hardening items (e.g. RFC 9207 `iss`) are
+> built in now. Before any release claims conformance with the 2026-07-28
+> final text, the manual maintainer checklist in
 > [`docs/verification.md` — "Spec-release re-verification (due
 > 2026-07-28)"](verification.md#spec-release-re-verification-due-2026-07-28)
 > MUST be completed.
@@ -986,7 +988,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ⏳ boundary v0.1, **contract locked §17.1**, impl v0.2 | §6.6, §17.1 |
+| CIMD (SSRF-guarded FetcherPort) | ⏳ boundary v0.1, **contract locked §17.1**, impl pending (S6, next minor) | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | ✅ v0.2 shipped (S3a provisioning/rotation + S3b grant: Basic+post auth, `MachineTokenResponse`, metadata-gated advertisement) | §17.2 |
@@ -998,8 +1000,11 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
 
-**RC re-check gate:** the 2026-07-28 RC is treated as additive hardening built in
-now; revisit it when it finalizes (~end July 2026) before anything is called v1.0.
+**Spec-final re-check gate:** the RC's (locked 2026-05-21) backward-compatible
+hardening items are built in now; before any release claims conformance with
+the 2026-07-28 final text, complete [`docs/verification.md` — "Spec-release
+re-verification (due
+2026-07-28)"](verification.md#spec-release-re-verification-due-2026-07-28).
 The RC changes nothing about the RS model or the bridge architecture.
 
 ## 17. v0.2 feature contracts (locked 2026-07-04)
@@ -2245,15 +2250,20 @@ mints an audience-restricted token, advertising
 `authorization_grant_profiles_supported`. This is the spec-native sibling of
 this section's flow for ENTERPRISE-MANAGED clients: it replaces the
 interactive browser leg + consent page with IdP-admin policy, and requires
-client-side token exchange plus IdP-side issuance — as of 2026-07-10 shipped
-only as Claude EMA beta / VS Code Preview on Okta Early Access; no IdP this
-library's deployments use (Entra, Cloudflare Access) issues ID-JAGs. It does
-NOT replace the AS itself (assertion validation, audience-bound minting,
-refresh rotation, and audit land HERE if adopted), the RS verifier,
-registration (§17.1/§9.2), client_credentials (§17.2), pairing (§17.5), or
-the gateway pattern. No contract change now; escalation triggers live in the
-project roadmap. Any future id-jag leg is a NEW §17.x contract through the
-§18 protocol, never an amendment to this section's flow.
+client-side token exchange plus IdP-side issuance — as of 2026-07-10 the only
+end-to-end MCP deployment is Claude EMA beta / VS Code Preview on Okta Early
+Access (protocol-level ID-JAG issuance elsewhere is pre-GA: Athenz beta,
+Keycloak in progress); no IdP this library's deployments use (Entra,
+Cloudflare Access — nor the other shipped ports, Google/generic OIDC) issues
+ID-JAGs. It does NOT replace the AS itself (assertion validation,
+audience-bound minting, refresh rotation, and audit land HERE if adopted),
+the RS verifier, registration (§17.1/§9.2), client_credentials (§17.2),
+pairing (§17.5), or the gateway pattern. No contract change now. Escalation
+triggers, recorded here so this contract stays self-contained: an IdP this
+library's deployments use begins issuing ID-JAGs, or a real client requests
+`urn:ietf:params:oauth:grant-profile:id-jag`. Any future id-jag leg is a NEW
+§17.x contract through the §18 protocol, never an amendment to this
+section's flow.
 
 ## 18. Contract-change protocol
 

@@ -325,18 +325,23 @@ whose docs or marketing claim conformance with the 2026-07-28 final spec
 text until every row below is checked off.
 
 - [ ] **(a) DCR deprecation wording.** Confirm the published final spec
-  retains the Dynamic Client Registration deprecation language from the RC
-  draft changelog: "Deprecate the OAuth 2.0 Dynamic Client Registration
-  Protocol (RFC7591)... It remains available for backwards compatibility."
-  This wording entered the draft AFTER the RC lock (PR #2858, merged
-  2026-06-04), so it must be re-confirmed against the final text, not
-  assumed to have carried over unchanged.
+  retains the Dynamic Client Registration deprecation language from the
+  current draft changelog: "Deprecate the OAuth 2.0 Dynamic Client
+  Registration Protocol (RFC7591)... It remains available for backwards
+  compatibility with authorization servers that do not support Client ID
+  Metadata Documents." This wording entered the draft AFTER the RC lock (PR
+  #2858, merged 2026-06-04), so it must be re-confirmed against the final
+  text, not assumed to have carried over unchanged.
 - [ ] **(b) CIMD normative level + draft revision.** Confirm Client ID
   Metadata Documents remain a SHOULD in the final spec, and record which
   CIMD draft revision the final spec cites. The spec currently cites draft
   `-00`; this repo's §17.1 CONTRACT builds to the stricter `-01`, and `-02`
   (published 2026-07-06) was reviewed 2026-07-10 — every `-02` normative
-  change is already covered by §17.1 as written. NOTE: this is a
+  change is covered by §17.1, with one caveat: §17.1 does not yet pin the
+  fetch target / `client_id` comparison operand / cache key to the RAW
+  presented `client_id` string (never a WHATWG re-serialization) — a §17.1
+  precision amendment from the same 2026-07-10 review is planned; do not
+  check this row off before that amendment lands. NOTE: this is a
   CONTRACT-conformance check only; the CIMD implementation itself is not yet
   built (`docs/contracts.md` §16 marks CIMD contract-locked, implementation
   pending — the S6 sessions). No conformance-with-final-spec claim about
