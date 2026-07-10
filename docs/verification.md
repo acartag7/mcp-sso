@@ -334,9 +334,14 @@ text until every row below is checked off.
 - [ ] **(b) CIMD normative level + draft revision.** Confirm Client ID
   Metadata Documents remain a SHOULD in the final spec, and record which
   CIMD draft revision the final spec cites. The spec currently cites draft
-  `-00`; this repo's §17.1 already builds to the stricter `-01`; `-02`
-  (published 2026-07-06) was reviewed 2026-07-10 and is already satisfied by
-  the existing implementation.
+  `-00`; this repo's §17.1 CONTRACT builds to the stricter `-01`, and `-02`
+  (published 2026-07-06) was reviewed 2026-07-10 — every `-02` normative
+  change is already covered by §17.1 as written. NOTE: this is a
+  CONTRACT-conformance check only; the CIMD implementation itself is not yet
+  built (`docs/contracts.md` §16 marks CIMD contract-locked, implementation
+  pending — the S6 sessions). No conformance-with-final-spec claim about
+  CIMD RUNTIME behavior may be checked off until that implementation ships
+  and its SSRF acceptance suite is green.
 - [ ] **(c) RFC 9207 `iss` + `application_type`.** Confirm the final spec's
   normative level for the RFC 9207 `iss` parameter (the draft has it as
   SHOULD, with a signposted future MUST) and confirm `/oauth/register`
