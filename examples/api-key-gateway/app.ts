@@ -39,7 +39,8 @@ import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 // sibling-sweep rule); configFromEnv / defaultListenHost are the same env switch.
 import {
   configFromEnv, ensureStateDir, defaultListenHost, createOidcUpstreamFromEnv,
-  oidcProviderConfigured, type OidcIdentityFactories,
+  assertUpstreamConfigBeforeState, oidcProviderConfigured, productionIdentityConfigured,
+  type OidcIdentityFactories,
 } from "../fastify-sqlite/app.ts";
 
 export interface GatewayOptions {
@@ -274,7 +275,7 @@ function listEnv(env: Record<string, string | undefined>, k: string, def: string
 }
 function mustEnv(env: Record<string, string | undefined>, k: string): string { const v = env[k]; if (!v) throw new Error(`Missing env: ${k}`); return v; }
 
-export { defaultListenHost, oidcProviderConfigured };
+export { defaultListenHost, oidcProviderConfigured, productionIdentityConfigured };
 
 /** The standalone entry's wiring, factored out so it is integration-testable without
  *  app.listen(). Selects identity exactly like examples/fastify-sqlite (Entra redirect
@@ -289,8 +290,7 @@ export async function buildGatewayExample(
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
   const audit = new JsonlFileAudit(join(dir, "audit.jsonl"));
 
-  if (env.ENTRA_TENANT_ID) {
-    await ensureStateDir(dir);
+  if (env.ENTRA_TENANT_ID !== undefined) {
     const config = configFromEnv(env);
     const redirectUri = mustEnv(env, "ENTRA_REDIRECT_URI");
     const callbackPath = new URL(redirectUri).pathname;
@@ -302,11 +302,12 @@ export async function buildGatewayExample(
       allowedTenantIds: listEnv(env, "ENTRA_ALLOWED_TENANT_IDS", ""),
       subjectAllowlist: listEnv(env, "ENTRA_SUBJECT_ALLOWLIST", ""),
     }, { scopeCatalog: config.scopeCatalog });
+    assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
+    await ensureStateDir(dir);
     const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, upstream: { identity, callbackPath }, audit, sqliteFile });
     return { app, store, config, dir };
   }
-  if (env.CF_ACCESS_AUDIENCE) {
-    await ensureStateDir(dir);
+  if (env.CF_ACCESS_AUDIENCE !== undefined) {
     const config = configFromEnv(env);
     const identity = createCloudflareAccessIdentity({
       audience: mustEnv(env, "CF_ACCESS_AUDIENCE"),
@@ -314,6 +315,7 @@ export async function buildGatewayExample(
       issuer: mustEnv(env, "CF_ACCESS_ISSUER"),
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
+    await ensureStateDir(dir);
     const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, identity, audit, sqliteFile });
     return { app, store, config, dir };
   }

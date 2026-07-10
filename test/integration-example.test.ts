@@ -93,7 +93,17 @@ test("integration — Cloudflare Access branch rejects a group/other-accessible 
   writeFileSync(join(dir, ".gitignore"), "*\n", { mode: 0o600 }); // valid ignore → only the dir mode is at fault
   try {
     await assert.rejects(
-      buildExample({ MCP_SSO_DIR: dir, CF_ACCESS_AUDIENCE: "https://cf.test/aud" }),
+      buildExample({
+        MCP_SSO_DIR: dir,
+        CF_ACCESS_AUDIENCE: "https://cf.test/aud",
+        CF_ACCESS_CERTS_URL: "https://cf.test/certs",
+        CF_ACCESS_ISSUER: "https://cf.test",
+        OAUTH_ISSUER: "http://localhost:3000",
+        OAUTH_RESOURCE: "http://localhost:3000/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      }),
       AuthConfigError,
     );
   } finally {
@@ -107,6 +117,8 @@ test("integration — listen host: pairing binds loopback; Cloudflare binds 0.0.
   // by default. CF/proxy is externally bound (fronted by CF / a reverse proxy).
   assert.equal(defaultListenHost({}), "127.0.0.1", "pairing mode → loopback");
   assert.equal(defaultListenHost({ CF_ACCESS_AUDIENCE: "x" }), "0.0.0.0", "CF mode → all interfaces");
+  assert.equal(defaultListenHost({ ENTRA_TENANT_ID: "" }), "0.0.0.0", "blank Entra selector remains production mode (boot later rejects it)");
+  assert.equal(defaultListenHost({ CF_ACCESS_AUDIENCE: "" }), "0.0.0.0", "blank CF selector remains production mode (boot later rejects it)");
   assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "x" }), "0.0.0.0", "Google redirect mode → all interfaces");
   assert.equal(defaultListenHost({ OIDC_ISSUER: "https://issuer.test" }), "0.0.0.0", "generic OIDC redirect mode → all interfaces");
   assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "" }), "0.0.0.0", "blank Google selector remains production mode (boot later rejects it)");
@@ -161,8 +173,18 @@ test("integration — Google branch rejects a malformed email-allowlist opt-in i
   }
 });
 
-test("integration — blank optional Google/OIDC env fails closed before state creation in both examples", async () => {
+test("integration — blank production identity env fails closed before state creation in both examples", async () => {
   const invalidCases = [
+    {
+      name: "blank Entra selector",
+      provider: { ENTRA_TENANT_ID: "", ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/entra/callback" },
+      pattern: /Missing env: ENTRA_TENANT_ID/,
+    },
+    {
+      name: "blank Cloudflare selector",
+      provider: { CF_ACCESS_AUDIENCE: "", CF_ACCESS_CERTS_URL: "https://cf.test/certs", CF_ACCESS_ISSUER: "https://cf.test" },
+      pattern: /Missing env: CF_ACCESS_AUDIENCE/,
+    },
     {
       name: "blank Google selector",
       provider: { GOOGLE_CLIENT_ID: "", GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback" },
@@ -235,6 +257,14 @@ test("integration — invalid upstream callback config fails before state creati
     { name: "reserved route", redirectUri: "http://localhost:3000/oauth/token", pattern: /callbackPath must not be a reserved route/ },
   ];
   const providers = [
+    {
+      name: "Entra",
+      env: (redirectUri: string) => ({
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: redirectUri,
+      }),
+      identityFactories: {},
+    },
     {
       name: "Google",
       env: (redirectUri: string) => ({

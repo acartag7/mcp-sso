@@ -164,7 +164,7 @@ export async function buildApp(opts: ExampleOptions) {
  *  loopback envelope; the callback must be reachable by the IdP). HOST env
  *  overrides either. */
 export function defaultListenHost(env: Record<string, string | undefined> = process.env): string {
-  return (env.CF_ACCESS_AUDIENCE || env.ENTRA_TENANT_ID || oidcProviderConfigured(env)) ? "0.0.0.0" : "127.0.0.1";
+  return productionIdentityConfigured(env) ? "0.0.0.0" : "127.0.0.1";
 }
 
 /** Read config from env (the production path; standalone index.ts uses quickstart
@@ -222,6 +222,12 @@ export function oidcProviderConfigured(env: Record<string, string | undefined>):
   return env.GOOGLE_CLIENT_ID !== undefined || env.OIDC_ISSUER !== undefined;
 }
 
+/** All real-IdP selectors use presence, not truthiness: blank production config
+ *  is a boot error and must never select the console-pairing fallback. */
+export function productionIdentityConfigured(env: Record<string, string | undefined>): boolean {
+  return env.ENTRA_TENANT_ID !== undefined || env.CF_ACCESS_AUDIENCE !== undefined || oidcProviderConfigured(env);
+}
+
 /** Build either shipped §17.6 RedirectIdentityPort from env. Shared with the
  *  gateway example so provider config and branch precedence cannot drift. */
 export async function createOidcUpstreamFromEnv(
@@ -264,7 +270,7 @@ export async function createOidcUpstreamFromEnv(
 /** Run the orchestrator's pure redirect boot assertions before provider discovery,
  *  state-dir creation, or sqlite open. The real orchestrator repeats them when the
  *  routes mount; this early mirror keeps example boot rejection side-effect free. */
-function assertUpstreamConfigBeforeState(
+export function assertUpstreamConfigBeforeState(
   config: BridgeConfig,
   redirectUri: string,
   callbackPath = "/oauth/callback",
@@ -316,7 +322,7 @@ export async function buildExample(
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
   const audit = new JsonlFileAudit(join(dir, "audit.jsonl"));
 
-  if (env.ENTRA_TENANT_ID) {
+  if (env.ENTRA_TENANT_ID !== undefined) {
     // §17.11 PRODUCTION: Entra redirect-flow. The upstream IdP (Entra app
     // assignment / Conditional Access) is the auth gate, so this is network-bound
     // (0.0.0.0) like Cloudflare — NOT loopback. ENTRA_REDIRECT_URI's pathname is
@@ -324,7 +330,6 @@ export async function buildExample(
     // originOf(OAUTH_ISSUER) + callbackPath (a mismatch is silent breakage at the
     // IdP, so it fails closed at boot). The bridge's own signing material still
     // comes from OAUTH_* env (configFromEnv).
-    await ensureStateDir(dir);
     const config = configFromEnv(env);
     const redirectUri = mustEnv(env, "ENTRA_REDIRECT_URI");
     const callbackPath = new URL(redirectUri).pathname;
@@ -336,14 +341,15 @@ export async function buildExample(
       allowedTenantIds: listEnv(env, "ENTRA_ALLOWED_TENANT_IDS", ""),
       subjectAllowlist: listEnv(env, "ENTRA_SUBJECT_ALLOWLIST", ""),
     }, { scopeCatalog: config.scopeCatalog });
+    assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
+    await ensureStateDir(dir);
     const { app, store } = await buildApp({ config, upstream: { identity, callbackPath }, audit, sqliteFile });
     return { app, store, config, dir };
   }
-  if (env.CF_ACCESS_AUDIENCE) {
+  if (env.CF_ACCESS_AUDIENCE !== undefined) {
     // PRODUCTION: Cloudflare Access + env signing material. This branch does NOT
     // run the quickstart helper, so create the state dir explicitly (sqlite open +
     // audit append otherwise fail on the missing parent).
-    await ensureStateDir(dir);
     const config = configFromEnv(env);
     const identity = createCloudflareAccessIdentity({
       audience: mustEnv(env, "CF_ACCESS_AUDIENCE"),
@@ -351,6 +357,7 @@ export async function buildExample(
       issuer: mustEnv(env, "CF_ACCESS_ISSUER"),
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
+    await ensureStateDir(dir);
     const { app, store } = await buildApp({ config, identity, audit, sqliteFile });
     return { app, store, config, dir };
   }
