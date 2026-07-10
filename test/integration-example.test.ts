@@ -222,31 +222,48 @@ test("integration — invalid upstream callback config fails before state creati
     { name: "foreign origin", redirectUri: "http://other.test/google/callback", pattern: /identity.redirectUri must equal issuerOrigin/ },
     { name: "reserved route", redirectUri: "http://localhost:3000/oauth/token", pattern: /callbackPath must not be a reserved route/ },
   ];
+  const providers = [
+    {
+      name: "Google",
+      env: (redirectUri: string) => ({
+        GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret", GOOGLE_REDIRECT_URI: redirectUri,
+      }),
+      identityFactories: { google: async () => { throw new Error("Google identity factory ran before callback validation"); } },
+    },
+    {
+      name: "generic OIDC",
+      env: (redirectUri: string) => ({
+        OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client", OIDC_REDIRECT_URI: redirectUri,
+      }),
+      identityFactories: { genericOidc: async () => { throw new Error("generic OIDC identity factory ran before callback validation"); } },
+    },
+  ];
   for (const target of ["fastify", "gateway"] as const) {
-    for (const invalid of redirectCases) {
-      const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-${target}-callback-`));
-      const dir = join(base, "state");
-      const identityFactories = { google: async () => { throw new Error("identity factory ran before callback validation"); } };
-      const env = {
-        MCP_SSO_DIR: dir,
-        GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret",
-        GOOGLE_REDIRECT_URI: invalid.redirectUri,
-        OAUTH_ISSUER: "http://localhost:3000",
-        OAUTH_RESOURCE: "http://localhost:3000/mcp",
-        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
-        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
-        OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
-      };
-      try {
-        const boot = target === "fastify"
-          ? buildExample(env, identityFactories)
-          : buildGatewayExample(env, {
-            backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused", identityFactories,
-          });
-        await assert.rejects(boot, invalid.pattern, `${target}: ${invalid.name}`);
-        assert.equal(existsSync(dir), false, `${target}: ${invalid.name} fails before state creation`);
-      } finally {
-        rmSync(base, { recursive: true, force: true });
+    for (const provider of providers) {
+      for (const invalid of redirectCases) {
+        const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-${target}-${provider.name.replace(" ", "-")}-callback-`));
+        const dir = join(base, "state");
+        const env = {
+          MCP_SSO_DIR: dir,
+          ...provider.env(invalid.redirectUri),
+          OAUTH_ISSUER: "http://localhost:3000",
+          OAUTH_RESOURCE: "http://localhost:3000/mcp",
+          OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+          OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+          OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+        };
+        try {
+          const boot = target === "fastify"
+            ? buildExample(env, provider.identityFactories)
+            : buildGatewayExample(env, {
+              backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+              identityFactories: provider.identityFactories,
+            });
+          await assert.rejects(boot, invalid.pattern, `${target} ${provider.name}: ${invalid.name}`);
+          assert.equal(existsSync(dir), false, `${target} ${provider.name}: ${invalid.name} fails before state creation`);
+        } finally {
+          rmSync(base, { recursive: true, force: true });
+        }
       }
     }
   }
