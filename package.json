@@ -1,6 +1,6 @@
 {
   "name": "mcp-sso",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "OAuth 2.1 for remote MCP servers: a spec-correct resource-server verifier plus a small AS-lite bridge with a pluggable upstream identity provider.",
   "license": "MIT",
   "type": "module",
