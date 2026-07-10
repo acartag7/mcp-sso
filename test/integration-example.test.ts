@@ -17,7 +17,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { pkceChallenge } from "../src/crypto.ts";
 import { AuthConfigError } from "../src/config.ts";
-import { buildExample, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
+import { buildExample, configFromEnv, createOidcUpstreamFromEnv, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
+import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 
 function jwk(): JWK {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -92,7 +93,17 @@ test("integration — Cloudflare Access branch rejects a group/other-accessible 
   writeFileSync(join(dir, ".gitignore"), "*\n", { mode: 0o600 }); // valid ignore → only the dir mode is at fault
   try {
     await assert.rejects(
-      buildExample({ MCP_SSO_DIR: dir, CF_ACCESS_AUDIENCE: "https://cf.test/aud" }),
+      buildExample({
+        MCP_SSO_DIR: dir,
+        CF_ACCESS_AUDIENCE: "https://cf.test/aud",
+        CF_ACCESS_CERTS_URL: "https://cf.test/certs",
+        CF_ACCESS_ISSUER: "https://cf.test",
+        OAUTH_ISSUER: "http://localhost:3000",
+        OAUTH_RESOURCE: "http://localhost:3000/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      }),
       AuthConfigError,
     );
   } finally {
@@ -106,6 +117,268 @@ test("integration — listen host: pairing binds loopback; Cloudflare binds 0.0.
   // by default. CF/proxy is externally bound (fronted by CF / a reverse proxy).
   assert.equal(defaultListenHost({}), "127.0.0.1", "pairing mode → loopback");
   assert.equal(defaultListenHost({ CF_ACCESS_AUDIENCE: "x" }), "0.0.0.0", "CF mode → all interfaces");
+  assert.equal(defaultListenHost({ ENTRA_TENANT_ID: "" }), "0.0.0.0", "blank Entra selector remains production mode (boot later rejects it)");
+  assert.equal(defaultListenHost({ CF_ACCESS_AUDIENCE: "" }), "0.0.0.0", "blank CF selector remains production mode (boot later rejects it)");
+  assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "x" }), "0.0.0.0", "Google redirect mode → all interfaces");
+  assert.equal(defaultListenHost({ OIDC_ISSUER: "https://issuer.test" }), "0.0.0.0", "generic OIDC redirect mode → all interfaces");
+  assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "" }), "0.0.0.0", "blank Google selector remains production mode (boot later rejects it)");
+  assert.equal(defaultListenHost({ OIDC_ISSUER: "" }), "0.0.0.0", "blank OIDC selector remains production mode (boot later rejects it)");
+});
+
+test("integration — Google branch boot-fails on a missing confidential-client secret before creating state", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-google-secret-"));
+  const dir = join(base, "state");
+  try {
+    await assert.rejects(
+      buildExample({
+        MCP_SSO_DIR: dir,
+        GOOGLE_CLIENT_ID: "google-client",
+        GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback",
+        OAUTH_ISSUER: "http://localhost:3000",
+        OAUTH_RESOURCE: "http://localhost:3000/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      }),
+      /Missing env: GOOGLE_CLIENT_SECRET/,
+    );
+    assert.equal(existsSync(dir), false, "missing Google secret fails before state-dir creation");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — Google branch rejects a malformed email-allowlist opt-in instead of silently disabling it", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-google-bool-"));
+  const dir = join(base, "state");
+  try {
+    await assert.rejects(
+      buildExample({
+        MCP_SSO_DIR: dir,
+        GOOGLE_CLIENT_ID: "google-client",
+        GOOGLE_CLIENT_SECRET: "google-secret",
+        GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback",
+        GOOGLE_ALLOW_EMAIL_ALLOWLIST: "yes",
+        OAUTH_ISSUER: "http://localhost:3000",
+        OAUTH_RESOURCE: "http://localhost:3000/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      }),
+      /Invalid env: GOOGLE_ALLOW_EMAIL_ALLOWLIST must be 'true' or 'false'/,
+    );
+    assert.equal(existsSync(dir), false, "malformed opt-in fails before state-dir creation");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — blank production identity env fails closed before state creation in both examples", async () => {
+  const invalidCases = [
+    {
+      name: "blank Entra selector",
+      provider: { ENTRA_TENANT_ID: "", ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/entra/callback" },
+      pattern: /Missing env: ENTRA_TENANT_ID/,
+    },
+    {
+      name: "blank Cloudflare selector",
+      provider: { CF_ACCESS_AUDIENCE: "", CF_ACCESS_CERTS_URL: "https://cf.test/certs", CF_ACCESS_ISSUER: "https://cf.test" },
+      pattern: /Missing env: CF_ACCESS_AUDIENCE/,
+    },
+    {
+      name: "blank Google selector",
+      provider: { GOOGLE_CLIENT_ID: "", GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback" },
+      pattern: /Missing env: GOOGLE_CLIENT_ID/,
+    },
+    {
+      name: "blank generic OIDC selector",
+      provider: { OIDC_ISSUER: "", OIDC_CLIENT_ID: "oidc-client", OIDC_REDIRECT_URI: "http://localhost:3000/oidc/callback" },
+      pattern: /Missing env: OIDC_ISSUER/,
+    },
+    {
+      name: "blank Google hosted domain",
+      provider: {
+        GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret",
+        GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback", GOOGLE_HOSTED_DOMAIN: "",
+      },
+      pattern: /google_bad_config: hostedDomain must be a non-empty string/,
+    },
+    {
+      name: "blank generic OIDC secret",
+      provider: {
+        OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client", OIDC_CLIENT_SECRET: "",
+        OIDC_REDIRECT_URI: "http://localhost:3000/oidc/callback",
+      },
+      pattern: /generic_oidc_bad_config: clientSecret must be a non-empty string/,
+    },
+    {
+      name: "blank generic OIDC scopes",
+      provider: {
+        OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client", OIDC_SCOPES: "",
+        OIDC_REDIRECT_URI: "http://localhost:3000/oidc/callback",
+      },
+      pattern: /generic_oidc_bad_config: scopes must be a non-empty/,
+    },
+  ];
+  const builders = [
+    { name: "fastify", run: (env: Record<string, string | undefined>) => buildExample(env) },
+    {
+      name: "gateway",
+      run: (env: Record<string, string | undefined>) => buildGatewayExample(env, {
+        backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+      }),
+    },
+  ];
+  for (const builder of builders) {
+    for (const invalid of invalidCases) {
+      const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-${builder.name}-blank-env-`));
+      const dir = join(base, "state");
+      try {
+        await assert.rejects(builder.run({
+          MCP_SSO_DIR: dir,
+          OAUTH_ISSUER: "http://localhost:3000",
+          OAUTH_RESOURCE: "http://localhost:3000/mcp",
+          OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+          OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+          OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+          ...invalid.provider,
+        }), invalid.pattern, `${builder.name}: ${invalid.name}`);
+        assert.equal(existsSync(dir), false, `${builder.name}: ${invalid.name} fails before state creation`);
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+test("integration — invalid upstream callback config fails before state creation in both examples", async () => {
+  const redirectCases = [
+    { name: "foreign origin", redirectUri: "http://other.test/google/callback", pattern: /identity.redirectUri must equal issuerOrigin/ },
+    { name: "reserved route", redirectUri: "http://localhost:3000/oauth/token", pattern: /callbackPath must not be a reserved route/ },
+  ];
+  const providers = [
+    {
+      name: "Entra",
+      env: (redirectUri: string) => ({
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: redirectUri,
+      }),
+      identityFactories: {},
+    },
+    {
+      name: "Google",
+      env: (redirectUri: string) => ({
+        GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret", GOOGLE_REDIRECT_URI: redirectUri,
+      }),
+      identityFactories: { google: async () => { throw new Error("Google identity factory ran before callback validation"); } },
+    },
+    {
+      name: "generic OIDC",
+      env: (redirectUri: string) => ({
+        OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client", OIDC_REDIRECT_URI: redirectUri,
+      }),
+      identityFactories: { genericOidc: async () => { throw new Error("generic OIDC identity factory ran before callback validation"); } },
+    },
+  ];
+  for (const target of ["fastify", "gateway"] as const) {
+    for (const provider of providers) {
+      for (const invalid of redirectCases) {
+        const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-${target}-${provider.name.replace(" ", "-")}-callback-`));
+        const dir = join(base, "state");
+        const env = {
+          MCP_SSO_DIR: dir,
+          ...provider.env(invalid.redirectUri),
+          OAUTH_ISSUER: "http://localhost:3000",
+          OAUTH_RESOURCE: "http://localhost:3000/mcp",
+          OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+          OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+          OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+        };
+        try {
+          const boot = target === "fastify"
+            ? buildExample(env, provider.identityFactories)
+            : buildGatewayExample(env, {
+              backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+              identityFactories: provider.identityFactories,
+            });
+          await assert.rejects(boot, invalid.pattern, `${target} ${provider.name}: ${invalid.name}`);
+          assert.equal(existsSync(dir), false, `${target} ${provider.name}: ${invalid.name} fails before state creation`);
+        } finally {
+          rmSync(base, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+});
+
+test("integration — Google/generic env wiring defaults to the shipped production factories (stubbed discovery, no network)", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: URL | Request | string): Promise<Response> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const issuer = url.startsWith("https://accounts.google.com/") ? "https://accounts.google.com" : "https://issuer.test";
+    return new Response(JSON.stringify({
+      issuer,
+      authorization_endpoint: `${issuer}/authorize`,
+      token_endpoint: `${issuer}/token`,
+      jwks_uri: `${issuer}/jwks`,
+      code_challenge_methods_supported: ["S256"],
+      id_token_signing_alg_values_supported: ["RS256"],
+      token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const config = configFromEnv({
+      OAUTH_ISSUER: "https://bridge.test", OAUTH_RESOURCE: "https://bridge.test/mcp",
+      OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40), OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+    });
+    const google = await createOidcUpstreamFromEnv({
+      GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret",
+      GOOGLE_REDIRECT_URI: "https://bridge.test/google/callback",
+    }, config);
+    assert.ok(google);
+    assert.equal(google.callbackPath, "/google/callback");
+    assert.equal(new URL(google.identity.buildAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c", codeChallengeMethod: "S256" })).origin, "https://accounts.google.com");
+
+    const generic = await createOidcUpstreamFromEnv({
+      OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client",
+      OIDC_REDIRECT_URI: "https://bridge.test/oidc/callback",
+    }, config);
+    assert.ok(generic);
+    assert.equal(generic.callbackPath, "/oidc/callback");
+    assert.equal(new URL(generic.identity.buildAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c", codeChallengeMethod: "S256" })).origin, "https://issuer.test");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("integration — gateway Google branch boot failures also occur before state-dir creation", async () => {
+  const cases = [
+    { name: "missing secret", env: {}, pattern: /Missing env: GOOGLE_CLIENT_SECRET/ },
+    { name: "malformed boolean", env: { GOOGLE_CLIENT_SECRET: "google-secret", GOOGLE_ALLOW_EMAIL_ALLOWLIST: "yes" }, pattern: /Invalid env: GOOGLE_ALLOW_EMAIL_ALLOWLIST/ },
+  ];
+  for (const c of cases) {
+    const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-gateway-google-${c.name.replace(" ", "-")}-`));
+    const dir = join(base, "state");
+    try {
+      await assert.rejects(
+        buildGatewayExample({
+          MCP_SSO_DIR: dir,
+          GOOGLE_CLIENT_ID: "google-client",
+          GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback",
+          OAUTH_ISSUER: "http://localhost:3000",
+          OAUTH_RESOURCE: "http://localhost:3000/mcp",
+          OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+          OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+          OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+          ...c.env,
+        }, { backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused" }),
+        c.pattern,
+      );
+      assert.equal(existsSync(dir), false, `${c.name}: gateway fails before state-dir creation`);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  }
 });
 
 test("integration — OAUTH_SQLITE_FILE overrides the default auth.db location (both branches)", async () => {
