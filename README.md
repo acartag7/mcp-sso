@@ -5,6 +5,7 @@
 [![npm](https://img.shields.io/npm/v/mcp-sso)](https://www.npmjs.com/package/mcp-sso)
 [![CI](https://img.shields.io/github/actions/workflow/status/acartag7/mcp-sso/ci.yml?branch=main&label=CI)](https://github.com/acartag7/mcp-sso/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/acartag7/mcp-sso?label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/acartag7/mcp-sso)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13556/badge)](https://www.bestpractices.dev/projects/13556)
 [![license](https://img.shields.io/github/license/acartag7/mcp-sso)](LICENSE)
 [![node](https://img.shields.io/node/v/mcp-sso)](package.json)
 [![runtime deps](https://img.shields.io/badge/runtime%20deps-1%20(jose)-blue)](docs/dependency-ledger.md)
