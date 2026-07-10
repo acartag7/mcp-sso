@@ -474,6 +474,49 @@ test("config fail-closed: a parked secret never reaches the frozen bridge.config
   assert.deepEqual(Reflect.ownKeys(config).filter((k) => typeof k === "symbol"), []);
 });
 
+test("config TOCTOU: a getter-backed issuer cannot smuggle http past https validation", () => {
+  // Pre-fix, createBridgeConfig validated `input.issuer` then built the output via
+  // `{...input}` — two reads, so a getter returning https on the validate-read and
+  // http on the spread-read smuggled http onto the frozen config. The fix reads
+  // each field ONCE; validation and the frozen output share that single read.
+  const base = baseInput();
+  let reads = 0;
+  const input = { ...base } as BridgeConfig;
+  Object.defineProperty(input, "issuer", {
+    enumerable: true, configurable: true,
+    get() { reads += 1; return reads === 1 ? "https://auth.test" : "http://evil.test"; },
+  });
+  const config = createBridgeConfig(input);
+  assert.equal(config.issuer, "https://auth.test", "the validated (first-read) value is what ships");
+  assert.equal(reads, 1, "issuer read exactly once");
+});
+
+test("config TOCTOU: a Proxy ownKeys trap cannot inject an unknown key via the spread", () => {
+  // Pre-fix, the reject-unknown loop's Reflect.ownKeys call hid the extra key, then
+  // the `{...input}` spread's second ownKeys call revealed it and copied it onto
+  // the frozen config. The fix builds the output from named locals, so ownKeys is
+  // called once (the loop) and no extra key can ever reach the output.
+  const base = baseInput();
+  let ownKeysCalled = 0;
+  const input = new Proxy({ ...base }, {
+    ownKeys(target) {
+      // First call (the reject loop) hides backendApiKey; a later call would reveal it.
+      return ownKeysCalled++ === 0 ? Reflect.ownKeys(target) : [...Reflect.ownKeys(target), "backendApiKey"];
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      if (prop === "backendApiKey") return { configurable: true, enumerable: true, writable: true, value: "TOP_SECRET" };
+      return Reflect.getOwnPropertyDescriptor(target, prop);
+    },
+    get(target, prop) {
+      if (prop === "backendApiKey") return "TOP_SECRET";
+      return Reflect.get(target, prop);
+    },
+  }) as BridgeConfig;
+  const config = createBridgeConfig(input);
+  assert.equal("backendApiKey" in config, false, "Proxy ownKeys trap cannot inject an unknown key");
+  assert.equal((config as unknown as Record<string, unknown>).backendApiKey, undefined);
+});
+
 test("oauthErrorBody is RFC 6749 §5.2 shape (top-level error string)", () => {
   // The official MCP SDK reads body.error as a STRING to drive recovery
   // (invalid_grant -> drop token, re-authorize). It must NOT be {error:{code,...}}.

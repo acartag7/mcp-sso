@@ -15,7 +15,7 @@ delivery guarantees honestly.
 
 | Path | Delivery | Durability | When |
 |---|---|---|---|
-| **`JsonlFileAudit` + a log shipper** (recommended) | Durable on disk the moment `appendFile` returns; the shipper delivers to your indexer with its own retry/buffer. | **Durable** (disk) | Production. The shipper absorbs sink outages, retries, and indexing — the layer that should own those concerns. |
+| **`JsonlFileAudit` + a log shipper** (recommended) | Durable once the OS accepts the append (survives normal process exit). No `fsync` — for power-loss/crash durability use a sync mount or the shipper's buffer. The shipper delivers to your indexer with its own retry/buffer. | **Durable** (disk; not fsync'd) | Production. The shipper absorbs sink outages, retries, and indexing — the layer that should own those concerns. |
 | **`WebhookAudit` → a SIEM HEC** | **At-most-once.** One POST per event. No retry, no buffering, no backgrounding. | Best-effort | Low-volume or loss-tolerant flows; a side-channel into Splunk/Elastic HEC where dropping events under outage is acceptable. |
 | **Custom `AuditPort`** | Whatever you implement. | Whatever you implement. | When you need batching, a durable queue (Kafka/SQS), custom retry, or a non-JSONL/non-HTTP shape (e.g. OpenSearch directly). |
 
@@ -101,9 +101,10 @@ The library treats audit as **evidence, not a gate**.
   gone; a failed `JsonlFileAudit` append is gone (the next event still appends
   once the filesystem recovers).
 - **If your compliance posture requires no lost events**, the file + shipper
-  path is the only supported answer. The file is durable on disk before the
-  shipper is involved, and the shipper is the component designed to absorb
-  indexer outages.
+  path is the only supported answer. The file is durable across normal process
+  exit once the OS has accepted the append; the sink does not `fsync`, so for
+  power-loss/crash durability put the audit file on a sync mount and let the
+  shipper's buffer absorb indexer outages.
 
 ## Fan-out with `combineAudit`
 

@@ -125,9 +125,13 @@ full pattern, topology, and Kubernetes notes in
 - **`jose` is the only runtime dependency**; every pin is ≥15 days old before we
   accept it; npm publishes run only through GitHub Actions with Sigstore
   provenance, never from a local machine.
-- **Codes and tokens are hashed and single-use**; separate signing keys for
-  consent vs. access tokens; timing-safe PKCE; redirect URIs matched against an
-  explicit allowlist.
+- **Token handling**: authorization codes and refresh tokens are hashed at rest
+  and single-use (a replayed refresh token revokes its whole family); consent
+  tokens are single-use. **Access tokens are short-TTL ES256 bearer tokens — like
+  any OAuth access token, a stolen one is valid until `exp`** (no access-token
+  introspection or revocation in v0.2; [threat-model row 1](docs/threat-model.md)).
+  Separate signing keys for consent vs. access; timing-safe PKCE; redirect URIs
+  matched against an explicit allowlist.
 - **Published STRIDE threat model** + a documented two-gate authorization model
   (IdP-side access control vs. mcp-sso's defense-in-depth allowlists):
   [`docs/threat-model.md`](docs/threat-model.md),
