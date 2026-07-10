@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { redactSecrets, safeErrorMessage } from "../src/audit/util.ts";
+import { redactSecrets, safeErrorMessage, redactForStderr } from "../src/audit/util.ts";
 
 test("redactSecrets: strips Bearer credentials", () => {
   const out = redactSecrets("auth failed: Bearer eyJhbGci.payload.sig more text");
@@ -101,4 +101,17 @@ test("safeErrorMessage: a long opaque password embedded in a userinfo URL is red
   const msg = `TypeError: fetch failed for https://user:${"p".repeat(48)}@siem.test/ingest`;
   const out = safeErrorMessage(msg);
   assert.equal(out.includes("p".repeat(48)), false, "long password leaked");
+});
+
+test("redactForStderr: strips control chars (log-injection safe) and redacts secrets", () => {
+  // an attacker-controlled client_id / a provider error_description with newlines
+  // cannot forge extra log lines (CRLF injection into the stderr log).
+  const injected = redactForStderr("ok\n[FAKE] log line\rhere");
+  assert.equal(injected.includes("\n"), false, "newline survived — log injection");
+  assert.equal(injected.includes("\r"), false, "CR survived — log injection");
+  assert.equal(injected, "ok [FAKE] log line here", "control chars collapsed to spaces — one line, no forged entry");
+  // a secret-shaped IdP error_description is redacted before it reaches stderr.
+  const secret = redactForStderr("invalid_client — token=supersecretvalueXYZ");
+  assert.equal(secret.includes("supersecretvalueXYZ"), false, "secret leaked to stderr");
+  assert.ok(secret.includes("[redacted]"), "redaction marker present");
 });

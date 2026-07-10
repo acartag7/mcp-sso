@@ -47,3 +47,12 @@ export function safeErrorMessage(error: unknown): string {
     return "unknown error";
   }
 }
+
+/** Single-line, secret-redacted form for arbitrary stderr diagnostics that may be
+ *  attacker- or provider-controlled (a stateless `client_id`, an IdP
+ *  `error_description`). Strips control chars so a value can't forge extra log
+ *  lines (log injection), bounds length, then redacts secret-shaped substrings via
+ *  `redactSecrets` (§17.7, threat-model #14). Best-effort, over-broad by design. */
+export function redactForStderr(input: unknown): string {
+  return redactSecrets(String(input ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 200).trim());
+}
