@@ -1608,10 +1608,14 @@ gate replaces no-gate).
   success); invalidated by expiry (600 s) or by `maxAttempts` (5) wrong
   submissions, after which the next request prints a fresh code. **Never
   persisted** — process-memory only; restart = clean slate (fail-closed).
-- **Session binding:** the code is bound to the pairing session (random nonce
-  in the form) that triggered its printing — a code printed for one flow
-  cannot be consumed by another, so an attacker triggering codes onto the
-  operator's console gains nothing and cannot race a pasted code.
+- **Session binding:** the code is single-use and bound to the pairing *session*
+  (a random nonce in the form) and to the operator who pastes it — not to the
+  specific OAuth request parameters (`client_id`, `redirect_uri`, `scope`, …),
+  which round-trip through the form. Those parameters are re-displayed on the
+  consent page before the grant is minted, so the operator sees and approves the
+  resource + scopes at consent time. An attacker who triggers a code onto the
+  operator's console gains nothing without the printed code; only the operator
+  pasting it completes the flow.
 - **Rate limiting:** the attempt cap is built-in and in-process — it cannot be
   misconfigured away; the `RateLimitPort` hook (`pairing:<ip>`) adds
   defense-in-depth.
@@ -1845,11 +1849,16 @@ gate replaces no-gate).
 - **API-key-gateway example** (mcp-sso as the SSO front door for a backend
   that only accepts a static API key): the backend key lives in an env var
   (`BACKEND_API_KEY`), read once at boot into a closure — never logged, never
-  audited, never present in token claims or responses; injected server-side
-  on the proxied backend call only after `RequestAuthorizer` accepts the
-  bridge-minted token. Missing key = boot failure. Secret-manager integration
-  is out of scope for the example but the read is isolated behind a single
-  `getBackendCredential()` swap point. The MCP client never sees the key.
+  audited, never placed in token claims, and never injected into any response
+  the gateway itself generates; it is injected server-side on the proxied backend
+  call only after `RequestAuthorizer` accepts the bridge-minted token. Missing
+  key = boot failure. Secret-manager integration is out of scope for the example
+  but the read is isolated behind a single `getBackendCredential()` swap point.
+  **Boundary (transparent proxy):** the gateway forwards backend response bodies
+  verbatim, so it cannot prevent a *backend that itself echoes the injected
+  credential* from exposing it — a backend MUST never reflect its received
+  `Authorization`. The gateway's guarantee is that it does not introduce the key
+  into any client-visible surface; the trusted backend must not either.
 
 ### 17.10 distributed `RateLimitPort` (Redis/Valkey) — shipped v0.1.2
 
