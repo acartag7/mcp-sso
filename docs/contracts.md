@@ -955,7 +955,13 @@ consumer can mount the pairing surface alongside the `skipAuthorize` adapter
 option (the in-repo example imports them from source; package consumers import
 them from the root entry). The framework-free `Bridge` class — the central object
 a consumer constructs and passes to a framework adapter — is root-exported
-(`import { Bridge, RequestAuthorizer } from "mcp-sso"`). Deployer guidance for the audit sinks lives in
+(`import { Bridge, RequestAuthorizer } from "mcp-sso"`). `isMcpPath(requestUrl)` —
+the `/mcp` Streamable-HTTP path check a consumer's `onRequest` Origin-gate hook uses
+to scope DNS-rebinding protection to MCP paths (it robustly handles the
+absolute-form request-target `POST http://host/mcp`, which a raw `=== "/mcp"` misses;
+run before the bearer check, for every method — see `examples/fastify-sqlite`) — is
+root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recommended
+Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in
 [`docs/audit-deployment.md`](./audit-deployment.md).
 
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;

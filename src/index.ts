@@ -99,6 +99,12 @@ export { createUpstreamRedirectFlow, type UpstreamRedirectFlow, type UpstreamFlo
 // to a framework adapter (root-exported so `import { Bridge } from "mcp-sso"` works;
 // previously only the adapters reached it internally).
 export { Bridge, type BridgeDeps } from "./adapters/bridge.ts";
+// isMcpPath — the /mcp Streamable-HTTP path check (contracts §15). A consumer's
+// onRequest Origin-gate hook (DNS-rebinding protection that runs BEFORE the bearer
+// check + for every method) scopes to MCP paths via isMcpPath(request.url); see
+// examples/fastify-sqlite. Root-exported so adopters of the recommended Origin-gate
+// pattern import it from the package root, not an internal adapter path.
+export { isMcpPath } from "./adapters/http.ts";
 export {
   type StorePort, type AuthCodeRecord, type RefreshTokenRecord,
   type SaveAuthCodeInput, type SaveRefreshTokenInput,
