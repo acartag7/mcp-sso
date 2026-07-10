@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
-import { createBridgeConfig, originOf, type BridgeConfig } from "../../src/config.ts";
+import { AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin, type BridgeConfig } from "../../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../../src/errors.ts";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { RequestAuthorizer } from "../../src/verifier.ts";
@@ -28,6 +28,7 @@ import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identit
 import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
+import { assertCallbackPath } from "../../src/adapters/upstream-flow-internals.ts";
 import { isMcpPath, type NormRequest, type NormResponse } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 
@@ -219,16 +220,18 @@ export interface OidcIdentityFactories {
  *  gateway example so provider config and branch precedence cannot drift. */
 export async function createOidcUpstreamFromEnv(
   env: Record<string, string | undefined>,
+  config: BridgeConfig,
   factories: OidcIdentityFactories = {},
 ): Promise<{ identity: RedirectIdentityPort; callbackPath: string } | undefined> {
   if (env.GOOGLE_CLIENT_ID) {
     const redirectUri = mustEnv(env, "GOOGLE_REDIRECT_URI");
     const callbackPath = new URL(redirectUri).pathname;
+    assertUpstreamConfigBeforeState(config, redirectUri, callbackPath);
     const identity = await (factories.google ?? createGoogleRedirectIdentity)({
       clientId: mustEnv(env, "GOOGLE_CLIENT_ID"),
       clientSecret: mustEnv(env, "GOOGLE_CLIENT_SECRET"),
       redirectUri,
-      hostedDomain: env.GOOGLE_HOSTED_DOMAIN || undefined,
+      hostedDomain: env.GOOGLE_HOSTED_DOMAIN,
       subjectAllowlist: listEnv(env, "GOOGLE_SUBJECT_ALLOWLIST", ""),
       allowEmailAllowlist: booleanEnv(env, "GOOGLE_ALLOW_EMAIL_ALLOWLIST"),
     });
@@ -237,18 +240,37 @@ export async function createOidcUpstreamFromEnv(
   if (env.OIDC_ISSUER) {
     const redirectUri = mustEnv(env, "OIDC_REDIRECT_URI");
     const callbackPath = new URL(redirectUri).pathname;
+    assertUpstreamConfigBeforeState(config, redirectUri, callbackPath);
     const identity = await (factories.genericOidc ?? createGenericOidcRedirectIdentity)({
       issuer: mustEnv(env, "OIDC_ISSUER"),
       clientId: mustEnv(env, "OIDC_CLIENT_ID"),
-      clientSecret: env.OIDC_CLIENT_SECRET || undefined,
+      clientSecret: env.OIDC_CLIENT_SECRET,
       redirectUri,
       endpoints: "discover",
-      scopes: env.OIDC_SCOPES || undefined,
+      scopes: env.OIDC_SCOPES,
       subjectAllowlist: listEnv(env, "OIDC_SUBJECT_ALLOWLIST", ""),
     });
     return { identity, callbackPath };
   }
   return undefined;
+}
+
+/** Run the orchestrator's pure redirect boot assertions before provider discovery,
+ *  state-dir creation, or sqlite open. The real orchestrator repeats them when the
+ *  routes mount; this early mirror keeps example boot rejection side-effect free. */
+function assertUpstreamConfigBeforeState(
+  config: BridgeConfig,
+  redirectUri: string,
+  callbackPath = "/oauth/callback",
+): void {
+  const issuerOrigin = originOf(config.issuer);
+  assertCallbackPath(callbackPath, issuerOrigin, pathAfterOrigin(config.resource));
+  if (redirectUri.includes("?") || redirectUri.includes("#")) {
+    throw new AuthConfigError("identity.redirectUri must not contain a query or fragment");
+  }
+  if (redirectUri !== issuerOrigin + callbackPath) {
+    throw new AuthConfigError(`identity.redirectUri must equal issuerOrigin + callbackPath ('${issuerOrigin + callbackPath}')`);
+  }
 }
 
 /** Ensure the state dir exists AND meets the full security bar — same bar the
@@ -331,7 +353,7 @@ export async function buildExample(
     // configured redirect URI's pathname is the mounted callback route; the
     // orchestrator boot-asserts the full URI equals issuerOrigin + callbackPath.
     const config = configFromEnv(env);
-    const upstream = await createOidcUpstreamFromEnv(env, identityFactories);
+    const upstream = await createOidcUpstreamFromEnv(env, config, identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
     await ensureStateDir(dir);
     const { app, store } = await buildApp({ config, upstream, audit, sqliteFile });

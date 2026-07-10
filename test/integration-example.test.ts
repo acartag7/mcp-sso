@@ -17,7 +17,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { pkceChallenge } from "../src/crypto.ts";
 import { AuthConfigError } from "../src/config.ts";
-import { buildExample, createOidcUpstreamFromEnv, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
+import { buildExample, configFromEnv, createOidcUpstreamFromEnv, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
 import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 
 function jwk(): JWK {
@@ -159,6 +159,99 @@ test("integration — Google branch rejects a malformed email-allowlist opt-in i
   }
 });
 
+test("integration — blank optional Google/OIDC env fails closed before state creation in both examples", async () => {
+  const invalidCases = [
+    {
+      name: "blank Google hosted domain",
+      provider: {
+        GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret",
+        GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback", GOOGLE_HOSTED_DOMAIN: "",
+      },
+      pattern: /google_bad_config: hostedDomain must be a non-empty string/,
+    },
+    {
+      name: "blank generic OIDC secret",
+      provider: {
+        OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client", OIDC_CLIENT_SECRET: "",
+        OIDC_REDIRECT_URI: "http://localhost:3000/oidc/callback",
+      },
+      pattern: /generic_oidc_bad_config: clientSecret must be a non-empty string/,
+    },
+    {
+      name: "blank generic OIDC scopes",
+      provider: {
+        OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client", OIDC_SCOPES: "",
+        OIDC_REDIRECT_URI: "http://localhost:3000/oidc/callback",
+      },
+      pattern: /generic_oidc_bad_config: scopes must be a non-empty/,
+    },
+  ];
+  const builders = [
+    { name: "fastify", run: (env: Record<string, string | undefined>) => buildExample(env) },
+    {
+      name: "gateway",
+      run: (env: Record<string, string | undefined>) => buildGatewayExample(env, {
+        backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+      }),
+    },
+  ];
+  for (const builder of builders) {
+    for (const invalid of invalidCases) {
+      const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-${builder.name}-blank-env-`));
+      const dir = join(base, "state");
+      try {
+        await assert.rejects(builder.run({
+          MCP_SSO_DIR: dir,
+          OAUTH_ISSUER: "http://localhost:3000",
+          OAUTH_RESOURCE: "http://localhost:3000/mcp",
+          OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+          OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+          OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+          ...invalid.provider,
+        }), invalid.pattern, `${builder.name}: ${invalid.name}`);
+        assert.equal(existsSync(dir), false, `${builder.name}: ${invalid.name} fails before state creation`);
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+test("integration — invalid upstream callback config fails before state creation in both examples", async () => {
+  const redirectCases = [
+    { name: "foreign origin", redirectUri: "http://other.test/google/callback", pattern: /identity.redirectUri must equal issuerOrigin/ },
+    { name: "reserved route", redirectUri: "http://localhost:3000/oauth/token", pattern: /callbackPath must not be a reserved route/ },
+  ];
+  for (const target of ["fastify", "gateway"] as const) {
+    for (const invalid of redirectCases) {
+      const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-${target}-callback-`));
+      const dir = join(base, "state");
+      const identityFactories = { google: async () => { throw new Error("identity factory ran before callback validation"); } };
+      const env = {
+        MCP_SSO_DIR: dir,
+        GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret",
+        GOOGLE_REDIRECT_URI: invalid.redirectUri,
+        OAUTH_ISSUER: "http://localhost:3000",
+        OAUTH_RESOURCE: "http://localhost:3000/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      };
+      try {
+        const boot = target === "fastify"
+          ? buildExample(env, identityFactories)
+          : buildGatewayExample(env, {
+            backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused", identityFactories,
+          });
+        await assert.rejects(boot, invalid.pattern, `${target}: ${invalid.name}`);
+        assert.equal(existsSync(dir), false, `${target}: ${invalid.name} fails before state creation`);
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
 test("integration — Google/generic env wiring defaults to the shipped production factories (stubbed discovery, no network)", async () => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: URL | Request | string): Promise<Response> => {
@@ -175,10 +268,14 @@ test("integration — Google/generic env wiring defaults to the shipped producti
     }), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
   try {
+    const config = configFromEnv({
+      OAUTH_ISSUER: "https://bridge.test", OAUTH_RESOURCE: "https://bridge.test/mcp",
+      OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40), OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+    });
     const google = await createOidcUpstreamFromEnv({
       GOOGLE_CLIENT_ID: "google-client", GOOGLE_CLIENT_SECRET: "google-secret",
       GOOGLE_REDIRECT_URI: "https://bridge.test/google/callback",
-    });
+    }, config);
     assert.ok(google);
     assert.equal(google.callbackPath, "/google/callback");
     assert.equal(new URL(google.identity.buildAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c", codeChallengeMethod: "S256" })).origin, "https://accounts.google.com");
@@ -186,7 +283,7 @@ test("integration — Google/generic env wiring defaults to the shipped producti
     const generic = await createOidcUpstreamFromEnv({
       OIDC_ISSUER: "https://issuer.test", OIDC_CLIENT_ID: "oidc-client",
       OIDC_REDIRECT_URI: "https://bridge.test/oidc/callback",
-    });
+    }, config);
     assert.ok(generic);
     assert.equal(generic.callbackPath, "/oidc/callback");
     assert.equal(new URL(generic.identity.buildAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c", codeChallengeMethod: "S256" })).origin, "https://issuer.test");

@@ -319,7 +319,7 @@ export async function buildGatewayExample(
   }
   if (env.GOOGLE_CLIENT_ID || env.OIDC_ISSUER) {
     const config = configFromEnv(env);
-    const upstream = await createOidcUpstreamFromEnv(env, deps.identityFactories);
+    const upstream = await createOidcUpstreamFromEnv(env, config, deps.identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
     await ensureStateDir(dir);
     const { app, store } = await buildGateway({
