@@ -106,6 +106,56 @@ test("integration — listen host: pairing binds loopback; Cloudflare binds 0.0.
   // by default. CF/proxy is externally bound (fronted by CF / a reverse proxy).
   assert.equal(defaultListenHost({}), "127.0.0.1", "pairing mode → loopback");
   assert.equal(defaultListenHost({ CF_ACCESS_AUDIENCE: "x" }), "0.0.0.0", "CF mode → all interfaces");
+  assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "x" }), "0.0.0.0", "Google redirect mode → all interfaces");
+  assert.equal(defaultListenHost({ OIDC_ISSUER: "https://issuer.test" }), "0.0.0.0", "generic OIDC redirect mode → all interfaces");
+});
+
+test("integration — Google branch boot-fails on a missing confidential-client secret before creating state", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-google-secret-"));
+  const dir = join(base, "state");
+  try {
+    await assert.rejects(
+      buildExample({
+        MCP_SSO_DIR: dir,
+        GOOGLE_CLIENT_ID: "google-client",
+        GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback",
+        OAUTH_ISSUER: "http://localhost:3000",
+        OAUTH_RESOURCE: "http://localhost:3000/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      }),
+      /Missing env: GOOGLE_CLIENT_SECRET/,
+    );
+    assert.equal(existsSync(dir), false, "missing Google secret fails before state-dir creation");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — Google branch rejects a malformed email-allowlist opt-in instead of silently disabling it", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-google-bool-"));
+  const dir = join(base, "state");
+  try {
+    await assert.rejects(
+      buildExample({
+        MCP_SSO_DIR: dir,
+        GOOGLE_CLIENT_ID: "google-client",
+        GOOGLE_CLIENT_SECRET: "google-secret",
+        GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback",
+        GOOGLE_ALLOW_EMAIL_ALLOWLIST: "yes",
+        OAUTH_ISSUER: "http://localhost:3000",
+        OAUTH_RESOURCE: "http://localhost:3000/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      }),
+      /Invalid env: GOOGLE_ALLOW_EMAIL_ALLOWLIST must be 'true' or 'false'/,
+    );
+    assert.equal(existsSync(dir), false, "malformed opt-in fails before state-dir creation");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("integration — OAUTH_SQLITE_FILE overrides the default auth.db location (both branches)", async () => {

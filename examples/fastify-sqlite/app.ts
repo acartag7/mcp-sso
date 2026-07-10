@@ -22,6 +22,8 @@ import { openSqliteStore } from "../../src/store/sqlite.ts";
 import { loadOrCreateQuickstartSecrets, ensureGitignore, assertRealDir } from "../../src/quickstart.ts";
 import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
 import { createEntraRedirectIdentity } from "../../src/identity/entra-redirect.ts";
+import { createGoogleRedirectIdentity, type GoogleConfig } from "../../src/identity/google.ts";
+import { createGenericOidcRedirectIdentity, type GenericOidcConfig } from "../../src/identity/generic-oidc.ts";
 import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identity.ts";
 import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
@@ -156,12 +158,12 @@ export async function buildApp(opts: ExampleOptions) {
 /** Default listen host by mode. Console pairing binds LOOPBACK by default (its
  *  trust envelope is "whoever can read the process's stderr IS the operator" —
  *  a non-loopback bind exposes the pairing authorize surface + the printed-code
- *  attempt budget to the network). The Cloudflare/proxy path AND the Entra
- *  redirect-flow path bind 0.0.0.0 (network deployment — the real IdP is the
- *  gate, unlike pairing's loopback envelope; the callback must be reachable by
- *  the IdP). HOST env overrides either. */
+ *  attempt budget to the network). Cloudflare and every redirect-flow path bind
+ *  0.0.0.0 (network deployment — the real IdP is the gate, unlike pairing's
+ *  loopback envelope; the callback must be reachable by the IdP). HOST env
+ *  overrides either. */
 export function defaultListenHost(env: Record<string, string | undefined> = process.env): string {
-  return (env.CF_ACCESS_AUDIENCE || env.ENTRA_TENANT_ID) ? "0.0.0.0" : "127.0.0.1";
+  return (env.CF_ACCESS_AUDIENCE || env.ENTRA_TENANT_ID || env.GOOGLE_CLIENT_ID || env.OIDC_ISSUER) ? "0.0.0.0" : "127.0.0.1";
 }
 
 /** Read config from env (the production path; standalone index.ts uses quickstart
@@ -200,6 +202,55 @@ function mustEnv(env: Record<string, string | undefined>, k: string): string {
   return v;
 }
 
+function booleanEnv(env: Record<string, string | undefined>, k: string): boolean | undefined {
+  const value = env[k];
+  if (value === undefined || value === "") return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`Invalid env: ${k} must be 'true' or 'false'`);
+}
+
+export interface OidcIdentityFactories {
+  google?: (config: GoogleConfig) => Promise<RedirectIdentityPort>;
+  genericOidc?: (config: GenericOidcConfig) => Promise<RedirectIdentityPort>;
+}
+
+/** Build either shipped §17.6 RedirectIdentityPort from env. Shared with the
+ *  gateway example so provider config and branch precedence cannot drift. */
+export async function createOidcUpstreamFromEnv(
+  env: Record<string, string | undefined>,
+  factories: OidcIdentityFactories = {},
+): Promise<{ identity: RedirectIdentityPort; callbackPath: string } | undefined> {
+  if (env.GOOGLE_CLIENT_ID) {
+    const redirectUri = mustEnv(env, "GOOGLE_REDIRECT_URI");
+    const callbackPath = new URL(redirectUri).pathname;
+    const identity = await (factories.google ?? createGoogleRedirectIdentity)({
+      clientId: mustEnv(env, "GOOGLE_CLIENT_ID"),
+      clientSecret: mustEnv(env, "GOOGLE_CLIENT_SECRET"),
+      redirectUri,
+      hostedDomain: env.GOOGLE_HOSTED_DOMAIN || undefined,
+      subjectAllowlist: listEnv(env, "GOOGLE_SUBJECT_ALLOWLIST", ""),
+      allowEmailAllowlist: booleanEnv(env, "GOOGLE_ALLOW_EMAIL_ALLOWLIST"),
+    });
+    return { identity, callbackPath };
+  }
+  if (env.OIDC_ISSUER) {
+    const redirectUri = mustEnv(env, "OIDC_REDIRECT_URI");
+    const callbackPath = new URL(redirectUri).pathname;
+    const identity = await (factories.genericOidc ?? createGenericOidcRedirectIdentity)({
+      issuer: mustEnv(env, "OIDC_ISSUER"),
+      clientId: mustEnv(env, "OIDC_CLIENT_ID"),
+      clientSecret: env.OIDC_CLIENT_SECRET || undefined,
+      redirectUri,
+      endpoints: "discover",
+      scopes: env.OIDC_SCOPES || undefined,
+      subjectAllowlist: listEnv(env, "OIDC_SUBJECT_ALLOWLIST", ""),
+    });
+    return { identity, callbackPath };
+  }
+  return undefined;
+}
+
 /** Ensure the state dir exists AND meets the full security bar — same bar the
  *  zero-setup branch gets from loadOrCreateQuickstartSecrets. Creates the dir 0700
  *  if absent; for a pre-existing dir, rejects a symlink or group/other-accessible
@@ -221,10 +272,13 @@ export async function ensureStateDir(dir: string): Promise<void> {
 }
 
 /** The standalone entry's wiring, factored out so it can be integration-tested
- *  without `app.listen()`. Selects the documented Cloudflare Access production
- *  path when CF_ACCESS_AUDIENCE is set; otherwise the zero-setup path (quickstart
- *  secrets + console pairing). Returns the built app (+ store/config/dir). */
-export async function buildExample(env: Record<string, string | undefined> = process.env): Promise<{
+ *  without `app.listen()`. Selects Entra, Cloudflare Access, Google, or generic
+ *  OIDC from env; otherwise uses quickstart secrets + console pairing. Returns
+ *  the built app (+ store/config/dir). */
+export async function buildExample(
+  env: Record<string, string | undefined> = process.env,
+  identityFactories: OidcIdentityFactories = {},
+): Promise<{
   app: ReturnType<typeof Fastify>;
   store: ReturnType<typeof openSqliteStore>;
   config: BridgeConfig;
@@ -270,6 +324,17 @@ export async function buildExample(env: Record<string, string | undefined> = pro
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
     const { app, store } = await buildApp({ config, identity, audit, sqliteFile });
+    return { app, store, config, dir };
+  }
+  if (env.GOOGLE_CLIENT_ID || env.OIDC_ISSUER) {
+    // §17.6 + §17.11 PRODUCTION: Google or generic OIDC redirect flow. The
+    // configured redirect URI's pathname is the mounted callback route; the
+    // orchestrator boot-asserts the full URI equals issuerOrigin + callbackPath.
+    const config = configFromEnv(env);
+    const upstream = await createOidcUpstreamFromEnv(env, identityFactories);
+    if (!upstream) throw new Error("OIDC identity branch selected without provider config");
+    await ensureStateDir(dir);
+    const { app, store } = await buildApp({ config, upstream, audit, sqliteFile });
     return { app, store, config, dir };
   }
 

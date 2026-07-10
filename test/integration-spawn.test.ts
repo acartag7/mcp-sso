@@ -98,14 +98,16 @@ async function assertWellKnownServed(base: string): Promise<void> {
 }
 
 /** Build a hermetic env for the spawned example: inherit a working runtime env
- *  (PATH/HOME/…), then SWEEP every OAUTH_* and CF_ACCESS_* var so ambient shell
+ *  (PATH/HOME/…), then SWEEP every identity/config var so ambient shell
  *  config can't make buildExample boot with a different issuer/resource/scope
  *  catalog (or fail validation) before the readiness check. `overrides` then pins
  *  exactly the inputs the test wants. (Codex P2: spreading raw process.env leaked
  *  the developer's OAUTH_* into the child.) */
 function childEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const k of Object.keys(env)) if (k.startsWith("OAUTH_") || k.startsWith("CF_ACCESS_")) delete env[k];
+  for (const k of Object.keys(env)) {
+    if (k.startsWith("OAUTH_") || k.startsWith("CF_ACCESS_") || k.startsWith("ENTRA_") || k.startsWith("GOOGLE_") || k.startsWith("OIDC_")) delete env[k];
+  }
   return Object.assign(env, overrides);
 }
 

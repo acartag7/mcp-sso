@@ -37,7 +37,10 @@ import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 // Reuse the fastify-sqlite example's env-wiring + fs-trust helpers rather than
 // duplicate them — ensureStateDir is the security-critical state-dir bar (the
 // sibling-sweep rule); configFromEnv / defaultListenHost are the same env switch.
-import { configFromEnv, ensureStateDir, defaultListenHost } from "../fastify-sqlite/app.ts";
+import {
+  configFromEnv, ensureStateDir, defaultListenHost, createOidcUpstreamFromEnv,
+  type OidcIdentityFactories,
+} from "../fastify-sqlite/app.ts";
 
 export interface GatewayOptions {
   config: BridgeConfig;
@@ -53,7 +56,7 @@ export interface GatewayOptions {
   identity?: IdentityPort;
   /** Console-pairing OPTIONS — when set, the gateway mounts the pairing authorize surface. */
   pairing?: ConsolePairingOptions;
-  /** §17.11 upstream redirect-flow identity + callback config (Entra redirect). */
+  /** §17.11 upstream redirect-flow identity + callback config. */
   upstream?: { identity: RedirectIdentityPort; callbackPath?: string; flowTtlSeconds?: number };
   sqliteFile?: string; // defaults to :memory:
   identityHeader?: string;
@@ -275,12 +278,12 @@ export { defaultListenHost };
 
 /** The standalone entry's wiring, factored out so it is integration-testable without
  *  app.listen(). Selects identity exactly like examples/fastify-sqlite (Entra redirect
- *  → Cloudflare Access → zero-setup console pairing). The backend credential is passed
+ *  → Cloudflare Access → Google → generic OIDC → zero-setup console pairing). The backend credential is passed
  *  in as a closure — it NEVER enters createBridgeConfig (which rejects unknown keys
  *  with a boot AuthConfigError, contracts §5); the two paths stay fully separate. */
 export async function buildGatewayExample(
   env: Record<string, string | undefined> = process.env,
-  deps: { backendUrl: string; getBackendCredential: () => string },
+  deps: { backendUrl: string; getBackendCredential: () => string; identityFactories?: OidcIdentityFactories },
 ): Promise<{ app: FastifyInstance; store: ReturnType<typeof openSqliteStore>; config: BridgeConfig; dir: string }> {
   const dir = env.MCP_SSO_DIR ?? "./.mcp-sso";
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
@@ -312,6 +315,17 @@ export async function buildGatewayExample(
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
     const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, identity, audit, sqliteFile });
+    return { app, store, config, dir };
+  }
+  if (env.GOOGLE_CLIENT_ID || env.OIDC_ISSUER) {
+    const config = configFromEnv(env);
+    const upstream = await createOidcUpstreamFromEnv(env, deps.identityFactories);
+    if (!upstream) throw new Error("OIDC identity branch selected without provider config");
+    await ensureStateDir(dir);
+    const { app, store } = await buildGateway({
+      config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential,
+      upstream, audit, sqliteFile,
+    });
     return { app, store, config, dir };
   }
 

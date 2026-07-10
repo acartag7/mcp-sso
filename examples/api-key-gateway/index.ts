@@ -7,8 +7,8 @@
 // and NEVER reaches an MCP client, a config file, or a laptop.
 //
 // Identity = console pairing by default (zero-setup local dev: paste a one-time code
-// from the console), with the SAME env-switch to Cloudflare Access / Entra redirect
-// as examples/fastify-sqlite. For a real multi-user gateway use an IdP-backed port
+// from the console), with the SAME env-switch to Cloudflare Access / Entra redirect /
+// Google / generic OIDC as examples/fastify-sqlite. For a real multi-user gateway use an IdP-backed port
 // (console pairing is single-operator by design — see docs/gateway-deployment.md).
 
 import { buildBackend } from "./backend.ts";
@@ -46,16 +46,16 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
   const host = process.env.HOST ?? defaultListenHost(process.env);
   // Warn if console pairing (single-operator envelope) is bound off-loopback.
-  if (!process.env.CF_ACCESS_AUDIENCE && !process.env.ENTRA_TENANT_ID && host !== "127.0.0.1" && host !== "localhost") {
+  if (!process.env.CF_ACCESS_AUDIENCE && !process.env.ENTRA_TENANT_ID && !process.env.GOOGLE_CLIENT_ID && !process.env.OIDC_ISSUER && host !== "127.0.0.1" && host !== "localhost") {
     console.error(
       `[mcp-sso-gateway] WARNING: console pairing is bound to ${host} (non-loopback). The pairing code is the identity gate — ` +
         "anyone who can reach this port can attempt it. Pairing is for single-operator / private-console deployments only; " +
-        "use the Cloudflare Access or Entra path for network-exposed deployments.",
+        "use a real IdP path for network-exposed deployments.",
     );
   }
   await app.listen({ port, host });
 
-  const mode = process.env.ENTRA_TENANT_ID ? "Entra redirect" : process.env.CF_ACCESS_AUDIENCE ? "Cloudflare Access" : "console pairing";
+  const mode = process.env.ENTRA_TENANT_ID ? "Entra redirect" : process.env.CF_ACCESS_AUDIENCE ? "Cloudflare Access" : process.env.GOOGLE_CLIENT_ID ? "Google" : process.env.OIDC_ISSUER ? "generic OIDC" : "console pairing";
   console.error(`mcp-sso api-key-gateway listening on ${host}:${port}  (identity: ${mode})`);
   console.error(`  issuer=${config.issuer}  resource=${config.resource}`);
   console.error(`  proxying /mcp → ${backendUrl}  (backend credential injected server-side; never exposed to clients)`);
