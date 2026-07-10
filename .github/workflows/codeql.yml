@@ -1,0 +1,38 @@
+name: CodeQL
+
+# Static analysis (OpenSSF Scorecard SAST check). Runs the github/codeql-action
+# JavaScript/TypeScript queries on push to main, PRs, and weekly. Actions are
+# SHA-pinned with the same vetted versions ci.yml uses (docs/dependency-ledger.md).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly — off the :00 mark.
+    - cron: "37 8 * * 1"
+
+permissions:
+  contents: read
+  security-events: write # upload-sarif / CodeQL results
+
+jobs:
+  analyze:
+    name: analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (2026-06-18)
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (2026-06-15)
+        with:
+          version: 10.34.4
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0 (2026-04-20)
+        with:
+          node-version: "24"
+          cache: pnpm
+      # JS/TS CodeQL extracts from source; installing resolves modules for richer analysis.
+      - run: pnpm install --frozen-lockfile
+      - uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2 (2026-06-04)
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2 (2026-06-04)
