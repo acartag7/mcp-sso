@@ -83,40 +83,70 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
       );
     }
   }
-  validateUrl(input, "issuer", input.issuer);
-  validateUrl(input, "resource", input.resource);
-  if (input.consentSigningSecret.trim().length < 32) {
+  // Snapshot each field with a SINGLE read, then validate + freeze from these
+  // locals. A getter- or Proxy-backed `input` can return different values across
+  // reads, so validate-then-`{...input}`-spread is a TOCTOU: validation saw the
+  // https/known value while the spread stored a different one, and a Proxy
+  // `ownKeys` trap could inject an unknown key via that spread. Pinning every
+  // field to one read and building the output from named locals closes both
+  // (contracts §5; the promise on KNOWN_CONFIG_KEYS above is then actually true).
+  // Nested object fields (dcr/dev/clientCredentials) are read from these refs but
+  // not deep-snapshotted — the depth-1 freeze residual is pre-existing; the
+  // demonstrated top-level vector (issuer getter + ownKeys proxy) is closed here.
+  const issuer = input.issuer;
+  const resource = input.resource;
+  const consentSigningSecret = input.consentSigningSecret;
+  const signingPrivateJwk = input.signingPrivateJwk;
+  const signingKeyId = input.signingKeyId;
+  const redirectAllowlist = input.redirectAllowlist;
+  const scopeCatalog = input.scopeCatalog;
+  const defaultScopes = input.defaultScopes;
+  const allowedOrigins = input.allowedOrigins;
+  const dcr = input.dcr;
+  const dcrMode = dcr.mode;
+  const dev = input.dev;
+  const allowInsecureLocalhost = dev?.allowInsecureLocalhost === true;
+  const clientCredentials = input.clientCredentials;
+  const clientCredentialsEnabled = clientCredentials?.enabled;
+  const accessTokenTtlSeconds = input.accessTokenTtlSeconds;
+  const refreshTokenTtlSeconds = input.refreshTokenTtlSeconds;
+  const consentTokenTtlSeconds = input.consentTokenTtlSeconds;
+  const authorizationCodeTtlSeconds = input.authorizationCodeTtlSeconds;
+
+  validateUrl(allowInsecureLocalhost, "issuer", issuer);
+  validateUrl(allowInsecureLocalhost, "resource", resource);
+  if (consentSigningSecret.trim().length < 32) {
     throw new AuthConfigError("consentSigningSecret must be at least 32 characters");
   }
-  validateSigningKey(input.signingPrivateJwk);
-  if (!Array.isArray(input.scopeCatalog) || input.scopeCatalog.length === 0) {
+  validateSigningKey(signingPrivateJwk);
+  if (!Array.isArray(scopeCatalog) || scopeCatalog.length === 0) {
     throw new AuthConfigError("scopeCatalog must be a non-empty array");
   }
-  if (!input.defaultScopes.every((s) => input.scopeCatalog.includes(s))) {
+  if (!defaultScopes.every((s) => scopeCatalog.includes(s))) {
     throw new AuthConfigError("defaultScopes must be a subset of scopeCatalog");
   }
-  validateTtl(input.accessTokenTtlSeconds, "accessTokenTtlSeconds");
-  validateTtl(input.refreshTokenTtlSeconds, "refreshTokenTtlSeconds");
-  validateTtl(input.consentTokenTtlSeconds, "consentTokenTtlSeconds");
-  validateTtl(input.authorizationCodeTtlSeconds, "authorizationCodeTtlSeconds");
-  if (input.dcr.mode !== "stateless" && input.dcr.mode !== "stored") {
+  validateTtl(accessTokenTtlSeconds, "accessTokenTtlSeconds");
+  validateTtl(refreshTokenTtlSeconds, "refreshTokenTtlSeconds");
+  validateTtl(consentTokenTtlSeconds, "consentTokenTtlSeconds");
+  validateTtl(authorizationCodeTtlSeconds, "authorizationCodeTtlSeconds");
+  if (dcrMode !== "stateless" && dcrMode !== "stored") {
     throw new AuthConfigError("dcr.mode must be 'stateless' or 'stored'");
   }
-  if (input.dcr.mode === "stored" && !input.dcr.store) {
+  if (dcrMode === "stored" && !dcr.store) {
     throw new AuthConfigError("dcr.mode 'stored' requires a ClientStore");
   }
-  if (input.clientCredentials !== undefined) {
-    if (typeof input.clientCredentials !== "object" || input.clientCredentials === null
-      || typeof input.clientCredentials.enabled !== "boolean") {
+  if (clientCredentials !== undefined) {
+    if (typeof clientCredentials !== "object" || clientCredentials === null
+      || typeof clientCredentialsEnabled !== "boolean") {
       throw new AuthConfigError("clientCredentials must be { enabled: boolean }");
     }
     // §17.2: machine clients are persisted into the ClientStore, so the grant
     // surface is meaningless (and dangerous to advertise) without stored DCR.
-    if (input.clientCredentials.enabled && input.dcr.mode !== "stored") {
+    if (clientCredentialsEnabled && dcrMode !== "stored") {
       throw new AuthConfigError("clientCredentials.enabled requires dcr.mode 'stored' (machine clients are provisioned into the ClientStore — §17.2)");
     }
   }
-  if (input.dev?.allowInsecureLocalhost === true) {
+  if (allowInsecureLocalhost) {
     // Defense-in-depth advisory (threat-model #16): the loopback-only check above
     // already passed; this surfaces that the dev escape hatch is ACTIVE, so an
     // operator who tunnels/exposes the loopback bridge gets a loud signal.
@@ -124,17 +154,22 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
       "[mcp-sso] dev.allowInsecureLocalhost is ON — http:// is permitted on loopback origins only. Do NOT use in production.",
     );
   }
-  return Object.freeze({ ...input });
+  return Object.freeze({
+    issuer, resource, consentSigningSecret, signingPrivateJwk, signingKeyId,
+    redirectAllowlist, scopeCatalog, defaultScopes, allowedOrigins, dcr, dev,
+    clientCredentials, accessTokenTtlSeconds, refreshTokenTtlSeconds,
+    consentTokenTtlSeconds, authorizationCodeTtlSeconds,
+  });
 }
 
-function validateUrl(input: BridgeConfig, label: string, value: string): void {
+function validateUrl(allowInsecureLocalhost: boolean, label: string, value: string): void {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     throw new AuthConfigError(`${label} must be an absolute URL`);
   }
-  if (input.dev?.allowInsecureLocalhost === true) {
+  if (allowInsecureLocalhost) {
     if (!LOOPBACK_HOSTS.has(url.hostname)) {
       throw new AuthConfigError(`dev.allowInsecureLocalhost requires a loopback origin for ${label}`);
     }
