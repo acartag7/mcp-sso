@@ -164,7 +164,7 @@ export async function buildApp(opts: ExampleOptions) {
  *  loopback envelope; the callback must be reachable by the IdP). HOST env
  *  overrides either. */
 export function defaultListenHost(env: Record<string, string | undefined> = process.env): string {
-  return (env.CF_ACCESS_AUDIENCE || env.ENTRA_TENANT_ID || env.GOOGLE_CLIENT_ID || env.OIDC_ISSUER) ? "0.0.0.0" : "127.0.0.1";
+  return (env.CF_ACCESS_AUDIENCE || env.ENTRA_TENANT_ID || oidcProviderConfigured(env)) ? "0.0.0.0" : "127.0.0.1";
 }
 
 /** Read config from env (the production path; standalone index.ts uses quickstart
@@ -216,6 +216,12 @@ export interface OidcIdentityFactories {
   genericOidc?: (config: GenericOidcConfig) => Promise<RedirectIdentityPort>;
 }
 
+/** Presence selects a production OIDC branch; a present blank value must reach
+ *  mustEnv/the provider guard and boot-fail, never fall through to pairing. */
+export function oidcProviderConfigured(env: Record<string, string | undefined>): boolean {
+  return env.GOOGLE_CLIENT_ID !== undefined || env.OIDC_ISSUER !== undefined;
+}
+
 /** Build either shipped §17.6 RedirectIdentityPort from env. Shared with the
  *  gateway example so provider config and branch precedence cannot drift. */
 export async function createOidcUpstreamFromEnv(
@@ -223,7 +229,7 @@ export async function createOidcUpstreamFromEnv(
   config: BridgeConfig,
   factories: OidcIdentityFactories = {},
 ): Promise<{ identity: RedirectIdentityPort; callbackPath: string } | undefined> {
-  if (env.GOOGLE_CLIENT_ID) {
+  if (env.GOOGLE_CLIENT_ID !== undefined) {
     const redirectUri = mustEnv(env, "GOOGLE_REDIRECT_URI");
     const callbackPath = new URL(redirectUri).pathname;
     assertUpstreamConfigBeforeState(config, redirectUri, callbackPath);
@@ -237,7 +243,7 @@ export async function createOidcUpstreamFromEnv(
     });
     return { identity, callbackPath };
   }
-  if (env.OIDC_ISSUER) {
+  if (env.OIDC_ISSUER !== undefined) {
     const redirectUri = mustEnv(env, "OIDC_REDIRECT_URI");
     const callbackPath = new URL(redirectUri).pathname;
     assertUpstreamConfigBeforeState(config, redirectUri, callbackPath);
@@ -348,7 +354,7 @@ export async function buildExample(
     const { app, store } = await buildApp({ config, identity, audit, sqliteFile });
     return { app, store, config, dir };
   }
-  if (env.GOOGLE_CLIENT_ID || env.OIDC_ISSUER) {
+  if (oidcProviderConfigured(env)) {
     // §17.6 + §17.11 PRODUCTION: Google or generic OIDC redirect flow. The
     // configured redirect URI's pathname is the mounted callback route; the
     // orchestrator boot-asserts the full URI equals issuerOrigin + callbackPath.

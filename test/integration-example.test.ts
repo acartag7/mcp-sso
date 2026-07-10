@@ -109,6 +109,8 @@ test("integration — listen host: pairing binds loopback; Cloudflare binds 0.0.
   assert.equal(defaultListenHost({ CF_ACCESS_AUDIENCE: "x" }), "0.0.0.0", "CF mode → all interfaces");
   assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "x" }), "0.0.0.0", "Google redirect mode → all interfaces");
   assert.equal(defaultListenHost({ OIDC_ISSUER: "https://issuer.test" }), "0.0.0.0", "generic OIDC redirect mode → all interfaces");
+  assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "" }), "0.0.0.0", "blank Google selector remains production mode (boot later rejects it)");
+  assert.equal(defaultListenHost({ OIDC_ISSUER: "" }), "0.0.0.0", "blank OIDC selector remains production mode (boot later rejects it)");
 });
 
 test("integration — Google branch boot-fails on a missing confidential-client secret before creating state", async () => {
@@ -161,6 +163,16 @@ test("integration — Google branch rejects a malformed email-allowlist opt-in i
 
 test("integration — blank optional Google/OIDC env fails closed before state creation in both examples", async () => {
   const invalidCases = [
+    {
+      name: "blank Google selector",
+      provider: { GOOGLE_CLIENT_ID: "", GOOGLE_REDIRECT_URI: "http://localhost:3000/google/callback" },
+      pattern: /Missing env: GOOGLE_CLIENT_ID/,
+    },
+    {
+      name: "blank generic OIDC selector",
+      provider: { OIDC_ISSUER: "", OIDC_CLIENT_ID: "oidc-client", OIDC_REDIRECT_URI: "http://localhost:3000/oidc/callback" },
+      pattern: /Missing env: OIDC_ISSUER/,
+    },
     {
       name: "blank Google hosted domain",
       provider: {

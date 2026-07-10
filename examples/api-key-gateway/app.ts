@@ -39,7 +39,7 @@ import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 // sibling-sweep rule); configFromEnv / defaultListenHost are the same env switch.
 import {
   configFromEnv, ensureStateDir, defaultListenHost, createOidcUpstreamFromEnv,
-  type OidcIdentityFactories,
+  oidcProviderConfigured, type OidcIdentityFactories,
 } from "../fastify-sqlite/app.ts";
 
 export interface GatewayOptions {
@@ -274,7 +274,7 @@ function listEnv(env: Record<string, string | undefined>, k: string, def: string
 }
 function mustEnv(env: Record<string, string | undefined>, k: string): string { const v = env[k]; if (!v) throw new Error(`Missing env: ${k}`); return v; }
 
-export { defaultListenHost };
+export { defaultListenHost, oidcProviderConfigured };
 
 /** The standalone entry's wiring, factored out so it is integration-testable without
  *  app.listen(). Selects identity exactly like examples/fastify-sqlite (Entra redirect
@@ -317,7 +317,7 @@ export async function buildGatewayExample(
     const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, identity, audit, sqliteFile });
     return { app, store, config, dir };
   }
-  if (env.GOOGLE_CLIENT_ID || env.OIDC_ISSUER) {
+  if (oidcProviderConfigured(env)) {
     const config = configFromEnv(env);
     const upstream = await createOidcUpstreamFromEnv(env, config, deps.identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
