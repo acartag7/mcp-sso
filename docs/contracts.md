@@ -990,6 +990,16 @@ server is the zero-setup pairing path; a real IdP (Cloudflare Access / Entra / G
 OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded
 default — the done-bar is the pairing round-trip, not a production deploy.
 
+**Known follow-ups (the input-validation + filesystem-trust edge class):** the generated
+server validates the `PORT` range and treats blank env as missing, but two low-severity
+edges remain for a tightening pass: (a) it does not warn/require an explicit
+`OAUTH_ISSUER` when `HOST` is overridden to a non-loopback address (the issuer must equal
+the advertised host or RFC 9728 resource validation can fail); (b) the scaffolder refuses
+a symlinked target dir but not a symlinked *ancestor* (`mkdir -p` follows it; the per-file
+`O_NOFOLLOW` protects only the final component) — exploitable only via an attacker-controlled
+symlinked ancestor in the operator's own path. Recorded here because the §15 spec
+under-enumerated this class and review surfaced it round-by-round.
+
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —
 the install-time floor and the `docs/dependency-ledger.md` 15-day curation rule

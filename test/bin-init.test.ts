@@ -306,6 +306,29 @@ test("bin init (spawn): a blank HOST binds loopback (fail-closed on blank env â€
   }
 });
 
+test("bin init (spawn): PORT=0 fails closed at boot (not an unusable ephemeral bind)", async () => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-port0-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "0", HOST: "127.0.0.1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    const code = await new Promise<number | null>((resolveP) => child.on("close", (c) => resolveP(c)));
+    assert.notEqual(code, 0, "PORT=0 fails closed (non-zero exit), not an ephemeral bind with port-0 URLs");
+    assert.match(stderr, /PORT must be an integer in 1/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 function extractField(html: string, name: string): string {
   const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
   assert.ok(m?.[1], `hidden field ${name} not found`);

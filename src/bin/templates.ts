@@ -59,6 +59,9 @@ const env = (key: string, def: string): string => {
   return v && v.trim() ? v : def;
 };
 const PORT = Number(env("PORT", "3000"));
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  throw new Error(\`mcp-sso: PORT must be an integer in 1–65535 (got '\${env("PORT", "3000")}')\`);
+}
 const HOST = env("HOST", "127.0.0.1"); // loopback default — the pairing code is the identity gate
 const DIR = env("MCP_SSO_DIR", "./.mcp-sso");
 const ISSUER = env("OAUTH_ISSUER", \`http://127.0.0.1:\${PORT}\`); // 127.0.0.1 (not localhost) matches the HOST bind — no IPv6/IPv4 address-family mismatch
