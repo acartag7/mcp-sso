@@ -971,12 +971,15 @@ them (and re-opening the footguns they centralize): the normalized request/respo
 shapes `NormRequest` and `NormResponse` (co-exported with `isMcpPath` — the types
 the already-exported `handlePairingAuthorize` and `createUpstreamRedirectFlow`
 take/return, so a consumer mounting the pairing surface or an upstream callback can
-type-check them); the state-dir security controls `assertRealDir` (the fs-trust bar
-— rejects a symlink or group/other-accessible state dir so another local user cannot
-replace `auth.db`) and `ensureGitignore` (writes the managed `*` `.gitignore` so
-secrets are not committed), co-exported with `loadOrCreateQuickstartSecrets` so a
-consumer on the Cloudflare/Entra/gateway path — which manages its own state dir —
-applies the SAME bar; and `assertCallbackPath` (the upstream callback-PATH
+type-check them); the state-dir security controls `ensureStateDir` (the ATOMIC
+helper — `mkdir 0o700` + `assertRealDir` + the managed `*` `.gitignore`, which a
+consumer on the Cloudflare/Entra/gateway path — managing its own state dir — applies
+for the SAME bar the example does; it derives whether the `.gitignore` may be created
+from `mkdir`'s return, so a caller cannot drop a `*` ignore into a pre-existing tree)
+and `assertRealDir` (the fs-trust bar alone — rejects a symlink or
+group/other-accessible state dir so another local user cannot replace `auth.db`),
+co-exported with `loadOrCreateQuickstartSecrets` (the raw `ensureGitignore(dir,
+canCreate)` stays internal — its caller-asserted boolean is a footgun); and `assertCallbackPath` (the upstream callback-PATH
 validator — a pure check that the pathname starts with `/`, is plain (no
 query/fragment/whitespace/control or dot-segments), normalizes to itself under the
 issuer origin, and is not a reserved OAuth route or the resource path), co-exported

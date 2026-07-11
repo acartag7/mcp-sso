@@ -83,11 +83,16 @@ export { JsonlFileAudit, createJsonlFileAudit } from "./audit/jsonl-file.ts";
 export { WebhookAudit, createWebhookAudit, type WebhookAuditOptions } from "./audit/webhook.ts";
 export { combineAudit } from "./audit/combine.ts";
 // Quickstart secret persistence (§17.8) — dep-free boot helper (jose + node
-// builtins), so it ships from the root entry like the audit sinks. ensureGitignore +
-// assertRealDir are the state-dir security controls a consumer managing its own dir
-// (the CF/Entra/gateway path) must apply — co-exported so the bar is reused, not
-// reimplemented (contracts §15 DX).
-export { loadOrCreateQuickstartSecrets, ensureGitignore, assertRealDir, type QuickstartSecrets, type QuickstartOptions } from "./quickstart.ts";
+// builtins), so it ships from the root entry like the audit sinks. assertRealDir is
+// the state-dir fs-trust bar (rejects a symlink / group-writable dir) a consumer may
+// want standalone; the full atomic bar is ensureStateDir below (contracts §15 DX).
+export { loadOrCreateQuickstartSecrets, assertRealDir, type QuickstartSecrets, type QuickstartOptions } from "./quickstart.ts";
+// ensureStateDir — the atomic state-dir setup helper (mkdir 0o700 + assertRealDir +
+// ensureGitignore), fail-safe by construction: it derives whether the managed `*`
+// .gitignore may be created from mkdir's return, so a caller cannot drop a `*` ignore
+// into a pre-existing tree (the footgun the raw ensureGitignore(dir, canCreate)
+// boolean would expose). The public surface for the CF/Entra/gateway path (§15 DX).
+export { ensureStateDir } from "./state-dir.ts";
 // Console-pairing authorize surface (§17.5) — framework-free, so root-exported.
 // A consumer pairs these with the `./identity/console-pairing` subpath identity
 // and the `skipAuthorize` option on the framework adapters.

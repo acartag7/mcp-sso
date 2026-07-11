@@ -22,7 +22,7 @@ import {
   createUpstreamRedirectFlow,
   isMcpPath,
   assertCallbackPath,
-  ensureGitignore,
+  ensureStateDir,
   assertRealDir,
   type UpstreamRedirectFlow,
   type RedirectIdentityPort,
@@ -44,7 +44,7 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   assert.equal(typeof createUpstreamRedirectFlow, "function", "createUpstreamRedirectFlow (§17.11) is root-exported");
   assert.equal(typeof isMcpPath, "function", "isMcpPath (/mcp Origin-gate path check) is root-exported");
   assert.equal(typeof assertCallbackPath, "function", "assertCallbackPath (§17.11 callback-path validator) is root-exported");
-  assert.equal(typeof ensureGitignore, "function", "ensureGitignore (state-dir .gitignore control) is root-exported");
+  assert.equal(typeof ensureStateDir, "function", "ensureStateDir (atomic state-dir setup helper) is root-exported");
   assert.equal(typeof assertRealDir, "function", "assertRealDir (state-dir fs-trust bar) is root-exported");
   void (null as unknown as UpstreamRedirectFlow); // type reachable
   void (null as unknown as RedirectIdentityPort); // type reachable
@@ -61,14 +61,16 @@ test("exports: the consumer-facing example helpers (§15 DX) behave as the contr
   assert.throws(() => { assertCallbackPath("/oauth/token", "https://bridge.test", "/mcp"); }, /reserved route/);
   assert.throws(() => { assertCallbackPath("google/callback", "https://bridge.test", "/mcp"); }, /must start with '\/'/);
 
-  // ensureGitignore: writes the managed `*` ignore into a fresh dir (canCreate).
-  const dir = await mkdtemp(join(tmpdir(), "mcp-sso-exports-dx-"));
+  // ensureStateDir: creates a fresh nested dir + writes the managed `*` .gitignore
+  // (the atomic, fail-safe state-dir bar — the public surface, not raw ensureGitignore).
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-exports-dx-"));
+  const dir = join(base, "state"); // does NOT exist — ensureStateDir creates it
   try {
-    await ensureGitignore(dir, true);
+    await ensureStateDir(dir);
     const written = await readFile(join(dir, ".gitignore"), "utf8");
-    assert.equal(written, "*\n", "ensureGitignore wrote the managed ignore so secrets are not committed");
+    assert.equal(written, "*\n", "ensureStateDir wrote the managed ignore so secrets are not committed");
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await rm(base, { recursive: true, force: true });
   }
 });
 

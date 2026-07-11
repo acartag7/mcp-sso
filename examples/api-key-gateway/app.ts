@@ -34,14 +34,17 @@ import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
 import { isMcpPath, type NormRequest, type NormResponse } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
-// Reuse the fastify-sqlite example's env-wiring + fs-trust helpers rather than
-// duplicate them — ensureStateDir is the security-critical state-dir bar (the
-// sibling-sweep rule); configFromEnv / defaultListenHost are the same env switch.
+// Reuse the fastify-sqlite example's env-wiring helpers rather than duplicate them
+// (configFromEnv / defaultListenHost / createOidcUpstreamFromEnv / assertUpstreamConfigBeforeState
+// are the same env switch). ensureStateDir — the security-critical state-dir bar
+// (sibling-sweep) — is now a library primitive (src/state-dir.ts), so both examples
+// AND package consumers apply the SAME bar (contracts §15 DX).
 import {
-  configFromEnv, ensureStateDir, defaultListenHost, createOidcUpstreamFromEnv,
+  configFromEnv, defaultListenHost, createOidcUpstreamFromEnv,
   assertUpstreamConfigBeforeState, oidcProviderConfigured, productionIdentityConfigured,
   type OidcIdentityFactories,
 } from "../fastify-sqlite/app.ts";
+import { ensureStateDir } from "../../src/state-dir.ts";
 
 export interface GatewayOptions {
   config: BridgeConfig;
