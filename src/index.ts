@@ -98,11 +98,12 @@ export { renderPairingPage, type PairingPageInput } from "./adapters/pairing-pag
 // (e.g. createEntraRedirectIdentity via ./identity/entra) and the `upstream`
 // option on the framework adapters.
 export { createUpstreamRedirectFlow, type UpstreamRedirectFlow, type UpstreamFlowDeps } from "./adapters/upstream-flow.ts";
-// assertCallbackPath — the upstream callback-path validator (§17.11): starts with
-// '/', is not a reserved OAuth route, and equals issuerOrigin + callbackPath.
-// Root-exported so a consumer can run the example's early-fail boot validation
-// before state-dir creation (contracts §15 DX). Lives in the -internals module but
-// is public surface via this re-export.
+// assertCallbackPath — the upstream callback-PATH validator (§17.11): the pathname
+// starts with '/', is plain (no ?#%\/ whitespace/control or dot-segments), normalizes
+// to itself under the issuer origin, and is not a reserved OAuth route / the resource
+// path. Validates the PATH only — the redirectUri===issuerOrigin+callbackPath
+// equality is enforced at mount by createUpstreamRedirectFlow (§15 DX). Lives in the
+// -internals module but is public surface via this re-export.
 export { assertCallbackPath } from "./adapters/upstream-flow-internals.ts";
 // The framework-free Bridge — the central class a consumer constructs and passes
 // to a framework adapter (root-exported so `import { Bridge } from "mcp-sso"` works;

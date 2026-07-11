@@ -976,11 +976,17 @@ type-check them); the state-dir security controls `assertRealDir` (the fs-trust 
 replace `auth.db`) and `ensureGitignore` (writes the managed `*` `.gitignore` so
 secrets are not committed), co-exported with `loadOrCreateQuickstartSecrets` so a
 consumer on the Cloudflare/Entra/gateway path — which manages its own state dir —
-applies the SAME bar; and `assertCallbackPath` (the upstream callback-path validator:
-starts with `/`, not a reserved OAuth route, equals `issuerOrigin + callbackPath`),
-co-exported with `createUpstreamRedirectFlow` for the example's early-fail boot
-validation. All five are dep-free (node builtins / pure string logic), so
-root-exporting them does not widen the `jose`-only runtime posture.
+applies the SAME bar; and `assertCallbackPath` (the upstream callback-PATH
+validator — a pure check that the pathname starts with `/`, is plain (no
+query/fragment/whitespace/control or dot-segments), normalizes to itself under the
+issuer origin, and is not a reserved OAuth route or the resource path), co-exported
+with `createUpstreamRedirectFlow`. It validates the PATH only — the
+`identity.redirectUri === issuerOrigin + callbackPath` equality is enforced
+separately, at mount, by `createUpstreamRedirectFlow` (and mirrored by the example's
+`assertUpstreamConfigBeforeState`); a consumer doing early-fail boot validation
+pairs `assertCallbackPath` with its own redirectUri equality check. All five are
+dep-free (node builtins / pure string logic), so root-exporting them does not widen
+the `jose`-only runtime posture.
 
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —
