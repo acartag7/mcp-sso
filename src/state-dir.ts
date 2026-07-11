@@ -13,13 +13,14 @@ import { assertRealDir, ensureGitignore } from "./quickstart.ts";
  *  with state they control). Then `ensureGitignore` writes the managed `*`
  *  `.gitignore` so auth.db / audit.jsonl cannot be committed.
  *
- *  Boundary: this polices the state dir's OWN mode + symlink-ness + .gitignore, NOT
- *  its ancestors. The deployer must place the state dir under a trusted parent (as
- *  with any secret store) — a group/other-writable, non-sticky parent would let
- *  another local user rename/replace the state dir after this returns. This is the
- *  same per-directory scope `loadOrCreateQuickstartSecrets` has always had; ancestor-
- *  chain hardening is tracked as a separate, pre-existing task (it would be a behavior
- *  change across both helpers, not a DX-A export concern).
+ *  Boundary: the dir is CREATED restrictive (mkdir mode `0o700` — atomic, no
+ *  world-writable race window between create and chmod; the retained chmod verifies).
+ *  This polices the state dir's OWN mode + symlink-ness + .gitignore, NOT any
+ *  pre-existing ancestors — the deployer must place the state dir under a trusted
+ *  parent (as with any secret store), since a group/other-writable, non-sticky parent
+ *  that pre-dates this call would let another local user rename/replace the state dir
+ *  after it returns. (Same scope `loadOrCreateQuickstartSecrets` has; both now create
+ *  atomically restrictive — sibling sweep of this race window.)
  *
  *  This aggregate helper — not the raw `ensureGitignore(dir, canCreate)` — is the
  *  public surface, because it DERIVES whether creating the `.gitignore` is safe from
@@ -28,7 +29,7 @@ import { assertRealDir, ensureGitignore } from "./quickstart.ts";
  *  whole repo — the exact outcome the internal protocol prevents. Fail-safe by
  *  construction (contracts §15 DX). */
 export async function ensureStateDir(dir: string): Promise<void> {
-  const created = await mkdir(dir, { recursive: true });
+  const created = await mkdir(dir, { recursive: true, mode: 0o700 }); // atomic restrictive create (no world-writable window)
   if (created !== undefined) {
     if (process.platform !== "win32") await chmod(dir, 0o700);
   } else {

@@ -104,11 +104,13 @@ function isValidSigningJwk(value: unknown): value is JWK {
 
 async function generateAndPersist(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
   // 1. Directory: mkdir returns the created path, or undefined if it pre-existed.
-  //    chmod ONLY a dir we just made (never mutate a pre-existing shared/repo dir);
-  //    a pre-existing dir must be a real directory, not a symlink (assertRealDir).
+  //    Create restrictive ATOMICALLY (mode DIR_MODE) so a permissive umask can't open
+  //    a world-writable window before the chmod; the chmod then only verifies/tightens
+  //    a dir we just made (never mutate a pre-existing shared/repo dir). A pre-existing
+  //    dir must be a real directory, not a symlink (assertRealDir).
   let createdDir: string | undefined;
   try {
-    createdDir = await mkdir(dir, { recursive: true });
+    createdDir = await mkdir(dir, { recursive: true, mode: DIR_MODE });
   } catch (error) {
     throw new AuthConfigError(`quickstart: cannot create directory ${dir}: ${errMsg(error)}`);
   }
