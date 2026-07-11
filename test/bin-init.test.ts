@@ -197,6 +197,50 @@ test("bin init (spawn): scaffolded server boots + serves discovery/register/mcp 
   }
 });
 
+test("bin init: the published bin has a node shebang (npx exec needs it)", async () => {
+  await ensureDist();
+  const firstLine = (await readFile(DIST_INIT, "utf8")).split("\n")[0];
+  assert.equal(firstLine, "#!/usr/bin/env node", "dist/bin/init.js must start with a node shebang so `npx mcp-sso init` can exec it");
+});
+
+test("bin init: runs when invoked through a symlink (npm exposes bins via symlinks)", async () => {
+  // P1 regression: import.meta.url resolves to the real file while process.argv[1]
+  // retains npm's .bin symlink; the entry guard must realpath both sides.
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-symlink-"));
+  const link = join(base, "mcp-sso"); // mimics node_modules/.bin/mcp-sso
+  const proj = join(base, "proj");
+  try {
+    await symlink(DIST_INIT, link);
+    const res = await new Promise<{ code: number | null; out: string }>((resolveP) => {
+      const p = spawn("node", [link, "init", proj], { stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      const take = (c: Buffer): void => { out += c.toString(); };
+      p.stdout.on("data", take); p.stderr.on("data", take);
+      p.on("close", (code) => resolveP({ code, out }));
+    });
+    assert.equal(res.code, 0, `symlink invocation failed (isMain must match under a symlink); output:\n${res.out}`);
+    assert.ok(existsSync(join(proj, "package.json")), "symlink-invoked bin scaffolded the project");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init: refuses a symlink in the target (no write outside the target via O_NOFOLLOW)", { skip: process.platform === "win32" }, async () => {
+  // P2 regression: a pre-existing dangling symlink at a scaffold path would let a
+  // check-then-write follow it and write outside the target. writeExclusive (O_NOFOLLOW)
+  // refuses it — the hard enforcement behind the access() pre-check's best-effort UX.
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-symlinktarget-"));
+  const target = join(base, "proj");
+  try {
+    await mkdir(target, { recursive: true });
+    await symlink(join(base, "elsewhere.txt"), join(target, "server.ts")); // dangling symlink at a scaffold path
+    await assert.rejects(scaffold(target), /symlink/, "a symlink at a scaffold path is refused, not followed");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 async function spawnScaffold(proj: string): Promise<void> {
   await mkdir(proj, { recursive: true });
   const res = await new Promise<{ code: number | null; stderr: string }>((resolveP) => {

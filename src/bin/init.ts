@@ -1,11 +1,24 @@
+#!/usr/bin/env node
 // `mcp-sso init [target]` — scaffold a zero-setup MCP server (contracts §15 "Init CLI").
 // Dep-free (node builtins only). Fail closed: refuse to overwrite an existing file.
+//
+// The shebang above MUST be the first line: npm exposes this as the package `bin`, so
+// `npx mcp-sso init` executes dist/bin/init.js directly (npm chmods it executable on
+// install); without the shebang the OS cannot launch it under node. tsc preserves it.
 
-import { access, mkdir, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { access, mkdir, open } from "node:fs/promises";
+import { constants as fsc, readFileSync, realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { templateFiles } from "./templates.ts";
+
+// O_NOFOLLOW refuses a symlink (dangling or not — no write outside the target via a
+// symlink); O_EXCL fails if the path already exists; O_CREAT creates. Atomic + no-follow
+// + no-clobber — the HARD guarantee behind "refuses to overwrite" (the access() pre-check
+// is best-effort UX that lists all conflicts up front; this is the enforcement that
+// closes the check-then-write race). O_NOFOLLOW is POSIX-only (0 on Windows).
+const O_NOFOLLOW = (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+const EXCLUSIVE_CREATE = O_NOFOLLOW | fsc.O_CREAT | fsc.O_EXCL | fsc.O_WRONLY;
 
 const HELP = `mcp-sso init [target]
 
@@ -37,6 +50,21 @@ async function exists(path: string): Promise<boolean> {
   try { await access(path); return true; } catch { return false; }
 }
 
+/** Atomically create `path` with `content`, refusing to overwrite or follow a symlink. */
+async function writeExclusive(path: string, content: string): Promise<void> {
+  let fh;
+  try {
+    fh = await open(path, EXCLUSIVE_CREATE, 0o644);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") throw new Error(`refusing to overwrite existing file: ${path}`);
+    if (code === "ELOOP") throw new Error(`refusing to follow a symlink at ${path} (scaffold target must be a real directory)`);
+    throw error;
+  }
+  try { await fh.writeFile(content, "utf8"); }
+  finally { await fh.close(); }
+}
+
 /** The scaffolder, factored out so tests call it directly (no process.exit). Writes the
  *  template files into `target`, refusing to clobber any pre-existing file. Throws on
  *  conflict or version-resolution failure. */
@@ -47,7 +75,8 @@ export async function run(argv: string[]): Promise<string[]> {
   const name = basename(dir) || "mcp-sso-server";
   const files = templateFiles({ mcpSsoVersion: ownVersion(), name });
 
-  // Fail closed: refuse to overwrite ANY existing file (never clobber a consumer's work).
+  // Best-effort UX: list ALL conflicts up front so the operator sees every clash, not
+  // just the first. (writeExclusive is the hard, atomic enforcement that closes the race.)
   const conflicts = (await Promise.all(files.map(async (f) => ({ path: f.path, exists: await exists(resolve(dir, f.path)) }))))
     .filter((x) => x.exists).map((x) => x.path);
   if (conflicts.length > 0) {
@@ -57,7 +86,7 @@ export async function run(argv: string[]): Promise<string[]> {
   await mkdir(dir, { recursive: true });
   const written: string[] = [];
   for (const f of files) {
-    await writeFile(resolve(dir, f.path), f.content, "utf8");
+    await writeExclusive(resolve(dir, f.path), f.content);
     written.push(f.path);
   }
 
@@ -67,8 +96,16 @@ export async function run(argv: string[]): Promise<string[]> {
   return written;
 }
 
-// Entry: run only when invoked as the bin (not when imported by a test).
-const invokedDirectly = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
-if (invokedDirectly) {
+/** Entry detection that survives npm's bin symlink: resolve BOTH sides to their real
+ *  path (import.meta.url is the real module; process.argv[1] is the symlink npm exec'd). */
+function isMain(): boolean {
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1] ?? "");
+  } catch {
+    return false; // don't auto-run when imported (e.g. by a test) or on an odd invocation
+  }
+}
+
+if (isMain()) {
   run(process.argv).catch((error) => { console.error((error as Error)?.message ?? String(error)); process.exit(1); });
 }
