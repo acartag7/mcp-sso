@@ -964,6 +964,33 @@ root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recomme
 Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in
 [`docs/audit-deployment.md`](./audit-deployment.md).
 
+**Consumer-facing example helpers (DX):** five symbols the in-repo example leans on
+to implement the recommended patterns are root-exported, so a package consumer
+replicating those patterns imports them from `mcp-sso` instead of reimplementing
+them (and re-opening the footguns they centralize): the normalized request/response
+shapes `NormRequest` and `NormResponse` (co-exported with `isMcpPath` — the types
+the already-exported `handlePairingAuthorize` and `createUpstreamRedirectFlow`
+take/return, so a consumer mounting the pairing surface or an upstream callback can
+type-check them); the state-dir security controls `ensureStateDir` (the ATOMIC
+helper — `mkdir 0o700` + `assertRealDir` + the managed `*` `.gitignore`, which a
+consumer on the Cloudflare/Entra/gateway path — managing its own state dir — applies
+for the SAME bar the example does; it derives whether the `.gitignore` may be created
+from `mkdir`'s return, so a caller cannot drop a `*` ignore into a pre-existing tree)
+and `assertRealDir` (the fs-trust bar alone — rejects a symlink or
+group/other-accessible state dir so another local user cannot replace `auth.db`),
+co-exported with `loadOrCreateQuickstartSecrets` (the raw `ensureGitignore(dir,
+canCreate)` stays internal — its caller-asserted boolean is a footgun); and `assertCallbackPath` (the upstream callback-PATH
+validator — a pure check that the pathname starts with `/`, is plain (no
+query/fragment/whitespace/control or dot-segments), normalizes to itself under the
+issuer origin, and is not a reserved OAuth route or the resource path), co-exported
+with `createUpstreamRedirectFlow`. It validates the PATH only — the
+`identity.redirectUri === issuerOrigin + callbackPath` equality is enforced
+separately, at mount, by `createUpstreamRedirectFlow` (and mirrored by the example's
+`assertUpstreamConfigBeforeState`); a consumer doing early-fail boot validation
+pairs `assertCallbackPath` with its own redirectUri equality check. All five are
+dep-free (node builtins / pure string logic), so root-exporting them does not widen
+the `jose`-only runtime posture.
+
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —
 the install-time floor and the `docs/dependency-ledger.md` 15-day curation rule
