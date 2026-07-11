@@ -6,7 +6,7 @@
 // `npx mcp-sso init` executes dist/bin/init.js directly (npm chmods it executable on
 // install); without the shebang the OS cannot launch it under node. tsc preserves it.
 
-import { lstat, mkdir, open } from "node:fs/promises";
+import { lstat, mkdir, open, rm, stat, type FileHandle } from "node:fs/promises";
 import { constants as fsc, readFileSync, realpathSync } from "node:fs";
 import { basename, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,12 +53,12 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /** Ensure the scaffold cannot be redirected outside the lexical target via a symlink, for
- *  every existing component AND the first missing one. A component is attacker-swappable
- *  when its parent is group/other-writable (an attacker can delete+replace it, or create it
- *  if missing); sticky-writable parents (e.g. /tmp, mode 0o1xx) protect OWNED entries, so a
- *  real dir there is NOT refused (a normal mkdtemp-under-/tmp scaffold proceeds) — but a
- *  MISSING name still is, since sticky gates delete/rename, not creation. System symlinks
- *  under an owner-owned parent (e.g. macOS /tmp→/private/tmp) are allowed. POSIX-only. */
+ *  every existing component AND the first missing one. The parent's REAL mode is checked
+ *  with stat() (follows a symlink parent to its destination), so a trusted symlink ancestor
+ *  like macOS /tmp→/private/tmp is evaluated at the writable destination it points into.
+ *  A component is attacker-swappable when its (real) parent is group/other-writable; sticky
+ *  parents (e.g. /tmp) protect OWNED real dirs (so mkdtemp-under-/tmp proceeds), but a
+ *  MISSING name is still refused (sticky gates delete/rename, not creation). POSIX-only. */
 async function assertSafeScaffoldTarget(dir: string): Promise<void> {
   if (process.platform === "win32") return;
   const { root } = parse(dir);
@@ -66,28 +66,32 @@ async function assertSafeScaffoldTarget(dir: string): Promise<void> {
   for (const seg of dir.slice(root.length).split(sep).filter(Boolean)) {
     const parent = current;
     current = join(current, seg);
-    const pst = await lstat(parent); // root + deeper parents exist by induction
-    // `gate` = the parent is a real writable dir (a symlink parent's mode bits are
-    // meaningless; such a parent was vetted in the prior iteration as trusted).
-    const gate = !pst.isSymbolicLink() && (pst.mode & 0o022) !== 0;
-    const nonSticky = (pst.mode & 0o1000) === 0;
+    let pm: number;
+    try { pm = (await stat(parent)).mode; } // stat follows a symlink parent → its destination
+    catch (error) {
+      // ENOENT from stat (which follows) = `parent` is a dangling symlink → broken path.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`${parent} is a dangling symlink (broken path); mcp-sso init cannot scaffold through it.`);
+      throw error;
+    }
+    const writable = (pm & 0o022) !== 0;
+    const sticky = (pm & 0o1000) !== 0;
     let st;
     try { st = await lstat(current); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       // Missing: an attacker can CREATE the name (sticky gates delete/rename, not create),
       // so refuse under any writable parent — sticky does not help a non-existent name.
-      if (gate) throw new Error(`${current} would be created under a group/other-writable parent (${parent}); mcp-sso init refuses — a symlink could be raced in before creation (write-redirection risk). Use a directory under a non-group/other-writable parent.`);
-      return; // owner-only (or trusted-symlink) parent → safe to mkdir the missing tail
+      if (writable) throw new Error(`${current} would be created under a group/other-writable parent (${parent}); mcp-sso init refuses — a symlink could be raced in before creation (write-redirection risk). Use a directory under a non-group/other-writable parent.`);
+      return; // owner-only parent → safe to mkdir the missing tail
     }
     if (st.isSymbolicLink()) {
-      if (gate) throw new Error(`${current} is a symlink inside a group/other-writable directory (${parent}); mcp-sso init refuses to scaffold through it (write-redirection risk). Point it at a real directory.`);
-      continue; // trusted symlink (non-writable / trusted-symlink parent)
+      if (writable) throw new Error(`${current} is a symlink inside a group/other-writable directory (${parent}); mcp-sso init refuses to scaffold through it (write-redirection risk). Point it at a real directory.`);
+      continue; // trusted symlink (its real parent isn't writable)
     }
     if (!st.isDirectory()) throw new Error(`${current} exists and is not a directory; mcp-sso init cannot scaffold there.`);
     // Real dir: an attacker can delete+swap it under a writable + NON-STICKY parent. Sticky
     // parents (e.g. /tmp) protect owned entries, so mkdtemp-under-/tmp is allowed.
-    if (gate && nonSticky) throw new Error(`${current} is under a group/other-writable, non-sticky directory (${parent}); mcp-sso init refuses (the directory could be swapped for a symlink after the check). Use a directory under a non-writable or sticky parent.`);
+    if (writable && !sticky) throw new Error(`${current} is under a group/other-writable, non-sticky directory (${parent}); mcp-sso init refuses (the directory could be swapped for a symlink after the check). Use a directory under a non-writable or sticky parent.`);
   }
 }
 
@@ -97,19 +101,26 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-/** Atomically create `path` with `content`, refusing to overwrite or follow a symlink. */
-async function writeExclusive(path: string, content: string): Promise<void> {
-  let fh;
-  try {
-    fh = await open(path, EXCLUSIVE_CREATE, 0o644);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EEXIST") throw new Error(`refusing to overwrite existing file: ${path}`);
-    if (code === "ELOOP") throw new Error(`refusing to follow a symlink at ${path} (scaffold target must be a real directory)`);
-    throw error;
+/** Open ALL scaffold files exclusively (O_NOFOLLOW|O_EXCL|O_CREAT) before writing any —
+ *  atomic: a file that appears between the preflight and the writes is caught at reserve
+ *  time and the already-reserved (empty) files are rolled back, so a concurrent conflict
+ *  never leaves a partial scaffold. Each handle is paired with its content + paths so the
+ *  caller writes without index access. */
+async function reserveAll(files: { path: string; content: string }[], dir: string): Promise<{ fh: FileHandle; content: string; relPath: string; fullPath: string }[]> {
+  const reserved: { fh: FileHandle; content: string; relPath: string; fullPath: string }[] = [];
+  for (const f of files) {
+    const fullPath = resolve(dir, f.path);
+    try {
+      reserved.push({ fh: await open(fullPath, EXCLUSIVE_CREATE, 0o644), content: f.content, relPath: f.path, fullPath });
+    } catch (error) {
+      for (const r of reserved) { await r.fh.close().catch(() => {}); await rm(r.fullPath, { force: true }).catch(() => {}); }
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") throw new Error(`refusing to overwrite a file that appeared mid-scaffold: ${fullPath}`);
+      if (code === "ELOOP") throw new Error(`refusing to follow a symlink that appeared mid-scaffold: ${fullPath}`);
+      throw error;
+    }
   }
-  try { await fh.writeFile(content, "utf8"); }
-  finally { await fh.close(); }
+  return reserved;
 }
 
 /** The scaffolder, factored out so tests call it directly (no process.exit). Writes the
@@ -141,10 +152,13 @@ export async function run(argv: string[]): Promise<string[]> {
   }
 
   await mkdir(dir, { recursive: true });
+  // Reserve all files exclusively before writing any (atomic — no partial scaffold).
+  const reserved = await reserveAll(files, dir);
   const written: string[] = [];
-  for (const f of files) {
-    await writeExclusive(resolve(dir, f.path), f.content);
-    written.push(f.path);
+  try {
+    for (const r of reserved) { await r.fh.writeFile(r.content, "utf8"); written.push(r.relPath); }
+  } finally {
+    for (const r of reserved) await r.fh.close().catch(() => {});
   }
 
   console.log(`mcp-sso init: wrote ${files.length} files to ${dir}:`);

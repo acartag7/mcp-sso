@@ -465,6 +465,24 @@ test("bin init (spawn): a malformed OAUTH_ISSUER fails BEFORE the state dir is c
   }
 });
 
+test("bin init: refuses a missing descendant through a symlink into a writable destination (macOS /tmp→/private/tmp shape)", { skip: process.platform === "win32" }, async () => {
+  // A trusted symlink ancestor (under a non-writable parent) that points into a writable
+  // destination: the walk must check the DESTINATION's writability (stat follows the
+  // symlink), or a missing descendant could be raced in at the writable destination.
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-destlink-"));
+  const dest = join(base, "dest"); // → 0777 (the writable destination)
+  const link = join(base, "link"); // symlink → dest (trusted: under the owner-only base)
+  const target = join(link, "newproj"); // missing descendant through the symlink
+  try {
+    await mkdir(dest, { mode: 0o777 });
+    await chmod(dest, 0o777);
+    await symlink(dest, link);
+    await assert.rejects(run(["node", "init.ts", "init", target]), /group\/other-writable parent/, "a missing descendant through a symlink into a writable destination is refused");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 function extractField(html: string, name: string): string {
   const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
   assert.ok(m?.[1], `hidden field ${name} not found`);

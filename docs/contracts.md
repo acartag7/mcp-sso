@@ -1020,7 +1020,15 @@ resolution at scaffold time), so the operator's `npm install` creates
 `package-lock.json` (to commit) — locking the transitive graph at first install. The
 server is the zero-setup pairing path; a real IdP (Cloudflare Access / Entra / Google /
 OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded
-default — the done-bar is the pairing round-trip, not a production deploy.
+default — the done-bar is the pairing round-trip, not a production deploy. **Config-
+validation ordering (benign residual):** the generated server pre-validates the
+`OAUTH_ISSUER`/`OAUTH_RESOURCE` URLs before the state-creating helper, but the deeper
+config validation (`createBridgeConfig` — scheme, scope shapes) runs *after*
+`loadOrCreateQuickstartSecrets`, so a malformed env value leaves a `secrets.json`. That
+file is owner-only (`0600` in a `0700` gitignored dir), holds secrets generated
+independently of the rejected config (so they are valid, not bad), and is reused verbatim
+on the next (fixed) boot — no leak, no exposed/bad/committed state; full pre-validation
+would need a library secret-free `validateConfig` (deferred).
 
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —
