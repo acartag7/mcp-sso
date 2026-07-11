@@ -210,6 +210,15 @@ test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; mi
   // a non-string id_token (e.g. {}) is truthy but invalid — reject at the exchange.
   const nonStringIdToken: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: {}, access_token: "atk" }); } }; } };
   await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, nonStringIdToken));
+  // operability: the upstream OAuth error code (+ a bounded, newline-stripped description) now
+  // travels in the thrown error so upstream-flow can log it — it was previously discarded.
+  const invalidClient: GenericOidcTokenTransport = { async postForm() { return { status: 401, async text() { return JSON.stringify({ error: "invalid_client", error_description: "Unauthorized" }); } }; } };
+  await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, invalidClient), /HTTP 401: invalid_client — Unauthorized/);
+  // a long error_description is NOT pre-truncated at 160 here — a pre-redaction slice
+  // would fragment a secret below the redaction threshold; redaction happens at the
+  // stderr choke point (redactForStderr, redact-then-bound).
+  const longDesc: GenericOidcTokenTransport = { async postForm() { return { status: 401, async text() { return JSON.stringify({ error: "invalid_client", error_description: "Z".repeat(200) }); } }; } };
+  await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, longDesc), (e: Error) => e.message.includes("Z".repeat(180)), "description was pre-sliced at 160 (fragments a secret before redaction)");
 });
 
 // --- resolveEndpoints (discover + manual) -----------------------------------
@@ -288,6 +297,15 @@ test("createGenericOidcRedirectIdentity: exchangeAndVerify outcome mapping (exch
   assert.equal(ef.ok, false);
   assert.ok(!ef.ok && ef.kind === "exchange_failed");
 
+  // exchange_failed: the upstream error code propagates through the wrapper (operability —
+  // upstream-flow logs exchange.reason; the cause must not be swallowed at the wrapper).
+  const portInvalidClient = await createGenericOidcRedirectIdentity(CONFIG, {
+    verifyKey: rsa.publicKey, currentDate: now,
+    transport: { async postForm() { return { status: 401, async text() { return JSON.stringify({ error: "invalid_client", error_description: "Unauthorized" }); } }; } },
+  });
+  const ic = await portInvalidClient.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+  assert.ok(!ic.ok && ic.kind === "exchange_failed" && ic.reason.includes("invalid_client"), "wrapper propagates the upstream error code into exchange.reason");
+
   // exchange_failed: transport throws
   const portThrow = await createGenericOidcRedirectIdentity(CONFIG, {
     verifyKey: rsa.publicKey, currentDate: now,
@@ -295,6 +313,16 @@ test("createGenericOidcRedirectIdentity: exchangeAndVerify outcome mapping (exch
   });
   const et = await portThrow.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
   assert.ok(!et.ok && et.kind === "exchange_failed");
+
+  // exchange_failed: a hostile non-Error throw (no toString) still classifies as
+  // exchange_failed, never throws out of the wrapper — the never-throw contract
+  // (a custom transport can't regress the throw⇒exchange_failed outcome).
+  const portHostile = await createGenericOidcRedirectIdentity(CONFIG, {
+    verifyKey: rsa.publicKey, currentDate: now,
+    transport: { async postForm() { throw Object.create(null); } },
+  });
+  const hb = await portHostile.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+  assert.ok(!hb.ok && hb.kind === "exchange_failed", "a hostile throw still classifies as exchange_failed (wrapper never throws)");
 
   // identity_rejected: bad iss (verified-context denial)
   const portBadIss = await createGenericOidcRedirectIdentity(CONFIG, {

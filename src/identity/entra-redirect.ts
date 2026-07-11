@@ -47,6 +47,7 @@ import {
   createEntraIdentity, exchangeCodeForToken, getAuthorizationUrl,
   verifyEntraIdToken,
 } from "./entra.ts";
+import { redactForStderr } from "../audit/util.ts";
 
 /** The exact upstream scope this port requests — `offline_access` is omitted on
  *  purpose (the bridge never uses an upstream refresh token). */
@@ -106,10 +107,11 @@ export function createEntraRedirectIdentity(
       let idToken: string;
       try {
         idToken = await exchangeCodeForToken(config, { code, codeVerifier }, transport);
-      } catch {
-        // Transport/protocol failure (non-200, timeout, malformed body, missing
-        // id_token) — no identity decision was made.
-        return { ok: false, kind: "exchange_failed", reason: "entra_exchange_failed" };
+      } catch (e) {
+        // Transport/protocol failure (non-200, timeout, malformed body, missing id_token) —
+        // no identity decision. Propagate the primitive's cause (carries the upstream error
+        // code) so upstream-flow logs it instead of a fixed generic string.
+        return { ok: false, kind: "exchange_failed", reason: redactForStderr(e) };
       }
       const result = opts?.verifyKey
         ? await verifyEntraIdToken(idToken, opts.verifyKey, config, { expectedNonce: nonce, currentDate: opts.currentDate })

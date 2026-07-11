@@ -147,7 +147,7 @@ export async function exchangeCodeForToken(
     if (config.clientSecret) body.set("client_secret", config.clientSecret); // post
   }
   const resp = await transport.postForm(resolved.tokenEndpoint, body, headers);
-  if (resp.status !== 200) throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${resp.status}`);
+  if (resp.status !== 200) { let detail = ""; try { const e = JSON.parse(await resp.text()) as { error?: unknown; error_description?: unknown }; if (typeof e.error === "string") detail = `: ${e.error}${typeof e.error_description === "string" ? ` — ${String(e.error_description).replace(/[\r\n]+/g, " ")}` : ""}`; } catch { /* non-JSON error body — the HTTP status is the detail */ } throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${resp.status}${detail}`); }
   const parsed = JSON.parse(await resp.text()) as Partial<GenericOidcTokenResponse>;
   if (typeof parsed.id_token !== "string" || !parsed.id_token) throw new Error("generic_oidc_exchange_failed: token response missing id_token");
   // access_token is REQUIRED in the code flow (OIDC §3.1.3.3) — requiring it also
