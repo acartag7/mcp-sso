@@ -6,7 +6,7 @@
 // `npx mcp-sso init` executes dist/bin/init.js directly (npm chmods it executable on
 // install); without the shebang the OS cannot launch it under node. tsc preserves it.
 
-import { access, mkdir, open } from "node:fs/promises";
+import { lstat, mkdir, open } from "node:fs/promises";
 import { constants as fsc, readFileSync, realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,9 +14,9 @@ import { templateFiles } from "./templates.ts";
 
 // O_NOFOLLOW refuses a symlink (dangling or not — no write outside the target via a
 // symlink); O_EXCL fails if the path already exists; O_CREAT creates. Atomic + no-follow
-// + no-clobber — the HARD guarantee behind "refuses to overwrite" (the access() pre-check
-// is best-effort UX that lists all conflicts up front; this is the enforcement that
-// closes the check-then-write race). O_NOFOLLOW is POSIX-only (0 on Windows).
+// + no-clobber — the HARD enforcement behind "refuses to overwrite" (the lstat pre-check
+// lists all conflicts up front; this closes the check-then-write race). POSIX-only (0 on
+// Windows, where the lstat pre-check still catches symlinks).
 const O_NOFOLLOW = (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
 const EXCLUSIVE_CREATE = O_NOFOLLOW | fsc.O_CREAT | fsc.O_EXCL | fsc.O_WRONLY;
 
@@ -47,7 +47,9 @@ function parseArgs(argv: string[]): { target: string; help: boolean } {
 }
 
 async function exists(path: string): Promise<boolean> {
-  try { await access(path); return true; } catch { return false; }
+  // lstat (NO-follow): a symlink (dangling or not) counts as existing, so the pre-check
+  // refuses it up front — no partial scaffold before writeExclusive's O_NOFOLLOW kicks in.
+  try { await lstat(path); return true; } catch { return false; }
 }
 
 /** Atomically create `path` with `content`, refusing to overwrite or follow a symlink. */

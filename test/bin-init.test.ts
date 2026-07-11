@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -59,9 +59,13 @@ test("bin init: scaffolds 4 files with a valid, exact-pinned package.json", asyn
     assert.equal(pkg.type, "module");
     assert.equal((pkg.scripts as { start: string }).start, "node server.ts");
     const deps = pkg.dependencies as Record<string, string>;
-    assert.equal(deps["mcp-sso"], "0.2.2", "mcp-sso pinned to the running version");
-    assert.equal(deps.fastify, "5.8.5", "fastify exact-pinned (no ^/~)");
-    assert.equal(deps["@modelcontextprotocol/sdk"], "1.29.0", "MCP SDK exact-pinned");
+    // The generated pins must MATCH the repo's own versions (the template hardcodes
+    // fastify/SDK; assert they track the repo's devDeps so a bump can't silently leave
+    // the scaffold on untested versions — and doesn't go stale on an mcp-sso bump).
+    const repoPkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8")) as { version: string; devDependencies: Record<string, string> };
+    assert.equal(deps["mcp-sso"], repoPkg.version, "mcp-sso pinned to the running (repo) version");
+    assert.equal(deps.fastify, repoPkg.devDependencies.fastify, "fastify pinned to the repo's tested devDependency");
+    assert.equal(deps["@modelcontextprotocol/sdk"], repoPkg.devDependencies["@modelcontextprotocol/sdk"], "MCP SDK pinned to the repo's tested devDependency");
     assert.ok(!/[\^~]/.test(Object.values(deps).join(" ")), "no version ranges — exact pins only");
 
     const server = await readFile(join(dir, "server.ts"), "utf8");
@@ -235,7 +239,8 @@ test("bin init: refuses a symlink in the target (no write outside the target via
   try {
     await mkdir(target, { recursive: true });
     await symlink(join(base, "elsewhere.txt"), join(target, "server.ts")); // dangling symlink at a scaffold path
-    await assert.rejects(scaffold(target), /symlink/, "a symlink at a scaffold path is refused, not followed");
+    await assert.rejects(scaffold(target), /refusing to overwrite.*server\.ts/, "a symlink at a scaffold path is refused up front (lstat no-follow), not followed");
+    assert.equal(existsSync(join(target, "package.json")), false, "no partial scaffold — nothing written before the refusal");
   } finally {
     await rm(base, { recursive: true, force: true });
   }

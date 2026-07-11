@@ -130,6 +130,12 @@ async function main(): Promise<void> {
     finally { await mcp.close(); }
   });
 
+  // Off-loopback warning: the one-time pairing code is the identity gate, so binding
+  // it to a non-loopback host exposes the pairing surface to the network (single-
+  // operator / private-console use only). Mirrors examples/fastify-sqlite/index.ts.
+  if (HOST !== "127.0.0.1" && HOST !== "localhost") {
+    console.error(\`[mcp-sso] WARNING: console pairing is bound to \${HOST} (non-loopback). The one-time code is the identity gate — anyone who can reach this port can attempt it. Pairing is for single-operator / private-console use only; use a real identity provider for a network-exposed server.\`);
+  }
   await app.listen({ port: PORT, host: HOST });
   console.error(\`mcp-sso listening on \${HOST}:\${PORT}  (console pairing — paste the one-time code printed above)\`);
   console.error(\`  issuer=\${config.issuer}  resource=\${config.resource}\`);
