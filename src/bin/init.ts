@@ -52,12 +52,16 @@ async function exists(path: string): Promise<boolean> {
   try { await lstat(path); return true; } catch { return false; }
 }
 
-/** Refuse a symlinked ANCESTOR of the target whose parent is group/other-writable (the
- *  attacker-swappable class): `mkdir -p` would follow it, writing outside the lexical
- *  target. System symlinks under a root/owner-owned parent (e.g. macOS /tmp→/private/tmp,
- *  /var→/private/var) are ALLOWED — an attacker can't replace them, so refusing them would
- *  be a false positive on a normal temp-dir scaffold. POSIX-only. */
-async function assertNoAttackerSymlinkAncestor(dir: string): Promise<void> {
+/** Ensure the scaffold cannot be redirected outside the lexical target via a symlink:
+ *  (a) refuse a symlinked existing ANCESTOR whose parent is group/other-writable (the
+ *  attacker-swappable class — `mkdir -p` would follow it); AND (b) at the FIRST missing
+ *  segment, refuse if its parent is group/other-writable, since an attacker could race-
+ *  create that missing segment as a symlink in the window before `mkdir` (the TOCTOU the
+ *  pre-check can't otherwise close). System symlinks under a root/owner-owned parent
+ *  (e.g. macOS /tmp→/private/tmp) are ALLOWED — an attacker can't replace them, and an
+ *  owner-only parent can't be raced, so a normal mkdtemp-under-the-user-temp scaffold is
+ *  not a false positive. POSIX-only. */
+async function assertSafeScaffoldTarget(dir: string): Promise<void> {
   if (process.platform === "win32") return;
   const { root } = parse(dir);
   let current = root;
@@ -66,7 +70,16 @@ async function assertNoAttackerSymlinkAncestor(dir: string): Promise<void> {
     current = join(current, seg);
     let st;
     try { st = await lstat(current); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; } // rest doesn't exist yet
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // `current` is the first missing segment; `parent` is the last existing one. If the
+      // parent is group/other-writable, an attacker could race-create `current` as a symlink
+      // before mkdir(dir, recursive) follows it — refuse (closes the TOCTOU).
+      if ((await lstat(parent)).mode & 0o022) {
+        throw new Error(`${current} would be created under a group/other-writable parent (${parent}); mcp-sso init refuses — a symlink could be raced in before creation (write-redirection risk). Use a directory under a non-group/other-writable parent.`);
+      }
+      return; // parent is owner-only → no race → safe to mkdir the missing tail
+    }
     if (st.isSymbolicLink() && ((await lstat(parent)).mode & 0o022)) {
       throw new Error(`${current} is a symlink inside a group/other-writable directory (${parent}); mcp-sso init refuses to scaffold through it (write-redirection risk). Point it at a real directory.`);
     }
@@ -110,7 +123,7 @@ export async function run(argv: string[]): Promise<string[]> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; // ENOENT is fine — mkdir creates it
   }
-  await assertNoAttackerSymlinkAncestor(dir);
+  await assertSafeScaffoldTarget(dir);
   const name = basename(dir) || "mcp-sso-server";
   const files = templateFiles({ mcpSsoVersion: ownVersion(), name });
 

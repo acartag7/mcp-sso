@@ -404,6 +404,23 @@ test("bin init (spawn): a trailing slash on OAUTH_ISSUER is trimmed (resource is
   }
 });
 
+test("bin init: refuses a MISSING segment under a group/other-writable parent (closes the create-race TOCTOU)", { skip: process.platform === "win32" }, async () => {
+  // The path walk returns at the first missing segment; if that segment's parent is
+  // group/other-writable, an attacker could race-create it as a symlink before mkdir.
+  // Refuse outright (the pre-check can't otherwise close that window).
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-missing-"));
+  const writable = join(base, "writable"); // → 0777
+  const target = join(writable, "new", "proj"); // 'new' is missing under the writable parent
+  try {
+    await mkdir(writable, { mode: 0o777 });
+    await chmod(writable, 0o777);
+    await assert.rejects(run(["node", "init.ts", "init", target]), /group\/other-writable parent/, "a missing segment under a writable parent is refused (closes the create-race)");
+    assert.equal(existsSync(join(writable, "new")), false, "nothing created under the writable parent");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 function extractField(html: string, name: string): string {
   const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
   assert.ok(m?.[1], `hidden field ${name} not found`);
