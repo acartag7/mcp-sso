@@ -164,24 +164,29 @@ test("S1b.8: pairing flow (buildApp pairing mode) — code → consent → token
 
     // 5. Protected /mcp via the OFFICIAL MCP SDK client over a real loopback socket
     //    (the inject-mock socket lacks destroySoon() — see callProtectedMcp / #66).
-    await callProtectedMcp(app, RESOURCE, accessToken, SUBJECT); // the pairing-resolved subject reaches /mcp
+    //    callProtectedMcp opens a real listening server; wrap through the audit
+    //    assertions so a failure still closes the app (node --test has no per-test
+    //    timeout — a leaked server hangs the subprocess).
+    try {
+      await callProtectedMcp(app, RESOURCE, accessToken, SUBJECT); // the pairing-resolved subject reaches /mcp
 
-    // 6. JSONL audit: has the pairing event + the v0.1 flow events; no raw secrets/code.
-    const raw = await readFile(auditPath, "utf8");
-    const events = raw.split("\n").filter((l) => l.length > 0).map((l) => JSON.parse(l) as AuthAuditEvent);
-    const names = events.map((e) => e.event);
-    assert.ok(names.includes("oauth.pairing.attempt"), "pairing audit event present");
-    assert.ok(names.includes("oauth.authorize.prepare"));
-    assert.ok(names.includes("oauth.token.authorization_code"));
-    assert.ok(events.some((e) => e.event === "oauth.pairing.attempt" && e.status === "success"));
-    // No raw code (canonical AND displayed dashed form), auth code, or access token in the audit output.
-    assert.equal(raw.includes(code), false, "canonical pairing code leaked into audit");
-    assert.equal(raw.includes(formatPairingCode(code)), false, "displayed (dashed) pairing code leaked into audit");
-    assert.equal(raw.includes(authCode as string), false, "auth code leaked into audit");
-    assert.equal(raw.includes(accessToken), false, "access token leaked into audit");
-
-    await app.close();
-    await store.close();
+      // 6. JSONL audit: has the pairing event + the v0.1 flow events; no raw secrets/code.
+      const raw = await readFile(auditPath, "utf8");
+      const events = raw.split("\n").filter((l) => l.length > 0).map((l) => JSON.parse(l) as AuthAuditEvent);
+      const names = events.map((e) => e.event);
+      assert.ok(names.includes("oauth.pairing.attempt"), "pairing audit event present");
+      assert.ok(names.includes("oauth.authorize.prepare"));
+      assert.ok(names.includes("oauth.token.authorization_code"));
+      assert.ok(events.some((e) => e.event === "oauth.pairing.attempt" && e.status === "success"));
+      // No raw code (canonical AND displayed dashed form), auth code, or access token in the audit output.
+      assert.equal(raw.includes(code), false, "canonical pairing code leaked into audit");
+      assert.equal(raw.includes(formatPairingCode(code)), false, "displayed (dashed) pairing code leaked into audit");
+      assert.equal(raw.includes(authCode as string), false, "auth code leaked into audit");
+      assert.equal(raw.includes(accessToken), false, "access token leaked into audit");
+    } finally {
+      await app.close();
+      await store.close();
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -270,15 +275,19 @@ test("S1b.8 (zero-config boot): quickstart secrets (NO env config) drive the pai
 
     // Protected /mcp via the OFFICIAL MCP SDK client over a real loopback socket —
     // the literal zero-config e2e (RequestAuthorizer + MCP transport accept the
-    // quickstart-signed token).
-    await callProtectedMcp(app, RESOURCE, accessToken, SUBJECT);
+    // quickstart-signed token). callProtectedMcp opens a real listening server; wrap
+    // through the reload assertion so a failure still closes the app (node --test has
+    // no per-test timeout — a leaked server hangs the subprocess).
+    try {
+      await callProtectedMcp(app, RESOURCE, accessToken, SUBJECT);
 
-    await app.close();
-    await store.close();
-
-    // Restart: reload reuses the SAME secrets (no silent rotation).
-    const reloaded = await loadOrCreateQuickstartSecrets({ dir: stateDir });
-    assert.deepEqual(reloaded, secrets);
+      // Restart: reload reuses the SAME secrets (no silent rotation).
+      const reloaded = await loadOrCreateQuickstartSecrets({ dir: stateDir });
+      assert.deepEqual(reloaded, secrets);
+    } finally {
+      await app.close();
+      await store.close();
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
