@@ -75,6 +75,12 @@ const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const isLoopback = (url: string): boolean => { try { return LOOPBACK.has(new URL(url).hostname); } catch { return false; } };
 
 async function main(): Promise<void> {
+  // Validate the env-sourced config BEFORE creating state (the validate-before-side-effects
+  // invariant): a malformed issuer/resource rejects here, not after loadOrCreateQuickstartSecrets
+  // writes the state dir + signing secrets.
+  const requireUrl = (label: string, v: string): void => { try { new URL(v); } catch { throw new Error(\`\${label} is not a valid URL: \${v}\`); } };
+  requireUrl("OAUTH_ISSUER", ISSUER);
+  requireUrl("OAUTH_RESOURCE", RESOURCE);
   // loadOrCreateQuickstartSecrets creates DIR (0o700) + the managed .gitignore +
   // the signing material on first boot (the fs-trust bar + zero-setup keys).
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });

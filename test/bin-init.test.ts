@@ -421,6 +421,50 @@ test("bin init: refuses a MISSING segment under a group/other-writable parent (c
   }
 });
 
+test("bin init: refuses an existing real dir under a writable NON-STICKY parent (swap race)", { skip: process.platform === "win32" }, async () => {
+  // The P1 race: an existing real dir under a group/other-writable + non-sticky parent can
+  // be deleted+swapped for a symlink after the check. Sticky parents (e.g. /tmp) protect
+  // owned entries, so this targets the non-sticky case specifically.
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-nonsticky-"));
+  const writable = join(base, "writable"); // → 0777 (non-sticky)
+  const existing = join(writable, "existing"); // a real dir under the non-sticky writable parent
+  const target = join(existing, "proj");
+  try {
+    await mkdir(writable, { mode: 0o777 });
+    await chmod(writable, 0o777); // non-sticky
+    await mkdir(existing); // a real dir under the writable parent
+    await assert.rejects(run(["node", "init.ts", "init", target]), /non-sticky directory/, "an existing real dir under a writable non-sticky parent is refused (swap race)");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init (spawn): a malformed OAUTH_ISSUER fails BEFORE the state dir is created", async () => {
+  // Validate-before-side-effects: a malformed issuer rejects at URL validation, not after
+  // loadOrCreateQuickstartSecrets writes the state dir + signing secrets.
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-badissuer-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1", OAUTH_ISSUER: "not-a-url" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    const code = await new Promise<number | null>((resolveP) => child.on("close", (c) => resolveP(c)));
+    assert.notEqual(code, 0, "a malformed OAUTH_ISSUER fails closed");
+    assert.match(stderr, /OAUTH_ISSUER is not a valid URL/);
+    assert.equal(existsSync(stateDir), false, "the state dir was NOT created (validation ran before the state-creating helper)");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 function extractField(html: string, name: string): string {
   const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
   assert.ok(m?.[1], `hidden field ${name} not found`);

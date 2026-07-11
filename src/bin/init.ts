@@ -52,15 +52,13 @@ async function exists(path: string): Promise<boolean> {
   try { await lstat(path); return true; } catch { return false; }
 }
 
-/** Ensure the scaffold cannot be redirected outside the lexical target via a symlink:
- *  (a) refuse a symlinked existing ANCESTOR whose parent is group/other-writable (the
- *  attacker-swappable class — `mkdir -p` would follow it); AND (b) at the FIRST missing
- *  segment, refuse if its parent is group/other-writable, since an attacker could race-
- *  create that missing segment as a symlink in the window before `mkdir` (the TOCTOU the
- *  pre-check can't otherwise close). System symlinks under a root/owner-owned parent
- *  (e.g. macOS /tmp→/private/tmp) are ALLOWED — an attacker can't replace them, and an
- *  owner-only parent can't be raced, so a normal mkdtemp-under-the-user-temp scaffold is
- *  not a false positive. POSIX-only. */
+/** Ensure the scaffold cannot be redirected outside the lexical target via a symlink, for
+ *  every existing component AND the first missing one. A component is attacker-swappable
+ *  when its parent is group/other-writable (an attacker can delete+replace it, or create it
+ *  if missing); sticky-writable parents (e.g. /tmp, mode 0o1xx) protect OWNED entries, so a
+ *  real dir there is NOT refused (a normal mkdtemp-under-/tmp scaffold proceeds) — but a
+ *  MISSING name still is, since sticky gates delete/rename, not creation. System symlinks
+ *  under an owner-owned parent (e.g. macOS /tmp→/private/tmp) are allowed. POSIX-only. */
 async function assertSafeScaffoldTarget(dir: string): Promise<void> {
   if (process.platform === "win32") return;
   const { root } = parse(dir);
@@ -68,21 +66,28 @@ async function assertSafeScaffoldTarget(dir: string): Promise<void> {
   for (const seg of dir.slice(root.length).split(sep).filter(Boolean)) {
     const parent = current;
     current = join(current, seg);
+    const pst = await lstat(parent); // root + deeper parents exist by induction
+    // `gate` = the parent is a real writable dir (a symlink parent's mode bits are
+    // meaningless; such a parent was vetted in the prior iteration as trusted).
+    const gate = !pst.isSymbolicLink() && (pst.mode & 0o022) !== 0;
+    const nonSticky = (pst.mode & 0o1000) === 0;
     let st;
     try { st = await lstat(current); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      // `current` is the first missing segment; `parent` is the last existing one. If the
-      // parent is group/other-writable, an attacker could race-create `current` as a symlink
-      // before mkdir(dir, recursive) follows it — refuse (closes the TOCTOU).
-      if ((await lstat(parent)).mode & 0o022) {
-        throw new Error(`${current} would be created under a group/other-writable parent (${parent}); mcp-sso init refuses — a symlink could be raced in before creation (write-redirection risk). Use a directory under a non-group/other-writable parent.`);
-      }
-      return; // parent is owner-only → no race → safe to mkdir the missing tail
+      // Missing: an attacker can CREATE the name (sticky gates delete/rename, not create),
+      // so refuse under any writable parent — sticky does not help a non-existent name.
+      if (gate) throw new Error(`${current} would be created under a group/other-writable parent (${parent}); mcp-sso init refuses — a symlink could be raced in before creation (write-redirection risk). Use a directory under a non-group/other-writable parent.`);
+      return; // owner-only (or trusted-symlink) parent → safe to mkdir the missing tail
     }
-    if (st.isSymbolicLink() && ((await lstat(parent)).mode & 0o022)) {
-      throw new Error(`${current} is a symlink inside a group/other-writable directory (${parent}); mcp-sso init refuses to scaffold through it (write-redirection risk). Point it at a real directory.`);
+    if (st.isSymbolicLink()) {
+      if (gate) throw new Error(`${current} is a symlink inside a group/other-writable directory (${parent}); mcp-sso init refuses to scaffold through it (write-redirection risk). Point it at a real directory.`);
+      continue; // trusted symlink (non-writable / trusted-symlink parent)
     }
+    if (!st.isDirectory()) throw new Error(`${current} exists and is not a directory; mcp-sso init cannot scaffold there.`);
+    // Real dir: an attacker can delete+swap it under a writable + NON-STICKY parent. Sticky
+    // parents (e.g. /tmp) protect owned entries, so mkdtemp-under-/tmp is allowed.
+    if (gate && nonSticky) throw new Error(`${current} is under a group/other-writable, non-sticky directory (${parent}); mcp-sso init refuses (the directory could be swapped for a symlink after the check). Use a directory under a non-writable or sticky parent.`);
   }
 }
 
