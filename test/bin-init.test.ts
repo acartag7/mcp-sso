@@ -375,6 +375,35 @@ test("bin init: refuses a symlinked ancestor in a group/other-writable dir (writ
   }
 });
 
+test("bin init (spawn): a trailing slash on OAUTH_ISSUER is trimmed (resource is /mcp, not //mcp)", async () => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-slash-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  const port = await freePort();
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "127.0.0.1", OAUTH_ISSUER: `http://127.0.0.1:${port}/` }, // trailing slash
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    try {
+      await waitFor(child, new RegExp(`mcp-sso listening on 127\\.0\\.0\\.1:${port}`), 15_000);
+      // Assert on the ADVERTISED PRM resource (what clients see), not the boot log line
+      // (which prints a tick after "listening" and races under suite load).
+      const prm = await fetchBounded(`http://127.0.0.1:${port}/.well-known/oauth-protected-resource`);
+      assert.equal(prm.status, 200);
+      assert.equal((await prm.json() as { resource: string }).resource, `http://127.0.0.1:${port}/mcp`, "the advertised PRM resource is /mcp (the trailing slash on OAUTH_ISSUER was trimmed, not //mcp)");
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); }
+    }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 function extractField(html: string, name: string): string {
   const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
   assert.ok(m?.[1], `hidden field ${name} not found`);

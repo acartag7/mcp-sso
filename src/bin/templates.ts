@@ -64,7 +64,9 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
 }
 const HOST = env("HOST", "127.0.0.1"); // loopback default — the pairing code is the identity gate
 const DIR = env("MCP_SSO_DIR", "./.mcp-sso");
-const ISSUER = env("OAUTH_ISSUER", \`http://127.0.0.1:\${PORT}\`); // 127.0.0.1 (not localhost) matches the HOST bind — no IPv6/IPv4 address-family mismatch
+// 127.0.0.1 (not localhost) matches the HOST bind — no IPv6/IPv4 address-family mismatch.
+let ISSUER = env("OAUTH_ISSUER", \`http://127.0.0.1:\${PORT}\`);
+while (ISSUER.endsWith("/")) ISSUER = ISSUER.slice(0, -1); // trim a trailing / so the derived resource is /mcp, not //mcp
 const RESOURCE = env("OAUTH_RESOURCE", \`\${ISSUER}/mcp\`);
 const list = (v: string | undefined, def: string): string[] => (v ?? def).split(",").map((s) => s.trim()).filter(Boolean);
 // allowInsecureLocalhost lets an http:// loopback issuer boot for local dev (the
