@@ -967,7 +967,7 @@ Origin-gate pattern need not import an internal adapter path. Deployer guidance 
 **Init CLI (`npx mcp-sso init`):** the package ships a `bin` — `mcp-sso init [target]`
 (default `.`) — that scaffolds a working zero-setup MCP server a stranger can boot with
 `npm install && npm start` and pair with via a console-printed one-time code (then
-`claude mcp add --transport http my-bridge http://localhost:3000/mcp`). It generates:
+`claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp`). It generates:
 `package.json` (`"type": "module"`, `"start": "node server.ts"`, exact-pinned deps —
 `mcp-sso` at the running version + `fastify` + `@modelcontextprotocol/sdk` at the
 versions mcp-sso is tested against, recorded in `docs/dependency-ledger.md`; Node
