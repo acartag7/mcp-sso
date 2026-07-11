@@ -61,7 +61,7 @@ const env = (key: string, def: string): string => {
 const PORT = Number(env("PORT", "3000"));
 const HOST = env("HOST", "127.0.0.1"); // loopback default — the pairing code is the identity gate
 const DIR = env("MCP_SSO_DIR", "./.mcp-sso");
-const ISSUER = env("OAUTH_ISSUER", \`http://localhost:\${PORT}\`);
+const ISSUER = env("OAUTH_ISSUER", \`http://127.0.0.1:\${PORT}\`); // 127.0.0.1 (not localhost) matches the HOST bind — no IPv6/IPv4 address-family mismatch
 const RESOURCE = env("OAUTH_RESOURCE", \`\${ISSUER}/mcp\`);
 const list = (v: string | undefined, def: string): string[] => (v ?? def).split(",").map((s) => s.trim()).filter(Boolean);
 // allowInsecureLocalhost lets an http:// loopback issuer boot for local dev (the
@@ -197,7 +197,7 @@ npm install
 npm start
 
 # Terminal 2 — once the server is up (it prints a one-time code ONLY when a client connects):
-claude mcp add --transport http my-bridge http://localhost:3000/mcp
+claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp
 # → the server prints the code to Terminal 1; a browser opens — paste the code, approve.
 \`\`\`
 

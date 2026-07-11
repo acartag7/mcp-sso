@@ -187,10 +187,9 @@ test("bin init (spawn): full pairing round-trip — register → code → consen
     await linkDeps(proj);
     const child = spawn("node", ["server.ts"], {
       cwd: proj,
-      // OAUTH_ISSUER = the bound address so issuer/resource/origin are consistent (the
-      // default issuer is http://localhost:PORT, but `localhost` may resolve to IPv6 ::1
-      // against a 127.0.0.1 bind; pin the issuer to 127.0.0.1 for a reliable round-trip).
-      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "127.0.0.1", OAUTH_ISSUER: origin },
+      // No OAUTH_ISSUER override: the default is http://127.0.0.1:PORT (matches the HOST
+      // bind), so the test exercises the real default config, not a masked one.
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "127.0.0.1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stderrBuf = "";
@@ -279,7 +278,7 @@ test("bin init (spawn): a blank HOST binds loopback (fail-closed on blank env �
     await linkDeps(proj);
     const child = spawn("node", ["server.ts"], {
       cwd: proj,
-      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "", OAUTH_ISSUER: `http://127.0.0.1:${port}` },
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     try {

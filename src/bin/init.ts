@@ -103,7 +103,7 @@ export async function run(argv: string[]): Promise<string[]> {
 
   console.log(`mcp-sso init: wrote ${files.length} files to ${dir}:`);
   for (const f of files) console.log(`  ${f.path}`);
-  console.log(`\nNext:\n  cd ${dir}\n  npm install\n  npm start        # terminal 1 — the server (stays foreground)\n  # in ANOTHER terminal (server running) — it prints a one-time code when a client connects:\n  claude mcp add --transport http my-bridge http://localhost:3000/mcp\n  # the server prints the code to terminal 1; a browser opens — paste the code, approve.`);
+  console.log(`\nNext:\n  cd ${dir}\n  npm install\n  npm start        # terminal 1 — the server (stays foreground)\n  # in ANOTHER terminal (server running) — it prints a one-time code when a client connects:\n  claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp\n  # the server prints the code to terminal 1; a browser opens — paste the code, approve.`);
   return written;
 }
 
