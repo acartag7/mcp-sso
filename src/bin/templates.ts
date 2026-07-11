@@ -50,11 +50,19 @@ import { createConsolePairingIdentity } from "mcp-sso/identity/console-pairing";
 type NormRequest = { query: Record<string, string | string[] | undefined>; body: unknown; headers: Record<string, string | string[] | undefined>; ip?: string };
 type NormResponse = { status: number; headers: Record<string, string>; body?: unknown; redirect?: string };
 
-const PORT = Number(process.env.PORT ?? 3000);
-const HOST = process.env.HOST ?? "127.0.0.1"; // loopback: the pairing code is the identity gate
-const DIR = process.env.MCP_SSO_DIR ?? "./.mcp-sso";
-const ISSUER = process.env.OAUTH_ISSUER ?? \`http://localhost:\${PORT}\`;
-const RESOURCE = process.env.OAUTH_RESOURCE ?? \`\${ISSUER}/mcp\`;
+// Treat a blank (whitespace-only) env value as MISSING — fail-closed on untrusted input
+// (the house rule): e.g. HOST="" must NOT reach Node as "bind all interfaces" (0.0.0.0),
+// which would expose the one-time pairing code to the network. Same for PORT (Number("")
+// is 0 → an ephemeral, undiscoverable port).
+const env = (key: string, def: string): string => {
+  const v = process.env[key];
+  return v && v.trim() ? v : def;
+};
+const PORT = Number(env("PORT", "3000"));
+const HOST = env("HOST", "127.0.0.1"); // loopback default — the pairing code is the identity gate
+const DIR = env("MCP_SSO_DIR", "./.mcp-sso");
+const ISSUER = env("OAUTH_ISSUER", \`http://localhost:\${PORT}\`);
+const RESOURCE = env("OAUTH_RESOURCE", \`\${ISSUER}/mcp\`);
 const list = (v: string | undefined, def: string): string[] => (v ?? def).split(",").map((s) => s.trim()).filter(Boolean);
 // allowInsecureLocalhost lets an http:// loopback issuer boot for local dev (the
 // bridge mints real tokens; never set this for a non-loopback / production issuer).
@@ -192,6 +200,9 @@ npm start
 claude mcp add --transport http my-bridge http://localhost:3000/mcp
 # → the server prints the code to Terminal 1; a browser opens — paste the code, approve.
 \`\`\`
+
+\`npm install\` creates \`package-lock.json\` — commit it. The top-level pins above are
+exact (the versions mcp-sso is tested against); the lockfile fixes the transitive graph.
 
 The server binds loopback (127.0.0.1) by default — the printed pairing code is the
 identity gate, so it must not be exposed to the network. Override with HOST/PORT env.

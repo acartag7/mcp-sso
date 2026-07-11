@@ -56,7 +56,7 @@ async function scaffold(target: string): Promise<string[]> {
   return run(["node", "init.ts", "init", target]);
 }
 
-test("bin init: scaffolds 4 files with a valid, exact-pinned package.json", async () => {
+test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mcp-sso-init-unit-"));
   try {
     const written = await scaffold(dir);
@@ -257,6 +257,33 @@ test("bin init (spawn): full pairing round-trip — register → code → consen
       const mcp = await fetchBounded(`${origin}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }) });
       assert.equal(mcp.status, 401);
       assert.match(mcp.headers.get("www-authenticate") ?? "", /^Bearer resource_metadata=/);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); }
+    }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init (spawn): a blank HOST binds loopback (fail-closed on blank env — NOT 0.0.0.0)", async () => {
+  // P1 regression: HOST="" must not fall through `??` to Node as "bind all interfaces",
+  // which would expose the one-time pairing code to the network. The generated server
+  // treats a blank env value as missing → the loopback default.
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-blankhost-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  const port = await freePort();
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "", OAUTH_ISSUER: `http://127.0.0.1:${port}` },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    try {
+      await waitFor(child, new RegExp(`mcp-sso listening on 127\\.0\\.0\\.1:${port}`), 15_000);
     } finally {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); }
     }

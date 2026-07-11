@@ -981,7 +981,11 @@ supply-chain posture); and `README.md` (the run steps +
 pointers to `docs/gateway-deployment.md` / `docs/live-verification.md` for production
 identity providers). The init binary itself is **dep-free** (node builtins only) — it
 adds nothing to the `jose`-only runtime. It refuses to overwrite an existing file
-(fail closed — never clobber a consumer's work) and lists what it wrote. The generated
+(fail closed — never clobber a consumer's work) and lists what it wrote. **Dependency
+posture:** the generated `package.json` pins the top-level deps **exactly** (the versions
+mcp-sso is tested against); the scaffold cannot ship a curated transitive lockfile (that
+needs network resolution at scaffold time), so the operator's `npm install` creates
+`package-lock.json` (to commit) — locking the transitive graph at first install. The
 server is the zero-setup pairing path; a real IdP (Cloudflare Access / Entra / Google /
 OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded
 default — the done-bar is the pairing round-trip, not a production deploy.
