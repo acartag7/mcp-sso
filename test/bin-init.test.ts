@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -324,6 +324,52 @@ test("bin init (spawn): PORT=0 fails closed at boot (not an unusable ephemeral b
     const code = await new Promise<number | null>((resolveP) => child.on("close", (c) => resolveP(c)));
     assert.notEqual(code, 0, "PORT=0 fails closed (non-zero exit), not an ephemeral bind with port-0 URLs");
     assert.match(stderr, /PORT must be an integer in 1/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init (spawn): HOST off-loopback without OAUTH_ISSUER warns about the issuer mismatch", async () => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-hostwarn-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  const port = await freePort();
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      // HOST off loopback, OAUTH_ISSUER intentionally UNSET → the advertised issuer
+      // (127.0.0.1) won't match the host clients reach (RFC 9728 resource validation).
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "0.0.0.0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    try {
+      const stderr = await waitFor(child, /OAUTH_ISSUER is unset/, 15_000);
+      assert.match(stderr, /HOST=0\.0\.0\.0 but OAUTH_ISSUER is unset/, "off-loopback HOST without OAUTH_ISSUER warns about the mismatch");
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); }
+    }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init: refuses a symlinked ancestor in a group/other-writable dir (write-redirection risk)", { skip: process.platform === "win32" }, async () => {
+  // The attacker-controllable class: a symlinked ANCESTOR whose parent is group/other-
+  // writable (an attacker could swap it). mkdir -p would follow it → write outside the
+  // lexical target. (A system symlink under a root-owned parent — e.g. macOS /tmp — is
+  // ALLOWED, not a false positive.)
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-anceslink-"));
+  const writable = join(base, "writable"); // → 0777
+  const link = join(writable, "link"); // symlink → elsewhere
+  const target = join(link, "proj"); // scaffold THROUGH the symlinked ancestor
+  try {
+    await mkdir(writable, { mode: 0o777 });
+    await chmod(writable, 0o777);
+    await symlink(join(base, "elsewhere"), link);
+    await assert.rejects(run(["node", "init.ts", "init", target]), /write-redirection risk/, "a symlinked ancestor in a writable dir is refused");
   } finally {
     await rm(base, { recursive: true, force: true });
   }

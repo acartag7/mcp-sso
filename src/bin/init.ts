@@ -8,7 +8,7 @@
 
 import { lstat, mkdir, open } from "node:fs/promises";
 import { constants as fsc, readFileSync, realpathSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { templateFiles } from "./templates.ts";
 
@@ -52,6 +52,27 @@ async function exists(path: string): Promise<boolean> {
   try { await lstat(path); return true; } catch { return false; }
 }
 
+/** Refuse a symlinked ANCESTOR of the target whose parent is group/other-writable (the
+ *  attacker-swappable class): `mkdir -p` would follow it, writing outside the lexical
+ *  target. System symlinks under a root/owner-owned parent (e.g. macOS /tmp→/private/tmp,
+ *  /var→/private/var) are ALLOWED — an attacker can't replace them, so refusing them would
+ *  be a false positive on a normal temp-dir scaffold. POSIX-only. */
+async function assertNoAttackerSymlinkAncestor(dir: string): Promise<void> {
+  if (process.platform === "win32") return;
+  const { root } = parse(dir);
+  let current = root;
+  for (const seg of dir.slice(root.length).split(sep).filter(Boolean)) {
+    const parent = current;
+    current = join(current, seg);
+    let st;
+    try { st = await lstat(current); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; } // rest doesn't exist yet
+    if (st.isSymbolicLink() && ((await lstat(parent)).mode & 0o022)) {
+      throw new Error(`${current} is a symlink inside a group/other-writable directory (${parent}); mcp-sso init refuses to scaffold through it (write-redirection risk). Point it at a real directory.`);
+    }
+  }
+}
+
 /** POSIX shell-escape a path for safe copy-paste in a printed command: single-quote +
  *  escape embedded single quotes. Survives spaces, `"`, `$()`, backticks, and `'`. */
 function shellQuote(s: string): string {
@@ -89,6 +110,7 @@ export async function run(argv: string[]): Promise<string[]> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; // ENOENT is fine — mkdir creates it
   }
+  await assertNoAttackerSymlinkAncestor(dir);
   const name = basename(dir) || "mcp-sso-server";
   const files = templateFiles({ mcpSsoVersion: ownVersion(), name });
 
