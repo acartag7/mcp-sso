@@ -173,3 +173,14 @@ test("redactSecrets: consumes Basic scheme + creds in header / assignment / JSON
     assert.equal(redactSecrets(raw).includes(creds), false, `${raw}: Basic credentials leaked`);
   }
 });
+
+test("redactForStderr: strips C1 controls + Unicode line separators (terminal/log injection)", () => {
+  // NEL (U+0085), LS (U+2028), PS (U+2029), CSI (U+009B / ANSI escape) act as line
+  // breaks / terminal controls and survive a C0-only strip, breaking the one-line guarantee.
+  const NEL = String.fromCodePoint(0x85), LS = String.fromCodePoint(0x2028), PS = String.fromCodePoint(0x2029), CSI = String.fromCodePoint(0x9b);
+  const injected = redactForStderr(`ok${NEL}[FAKE]${LS}line${PS}${CSI}X`);
+  assert.equal(injected.includes(NEL), false, "NEL survived");
+  assert.equal(injected.includes(LS), false, "LS survived");
+  assert.equal(injected.includes(PS), false, "PS survived");
+  assert.equal(injected.includes(CSI), false, "CSI survived");
+});

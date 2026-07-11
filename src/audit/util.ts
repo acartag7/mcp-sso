@@ -58,6 +58,13 @@ export function safeErrorMessage(error: unknown): string {
   }
 }
 
+// Line-breaking + terminal-control chars stripped from stderr diagnostics so an
+// attacker-chosen client_id / provider text can't forge log lines or inject ANSI
+// escapes: C0 (\x00-\x1f), DEL+C1 (\x7f-\x9f), and the Unicode line/paragraph
+// separators. Built from code points so this source file holds NO literal line
+// terminators (a literal U+2028/U+2029 would itself break parsing).
+const STDERR_LINE_BREAKS = new RegExp("[\\x00-\\x1f\\x7f-\\x9f" + String.fromCodePoint(0x2028) + String.fromCodePoint(0x2029) + "]+", "g");
+
 /** Single-line, secret-redacted form for arbitrary stderr diagnostics that may be
  *  attacker- or provider-controlled (a stateless `client_id`, an IdP
  *  `error_description`). Strips control chars so a value can't forge extra log
@@ -71,7 +78,7 @@ export function redactForStderr(input: unknown): string {
   // Redact BEFORE bounding: a secret starting near the cap must be fully matched
   // (≥32 chars) before slice() can fragment it below the opaque-token threshold.
   try {
-    return redactSecrets(String(input ?? "").replace(/[\x00-\x1f\x7f]+/g, " ")).slice(0, 200).trim();
+    return redactSecrets(String(input ?? "").replace(STDERR_LINE_BREAKS, " ")).slice(0, 200).trim();
   } catch {
     return "[redacted]";
   }
