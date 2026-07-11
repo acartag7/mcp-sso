@@ -152,7 +152,11 @@ export async function resolveEndpoints(
 ): Promise<ResolvedEndpoints> {
   if (config.endpoints === "discover") {
     assertValidHttpsEndpoint(config.issuer, "issuer");
-    const discoveryUrl = config.issuer.replace(/\/+$/, "") + "/.well-known/openid-configuration";
+    // Trim trailing slashes without a regex: `/\/+$/` over env-sourced config trips
+    // CodeQL js/polynomial-redos; a bounded slice loop is unambiguously linear.
+    let issuer = config.issuer;
+    while (issuer.endsWith("/")) issuer = issuer.slice(0, -1);
+    const discoveryUrl = issuer + "/.well-known/openid-configuration";
     const fetcher = transport ?? defaultDiscoveryTransport;
     const resp = await fetcher.get(discoveryUrl);
     if (resp.status !== 200) throw new Error(`generic_oidc_discovery_failed: discovery fetch returned HTTP ${resp.status} (redirects are not followed)`);
