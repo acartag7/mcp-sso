@@ -964,6 +964,26 @@ root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recomme
 Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in
 [`docs/audit-deployment.md`](./audit-deployment.md).
 
+**Init CLI (`npx mcp-sso init`):** the package ships a `bin` — `mcp-sso init [target]`
+(default `.`) — that scaffolds a working zero-setup MCP server a stranger can boot with
+`npm install && npm start` and pair with via a console-printed one-time code (then
+`claude mcp add --transport http my-bridge http://localhost:3000/mcp`). It generates:
+`package.json` (`"type": "module"`, `"start": "node server.ts"`, exact-pinned deps —
+`mcp-sso` at the running version + `fastify` + `@modelcontextprotocol/sdk` at the
+versions mcp-sso is tested against, recorded in `docs/dependency-ledger.md`; Node
+`>=24`, native TS, no build step); `server.ts` (the composition root, built from the
+root exports + the `./fastify`, `./store/sqlite`, `./identity/console-pairing` subpaths
+— quickstart secrets + console pairing + sqlite + the `/mcp` Streamable-HTTP Origin
+gate + a protected `/mcp`, zero-setup loopback by default); `.gitignore`
+(`node_modules/` + the `.mcp-sso/` state dir); and `README.md` (the run steps +
+pointers to `docs/gateway-deployment.md` / `docs/live-verification.md` for production
+identity providers). The init binary itself is **dep-free** (node builtins only) — it
+adds nothing to the `jose`-only runtime. It refuses to overwrite an existing file
+(fail closed — never clobber a consumer's work) and lists what it wrote. The generated
+server is the zero-setup pairing path; a real IdP (Cloudflare Access / Entra / Google /
+OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded
+default — the done-bar is the pairing round-trip, not a production deploy.
+
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —
 the install-time floor and the `docs/dependency-ledger.md` 15-day curation rule
