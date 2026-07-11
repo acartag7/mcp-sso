@@ -28,6 +28,20 @@ const stubIdentity: IdentityPort = {
 
 function extractConsentToken(html: string): string { const m = /name="consent_token" value="([^"]+)"/.exec(html); assert.ok(m?.[1]); return m[1]; }
 
+/** Real fetch captured at module load — before any test stubs globalThis.fetch.
+ *  The SDK /mcp call must hit the real loopback server, not a per-test fetch stub. */
+const networkFetch = globalThis.fetch.bind(globalThis) as typeof fetch;
+
+/** Race a promise against a hard deadline. The MCP SDK transport overrides
+ *  requestInit.signal with its own AbortController.signal, so the abort lever is
+ *  transport.close() in the caller's finally, not a bounded requestInit.signal. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
 test("e2e: register -> authorize -> token -> /mcp (official SDK client) -> refresh -> replay-revoke -> revoke", async () => {
   const config = createBridgeConfig({
     issuer: ISSUER, resource: RESOURCE,
@@ -57,29 +71,23 @@ test("e2e: register -> authorize -> token -> /mcp (official SDK client) -> refre
   assert.equal(tokenResp.statusCode, 200);
   const { access_token: accessToken, refresh_token: refreshToken } = tokenResp.json<{ access_token: string; refresh_token: string }>();
 
-  // --- /mcp call via the OFFICIAL MCP SDK client, presenting the bridge-minted token ---
-  const fetchShim = async (url: URL | string, init?: { method?: string; headers?: unknown; body?: unknown }): Promise<Response> => {
-    const u = url instanceof URL ? url : new URL(String(url));
-    const headers: Record<string, string> = {};
-    const src = init?.headers;
-    if (src instanceof Headers) src.forEach((v, k) => { headers[k] = v; });
-    else if (src && typeof src === "object") for (const [k, v] of Object.entries(src as Record<string, string>)) headers[k] = v;
-    const method = (init?.method ?? "POST") as "POST";
-    const payload = init?.body === undefined || init?.body === null
-      ? undefined
-      : typeof init.body === "string" ? init.body : JSON.stringify(init.body);
-    const r = await app.inject(payload === undefined ? { method, url: u.pathname + u.search, headers } : { method, url: u.pathname + u.search, headers, payload }) as unknown as { statusCode: number; headers: Record<string, string>; body: string };
-    return new Response(r.body, { status: r.statusCode, headers: r.headers });
-  };
-  const transport = new StreamableHTTPClientTransport(new URL(RESOURCE), { fetch: fetchShim as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
+  // --- /mcp call via the OFFICIAL MCP SDK client over a REAL loopback socket,
+  //     presenting the bridge-minted token. (The inject-mock socket lacks
+  //     destroySoon(); the SDK server transport's forceClose timer throws on it
+  //     ~500 ms later — issue #66. A real listen() socket has destroySoon().) ---
+  const base = await app.listen({ port: 0, host: "127.0.0.1" });
+  const transport = new StreamableHTTPClientTransport(new URL(new URL(RESOURCE).pathname, base), { fetch: networkFetch, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
   const client = new Client({ name: "verify-gate", version: "0.0.1" }, { capabilities: {} });
-  await client.connect(transport);
-  const result = await client.callTool({ name: "ping", arguments: {} });
-  assert.equal(result.isError ?? false, false); // success (isError omitted/undefined on success)
-  const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
-  assert.equal(text, `pong: ${SUBJECT}`); // the bridge-minted token carried the verified subject
-  await client.close();
-  await transport.close();
+  try {
+    await withTimeout(client.connect(transport), 10_000, "MCP client connect");
+    const result = await withTimeout(client.callTool({ name: "ping", arguments: {} }), 10_000, "MCP client callTool");
+    assert.equal(result.isError ?? false, false); // success (isError omitted/undefined on success)
+    const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
+    assert.equal(text, `pong: ${SUBJECT}`); // the bridge-minted token carried the verified subject
+  } finally {
+    await client.close();
+    await transport.close();
+  }
 
   // --- refresh rotates; replay revokes the family; revoke is always 200 ---
   const refreshed = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId }).toString() });

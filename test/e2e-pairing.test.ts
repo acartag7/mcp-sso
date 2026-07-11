@@ -45,22 +45,44 @@ function extractCode(text: string): string {
   return m[1]!.replace(/-/g, "");
 }
 
-/** A fetch shim that routes the MCP SDK client through the in-process Fastify
- *  app (so a test can call protected /mcp without a TCP socket). */
-function sdkFetchShim(app: { inject(args: unknown): Promise<unknown> }): typeof fetch {
-  return (async (url: URL | string, init?: { method?: string; headers?: unknown; body?: unknown }): Promise<Response> => {
-    const u = url instanceof URL ? url : new URL(String(url));
-    const headers: Record<string, string> = {};
-    const src = init?.headers;
-    if (src instanceof Headers) src.forEach((v, k) => { headers[k] = v; });
-    else if (src && typeof src === "object") for (const [k, v] of Object.entries(src as Record<string, string>)) headers[k] = v;
-    const method = (init?.method ?? "POST") as "POST";
-    const payload = init?.body === undefined || init?.body === null
-      ? undefined
-      : typeof init.body === "string" ? init.body : JSON.stringify(init.body);
-    const r = await app.inject(payload === undefined ? { method, url: u.pathname + u.search, headers } : { method, url: u.pathname + u.search, headers, payload }) as unknown as { statusCode: number; headers: Record<string, string>; body: string };
-    return new Response(r.body, { status: r.statusCode, headers: r.headers });
-  }) as typeof fetch;
+/** Real fetch captured at module load — before any test stubs globalThis.fetch.
+ *  The SDK /mcp call must hit the real loopback server, not a per-test fetch stub. */
+const networkFetch = globalThis.fetch.bind(globalThis) as typeof fetch;
+
+/** Race a promise against a hard deadline. The MCP SDK transport overrides
+ *  requestInit.signal with its own AbortController.signal, so the abort lever is
+ *  transport.close() in the caller's finally, not a bounded requestInit.signal. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
+/** Drive protected /mcp via the OFFICIAL MCP SDK client over a REAL loopback socket.
+ *  Fastify's app.inject() socket is a light-my-request mock without destroySoon(); the
+ *  SDK server transport's @hono/node-server adapter schedules a forceClose timer
+ *  (~400-500 ms after the request) that calls socket.destroySoon(), and the mock's
+ *  throw lands as a post-test uncaught exception under suite load (issue #66). A real
+ *  app.listen() socket has destroySoon() and a real lifecycle (closer to production).
+ *  The OAuth/browser legs stay on inject(); only this final SDK /mcp call uses the
+ *  real socket. Mirrors the proven pattern in integration-upstream-redirect.test.ts. */
+async function callProtectedMcp(
+  app: { listen(opts: { port: number; host: string }): Promise<string> },
+  resource: string, accessToken: string, expectedSubject: string,
+): Promise<void> {
+  const base = await app.listen({ port: 0, host: "127.0.0.1" });
+  const transport = new StreamableHTTPClientTransport(new URL(new URL(resource).pathname, base), { fetch: networkFetch, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
+  const client = new Client({ name: "verify-gate-pairing", version: "0.0.1" }, { capabilities: {} });
+  try {
+    await withTimeout(client.connect(transport), 10_000, "MCP client connect");
+    const result = await withTimeout(client.callTool({ name: "ping", arguments: {} }), 10_000, "MCP client callTool");
+    const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
+    assert.equal(text, `pong: ${expectedSubject}`, "the pairing-resolved subject reached /mcp");
+  } finally {
+    await client.close();
+    await transport.close();
+  }
 }
 
 test("S1b.8: pairing flow (buildApp pairing mode) — code → consent → token → /mcp; JSONL audit has events and no secrets", async () => {
@@ -140,15 +162,9 @@ test("S1b.8: pairing flow (buildApp pairing mode) — code → consent → token
     assert.equal(tokenResp.statusCode, 200);
     const { access_token: accessToken } = tokenResp.json<{ access_token: string }>();
 
-    // 5. Protected /mcp via the OFFICIAL MCP SDK client.
-    const transport = new StreamableHTTPClientTransport(new URL(RESOURCE), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
-    const client = new Client({ name: "verify-gate-pairing", version: "0.0.1" }, { capabilities: {} });
-    await client.connect(transport);
-    const result = await client.callTool({ name: "ping", arguments: {} });
-    const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
-    assert.equal(text, `pong: ${SUBJECT}`); // the pairing-resolved subject reaches /mcp
-    await client.close();
-    await transport.close();
+    // 5. Protected /mcp via the OFFICIAL MCP SDK client over a real loopback socket
+    //    (the inject-mock socket lacks destroySoon() — see callProtectedMcp / #66).
+    await callProtectedMcp(app, RESOURCE, accessToken, SUBJECT); // the pairing-resolved subject reaches /mcp
 
     // 6. JSONL audit: has the pairing event + the v0.1 flow events; no raw secrets/code.
     const raw = await readFile(auditPath, "utf8");
@@ -252,16 +268,10 @@ test("S1b.8 (zero-config boot): quickstart secrets (NO env config) drive the pai
     const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: REDIRECT, client_id: clientId, code_verifier: verifier }).toString() });
     const { access_token: accessToken } = tokenResp.json<{ access_token: string }>();
 
-    // Protected /mcp via the OFFICIAL MCP SDK client — the literal zero-config e2e
-    // (RequestAuthorizer + MCP transport accept the quickstart-signed token).
-    const transport = new StreamableHTTPClientTransport(new URL(RESOURCE), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
-    const client = new Client({ name: "zero-config-verify", version: "0.0.1" }, { capabilities: {} });
-    await client.connect(transport);
-    const result = await client.callTool({ name: "ping", arguments: {} });
-    const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
-    assert.equal(text, `pong: ${SUBJECT}`);
-    await client.close();
-    await transport.close();
+    // Protected /mcp via the OFFICIAL MCP SDK client over a real loopback socket —
+    // the literal zero-config e2e (RequestAuthorizer + MCP transport accept the
+    // quickstart-signed token).
+    await callProtectedMcp(app, RESOURCE, accessToken, SUBJECT);
 
     await app.close();
     await store.close();
