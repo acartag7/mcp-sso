@@ -167,6 +167,13 @@ const GITIGNORE = `node_modules/
 .mcp-sso/
 `;
 
+// Harden the install: no dependency lifecycle/postinstall scripts run unless the operator
+// explicitly vets one (the project's supply-chain posture — install scripts are a primary
+// npm supply-chain vector). mcp-sso + fastify + the MCP SDK are pure JS (no scripts), so
+// this is the safe default; remove the line only if a dep you've vetted needs a script.
+const NPMRC = `ignore-scripts=true
+`;
+
 function readme(vars: TemplateVars): string {
   return `# ${vars.name}
 
@@ -177,9 +184,13 @@ MCP server, zero-setup (console pairing: no identity provider, no keys to genera
 
 \`\`\`bash
 npm install
-npm start   # boots the server (loopback). It prints a one-time code ONLY when a client connects.
+
+# Terminal 1 — the server (stays foreground):
+npm start
+
+# Terminal 2 — once the server is up (it prints a one-time code ONLY when a client connects):
 claude mcp add --transport http my-bridge http://localhost:3000/mcp
-# → the server prints the code to its console; a browser opens — paste the code, approve.
+# → the server prints the code to Terminal 1; a browser opens — paste the code, approve.
 \`\`\`
 
 The server binds loopback (127.0.0.1) by default — the printed pairing code is the
@@ -202,6 +213,7 @@ export function templateFiles(vars: TemplateVars): TemplateFile[] {
     { path: "package.json", content: packageJson(vars) },
     { path: "server.ts", content: SERVER_TS },
     { path: ".gitignore", content: GITIGNORE },
+    { path: ".npmrc", content: NPMRC },
     { path: "README.md", content: readme(vars) },
   ];
 }

@@ -18,6 +18,9 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { pkceChallenge } from "../src/crypto.ts";
 import { run } from "../src/bin/init.ts";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
@@ -32,6 +35,10 @@ let distEnsured = false;
 async function ensureDist(): Promise<void> {
   if (distEnsured) return;
   distEnsured = true;
+  // Clean build (rm dist first, like `pnpm build`): a bare `tsc` overwrites current
+  // outputs but leaves stale files from deleted source modules, which could let a
+  // removed subpath still resolve locally. Start from a clean dist.
+  await rm(join(REPO, "dist"), { recursive: true, force: true });
   const tsc = join(REPO, "node_modules", "typescript", "bin", "tsc");
   const res = await new Promise<{ code: number | null; out: string }>((resolveP) => {
     const p = spawn("node", [tsc, "-p", join(REPO, "tsconfig.build.json")], { cwd: REPO, stdio: ["ignore", "pipe", "pipe"] });
@@ -53,7 +60,7 @@ test("bin init: scaffolds 4 files with a valid, exact-pinned package.json", asyn
   const dir = await mkdtemp(join(tmpdir(), "mcp-sso-init-unit-"));
   try {
     const written = await scaffold(dir);
-    assert.deepEqual(written.sort(), [".gitignore", "README.md", "package.json", "server.ts"].sort());
+    assert.deepEqual(written.sort(), [".gitignore", ".npmrc", "README.md", "package.json", "server.ts"].sort());
     for (const f of written) assert.ok(existsSync(join(dir, f)), `${f} written`);
 
     const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as Record<string, unknown>;
@@ -162,39 +169,94 @@ function waitFor(child: ChildProcess, regex: RegExp, timeoutMs: number): Promise
   });
 }
 
-test("bin init (spawn): scaffolded server boots + serves discovery/register/mcp challenge", async () => {
+test("bin init (spawn): full pairing round-trip — register → code → consent → token → SDK callTool", async () => {
+  // The automated done-bar: a stranger's `npx mcp-sso init && npm install && npm start`
+  // boots a server an operator pairs with via a console code, then an MCP client calls a
+  // protected tool. Drives the WHOLE flow (not just the tokenless challenge) through the
+  // OFFICIAL SDK client against the spawned generated server.
   await ensureDist();
   const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-spawn-"));
   const proj = join(base, "proj");
-  const dir = join(base, "state"); // does NOT exist — loadOrCreateQuickstartSecrets creates it
+  const stateDir = join(base, "state");
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
+  const redirect = "http://localhost:4321/callback";
+  const subject = "console-operator"; // the default pairing subject
   try {
-    await spawnScaffold(proj); // node dist/bin/init.js init <proj>
-    await linkDeps(proj);      // node_modules/{mcp-sso,fastify,@modelcontextprotocol} → repo
+    await spawnScaffold(proj);
+    await linkDeps(proj);
     const child = spawn("node", ["server.ts"], {
       cwd: proj,
-      env: { ...process.env, MCP_SSO_DIR: dir, PORT: String(port), HOST: "127.0.0.1" },
+      // OAUTH_ISSUER = the bound address so issuer/resource/origin are consistent (the
+      // default issuer is http://localhost:PORT, but `localhost` may resolve to IPv6 ::1
+      // against a 127.0.0.1 bind; pin the issuer to 127.0.0.1 for a reliable round-trip).
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "127.0.0.1", OAUTH_ISSUER: origin },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    let stderrBuf = "";
+    child.stderr?.on("data", (c: Buffer) => { stderrBuf += c.toString(); });
     try {
       await waitFor(child, new RegExp(`mcp-sso listening on 127.0.0.1:${port}`), 15_000);
-      const prm = await fetch(`${origin}/.well-known/oauth-protected-resource`, { signal: AbortSignal.timeout(10_000) });
+
+      // discovery + register
+      const prm = await fetchBounded(`${origin}/.well-known/oauth-protected-resource`);
       assert.equal(prm.status, 200, "PRM discovery served");
-      const reg = await fetch(`${origin}/oauth/register`, {
+      const reg = await fetchBounded(`${origin}/oauth/register`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ redirect_uris: ["http://localhost:4321/callback"] }),
-        signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ redirect_uris: [redirect] }),
       });
       assert.equal(reg.status, 201, "DCR register works");
-      assert.match((await reg.json() as { client_id: string }).client_id, /^mcpdc_/, "real client_id");
-      const mcp = await fetch(`${origin}/mcp`, {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }),
-        signal: AbortSignal.timeout(10_000),
+      const clientId = (await reg.json() as { client_id: string }).client_id;
+      assert.match(clientId, /^mcpdc_/, "real client_id");
+
+      // GET /oauth/authorize → the server prints the pairing code to stderr + returns the page
+      const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
+      const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirect, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
+      const authPage = await fetchBounded(`${origin}/oauth/authorize?${q}`);
+      assert.equal(authPage.status, 200);
+      const authHtml = await authPage.text();
+      const nonce = extractField(authHtml, "pairing_nonce");
+      const code = extractCode(stderrBuf); // printed by the GET (lazy, on /oauth/authorize)
+      assert.ok(code, "the server printed a pairing code after /oauth/authorize");
+
+      // POST the code → consent page; approve → auth code; exchange → access token
+      const consentPage = await fetchBounded(`${origin}/oauth/authorize`, {
+        method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: nonce }).toString(),
       });
-      assert.equal(mcp.status, 401, "tokenless /mcp → 401");
-      assert.match(mcp.headers.get("www-authenticate") ?? "", /^Bearer resource_metadata=/, "RFC 9728 challenge");
+      assert.equal(consentPage.status, 200, "code accepted → consent page");
+      const consentToken = extractField(await consentPage.text(), "consent_token");
+      const approve = await fetchBounded(`${origin}/oauth/authorize/approve`, {
+        method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", origin: origin },
+        body: new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString(),
+      });
+      assert.equal(approve.status, 302, "approve → 302 with an auth code");
+      const authCode = new URL(approve.headers.get("location") ?? "").searchParams.get("code");
+      assert.ok(authCode, "auth code in the redirect");
+      const tokenResp = await fetchBounded(`${origin}/oauth/token`, {
+        method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: redirect, client_id: clientId, code_verifier: verifier }).toString(),
+      });
+      assert.equal(tokenResp.status, 200, "token exchange");
+      const accessToken = (await tokenResp.json() as { access_token: string }).access_token;
+
+      // The protected /mcp via the OFFICIAL MCP SDK client with the bridge-minted token.
+      const transport = new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), { requestInit: { headers: { authorization: `Bearer ${accessToken}` } } });
+      const client = new Client({ name: "init-done-bar", version: "0.0.1" }, { capabilities: {} });
+      try {
+        await withTimeout(client.connect(transport), 10_000, "MCP client connect");
+        const result = await withTimeout(client.callTool({ name: "ping", arguments: {} }), 10_000, "MCP client callTool");
+        const text = (result.content as Array<{ type: string; text?: string }>).find((c) => c.type === "text")?.text;
+        assert.equal(text, `pong: ${subject}`, "the pairing-resolved subject reached the protected tool — full round-trip");
+      } finally {
+        await client.close();
+        await transport.close();
+      }
+
+      // Tokenless /mcp is still 401 + the RFC 9728 challenge (the resource-server leg).
+      const mcp = await fetchBounded(`${origin}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }) });
+      assert.equal(mcp.status, 401);
+      assert.match(mcp.headers.get("www-authenticate") ?? "", /^Bearer resource_metadata=/);
     } finally {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); }
     }
@@ -202,6 +264,28 @@ test("bin init (spawn): scaffolded server boots + serves discovery/register/mcp 
     await rm(base, { recursive: true, force: true });
   }
 });
+
+function extractField(html: string, name: string): string {
+  const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
+  assert.ok(m?.[1], `hidden field ${name} not found`);
+  return m![1];
+}
+
+function extractCode(stderr: string): string | undefined {
+  const m = /\[mcp-sso\] Console pairing code: ([A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4})/.exec(stderr);
+  return m?.[1];
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolveP, rejectP) => {
+    const t = setTimeout(() => rejectP(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then((v) => { clearTimeout(t); resolveP(v); }, (e) => { clearTimeout(t); rejectP(e); });
+  });
+}
+
+async function fetchBounded(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
+}
 
 test("bin init: the published bin has a node shebang (npx exec needs it)", async () => {
   await ensureDist();

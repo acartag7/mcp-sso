@@ -975,7 +975,9 @@ versions mcp-sso is tested against, recorded in `docs/dependency-ledger.md`; Nod
 root exports + the `./fastify`, `./store/sqlite`, `./identity/console-pairing` subpaths
 — quickstart secrets + console pairing + sqlite + the `/mcp` Streamable-HTTP Origin
 gate + a protected `/mcp`, zero-setup loopback by default); `.gitignore`
-(`node_modules/` + the `.mcp-sso/` state dir); and `README.md` (the run steps +
+(`node_modules/` + the `.mcp-sso/` state dir); `.npmrc` (`ignore-scripts=true` —
+dependency lifecycle scripts disabled unless the operator vets one, the project's
+supply-chain posture); and `README.md` (the run steps +
 pointers to `docs/gateway-deployment.md` / `docs/live-verification.md` for production
 identity providers). The init binary itself is **dep-free** (node builtins only) — it
 adds nothing to the `jose`-only runtime. It refuses to overwrite an existing file
