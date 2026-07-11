@@ -110,6 +110,21 @@ test("bin init: the literal `init` subcommand is required", async () => {
   }
 });
 
+test("bin init: the printed `cd` is POSIX shell-escaped (spaces + metacharacters)", async () => {
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-shellquote-"));
+  const target = join(base, "My Server"); // a space — unquoted `cd` would split here
+  try {
+    const orig = console.log;
+    let captured = "";
+    console.log = ((s: string) => { captured += s; }) as typeof console.log;
+    try { await run(["node", "init.ts", "init", target]); }
+    finally { console.log = orig; }
+    assert.ok(captured.includes(`cd '${target}'`), "the cd target is single-quoted (POSIX shell-escape), safe for spaces/metacharacters");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test("bin init: the generated server.ts typechecks against the built package (tsc --noEmit)", async () => {
   // The generated server.ts imports `mcp-sso` (the package), so type-checking it needs
   // the built .d.ts — the package's exports point at ./dist, and tsc (nodenext) won't

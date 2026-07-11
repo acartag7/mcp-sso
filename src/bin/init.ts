@@ -52,6 +52,12 @@ async function exists(path: string): Promise<boolean> {
   try { await lstat(path); return true; } catch { return false; }
 }
 
+/** POSIX shell-escape a path for safe copy-paste in a printed command: single-quote +
+ *  escape embedded single quotes. Survives spaces, `"`, `$()`, backticks, and `'`. */
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
 /** Atomically create `path` with `content`, refusing to overwrite or follow a symlink. */
 async function writeExclusive(path: string, content: string): Promise<void> {
   let fh;
@@ -103,7 +109,7 @@ export async function run(argv: string[]): Promise<string[]> {
 
   console.log(`mcp-sso init: wrote ${files.length} files to ${dir}:`);
   for (const f of files) console.log(`  ${f.path}`);
-  console.log(`\nNext:\n  cd "${dir}"\n  npm install\n  npm start        # terminal 1 — the server (stays foreground)\n  # in ANOTHER terminal (server running) — it prints a one-time code when a client connects:\n  claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp\n  # the server prints the code to terminal 1; a browser opens — paste the code, approve.`);
+  console.log(`\nNext:\n  cd ${shellQuote(dir)}\n  npm install\n  npm start        # terminal 1 — the server (stays foreground)\n  # in ANOTHER terminal (server running) — it prints a one-time code when a client connects:\n  claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp\n  # the server prints the code to terminal 1; a browser opens — paste the code, approve.`);
   return written;
 }
 
