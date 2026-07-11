@@ -39,7 +39,7 @@ optional peer that a consumer opts into.
 |---|---|---|---|---|---|
 | [`typescript`](https://www.typescriptlang.org/) | `6.0.3` | 2026-04-16 | 79d | ✅ | Type-checking + the publish `tsc` build. (7.0.1-rc skipped — RC.) |
 | [`@types/node`](https://www.npmjs.com/package/@types/node) | `24.13.2` | 2026-06-10 | 24d | ✅ | Node 24 typings; matches the `engines.node >=24` target. |
-| [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | 96d | ✅ | The official MCP SDK — used **only** in tests/the Phase 4 example as the real client for the end-to-end verify gate. Not a runtime dep. |
+| [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | 96d | ✅ | The official MCP SDK — used in tests/the Phase 4 example (the end-to-end verify client) AND as a runtime dep of every server scaffolded by `npx mcp-sso init` (§15), pinned there at this same version. Not a runtime dep of the mcp-sso package itself (jose-only). |
 | [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | 81d | ✅ | Reference framework adapter — dev/test + optional peer. (Latest `5.9.0` is 5d — rejected.) |
 | [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | 215d | ✅ | Framework adapter — dev/test + optional peer. |
 | [`hono`](https://hono.dev/) | `4.12.26` | 2026-06-18 | 16d | ✅ | Framework adapter — dev/test + optional peer. (Latest `4.12.27` is 10d — rejected.) |

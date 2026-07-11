@@ -1859,8 +1859,8 @@ gate replaces no-gate).
 - Env-var configuration remains the primary production path; this is the
   zero-setup path (same audience as 17.5). Threat-model entry: plaintext key
   material on disk, boundary = the OS user account; production belongs in
-  env/secret managers. (`npx mcp-sso init` remains a possible wrapper later;
-  the function is the contract.)
+  env/secret managers. (`npx mcp-sso init` is now implemented — §15 "Init CLI" —
+  scaffolding a server that uses this helper; the function remains the contract.)
 - **Filesystem-trust bar (the quickstart reference — every state-dir code path
   meets this):** writes are `0600` (files) / `0700` (dirs) with `O_EXCL` for
   create-don't-clobber; reads of trusted content go through `open(O_NOFOLLOW |

@@ -22,14 +22,16 @@ import { run } from "../src/bin/init.ts";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const DIST_INIT = join(REPO, "dist", "bin", "init.js");
-const hasDist = (): boolean => existsSync(DIST_INIT);
 
 /** The compile + spawn tests need the BUILT dist (the generated server imports the
  *  `mcp-sso` package, whose exports point at ./dist; tsc/node won't follow .ts source).
- *  Build it if absent so these run in the plain `pnpm test` gate (which precedes build)
- *  — a one-time ~3s `tsc -p tsconfig.build.json`, not a side effect a consumer sees. */
+ *  Build it ONCE per test process — always fresh, never the stale dist a developer may
+ *  have left from a prior edit (the test gate runs before `pnpm build`, so building here
+ *  is what makes these tests exercise the CURRENT source). */
+let distEnsured = false;
 async function ensureDist(): Promise<void> {
-  if (hasDist()) return;
+  if (distEnsured) return;
+  distEnsured = true;
   const tsc = join(REPO, "node_modules", "typescript", "bin", "tsc");
   const res = await new Promise<{ code: number | null; out: string }>((resolveP) => {
     const p = spawn("node", [tsc, "-p", join(REPO, "tsconfig.build.json")], { cwd: REPO, stdio: ["ignore", "pipe", "pipe"] });
@@ -241,6 +243,22 @@ test("bin init: refuses a symlink in the target (no write outside the target via
     await symlink(join(base, "elsewhere.txt"), join(target, "server.ts")); // dangling symlink at a scaffold path
     await assert.rejects(scaffold(target), /refusing to overwrite.*server\.ts/, "a symlink at a scaffold path is refused up front (lstat no-follow), not followed");
     assert.equal(existsSync(join(target, "package.json")), false, "no partial scaffold — nothing written before the refusal");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init: refuses a symlinked target directory (writes must not follow it)", { skip: process.platform === "win32" }, async () => {
+  // O_NOFOLLOW protects only the final file component, not the target dir itself — so a
+  // symlinked target would let writes follow it into the real dir. lstat the target.
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-symlinktargetdir-"));
+  const real = join(base, "real");
+  const link = join(base, "link"); // symlink → an empty real dir
+  try {
+    await mkdir(real);
+    await symlink(real, link);
+    await assert.rejects(run(["node", "init.ts", "init", link]), /symlink; point mcp-sso init at a real directory/);
+    assert.equal(existsSync(join(real, "package.json")), false, "nothing written through the symlinked target");
   } finally {
     await rm(base, { recursive: true, force: true });
   }

@@ -74,6 +74,15 @@ export async function run(argv: string[]): Promise<string[]> {
   const { target, help } = parseArgs(argv);
   if (help) { console.log(HELP); return []; }
   const dir = resolve(target);
+  // Refuse a symlinked TARGET dir: O_NOFOLLOW protects only the final file component,
+  // not the target dir itself, so writes would follow a symlinked target out of it.
+  try {
+    if ((await lstat(dir)).isSymbolicLink()) {
+      throw new Error(`${dir} is a symlink; point mcp-sso init at a real directory (writes must not follow the target).`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; // ENOENT is fine — mkdir creates it
+  }
   const name = basename(dir) || "mcp-sso-server";
   const files = templateFiles({ mcpSsoVersion: ownVersion(), name });
 
@@ -94,7 +103,7 @@ export async function run(argv: string[]): Promise<string[]> {
 
   console.log(`mcp-sso init: wrote ${files.length} files to ${dir}:`);
   for (const f of files) console.log(`  ${f.path}`);
-  console.log(`\nNext:\n  cd ${dir}\n  npm install\n  npm start  # paste the printed one-time code, then:\n  claude mcp add --transport http my-bridge http://localhost:3000/mcp`);
+  console.log(`\nNext:\n  cd ${dir}\n  npm install\n  npm start   # boots the server. It prints a one-time code ONLY when a client connects:\n  claude mcp add --transport http my-bridge http://localhost:3000/mcp\n  # the server prints the code to its console; a browser opens — paste the code, approve.`);
   return written;
 }
 

@@ -177,10 +177,9 @@ MCP server, zero-setup (console pairing: no identity provider, no keys to genera
 
 \`\`\`bash
 npm install
-npm start
-# → prints a one-time code to the console (console-pairing identity).
+npm start   # boots the server (loopback). It prints a one-time code ONLY when a client connects.
 claude mcp add --transport http my-bridge http://localhost:3000/mcp
-# → a browser opens to the consent page; approve; the tool is callable.
+# → the server prints the code to its console; a browser opens — paste the code, approve.
 \`\`\`
 
 The server binds loopback (127.0.0.1) by default — the printed pairing code is the
