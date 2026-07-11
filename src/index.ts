@@ -83,8 +83,11 @@ export { JsonlFileAudit, createJsonlFileAudit } from "./audit/jsonl-file.ts";
 export { WebhookAudit, createWebhookAudit, type WebhookAuditOptions } from "./audit/webhook.ts";
 export { combineAudit } from "./audit/combine.ts";
 // Quickstart secret persistence (§17.8) — dep-free boot helper (jose + node
-// builtins), so it ships from the root entry like the audit sinks.
-export { loadOrCreateQuickstartSecrets, type QuickstartSecrets, type QuickstartOptions } from "./quickstart.ts";
+// builtins), so it ships from the root entry like the audit sinks. ensureGitignore +
+// assertRealDir are the state-dir security controls a consumer managing its own dir
+// (the CF/Entra/gateway path) must apply — co-exported so the bar is reused, not
+// reimplemented (contracts §15 DX).
+export { loadOrCreateQuickstartSecrets, ensureGitignore, assertRealDir, type QuickstartSecrets, type QuickstartOptions } from "./quickstart.ts";
 // Console-pairing authorize surface (§17.5) — framework-free, so root-exported.
 // A consumer pairs these with the `./identity/console-pairing` subpath identity
 // and the `skipAuthorize` option on the framework adapters.
@@ -95,6 +98,12 @@ export { renderPairingPage, type PairingPageInput } from "./adapters/pairing-pag
 // (e.g. createEntraRedirectIdentity via ./identity/entra) and the `upstream`
 // option on the framework adapters.
 export { createUpstreamRedirectFlow, type UpstreamRedirectFlow, type UpstreamFlowDeps } from "./adapters/upstream-flow.ts";
+// assertCallbackPath — the upstream callback-path validator (§17.11): starts with
+// '/', is not a reserved OAuth route, and equals issuerOrigin + callbackPath.
+// Root-exported so a consumer can run the example's early-fail boot validation
+// before state-dir creation (contracts §15 DX). Lives in the -internals module but
+// is public surface via this re-export.
+export { assertCallbackPath } from "./adapters/upstream-flow-internals.ts";
 // The framework-free Bridge — the central class a consumer constructs and passes
 // to a framework adapter (root-exported so `import { Bridge } from "mcp-sso"` works;
 // previously only the adapters reached it internally).
@@ -103,8 +112,11 @@ export { Bridge, type BridgeDeps } from "./adapters/bridge.ts";
 // onRequest Origin-gate hook (DNS-rebinding protection that runs BEFORE the bearer
 // check + for every method) scopes to MCP paths via isMcpPath(request.url); see
 // examples/fastify-sqlite. Root-exported so adopters of the recommended Origin-gate
-// pattern import it from the package root, not an internal adapter path.
-export { isMcpPath } from "./adapters/http.ts";
+// pattern import it from the package root, not an internal adapter path. NormRequest
+// / NormResponse are the normalized shapes the framework-free surface speaks — the
+// types handlePairingAuthorize + createUpstreamRedirectFlow take/return — so a
+// consumer mounting those surfaces can type-check them (contracts §15 DX).
+export { isMcpPath, type NormRequest, type NormResponse } from "./adapters/http.ts";
 export {
   type StorePort, type AuthCodeRecord, type RefreshTokenRecord,
   type SaveAuthCodeInput, type SaveRefreshTokenInput,

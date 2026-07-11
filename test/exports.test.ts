@@ -4,7 +4,10 @@
 // get the console-pairing identity but not the helper that makes it mountable.
 
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -18,8 +21,13 @@ import {
   combineAudit,
   createUpstreamRedirectFlow,
   isMcpPath,
+  assertCallbackPath,
+  ensureGitignore,
+  assertRealDir,
   type UpstreamRedirectFlow,
   type RedirectIdentityPort,
+  type NormRequest,
+  type NormResponse,
 } from "../src/index.ts";
 
 const pkgPath = fileURLToPath(new URL("../package.json", import.meta.url));
@@ -35,8 +43,33 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   assert.equal(typeof combineAudit, "function");
   assert.equal(typeof createUpstreamRedirectFlow, "function", "createUpstreamRedirectFlow (§17.11) is root-exported");
   assert.equal(typeof isMcpPath, "function", "isMcpPath (/mcp Origin-gate path check) is root-exported");
+  assert.equal(typeof assertCallbackPath, "function", "assertCallbackPath (§17.11 callback-path validator) is root-exported");
+  assert.equal(typeof ensureGitignore, "function", "ensureGitignore (state-dir .gitignore control) is root-exported");
+  assert.equal(typeof assertRealDir, "function", "assertRealDir (state-dir fs-trust bar) is root-exported");
   void (null as unknown as UpstreamRedirectFlow); // type reachable
   void (null as unknown as RedirectIdentityPort); // type reachable
+  void (null as unknown as NormRequest); // type reachable (the shapes handlePairingAuthorize/createUpstreamRedirectFlow take/return)
+  void (null as unknown as NormResponse);
+});
+
+test("exports: the consumer-facing example helpers (§15 DX) behave as the contract claims", async () => {
+  // A package consumer replicating the example's patterns imports these from the
+  // root; assert they work, not just that they exist (claims-vs-enforcement).
+  // assertCallbackPath: a valid path is accepted; a reserved OAuth route + a
+  // non-rooted path are rejected (the early-fail boot validation the example runs).
+  assertCallbackPath("/google/callback", "https://bridge.test", "/mcp"); // ok — no throw
+  assert.throws(() => { assertCallbackPath("/oauth/token", "https://bridge.test", "/mcp"); }, /reserved route/);
+  assert.throws(() => { assertCallbackPath("google/callback", "https://bridge.test", "/mcp"); }, /must start with '\/'/);
+
+  // ensureGitignore: writes the managed `*` ignore into a fresh dir (canCreate).
+  const dir = await mkdtemp(join(tmpdir(), "mcp-sso-exports-dx-"));
+  try {
+    await ensureGitignore(dir, true);
+    const written = await readFile(join(dir, ".gitignore"), "utf8");
+    assert.equal(written, "*\n", "ensureGitignore wrote the managed ignore so secrets are not committed");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("exports: renderPairingPage emits the nonce + round-tripped OAuth params, never a code", () => {

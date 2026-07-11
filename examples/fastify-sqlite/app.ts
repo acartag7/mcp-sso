@@ -26,10 +26,9 @@
 // Root-exported from `mcp-sso` (consumers import these from the root, not `../../src`):
 //   Bridge, RequestAuthorizer, createBridgeConfig, buildUnauthorizedChallenge, OAuthError,
 //   SystemClock, JsonlFileAudit, originOf, loadOrCreateQuickstartSecrets,
-//   handlePairingAuthorize, createUpstreamRedirectFlow, isMcpPath.
-// NOT exported — internal helpers a package consumer replicating this example must
-// reimplement until the DX export surface firms up (see src/index.ts + contracts §15):
-//   NormRequest / NormResponse, assertCallbackPath, ensureGitignore, assertRealDir.
+//   handlePairingAuthorize, createUpstreamRedirectFlow, isMcpPath,
+//   NormRequest / NormResponse, assertCallbackPath, ensureGitignore, assertRealDir
+//   (the last five are the consumer-facing example helpers — contracts §15 DX).
 
 import Fastify, { type FastifyReply } from "fastify";
 import { chmod, mkdir } from "node:fs/promises";

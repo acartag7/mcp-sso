@@ -964,6 +964,24 @@ root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recomme
 Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in
 [`docs/audit-deployment.md`](./audit-deployment.md).
 
+**Consumer-facing example helpers (DX):** five symbols the in-repo example leans on
+to implement the recommended patterns are root-exported, so a package consumer
+replicating those patterns imports them from `mcp-sso` instead of reimplementing
+them (and re-opening the footguns they centralize): the normalized request/response
+shapes `NormRequest` and `NormResponse` (co-exported with `isMcpPath` — the types
+the already-exported `handlePairingAuthorize` and `createUpstreamRedirectFlow`
+take/return, so a consumer mounting the pairing surface or an upstream callback can
+type-check them); the state-dir security controls `assertRealDir` (the fs-trust bar
+— rejects a symlink or group/other-accessible state dir so another local user cannot
+replace `auth.db`) and `ensureGitignore` (writes the managed `*` `.gitignore` so
+secrets are not committed), co-exported with `loadOrCreateQuickstartSecrets` so a
+consumer on the Cloudflare/Entra/gateway path — which manages its own state dir —
+applies the SAME bar; and `assertCallbackPath` (the upstream callback-path validator:
+starts with `/`, not a reserved OAuth route, equals `issuerOrigin + callbackPath`),
+co-exported with `createUpstreamRedirectFlow` for the example's early-fail boot
+validation. All five are dep-free (node builtins / pure string logic), so
+root-exporting them does not widen the `jose`-only runtime posture.
+
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —
 the install-time floor and the `docs/dependency-ledger.md` 15-day curation rule
