@@ -964,6 +964,33 @@ root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recomme
 Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in
 [`docs/audit-deployment.md`](./audit-deployment.md).
 
+**Consumer-facing example helpers (DX):** five symbols the in-repo example leans on
+to implement the recommended patterns are root-exported, so a package consumer
+replicating those patterns imports them from `mcp-sso` instead of reimplementing
+them (and re-opening the footguns they centralize): the normalized request/response
+shapes `NormRequest` and `NormResponse` (co-exported with `isMcpPath` — the types
+the already-exported `handlePairingAuthorize` and `createUpstreamRedirectFlow`
+take/return, so a consumer mounting the pairing surface or an upstream callback can
+type-check them); the state-dir security controls `ensureStateDir` (the ATOMIC
+helper — `mkdir 0o700` + `assertRealDir` + the managed `*` `.gitignore`, which a
+consumer on the Cloudflare/Entra/gateway path — managing its own state dir — applies
+for the SAME bar the example does; it derives whether the `.gitignore` may be created
+from `mkdir`'s return, so a caller cannot drop a `*` ignore into a pre-existing tree)
+and `assertRealDir` (the fs-trust bar alone — rejects a symlink or
+group/other-accessible state dir so another local user cannot replace `auth.db`),
+co-exported with `loadOrCreateQuickstartSecrets` (the raw `ensureGitignore(dir,
+canCreate)` stays internal — its caller-asserted boolean is a footgun); and `assertCallbackPath` (the upstream callback-PATH
+validator — a pure check that the pathname starts with `/`, is plain (no
+query/fragment/whitespace/control or dot-segments), normalizes to itself under the
+issuer origin, and is not a reserved OAuth route or the resource path), co-exported
+with `createUpstreamRedirectFlow`. It validates the PATH only — the
+`identity.redirectUri === issuerOrigin + callbackPath` equality is enforced
+separately, at mount, by `createUpstreamRedirectFlow` (and mirrored by the example's
+`assertUpstreamConfigBeforeState`); a consumer doing early-fail boot validation
+pairs `assertCallbackPath` with its own redirectUri equality check. All five are
+dep-free (node builtins / pure string logic), so root-exporting them does not widen
+the `jose`-only runtime posture.
+
 **Init CLI (`npx mcp-sso init`):** the package ships a `bin` — `mcp-sso init [target]`
 (default `.`) — that scaffolds a working zero-setup MCP server a stranger can boot with
 `npm install && npm start` and pair with via a console-printed one-time code (then
@@ -980,25 +1007,16 @@ dependency lifecycle scripts disabled unless the operator vets one, the project'
 supply-chain posture); and `README.md` (the run steps +
 pointers to `docs/gateway-deployment.md` / `docs/live-verification.md` for production
 identity providers). The init binary itself is **dep-free** (node builtins only) — it
-adds nothing to the `jose`-only runtime. It refuses to overwrite an existing file
-(fail closed — never clobber a consumer's work) and lists what it wrote. **Dependency
-posture:** the generated `package.json` pins the top-level deps **exactly** (the versions
-mcp-sso is tested against); the scaffold cannot ship a curated transitive lockfile (that
-needs network resolution at scaffold time), so the operator's `npm install` creates
+adds nothing to the `jose`-only runtime. It refuses to overwrite an existing file or
+follow a symlink (atomic `O_NOFOLLOW|O_EXCL|O_CREAT`; the target dir AND its existing
+ancestor chain are validated no-follow). **Dependency posture:** the generated
+`package.json` pins the top-level deps **exactly** (the versions mcp-sso is tested
+against); the scaffold cannot ship a curated transitive lockfile (that needs network
+resolution at scaffold time), so the operator's `npm install` creates
 `package-lock.json` (to commit) — locking the transitive graph at first install. The
 server is the zero-setup pairing path; a real IdP (Cloudflare Access / Entra / Google /
 OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded
 default — the done-bar is the pairing round-trip, not a production deploy.
-
-**Known follow-ups (the input-validation + filesystem-trust edge class):** the generated
-server validates the `PORT` range and treats blank env as missing, but two low-severity
-edges remain for a tightening pass: (a) it does not warn/require an explicit
-`OAUTH_ISSUER` when `HOST` is overridden to a non-loopback address (the issuer must equal
-the advertised host or RFC 9728 resource validation can fail); (b) the scaffolder refuses
-a symlinked target dir but not a symlinked *ancestor* (`mkdir -p` follows it; the per-file
-`O_NOFOLLOW` protects only the final component) — exploitable only via an attacker-controlled
-symlinked ancestor in the operator's own path. Recorded here because the §15 spec
-under-enumerated this class and review surfaced it round-by-round.
 
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —

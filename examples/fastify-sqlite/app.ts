@@ -26,13 +26,11 @@
 // Root-exported from `mcp-sso` (consumers import these from the root, not `../../src`):
 //   Bridge, RequestAuthorizer, createBridgeConfig, buildUnauthorizedChallenge, OAuthError,
 //   SystemClock, JsonlFileAudit, originOf, loadOrCreateQuickstartSecrets,
-//   handlePairingAuthorize, createUpstreamRedirectFlow, isMcpPath.
-// NOT exported — internal helpers a package consumer replicating this example must
-// reimplement until the DX export surface firms up (see src/index.ts + contracts §15):
-//   NormRequest / NormResponse, assertCallbackPath, ensureGitignore, assertRealDir.
+//   handlePairingAuthorize, createUpstreamRedirectFlow, isMcpPath,
+//   NormRequest / NormResponse, assertCallbackPath, ensureStateDir, assertRealDir
+//   (the last five are the consumer-facing example helpers — contracts §15 DX).
 
 import Fastify, { type FastifyReply } from "fastify";
-import { chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -45,7 +43,8 @@ import { SystemClock } from "../../src/ports/clock.ts";
 import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
 import { JsonlFileAudit } from "../../src/audit/jsonl-file.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
-import { loadOrCreateQuickstartSecrets, ensureGitignore, assertRealDir } from "../../src/quickstart.ts";
+import { loadOrCreateQuickstartSecrets } from "../../src/quickstart.ts";
+import { ensureStateDir } from "../../src/state-dir.ts";
 import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
 import { createEntraRedirectIdentity } from "../../src/identity/entra-redirect.ts";
 import { createGoogleRedirectIdentity, type GoogleConfig } from "../../src/identity/google.ts";
@@ -309,26 +308,6 @@ export function assertUpstreamConfigBeforeState(
   if (redirectUri !== issuerOrigin + callbackPath) {
     throw new AuthConfigError(`identity.redirectUri must equal issuerOrigin + callbackPath ('${issuerOrigin + callbackPath}')`);
   }
-}
-
-/** Ensure the state dir exists AND meets the full security bar — same bar the
- *  zero-setup branch gets from loadOrCreateQuickstartSecrets. Creates the dir 0700
- *  if absent; for a pre-existing dir, rejects a symlink or group/other-accessible
- *  mode (another local user could otherwise replace auth.db with state they
- *  control). Writes the managed `*` .gitignore into a dir we just made (or
- *  requires it already present + exact) so auth.db / audit.jsonl can't be committed.
- *
- *  Exported so the api-key-gateway example reuses the SAME fs-trust bar (the
- *  sibling-sweep rule — a control fixed in one path MUST be applied to every
- *  path that touches the state dir), not a second copy that could drift. */
-export async function ensureStateDir(dir: string): Promise<void> {
-  const created = await mkdir(dir, { recursive: true });
-  if (created !== undefined) {
-    if (process.platform !== "win32") await chmod(dir, 0o700);
-  } else {
-    await assertRealDir(dir); // pre-existing: real dir, not a symlink, not group/other-accessible
-  }
-  await ensureGitignore(dir, created !== undefined);
 }
 
 /** The standalone entry's wiring, factored out so it can be integration-tested

@@ -64,7 +64,12 @@ export function createRequestAuthorizer(deps: RequestAuthDeps): RequestAuthorize
 function bearerToken(header: string | string[] | undefined): string {
   const value = Array.isArray(header) ? header[0] : header;
   if (!value) throw new OAuthError("invalid_token", "Bearer token is required", 401);
-  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
+  // Capture a whitespace-free token68 (RFC 6750 §2.1: `Bearer 1*SP b64token`). The
+  // prior `(.+)` shared the space character with `\s+` (a `\s`/`.` overlap), the
+  // CodeQL js/polynomial-redos trigger; `\S+` is complementary to `\s`, so the two
+  // quantifiers cannot backtrack ambiguously. It is also stricter: a bearer value
+  // with internal whitespace is malformed and fails closed here (401).
+  const match = /^Bearer\s+(\S+)$/i.exec(value.trim());
   if (!match?.[1]) throw new OAuthError("invalid_token", "Bearer token is required", 401);
   return match[1];
 }

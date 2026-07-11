@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -423,23 +424,18 @@ function extractPairingCode(text: string): string {
   return m[1]!.replace(/-/g, "");
 }
 
-/** Route the official MCP SDK client through the in-process Fastify app (so a test
- *  can call protected /mcp without a TCP socket). Mirrors e2e-pairing's shim. */
-function sdkFetchShim(app: { inject(args: unknown): Promise<unknown> }): typeof fetch {
-  return (async (url: URL | string, init?: { method?: string; headers?: unknown; body?: unknown }): Promise<Response> => {
-    const u = url instanceof URL ? url : new URL(String(url));
-    const headers: Record<string, string> = {};
-    const src = init?.headers;
-    if (src instanceof Headers) src.forEach((v, k) => { headers[k] = v; });
-    else if (src && typeof src === "object") for (const [k, v] of Object.entries(src as Record<string, string>)) headers[k] = v;
-    const method = (init?.method ?? "POST") as "POST";
-    const payload = init?.body === undefined || init?.body === null
-      ? undefined
-      : typeof init.body === "string" ? init.body : JSON.stringify(init.body);
-    const r = await app.inject(payload === undefined ? { method, url: u.pathname + u.search, headers } : { method, url: u.pathname + u.search, headers, payload }) as unknown as { statusCode: number; headers: Record<string, string>; body: string };
-    return new Response(r.body, { status: r.statusCode, headers: r.headers });
-  }) as typeof fetch;
+/** A Fastify app that can both inject (in-process OAuth legs) and listen on a real
+ *  loopback socket (the SDK /mcp call). The minimal shape callProtectedMcp needs. */
+interface RealSocketApp {
+  inject(args: unknown): Promise<unknown>;
+  listen(opts: { port: number; host: string }): Promise<string>;
+  server: { listening: boolean; address(): AddressInfo | string | null };
 }
+
+/** Real fetch captured at module load — BEFORE any test stubs globalThis.fetch. The
+ *  CF-flow test below stubs globalThis.fetch to serve JWKS at the cf certs URL; the SDK
+ *  /mcp call must hit the real loopback server, not that stub (which 404s loopback). */
+const networkFetch = globalThis.fetch.bind(globalThis) as typeof fetch;
 
 /** Race a promise against a hard deadline (reject after `ms` with `label`). The MCP
  *  SDK transport overrides requestInit.signal with its own AbortController.signal, so
@@ -452,8 +448,16 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-async function callProtectedMcp(app: { inject(args: unknown): Promise<unknown> }, resource: string, accessToken: string, expectedSubject: string, extraHeaders: Record<string, string> = {}): Promise<void> {
-  const transport = new StreamableHTTPClientTransport(new URL(resource), { fetch: sdkFetchShim(app) as never, requestInit: { headers: { authorization: `Bearer ${accessToken}`, ...extraHeaders } } });
+async function callProtectedMcp(app: RealSocketApp, resource: string, accessToken: string, expectedSubject: string, extraHeaders: Record<string, string> = {}): Promise<void> {
+  // Real loopback socket — the inject-mock socket lacks destroySoon(); the SDK server
+  // transport's @hono/node-server forceClose timer throws on it ~500 ms later (issue
+  // #66). Idempotent: the zero-setup test calls this twice on the same app (absent
+  // Origin, then the allowlisted Origin), so reuse the address if already listening
+  // rather than calling listen() twice on one server.
+  const base = app.server.listening
+    ? `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`
+    : await app.listen({ port: 0, host: "127.0.0.1" });
+  const transport = new StreamableHTTPClientTransport(new URL(new URL(resource).pathname, base), { fetch: networkFetch, requestInit: { headers: { authorization: `Bearer ${accessToken}`, ...extraHeaders } } });
   const client = new Client({ name: "int-entry-flow", version: "0.0.1" }, { capabilities: {} });
   try {
     await withTimeout(client.connect(transport), 10_000, "MCP client connect");
