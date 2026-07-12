@@ -1,6 +1,4 @@
-// File templates for `mcp-sso init` (contracts §15 "Init CLI"). Each generated file
-// is a faithful, minimal composition root a stranger can `npm install && npm start`.
-// The init binary is dep-free (node builtins only); these strings ship in dist/bin.
+// File templates for `mcp-sso init` (contracts §15 "Init CLI"). Dep-free (node builtins); ships in dist/bin.
 
 /** fastify + the MCP SDK are pinned to the versions mcp-sso is TESTED against (the
  *  repo's devDependencies). The published package cannot read the repo's devDeps at
@@ -80,12 +78,14 @@ async function main(): Promise<void> {
   // Validate the env-sourced config BEFORE creating state (the validate-before-side-effects
   // invariant): a malformed issuer/resource rejects here, not after loadOrCreateQuickstartSecrets
   // writes the state dir + signing secrets.
+  // Validate: parseable URL, no userinfo, resource pathname /mcp (the server mounts /mcp). Errors don't echo the value (a malformed credential-bearing URL would leak).
   const requireUrl = (label: string, v: string): void => {
-    let u: URL; try { u = new URL(v); } catch { throw new Error(\`\${label} is not a valid URL: \${v}\`); }
+    let u: URL; try { u = new URL(v); } catch { throw new Error(\`\${label} is not a valid URL\`); }
     if (u.username || u.password) throw new Error(\`\${label} must not contain userinfo (user:password@) — use a plain URL\`);
   };
   requireUrl("OAUTH_ISSUER", ISSUER);
   requireUrl("OAUTH_RESOURCE", RESOURCE);
+  if (new URL(RESOURCE).pathname !== "/mcp") throw new Error("OAUTH_RESOURCE pathname must be /mcp (the server mounts /mcp); set OAUTH_RESOURCE to <issuer>/mcp or edit server.ts for a custom path.");
   // loadOrCreateQuickstartSecrets creates DIR (0o700) + the managed .gitignore +
   // the signing material on first boot (the fs-trust bar + zero-setup keys).
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
@@ -157,8 +157,7 @@ async function main(): Promise<void> {
   // Off-loopback warning: the pairing code is the identity gate — binding it to a non-loopback host exposes it to the network. Mirrors examples/fastify-sqlite/index.ts.
   if (HOST !== "127.0.0.1" && HOST !== "localhost") {
     console.error(\`[mcp-sso] WARNING: console pairing is bound to \${oneLine(HOST)} (non-loopback). The one-time code is the identity gate — anyone who can reach this port can attempt it. Pairing is for single-operator / private-console use only; use a real identity provider for a network-exposed server.\`);
-    // HOST moved off loopback: the issuer MUST be the publicly-reachable URL or discovery
-    // advertises 127.0.0.1 (which clients can't reach) + RFC 9728 resource validation fails.
+    // HOST off loopback: the issuer MUST be the publicly-reachable URL or discovery advertises 127.0.0.1 + RFC 9728 fails.
     if (!(process.env.OAUTH_ISSUER && process.env.OAUTH_ISSUER.trim())) {
       console.error(\`[mcp-sso] WARNING: HOST=\${oneLine(HOST)} but OAUTH_ISSUER is unset (defaults to http://127.0.0.1:\${PORT}). Set OAUTH_ISSUER to the URL clients actually reach.\`);
     }

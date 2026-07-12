@@ -498,12 +498,12 @@ test("bin init: refuses a pre-existing group/other-writable target dir (file-swa
   }
 });
 
-test("bin init (spawn): control chars in an env value are stripped from the logged error (no log-line injection)", async () => {
-  // A malformed env value (here a newline inside OAUTH_ISSUER) is rejected; the logged
-  // error must be single-line (the control char stripped), so a hostile value can't break
-  // the log line or inject a fake one on the operator's console.
+test("bin init (spawn): a malformed OAUTH_ISSUER is rejected WITHOUT echoing the raw value (no credential leak)", async () => {
+  // A malformed value — possibly credential-bearing (e.g. a broken https://user:pass@…) —
+  // is rejected; the error must NOT echo the supplied value (a password would otherwise
+  // reach stderr).
   await ensureDist();
-  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-logredact-"));
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-noecho-"));
   const proj = join(base, "proj");
   const stateDir = join(base, "state");
   try {
@@ -517,9 +517,34 @@ test("bin init (spawn): control chars in an env value are stripped from the logg
     let stderr = "";
     child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
     const code = await new Promise<number | null>((resolveP) => child.on("close", (c) => resolveP(c)));
-    assert.notEqual(code, 0, "the newline-bearing OAUTH_ISSUER fails closed");
-    assert.match(stderr, /is not a valid URL: ab\r?\n/, "the value is logged single-line (newline stripped → 'ab')");
-    assert.equal(stderr.includes("a\nb"), false, "the raw newline-bearing value did not reach stderr");
+    assert.notEqual(code, 0, "the malformed OAUTH_ISSUER fails closed");
+    assert.match(stderr, /OAUTH_ISSUER is not a valid URL/);
+    assert.equal(stderr.includes("a\nb"), false, "the raw malformed value is NOT echoed (no credential leak)");
+    assert.equal(existsSync(stateDir), false, "no state created");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init (spawn): a non-/mcp OAUTH_RESOURCE pathname is rejected (the server mounts /mcp)", async () => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-respath-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1", OAUTH_RESOURCE: "http://127.0.0.1:3000/api/mcp" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    const code = await new Promise<number | null>((resolveP) => child.on("close", (c) => resolveP(c)));
+    assert.notEqual(code, 0, "a non-/mcp resource pathname fails closed");
+    assert.match(stderr, /pathname must be \/mcp/);
+    assert.equal(existsSync(stateDir), false, "no state created");
   } finally {
     await rm(base, { recursive: true, force: true });
   }

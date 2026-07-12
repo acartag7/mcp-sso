@@ -176,15 +176,16 @@ export async function run(argv: string[]): Promise<string[]> {
   // Reserve all files exclusively before writing any (atomic — no partial scaffold).
   const reserved = await reserveAll(files, dir);
   const written: string[] = [];
+  let writeOk = false;
   try {
     for (const r of reserved) { await r.fh.writeFile(r.content, "utf8"); written.push(r.relPath); }
-  } catch (error) {
-    // A write failure (disk full / I/O): roll back ALL files this invocation created so the
-    // next attempt isn't blocked by partial/empty files (no partial scaffold).
-    for (const r of reserved) await rm(r.fullPath, { force: true }).catch(() => {});
-    throw error;
+    writeOk = true;
   } finally {
+    // Close ALL handles first — Windows refuses to unlink an open file (EPERM), so closing
+    // before rm is required for the rollback to actually remove the partial files. On a
+    // write failure, roll back every file this invocation created (no partial scaffold).
     for (const r of reserved) await r.fh.close().catch(() => {});
+    if (!writeOk) for (const r of reserved) await rm(r.fullPath, { force: true }).catch(() => {});
   }
 
   console.log(`mcp-sso init: wrote ${files.length} files to ${dir}:`);
