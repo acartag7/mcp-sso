@@ -10,3 +10,8 @@ coverage/
 *.db
 *.db-journal
 .DS_Store
+
+# Session artifacts (agent tooling — not project files)
+.codex/
+.entire/
+.live-evidence/
