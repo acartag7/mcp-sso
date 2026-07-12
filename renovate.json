@@ -1,7 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
+  "enabledManagers": ["github-actions"],
   "minimumReleaseAge": "15 days",
+  "internalChecksFilter": "strict",
+  "prCreation": "not-pending",
   "timezone": "Europe/Berlin",
   "schedule": ["after 9am on monday"],
   "labels": ["dependencies"],
@@ -9,10 +12,11 @@
   "packageRules": [
     {
       "description": "GitHub Actions: pin to commit SHA (the repo already SHA-pins; Renovate updates the SHA + the version comment), batch into one PR, 15-day release-age floor (matches the pnpm-workspace.yaml minimumReleaseAge + the dependency-ledger 15-day rule).",
-      "matchDatasources": ["github-actions"],
+      "matchManagers": ["github-actions"],
       "groupName": "github-actions",
       "pinDigests": true,
       "commitMessagePrefix": "chore(deps):"
     }
   ]
 }
+
