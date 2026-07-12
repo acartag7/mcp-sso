@@ -14,3 +14,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      # Batch all github-actions updates into ONE PR (otherwise Dependabot opens a
+      # separate PR per uses: line — e.g. 3 PRs for the same codeql-action version).
+      github-actions:
+        patterns: ["*"]
