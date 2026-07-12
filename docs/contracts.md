@@ -1013,7 +1013,13 @@ path component an attacker could swap — a symlinked target/ancestor, a missing
 raced in before `mkdir`, or an existing real dir NOT owned by you — when its *real*
 (symlink-followed) parent is group/other-writable; sticky + victim-owned paths, e.g.
 `mkdtemp` under `/tmp`, and system symlinks like macOS `/tmp`→`/private/tmp`, are allowed
-so a normal temp-dir scaffold isn't a false positive). **Dependency posture:** the generated
+so a normal temp-dir scaffold isn't a false positive). **Filesystem-trust boundary (inherent
+Node limit):** the check covers the common write-redirection paths, but a fully race-free
+secure `mkdir` needs `mkdirat`/`openat` — resolve-and-create relative to a held directory
+fd — which Node's `fs` does not expose. A residual TOCTOU therefore remains in exotic cases
+(a trusted symlink whose *destination's real ancestry* is attacker-swappable, on a
+multi-user host where an attacker has write access to the user's own path); the realistic
+cases are refused, and this residual is inherent to Node, not a logic gap. **Dependency posture:** the generated
 `package.json` pins the top-level deps **exactly** (the versions mcp-sso is tested
 against); the scaffold cannot ship a curated transitive lockfile (that needs network
 resolution at scaffold time), so the operator's `npm install` creates

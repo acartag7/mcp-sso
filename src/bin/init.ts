@@ -156,7 +156,18 @@ export async function run(argv: string[]): Promise<string[]> {
     throw new Error(`refusing to overwrite existing file(s) in ${dir}: ${conflicts.join(", ")} — move them aside or pick an empty target.`);
   }
 
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 }); // 0700 if created (no umask window); a pre-existing dir keeps its mode
+  // The target dir's OWN mode matters (the ancestor walk checks parents): a group/other-
+  // writable target lets another user unlink+swap the scaffolded files. A just-created dir
+  // is 0700 (passes); a pre-existing group/other-writable dir is refused unless sticky AND
+  // owned by the invoking user (sticky protects only the owner's own entries).
+  if (process.platform !== "win32") {
+    const st = await lstat(dir);
+    const euid = process.geteuid?.() ?? -1;
+    if ((st.mode & 0o022) && (!(st.mode & 0o1000) || st.uid !== euid)) {
+      throw new Error(`${dir} is group/other-writable${st.mode & 0o1000 ? " and not owned by you" : ""}; mcp-sso init refuses to scaffold there (another user could swap the files). Use a directory you own that isn't group/other-writable.`);
+    }
+  }
   // Reserve all files exclusively before writing any (atomic — no partial scaffold).
   const reserved = await reserveAll(files, dir);
   const written: string[] = [];

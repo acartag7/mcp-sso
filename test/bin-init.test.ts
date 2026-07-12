@@ -483,6 +483,21 @@ test("bin init: refuses a missing descendant through a symlink into a writable d
   }
 });
 
+test("bin init: refuses a pre-existing group/other-writable target dir (file-swap risk)", { skip: process.platform === "win32" }, async () => {
+  // The target dir's OWN mode (the ancestor walk checks parents): a group/other-writable
+  // target lets another user unlink+swap the scaffolded files. A just-created target is
+  // 0700 (passes); a pre-existing 0777 target is refused.
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-writabletarget-"));
+  const target = join(base, "target"); // → 0777
+  try {
+    await mkdir(target, { mode: 0o777 });
+    await chmod(target, 0o777);
+    await assert.rejects(run(["node", "init.ts", "init", target]), /group\/other-writable.*another user could swap the files/, "a group/other-writable target dir is refused");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 function extractField(html: string, name: string): string {
   const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
   assert.ok(m?.[1], `hidden field ${name} not found`);
