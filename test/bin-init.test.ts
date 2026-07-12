@@ -525,6 +525,34 @@ test("bin init (spawn): control chars in an env value are stripped from the logg
   }
 });
 
+test("bin init (spawn): an issuer URL with userinfo (credentials) is rejected — password not logged, no state", async () => {
+  // OAUTH_ISSUER is the bridge's OWN URL — it must never carry credentials. A URL with
+  // userinfo (https://user:pass@host) is rejected before state creation AND before any
+  // logging, so the password never reaches stderr.
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-userinfo-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1", OAUTH_ISSUER: "https://user:secret@127.0.0.1:3000" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    const code = await new Promise<number | null>((resolveP) => child.on("close", (c) => resolveP(c)));
+    assert.notEqual(code, 0, "an issuer with userinfo fails closed");
+    assert.match(stderr, /must not contain userinfo/);
+    assert.equal(stderr.includes("secret"), false, "the password is NOT logged");
+    assert.equal(existsSync(stateDir), false, "no state created");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 function extractField(html: string, name: string): string {
   const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
   assert.ok(m?.[1], `hidden field ${name} not found`);

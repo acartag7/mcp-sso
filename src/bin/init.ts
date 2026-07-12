@@ -53,50 +53,55 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /** Ensure the scaffold cannot be redirected outside the lexical target via a symlink, for
- *  every existing component AND the first missing one. The parent's REAL mode is checked
- *  with stat() (follows a symlink parent to its destination), so a trusted symlink ancestor
- *  like macOS /tmp→/private/tmp is evaluated at the writable destination it points into.
- *  A component is attacker-swappable when its (real) parent is group/other-writable; sticky
- *  parents (e.g. /tmp) protect OWNED real dirs (so mkdtemp-under-/tmp proceeds), but a
- *  MISSING name is still refused (sticky gates delete/rename, not creation). POSIX-only. */
+ *  every existing component AND the first missing one. A symlink/junction component is
+ *  refused on ALL platforms (Windows reparse points too). On POSIX, the parent's REAL mode
+ *  (stat follows a symlink parent to its destination) gates the rest: a component is
+ *  attacker-swappable when its parent is group/other-writable — a missing name always is
+ *  (sticky gates delete/rename, not creation); an existing real dir is, unless sticky AND
+ *  victim-owned. Sticky + victim-owned (mkdtemp under /tmp) + system symlinks under an
+ *  owner-owned parent (macOS /tmp→/private/tmp) are allowed. The POSIX mode/ownership
+ *  checks don't apply on Windows (ACLs differ); there, symlinks/junctions are still refused
+ *  but writability is not (a documented Windows gap, not a logic bypass). */
 async function assertSafeScaffoldTarget(dir: string): Promise<void> {
-  if (process.platform === "win32") return;
-  const euid = process.geteuid?.() ?? -1; // POSIX-only path (win32 returned above)
+  const isWin = process.platform === "win32";
+  const euid = isWin ? -1 : (process.geteuid?.() ?? -1); // POSIX-only
   const { root } = parse(dir);
   let current = root;
   for (const seg of dir.slice(root.length).split(sep).filter(Boolean)) {
     const parent = current;
     current = join(current, seg);
-    let pm: number;
-    try { pm = (await stat(parent)).mode; } // stat follows a symlink parent → its destination
-    catch (error) {
-      // ENOENT from stat (which follows) = `parent` is a dangling symlink → broken path.
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`${parent} is a dangling symlink (broken path); mcp-sso init cannot scaffold through it.`);
-      throw error;
+    let writable = false;
+    let sticky = false;
+    if (!isWin) {
+      let pm: number;
+      try { pm = (await stat(parent)).mode; } // stat follows a symlink parent → its destination
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`${parent} is a dangling symlink (broken path); mcp-sso init cannot scaffold through it.`);
+        throw error;
+      }
+      writable = (pm & 0o022) !== 0;
+      sticky = (pm & 0o1000) !== 0;
     }
-    const writable = (pm & 0o022) !== 0;
-    const sticky = (pm & 0o1000) !== 0;
     let st;
     try { st = await lstat(current); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      // Missing: an attacker can CREATE the name (sticky gates delete/rename, not create),
-      // so refuse under any writable parent — sticky does not help a non-existent name.
       if (writable) throw new Error(`${current} would be created under a group/other-writable parent (${parent}); mcp-sso init refuses — a symlink could be raced in before creation (write-redirection risk). Use a directory under a non-group/other-writable parent.`);
-      return; // owner-only parent → safe to mkdir the missing tail
+      return; // owner-only (or Windows) parent → safe to mkdir the missing tail
     }
     if (st.isSymbolicLink()) {
+      // ALL platforms: a symlink/junction ancestor redirects writes. Windows reparse points
+      // are symlinks to lstat → refuse outright. POSIX also refuses under a writable real
+      // parent; a trusted symlink under an owner-only parent is allowed.
+      if (isWin) throw new Error(`${current} is a symlink/junction; mcp-sso init refuses to scaffold through it (write-redirection risk). Point it at a real directory.`);
       if (writable) throw new Error(`${current} is a symlink inside a group/other-writable directory (${parent}); mcp-sso init refuses to scaffold through it (write-redirection risk). Point it at a real directory.`);
-      continue; // trusted symlink (its real parent isn't writable)
+      continue;
     }
     if (!st.isDirectory()) throw new Error(`${current} exists and is not a directory; mcp-sso init cannot scaffold there.`);
-    // Real dir: an attacker can delete+swap it under a writable parent that is either
-    // non-sticky OR sticky-but-not-the-victim's (sticky protects only the owner's OWN
-    // entries — an attacker-owned dir under /tmp can be swapped by its owner). Sticky +
-    // victim-owned (e.g. mkdtemp under /tmp) is safe.
-    if (writable && (!sticky || st.uid !== euid)) {
+    if (!isWin && writable && (!sticky || st.uid !== euid)) {
       throw new Error(`${current} is under a group/other-writable directory (${parent})${sticky ? " that you don't own" : ""}; mcp-sso init refuses — it could be swapped for a symlink after the check. Use a directory you own under a non-writable or sticky parent.`);
     }
+    // Windows real dir: accepted (POSIX writability/ownership don't apply; symlinks rejected above).
   }
 }
 

@@ -74,13 +74,16 @@ const oneLine = (s: unknown): string => String(s).replace(/[\\x00-\\x1f\\x7f]/g,
 // allowInsecureLocalhost lets an http:// loopback issuer boot for local dev (the
 // bridge mints real tokens; never set this for a non-loopback / production issuer).
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const isLoopback = (url: string): boolean => { try { return LOOPBACK.has(new URL(url).hostname); } catch { return false; } };
+const isHttpLoopback = (url: string): boolean => { try { const u = new URL(url); return u.protocol === "http:" && LOOPBACK.has(u.hostname); } catch { return false; } };
 
 async function main(): Promise<void> {
   // Validate the env-sourced config BEFORE creating state (the validate-before-side-effects
   // invariant): a malformed issuer/resource rejects here, not after loadOrCreateQuickstartSecrets
   // writes the state dir + signing secrets.
-  const requireUrl = (label: string, v: string): void => { try { new URL(v); } catch { throw new Error(\`\${label} is not a valid URL: \${v}\`); } };
+  const requireUrl = (label: string, v: string): void => {
+    let u: URL; try { u = new URL(v); } catch { throw new Error(\`\${label} is not a valid URL: \${v}\`); }
+    if (u.username || u.password) throw new Error(\`\${label} must not contain userinfo (user:password@) — use a plain URL\`);
+  };
   requireUrl("OAUTH_ISSUER", ISSUER);
   requireUrl("OAUTH_RESOURCE", RESOURCE);
   // loadOrCreateQuickstartSecrets creates DIR (0o700) + the managed .gitignore +
@@ -95,7 +98,7 @@ async function main(): Promise<void> {
     scopeCatalog: list(process.env.OAUTH_SCOPE_CATALOG, "mcp:read,mcp:write"),
     defaultScopes: list(process.env.OAUTH_DEFAULT_SCOPES, "mcp:read"),
     allowedOrigins: list(process.env.OAUTH_ALLOWED_ORIGINS, ISSUER),
-    dev: isLoopback(ISSUER) ? { allowInsecureLocalhost: true } : undefined,
+    dev: isHttpLoopback(ISSUER) ? { allowInsecureLocalhost: true } : undefined,
     dcr: { mode: "stateless" },
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
@@ -151,9 +154,7 @@ async function main(): Promise<void> {
     finally { await mcp.close(); }
   });
 
-  // Off-loopback warning: the one-time pairing code is the identity gate, so binding
-  // it to a non-loopback host exposes the pairing surface to the network (single-
-  // operator / private-console use only). Mirrors examples/fastify-sqlite/index.ts.
+  // Off-loopback warning: the pairing code is the identity gate — binding it to a non-loopback host exposes it to the network. Mirrors examples/fastify-sqlite/index.ts.
   if (HOST !== "127.0.0.1" && HOST !== "localhost") {
     console.error(\`[mcp-sso] WARNING: console pairing is bound to \${oneLine(HOST)} (non-loopback). The one-time code is the identity gate — anyone who can reach this port can attempt it. Pairing is for single-operator / private-console use only; use a real identity provider for a network-exposed server.\`);
     // HOST moved off loopback: the issuer MUST be the publicly-reachable URL or discovery
