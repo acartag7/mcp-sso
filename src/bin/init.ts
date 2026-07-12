@@ -43,6 +43,8 @@ function parseArgs(argv: string[]): { target: string; help: boolean } {
   // works; the bin is named "mcp-sso"). Bare `npx mcp-sso` or -h/--help → help.
   if (args.length === 0 || args.includes("-h") || args.includes("--help")) return { target: ".", help: true };
   if (args[0] !== "init") throw new Error(`unknown subcommand "${args[0]}" — try "mcp-sso init [target]"`);
+  if (args.length > 2) throw new Error(`unexpected extra argument "${args[2]}" — mcp-sso init takes at most one target directory`);
+  if (args[1] !== undefined && args[1].startsWith("-")) throw new Error(`option-like target "${args[1]}" — a directory name must not start with '-'`);
   return { target: args[1] ?? ".", help: false };
 }
 

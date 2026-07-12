@@ -110,6 +110,11 @@ test("bin init: the literal `init` subcommand is required", async () => {
   }
 });
 
+test("bin init: rejects option-looking targets + extra arguments (no --force dir)", async () => {
+  await assert.rejects(run(["node", "init.ts", "init", "--force"]), /option-like target/);
+  await assert.rejects(run(["node", "init.ts", "init", "target", "extra"]), /unexpected extra argument/);
+});
+
 test("bin init: the printed `cd` is POSIX shell-escaped (spaces + metacharacters)", async () => {
   const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-shellquote-"));
   const target = join(base, "My Server"); // a space — unquoted `cd` would split here
