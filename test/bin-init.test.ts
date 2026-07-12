@@ -667,7 +667,9 @@ test("bin init: refuses a symlinked target directory (writes must not follow it)
 });
 
 async function spawnScaffold(proj: string): Promise<void> {
-  await mkdir(proj, { recursive: true });
+  // Don't pre-create proj: the init bin creates it (mkdir 0o700). Pre-creating with
+  // mkdir's umask-default mode could make it group-writable (umask 0002 → 0775), which
+  // the bin's own target-mode check would then correctly reject → test failure.
   const res = await new Promise<{ code: number | null; stderr: string }>((resolveP) => {
     const p = spawn("node", [DIST_INIT, "init", proj], { cwd: REPO, stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
