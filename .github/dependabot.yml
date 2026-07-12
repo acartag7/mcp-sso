@@ -1,16 +1,14 @@
 version: 2
-# Advisory update PRs only. Each is reviewed and merged only after the 15-day
-# release-age rule (docs/dependency-ledger.md) and the exact-pin + committed
-# lockfile discipline — Dependabot does NOT know about the age rule, so apply it
-# manually before merging.
+# Dependabot SECURITY alerts (CVEs) are configured via GitHub's Security &
+# Advisories toggle, not here — they arrive as alerts regardless of this file.
 #
-# github-actions: surfaces new action SHAs to re-pin (the ecosystem where the
-#   manual re-pin chore pays off most). npm CVEs arrive via the Dependabot
-#   security-alerts toggle; add an npm version-updates entry here only if you
-#   want advisory bumps for jose / the optional peers (mysql2, ioredis).
-updates:
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+# Version-update PRs for github-actions are now handled by Renovate
+# (renovate.json) with minimumReleaseAge: 15 days — the release-age floor
+# Dependabot can't enforce natively. Install the Renovate GitHub App
+# (https://github.com/apps/renovate) to activate it.
+#
+# To re-enable Dependabot version updates for npm (jose / optional peers), add:
+#   - package-ecosystem: npm
+#     directory: /
+#     schedule:
+#       interval: weekly
