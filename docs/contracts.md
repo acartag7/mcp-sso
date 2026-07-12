@@ -991,6 +991,51 @@ pairs `assertCallbackPath` with its own redirectUri equality check. All five are
 dep-free (node builtins / pure string logic), so root-exporting them does not widen
 the `jose`-only runtime posture.
 
+**Init CLI (`npx mcp-sso init`):** the package ships a `bin` — `mcp-sso init [target]`
+(default `.`) — that scaffolds a working zero-setup MCP server a stranger can boot with
+`npm install && npm start` and pair with via a console-printed one-time code (then
+`claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp`). It generates:
+`package.json` (`"type": "module"`, `"start": "node server.ts"`, exact-pinned deps —
+`mcp-sso` at the running version + `fastify` + `@modelcontextprotocol/sdk` at the
+versions mcp-sso is tested against, recorded in `docs/dependency-ledger.md`; Node
+`>=24`, native TS, no build step); `server.ts` (the composition root, built from the
+root exports + the `./fastify`, `./store/sqlite`, `./identity/console-pairing` subpaths
+— quickstart secrets + console pairing + sqlite + the `/mcp` Streamable-HTTP Origin
+gate + a protected `/mcp`, zero-setup loopback by default); `.gitignore`
+(`node_modules/` + the `.mcp-sso/` state dir); `.npmrc` (`ignore-scripts=true` —
+dependency lifecycle scripts disabled unless the operator vets one, the project's
+supply-chain posture); and `README.md` (the run steps +
+pointers to `docs/gateway-deployment.md` / `docs/live-verification.md` for production
+identity providers). The init binary itself is **dep-free** (node builtins only) — it
+adds nothing to the `jose`-only runtime. It refuses to overwrite an existing file or
+follow a symlink (atomic `O_NOFOLLOW|O_EXCL|O_CREAT`; it refuses to write through any
+path component an attacker could swap — a symlinked target/ancestor, a missing segment
+raced in before `mkdir`, or an existing real dir NOT owned by you — when its *real*
+(symlink-followed) parent is group/other-writable; sticky + victim-owned paths, e.g.
+`mkdtemp` under `/tmp`, and system symlinks like macOS `/tmp`→`/private/tmp`, are allowed
+so a normal temp-dir scaffold isn't a false positive). **Filesystem-trust boundary (inherent
+Node limit):** the check covers the common write-redirection paths, but a fully race-free
+secure `mkdir` needs `mkdirat`/`openat` — resolve-and-create relative to a held directory
+fd — which Node's `fs` does not expose. A residual TOCTOU therefore remains in exotic cases
+(a trusted symlink whose *destination's real ancestry* is attacker-swappable, on a
+multi-user host where an attacker has write access to the user's own path); the realistic
+cases are refused, and this residual is inherent to Node, not a logic gap. **Dependency posture:** the generated
+`package.json` pins the top-level deps **exactly** (the versions mcp-sso is tested
+against); the scaffold cannot ship a curated transitive lockfile (that needs network
+resolution at scaffold time), so the operator's `npm install` creates
+`package-lock.json` (to commit) — locking the transitive graph at first install. The
+server is the zero-setup pairing path; a real IdP (Cloudflare Access / Entra / Google /
+OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded
+default — the done-bar is the pairing round-trip, not a production deploy. **Config-
+validation ordering (benign residual):** the generated server pre-validates the
+`OAUTH_ISSUER`/`OAUTH_RESOURCE` URLs before the state-creating helper, but the deeper
+config validation (`createBridgeConfig` — scheme, scope shapes) runs *after*
+`loadOrCreateQuickstartSecrets`, so a malformed env value leaves a `secrets.json`. That
+file is owner-only (`0600` in a `0700` gitignored dir), holds secrets generated
+independently of the rejected config (so they are valid, not bad), and is reused verbatim
+on the next (fixed) boot — no leak, no exposed/bad/committed state; full pre-validation
+would need a library secret-free `validateConfig` (deferred).
+
 **Supply-chain settings:** `packageManager` pins pnpm via corepack;
 `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days —
 the install-time floor and the `docs/dependency-ledger.md` 15-day curation rule
@@ -1866,8 +1911,8 @@ gate replaces no-gate).
 - Env-var configuration remains the primary production path; this is the
   zero-setup path (same audience as 17.5). Threat-model entry: plaintext key
   material on disk, boundary = the OS user account; production belongs in
-  env/secret managers. (`npx mcp-sso init` remains a possible wrapper later;
-  the function is the contract.)
+  env/secret managers. (`npx mcp-sso init` is now implemented — §15 "Init CLI" —
+  scaffolding a server that uses this helper; the function remains the contract.)
 - **Filesystem-trust bar (the quickstart reference — every state-dir code path
   meets this):** writes are `0600` (files) / `0700` (dirs) with `O_EXCL` for
   create-don't-clobber; reads of trusted content go through `open(O_NOFOLLOW |
