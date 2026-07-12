@@ -1008,12 +1008,12 @@ supply-chain posture); and `README.md` (the run steps +
 pointers to `docs/gateway-deployment.md` / `docs/live-verification.md` for production
 identity providers). The init binary itself is **dep-free** (node builtins only) — it
 adds nothing to the `jose`-only runtime. It refuses to overwrite an existing file or
-follow a symlink (atomic `O_NOFOLLOW|O_EXCL|O_CREAT`; the target dir is refused if
-symlinked, and a symlinked existing *ancestor* — or a missing segment an attacker could
-race in before `mkdir` — is refused when its parent is group/other-writable, the
-attacker-swappable class that closes both the follow and the create-race; system symlinks
-under an owner-owned parent, e.g. macOS `/tmp`→`/private/tmp`, are allowed so a normal
-temp-dir scaffold isn't a false positive). **Dependency posture:** the generated
+follow a symlink (atomic `O_NOFOLLOW|O_EXCL|O_CREAT`; it refuses to write through any
+path component an attacker could swap — a symlinked target/ancestor, a missing segment
+raced in before `mkdir`, or an existing real dir NOT owned by you — when its *real*
+(symlink-followed) parent is group/other-writable; sticky + victim-owned paths, e.g.
+`mkdtemp` under `/tmp`, and system symlinks like macOS `/tmp`→`/private/tmp`, are allowed
+so a normal temp-dir scaffold isn't a false positive). **Dependency posture:** the generated
 `package.json` pins the top-level deps **exactly** (the versions mcp-sso is tested
 against); the scaffold cannot ship a curated transitive lockfile (that needs network
 resolution at scaffold time), so the operator's `npm install` creates

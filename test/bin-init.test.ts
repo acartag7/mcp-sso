@@ -433,7 +433,7 @@ test("bin init: refuses an existing real dir under a writable NON-STICKY parent 
     await mkdir(writable, { mode: 0o777 });
     await chmod(writable, 0o777); // non-sticky
     await mkdir(existing); // a real dir under the writable parent
-    await assert.rejects(run(["node", "init.ts", "init", target]), /non-sticky directory/, "an existing real dir under a writable non-sticky parent is refused (swap race)");
+    await assert.rejects(run(["node", "init.ts", "init", target]), /could be swapped for a symlink/, "an existing real dir under a writable non-sticky parent is refused (swap race)");
   } finally {
     await rm(base, { recursive: true, force: true });
   }

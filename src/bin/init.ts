@@ -61,6 +61,7 @@ async function exists(path: string): Promise<boolean> {
  *  MISSING name is still refused (sticky gates delete/rename, not creation). POSIX-only. */
 async function assertSafeScaffoldTarget(dir: string): Promise<void> {
   if (process.platform === "win32") return;
+  const euid = process.geteuid?.() ?? -1; // POSIX-only path (win32 returned above)
   const { root } = parse(dir);
   let current = root;
   for (const seg of dir.slice(root.length).split(sep).filter(Boolean)) {
@@ -89,9 +90,13 @@ async function assertSafeScaffoldTarget(dir: string): Promise<void> {
       continue; // trusted symlink (its real parent isn't writable)
     }
     if (!st.isDirectory()) throw new Error(`${current} exists and is not a directory; mcp-sso init cannot scaffold there.`);
-    // Real dir: an attacker can delete+swap it under a writable + NON-STICKY parent. Sticky
-    // parents (e.g. /tmp) protect owned entries, so mkdtemp-under-/tmp is allowed.
-    if (writable && !sticky) throw new Error(`${current} is under a group/other-writable, non-sticky directory (${parent}); mcp-sso init refuses (the directory could be swapped for a symlink after the check). Use a directory under a non-writable or sticky parent.`);
+    // Real dir: an attacker can delete+swap it under a writable parent that is either
+    // non-sticky OR sticky-but-not-the-victim's (sticky protects only the owner's OWN
+    // entries — an attacker-owned dir under /tmp can be swapped by its owner). Sticky +
+    // victim-owned (e.g. mkdtemp under /tmp) is safe.
+    if (writable && (!sticky || st.uid !== euid)) {
+      throw new Error(`${current} is under a group/other-writable directory (${parent})${sticky ? " that you don't own" : ""}; mcp-sso init refuses — it could be swapped for a symlink after the check. Use a directory you own under a non-writable or sticky parent.`);
+    }
   }
 }
 
@@ -157,6 +162,11 @@ export async function run(argv: string[]): Promise<string[]> {
   const written: string[] = [];
   try {
     for (const r of reserved) { await r.fh.writeFile(r.content, "utf8"); written.push(r.relPath); }
+  } catch (error) {
+    // A write failure (disk full / I/O): roll back ALL files this invocation created so the
+    // next attempt isn't blocked by partial/empty files (no partial scaffold).
+    for (const r of reserved) await rm(r.fullPath, { force: true }).catch(() => {});
+    throw error;
   } finally {
     for (const r of reserved) await r.fh.close().catch(() => {});
   }
