@@ -498,6 +498,33 @@ test("bin init: refuses a pre-existing group/other-writable target dir (file-swa
   }
 });
 
+test("bin init (spawn): control chars in an env value are stripped from the logged error (no log-line injection)", async () => {
+  // A malformed env value (here a newline inside OAUTH_ISSUER) is rejected; the logged
+  // error must be single-line (the control char stripped), so a hostile value can't break
+  // the log line or inject a fake one on the operator's console.
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-logredact-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1", OAUTH_ISSUER: "a\nb" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    const code = await new Promise<number | null>((resolveP) => child.on("close", (c) => resolveP(c)));
+    assert.notEqual(code, 0, "the newline-bearing OAUTH_ISSUER fails closed");
+    assert.match(stderr, /is not a valid URL: ab\r?\n/, "the value is logged single-line (newline stripped → 'ab')");
+    assert.equal(stderr.includes("a\nb"), false, "the raw newline-bearing value did not reach stderr");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 function extractField(html: string, name: string): string {
   const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
   assert.ok(m?.[1], `hidden field ${name} not found`);

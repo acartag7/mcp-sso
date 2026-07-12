@@ -69,6 +69,8 @@ let ISSUER = env("OAUTH_ISSUER", \`http://127.0.0.1:\${PORT}\`);
 while (ISSUER.endsWith("/")) ISSUER = ISSUER.slice(0, -1); // trim a trailing / so the derived resource is /mcp, not //mcp
 const RESOURCE = env("OAUTH_RESOURCE", \`\${ISSUER}/mcp\`);
 const list = (v: string | undefined, def: string): string[] => (v ?? def).split(",").map((s) => s.trim()).filter(Boolean);
+// Strip control chars before logging an env-derived value (no log-line injection on the operator's console; a char class is linear → no ReDoS).
+const oneLine = (s: unknown): string => String(s).replace(/[\\x00-\\x1f\\x7f]/g, "");
 // allowInsecureLocalhost lets an http:// loopback issuer boot for local dev (the
 // bridge mints real tokens; never set this for a non-loopback / production issuer).
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -153,20 +155,20 @@ async function main(): Promise<void> {
   // it to a non-loopback host exposes the pairing surface to the network (single-
   // operator / private-console use only). Mirrors examples/fastify-sqlite/index.ts.
   if (HOST !== "127.0.0.1" && HOST !== "localhost") {
-    console.error(\`[mcp-sso] WARNING: console pairing is bound to \${HOST} (non-loopback). The one-time code is the identity gate — anyone who can reach this port can attempt it. Pairing is for single-operator / private-console use only; use a real identity provider for a network-exposed server.\`);
+    console.error(\`[mcp-sso] WARNING: console pairing is bound to \${oneLine(HOST)} (non-loopback). The one-time code is the identity gate — anyone who can reach this port can attempt it. Pairing is for single-operator / private-console use only; use a real identity provider for a network-exposed server.\`);
     // HOST moved off loopback: the issuer MUST be the publicly-reachable URL or discovery
     // advertises 127.0.0.1 (which clients can't reach) + RFC 9728 resource validation fails.
     if (!(process.env.OAUTH_ISSUER && process.env.OAUTH_ISSUER.trim())) {
-      console.error(\`[mcp-sso] WARNING: HOST=\${HOST} but OAUTH_ISSUER is unset (defaults to http://127.0.0.1:\${PORT}). Set OAUTH_ISSUER to the URL clients actually reach.\`);
+      console.error(\`[mcp-sso] WARNING: HOST=\${oneLine(HOST)} but OAUTH_ISSUER is unset (defaults to http://127.0.0.1:\${PORT}). Set OAUTH_ISSUER to the URL clients actually reach.\`);
     }
   }
   await app.listen({ port: PORT, host: HOST });
-  console.error(\`mcp-sso listening on \${HOST}:\${PORT}  (console pairing — paste the one-time code printed above)\`);
-  console.error(\`  issuer=\${config.issuer}  resource=\${config.resource}\`);
-  console.error(\`  pair with: claude mcp add --transport http my-bridge \${RESOURCE}\`);
+  console.error(\`mcp-sso listening on \${oneLine(HOST)}:\${PORT}  (console pairing — paste the one-time code printed above)\`);
+  console.error(\`  issuer=\${oneLine(config.issuer)}  resource=\${oneLine(config.resource)}\`);
+  console.error(\`  pair with: claude mcp add --transport http my-bridge \${oneLine(RESOURCE)}\`);
 }
 
-main().catch((error) => { console.error(error); process.exit(1); });
+main().catch((error) => { console.error(oneLine((error as Error)?.message ?? error)); process.exit(1); });
 `;
 
 function packageJson(vars: TemplateVars): string {
