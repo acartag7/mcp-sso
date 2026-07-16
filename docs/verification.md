@@ -228,9 +228,9 @@ its enforcement evidence.
 | S6a.3 | IPv4-embedding IPv6 | IPv4-mapped, NAT64, 6to4, and Teredo-style prefixes blocked wholesale. |
 | S6a.4 | Guarded fetch all-records DNS | Any blocked A or AAAA record rejects the whole fetch. |
 | S6a.5 | Pinned connect | Transport receives the validated IP; Host/SNI stay the original hostname. |
-| S6a.6 | Redirect, cap, timeout | Redirects are not followed; over-cap body rejects (not truncates); deadline aborts. |
+| S6a.6 | Redirect, cap, timeout | Redirects are not followed; explicit no-redirect evidence (`redirected === false` / hop count 0) asserted, never URL comparison alone; over-cap body rejects (not truncates); deadline aborts. |
 | S6a.7 | Guard cannot be bypassed | Injected low-level transport sits below admission/DNS/IP/cap/timeout checks. |
-| S6a.8 | Document validator | Exact `client_id` equality, required fields, auth method, forbidden secrets, redirect URI hygiene, grant/response constraints. |
+| S6a.8 | Document validator | Exact `client_id` equality, required fields, auth method, forbidden secrets, private/symmetric key material in `jwks` rejected, redirect URI hygiene, grant/response constraints. |
 
 ### T1.S6b — CIMD integration and SSRF regression
 

@@ -1124,8 +1124,9 @@ requires the document to contain `client_id`, `client_name`, and
 > periodic re-fetch SHOULD (`-02` §5) is carried by 17.1.4's cache clamp —
 > re-fetch happens at the next authorize after cache expiry; 17.1.4's
 > token/refresh/revoke no-re-fetch rule is about per-request fetching, not
-> staleness; (5) the private-key-material MUST NOT (`-02` §4.1) is moot
-> under the public-client-only profile (17.1.3); (6) `-02` §8.2's
+> staleness; (5) the private-key-material MUST NOT (`-02` §4.1) is carried
+> by 17.1.3's explicit rejection of private/symmetric key material in
+> `jwks`, paired with the public-client-only profile; (6) `-02` §8.2's
 > strengthened client-authentication language (an AS MUST authenticate a
 > `private_key_jwt`-declaring client per RFC 7523) is satisfied vacuously —
 > 17.1.3 rejects any document declaring a `token_endpoint_auth_method`
@@ -1280,16 +1281,24 @@ decision. Everything else in the pipeline still runs under the flag.
   by the list above** — no extraction-and-recheck step exists to get subtly
   wrong. Membership tests compare **parsed binary addresses**, never strings.
 - **Redirects: refused.** Draft -01 MUST NOT follow; any 3xx is an error. The
-  core additionally asserts that the response was served for the requested
-  target and `status === 200`, so a fetcher that silently followed a redirect
-  is detected and the result rejected. (Max hop count is therefore 0 by
-  contract.) This final-URL assertion is redirect DETECTION, not an identity
-  comparison: it compares the transport-reported final URL against the
-  requested URL **in the same serialization** (a transport that reports a
-  WHATWG-serialized final URL is checked against the WHATWG serialization of
-  the fetch target), so a legitimately admitted raw `client_id` carrying an
-  explicit `:443` or a mixed-case host is NOT spuriously rejected. Identity
-  comparisons remain raw-string-only per the raw-string identity rule.
+  core additionally asserts that no redirect occurred and `status === 200`,
+  so a fetcher that silently followed a redirect is detected and the result
+  rejected. (Max hop count is therefore 0 by contract.) Redirect detection
+  MUST rest on **explicit no-redirect evidence from the transport result** —
+  the Fetch API's `redirected === false`, or an equivalent
+  redirects-followed count of 0 — asserted by the core. A normalized-URL
+  comparison alone is NOT sufficient evidence: a transport that silently
+  followed a redirect from a non-canonical admitted `client_id` to its own
+  canonical form (`https://Example.com:443/client` →
+  `https://example.com/client`) reports a final URL identical to the
+  requested URL's serialization, so that hop is invisible to URL comparison.
+  The final-URL check (the transport-reported final URL against the WHATWG
+  serialization of the fetch target — the **same serialization** on both
+  sides) is kept as defense-in-depth on top of the explicit indicator.
+  Neither check is an identity comparison: identity comparisons remain
+  raw-string-only per the raw-string identity rule, and a legitimately
+  admitted raw `client_id` carrying an explicit `:443` or a mixed-case host
+  is NOT spuriously rejected by either check.
 - **Response:** status 200 only (draft MUST); `Content-Type` must be
   `application/json` or a `+json` suffix type (our hardening — the draft only
   requires the body to be JSON); body read with a streaming hard cap of
@@ -1325,6 +1334,18 @@ decision. Everything else in the pipeline still runs under the flag.
   JWKS) is DEFERRED, together with 17.2's `private_key_jwt` — one future
   asymmetric-client-auth unit. `client_secret` /
   `client_secret_expires_at` present ⇒ reject (draft MUST NOT).
+- **Private or symmetric key material rejects the document** (`-02` §4.1:
+  "private key material MUST NOT be included ... only public keys ... are
+  permitted" — enforced AS-side as a fail-closed conformance check, even
+  though v0.2 never uses document keys). If a `jwks` member is present it
+  MUST parse as a JWK Set — an object whose `keys` member is an array of
+  objects; malformed ⇒ reject — and every key MUST be public-only: a key
+  bearing any private or symmetric JOSE parameter (`d`, `p`, `q`, `dp`,
+  `dq`, `qi`, `oth`, `k` — the complete registered RFC 7517/7518 set)
+  rejects the whole document. Without this rule a nonconformant document
+  would be accepted with the key material silently ignored. `jwks_uri` is a
+  URL and is never fetched (17.1.4 / the no-second-fetch posture), so it
+  cannot carry key material into the AS.
 - `redirect_uris` entries: https (exact-match at authorize, per draft §4.5 /
   RFC 9700) or loopback http (RFC 8252 any-port at match time — consistent
   with §10.2 native policy). Same hygiene as §10: no wildcards, no fragments,
