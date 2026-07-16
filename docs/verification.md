@@ -228,9 +228,9 @@ its enforcement evidence.
 | S6a.3 | IPv4-embedding IPv6 | IPv4-mapped, NAT64, 6to4, and Teredo-style prefixes blocked wholesale. |
 | S6a.4 | Guarded fetch all-records DNS | Any blocked A or AAAA record rejects the whole fetch. |
 | S6a.5 | Pinned connect | Transport receives the validated IP; Host/SNI stay the original hostname. |
-| S6a.6 | Redirect, cap, timeout | Redirects are not followed; over-cap body rejects (not truncates); deadline aborts. |
+| S6a.6 | Redirect, cap, timeout | Redirects are not followed; explicit no-redirect evidence (`redirected === false` / hop count 0) asserted, never URL comparison alone; over-cap body rejects (not truncates); deadline aborts. |
 | S6a.7 | Guard cannot be bypassed | Injected low-level transport sits below admission/DNS/IP/cap/timeout checks. |
-| S6a.8 | Document validator | Exact `client_id` equality, required fields, auth method, forbidden secrets, redirect URI hygiene, grant/response constraints. |
+| S6a.8 | Document validator | Exact `client_id` equality, required fields, auth method, forbidden secrets, private/symmetric key material in `jwks` rejected, redirect URI hygiene, grant/response constraints. |
 
 ### T1.S6b — CIMD integration and SSRF regression
 
@@ -243,7 +243,7 @@ its enforcement evidence.
 | S6b.5 | Redirect URI match | Exact match required; loopback any-port exception honored. |
 | S6b.6 | Scope accumulation | CIMD ids accumulate scopes in stateless and stored DCR modes. |
 | S6b.7 | Metadata flag | `client_id_metadata_document_supported` appears only when enabled. |
-| S6b.8 | Cache | Cache hit, RFC 9111 clamp, no error cache, no invalid-doc cache, single-flight per URL, global in-flight cap. |
+| S6b.8 | Cache | Cache hit, RFC 9111 clamp, no error cache, no invalid-doc cache, single-flight keyed by the raw presented `client_id` string, global in-flight cap. |
 | S6b.9 | SSRF negative suite | Encoded dot segments, IP-literal tricks, blocked DNS records, rebinding, redirect-to-blocked-host, over-cap body, slow endpoint, mismatched `client_id`, and `client_secret` doc all fail with identical client-facing text. |
 
 A happy path alone does not close S6b. The negative SSRF suite is the security
@@ -337,11 +337,12 @@ text until every row below is checked off.
   CIMD draft revision the final spec cites. The spec currently cites draft
   `-00`; this repo's §17.1 CONTRACT builds to the stricter `-01`, and `-02`
   (published 2026-07-06) was reviewed 2026-07-10 — every `-02` normative
-  change is covered by §17.1, with one caveat: §17.1 does not yet pin the
-  fetch target / `client_id` comparison operand / cache key to the RAW
-  presented `client_id` string (never a WHATWG re-serialization) — a §17.1
-  precision amendment from the same 2026-07-10 review is planned; do not
-  check this row off before that amendment lands. NOTE: this is a
+  change is covered by §17.1 as written. The former caveat is resolved: the
+  §17.1 precision amendment (landed 2026-07-16, closing issue #58) pins the
+  fetch target / `client_id` comparison operand / cache key / stored
+  identifiers to the RAW presented `client_id` string (never a WHATWG
+  re-serialization) and records the `-02` section renumbering for the next
+  re-pin. NOTE: this is a
   CONTRACT-conformance check only; the CIMD implementation itself is not yet
   built (`docs/contracts.md` §16 marks CIMD contract-locked, implementation
   pending — the S6 sessions). No conformance-with-final-spec claim about

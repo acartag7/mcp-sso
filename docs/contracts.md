@@ -1105,6 +1105,41 @@ The RC changes nothing about the RS model or the bridge architecture.
 requires the document to contain `client_id`, `client_name`, and
 `redirect_uris`.
 
+> **Draft `-02` (2026-07-06) review — performed 2026-07-10, recorded here
+> 2026-07-16 (closes issue #58).** The conformance target deliberately
+> remains `-01`. Every normative change in `-02` is already satisfied by
+> this contract **as written** — a property of the contract text, not of an
+> implementation (CIMD has no runtime path until the S6 sessions ship code
+> against this section): (1) `-02` §3's MUST — Client Identifier URLs
+> compared using RFC 3986 §6.2.1 simple string comparison (`-02`'s
+> changelog records this as a clarification, with the
+> no-default-port-normalization example made explicit) — is carried by the
+> raw-string identity rule below plus 17.1.3's exact
+> character-for-character comparison; (2) the production loopback
+> prohibition (`-02` §8.6) is carried by the loopback exception's binding
+> to `dev.allowInsecureLocalhost`; (3) `-02` §8.6's MUST NOT on fetching
+> document-contained URLs *that resolve to special-use IP addresses* is
+> satisfied a fortiori — the contract forbids fetching ANY URL inside the
+> document (17.1.3: `logo_uri` neither fetched nor displayed); (4) the
+> periodic re-fetch SHOULD (`-02` §5) is carried by 17.1.4's cache clamp —
+> re-fetch happens at the next authorize after cache expiry; 17.1.4's
+> token/refresh/revoke no-re-fetch rule is about per-request fetching, not
+> staleness; (5) the private-key-material MUST NOT (`-02` §4.1) is carried
+> by 17.1.3's explicit rejection of private/symmetric key material in
+> `jwks`, paired with the public-client-only profile; (6) `-02` §8.2's
+> strengthened client-authentication language (an AS MUST authenticate a
+> `private_key_jwt`-declaring client per RFC 7523) is satisfied vacuously —
+> 17.1.3 rejects any document declaring a `token_endpoint_auth_method`
+> other than absent/`"none"`. `-02` also renumbers sections. Unlabeled
+> draft citations in this section remain in `-01` numbering; citations
+> explicitly tagged `-02` are already re-pinned. The mapping for the next
+> re-pin: §4.5 → §4.2 (redirect URL registration), §5 → §6 (AS metadata),
+> §6.5 → §8.6 (SSRF), §6.6 → §8.7 (response size), §6.9 → §7.1
+> (pre-registered + unregistered clients) — draft-section citations only
+> (`contracts.md`-internal cross-references such as the §6.6 `FetcherPort`
+> note are not draft citations). Re-pin to `-02` (or later) at the next
+> §17.1 contract revision, re-pointing the citations then.
+
 **Config (opt-in; absent ⇒ CIMD disabled and URL-shaped client_ids are
 rejected with `invalid_client`, direct):**
 
@@ -1144,6 +1179,19 @@ metadata emits
 Detection is by shape: a `client_id` starting with `https://` takes the CIMD
 path (draft §6.9 — our generated ids `mcpdc_`/`mcc_` never collide).
 
+**Raw-string identity rule (RFC 3986 §6.2.1; `-02` §3 MUST).** The presented
+`client_id` string IS the client's identity, raw: the fetch target (17.1.2),
+the document `client_id` comparison operand (17.1.3), the cache key (17.1.4),
+and every stored/emitted identifier derived from it (the registration
+`client_id`, audit fields, the `findGrantedScopes` key) are the exact string
+the client presented — never a parsed-and-re-serialized form. A WHATWG
+re-serialization (`new URL(id).href`) drops an explicit `:443` and lowercases
+the host, so a re-serialized operand would treat
+`https://example.com:443/client` as equal to `https://example.com/client`,
+defeating simple string comparison. The 17.1.1 parse exists for VALIDATION
+(and to extract connection parameters — host for DNS/SNI, port); its output
+is never a comparison operand, fetch target, cache key, or stored identifier.
+
 **17.1.1 URL admission (pure function, unit-testable, runs before any DNS):**
 
 1. Raw-string checks first — every check in this step runs on the RAW
@@ -1168,16 +1216,41 @@ path (draft §6.9 — our generated ids `mcpdc_`/`mcc_` never collide).
    same check. `localhost`, `*.localhost`, and trailing-dot hostnames rejected
    pre-DNS. Explicit ports allowed (draft MAY) but must pass the port denylist
    `{22, 25, 465, 587, 993, 995, 1433, 1521, 3306, 3389, 5432, 6379, 9200,
-   11211, 27017}`.
+   11211, 27017}`. (Rationale: the 17.1.2 IP blocklist is the SSRF security
+   boundary; the port denylist is cross-protocol hardening — it keeps the
+   fetcher from speaking HTTPS at well-known non-HTTP service ports — not a
+   boundary of its own.)
 
-**Loopback exception:** none in production. The draft permits a loopback AS to
-fetch same-loopback client_ids; we bind that to the existing
-`dev.allowInsecureLocalhost` flag (which already boot-fails on non-loopback
-origins) — loopback CIMD fetches are permitted only under that flag.
+**Loopback exception:** none in production. The draft (`-02` §8.6) permits a
+development/testing AS that itself runs on a loopback address to fetch
+client_ids resolving to the same loopback interface; we bind that to the
+existing `dev.allowInsecureLocalhost` flag (which already boot-fails on
+non-loopback origins — that flag carries the AS-side condition). Under the
+flag, ONLY two checks relax, and only for a URL whose host is `localhost` or
+`*.localhost`: (1) the 17.1.1 rejection of those hostnames — 17.1.1 stays a
+pure pre-DNS function; under the flag it simply stops rejecting them — and
+(2) the `127.0.0.0/8` + `::1/128` blocklist rows, enforced at 17.1.2's DNS
+step, which additionally requires EVERY resolved A/AAAA record to be a
+loopback address (the draft's resolves-to-the-AS's-own-loopback-interface
+condition; a single non-loopback record rejects the whole fetch — the same
+every-record rule as the rest of 17.1.2). A hostname outside
+`localhost`/`*.localhost` gets NO relaxation: if its records resolve to
+loopback they still reject — attacker-controlled DNS must not steer a dev AS
+into itself. IP-literal hosts stay rejected (17.1.1). The raw `^https://`
+requirement is NOT relaxed: 17.1.1 has no scheme carve-out, and admitting
+http-loopback CIMD would be a §18 contract change, never an implementation
+decision. Everything else in the pipeline still runs under the flag.
 
 **17.1.2 Fetch enforcement (`createGuardedFetcher` — the reference
 `FetcherPort`):**
 
+- **Fetch target:** the URL fetched is the RAW presented `client_id` string
+  (raw-string identity rule above). The admission parse extracts the
+  connection parameters — the parsed host (case-normalized by the parse;
+  hostname matching is case-insensitive, so this is the "original hostname"
+  the DNS-pinning bullet names for DNS/SNI/certificate purposes) and the
+  port — but the request is built from the presented string, never from a
+  re-serialized URL.
 - **DNS pinning:** resolve ALL A + AAAA records; EVERY resolved address must
   pass the blocklist (any hit rejects the whole fetch — multi-record attacks);
   connect to one validated resolved IP (family-consistent), with `Host` header
@@ -1208,9 +1281,24 @@ origins) — loopback CIMD fetches are permitted only under that flag.
   by the list above** — no extraction-and-recheck step exists to get subtly
   wrong. Membership tests compare **parsed binary addresses**, never strings.
 - **Redirects: refused.** Draft -01 MUST NOT follow; any 3xx is an error. The
-  core additionally asserts `result.url === <requested URL>` and
-  `status === 200`, so a fetcher that silently followed a redirect is detected
-  and the result rejected. (Max hop count is therefore 0 by contract.)
+  core additionally asserts that no redirect occurred and `status === 200`,
+  so a fetcher that silently followed a redirect is detected and the result
+  rejected. (Max hop count is therefore 0 by contract.) Redirect detection
+  MUST rest on **explicit no-redirect evidence from the transport result** —
+  the Fetch API's `redirected === false`, or an equivalent
+  redirects-followed count of 0 — asserted by the core. A normalized-URL
+  comparison alone is NOT sufficient evidence: a transport that silently
+  followed a redirect from a non-canonical admitted `client_id` to its own
+  canonical form (`https://Example.com:443/client` →
+  `https://example.com/client`) reports a final URL identical to the
+  requested URL's serialization, so that hop is invisible to URL comparison.
+  The final-URL check (the transport-reported final URL against the WHATWG
+  serialization of the fetch target — the **same serialization** on both
+  sides) is kept as defense-in-depth on top of the explicit indicator.
+  Neither check is an identity comparison: identity comparisons remain
+  raw-string-only per the raw-string identity rule, and a legitimately
+  admitted raw `client_id` carrying an explicit `:443` or a mixed-case host
+  is NOT spuriously rejected by either check.
 - **Response:** status 200 only (draft MUST); `Content-Type` must be
   `application/json` or a `+json` suffix type (our hardening — the draft only
   requires the body to be JSON); body read with a streaming hard cap of
@@ -1220,8 +1308,10 @@ origins) — loopback CIMD fetches are permitted only under that flag.
 - **Timeout:** one `AbortController` deadline (`fetchTimeoutMs`, default
   5000 ms) spanning DNS, connect, TLS, headers, and body. The spec is silent
   on timeouts; this value is our own hardening, recorded as such.
-- **Concurrency/DoS:** single-flight per URL (concurrent authorizes for the
-  same client_id coalesce into one fetch); a global in-flight cap (default 8);
+- **Concurrency/DoS:** single-flight keyed by the RAW presented `client_id`
+  string (raw-string identity rule — concurrent authorizes for the same
+  client_id coalesce into one fetch; distinct raw strings never coalesce,
+  even when they re-serialize identically); a global in-flight cap (default 8);
   the authorize endpoint sits behind `RateLimitPort` (`cimd:<ip>`). Error
   responses are NOT cached (draft MUST NOT) — the rate-limit layer, not a
   negative cache, bounds refetch abuse.
@@ -1229,9 +1319,12 @@ origins) — loopback CIMD fetches are permitted only under that flag.
 **17.1.3 Document validation (pure function, unit-testable):**
 
 - Strict `JSON.parse`; result must be a JSON object.
-- `client_id` member MUST equal the fetched URL by **exact character-for-
-  character comparison** (RFC 3986 §6.2.1 simple string comparison — no
-  normalization, no case-folding, no trailing-slash equivalence).
+- `client_id` member MUST equal the RAW presented `client_id` string by
+  **exact character-for-character comparison** (RFC 3986 §6.2.1 simple string
+  comparison — no normalization, no case-folding, no trailing-slash
+  equivalence; the raw-string identity rule — comparing against a
+  parsed/re-serialized URL would let an explicit-`:443` or case-folded-host
+  difference pass, and MUST reject instead).
 - Required members (MCP profile): `client_id`, `client_name` (non-empty
   string, ≤ 256 chars — display data, HTML-escaped at render),
   `redirect_uris` (non-empty array).
@@ -1241,6 +1334,18 @@ origins) — loopback CIMD fetches are permitted only under that flag.
   JWKS) is DEFERRED, together with 17.2's `private_key_jwt` — one future
   asymmetric-client-auth unit. `client_secret` /
   `client_secret_expires_at` present ⇒ reject (draft MUST NOT).
+- **Private or symmetric key material rejects the document** (`-02` §4.1:
+  "private key material MUST NOT be included ... only public keys ... are
+  permitted" — enforced AS-side as a fail-closed conformance check, even
+  though v0.2 never uses document keys). If a `jwks` member is present it
+  MUST parse as a JWK Set — an object whose `keys` member is an array of
+  objects; malformed ⇒ reject — and every key MUST be public-only: a key
+  bearing any private or symmetric JOSE parameter (`d`, `p`, `q`, `dp`,
+  `dq`, `qi`, `oth`, `k` — the complete registered RFC 7517/7518 set)
+  rejects the whole document. Without this rule a nonconformant document
+  would be accepted with the key material silently ignored. `jwks_uri` is a
+  URL and is never fetched (17.1.4 / the no-second-fetch posture), so it
+  cannot carry key material into the AS.
 - `redirect_uris` entries: https (exact-match at authorize, per draft §4.5 /
   RFC 9700) or loopback http (RFC 8252 any-port at match time — consistent
   with §10.2 native policy). Same hygiene as §10: no wildcards, no fragments,
@@ -1270,8 +1375,11 @@ origins) — loopback CIMD fetches are permitted only under that flag.
   meaningful.
 - Token/refresh/revoke: NO re-fetch; binding is the existing auth-code-record
   and refresh-record client checks (§9.4). Validated documents cache per RFC
-  9111 headers clamped to `[60, cacheTtlCapSeconds]` seconds, keyed by exact
-  URL, in-memory per instance; invalid/error results never cached.
+  9111 headers clamped to `[60, cacheTtlCapSeconds]` seconds, keyed by the
+  RAW presented `client_id` string (raw-string identity rule —
+  `https://example.com/client` and `https://example.com:443/client` are
+  distinct clients and distinct cache entries), in-memory per instance;
+  invalid/error results never cached.
 - No new store records.
 
 ### 17.2 `client_credentials` grant (MCP extension `io.modelcontextprotocol/oauth-client-credentials`)
