@@ -87,7 +87,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (2026-06-18)
         with:
           fetch-depth: 0
-      - uses: acartag7/engineering-os/process-guard@b483fa418ffa8122588fdfa87c36f40f6908c06f # main (2026-07-09)
+      - uses: acartag7/engineering-os/process-guard@c697b412abf034be7a22a53f567ec10eecc776e0 # v0.1.0
         with:
           base-ref: origin/${{ github.base_ref }}
           src-paths: src/
