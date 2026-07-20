@@ -16,6 +16,12 @@
       "groupName": "github-actions",
       "pinDigests": true,
       "commitMessagePrefix": "chore(deps):"
+    },
+    {
+      "description": "First-party process-guard action (own repo): exempt from the 15-day release-age floor so hardening fixes propagate immediately. Scoped exclusion per the dependency-ledger 'my own packages are exempt' rule — never a blanket disable.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["/^acartag7\\/engineering-os/"],
+      "minimumReleaseAge": "0"
     }
   ]
 }
