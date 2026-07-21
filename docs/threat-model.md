@@ -7,9 +7,11 @@
 > Update this file before any change to auth, tokens, redirect policy, the
 > store, identity, egress, or the publish pipeline.
 >
-> Status: **v0.1 shipped + v0.2 contracts locked 2026-07-04.** Threats 17–25
-> cover the locked-but-unimplemented [§17](./contracts.md#17-v02-feature-contracts-locked-2026-07-04)
-> contracts; 29–33 cover the shipped [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
+> Status: **v0.2 shipped (through v0.2.3).** Threats 17–25 cover the
+> [§17](./contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
+> contracts — most shipped in v0.2; CIMD (§17.1), device flow (§17.3), and the
+> GitHub identity port (§17.6) remain contract-locked, implementation pending.
+> Threats 29–33 cover the shipped [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
 > upstream redirect-leg orchestrator.
 
 ## Assets

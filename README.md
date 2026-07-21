@@ -163,8 +163,7 @@ SDK. The full provider × client matrix lives in
 
 ## Roadmap (v0.3)
 
-Generic OIDC + Google/GitHub identity presets · device authorization flow
-(RFC 8628) · CIMD · `npx mcp-sso init`.
+GitHub identity preset · device authorization flow (RFC 8628) · CIMD.
 
 ## License
 
