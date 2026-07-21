@@ -36,8 +36,14 @@ Every port follows the same authorization model (see
    OIDC — matched against the **immutable** subject, not the email, unless you
    opt in). An **empty** allowlist delegates the decision entirely to the IdP.
 
-Empty config counts as missing config: blank required identity values fail the
-**boot**, never fall back to an unauthenticated or console-pairing default.
+Blank config counts as missing config. The example's env wiring rejects blank
+required values (`mustEnv`) and selects each provider branch by *presence*, so a
+blank required env var fails the **boot** instead of silently falling back to
+console pairing. Most factories also reject blank required fields at construction
+(Cloudflare's `audience`; the OIDC / Google `clientId`, `issuer`, `redirectUri`).
+The **Entra** factory is the exception — it does not non-empty-check `tenantId` /
+`clientId`, so wire it through a caller that rejects blanks (as the example's
+`mustEnv` does).
 
 ## Subjects prefer the immutable identifier
 
