@@ -114,9 +114,12 @@ code — never a bypass:
 - **`CF_ACCESS_AUDIENCE` is the hex AUD tag, not the hostname.** A wrong value is
   an `aud` mismatch; an *empty* value is worse (see fail-closed) — the factory
   throws on empty to prevent it.
-- **Subject is the Cloudflare `sub` (opaque UUID), not the email.** Cloudflare puts
-  a stable per-account UUID in `sub` and the email in a separate claim. Do not key
-  authorization on the email.
+- **Subject is the Cloudflare `sub` (opaque UUID) when present, falling back to the
+  email.** The code keys on `sub ?? email`. Real Access tokens always include a
+  stable `sub` UUID, so that is the subject in practice — but a token missing `sub`
+  (a malformed or non-Cloudflare assertion) would key on the mutable email instead.
+  The email is always required and surfaced as a separate claim; prefer the opaque
+  `sub` for grants and audits.
 - **Use a named tunnel.** Anonymous quick tunnels 404 at the edge. If you run other
   named tunnels on the same host, pass `--credentials-file` explicitly — a stray
   `~/.cloudflared/config.yml` can silently override which credentials are used.

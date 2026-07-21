@@ -34,11 +34,17 @@ Every port follows the same authorization model (see
 Empty config counts as missing config: blank required identity values fail the
 **boot**, never fall back to an unauthenticated or console-pairing default.
 
-## Subjects are keyed on the immutable identifier
+## Subjects prefer the immutable identifier
 
-- Cloudflare Access → the opaque `sub` UUID
-- Entra → `oid`
-- Google / generic OIDC → the provider `sub`
+- Cloudflare Access → `sub` (opaque UUID), falling back to `email` if `sub` is absent
+- Entra → `oid`, falling back to `preferred_username` / `email`
+- Google / generic OIDC → the provider `sub` (**required** — a token without `sub`
+  is rejected)
 
-Never key authorization on the email — it is mutable. Where a port surfaces an
-email, it does so only when the provider marks it verified.
+Prefer the immutable subject for grants and audits; do not key authorization on the
+email — it is mutable, and for Cloudflare and Entra it is also the subject
+*fallback*. Email handling differs by port: **Google** surfaces the email only when
+the provider marks it `email_verified`; **Cloudflare Access**, **Entra**, and
+**generic OIDC** surface the email claim as-is (generic OIDC applies the
+`email_verified` check only to optional allowlist *matching*, not to whether the
+email is surfaced).
