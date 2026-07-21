@@ -92,8 +92,9 @@ Verified-context rejections return `identity_rejected` (a 302 redirect with
 
 | Condition | Reason code |
 |---|---|
-| `tid` not allowed (or `!= tenantId` single-tenant) | `entra_bad_tid` |
-| `iss` != the tenant issuer | `entra_bad_iss` |
+| Multi-tenant: `tid` not in `allowedTenantIds` | `entra_bad_tid` |
+| Single-tenant: token from another tenant (`iss` is checked first) | `entra_bad_iss` |
+| `iss` != the tenant issuer (multi-tenant, after `tid`) | `entra_bad_iss` |
 | `aud` != `clientId` | `entra_bad_aud` |
 | `nonce` mismatch | `entra_bad_nonce` |
 | No `exp` | `entra_missing_exp` |
@@ -145,7 +146,8 @@ scope outside the catalog, or a non-array `baseScopes`.
 Run the checklist at the top of `src/identity/entra.ts` against a real tenant, and
 confirm the deny legs before flipping the `live-verification.md` rows:
 
-- A **non-allowed tenant** user → `entra_bad_tid`.
+- A **non-allowed tenant** user → `entra_bad_tid` (multi-tenant) or `entra_bad_iss`
+  (single-tenant — the foreign `iss` is checked first).
 - A **wrong subject** → `entra_subject_not_allowed`.
 - (groups) A **group-overage** user → `entra_groups_overage`; a **no-mapped-groups**
   user → `entra_no_mapped_groups`.

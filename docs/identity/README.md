@@ -43,8 +43,9 @@ Empty config counts as missing config: blank required identity values fail the
 
 - Cloudflare Access → `sub` (opaque UUID), falling back to `email` if `sub` is absent
 - Entra → `oid`, falling back to `preferred_username` / `email`
-- Google / generic OIDC → the provider `sub` (**required** — a token without `sub`
-  is rejected)
+- Google → the provider `sub` (raw — Google's `sub` is globally unique)
+- generic OIDC → `${issuer}|${sub}` (the `sub` namespaced by issuer to defend against
+  cross-issuer collisions; the allowlist still matches the raw `sub`)
 
 Prefer the immutable subject for grants and audits; do not key authorization on the
 email — it is mutable, and for Cloudflare and Entra it is also the subject
