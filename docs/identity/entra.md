@@ -102,12 +102,14 @@ Verified-context rejections return `identity_rejected` (a 302 redirect with
 | >200 groups → overage marker present, groups omitted | `entra_groups_overage` |
 | No groups claim + empty `baseScopes` | `entra_no_groups` |
 | Groups present but none mapped + empty `baseScopes` | `entra_no_mapped_groups` |
-| Missing raw `id_token` | `entra_id_token_missing` |
 | Expired / bad claim / bad alg / unknown key / other `jose` | `entra_token_expired` / `entra_bad_claim` / `entra_unsupported_alg` / `entra_unknown_key` / `entra_token_invalid` |
 
-**Infrastructure** failures (JWKS fetch timeout, token-exchange non-200) are
-classified `exchange_failed` → a 302 `server_error`, and emit **no**
-`identity.verify` audit event — no identity decision was made.
+**Infrastructure / exchange** failures — a token-exchange non-200 or timeout, a
+**token response missing `id_token`**, or a JWKS-fetch failure (`entra_verify_failed`)
+— are classified `exchange_failed` → a 302 `server_error`, and emit **no**
+`identity.verify` audit event; no identity decision was made. (The `entra_id_token_missing`
+reason applies only to the lower-level header-driven / primitives path, where a raw
+`id_token` is passed to `verify()` — not to this redirect flow.)
 
 Malformed `groupAuthorization` config is a **boot** `AuthConfigError` (never a
 silent "no ceiling" default): a non-object `groupAuthorization`, a non-GUID mapping

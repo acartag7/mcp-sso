@@ -25,7 +25,12 @@ Every port follows the same authorization model (see
 
 1. **The IdP is the primary gate.** Cloudflare Access policy, Entra app
    assignment / Conditional Access, or the OIDC provider's own policy decides who
-   can sign in. A denied user is stopped upstream and never reaches the gateway.
+   can sign in. With **Cloudflare Access** a denied user is blocked at the
+   Cloudflare edge and never reaches the gateway. With the **redirect flow** (Entra
+   / Google / generic OIDC) an IdP denial returns to the gateway's callback, which
+   audits it (`oauth.upstream.callback`, reason `upstream_denied`) and redirects the
+   client with `access_denied` — the denial reaches the callback, but no bridge
+   token is minted.
 2. **mcp-sso's allowlist is optional defense-in-depth**, never a replacement:
    `emailAllowlist` (Cloudflare) or `subjectAllowlist` (Entra / Google / generic
    OIDC — matched against the **immutable** subject, not the email, unless you
