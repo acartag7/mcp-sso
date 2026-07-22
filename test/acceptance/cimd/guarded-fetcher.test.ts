@@ -111,6 +111,13 @@ if (phases["s6a-cimd-primitives"] !== true) {
     assert.equal(t.calls, 0);
   });
 
+  test("a malformed / family-mismatched resolver record rejects the WHOLE fetch (never skipped); no connect", async () => {
+    const t = transport(() => okResult());
+    await assert.rejects(fetcher(t, resolver([PUBLIC, { address: "1.2.3.4", family: 6 }])).fetch(ID), (e: any) => e && typeof e.reason === "string");
+    await assert.rejects(fetcher(t, resolver([PUBLIC, { address: "fe80::1%eth0", family: 6 }])).fetch(ID), (e: any) => e && typeof e.reason === "string");
+    assert.equal(t.calls, 0);
+  });
+
   test("zero-record resolver answer rejects (NOT a vacuous [].every() pass); no connect", async () => {
     const t = transport(() => okResult());
     await assert.rejects(fetcher(t, resolver([])).fetch(ID), (e: any) => e && typeof e.reason === "string");
@@ -206,6 +213,7 @@ if (phases["s6a-cimd-primitives"] !== true) {
     const t2 = transport(body);
     const mixed = resolver([{ address: "127.0.0.1", family: 4 }, { address: "93.184.216.34", family: 4 }]);
     await assert.rejects(fetcher(t2, mixed, { allowLoopback: true }).fetch(LID), (e: any) => e && typeof e.reason === "string");
+    assert.equal(t2.calls, 0); // the every-record guard rejects BEFORE any connect
   });
 
   test("isGuardedFetcher: true only for a constructed fetcher; a spread-clone is false", () => {

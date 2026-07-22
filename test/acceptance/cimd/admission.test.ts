@@ -106,6 +106,10 @@ if (phases["s6a-cimd-primitives"] !== true) {
       denied("https://h.example" + p);
   });
 
+  test("malformed percent escapes in the raw path reject (decode failure, pre-parse)", () => {
+    for (const p of ["/%zz/c", "/a/%2/c", "/%/c", "/g%/c"]) denied("https://h.example" + p);
+  });
+
   test("root or path-less url rejected (a real path component is required)", () => {
     denied("https://h.example/"); // root path
     denied("https://h.example"); // no path
