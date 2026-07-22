@@ -214,4 +214,31 @@ if (phases["s6a-cimd-primitives"] !== true) {
     assert.equal(isGuardedFetcher({ ...f }), false);
     for (const x of [null, undefined, {}, 42, "x", () => {}, []]) assert.equal(isGuardedFetcher(x), false);
   });
+
+  test("redirect refused when finalUrl differs even if redirected===false (defense-in-depth)", async () => {
+    const t = transport(() => okResult({ redirected: false, finalUrl: "https://cdn.example.com/other" }));
+    await rejectsReason(fetcher(t, resolver([PUBLIC])).fetch(ID), "redirect_refused");
+  });
+
+  test("absent Content-Type rejects (a 200 with no media type is not trusted)", async () => {
+    const t = transport(() => okResult({ headersDistinct: {} }));
+    await rejectsReason(fetcher(t, resolver([PUBLIC])).fetch(ID), "content_type");
+  });
+
+  test("over-cap body across MULTIPLE sub-cap chunks rejects (accumulated, not per-chunk)", async () => {
+    async function* multi() { yield enc("x".repeat(600)); yield enc("x".repeat(600)); }
+    const t = transport(() => okResult({ encodedBody: multi() }));
+    await rejectsReason(fetcher(t, resolver([PUBLIC]), { maxDocumentBytes: 1024 }).fetch(ID), "size_exceeded");
+  });
+
+  test("allowLoopback does NOT relax the blocklist for a non-localhost host (DNS-rebinding)", async () => {
+    // https://attacker.example/client whose attacker DNS returns 127.0.0.1 must still be
+    // ip_blocked under the dev flag — relaxation is scoped to localhost/*.localhost only.
+    const t = transport(() => okResult());
+    await rejectsReason(
+      fetcher(t, resolver([{ address: "127.0.0.1", family: 4 }]), { allowLoopback: true }).fetch("https://attacker.example/client"),
+      "ip_blocked",
+    );
+    assert.equal(t.calls, 0);
+  });
 }
