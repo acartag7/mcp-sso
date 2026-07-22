@@ -205,7 +205,7 @@ function assertOptions(opts: unknown): asserts opts is Record<string, unknown> {
     throw new TypeError("resolver is invalid");
   }
 }
-class NodeDnsResolver implements DnsResolver {
+export class NodeDnsResolver implements DnsResolver {
   readonly resolver = new Resolver();
   async resolve(hostname: string): Promise<{ address: string; family: 4 | 6 }[]> {
     const [v4, v6] = await Promise.all([
