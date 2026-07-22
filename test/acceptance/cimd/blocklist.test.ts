@@ -61,6 +61,11 @@ if (phases["s6a-cimd-primitives"] !== true) {
       blocked(a);
   });
 
+  test("IPv4-embedding IPv6 forms blocked WHOLESALE even for a PUBLIC embedded address", () => {
+    // the prefixes are blocked as ranges, NOT by extracting + re-checking the embedded v4.
+    for (const a of ["::ffff:8.8.8.8", "64:ff9b::808:808", "2002:808:808::"]) blocked(a);
+  });
+
   test("zone-scoped IPv6 is blocked; parseIp rejects the zone form", () => {
     blocked("fe80::1%eth0");
     assert.equal(parseIp("fe80::1%eth0"), null);
