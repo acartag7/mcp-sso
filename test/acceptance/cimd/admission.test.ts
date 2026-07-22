@@ -181,6 +181,11 @@ if (phases["s6a-cimd-primitives"] !== true) {
     denied("https://a.xn--exmple-cua.com/x");
   });
 
+  test("a mixed / UPPER-case xn-- A-label rejects (DNS labels are case-insensitive)", () => {
+    denied("https://XN--EXMPLE-CUA.com/x");
+    denied("https://www.XN--exmple-cua.com/x");
+  });
+
   test("raw bad bytes in the AUTHORITY reject (not only the path)", () => {
     const bs = String.fromCharCode(92), tab = String.fromCharCode(9);
     denied("https://h" + bs + "evil.example/c"); // raw backslash in authority (WHATWG maps to /)

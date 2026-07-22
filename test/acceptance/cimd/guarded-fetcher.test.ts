@@ -307,4 +307,11 @@ if (phases["s6a-cimd-primitives"] !== true) {
     assert.throws(() => createGuardedFetcher({ maxDocumentBytes: null as unknown as number }));
     assert.throws(() => createGuardedFetcher({ fetchTimeoutMs: null as unknown as number }));
   });
+
+  test("out-of-domain cap values are ALL rejected (rule 21 closed domain, not just null)", () => {
+    for (const v of [0, 1023, 65537, -1, 1.5, NaN, Infinity, "5120"])
+      assert.throws(() => createGuardedFetcher({ maxDocumentBytes: v as unknown as number }));
+    for (const v of [0, 999, 30001, -1, 1.5, NaN, Infinity, "5000"])
+      assert.throws(() => createGuardedFetcher({ fetchTimeoutMs: v as unknown as number }));
+  });
 }
