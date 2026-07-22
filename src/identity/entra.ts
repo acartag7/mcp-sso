@@ -9,35 +9,20 @@
 // transport so it is testable without the network. An optional subject/email
 // allowlist adds defense-in-depth.
 //
-// --- Manual checklist: live-tenant verification (cannot be automated without a
-// real tenant; run before claiming Entra works end-to-end) ---
-//   1. Register ONE app in the Entra tenant (App registrations): redirect URI =
-//      the bridge's Entra-callback URL; allow public-client PKCE OR create a
-//      client secret; expose openid/profile/email/offline_access.
-//   2. Sign a real user in via getAuthorizationUrl → Entra login → callback.
-//   3. Confirm exchangeCodeForToken returns an id_token and validateEntraIdToken
-//      accepts it (iss/aud/tid match the config; subject is the user's oid).
-//   4. Confirm a user from a NON-allowed tid is rejected (entra_bad_tid).
-//   5. Confirm the bridge then mints its OWN token (the Entra token is not
-//      forwarded to any MCP client).
-//   6. (groupAuthorization) In the app manifest set `groupMembershipClaims` to
-//      emit group OBJECT IDs — "ApplicationGroup" (direct membership, solves
-//      overage for the mapping use case; requires Entra P1) or "SecurityGroup"
-//      (transitive). Mapping keys MUST be the group object IDs (GUIDs), never
-//      display names (a documented spoof vector — boot-rejected).
-//   7. Confirm a user whose groups map to a subset of scopeCatalog receives
-//      exactly the intersected scopes in the bridge token; a user in zero
-//      mapped groups (with empty baseScopes) is rejected (entra_no_groups).
-//   8. Confirm an overage (>200-group) token fails closed (entra_groups_overage)
-//      and that the `_claim_sources` endpoint URL is NEVER fetched. Remedy:
-//      switch the manifest to "ApplicationGroup" or reduce group sprawl.
-//   9. Guest/B2B users: group-claim behavior is UNVERIFIED in Microsoft's docs —
-//      confirm a guest's membership resolves as expected before relying on it.
+// --- Manual live-tenant verification (run before claiming Entra works end-to-end;
+// full walkthrough + setup in docs/identity/entra.md) ---
+//   1. Register one app (redirect URI = the bridge callback; public-client PKCE or a secret).
+//   2. Sign a real user in; confirm the bridge mints its OWN token (Entra token never forwarded).
+//   3. Confirm the deny legs: wrong tenant (entra_bad_tid / entra_bad_iss), group overage
+//      >200 (entra_groups_overage — the `_claim_sources` URL is NEVER fetched), no-mapped-groups
+//      (entra_no_mapped_groups). groupAuthorization keys MUST be group object-ID GUIDs, never
+//      display names (spoof vector). Guest/B2B group behavior is unverified — check before relying on it.
 
 import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWTPayload } from "jose";
 import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
 import { type GroupAuthorization, assertGroupAuthorizationMapping, resolveGroupCeiling } from "./entra-groups.ts";
 import { assertHttpsRaw } from "./util.ts";
+import { AuthConfigError } from "../config.ts";
 
 export interface EntraConfig {
   tenantId: string;
@@ -213,6 +198,10 @@ export interface EntraIdentity {
  *  validates the subset elsewhere — passing it is recommended. */
 export function createEntraIdentity(config: EntraConfig, opts?: { scopeCatalog?: readonly string[] }): EntraIdentity {
   assertHttpsRaw(ENTRA_BASE, "entra base");
+  // Fail closed on blank required config (empty == missing) — sibling of the CF
+  // empty-audience guard: a blank tenantId/clientId builds malformed URLs / a vacuous aud check.
+  if (!config.tenantId || !config.tenantId.trim()) throw new AuthConfigError("tenantId is required (a non-empty Entra tenant id)");
+  if (!config.clientId || !config.clientId.trim()) throw new AuthConfigError("clientId is required (a non-empty Entra app/client id)");
   // §17.4 boot validation: GUID-only keys, non-empty scope values (+ subset ⊆
   // catalog when supplied). Fail closed at construction, never a silent default.
   assertGroupAuthorizationMapping(config.groupAuthorization, opts?.scopeCatalog);
