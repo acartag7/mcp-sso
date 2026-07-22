@@ -189,7 +189,7 @@ async function* bodyChunks(body: AsyncIterable<Uint8Array> | ReadableStream<Uint
 }
 function integerOption(value: number | undefined, fallback: number, min: number,
   max: number, name: string): number {
-  const result = value ?? fallback;
+  const result = value === undefined ? fallback : value; // null/NaN/etc are present-but-invalid -> reject below
   if (!Number.isInteger(result) || result < min || result > max) throw new TypeError(`${name} is out of range`);
   return result;
 }
