@@ -54,6 +54,9 @@ function admit(raw: string, allowLoopback: boolean): AdmittedUrl {
   const rawHost = extractRawHost(authority);
   if (rawHost === null || !/^[\x00-\x7f]+$/.test(rawHost)) throw denied();
   if (rawHost.toLowerCase() !== url.hostname.toLowerCase()) throw denied();
+  // A pre-encoded IDNA A-label (xn--…) is pure ASCII and equals url.hostname, so it
+  // would slip the checks above — but it is a punycode identity, deferred to §18 (rule 6).
+  if (/(^|\.)xn--/i.test(url.hostname)) throw denied();
 
   const hostname = url.hostname;
   const unbracketed = hostname.startsWith("[") && hostname.endsWith("]")
