@@ -87,6 +87,15 @@ if (phases["s6a-cimd-primitives"] !== true) {
     assert.equal(r.calls, 1); // exactly one resolution
   });
 
+  test("non-default port propagates to connect port + Host header (rule 13)", async () => {
+    const PORTED = "https://cdn.example.com:8443/client";
+    const t = transport(() => okResult({ finalUrl: PORTED, encodedBody: chunk(enc(docBody(PORTED))) }));
+    await fetcher(t, resolver([PUBLIC])).fetch(PORTED);
+    assert.equal(t.last.port, 8443);
+    assert.equal(t.last.hostHeader, "cdn.example.com:8443");
+    assert.equal(t.last.requestTarget, "/client");
+  });
+
   test("exactly ONE resolution; a 2nd (private) answer cannot re-point the connect target", async () => {
     const t = transport(() => okResult());
     const r = resolver((n: any) => (n === 1 ? [PUBLIC] : [{ address: "10.0.0.1", family: 4 }]));
