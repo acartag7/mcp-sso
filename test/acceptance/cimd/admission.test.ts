@@ -36,6 +36,12 @@ if (phases["s6a-cimd-primitives"] !== true) {
     assert.equal(r.raw, "https://cdn.example.com:8443/client");
   });
 
+  test("admits an explicit default port :443 as a distinct raw client_id", () => {
+    const r = admitCimdUrl("https://cdn.example.com:443/client");
+    assert.equal(r.raw, "https://cdn.example.com:443/client"); // raw-string identity keeps :443
+    assert.equal(r.port, 443);
+  });
+
   test("admits a path-@ (legal pchar), distinct from an authority-@", () => {
     const r = admitCimdUrl("https://cdn.example.com/@scope/c.json");
     assert.equal(r.hostname, "cdn.example.com");

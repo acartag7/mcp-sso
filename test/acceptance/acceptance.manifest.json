@@ -1,9 +1,9 @@
 {
   "version": 1,
   "files": {
-    "cimd/admission.test.ts": "fd9db310e7577f6fa4d881b0fd2078c605de7ed5f96d91db941ece722cd9625e",
+    "cimd/admission.test.ts": "2f06c5030c5dc5b961c82912a8ae32efa219e090f21f35a47de048239f9877a8",
     "cimd/blocklist.test.ts": "482ff4346dde3feacb18a712d3cb4152796086614d37c10a53351c7c201bbafa",
-    "cimd/document.test.ts": "5d8df8f7def2b4861015cc337f0b32618276c36a90d0485cc1d4f93118be3af8",
-    "cimd/guarded-fetcher.test.ts": "4f8d910f2a3b2024173a9f362401e33fb343dfc3ff35cd25cc294d98c0819e1a"
+    "cimd/document.test.ts": "0915a2155e853f0be12af1a1dc8a69c150531e2919ce691e30551820fe3ed127",
+    "cimd/guarded-fetcher.test.ts": "7d4f38c43d1329ab4655f16ac7e10cd226e1b6e36c411f8eca6f7406d89b6096"
   }
 }

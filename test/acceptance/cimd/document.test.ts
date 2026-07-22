@@ -164,6 +164,7 @@ if (phases["s6a-cimd-primitives"] !== true) {
     uriBad("http://192.168.0.10/cb"); // http non-loopback
     uriBad("http://example.com/cb");
     uriBad("http://10.0.0.1/cb");
+    uriBad("http://127.0.0.2/cb"); // 127/8 but not exactly 127.0.0.1 (rule 20 is exact-host)
     uriBad("https://app.example.com/cb#x"); // fragment
     uriBad("https://app.example.com/cb#"); // trailing #
     uriBad("https://user@app.example.com/cb"); // userinfo
