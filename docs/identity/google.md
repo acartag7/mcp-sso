@@ -7,6 +7,9 @@ the **`hd` (hosted domain) claim** is checked when you restrict to a Workspace
 true`**. Subject = the stable Google `sub` (don't key on email — it can change).
 `clientSecret` is **required** (Google's token auth methods are secret-based).
 
+Part of the [identity ports](./README.md) (shared authorization model + subject
+rules); the `GOOGLE_*` env vars are in [configuration.md](../configuration.md).
+
 ```ts
 import { createGoogleRedirectIdentity } from "mcp-sso/identity/google";
 import { createUpstreamRedirectFlow } from "mcp-sso";
