@@ -3,7 +3,7 @@
   "files": {
     "cimd/admission.test.ts": "341463656dfee93f1ed6c29dd93805f6ce0f128bf4e0eb17b1a67b862278d869",
     "cimd/blocklist.test.ts": "776d8ad97ee0fb2296cb7377bf06f6caa73d9c3a44d76037b1192876f6aebc66",
-    "cimd/document.test.ts": "75b2182d34411c21da30a9c1d1da4ab290179dd03c8c5e538630baa721af2c3e",
+    "cimd/document.test.ts": "7e45170890ea9e0242b8f8ad0464ccb324ce9e03a7f556ba6946e42c9b1108a6",
     "cimd/guarded-fetcher.test.ts": "6b1480d502067351fdcae87e120f3c7779e61be6a52f10899a4c31121dce3ab0"
   }
 }
