@@ -101,8 +101,7 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
     hostHeader: admitted.hostname + (url.port === "" ? "" : `:${url.port}`),
     requestTarget: url.pathname + url.search, signal: controller.signal, redirect: "manual",
   });
-  // redirected===false is the load-bearing no-redirect evidence (node:https never
-  // follows); sameSerializedUrl is defense-in-depth, meaningful for the injected seam.
+  // redirected===false is load-bearing; sameSerializedUrl is defense-in-depth (seam-only).
   if (response.redirected !== false || !sameSerializedUrl(response.finalUrl, admitted.raw)) {
     throw new CimdError("redirect_refused");
   }
@@ -195,6 +194,7 @@ function integerOption(value: number | undefined, fallback: number, min: number,
 function assertOptions(opts: unknown): asserts opts is Record<string, unknown> {
   if (typeof opts !== "object" || opts === null || Array.isArray(opts)) throw new TypeError("CIMD fetcher options are invalid");
   const value = opts as Record<string, unknown>;
+  for (const k of Object.keys(value)) if (!["transport", "resolver", "allowLoopback", "maxDocumentBytes", "fetchTimeoutMs"].includes(k)) throw new TypeError(`unknown CIMD fetcher option: ${k}`);
   if (value.allowLoopback !== undefined && typeof value.allowLoopback !== "boolean") throw new TypeError("allowLoopback must be boolean");
   if (value.transport !== undefined && (typeof value.transport !== "object"
     || value.transport === null || typeof (value.transport as CimdTransport).connectAndGet !== "function")) {
@@ -208,6 +208,7 @@ function assertOptions(opts: unknown): asserts opts is Record<string, unknown> {
 export class NodeDnsResolver implements DnsResolver {
   readonly resolver = new Resolver();
   async resolve(hostname: string): Promise<{ address: string; family: 4 | 6 }[]> {
+    if (hostname === "localhost" || hostname.endsWith(".localhost")) return [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }]; // c-ares can't resolve localhost
     const [v4, v6] = await Promise.all([
       resolveFamily(this.resolver.resolve4(hostname), 4),
       resolveFamily(this.resolver.resolve6(hostname), 6),
@@ -231,7 +232,7 @@ function nodeConnectAndGet(req: Parameters<CimdTransport["connectAndGet"]>[0]) {
       hostname: req.connectIp, family: req.family, port: req.port, servername: req.servername,
       method: "GET", path: req.requestTarget,
       headers: { Host: req.hostHeader, Accept: "application/json", "Accept-Encoding": "identity" },
-      agent: false, signal: req.signal,
+      agent: false, signal: req.signal, rejectUnauthorized: true, // enforce TLS even under NODE_TLS_REJECT_UNAUTHORIZED=0
     }, (response) => {
       const headersDistinct: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
       for (let index = 0; index < response.rawHeaders.length; index += 2) {

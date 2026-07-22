@@ -26,3 +26,10 @@ test("built-in resolver: a non-nodata resolver error rejects the whole lookup (f
   (r.resolver as unknown as { resolve6: unknown }).resolve6 = async () => [];
   await assert.rejects(() => r.resolve("example.com"));
 });
+
+test("built-in resolver: localhost / *.localhost map to loopback (c-ares bypasses /etc/hosts)", async () => {
+  const r = new NodeDnsResolver();
+  const loopback = [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }];
+  assert.deepEqual(await r.resolve("localhost"), loopback);
+  assert.deepEqual(await r.resolve("api.localhost"), loopback);
+});
