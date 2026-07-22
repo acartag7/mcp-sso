@@ -145,8 +145,11 @@ if (phases["s6a-cimd-primitives"] !== true) {
     }
   });
 
-  test("ANY present Content-Encoding rejects (identity-only, no gzip)", async () => {
-    for (const ce of ["gzip", "x-gzip", "br", "deflate", "zstd", "gzip, gzip", "identity, gzip"]) {
+  test("ANY present Content-Encoding rejects incl. bare identity (only ABSENT accepted)", async () => {
+    // §17.1.5 rule 16: a present header rejects even for a no-op `identity` — only
+    // an absent Content-Encoding is accepted. (A guarded fetcher that allowed a bare
+    // `identity` would pass a gzip-only table yet diverge from the contract.)
+    for (const ce of ["gzip", "x-gzip", "br", "deflate", "zstd", "identity", "gzip, gzip", "identity, gzip"]) {
       const t = transport(() => okResult({ headersDistinct: { "content-type": ["application/json"], "content-encoding": [ce] } }));
       await rejectsReason(fetcher(t, resolver([PUBLIC])).fetch(ID), "encoding");
     }
