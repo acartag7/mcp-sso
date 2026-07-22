@@ -111,12 +111,13 @@ if (phases["s6a-cimd-primitives"] !== true) {
     denied("https://h.example"); // no path
   });
 
-  test("IP-literal hosts rejected (v4, bracketed v6, dword, hex, fullwidth)", () => {
+  test("IP-literal hosts rejected (v4, bracketed v6, dword, octal, hex, fullwidth)", () => {
     for (const h of [
       "https://1.2.3.4/x",
       "https://[::1]/x",
       "https://[2001:db8::1]/x",
       "https://2130706433/x", // dword -> 127.0.0.1
+      "https://0177.0.0.1/x", // octal -> 127.0.0.1
       "https://0x7f.0.0.1/x", // hex
       "https://1．2．3．4/x", // fullwidth dots -> 1.2.3.4
     ]) denied(h);
@@ -125,6 +126,7 @@ if (phases["s6a-cimd-primitives"] !== true) {
   test("non-ASCII / IDNA hostnames rejected (v0.2 fail-closed policy)", () => {
     denied("https://exämple.com/x");
     denied("https://пример.example/x");
+    denied("https://xn--exmple-cua.com/x"); // pre-encoded IDNA A-label
   });
 
   test("localhost family rejected by default; a.b.localhost matches, notlocalhost does not", () => {
