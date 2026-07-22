@@ -22,6 +22,10 @@ test("createCloudflareAccessIdentity rejects an empty audience (fail-closed: jos
     () => createCloudflareAccessIdentity({ audience: "", certsUrl: CONFIG.certsUrl, issuer: CONFIG.issuer }),
     /audience is required/,
   );
+  assert.throws( // whitespace-only == missing config (contracts §6.5)
+    () => createCloudflareAccessIdentity({ audience: "   ", certsUrl: CONFIG.certsUrl, issuer: CONFIG.issuer }),
+    /audience is required/,
+  );
 });
 
 test("verifyCloudflareAccessToken also rejects an empty audience (direct-library reuse — Codex P2 on PR #26)", async () => {
@@ -35,6 +39,8 @@ test("verifyCloudflareAccessToken also rejects an empty audience (direct-library
   const result = await verifyCloudflareAccessToken(token, publicKey, { ...CONFIG, audience: "" });
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.reason, "access_jwt_verify_failed");
+  const ws = await verifyCloudflareAccessToken(token, publicKey, { ...CONFIG, audience: "   " });
+  assert.equal(ws.ok, false); // whitespace-only audience is also rejected
 });
 
 test("emailAllowed: case-insensitive, trimmed, rejects empty", () => {
