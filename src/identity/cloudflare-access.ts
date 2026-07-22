@@ -72,7 +72,7 @@ export async function verifyCloudflareAccessToken(
   options?: CloudflareAccessVerifyOptions,
 ): Promise<IdentityResult> {
   try {
-    if (!config.audience) throw new Error("audience is required"); // fail-closed sibling of the factory guard: an empty audience lets jose skip the value match
+    if (!config.audience || !config.audience.trim()) throw new Error("audience is required"); // fail-closed sibling of the factory guard: a blank/whitespace audience lets jose skip the value match
     const { payload } = await jwtVerify<AccessJwtPayload>(token, key, {
       algorithms: ["RS256"],
       audience: config.audience,
@@ -89,7 +89,7 @@ export async function verifyCloudflareAccessToken(
 /** Build a CloudflareAccess IdentityPort. `input` is the raw JWT string; the JWKS
  *  is fetched (and cached) from the https certsUrl. */
 export function createCloudflareAccessIdentity(config: CloudflareAccessConfig): IdentityPort {
-  if (!config.audience) throw new Error("audience is required (a non-empty CF Access AUD tag) — an empty audience lets jose enforce aud-presence but skip the value match, accepting any CF JWT regardless of app");
+  if (!config.audience || !config.audience.trim()) throw new Error("audience is required (a non-empty CF Access AUD tag) — a blank/whitespace audience lets jose enforce aud-presence but skip the value match, accepting any CF JWT regardless of app");
   assertHttpsRaw(config.certsUrl, "certsUrl");
   assertHttpsRaw(config.issuer, "issuer");
   const jwks = createRemoteJWKSet(new URL(config.certsUrl), { cacheMaxAge: 5 * 60 * 1000 });

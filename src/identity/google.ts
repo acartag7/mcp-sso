@@ -58,7 +58,8 @@ export interface GoogleConfig {
   /** Optional Google Workspace restriction — validated against the `hd` claim
    *  (never the email domain). */
   hostedDomain?: string;
-  /** Optional defense-in-depth allowlist (matches `sub`; case-insensitive). */
+  /** Optional defense-in-depth allowlist (matches `sub` exactly — case-sensitive;
+   *  only an opt-in verified email is matched case-insensitively). */
   subjectAllowlist?: string[];
   /** Opt-in: also match a VERIFIED email against `subjectAllowlist`. */
   allowEmailAllowlist?: boolean;

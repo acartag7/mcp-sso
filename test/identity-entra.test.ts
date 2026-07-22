@@ -114,6 +114,13 @@ test("exchangeCodeForToken: posts to the token endpoint and returns the id_token
   await assert.rejects(exchangeCodeForToken(CONFIG, { code: "c", codeVerifier: "v" }, failing));
 });
 
+test("createEntraIdentity: fails closed on blank tenantId/clientId (empty == missing config)", () => {
+  assert.throws(() => createEntraIdentity({ ...CONFIG, tenantId: "" }), /tenantId is required/);
+  assert.throws(() => createEntraIdentity({ ...CONFIG, tenantId: "   " }), /tenantId is required/);
+  assert.throws(() => createEntraIdentity({ ...CONFIG, clientId: "" }), /clientId is required/);
+  assert.throws(() => createEntraIdentity({ ...CONFIG, clientId: "   " }), /clientId is required/);
+});
+
 test("createEntraIdentity: exposes the port; getAuthorizationUrl carries nonce; verify rejects non-string", async () => {
   const entra = createEntraIdentity(CONFIG);
   assert.match(entra.getAuthorizationUrl({ state: "s", codeChallenge: "c", nonce: "n" }), /nonce=n/);
