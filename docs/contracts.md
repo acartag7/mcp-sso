@@ -316,6 +316,11 @@ scope ceiling) is locked in §17.4.
   Validate with a **raw `^https://` prefix check BEFORE `new URL()`** (Node's lenient
   URL parser normalizes `https:/host` into a valid-looking URL). Applies to
   CloudflareAccessIdentity and EntraIdentity.
+- **Required construction config MUST be non-empty.** A blank required field —
+  CloudflareAccess `audience`, Entra `tenantId`/`clientId`, generic-OIDC
+  `clientId`/`issuer`/`redirectUri` — fails closed at construction (empty ==
+  missing config). A blank value would otherwise build a malformed URL or make the
+  `aud` check vacuous instead of raising a clear boot error.
 - **Optional subject allowlist (defense-in-depth).** A port MAY accept a
   case-insensitive, trimmed subject/email allowlist; empty ⇒ delegate entirely to
   the IdP's own policy (e.g. Cloudflare Access Zero Trust). Never the sole gate.

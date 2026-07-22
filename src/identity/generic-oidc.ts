@@ -50,7 +50,8 @@ export interface GenericOidcConfig {
   endpoints: GenericOidcEndpoints;
   /** Upstream scopes requested; default "openid profile email". */
   scopes?: string;
-  /** Optional defense-in-depth allowlist (matches `sub`; case-insensitive). */
+  /** Optional defense-in-depth allowlist (matches `sub` exactly — case-sensitive;
+   *  only an opt-in verified email is matched case-insensitively). */
   subjectAllowlist?: string[];
   /** Opt-in: also match a VERIFIED email against `subjectAllowlist`
    *  (`email_verified === true` strict). */
