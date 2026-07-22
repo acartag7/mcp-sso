@@ -1454,8 +1454,11 @@ tracks CIMD as pending.
    "https://exämple.com/x").hostname` becomes `xn--exmple-cua.com` (verified),
    so admitting IDNA would force either a fetch target that differs from the raw
    identity or a punycode re-serialization as identity — both undesirable in v0.2.
-   Rule: reject unless the **raw-authority host** is pure ASCII AND equals
-   `url.hostname` case-insensitively. Raw-authority-host extraction (validation
+   Rule: reject unless the **raw-authority host** is pure ASCII, equals
+   `url.hostname` case-insensitively, AND contains no `xn--`-prefixed label — a
+   pre-encoded IDNA A-label (e.g. `xn--exmple-cua.com`) is itself a punycode
+   identity and is likewise deferred; without this an A-label host passes the
+   pure-ASCII check and opens a homograph allow-path. Raw-authority-host extraction (validation
    only; never a fetch target/cache key/identity): after `https://`, take chars
    up to the first `/` or end = the authority; (authority `@` already rejected in
    rule 2); if it starts with `[`, the host is the substring through the matching
