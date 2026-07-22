@@ -4,8 +4,9 @@ import { admitCimdUrl, type AdmittedUrl } from "./admission.ts";
 import { isBlockedIp, parseIp, type ParsedIp } from "./blocklist.ts";
 import { validateCimdDocument, type CimdDocument } from "./document.ts";
 import { CimdError } from "./errors.ts";
+const BRAND: unique symbol = Symbol("GuardedFetcher");
 export interface CimdFetchResult { readonly document: CimdDocument; }
-export interface GuardedFetcher { fetch(rawClientId: string): Promise<CimdFetchResult>; }
+export interface GuardedFetcher { readonly [BRAND]: true; fetch(rawClientId: string): Promise<CimdFetchResult>; }
 export interface DnsResolver {
   resolve(hostname: string): Promise<{ address: string; family: 4 | 6 }[]>; cancel?(): void;
 }
@@ -23,7 +24,6 @@ export interface CimdTransport {
 interface ResolvedAddress {
   readonly address: string; readonly family: 4 | 6; readonly parsed: ParsedIp;
 }
-const BRAND = Symbol("GuardedFetcher");
 const INSTANCES = new WeakSet<object>();
 const NODE_TRANSPORT: CimdTransport = { connectAndGet: nodeConnectAndGet };
 export function createGuardedFetcher(opts: {
@@ -35,8 +35,8 @@ export function createGuardedFetcher(opts: {
   const maxBytes = integerOption(opts.maxDocumentBytes, 5120, 1024, 65536, "maxDocumentBytes");
   const timeoutMs = integerOption(opts.fetchTimeoutMs, 5000, 1000, 30000, "fetchTimeoutMs");
   const allowLoopback = opts.allowLoopback === true;
-  const fetcher: GuardedFetcher = {
-    async fetch(rawClientId) {
+  const fetcher = {
+    async fetch(rawClientId: string): Promise<CimdFetchResult> {
       const admitted = admitCimdUrl(rawClientId, { allowLoopback });
       return fetchWithDeadline(admitted, opts.resolver ?? new NodeDnsResolver(), transport,
         allowLoopback, maxBytes, timeoutMs);
@@ -44,7 +44,7 @@ export function createGuardedFetcher(opts: {
   };
   Object.defineProperty(fetcher, BRAND, { value: true, enumerable: false });
   INSTANCES.add(fetcher);
-  return Object.freeze(fetcher);
+  return Object.freeze(fetcher) as GuardedFetcher;
 }
 export function isGuardedFetcher(value: unknown): value is GuardedFetcher {
   return typeof value === "object" && value !== null && INSTANCES.has(value)
