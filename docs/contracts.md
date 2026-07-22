@@ -1405,8 +1405,12 @@ GPT-5.6 Sol, Grok 4.5, GLM 5.2), each empirically re-verified on the project's
 Node 24 runtime. They **TIGHTEN** the bullets above; where a rule here and a
 bullet above differ, this subsection wins. Every rule is fail-closed. No new
 subsystem is introduced — these pin behavior the primitives already imply so the
-S6a bake-off cannot diverge and review cannot discover. Each S6a-scope rule maps
-to a negative acceptance test; flow rules (H) are enforced and tested in S6b.
+S6a bake-off cannot diverge and review cannot discover. **This subsection is
+contract text; the enforcement lands with the S6 code, not with this docs
+change:** each S6a-scope rule is to be covered by a negative test in the frozen
+S6a acceptance suite, and the flow rules (H) are to be implemented and tested in
+S6b. Until those PRs land there is no CIMD implementation or test yet — §16 still
+tracks CIMD as pending.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -1531,8 +1535,9 @@ to a negative acceptance test; flow rules (H) are enforced and tested in S6b.
     allowed: media type `application/json` or any type ending in `+json`.
 16. **Content-Encoding: identity only (v0.2).** The request sends
     `Accept-Encoding: identity`; ANY present `Content-Encoding` response header
-    (`gzip`, `x-gzip`, `br`, `deflate`, `zstd`, list-forms like `gzip, gzip`, or
-    unknown) rejects. This SUPERSEDES 17.1.2's gzip allowance: dropping
+    rejects — **including a bare `identity`; ONLY an ABSENT `Content-Encoding` is
+    accepted** (examples that reject: `gzip`, `x-gzip`, `br`, `deflate`, `zstd`,
+    `identity`, list-forms like `gzip, gzip`, and any unknown coding). This SUPERSEDES 17.1.2's gzip allowance: dropping
     compression eliminates the decompression-bomb class entirely rather than
     defending it (least machinery on a T3 SSRF boundary; a 5 KiB JSON document
     does not need compression). gzip interoperability, if a real metadata host
