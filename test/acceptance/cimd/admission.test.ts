@@ -36,6 +36,12 @@ if (phases["s6a-cimd-primitives"] !== true) {
     assert.equal(r.raw, "https://cdn.example.com:8443/client");
   });
 
+  test("admits an explicit default port :443 as a distinct raw client_id", () => {
+    const r = admitCimdUrl("https://cdn.example.com:443/client");
+    assert.equal(r.raw, "https://cdn.example.com:443/client"); // raw-string identity keeps :443
+    assert.equal(r.port, 443);
+  });
+
   test("admits a path-@ (legal pchar), distinct from an authority-@", () => {
     const r = admitCimdUrl("https://cdn.example.com/@scope/c.json");
     assert.equal(r.hostname, "cdn.example.com");
@@ -168,5 +174,26 @@ if (phases["s6a-cimd-primitives"] !== true) {
   test("allowLoopback=false rejects all loopback hosts", () => {
     denied("https://localhost/c", { allowLoopback: false });
     denied("https://x.localhost/c", { allowLoopback: false });
+  });
+
+  test("an xn-- label BELOW a parent domain rejects (rule 6: ANY xn-- label)", () => {
+    denied("https://www.xn--exmple-cua.com/x");
+    denied("https://a.xn--exmple-cua.com/x");
+  });
+
+  test("raw bad bytes in the AUTHORITY reject (not only the path)", () => {
+    const bs = String.fromCharCode(92), tab = String.fromCharCode(9);
+    denied("https://h" + bs + "evil.example/c"); // raw backslash in authority (WHATWG maps to /)
+    denied("https://cdn%2eexample.com/client");  // %-decoded host != raw authority (rule 6 equality)
+    denied("https://h" + tab + "ost.example/c"); // interior TAB (C0 control)
+  });
+
+  test("blanket trailing-dot rejects EVEN under allowLoopback (never relaxed)", () => {
+    denied("https://localhost./c", { allowLoopback: true });
+    denied("https://example.com./x", { allowLoopback: true });
+  });
+
+  test("admits a mixed-case host (rule 6 equality is case-insensitive)", () => {
+    assert.equal(admitCimdUrl("https://CDN.Example.com/client").hostname, "cdn.example.com");
   });
 }

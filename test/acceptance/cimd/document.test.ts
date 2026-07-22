@@ -164,6 +164,7 @@ if (phases["s6a-cimd-primitives"] !== true) {
     uriBad("http://192.168.0.10/cb"); // http non-loopback
     uriBad("http://example.com/cb");
     uriBad("http://10.0.0.1/cb");
+    uriBad("http://127.0.0.2/cb"); // 127/8 but not exactly 127.0.0.1 (rule 20 is exact-host)
     uriBad("https://app.example.com/cb#x"); // fragment
     uriBad("https://app.example.com/cb#"); // trailing #
     uriBad("https://user@app.example.com/cb"); // userinfo
@@ -179,5 +180,23 @@ if (phases["s6a-cimd-primitives"] !== true) {
 
   test("assertCimdRedirectUri rejects non-string arguments", () => {
     for (const v of [123, null, undefined, {}, []]) uriBad(v);
+  });
+
+  test("redirect_uris validates EVERY entry, not just index 0", () => {
+    invalid(base({ redirect_uris: ["https://good.example/cb", "https://evil.example/cb#frag"] }));
+    invalid(base({ redirect_uris: ["https://good.example/cb", "http://192.168.0.10/cb"] }));
+    invalid(base({ redirect_uris: ["https://good.example/cb", 123] }));
+  });
+
+  test("response_types / grant_types must be ARRAYS (a string is not coerced)", () => {
+    invalid(base({ response_types: "code" }));   // "codex".includes("code")===true trap
+    invalid(base({ response_types: "codex" }));
+    invalid(base({ grant_types: "authorization_code" }));
+  });
+
+  test("jwks keys entries must be plain objects (null / array reject, no crash)", () => {
+    invalid(base({ jwks: { keys: [null] } }));
+    invalid(base({ jwks: { keys: [[]] } }));
+    invalid(base({ jwks: { keys: [{ kty: "RSA", n: "a", e: "AQAB" }, null] } }));
   });
 }
