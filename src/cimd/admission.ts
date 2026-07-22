@@ -65,8 +65,11 @@ function admit(raw: string, allowLoopback: boolean): AdmittedUrl {
   const localhost = hostname === "localhost" || hostname.endsWith(".localhost");
   if (localhost && !allowLoopback) throw denied();
 
+  // Fail closed on an invalid port: `:0` parses to port 0 (WHATWG keeps "0"), which
+  // node:https would coerce to the 443 default — a raw-identity(:0)/connect(:443)
+  // differential. WHATWG already rejects > 65535 at parse; the bounds are explicit here.
   const port = url.port === "" ? 443 : Number(url.port);
-  if (!Number.isInteger(port) || DENIED_PORTS.has(port)) throw denied();
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || DENIED_PORTS.has(port)) throw denied();
   return { raw, hostname, port };
 }
 

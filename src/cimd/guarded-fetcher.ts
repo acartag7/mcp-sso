@@ -111,7 +111,8 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
   if (contentType === null || contentType === undefined || contentType.length !== 1
     || !isJsonMediaType(contentType[0]!)) throw new CimdError("content_type");
   if (headerValues(response.headersDistinct, "content-encoding") !== undefined) throw new CimdError("encoding");
-  const body = await readBody(response.encodedBody, maxBytes);
+  const body = await readBody(response.encodedBody, maxBytes)
+    .catch((error) => { controller.abort(); throw error; }); // tear down socket on body failure
   return { document: validateCimdDocument(body, admitted.raw) };
 }
 function validateAnswer(answer: unknown): ResolvedAddress[] {
