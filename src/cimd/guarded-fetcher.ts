@@ -69,6 +69,7 @@ async function fetchWithDeadline(admitted: AdmittedUrl, resolver: DnsResolver, t
       fetchOnce(admitted, resolver, transport, allowLoopback, maxBytes, controller), timeout,
     ]);
   } catch (error) {
+    controller.abort(); // tear down the socket on ANY failure (header-check rejection, body, timeout)
     if (error instanceof CimdError) throw error;
     if (expired) throw new CimdError("timeout");
     throw new CimdError("fetch_failed");
@@ -111,8 +112,7 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
   if (contentType === null || contentType === undefined || contentType.length !== 1
     || !isJsonMediaType(contentType[0]!)) throw new CimdError("content_type");
   if (headerValues(response.headersDistinct, "content-encoding") !== undefined) throw new CimdError("encoding");
-  const body = await readBody(response.encodedBody, maxBytes)
-    .catch((error) => { controller.abort(); throw error; }); // tear down socket on body failure
+  const body = await readBody(response.encodedBody, maxBytes);
   return { document: validateCimdDocument(body, admitted.raw) };
 }
 function validateAnswer(answer: unknown): ResolvedAddress[] {
