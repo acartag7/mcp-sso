@@ -62,7 +62,6 @@ async function fetchWithDeadline(admitted: AdmittedUrl, resolver: DnsResolver, t
       try { resolver.cancel?.(); } catch { /* deadline still rejects */ }
       reject(new CimdError("timeout"));
     }, timeoutMs);
-    timer.unref();
   });
   try {
     return await Promise.race([
