@@ -264,4 +264,47 @@ if (phases["s6a-cimd-primitives"] !== true) {
     );
     assert.equal(t.calls, 0);
   });
+
+  test("the fetcher validates the document client_id against the RAW requested id (mismatch => document_invalid)", async () => {
+    const evil = JSON.stringify({ client_id: "https://evil.example/client", client_name: "x", redirect_uris: ["https://app.example.com/cb"] });
+    const t = transport(() => okResult({ encodedBody: chunk(enc(evil)) }));
+    await rejectsReason(fetcher(t, resolver([PUBLIC])).fetch(ID), "document_invalid");
+  });
+
+  test("an IPv6 blocked resolved record rejects at the fetcher (family-correct blocklist); no connect", async () => {
+    const t = transport(() => okResult());
+    await rejectsReason(fetcher(t, resolver([{ address: "fd00::1", family: 6 }])).fetch(ID), "ip_blocked");
+    assert.equal(t.calls, 0);
+  });
+
+  test("the deadline ABORTS the transport's signal (rule 14), not just races it", async () => {
+    const t = transport(() => okResult(), { never: true });
+    await rejectsReason(fetcher(t, resolver([PUBLIC]), { fetchTimeoutMs: 1000 }).fetch(ID), "timeout");
+    assert.equal(t.last.signal.aborted, true);
+  });
+
+  test("a body stream that never yields is bounded by the deadline (timeout)", async () => {
+    async function* stall() { await new Promise(() => {}); yield new Uint8Array(); }
+    const t = transport(() => okResult({ encodedBody: stall() }));
+    await rejectsReason(fetcher(t, resolver([PUBLIC]), { fetchTimeoutMs: 1000 }).fetch(ID), "timeout");
+  });
+
+  test("a legitimately admitted :443 client_id is NOT spuriously rejected by the finalUrl check", async () => {
+    const RAW = "https://cdn.example.com:443/client";
+    const t = transport(() => okResult({ finalUrl: "https://cdn.example.com/client", redirected: false, encodedBody: chunk(enc(docBody(RAW))) }));
+    const res = await fetcher(t, resolver([PUBLIC])).fetch(RAW);
+    assert.equal(res.document.client_id, RAW);
+  });
+
+  test("a json-SUBSTRING but wrong-essence Content-Type rejects (application/json-seq, text/json)", async () => {
+    for (const ct of ["application/json-seq", "text/json", "application/xjson"]) {
+      const t = transport(() => okResult({ headersDistinct: { "content-type": [ct] } }));
+      await rejectsReason(fetcher(t, resolver([PUBLIC])).fetch(ID), "content_type");
+    }
+  });
+
+  test("a null cap value is REJECTED, not silently defaulted (rule 21 fail-closed)", () => {
+    assert.throws(() => createGuardedFetcher({ maxDocumentBytes: null as unknown as number }));
+    assert.throws(() => createGuardedFetcher({ fetchTimeoutMs: null as unknown as number }));
+  });
 }

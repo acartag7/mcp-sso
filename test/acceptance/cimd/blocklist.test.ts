@@ -115,4 +115,9 @@ if (phases["s6a-cimd-primitives"] !== true) {
     blocked("127.0.0.1", { allowLoopback: false });
     blocked("::1", { allowLoopback: false });
   });
+
+  test("interior / top-of-range addresses are blocked (prefix widths are correct, not narrowed)", () => {
+    for (const a of ["172.31.255.254", "198.19.255.254", "100.127.255.254", "239.255.255.255", "febf::1", "10.255.255.254", "192.168.255.254"])
+      blocked(a);
+  });
 }
