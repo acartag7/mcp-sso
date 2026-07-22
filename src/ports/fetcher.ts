@@ -1,9 +1,8 @@
-// FetcherPort — boundary reserved for v0.2 Client-issued Metadata Discovery
-// (contracts §6.6). v0.1 does NO outbound fetching. Any v0.2 metadata fetch MUST
-// go through an SSRF-guarded implementation: scheme allow-list (http/https only),
-// CRLF rejection, resolved-IP private-range check, connect-to-IP with original
-// SNI/Host, per-hop re-validation, byte cap, and timeout. The boundary exists now
-// so v0.2 cannot accidentally add a raw fetch.
+// FetcherPort — generic outbound-fetch boundary (contracts §6.6). CIMD (§17.1)
+// accepts https only and requires its branded guarded fetcher: all resolved addresses
+// checked, connect-to-IP with original SNI/Host, zero redirects, byte cap, and one
+// DNS-to-body timeout. For that profile `result.url` is the requested URL because no
+// redirect is permitted; CIMD never accepts an arbitrary FetcherPort implementation.
 
 export interface FetchInit {
   method?: string;
@@ -16,7 +15,7 @@ export interface FetchInit {
 export interface FetchResult {
   ok: boolean;
   status: number;
-  url: string; // final URL after redirects
+  url: string; // requested URL; guarded profiles reject any redirect
   bytes: number;
   contentType?: string;
   text(): Promise<string>;
