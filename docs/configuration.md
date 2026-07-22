@@ -6,7 +6,8 @@ below are how the **runnable examples** (`examples/fastify-sqlite`,
 `examples/api-key-gateway`) wire that config — copy this shape into your own
 composition root, or use it as-is with the examples.
 
-Copy [`.env.example`](../.env.example) and fill in one identity provider.
+Copy [`.env.example`](.env.example) (in this directory) and fill in one identity
+provider.
 
 ## How the identity provider is selected
 
