@@ -4,6 +4,6 @@
     "cimd/admission.test.ts": "8befa8731cba9a4fe60089e492086ec51cbe7487ebdbc79ca8fe2715766765f4",
     "cimd/blocklist.test.ts": "8cab63e11c3e04a8d86c37f1b126fb445ccb7e48bf335048b81f24d860b839d2",
     "cimd/document.test.ts": "5d8df8f7def2b4861015cc337f0b32618276c36a90d0485cc1d4f93118be3af8",
-    "cimd/guarded-fetcher.test.ts": "da758f6737b1ab3b3f61972fc505b49274f5ae02afe19b667a73eeb6ee244583"
+    "cimd/guarded-fetcher.test.ts": "2dac27c3387b9e3c5b7f8509bf8f60cc980d2e1e2195e23ded65632b16ed0ab5"
   }
 }
