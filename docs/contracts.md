@@ -173,6 +173,16 @@ interface BridgeConfig {
   // --- local-dev escape hatch (see boot validation below) ---
   dev?: { allowInsecureLocalhost: boolean };
 
+  // --- CIMD (opt-in; Client ID Metadata Documents; see §17.1 + §17.1.5) ---
+  cimd?: {
+    enabled: true;
+    fetcher?: GuardedFetcher;     // branded (§17.1); omitted ⇒ library constructs its own
+    maxDocumentBytes?: number;    // integer [1024, 65536], default 5120 (§17.1.5 rule 21)
+    fetchTimeoutMs?: number;      // integer [1000, 30000], default 5000
+    cacheTtlCapSeconds?: number;  // integer [60, 86400], default 3600
+    maxInFlight?: number;         // integer [1, 64], default 8 (global in-flight cap)
+  };
+
   // --- TTLs (seconds); each MUST be a positive integer ---
   accessTokenTtlSeconds: number;
   refreshTokenTtlSeconds: number;
@@ -1386,6 +1396,231 @@ decision. Everything else in the pipeline still runs under the flag.
   distinct clients and distinct cache entries), in-memory per instance;
   invalid/error results never cached.
 - No new store records.
+
+### 17.1.5 Precision amendments (S6 pre-implementation, 2026-07-22)
+
+These close ambiguities and fail-open gaps found by the cross-family S6a spec
+critique and confirmed by an adversarial amendment-verify pass (critics/verifiers:
+GPT-5.6 Sol, Grok 4.5, GLM 5.2), each empirically re-verified on the project's
+Node 24 runtime. They **TIGHTEN** the bullets above; where a rule here and a
+bullet above differ, this subsection wins. Every rule is fail-closed. No new
+subsystem is introduced — these pin behavior the primitives already imply so the
+S6a bake-off cannot diverge and review cannot discover. **This subsection is
+contract text; the enforcement lands with the S6 code, not with this docs
+change:** each S6a-scope rule is to be covered by a negative test in the frozen
+S6a acceptance suite, and the flow rules (H) are to be implemented and tested in
+S6b. Until those PRs land there is no CIMD implementation or test yet — §16 still
+tracks CIMD as pending.
+
+**A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
+1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
+   **UTF-8 bytes** (`Buffer.byteLength(raw,"utf8")`); no type coercion. A
+   non-string, empty, or over-length input rejects pre-parse.
+2. Before `new URL()`, reject on the RAW string: any raw backslash `\` (WHATWG
+   maps `\`→`/` on special schemes: `https://h/a\..\b` parses to pathname `/b`,
+   invisible to a `/`-split — verified); any raw `?` (query delimiter, incl. a
+   trailing `?` that parses to empty `search`); any raw `#` (fragment delimiter,
+   incl. a trailing `#` that parses to empty `hash`); leading or trailing ASCII
+   whitespace (WHATWG trims a trailing space — verified); any C0 control
+   (U+0000–U+001F), DEL (U+007F), or raw/`%`-encoded CR/LF in all case variants.
+   **Userinfo:** reject any `@` in the RAW AUTHORITY only — the substring after
+   `https://` up to the first `/` (or end) — INCLUDING empty userinfo
+   (`https://@h/c` parses to username `""`, host `h` — verified). A `@` in the
+   PATH is a legal `pchar` and is allowed (`https://cdn.example/@scope/c.json`).
+   No separate whole-string malformed-percent scan is required: a malformed
+   escape in a path segment fails the rule-3 one-pass decode, and a malformed
+   escape in the authority fails `new URL()` or the rule-6 raw-host check.
+3. **Raw-path extraction (pins "split the raw path on `/`").** Because rule 2 has
+   rejected raw `\`, authority `@`, `?`, `#`, and required a literal lowercase
+   `^https://` prefix, the raw path is unambiguous: the substring beginning at the
+   first `/` at or after index 8 (the char after `https://`). No such `/` ⇒ no
+   path component ⇒ reject (17.1.1 step 2). Split that substring on `/`;
+   percent-decode EACH segment exactly ONCE (a decode failure rejects; recursion
+   is forbidden, so `%252e`→`%2e` is NOT a dot segment — verified); reject if a
+   decoded segment equals `.` or `..`.
+
+**B. Host checks run on the PARSED hostname (tightens 17.1.1 step 3).**
+4. All host rules evaluate `url.hostname` AFTER `new URL()` (WHATWG canonicalizes
+   dword/octal/hex and IDNA-narrows fullwidth digits to a dotted quad —
+   `https://1．2．3．4/`→`1.2.3.4`, `https://2130706433/`→`127.0.0.1` — verified;
+   caught by the IP-literal rule only when it runs on the parsed host).
+5. **IP-literal rejection strips brackets first:** `new URL("https://[::1]/x")
+   .hostname` returns `"[::1]"` WITH brackets and `net.isIP("[::1]")` returns 0
+   (verified) — a naive `net.isIP(hostname)` admits every bracketed IPv6 literal.
+   Rule: let `h` = hostname with one leading `[` and trailing `]` removed if both
+   present; reject if `net.isIP(h) !== 0` OR the original hostname began with `[`.
+6. **Non-ASCII / IDNA hostnames reject (deliberate v0.2 policy).** This is a
+   chosen fail-closed policy, not a logical necessity: `new URL(
+   "https://exämple.com/x").hostname` becomes `xn--exmple-cua.com` (verified),
+   so admitting IDNA would force either a fetch target that differs from the raw
+   identity or a punycode re-serialization as identity — both undesirable in v0.2.
+   Rule: reject unless the **raw-authority host** is pure ASCII, equals
+   `url.hostname` case-insensitively, AND contains no `xn--`-prefixed label — a
+   pre-encoded IDNA A-label (e.g. `xn--exmple-cua.com`) is itself a punycode
+   identity and is likewise deferred; without this an A-label host passes the
+   pure-ASCII check and opens a homograph allow-path. Raw-authority-host extraction (validation
+   only; never a fetch target/cache key/identity): after `https://`, take chars
+   up to the first `/` or end = the authority; (authority `@` already rejected in
+   rule 2); if it starts with `[`, the host is the substring through the matching
+   `]`; else the host is the authority with an optional trailing `:port` removed
+   at the LAST `:`. (IDNA/punycode CIMD identities are a §18 change, never a
+   coder decision.)
+7. **Trailing-dot and localhost matcher (pins the wording; restores the blanket
+   rule).** FIRST, independently of any relaxation: reject ANY `url.hostname`
+   ending in `.` (the blanket trailing-dot rejection of 17.1.1 step 3; the
+   loopback exception does NOT relax it). THEN reject `localhost` and
+   `*.localhost`: host equals `localhost`, or host ends with `.localhost` (so
+   `notlocalhost` does NOT match; `a.b.localhost` does). The loopback exception
+   relaxes exactly this localhost matcher and the loopback blocklist rows —
+   nothing else.
+
+**C. DNS resolution + blocklist membership (tightens 17.1.2 DNS pinning).**
+8. Both A and AAAA are queried within the one deadline. An explicit no-data
+   result for ONE family (`ENODATA`/`ENOTFOUND`) is permitted; any other resolver
+   error rejects the whole fetch. The combined answer MUST contain ≥ 1 and ≤ 64
+   addresses; **zero addresses rejects** (`[].every()` is `true` — verified — so
+   an empty answer must never pass the blocklist or the loopback every-record
+   check vacuously). More than 64 rejects.
+9. Every returned address MUST be parseable and its parsed family MUST match the
+   query record type; a whitespace/zoned/non-decimal/family-mismatched/otherwise
+   unparseable record rejects the WHOLE fetch — records are never silently
+   skipped (skipping a malformed record and passing the rest is the loopback
+   fail-open in 17.1.1's exception).
+10. **Blocklist engine is total on BOTH add and check.** Membership compares
+    parsed binary addresses. If `net.BlockList` is used: (a) IPv6 subnets MUST be
+    added with an explicit `"ipv6"` family — `addSubnet("::1",128)` THROWS
+    `ERR_INVALID_ADDRESS` without it (verified); and (b) **every `check()` MUST
+    pass the address family** — `check("::1")` returns `false` even after the
+    subnet was added with family `"ipv6"`, while `check("::1","ipv6")` returns
+    `true` (verified); omitting the family silently makes the ENTIRE IPv6
+    blocklist inert (loopback, ULA, link-local, multicast, documentation all
+    pass — a full IPv6 SSRF bypass). Use `check(addr, net.isIP(addr)===4?"ipv4":
+    "ipv6")` with the per-record family from rule 9. Any error constructing the
+    blocklist is a boot failure, never a caught-and-skipped range.
+
+**D. Connection / transport (tightens 17.1.2 fetch enforcement).**
+11. **Proxy env is forbidden.** The transport connects DIRECTLY to the validated
+    IP and MUST NOT honor `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY` (any
+    case) — a proxy re-resolves the hostname and defeats DNS pinning (SSRF
+    bypass; threat rows 13/25).
+12. **The deadline covers DNS with cancellation.** `dns.promises.resolve4/6` do
+    not accept an `AbortSignal`, and a bare timer/race bounds only the caller
+    while background resolution keeps running. Use a per-fetch
+    `dns.promises.Resolver` (or an equivalently cancellable resolver seam) and
+    call `.cancel()` at the shared `fetchTimeoutMs` deadline; the single-flight
+    slot (H/24) is not released until resolution has settled or been cancelled,
+    so a hanging resolver can neither exceed the deadline nor leak past the
+    in-flight cap.
+13. **Request + connection shape.** GET only; no body; no credentials/cookies; no
+    `Authorization`/`Cookie`/`Proxy-Authorization`; only fixed allowlisted
+    `Accept: application/json` and `Accept-Encoding: identity` headers. The HTTP
+    request-target is **origin-form** (path + query) derived from the admitted
+    URL — NEVER absolute-form to a directly-connected origin. The `Host` header
+    is the parsed hostname, plus `:${url.port}` ONLY when `url.port !== ""` (a
+    non-default explicit port survives WHATWG); a default-443 form carries no
+    explicit port. TLS SNI and certificate verification use the parsed ASCII
+    hostname with brackets/port stripped. The raw client_id string is carried
+    separately as identity/evidence, never as the request-target.
+14. **Injected transport seam (test-only, below the guard).** Its request is
+    `{ connectIp, family, port, servername, hostHeader, requestTarget, signal,
+    redirect:"manual" }` — `connectIp` is the already-validated address it MUST
+    connect to (no DNS/proxy re-resolution). Its result is `{ status,
+    redirected:boolean, finalUrl, headersDistinct, encodedBody }` where
+    `headersDistinct` **preserves duplicate header occurrences** (Node's
+    `IncomingMessage.headers` keeps only the first `Content-Type`, so a normalized
+    map cannot satisfy rule 15's duplicate check — use `rawHeaders`/
+    `headersDistinct`). The public guarded-fetch API accepts only the raw
+    client_id; no generic `FetchInit` overrides.
+
+**E. Response handling (tightens 17.1.2 response; supersedes its gzip allowance).**
+15. A duplicate or multi-value `Content-Type` header rejects (an essence-ambiguous
+    response is untrusted). Essence match is case-insensitive with parameters
+    allowed: media type `application/json` or any type ending in `+json`.
+16. **Content-Encoding: identity only (v0.2).** The request sends
+    `Accept-Encoding: identity`; ANY present `Content-Encoding` response header
+    rejects — **including a bare `identity`; ONLY an ABSENT `Content-Encoding` is
+    accepted** (examples that reject: `gzip`, `x-gzip`, `br`, `deflate`, `zstd`,
+    `identity`, list-forms like `gzip, gzip`, and any unknown coding). This SUPERSEDES 17.1.2's gzip allowance: dropping
+    compression eliminates the decompression-bomb class entirely rather than
+    defending it (least machinery on a T3 SSRF boundary; a 5 KiB JSON document
+    does not need compression). gzip interoperability, if a real metadata host
+    ever requires it, is a documented §18 follow-up with its own streaming
+    stream-and-abort defense — not v0.2. The single streaming cap therefore
+    applies to wire bytes only: exceeding `maxDocumentBytes` REJECTS (never
+    truncates).
+17. Response header total size is bounded by Node's built-in
+    `--max-http-header-size` default (~16 KiB) plus the one deadline; the built-in
+    transport MUST NOT raise or disable that platform cap. An application-level
+    header-byte counter is an accepted v0.2 residual (peak-memory only, no
+    correctness impact) — documented, not enforced.
+
+**F. Document validation typing + cardinality (tightens 17.1.3).**
+18. The parsed root MUST be a non-null, non-array plain object
+    (`typeof x==="object" && x!==null && !Array.isArray(x)`). Each member is
+    type-checked before use: `client_id`/`client_name` MUST be strings,
+    `redirect_uris` MUST be an array; a wrong JSON type rejects (never coerced).
+19. `redirect_uris` length MUST be 1..16 (bounds the authorize-time exact-match
+    linear scan). A `jwks` object's `keys` MUST be an array of plain objects
+    (malformed rejects); no separate numeric keys-count cap is imposed — the
+    5120-byte-default (≤ 64 KiB) body cap bounds the parse, and v0.2 never uses
+    document keys, so the public-only per-key scan is the only obligation. JSON
+    depth is bounded by the body cap; no separate depth limit.
+20. **CIMD redirect hygiene uses a NEW pure validator, not the §10 exports.**
+    Neither `assertAllowedRedirectUri` (allowlist membership; sets `url.hash=""`,
+    src/redirect.ts:35) nor `assertRedirectAllowedForClient` (needs a stored
+    client; `url.hash=""`, src/redirect.ts:83) is a pure per-URI shape predicate,
+    and both STRIP a fragment where 17.1.3 requires REJECTING one (verified). S6a
+    adds a pure internal `assertCimdRedirectUri(raw: string): void` (throws
+    `CimdError("document_invalid")`; factored so §10's runtime behavior is
+    unchanged; not a package export). Full edge class (enumerate before coding,
+    per the identity-port lesson): argument MUST be a primitive non-empty string,
+    no coercion; reject raw `\`, C0/DEL, CR/LF, malformed percent triplets, any
+    userinfo (INCLUDING empty `@`), any fragment (INCLUDING a trailing `#`), and
+    any `*` in the host; accept EITHER `https:` (validated for shape only here;
+    EXACT raw-string match at authorize, port included, no normalization) OR
+    `http:` with host exactly `localhost`, `127.0.0.1`, or `[::1]`. Only the
+    `http:` case is loopback. The authorize-time (S6b) loopback any-port match
+    reuses the existing runtime semantics of src/redirect.ts:95-103 — scheme,
+    hostname, pathname, and search equal; port ignored; fragment already rejected
+    at validation — resolving the looser "origin" wording elsewhere.
+
+**G. Config cap numeric domains (tightens the `cimd` config + boot + §5).**
+21. The `cimd` config key MUST be enumerated in the canonical §5 `BridgeConfig`
+    shape and in `KNOWN_CONFIG_KEYS` (§5 rejects every unenumerated key at boot,
+    so the field is boot-rejected until listed). The concurrency bound is a named
+    property `maxInFlight?`. Each cap has a closed integer domain; a non-integer,
+    `NaN`, `Infinity`, or out-of-range value is an `AuthConfigError` at boot (an
+    unbounded value defeats the very controls threat rows 13/25 describe):
+    `maxDocumentBytes` ∈ [1024, 65536] (default 5120); `fetchTimeoutMs` ∈
+    [1000, 30000] (default 5000); `cacheTtlCapSeconds` ∈ [60, 86400] (default
+    3600); `maxInFlight` ∈ [1, 64] (default 8).
+
+**H. Flow-integration items (enforced + tested in S6b; recorded here for the suite).**
+22. **"URL-shaped" is mechanical.** A `client_id` matching raw scheme syntax
+    `^[A-Za-z][A-Za-z0-9+.-]*://` is NEVER eligible for the stateless-DCR
+    ephemeral-client fallback. Only a literal lowercase `https://` prefix enters
+    CIMD admission; every other scheme-shaped value (including `HTTPS://`,
+    `http://`, `ftp://`) is rejected `invalid_client` (direct). When CIMD is
+    disabled/absent, a `https://`-shaped `client_id` is likewise rejected
+    `invalid_client`, never treated as a stateless-DCR client.
+23. For a CIMD `client_id`, `prepare`'s redirect validation is the document
+    exact-match (loopback any-port per rule 20), REPLACING §9.3 step 2's §10
+    global-allowlist check for that client. Non-CIMD flows are unchanged.
+24. Single-flight/overload: coalesce concurrent fetches for the same RAW
+    client_id; a coalesced follower does NOT consume an in-flight slot. When
+    `maxInFlight` distinct fetches are in flight, a new DISTINCT client_id fetch
+    rejects (generic error), never queues unboundedly. A key's entry is removed
+    on settle (success, error, or timeout/cancellation). Error/invalid results
+    are never cached.
+25. Cache freshness (RFC 9111, in-memory per instance, keyed by raw client_id):
+    `no-store` or `no-cache` ⇒ do not cache; absent, malformed, duplicate, or
+    conflicting `Cache-Control`/`max-age`, and a negative/non-integer/overflow
+    `Age` or an `Age` ≥ the effective lifetime ⇒ no cache entry (fail toward
+    re-fetch, which the rate limiter bounds). A single valid `max-age` is clamped
+    to [60, `cacheTtlCapSeconds`] (a value below 60 on an otherwise-cacheable
+    response is clamped UP to 60 — the documented minimum — never treated as
+    non-cacheable); `Age` is subtracted from the effective lifetime. A quoted
+    `max-age` value is treated as malformed (no cache entry).
 
 ### 17.2 `client_credentials` grant (MCP extension `io.modelcontextprotocol/oauth-client-credentials`)
 
