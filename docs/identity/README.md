@@ -3,7 +3,8 @@
 mcp-sso keeps your existing identity provider as the source of truth and mints its
 **own** audience-bound tokens for MCP clients. Upstream IdP tokens are verified and
 then discarded — they never pass through to the client. Pick the port that matches
-the IdP you already run.
+the IdP you already run. Env-var wiring for every port is in
+[configuration.md](../configuration.md).
 
 ## Shipped ports
 

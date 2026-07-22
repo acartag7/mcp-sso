@@ -7,6 +7,9 @@ for an `id_token`, validates it, and takes the subject from the stable `sub`
 claim (keyed as `(issuer, sub)`). It then mints its **own** audience-bound
 tokens — the upstream token is never forwarded.
 
+Part of the [identity ports](./README.md) (shared authorization model + subject
+rules); the `OIDC_*` env vars are in [configuration.md](../configuration.md).
+
 > **Provider-specific presets:** for [Google](./google.md) use the dedicated
 > preset (it adds the `hd` hosted-domain and `email_verified` gates). This guide
 > is the generic port, parameterized for any OIDC issuer — a worked **Keycloak**
