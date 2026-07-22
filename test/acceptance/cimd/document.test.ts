@@ -124,6 +124,7 @@ if (phases["s6a-cimd-primitives"] !== true) {
     assert.ok(validate(base({ grant_types: ["authorization_code", "refresh_token"] })));
     invalid(base({ grant_types: ["client_credentials"] }));
     invalid(base({ grant_types: ["implicit"] }));
+    invalid(base({ grant_types: ["authorization_code", "client_credentials"] })); // valid first, invalid later
   });
 
   test("neither response_types nor grant_types present is valid; unknown members ignored", () => {
@@ -165,6 +166,9 @@ if (phases["s6a-cimd-primitives"] !== true) {
     uriBad("http://example.com/cb");
     uriBad("http://10.0.0.1/cb");
     uriBad("http://127.0.0.2/cb"); // 127/8 but not exactly 127.0.0.1 (rule 20 is exact-host)
+    uriBad("http://0177.0.0.1/cb"); // octal normalizes to 127.0.0.1; raw != canonical
+    uriBad("http://2130706433/cb"); // dword normalizes to 127.0.0.1
+    uriBad("http://[0:0:0:0:0:0:0:1]/cb"); // expanded ::1 form
     uriBad("https://app.example.com/cb#x"); // fragment
     uriBad("https://app.example.com/cb#"); // trailing #
     uriBad("https://user@app.example.com/cb"); // userinfo
