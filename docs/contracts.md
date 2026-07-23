@@ -723,11 +723,6 @@ the response. Wiring rules:
 - Framework adapters are optional `peerDependencies` (`fastify`/`express`/`hono`);
   anything added to `devDependencies` for testing gets a `dependency-ledger` entry
   with the 15-day check.
-- **Attacker-key normalization (§4.1; contract only, not yet shipped):** a
-  frozen-acceptance PR and then a Hono implementation PR are pending. The target
-  is to accumulate raw header and query names in null-prototype records so
-  `__proto__`/`constructor` cannot alter the normalized record's prototype.
-
 ## 10. Redirect-URI policy
 
 Two policies, by DCR mode. Both share the core rule: **no allow-all (`"*"`), no
