@@ -1140,7 +1140,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
 | RFC 9207 `iss` + `authorization_response_iss_parameter_supported` *(RC a)* | ✅ v0.1 | §9.1, §9.3 |
-| Scope accumulation on step-up *(RC c)* — stored-DCR mode | ✅ v0.1 (core+store; delta UI Phase 3) | §9.3, §11 |
+| Scope accumulation on step-up *(RC c)* — stored-DCR mode, or a CIMD-verified client in either mode (§17.1.6 dec 3) | ✅ v0.1 (core+store; delta UI Phase 3); CIMD extension ⏳ S6b | §9.3, §11, §17.1.6 |
 | Refresh rotation + family replay revocation | ✅ v0.1 | §7.4, §12 |
 | RFC 6749 §6 refresh client-binding | ✅ v0.1 | §7.4 |
 | RFC 6749 §4.1.2.1 error-redirect channels | ✅ v0.1 | §9.3, §14 |
@@ -1775,11 +1775,11 @@ callback re-fetch is forbidden (1d).**
 401) and `oauth.cimd.fetch` (failure, reason); success ⇒ `oauth.cimd.fetch`
 (success). The 4096-byte `Set-Cookie` oversize guard (upstream-flow.ts:104), for a
 CIMD id, maps to the SAME generic `invalid_client` (never `invalid_request`) so it
-is not a content oracle. Oversize occurs AFTER a successful resolution (which has
-already emitted `oauth.cimd.fetch` **success**): it is a **post-resolution flow
-rejection** that returns the generic `invalid_client` and emits **no second
-`oauth.cimd.fetch` failure** event (it is not a fetch failure); the single success
-audit stands. Hosted-Claude-class registrations (a short URL + a few
+is not a content oracle. The `oauth.cimd.fetch` **success** audit is emitted only
+**after the oversize guard passes**: a resolution whose document is valid but whose
+projected flow-cookie would exceed 4096 bytes is rejected as the generic
+`invalid_client` and audited as a **failure** (reason `oversize`), never a success
+event followed by a silent rejection — so the audit trail matches the actual outcome. Hosted-Claude-class registrations (a short URL + a few
 redirects) serialize to ~1–2 KiB and fit comfortably. **Documented residual:**
 because the validated projection rides the signed flow cookie, redirect-mode
 effective document size is **cookie-bound (≤4096 serialized), not only
@@ -1916,7 +1916,10 @@ prepare-time (authorize.ts:124) and approve-time (authorize.ts:158) — **NEVER 
 qualifier wherever it gates accumulation** — the full sibling list that S6b MUST
 update in lockstep: §6.3 (`findGrantedScopes` "stored-DCR mode only" note), §9.3
 step 5, the §9.3 approve-time "mint the code with the accumulated scopes" bullet,
-§11 "Accumulation — stored-DCR mode only", and the `authorize.ts` header comment.
+§11 "Accumulation — stored-DCR mode only", the **§16 conformance-matrix row**
+("Scope accumulation on step-up … stored-DCR mode"), and the `authorize.ts` header
+comment. (§16 is the requirement matrix release checks read, so it MUST state the
+CIMD-verified extension too.)
 For a CIMD client with `cimd_verified === true`, accumulation applies in BOTH modes;
 the forbid on `clientId.startsWith("https://")` stands. `prepare` MUST set
 `cimdVerified = true` on the consent claims once the CIMD registration is established
