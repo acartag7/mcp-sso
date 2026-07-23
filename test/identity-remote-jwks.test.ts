@@ -14,6 +14,13 @@ test("token-side unsupported features are not remote JWKS infrastructure failure
   );
 });
 
+test("malformed remote JWKS is an infrastructure failure", () => {
+  assert.equal(
+    isRemoteJwksInfrastructureError(new errors.JWKSInvalid("malformed remote JWKS")),
+    true,
+  );
+});
+
 test("validated remote JWKS requires key selectors to be own data", async () => {
   const { privateKey, publicKey } = await generateKeyPair("RS256");
   const publicJwk = await exportJWK(publicKey);
