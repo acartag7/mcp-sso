@@ -723,10 +723,10 @@ the response. Wiring rules:
 - Framework adapters are optional `peerDependencies` (`fastify`/`express`/`hono`);
   anything added to `devDependencies` for testing gets a `dependency-ledger` entry
   with the 15-day check.
-- **Attacker-key normalization (§4.1):** when an adapter accumulates raw header
-  or query names, the destination is a null-prototype record.
-  `__proto__`/`constructor` input cannot alter its prototype. This does not turn
-  fixed OAuth-field reads into generic object snapshots.
+- **Attacker-key normalization (§4.1; contract only, not yet shipped):** a
+  frozen-acceptance PR and then a Hono implementation PR are pending. The target
+  is to accumulate raw header and query names in null-prototype records so
+  `__proto__`/`constructor` cannot alter the normalized record's prototype.
 
 ## 10. Redirect-URI policy
 
