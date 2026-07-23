@@ -299,11 +299,11 @@ table** (prior grants are derived from active refresh-token records — §9.3).
 Methods: `saveAuthCode`, `consumeAuthCode`, `saveRefreshToken`, `rotateRefreshToken`,
 `revokeRefreshTokenFamily`, `findRefreshToken`, `consumeConsentJti`,
 `findGrantedScopes`, `sweepExpired`, `close`. Full shapes in §12.
-(`findGrantedScopes` is invoked in **stored-DCR mode**, and — per §17.1.6 decision
-3 — for a **CIMD-verified** client in either mode: a CIMD id is stable and validated,
-so a grant keyed by `(subject, clientId)` is meaningful. In **plain stateless** mode
-client_ids are ephemeral and unverified, so a grant keyed by `(subject, clientId)` is
-semantically meaningless and those authorizations stand alone.)
+(`findGrantedScopes` is invoked ONLY in **stored-DCR mode for opaque clients** — per
+§17.1.6 decision 3, every scheme-shaped (`https://`/CIMD) client_id stands alone
+(`priorScopes = []`) in both modes, because refresh rows carry no registration
+provenance. In stateless mode client_ids are ephemeral, so a grant keyed by
+`(subject, clientId)` is meaningless; those authorizations stand alone.)
 
 ### 6.4 `ClientStore` (stored-DCR mode only — fix #4)
 ```ts
@@ -649,15 +649,13 @@ client-controlled request input; when present, `prepare` uses it and does not fe
    intersection ⇒ `access_denied`** over the redirect channel. The ceiling is
    embedded in the consent-token claims (§7.1 `allowed_scopes`). Without a
    ceiling this step is a no-op (v0.1 behavior, including an empty requested set).
-5. **Scope accumulation *(RC item (c)) — stored-DCR mode, OR a CIMD-verified
-   client in either mode (§17.1.6 decision 3).*** Load
-   `priorScopes = findGrantedScopes(subject, clientId, now)` (the union of scopes
-   on this `(subject, clientId)`'s active refresh tokens). In **stateless mode**
-   `priorScopes = []` — client_ids are ephemeral/unverified, so a grant keyed by
-   them is meaningless — **unless `cimd_verified === true`** (a CIMD id is stable
-   and validated), in which case accumulation applies; **never** keyed on
-   `clientId.startsWith("https://")` alone. Stateless authorizations otherwise
-   stand alone.
+5. **Scope accumulation *(RC item (c)) — stored-DCR opaque clients only.*** Load
+   `priorScopes = findGrantedScopes(subject, clientId, now)` ONLY for an opaque client
+   resolved through `ClientStore` in stored-DCR mode. For **every scheme-shaped
+   (`https://`/CIMD) client_id, and in stateless mode, `priorScopes = []`** — never
+   keyed on `clientId.startsWith("https://")` and never on `cimd_verified` (§17.1.6
+   decision 3; CIMD accumulation is deferred — refresh rows carry no provenance). Those
+   authorizations stand alone.
 6. Sign the consent token (§7.1), audit, and return
    `{ consentToken, …claims, priorScopes, requestedScopes }`. The consent page
    renders the **delta** = `requestedScopes − priorScopes` as "new" (rendering is
@@ -683,9 +681,10 @@ client-controlled request input; when present, `prepare` uses it and does not fe
 - On approval (the consent token was already verified above, before the scheme gate
   and Deny branch — `authorize.ts:142`), **consume its single-use `jti`** (replay ⇒
   `invalid_grant` **direct** — an integrity failure, not a user-facing denial).
-- **Mint the code with the accumulated scopes** — in stored mode, OR for a
-  CIMD-verified client in either mode (§17.1.6 decision 3), the union of
-  `requestedScopes + priorScopes`; in plain stateless mode exactly the requested scopes.
+- **Mint the code with the accumulated scopes** — in stored-DCR mode for an opaque
+  `ClientStore`-resolved client, the union of `requestedScopes + priorScopes`; for
+  **every scheme-shaped (CIMD) client and in stateless mode, exactly the requested
+  scopes** (`priorScopes = []` — §17.1.6 decision 3).
   When the verified consent token carries an `allowedScopes` ceiling (§17.4), that
   union is **re-intersected against it** — accumulated prior grants cannot
   resurrect a scope a since-removed group granted. Then 302 to
@@ -787,11 +786,11 @@ This replaces the source's blanket loopback-for-everyone default in stored mode.
   `defaultScopes` when none requested. Returns the validated list.
 - `scopeString(scopes)` → sorted, space-joined (stable token `scope` values).
 - `requireScope(auth, required)` → 403 `insufficient_scope` step-up (§8.3).
-- **Accumulation *(RC item (c)) — stored-DCR mode, or a CIMD-verified client in
-  either mode (§17.1.6 decision 3).*** Re-authorization unions the requested scopes
-  with those derived from this `(subject, clientId)`'s active refresh-token records
-  (§9.3) — **no grant store**. In plain stateless mode there is no accumulation
-  (client_ids are ephemeral); a `cimd_verified` CIMD id is the exception. Consent UI shows the **delta** (new
+- **Accumulation *(RC item (c)) — stored-DCR opaque clients only.*** Re-authorization
+  unions the requested scopes with those derived from this `(subject, clientId)`'s
+  active refresh-token records (§9.3) — **no grant store**. In stateless mode, and for
+  every scheme-shaped (CIMD) client_id in any mode, there is no accumulation
+  (`priorScopes = []`); CIMD accumulation is deferred (§17.1.6 decision 3). Consent UI shows the **delta** (new
   scopes only); rendering is an adapter concern (Phase 3), the core supplies the
   before/after sets.
 
@@ -869,7 +868,19 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
    for that `(subject, clientId)` that are unconsumed, in non-revoked families,
    and not expired at `nowIso`. It is a **read over existing records — there is no
    grant table**. Returns `[]` when no active token exists (a first authorization
-   therefore grants exactly the requested scopes).
+   therefore grants exactly the requested scopes). **Registration provenance
+   (§17.1.6 decision 3):** v0.2 refresh records carry NO registration provenance, so
+   they are NOT eligible accumulation evidence for a CIMD authorization — the caller
+   MUST NOT invoke `findGrantedScopes` for a scheme-shaped (`https://`/CIMD) client_id
+   (accumulation runs only for opaque stored-DCR clients). A future CIMD-accumulation
+   extension MUST add immutable mint-time provenance to the auth-code and
+   refresh-family lineage, preserve it across rotation, filter this read by expected
+   provenance, and treat absent/unknown provenance as ineligible — with an explicit
+   legacy-row migration rule. Not part of v0.2. (This closes prior-grant resurrection
+   by construction: a pre-CIMD stateless URL-keyed grant is never read into a CIMD
+   authorization. Note it does NOT revoke already-issued legacy tokens — they keep
+   their own scopes until expiry/revocation; enabling CIMD is not a retroactive
+   re-validation of existing grants.)
 8. **Token-hash preexistence (collision parity):** `rotateRefreshToken` whose
    `next.tokenHash` already exists returns `null` WITHOUT consuming the
    predecessor (the failed rotation is retryable — matches the SQL stores'
@@ -1140,7 +1151,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
 | RFC 9207 `iss` + `authorization_response_iss_parameter_supported` *(RC a)* | ✅ v0.1 | §9.1, §9.3 |
-| Scope accumulation on step-up *(RC c)* — stored-DCR mode, or a CIMD-verified client in either mode (§17.1.6 dec 3) | ✅ v0.1 (core+store; delta UI Phase 3); CIMD extension ⏳ S6b | §9.3, §11, §17.1.6 |
+| Scope accumulation on step-up *(RC c)* — **stored-DCR opaque clients only** (CIMD clients stand alone; CIMD accumulation deferred — §17.1.6 dec 3) | ✅ v0.1 (core+store; delta UI Phase 3) | §9.3, §11, §17.1.6 |
 | Refresh rotation + family replay revocation | ✅ v0.1 | §7.4, §12 |
 | RFC 6749 §6 refresh client-binding | ✅ v0.1 | §7.4 |
 | RFC 6749 §4.1.2.1 error-redirect channels | ✅ v0.1 | §9.3, §14 |
@@ -1266,8 +1277,9 @@ path (draft §6.9 — our generated ids `mcpdc_`/`mcc_` never collide).
 `client_id` string IS the client's identity, raw: the fetch target (17.1.2),
 the document `client_id` comparison operand (17.1.3), the cache key (17.1.4),
 and every stored/emitted identifier derived from it (the registration
-`client_id`, audit fields, the `findGrantedScopes` key) are the exact string
-the client presented — never a parsed-and-re-serialized form. A WHATWG
+`client_id` and audit fields) are the exact string the client presented — never
+a parsed-and-re-serialized form. (A CIMD `client_id` is NOT a `findGrantedScopes`
+key: scope accumulation never runs for a scheme-shaped client — §17.1.6 decision 3.) A WHATWG
 re-serialization (`new URL(id).href`) drops an explicit `:443` and lowercases
 the host, so a re-serialized operand would treat
 `https://example.com:443/client` as equal to `https://example.com/client`,
@@ -1462,10 +1474,13 @@ decision. Everything else in the pipeline still runs under the flag.
   redirect host, SHOULD warn when every registered redirect is loopback (the
   MCP localhost-impersonation consideration); `client_name` renders as
   unverified display text.
-- **Scope accumulation applies to CIMD clients in both DCR modes** — the §9.3
-  stateless exclusion is about *ephemeral, unverified* ids; a CIMD client_id
-  is stable and validated, so `findGrantedScopes(subject, clientIdUrl)` is
-  meaningful.
+- **Scope accumulation does NOT apply to CIMD clients in v0.2** (§17.1.6 decision 3):
+  a CIMD authorization stands alone (`priorScopes = []`) in both DCR modes.
+  Accumulation stays a stored-DCR opaque-client feature — deferred for CIMD because
+  refresh records carry no registration provenance, so a pre-CIMD stateless grant for
+  the same URL would silently resurrect. (The target AI clients request their full
+  scope set up front, so the convenience is unused; a provenance-aware version is a
+  future minor — §12 note.)
 - Token/refresh/revoke: NO re-fetch; binding is the existing auth-code-record
   and refresh-record client checks (§9.4). Validated documents cache per RFC
   9111 headers (freshness per §17.1.6 decision 4: `effectiveTtlSeconds =
@@ -1901,42 +1916,59 @@ blocklist + the deadline. The earlier "matches unknown-stored-client" parity wor
 is DROPPED (that sibling uses description "Unknown client_id" — authorize.ts:192 /
 upstream-flow.ts:176 — so parity is not claimed).
 
-**Decision 3 — scope-accumulation provenance (both sites + approve-time sibling).**
-`ConsentRequestClaims` (crypto.ts:19-34) gains `cimdVerified?: true`, minted into
-the consent JWT as `cimd_verified: true` ONLY when `prepare` established the CIMD
-registration by genuine validation this flow — its own validated fetch/cache result
-(direct mode; a cache HIT is also validated, so it is set WITHOUT a network fetch)
-OR the carried-forward validated registration (redirect mode, 1c).
-`signConsentToken` OMITS the claim when absent/false (never `cimd_verified:false`);
-strict `payload.cimd_verified === true` is the sole true path; any present non-`true`
-value INVALIDATES the token (fail-closed). Scope accumulation gates on
-`this.config.dcr.mode === "stored" || claims.cimdVerified === true` at BOTH sites —
-prepare-time (authorize.ts:124) and approve-time (authorize.ts:158) — **NEVER on
-`clientId.startsWith("https://")`.** This **supersedes the "stored-DCR mode only"
-qualifier wherever it gates accumulation** — the full sibling list that S6b MUST
-update in lockstep: §6.3 (`findGrantedScopes` "stored-DCR mode only" note), §9.3
-step 5, the §9.3 approve-time "mint the code with the accumulated scopes" bullet,
-§11 "Accumulation — stored-DCR mode only", the **§16 conformance-matrix row**
-("Scope accumulation on step-up … stored-DCR mode"), and the `authorize.ts` header
-comment. (§16 is the requirement matrix release checks read, so it MUST state the
-CIMD-verified extension too.)
-For a CIMD client with `cimd_verified === true`, accumulation applies in BOTH modes;
-the forbid on `clientId.startsWith("https://")` stands. `prepare` MUST set
-`cimdVerified = true` on the consent claims once the CIMD registration is established
-(fetch/cache or carried registration) **before** the `findGrantedScopes` call
-(`authorize.ts:124`), so the prepare-time accumulation gate reads it. *Approve-time scheme gate
-(stored-state sibling of rule 22).* The gate runs **immediately after
-`verifyConsentToken` (`authorize.ts:142`) and BEFORE the `approved !== true` deny
-branch** (`authorize.ts:145-149`, which 302s to the token's `redirectUri`), before any
-token-claim audit, and before `consumeConsentJti` (`authorize.ts:153`): a lowercase-`https://` client_id
-is approvable only when `cimd_verified === true` AND `cimd` is still enabled; any
-other scheme-shaped client_id rejects; `cimd_verified:true` on a non-CIMD-shaped
-client_id rejects. The pinned failure is **direct `invalid_consent`** (so the deny
-path cannot 302 a legacy URL-shaped token to its redirect, and implementations +
-frozen tests cannot diverge). This stops a legacy stateless consent token (URL-shaped
-client_id + attacker-allowlisted redirect, minted before/without CIMD) from being
-redeemed into an auth code at all. §7 + §17.1 schema change; the frozen suite covers
-both the prepare and approve sites INCLUDING the deny / cimd-disabled exit paths.
+**Decision 3 — consent provenance; scope accumulation is stored-DCR-opaque-only
+(CIMD accumulation DEFERRED).** `ConsentRequestClaims` (crypto.ts:19-34) gains
+`cimdVerified?: true`, minted into the consent JWT as `cimd_verified: true` ONLY when
+`prepare` established the CIMD registration by genuine validation this flow (direct:
+its own validated fetch/cache result — a cache HIT counts, no network fetch; redirect:
+the carried-forward validated registration, 1c). `signConsentToken` OMITS the claim
+when absent/false (never `cimd_verified:false`); strict `payload.cimd_verified === true`
+is the sole true path; any present non-`true` value INVALIDATES the token (fail-closed).
+**This claim proves the provenance of the CURRENT authorization flow ONLY; it does NOT
+establish the provenance of any existing refresh-token record, and is NEVER a
+scope-accumulation entitlement.**
+
+*Scope accumulation stays a stored-DCR opaque-client feature; every CIMD client stands
+alone in v0.2.* The core MAY call `findGrantedScopes(subject, clientId, now)` ONLY for
+an opaque client resolved through `ClientStore` in stored-DCR mode. For **every
+scheme-shaped (`https://`) `client_id`, in BOTH stateless and stored mode**,
+`priorScopes` MUST be `[]` and the code is minted from the current request's scopes
+only (still bounded by the identity `allowedScopes` ceiling). The gate is fail-closed
+on the **NEGATIVE class** — accumulation runs iff `dcr.mode === "stored" && NOT
+scheme-shaped(clientId)` (the same canonical classifier rule 22 uses), **NEVER keyed on
+`clientId.startsWith("https://")` and NEVER on `cimd_verified`** — so a missing or
+mis-propagated `cimdVerified` value can never enable a grant-store read. Both sites:
+prepare-time (authorize.ts:124) and approve-time (authorize.ts:158).
+
+*Why deferred, not built (design-for-eventual-shape, build-minimal):* the current
+refresh records (§12) carry no registration provenance, so a CIMD authorization cannot
+safely union prior rows — a pre-CIMD stateless URL-keyed grant would silently resurrect
+into a new document-bound CIMD grant. Doing it correctly needs immutable mint-time
+registration provenance propagated through auth-code → token exchange → refresh-family
+creation → rotation across all three stores, plus a legacy-row migration/default rule
+(see the §12 note) — real security-core machinery for a re-authorization *convenience*
+that the target AI clients (Claude, Cursor, VS Code — which request their full scope set
+up front) do not use. It is a future-minor extension gated on real demand, never
+inferred from the current flow's `cimd_verified` bit.
+
+*Approve-time scheme/claim consistency gate (stored-state sibling of rule 22 — KEPT,
+decoupled from accumulation).* Immediately after `verifyConsentToken` (authorize.ts:142)
+and BEFORE the `approved !== true` deny branch (authorize.ts:145-149, which 302s to the
+token's `redirectUri`), before any token-claim audit or `consumeConsentJti`
+(authorize.ts:153): a lowercase-`https://` client_id is valid only when `cimd` is enabled
+AND `cimd_verified === true`; any other scheme-shaped client_id, or `cimd_verified:true`
+on a non-CIMD-shaped id, is invalid ⇒ **direct `invalid_consent`**, no code or state
+change (so a legacy URL-shaped stateless consent token cannot be redeemed at all). This
+is a validity check only — it is NOT an accumulation decision.
+
+*Sibling reversals (S6b updates in lockstep):* §6.3, §9.3 step 5 + the approve "mint the
+code with the accumulated scopes" bullet, §11, the §16 conformance-matrix row, and
+§17.1.4 all state accumulation = **stored-DCR opaque clients only; CIMD clients stand
+alone**; every "CIMD accumulates in either mode" claim is removed. The §7 `cimd_verified`
+claim stays for the consistency gate + audit. Frozen suite: seed an active legacy
+URL-keyed refresh row with a broader scope and prove a genuine CIMD authorization (BOTH
+modes) reports `priorScopes = []` and mints only the requested, ceiling-bounded scopes; a
+control case proves an opaque stored-DCR client still accumulates.
 
 **Decision 4 — CimdFetchResult minimal cache view; RFC-9111-correct freshness (the
 success cache serves BOTH modes).** The raw-client-id-keyed validated-success cache
