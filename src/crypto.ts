@@ -206,7 +206,7 @@ function keyId(config: BridgeConfig): string | undefined {
 
 function consentClaims(payload: JWTPayload): ConsentRequestClaims {
   if (payload.typ !== CONSENT_TYP) throw new Error("wrong token type");
-  const scopes = typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [];
+  const scopes = payload.scope === "" ? [] : typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [];
   const allowedScopes = payload.allowed_scopes === "" ? []
     : typeof payload.allowed_scopes === "string" && payload.allowed_scopes.trim() ? payload.allowed_scopes.split(/\s+/)
     : undefined;
@@ -227,7 +227,7 @@ function accessClaims(payload: JWTPayload): VerifiedAccessToken {
   return {
     subject: requiredString(payload.sub, "sub"),
     clientId: requiredString(payload.client_id, "client_id"),
-    scopes: typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [],
+    scopes: payload.scope === "" ? [] : typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [],
   };
 }
 
