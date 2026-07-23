@@ -8,7 +8,7 @@ import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { StorePort } from "./ports/store.ts";
 import type { BridgeConfig } from "./config.ts";
-import { originOf } from "./config.ts";
+import { assertBridgeConfig, originOf } from "./config.ts";
 import type { ConsentRequestClaims } from "./crypto.ts";
 import { OAuthError, withRedirect } from "./errors.ts";
 import {
@@ -18,6 +18,11 @@ import {
 import { assertAllowedScopesCeiling, normalizeScopes } from "./scopes.ts";
 import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "./redirect.ts";
 import { buildErrorRedirect } from "./challenge.ts";
+import { ownBooleanTrue, snapshotOwnDataRecord } from "./own-property.ts";
+import { parseFoundClientRegistration } from "./stored-records.ts";
+import {
+  dedupe, grantedScopes, hostOf, optionalStr, redirectWithCode, requiredStr,
+} from "./authorize-internals.ts";
 
 export interface OAuthAuthorizationDeps {
   config: BridgeConfig;
@@ -73,39 +78,48 @@ export class OAuthAuthorizationUseCase {
   private readonly audit: AuditPort;
 
   constructor(deps: OAuthAuthorizationDeps) {
-    this.config = deps.config;
-    this.store = deps.store;
-    this.clock = deps.clock;
-    this.audit = deps.audit;
+    const fields = snapshotOwnDataRecord(deps);
+    if (fields === null || !fields.config || !fields.store || !fields.clock || !fields.audit) {
+      throw new TypeError("Authorization dependencies must be own data properties");
+    }
+    this.config = assertBridgeConfig(fields.config);
+    this.store = fields.store as StorePort;
+    this.clock = fields.clock as ClockPort;
+    this.audit = fields.audit as AuditPort;
   }
 
   async prepare(input: AuthorizeRequestInput): Promise<PreparedConsent> {
     let clientId: string | undefined;
     let redirectUri: string | undefined;
+    let subject: string | undefined;
     try {
+      const fields = snapshotOwnDataRecord(input);
+      if (fields === null) throw new OAuthError("invalid_request", "Authorization request is malformed");
       // --- PRE-VALIDATION: direct errors, never redirect ---
-      if (!input.subject) throw new OAuthError("access_denied", "Authenticated subject is required", 401);
-      if (input.subject.startsWith("mcc_")) throw new OAuthError("access_denied", "Subject uses the reserved machine-client namespace", 401); // RFC 9700 §4.15.1: sub-prefix classification stays sound
+      if (typeof fields.subject !== "string" || !fields.subject) throw new OAuthError("access_denied", "Authenticated subject is required", 401);
+      subject = fields.subject;
+      if (subject.startsWith("mcc_")) throw new OAuthError("access_denied", "Subject uses the reserved machine-client namespace", 401); // RFC 9700 §4.15.1: sub-prefix classification stays sound
       // §17.4: fail closed on a malformed ceiling here too — prepare is exported,
       // so a direct caller bypassing Bridge.resolveIdentity is still guarded.
-      const ceiling = assertAllowedScopesCeiling(input.allowedScopes);
-      clientId = requiredStr(input.clientId, "client_id");
-      redirectUri = await this.resolveRedirect(input.redirectUri, clientId);
-      const state = input.state;
+      const ceiling = assertAllowedScopesCeiling(fields.allowedScopes as string[] | undefined);
+      clientId = requiredStr(fields.clientId as string | undefined, "client_id");
+      redirectUri = await this.resolveRedirect(fields.redirectUri as string | undefined, clientId);
+      const state = optionalStr(fields.state, "state");
 
       // --- POST-VALIDATION: redirect-tagged errors ---
       let claims: ConsentRequestClaims;
       try {
-        if (input.responseType !== "code") {
+        if (fields.responseType !== "code") {
           throw new OAuthError("unsupported_response_type", "Only response_type=code is supported");
         }
-        const resource = input.resource || this.config.resource;
+        const resource = fields.resource === undefined
+          ? this.config.resource : requiredStr(fields.resource as string | undefined, "resource");
         if (resource !== this.config.resource) throw new OAuthError("invalid_target", "Unknown OAuth resource");
-        if (input.codeChallengeMethod !== "S256") {
+        if (fields.codeChallengeMethod !== "S256") {
           throw new OAuthError("invalid_request", "PKCE code_challenge_method must be S256");
         }
-        const codeChallenge = requiredStr(input.codeChallenge, "code_challenge");
-        const requested = normalizeScopes(input.scope, this.config.scopeCatalog, this.config.defaultScopes);
+        const codeChallenge = requiredStr(fields.codeChallenge as string | undefined, "code_challenge");
+        const requested = normalizeScopes(optionalStr(fields.scope, "scope"), this.config.scopeCatalog, this.config.defaultScopes);
         // §17.4: a present ceiling (any array, incl. []) narrows requested/default
         // scopes by intersection (defaultScopes already folded into `requested`).
         const scopes = ceiling ? requested.filter((s) => ceiling.includes(s)) : requested;
@@ -115,34 +129,37 @@ export class OAuthAuthorizationUseCase {
         if (ceiling && scopes.length === 0) {
           throw new OAuthError("access_denied", "No requested scopes are within the authorized ceiling");
         }
-        claims = { clientId, redirectUri, resource, scopes, codeChallenge, codeChallengeMethod: "S256", state, subject: input.subject, allowedScopes: ceiling };
+        claims = { clientId, redirectUri, resource, scopes, codeChallenge, codeChallengeMethod: "S256", state, subject, allowedScopes: ceiling };
       } catch (error) {
         if (error instanceof OAuthError && !error.redirect) throw withRedirect(error, redirectUri, state);
         throw error;
       }
 
       const rawPrior = this.config.dcr.mode === "stored"
-        ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString())
+        ? await this.store.findGrantedScopes(subject, clientId, new Date(this.clock.nowMs()).toISOString())
         : [];
+      const safePrior = grantedScopes(rawPrior, this.config.scopeCatalog);
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
-      const priorScopes = claims.allowedScopes ? rawPrior.filter((s) => claims.allowedScopes!.includes(s)) : rawPrior;
+      const priorScopes = claims.allowedScopes ? safePrior.filter((s) => claims.allowedScopes!.includes(s)) : safePrior;
       const consentToken = await signConsentToken(claims, this.config, this.clock);
-      await this.auditSuccess(AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject: input.subject });
+      await this.auditSuccess(AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject });
       return { consentToken, ...claims, priorScopes };
     } catch (error) {
-      await this.auditFailure(AUDIT_PREPARE, error, clientId, input.redirectUri);
+      await this.auditFailure(AUDIT_PREPARE, error, clientId, redirectUri, subject);
       throw error;
     }
   }
 
   async approve(input: ApproveInput): Promise<ApproveResult> {
     try {
-      this.assertOrigin(input.origin);
-      const token = requiredStr(input.consentToken, "consent_token");
+      const fields = snapshotOwnDataRecord(input);
+      if (fields === null) throw new OAuthError("invalid_request", "Consent input is malformed");
+      this.assertOrigin(optionalStr(fields.origin, "origin"));
+      const token = requiredStr(fields.consentToken as string | undefined, "consent_token");
       const consent = await verifyConsentToken(token, this.config, this.clock);
 
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
-      if (input.approved !== true) {
+      if (!ownBooleanTrue(fields, "approved")) {
         const redirectTo = buildErrorRedirect(consent.redirectUri, "access_denied", consent.state);
         await this.auditFailure(AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject);
         return { redirectTo, state: consent.state };
@@ -150,7 +167,7 @@ export class OAuthAuthorizationUseCase {
 
       // Single-use consent JTI; replay is an integrity failure (direct).
       const consentExpiresAt = expiresAtIso(this.clock, this.config.consentTokenTtlSeconds);
-      if (!(await this.store.consumeConsentJti(consent.jti, consentExpiresAt))) {
+      if ((await this.store.consumeConsentJti(consent.jti, consentExpiresAt)) !== true) {
         throw new OAuthError("invalid_grant", "Consent token has already been used");
       }
 
@@ -158,7 +175,7 @@ export class OAuthAuthorizationUseCase {
       const priorScopes = this.config.dcr.mode === "stored"
         ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(this.clock.nowMs()).toISOString())
         : [];
-      const union = dedupe([...consent.scopes, ...priorScopes]);
+      const union = dedupe([...consent.scopes, ...grantedScopes(priorScopes, this.config.scopeCatalog)]);
       // §17.4: re-intersect the union against the ceiling from the VERIFIED
       // consent token — prior grants can't resurrect a removed-group scope.
       const scopes = consent.allowedScopes ? union.filter((s) => consent.allowedScopes!.includes(s)) : union;
@@ -190,7 +207,9 @@ export class OAuthAuthorizationUseCase {
     if (this.config.dcr.mode === "stored") {
       const client = await this.config.dcr.store.find(clientId);
       if (!client) throw new OAuthError("invalid_client", "Unknown client_id", 401);
-      return assertRedirectAllowedForClient(raw, client);
+      const parsed = parseFoundClientRegistration(client, clientId);
+      if (parsed === null) throw new OAuthError("invalid_client", "Stored client record is malformed", 401);
+      return assertRedirectAllowedForClient(raw, parsed);
     }
     return assertAllowedRedirectUri(raw, this.config.redirectAllowlist);
   }
@@ -216,33 +235,4 @@ export class OAuthAuthorizationUseCase {
       reason: error instanceof OAuthError ? error.code : "internal_error",
     });
   }
-}
-
-function redirectWithCode(redirectUri: string, code: string, issuer: string, state?: string): string {
-  const url = new URL(redirectUri);
-  url.searchParams.set("code", code);
-  url.searchParams.set("iss", issuer); // RFC 9207 (RC item a)
-  if (state) url.searchParams.set("state", state);
-  url.hash = "";
-  return url.href;
-}
-
-function hostOf(value: string): string | undefined {
-  try {
-    const u = new URL(value);
-    return `${u.protocol}//${u.host}`;
-  } catch {
-    return undefined;
-  }
-}
-
-function dedupe(values: string[]): string[] {
-  const out: string[] = [];
-  for (const v of values) if (!out.includes(v)) out.push(v);
-  return out;
-}
-
-function requiredStr(value: string | undefined, label: string): string {
-  if (typeof value === "string" && value) return value;
-  throw new OAuthError("invalid_request", `${label} is required`);
 }

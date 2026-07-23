@@ -5,8 +5,9 @@
 
 import type { JWK } from "jose";
 import type { BridgeConfig } from "./config.ts";
-import { originOf, pathAfterOrigin } from "./config.ts";
+import { assertBridgeConfig, originOf, pathAfterOrigin } from "./config.ts";
 import { publicJwk } from "./crypto.ts";
+import { ownBooleanTrue, ownDataValue } from "./own-property.ts";
 
 /** RFC 8414 authorization-server metadata. Includes RC item (a): the iss flag.
  *  The `client_credentials` grant and its confidential-client auth methods are
@@ -15,7 +16,8 @@ import { publicJwk } from "./crypto.ts";
  *  surface the bridge would reject with `unsupported_grant_type`. `"none"` is
  *  always advertised: the user grants use PKCE public clients. */
 export function authorizationServerMetadata(config: BridgeConfig): Record<string, unknown> {
-  const ccEnabled = config.clientCredentials?.enabled === true;
+  assertBridgeConfig(config);
+  const ccEnabled = ownBooleanTrue(ownDataValue(config, "clientCredentials"), "enabled");
   return {
     issuer: config.issuer,
     authorization_endpoint: `${config.issuer}/oauth/authorize`,
@@ -38,6 +40,7 @@ export function authorizationServerMetadata(config: BridgeConfig): Record<string
 
 /** RFC 9728 protected-resource metadata (identical JSON at both served paths). */
 export function protectedResourceMetadata(config: BridgeConfig): Record<string, unknown> {
+  assertBridgeConfig(config);
   return {
     resource: config.resource,
     authorization_servers: [config.issuer],
@@ -47,6 +50,7 @@ export function protectedResourceMetadata(config: BridgeConfig): Record<string, 
 
 /** The two URLs at which the PRM is served (root + path-inserted). */
 export function protectedResourceMetadataUrls(config: BridgeConfig): { root: string; pathInserted: string } {
+  assertBridgeConfig(config);
   const origin = originOf(config.resource);
   const path = pathAfterOrigin(config.resource).replace(/^\/+|\/+$/g, "");
   const root = `${origin}/.well-known/oauth-protected-resource`;
@@ -55,5 +59,6 @@ export function protectedResourceMetadataUrls(config: BridgeConfig): { root: str
 
 /** JWKS document for /oauth/jwks. */
 export function jwks(config: BridgeConfig): { keys: JWK[] } {
+  assertBridgeConfig(config);
   return { keys: [publicJwk(config)] };
 }

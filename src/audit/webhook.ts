@@ -34,6 +34,7 @@
 
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
 import { safeErrorMessage } from "./util.ts";
+import { snapshotOwnDataRecord } from "../own-property.ts";
 
 export interface WebhookAuditOptions {
   /** Per-request deadline. Default 5000 ms (§17.7). */
@@ -60,6 +61,8 @@ export class WebhookAudit implements AuditPort {
   private readonly querySecrets: string[];
 
   constructor(url: string, options: WebhookAuditOptions = {}) {
+    const optionFields = snapshotOwnDataRecord(options);
+    if (optionFields === null) throw new TypeError("WebhookAudit options must be own data properties");
     // RAW prefix check FIRST — fail-closed before any URL parsing. Rejects
     // `http://`, `HTTPS://`, and anything that is not an exact `https://` start.
     if (typeof url !== "string" || !url.startsWith("https://")) {
@@ -86,9 +89,22 @@ export class WebhookAudit implements AuditPort {
     this.url = url;
     this.host = parsed.host;
     this.querySecrets = collectQuerySecrets(parsed);
-    this.timeoutMs = options.timeoutMs ?? 5000;
-    this.headers = { "Content-Type": "application/json", ...options.headers };
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    const timeoutMs = optionFields.timeoutMs ?? 5000;
+    if (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new TypeError("WebhookAudit timeoutMs must be a positive integer");
+    }
+    const extraHeaders = optionFields.headers === undefined
+      ? Object.freeze(Object.create(null) as Record<string, string>)
+      : snapshotOwnDataRecord(optionFields.headers);
+    if (extraHeaders === null || !Object.values(extraHeaders).every((value) => typeof value === "string")) {
+      throw new TypeError("WebhookAudit headers must be own string properties");
+    }
+    if (optionFields.fetchImpl !== undefined && typeof optionFields.fetchImpl !== "function") {
+      throw new TypeError("WebhookAudit fetchImpl must be a function");
+    }
+    this.timeoutMs = timeoutMs;
+    this.headers = Object.freeze({ "Content-Type": "application/json", ...extraHeaders });
+    this.fetchImpl = (optionFields.fetchImpl as typeof fetch | undefined) ?? globalThis.fetch;
   }
 
   async writeAuthEvent(event: AuthAuditEvent): Promise<void> {

@@ -3,7 +3,8 @@
 
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
@@ -350,3 +351,30 @@ function badJwk(): JWK {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   return { ...privateKey.export({ format: "jwk" }) } as JWK;
 }
+test("quickstart rejects unknown option keys before filesystem side effects", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mcp-sso-quickstart-options-"));
+  const target = join(parent, "must-not-exist");
+  try {
+    await assert.rejects(
+      loadOrCreateQuickstartSecrets({ dir: target, dr: target } as never),
+      /unknown option/,
+    );
+    assert.equal(existsSync(target), false);
+  } finally { await rm(parent, { recursive: true, force: true }); }
+});
+
+test("quickstart rejects option accessors before filesystem side effects", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mcp-sso-quickstart-accessor-"));
+  const target = join(parent, "must-not-exist");
+  let reads = 0;
+  const options = {};
+  Object.defineProperty(options, "dir", {
+    enumerable: true,
+    get() { reads += 1; return target; },
+  });
+  try {
+    await assert.rejects(loadOrCreateQuickstartSecrets(options), /data object/);
+    assert.equal(reads, 0);
+    assert.equal(existsSync(target), false);
+  } finally { await rm(parent, { recursive: true, force: true }); }
+});

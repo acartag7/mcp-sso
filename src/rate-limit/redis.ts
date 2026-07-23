@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import type { Redis } from "ioredis";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
+import { ownDataValue, snapshotOwnDataRecord } from "../own-property.ts";
 
 export interface RedisRateLimitConfig {
   /** Fixed-window length in seconds. Must be a positive integer. */
@@ -42,16 +43,21 @@ export class RedisRateLimit implements RateLimitPort {
   private readonly keyPrefix: string;
 
   constructor(client: Redis, config: RedisRateLimitConfig) {
-    if (!Number.isInteger(config.windowSeconds) || config.windowSeconds < 1) {
+    const fields = snapshotOwnDataRecord(config);
+    if (fields === null) throw new TypeError("RedisRateLimitConfig must use own data properties");
+    if (!Number.isInteger(fields.windowSeconds) || (fields.windowSeconds as number) < 1) {
       throw new Error("RedisRateLimitConfig.windowSeconds must be a positive integer");
     }
-    if (!Number.isInteger(config.limit) || config.limit < 1) {
+    if (!Number.isInteger(fields.limit) || (fields.limit as number) < 1) {
       throw new Error("RedisRateLimitConfig.limit must be a positive integer");
     }
     this.client = client;
-    this.windowSeconds = config.windowSeconds;
-    this.limit = config.limit;
-    this.keyPrefix = config.keyPrefix ?? "mcp-sso:rl:";
+    if (fields.keyPrefix !== undefined && typeof fields.keyPrefix !== "string") {
+      throw new Error("RedisRateLimitConfig.keyPrefix must be a string");
+    }
+    this.windowSeconds = fields.windowSeconds as number;
+    this.limit = fields.limit as number;
+    this.keyPrefix = (fields.keyPrefix as string | undefined) ?? "mcp-sso:rl:";
   }
 
   async check(key: string): Promise<boolean> {
@@ -81,5 +87,6 @@ export function createRedisRateLimit(client: Redis, config: RedisRateLimitConfig
 // ioredis surfaces Redis's NOSCRIPT error as a ReplyError whose message begins with
 // "NOSCRIPT" (there is no `.code` field — verified against ioredis 5.11 / Redis 7).
 function isNoScript(error: unknown): boolean {
-  return String((error as { message?: string } | null)?.message ?? "").startsWith("NOSCRIPT");
+  const message = ownDataValue(error, "message");
+  return typeof message === "string" && message.startsWith("NOSCRIPT");
 }

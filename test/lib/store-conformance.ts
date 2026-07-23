@@ -33,6 +33,24 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: auth-code writes require own data properties`, async () => {
+    const store = make();
+    let getterCalls = 0;
+    const inherited = inheritedField(authCode("inherited-auth", FUTURE), "subject") as SaveAuthCodeInput;
+    const accessor = { ...authCode("accessor-auth", FUTURE) } as SaveAuthCodeInput;
+    Object.defineProperty(accessor, "resource", {
+      enumerable: true,
+      get() { getterCalls += 1; return "https://api.test/mcp"; },
+    });
+    await assert.rejects(store.saveAuthCode(inherited), StoreInputError);
+    await assert.rejects(store.saveAuthCode(accessor), StoreInputError);
+    assert.equal(getterCalls, 0, "auth-code input accessors are not invoked");
+    // A rejected input must not reserve its digest or otherwise mutate the store.
+    await assert.doesNotReject(store.saveAuthCode(authCode("inherited-auth", FUTURE)));
+    await assert.doesNotReject(store.saveAuthCode(authCode("accessor-auth", FUTURE)));
+    await store.close();
+  });
+
   test(`${label}: consent jti is single-use`, async () => {
     const store = make();
     assert.equal(await store.consumeConsentJti("jti-1", FUTURE), true);
@@ -50,6 +68,44 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     assert.equal(await store.rotateRefreshToken(sha256Hex("one"), refresh("three", "fam-1", sha256Hex("one"), FUTURE), LATER), null);
     // the rotated successor can no longer rotate either (family revoked) -> null
     assert.equal(await store.rotateRefreshToken(sha256Hex("two"), refresh("four", "fam-1", sha256Hex("two"), FUTURE), LATER), null);
+    await store.close();
+  });
+
+  test(`${label}: refresh-token writes require own data properties before mutation`, async () => {
+    const store = make();
+    let getterCalls = 0;
+    const inherited = inheritedField(
+      refresh("inherited-refresh", "fam-inherited", null, FUTURE),
+      "clientId",
+    ) as SaveRefreshTokenInput;
+    const accessor = { ...refresh("accessor-refresh", "fam-accessor", null, FUTURE) } as SaveRefreshTokenInput;
+    Object.defineProperty(accessor, "scopes", {
+      enumerable: true,
+      get() { getterCalls += 1; return ["mcp:read"]; },
+    });
+    await assert.rejects(store.saveRefreshToken(inherited), StoreInputError);
+    await assert.rejects(store.saveRefreshToken(accessor), StoreInputError);
+    assert.equal(getterCalls, 0, "refresh-token input accessors are not invoked");
+    await assert.doesNotReject(store.saveRefreshToken(refresh("inherited-refresh", "fam-inherited", null, FUTURE)));
+    await assert.doesNotReject(store.saveRefreshToken(refresh("accessor-refresh", "fam-accessor", null, FUTURE)));
+
+    await store.saveRefreshToken(refresh("rotation-source", "fam-rotation-input", null, FUTURE));
+    const sourceHash = sha256Hex("rotation-source");
+    const next = { ...refresh("rotation-next", "fam-rotation-input", sourceHash, FUTURE) } as SaveRefreshTokenInput;
+    Object.defineProperty(next, "subject", {
+      enumerable: true,
+      get() { getterCalls += 1; return "subject-1"; },
+    });
+    await assert.rejects(store.rotateRefreshToken(sourceHash, next, NOW), StoreInputError);
+    assert.equal(getterCalls, 0, "rotation input accessors are not invoked");
+    assert.ok(
+      await store.rotateRefreshToken(
+        sourceHash,
+        refresh("rotation-valid", "fam-rotation-input", sourceHash, FUTURE),
+        NOW,
+      ),
+      "a rejected rotation input leaves the predecessor usable",
+    );
     await store.close();
   });
 
@@ -187,4 +243,10 @@ function refresh(rawToken: string, familyId: string, previousTokenHash: string |
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function inheritedField<T extends object>(value: T, key: keyof T): T {
+  const copy = Object.assign(Object.create({ [key]: value[key] }), value) as T;
+  Reflect.deleteProperty(copy, key);
+  return copy;
 }

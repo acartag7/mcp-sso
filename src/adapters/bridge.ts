@@ -3,14 +3,14 @@
 // thin mapper around this; all OAuth logic stays in the core. The adapter resolves
 // the subject (via its IdentityPort) before calling handleAuthorize.
 
-import type { BridgeConfig } from "../config.ts";
+import { assertBridgeConfig, type BridgeConfig } from "../config.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { StorePort } from "../ports/store.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
 import type { ApplicationType } from "../ports/client-store.ts";
-import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
+import { parseIdentityResult, type IdentityPort, type IdentityResult } from "../ports/identity.ts";
 import { OAuthAuthorizationUseCase, type PreparedConsent } from "../authorize.ts";
 import { OAuthTokenUseCase, type UserTokenResponse, type MachineTokenResponse } from "../token.ts";
 import { registerClient } from "../register.ts";
@@ -19,26 +19,20 @@ import { OAuthError } from "../errors.ts";
 import { assertAllowedScopesCeiling } from "../scopes.ts";
 import { isBasicAttempt } from "../client-auth.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
+import { snapshotOwnDataRecord } from "../own-property.ts";
 import { renderConsentPage } from "./consent-page.ts";
 import {
-  formField, formObject, headerString, oauthErrorResponse, queryString,
+  findDuplicatedKeys, formField, formObject, headerString, OAUTH_AUTHORIZE_PARAM_KEYS,
+  oauthErrorResponse, queryString,
   type NormRequest, type NormResponse,
 } from "./http.ts";
+import {
+  asOAuth, CONSENT_HEADERS, consentCookie, parseApproved, requiredRequest,
+} from "./bridge-internals.ts";
+import type { BridgeDeps } from "./bridge-types.ts";
 
-export interface BridgeDeps {
-  config: BridgeConfig;
-  store: StorePort;
-  clock: ClockPort;
-  audit: AuditPort;
-  /** Optional register/token rate limiter (fix #7); defaults to no-op. */
-  rateLimit?: RateLimitPort;
-}
-
-const CONSENT_HEADERS = {
-  "content-type": "text/html; charset=utf-8",
-  "x-content-type-options": "nosniff",
-  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
-};
+export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
+export type { BridgeDeps } from "./bridge-types.ts";
 
 export class Bridge {
   readonly config: BridgeConfig;
@@ -49,12 +43,22 @@ export class Bridge {
   private readonly rateLimit: RateLimitPort;
 
   constructor(deps: BridgeDeps) {
-    this.config = deps.config;
-    this.clock = deps.clock;
-    this.audit = deps.audit;
-    this.auth = new OAuthAuthorizationUseCase(deps);
-    this.token = new OAuthTokenUseCase(deps);
-    this.rateLimit = deps.rateLimit ?? noopRateLimit;
+    const fields = snapshotOwnDataRecord(deps);
+    if (fields === null || !fields.config || !fields.store || !fields.clock || !fields.audit) {
+      throw new TypeError("Bridge dependencies must be own data properties");
+    }
+    const safeDeps = Object.freeze({
+      config: assertBridgeConfig(fields.config),
+      store: fields.store as StorePort,
+      clock: fields.clock as ClockPort,
+      audit: fields.audit as AuditPort,
+    });
+    this.config = safeDeps.config;
+    this.clock = safeDeps.clock;
+    this.audit = safeDeps.audit;
+    this.auth = new OAuthAuthorizationUseCase(safeDeps);
+    this.token = new OAuthTokenUseCase(safeDeps);
+    this.rateLimit = (fields.rateLimit as RateLimitPort | undefined) ?? noopRateLimit;
   }
 
   async handleAuthorizationServerMetadata(): Promise<NormResponse> {
@@ -69,13 +73,15 @@ export class Bridge {
 
   async handleRegister(req: NormRequest): Promise<NormResponse> {
     try {
-      await this.guard(req, "register");
-      const body = formObject(req.body);
-      const redirectUris = stringArray(body.redirect_uris);
-      const applicationType = formField(body, "application_type") as ApplicationType | undefined;
-      // §17.2 machine-shape signals — parsed only so registerClient can REJECT them.
-      const tokenEndpointAuthMethod = formField(body, "token_endpoint_auth_method");
-      const grantTypes = stringArray(body.grant_types);
+      const request = requiredRequest(req);
+      await this.guard(request, "register");
+      const body = formObject(request.body);
+      // Preserve the original value types for the core validator. Best-effort
+      // filtering here would turn malformed metadata into a valid registration.
+      const redirectUris = body.redirect_uris as string[] | undefined;
+      const applicationType = body.application_type as ApplicationType | undefined;
+      const tokenEndpointAuthMethod = body.token_endpoint_auth_method as string | undefined;
+      const grantTypes = body.grant_types as string[] | undefined;
       const registered = await registerClient(
         { config: this.config, clock: this.clock, audit: this.audit },
         { redirectUris, applicationType, tokenEndpointAuthMethod, grantTypes },
@@ -92,17 +98,25 @@ export class Bridge {
    *  form is removed (§17.4 item 3): the ceiling must travel the whole path. */
   async handleAuthorize(req: NormRequest, identity: { subject: string; allowedScopes?: string[] }): Promise<NormResponse> {
     try {
+      const request = requiredRequest(req);
+      if (findDuplicatedKeys(request.query, OAUTH_AUTHORIZE_PARAM_KEYS).length > 0) {
+        throw new OAuthError("invalid_request", "Duplicate authorization request parameters");
+      }
+      const identityFields = snapshotOwnDataRecord(identity);
+      if (identityFields === null || typeof identityFields.subject !== "string" || !identityFields.subject) {
+        throw new OAuthError("access_denied", "Resolved identity is malformed", 401);
+      }
       const prepared: PreparedConsent = await this.auth.prepare({
-        clientId: queryString(req.query, "client_id"),
-        redirectUri: queryString(req.query, "redirect_uri"),
-        responseType: queryString(req.query, "response_type"),
-        codeChallenge: queryString(req.query, "code_challenge"),
-        codeChallengeMethod: queryString(req.query, "code_challenge_method"),
-        resource: queryString(req.query, "resource"),
-        scope: queryString(req.query, "scope"),
-        state: queryString(req.query, "state"),
-        subject: identity.subject,
-        allowedScopes: identity.allowedScopes,
+        clientId: queryString(request.query, "client_id"),
+        redirectUri: queryString(request.query, "redirect_uri"),
+        responseType: queryString(request.query, "response_type"),
+        codeChallenge: queryString(request.query, "code_challenge"),
+        codeChallengeMethod: queryString(request.query, "code_challenge_method"),
+        resource: queryString(request.query, "resource"),
+        scope: queryString(request.query, "scope"),
+        state: queryString(request.query, "state"),
+        subject: identityFields.subject,
+        allowedScopes: assertAllowedScopesCeiling(identityFields.allowedScopes),
       });
       return { status: 200, headers: { ...CONSENT_HEADERS }, body: renderConsentPage(this.config, prepared) };
     } catch (error) {
@@ -125,7 +139,10 @@ export class Bridge {
   async resolveIdentity(identity: IdentityPort, input: unknown, ip?: string): Promise<{ subject: string; allowedScopes?: string[] }> {
     let result: IdentityResult;
     try {
-      result = await identity.verify(input);
+      const rawResult = await identity.verify(input);
+      const parsedResult = parseIdentityResult(rawResult);
+      if (parsedResult === null) throw new OAuthError("access_denied", "Identity port returned a malformed result", 401);
+      result = parsedResult;
     } catch (error) {
       await this.emitIdentityVerify("failure", error instanceof OAuthError ? error.code : "internal_error", undefined, ip);
       throw error;
@@ -155,12 +172,13 @@ export class Bridge {
 
   async handleApprove(req: NormRequest): Promise<NormResponse> {
     try {
-      const body = formObject(req.body);
-      const consentToken = formField(body, "consent_token") ?? consentCookie(req);
+      const request = requiredRequest(req);
+      const body = formObject(request.body);
+      const consentToken = formField(body, "consent_token") ?? consentCookie(request);
       const result = await this.auth.approve({
         consentToken,
-        approved: parseApproved(body.approved),
-        origin: headerString(req.headers, "origin"),
+        approved: parseApproved(formField(body, "approved")),
+        origin: headerString(request.headers, "origin"),
       });
       return { status: 302, headers: { location: result.redirectTo }, redirect: result.redirectTo };
     } catch (error) {
@@ -169,10 +187,12 @@ export class Bridge {
   }
 
   async handleToken(req: NormRequest): Promise<NormResponse> {
-    const authorization = headerString(req.headers, "authorization");
+    let authorization: string | undefined;
     try {
-      await this.guard(req, "token");
-      const body = formObject(req.body);
+      const request = requiredRequest(req);
+      authorization = headerString(request.headers, "authorization");
+      await this.guard(request, "token");
+      const body = formObject(request.body);
       const grantType = formField(body, "grant_type");
       let response: UserTokenResponse | MachineTokenResponse;
       if (grantType === "refresh_token") {
@@ -206,7 +226,8 @@ export class Bridge {
     // catch is for unexpected throws (e.g. store outage), which must map to the
     // §9.5 body like every other route — never a framework-shaped error.
     try {
-      await this.token.revoke(formField(formObject(req.body), "token"));
+      const request = requiredRequest(req);
+      await this.token.revoke(formField(formObject(request.body), "token"));
       return { status: 200, headers: { "cache-control": "no-store" }, body: {} };
     } catch (error) {
       return oauthErrorResponse(asOAuth(error));
@@ -222,28 +243,4 @@ export class Bridge {
     }
     if (!allowed) throw new OAuthError("temporarily_unavailable", "Rate limit exceeded; retry later", 429);
   }
-}
-
-export function asOAuth(error: unknown): OAuthError {
-  return error instanceof OAuthError ? error : new OAuthError("internal_error", "OAuth request failed", 500);
-}
-
-export function asDirectOAuth(error: unknown): OAuthError {
-  const mapped = asOAuth(error);
-  return new OAuthError(mapped.code, mapped.message, mapped.status);
-}
-
-function parseApproved(raw: unknown): boolean {
-  return raw === true || raw === "true"; // fail-closed (§9.3): absent/malformed never auto-approves
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && v.length > 0) : [];
-}
-
-function consentCookie(req: NormRequest): string | undefined {
-  const raw = headerString(req.headers, "cookie");
-  if (!raw) return undefined;
-  const found = raw.split(";").map((p) => p.trim()).find((p) => p.startsWith("mcp_idp_consent="));
-  return found ? decodeURIComponent(found.slice("mcp_idp_consent=".length)) : undefined;
 }

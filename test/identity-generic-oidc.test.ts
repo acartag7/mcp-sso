@@ -119,6 +119,43 @@ test("validateGenericOidcIdToken: sub required; allowlist (sub + verified-email 
   assert.equal(r.ok === false && r.reason, "generic_oidc_subject_not_allowed");
 });
 
+test("validateGenericOidcIdToken: security selectors use own data only", () => {
+  const inheritedSub = Object.assign(
+    Object.create({ sub: "sub-123" }),
+    { iss: ISSUER, aud: CLIENT_ID, exp: NOW + 3600, iat: NOW },
+  ) as GenericOidcIdTokenPayload;
+  const noSubject = validateGenericOidcIdToken(inheritedSub, CONFIG);
+  assert.equal(noSubject.ok, false);
+  if (!noSubject.ok) assert.equal(noSubject.reason, "generic_oidc_no_subject");
+
+  const allowEmail: GenericOidcConfig = {
+    ...CONFIG, subjectAllowlist: ["user@example.com"], allowEmailAllowlist: true,
+  };
+  const inheritedVerified = Object.assign(
+    Object.create({ email_verified: true }),
+    payload({ sub: "other", email: "user@example.com" }),
+  ) as GenericOidcIdTokenPayload;
+  assert.equal(validateGenericOidcIdToken(inheritedVerified, allowEmail).ok, false);
+
+  const inheritedOptIn = Object.assign(
+    Object.create({ allowEmailAllowlist: true }),
+    { ...CONFIG, subjectAllowlist: ["user@example.com"] },
+  ) as GenericOidcConfig;
+  assert.equal(validateGenericOidcIdToken(
+    payload({ sub: "other", email: "user@example.com", email_verified: true }),
+    inheritedOptIn,
+  ).ok, false);
+
+  let reads = 0;
+  const accessorPayload = payload();
+  Object.defineProperty(accessorPayload, "email_verified", {
+    enumerable: true,
+    get() { reads += 1; return true; },
+  });
+  assert.equal(validateGenericOidcIdToken(accessorPayload, CONFIG).ok, false);
+  assert.equal(reads, 0);
+});
+
 test("subjectAllowedGeneric + resolveAllowedAlgs units", () => {
   // sub is matched EXACTLY (opaque, case-sensitive) — `S1` does NOT match `s1`.
   assert.equal(subjectAllowedGeneric("s1", undefined, false, ["s1"], false), true);
@@ -221,6 +258,56 @@ test("exchangeCodeForToken: returns id_token + access_token; non-200 rejects; mi
   await assert.rejects(exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, longDesc), (e: Error) => e.message.includes("Z".repeat(180)), "description was pre-sliced at 160 (fragments a secret before redaction)");
 });
 
+test("token and discovery transports accept native Fetch Response objects", async () => {
+  const tokenTransport: GenericOidcTokenTransport = {
+    async postForm() {
+      return new Response(JSON.stringify({ id_token: "idt", access_token: "atk" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    },
+  };
+  assert.deepEqual(
+    await exchangeCodeForToken(CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, tokenTransport),
+    { id_token: "idt", access_token: "atk" },
+  );
+
+  const discovery: DiscoveryTransport = {
+    async get() {
+      return new Response(JSON.stringify(discoveryDoc()), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    },
+  };
+  const resolved = await resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, discovery);
+  assert.equal(resolved.jwksUri, MANUAL.jwksUri);
+});
+
+test("token and discovery transports reject response fields from a plain prototype", async () => {
+  let reads = 0;
+  const prototype = Object.create(null) as Record<string, unknown>;
+  Object.defineProperty(prototype, "status", {
+    get() { reads += 1; return 200; },
+  });
+  const tokenResponse = Object.assign(Object.create(prototype), {
+    async text() { return JSON.stringify({ id_token: "idt", access_token: "atk" }); },
+  });
+  await assert.rejects(exchangeCodeForToken(
+    CONFIG,
+    RESOLVED,
+    { code: "c", codeVerifier: "v" },
+    { async postForm() { return tokenResponse; } },
+  ));
+
+  const discoveryResponse = Object.assign(Object.create(prototype), {
+    async json() { return discoveryDoc(); },
+  });
+  await assert.rejects(resolveEndpoints(
+    { issuer: ISSUER, endpoints: "discover" },
+    { async get() { return discoveryResponse; } },
+  ));
+  assert.equal(reads, 0);
+});
+
 // --- resolveEndpoints (discover + manual) -----------------------------------
 
 function discoveryDoc(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -257,6 +344,34 @@ test("resolveEndpoints: discover boot failures (issuer mismatch, http endpoints,
   await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ id_token_signing_alg_values_supported: ["RS256", 7] }))));
   await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover", clientSecret: "s" }, fakeDiscovery(discoveryDoc({ token_endpoint_auth_methods_supported: ["client_secret_basic", 5] }))));
   await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ code_challenge_methods_supported: "S256" })))); // not an array
+});
+
+test("resolveEndpoints: discovery security fields must be own data properties", async () => {
+  const inheritedEndpoints = Object.assign(
+    Object.create({ token_endpoint: MANUAL.tokenEndpoint, jwks_uri: MANUAL.jwksUri }),
+    {
+      issuer: ISSUER,
+      authorization_endpoint: MANUAL.authorizationEndpoint,
+      id_token_signing_alg_values_supported: ["RS256"],
+      code_challenge_methods_supported: ["S256"],
+    },
+  ) as Record<string, unknown>;
+  await assert.rejects(
+    resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(inheritedEndpoints)),
+    /missing token_endpoint/,
+  );
+
+  let reads = 0;
+  const accessorDoc = discoveryDoc();
+  Object.defineProperty(accessorDoc, "jwks_uri", {
+    enumerable: true,
+    get() { reads += 1; return MANUAL.jwksUri; },
+  });
+  await assert.rejects(
+    resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(accessorDoc)),
+    /data object/,
+  );
+  assert.equal(reads, 0);
 });
 
 test("resolveEndpoints: manual-mode http endpoint boot-fails (addendum 11 not discovery-scoped)", async () => {

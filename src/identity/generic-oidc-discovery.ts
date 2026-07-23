@@ -12,6 +12,8 @@
 
 import { assertHttpsRaw } from "./util.ts";
 import { resolveAllowedAlgs } from "./generic-oidc-claims.ts";
+import { ownBooleanTrue, snapshotOwnDataRecord, snapshotOwnStringArray } from "../own-property.ts";
+import { captureHttpResponse } from "./util.ts";
 
 /** Manual endpoint mode — zero boot-time fetching. */
 export interface GenericOidcManualEndpoints {
@@ -97,9 +99,9 @@ function stringField(value: unknown, label: string): string {
 function asStringArray(value: unknown, label: string): string[] | undefined {
   if (value === undefined) return undefined; // truly absent (key not in the doc) ⇒ callers default
   // null (explicit) or non-array or array-with-non-strings ⇒ malformed ⇒ fail closed
-  if (!Array.isArray(value)) throw new Error(`generic_oidc_discovery_failed: discovery '${label}' must be an array when present`);
-  if (!value.every((v) => typeof v === "string")) throw new Error(`generic_oidc_discovery_failed: discovery '${label}' must contain only strings`);
-  return value;
+  const values = snapshotOwnStringArray(value);
+  if (values === null) throw new Error(`generic_oidc_discovery_failed: discovery '${label}' must contain a dense array of strings`);
+  return [...values];
 }
 
 /** Raw `^https://` check (addendum 11 — BEFORE `new URL()`, which normalizes
@@ -138,8 +140,10 @@ export function resolveTokenAuthMethod(
   }
   if (override) return override;
   if (advertised === undefined) return "client_secret_basic"; // OIDC default (discovery omitted + manual)
-  if (advertised.includes("client_secret_post")) return "client_secret_post";
-  if (advertised.includes("client_secret_basic")) return "client_secret_basic";
+  const methods = snapshotOwnStringArray(advertised);
+  if (methods === null) throw new Error("generic_oidc_no_supported_auth_method: malformed advertised method list");
+  if (methods.includes("client_secret_post")) return "client_secret_post";
+  if (methods.includes("client_secret_basic")) return "client_secret_basic";
   throw new Error("generic_oidc_no_supported_auth_method: the token endpoint advertises neither client_secret_post nor client_secret_basic (required for a confidential client)");
 }
 
@@ -150,23 +154,27 @@ export async function resolveEndpoints(
   config: GenericOidcDiscoveryConfig,
   transport?: DiscoveryTransport,
 ): Promise<ResolvedEndpoints> {
-  if (config.endpoints === "discover") {
-    assertValidHttpsEndpoint(config.issuer, "issuer");
+  const configSnapshot = snapshotOwnDataRecord(config);
+  if (configSnapshot === null) throw new Error("generic_oidc_config_invalid: config must be a data object");
+  const safeConfig = configSnapshot as unknown as GenericOidcDiscoveryConfig;
+  if (safeConfig.endpoints === "discover") {
+    assertValidHttpsEndpoint(safeConfig.issuer, "issuer");
     // Trim trailing slashes without a regex: `/\/+$/` over env-sourced config trips
     // CodeQL js/polynomial-redos; a bounded slice loop is unambiguously linear.
-    let issuer = config.issuer;
+    let issuer = safeConfig.issuer;
     while (issuer.endsWith("/")) issuer = issuer.slice(0, -1);
     const discoveryUrl = issuer + "/.well-known/openid-configuration";
     const fetcher = transport ?? defaultDiscoveryTransport;
-    const resp = await fetcher.get(discoveryUrl);
+    const resp = captureHttpResponse(await fetcher.get(discoveryUrl), "json");
+    if (resp === null) throw new Error("generic_oidc_discovery_failed: malformed transport response");
     if (resp.status !== 200) throw new Error(`generic_oidc_discovery_failed: discovery fetch returned HTTP ${resp.status} (redirects are not followed)`);
-    const docRaw = await resp.json();
+    const docRaw = await resp.read();
     // Fetched metadata is untrusted: a non-object doc (JSON null/array/primitive) must fail closed,
     // not crash on `doc.issuer` or best-effort parse (fail-closed on untrusted input).
-    if (docRaw === null || typeof docRaw !== "object" || Array.isArray(docRaw)) throw new Error("generic_oidc_discovery_failed: discovery document must be a JSON object");
-    const doc = docRaw as Record<string, unknown>;
+    const doc = snapshotOwnDataRecord(docRaw);
+    if (doc === null) throw new Error("generic_oidc_discovery_failed: discovery document must be a JSON data object");
     const docIssuer = doc.issuer;
-    if (typeof docIssuer !== "string" || docIssuer !== config.issuer) {
+    if (typeof docIssuer !== "string" || docIssuer !== safeConfig.issuer) {
       throw new Error("generic_oidc_discovery_issuer_mismatch: the document's `issuer` must exactly equal the configured issuer (OIDC Discovery §4.3)");
     }
     const authorizationEndpoint = stringField(doc.authorization_endpoint, "authorization_endpoint");
@@ -178,23 +186,28 @@ export async function resolveEndpoints(
     const allowedAlgs = resolveAllowedAlgs(asStringArray(doc.id_token_signing_alg_values_supported, "id_token_signing_alg_values_supported"));
     const methods = asStringArray(doc.code_challenge_methods_supported, "code_challenge_methods_supported") ?? [];
     if (!methods.includes("S256")) {
-      if (!config.allowProviderWithoutPkce) {
+      if (!ownBooleanTrue(safeConfig, "allowProviderWithoutPkce")) {
         throw new Error("generic_oidc_no_pkce: discovery does not advertise PKCE S256 (code_challenge_methods_supported omits S256 — RFC 8414 ⇒ no PKCE); set allowProviderWithoutPkce to proceed (state + nonce + client secret still bind the flow)");
       }
       console.warn("[mcp-sso] generic OIDC provider does not advertise PKCE S256; proceeding with allowProviderWithoutPkce=true. PKCE is a recommended code-injection defense — prefer a provider that supports it.");
     }
-    const tokenAuthMethod = resolveTokenAuthMethod(config.clientSecret, config.tokenEndpointAuthMethod, asStringArray(doc.token_endpoint_auth_methods_supported, "token_endpoint_auth_methods_supported"));
+    const tokenAuthMethod = resolveTokenAuthMethod(safeConfig.clientSecret, safeConfig.tokenEndpointAuthMethod, asStringArray(doc.token_endpoint_auth_methods_supported, "token_endpoint_auth_methods_supported"));
     return { authorizationEndpoint, tokenEndpoint, jwksUri, allowedAlgs, tokenAuthMethod };
   }
   // Manual mode: no fetch; validate each endpoint URL; default alg pin; no PKCE check.
-  assertValidHttpsEndpoint(config.endpoints.authorizationEndpoint, "authorizationEndpoint");
-  assertValidHttpsEndpoint(config.endpoints.tokenEndpoint, "tokenEndpoint");
-  assertValidHttpsEndpoint(config.endpoints.jwksUri, "jwksUri");
+  const endpoints = snapshotOwnDataRecord(safeConfig.endpoints);
+  if (endpoints === null) throw new Error("generic_oidc_config_invalid: endpoints must be a data object");
+  const authorizationEndpoint = endpoints.authorizationEndpoint;
+  const tokenEndpoint = endpoints.tokenEndpoint;
+  const jwksUri = endpoints.jwksUri;
+  assertValidHttpsEndpoint(authorizationEndpoint as string, "authorizationEndpoint");
+  assertValidHttpsEndpoint(tokenEndpoint as string, "tokenEndpoint");
+  assertValidHttpsEndpoint(jwksUri as string, "jwksUri");
   return {
-    authorizationEndpoint: config.endpoints.authorizationEndpoint,
-    tokenEndpoint: config.endpoints.tokenEndpoint,
-    jwksUri: config.endpoints.jwksUri,
+    authorizationEndpoint: authorizationEndpoint as string,
+    tokenEndpoint: tokenEndpoint as string,
+    jwksUri: jwksUri as string,
     allowedAlgs: resolveAllowedAlgs(undefined),
-    tokenAuthMethod: resolveTokenAuthMethod(config.clientSecret, config.tokenEndpointAuthMethod, undefined),
+    tokenAuthMethod: resolveTokenAuthMethod(safeConfig.clientSecret, safeConfig.tokenEndpointAuthMethod, undefined),
   };
 }

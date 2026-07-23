@@ -11,9 +11,11 @@
 // new URL() — Node's parser normalizes `https:/host`); claim validation is exported
 // and unit-testable without the JWKS network fetch.
 
-import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWTPayload } from "jose";
+import { errors, importJWK, jwtVerify, type JWTPayload } from "jose";
 import type { IdentityClaims, IdentityPort, IdentityResult } from "../ports/identity.ts";
 import { assertHttpsRaw } from "./util.ts";
+import { snapshotOwnDataArray, snapshotOwnDataRecord, snapshotOwnStringArray } from "../own-property.ts";
+import { createValidatedRemoteJWKSet } from "./remote-jwks.ts";
 
 export interface CloudflareAccessConfig {
   audience: string;
@@ -44,23 +46,34 @@ export function validateCloudflareAccessClaims(
   payload: AccessJwtPayload,
   config: CloudflareAccessConfig,
 ): { ok: true; identity: IdentityClaims } | { ok: false; reason: string } {
-  if (!payload.exp) return { ok: false, reason: "access_jwt_missing_expiry" };
-  if (!payload.email) return { ok: false, reason: "access_jwt_email_not_allowed" };
-  if (config.emailAllowlist && config.emailAllowlist.length > 0 && !emailAllowed(payload.email, config.emailAllowlist)) {
+  const payloadSnapshot = snapshotOwnDataRecord(payload);
+  let safeConfig: Readonly<CloudflareAccessConfig>;
+  try { safeConfig = snapshotCloudflareConfig(config); } catch { return { ok: false, reason: "access_jwt_bad_claim" }; }
+  if (payloadSnapshot === null) return { ok: false, reason: "access_jwt_bad_claim" };
+  const claims = payloadSnapshot as AccessJwtPayload;
+  if (claims.iss !== safeConfig.issuer || !audienceMatches(claims.aud, safeConfig.audience)) {
+    return { ok: false, reason: "access_jwt_bad_claim" };
+  }
+  if (!claims.exp) return { ok: false, reason: "access_jwt_missing_expiry" };
+  if (typeof claims.email !== "string" || !claims.email) return { ok: false, reason: "access_jwt_email_not_allowed" };
+  if (safeConfig.emailAllowlist && safeConfig.emailAllowlist.length > 0
+    && !emailAllowed(claims.email, safeConfig.emailAllowlist)) {
     return { ok: false, reason: "access_jwt_email_not_allowed" };
   }
-  const subject = payload.sub ?? payload.email;
+  const subject = typeof claims.sub === "string" && claims.sub ? claims.sub : claims.email;
   return {
     ok: true,
-    identity: { subject, claims: { email: payload.email, audience: config.audience, expiresAt: payload.exp, issuedAt: payload.iat } },
+    identity: { subject, claims: { email: claims.email, audience: safeConfig.audience,
+      expiresAt: claims.exp, issuedAt: claims.iat } },
   };
 }
 
 /** Case-insensitive, whitespace-trimmed email membership. Exported for unit testing. */
 export function emailAllowed(email: string, allowlist: string[]): boolean {
+  const entries = snapshotOwnStringArray(allowlist);
   const normalized = email.trim().toLowerCase();
-  if (!normalized) return false;
-  return allowlist.some((entry) => entry.trim().toLowerCase() === normalized);
+  if (!normalized || entries === null) return false;
+  return entries.some((entry) => entry.trim().toLowerCase() === normalized);
 }
 
 /** Verify a Cf-Access-Jwt-Assertion against an explicit key (CryptoKey/Uint8Array).
@@ -72,15 +85,17 @@ export async function verifyCloudflareAccessToken(
   options?: CloudflareAccessVerifyOptions,
 ): Promise<IdentityResult> {
   try {
-    if (!config.audience || !config.audience.trim()) throw new Error("audience is required"); // fail-closed sibling of the factory guard: a blank/whitespace audience lets jose skip the value match
+    const safeConfig = snapshotCloudflareConfig(config);
+    const optionSnapshot = options === undefined ? undefined : snapshotOwnDataRecord(options);
+    if (optionSnapshot === null) return { ok: false, reason: "access_jwt_bad_claim" };
     const { payload } = await jwtVerify<AccessJwtPayload>(token, key, {
       algorithms: ["RS256"],
-      audience: config.audience,
+      audience: safeConfig.audience,
       clockTolerance: 60,
-      issuer: config.issuer,
-      currentDate: options?.currentDate,
+      issuer: safeConfig.issuer,
+      currentDate: optionSnapshot?.currentDate as Date | undefined,
     });
-    return validateCloudflareAccessClaims(payload, config);
+    return validateCloudflareAccessClaims(payload, safeConfig as CloudflareAccessConfig);
   } catch (error) {
     return { ok: false, reason: jwtErrorReason(error) };
   }
@@ -89,22 +104,49 @@ export async function verifyCloudflareAccessToken(
 /** Build a CloudflareAccess IdentityPort. `input` is the raw JWT string; the JWKS
  *  is fetched (and cached) from the https certsUrl. */
 export function createCloudflareAccessIdentity(config: CloudflareAccessConfig): IdentityPort {
-  if (!config.audience || !config.audience.trim()) throw new Error("audience is required (a non-empty CF Access AUD tag) — a blank/whitespace audience lets jose enforce aud-presence but skip the value match, accepting any CF JWT regardless of app");
-  assertHttpsRaw(config.certsUrl, "certsUrl");
-  assertHttpsRaw(config.issuer, "issuer");
-  const jwks = createRemoteJWKSet(new URL(config.certsUrl), { cacheMaxAge: 5 * 60 * 1000 });
-  const verifyOptions = { algorithms: ["RS256"], audience: config.audience, clockTolerance: 60, issuer: config.issuer };
+  const safeConfig = snapshotCloudflareConfig(config);
+  assertHttpsRaw(safeConfig.certsUrl, "certsUrl");
+  assertHttpsRaw(safeConfig.issuer, "issuer");
+  const jwks = createValidatedRemoteJWKSet(new URL(safeConfig.certsUrl), { cacheMaxAge: 5 * 60 * 1000 });
+  const verifyOptions = { algorithms: ["RS256"], audience: safeConfig.audience,
+    clockTolerance: 60, issuer: safeConfig.issuer };
   return {
     async verify(input: unknown): Promise<IdentityResult> {
       if (typeof input !== "string" || !input) return { ok: false, reason: "access_jwt_missing" };
       try {
         const { payload } = await jwtVerify<AccessJwtPayload>(input, jwks, verifyOptions);
-        return validateCloudflareAccessClaims(payload, config);
+        return validateCloudflareAccessClaims(payload, safeConfig);
       } catch (error) {
         return { ok: false, reason: jwtErrorReason(error) };
       }
     },
   };
+}
+
+function snapshotCloudflareConfig(value: unknown): Readonly<CloudflareAccessConfig> {
+  const fields = snapshotOwnDataRecord(value);
+  if (fields === null) throw new Error("Cloudflare Access config must be a data object");
+  for (const key of ["audience", "certsUrl", "issuer"] as const) {
+    if (typeof fields[key] !== "string" || !(fields[key] as string).trim()) {
+      throw new Error(key === "audience" ? "audience is required" : `${key} must be a non-empty string`);
+    }
+  }
+  const emailAllowlist = fields.emailAllowlist === undefined
+    ? undefined : snapshotOwnStringArray(fields.emailAllowlist);
+  if (emailAllowlist === null) throw new Error("emailAllowlist must be a dense string array");
+  return Object.freeze({
+    audience: fields.audience,
+    certsUrl: fields.certsUrl,
+    issuer: fields.issuer,
+    emailAllowlist: emailAllowlist && Object.freeze([...emailAllowlist]) as string[],
+  }) as Readonly<CloudflareAccessConfig>;
+}
+
+function audienceMatches(value: unknown, expected: string): boolean {
+  if (typeof value === "string") return value === expected;
+  const values = snapshotOwnDataArray(value);
+  return values !== null && values.every((entry) => typeof entry === "string")
+    && values.includes(expected);
 }
 
 /** Raw `^https://` prefix check BEFORE `new URL()` (addendum 11). Hoisted to

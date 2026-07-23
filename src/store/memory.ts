@@ -6,9 +6,10 @@
 import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
+import { StoreInputError, assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
 import {
-  StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
-} from "../ports/store.ts";
+  requireRotationInput, requireSaveAuthCodeInput, requireSaveRefreshTokenInput,
+} from "../stored-records.ts";
 
 type StoredRefresh = RefreshTokenRecord & { consumedAt: string | null };
 
@@ -21,8 +22,8 @@ export class MemoryStore implements StorePort {
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();
-    validateAuthCode(input);
-    this.authCodes.set(input.codeHash, { ...input });
+    const safeInput = requireSaveAuthCodeInput(input);
+    this.authCodes.set(safeInput.codeHash, safeInput);
   }
 
   async consumeAuthCode(codeHash: string, nowIso: string): Promise<AuthCodeRecord | null> {
@@ -44,31 +45,31 @@ export class MemoryStore implements StorePort {
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
-    validateRefreshToken(input);
+    const safeInput = requireSaveRefreshTokenInput(input);
     // §12.2 invariant 8: never silently overwrite — an overwrite would rebuild
     // the row with consumedAt:null, resurrecting a consumed token (parity with
     // the SQL stores' PRIMARY KEY rejection).
-    if (this.refreshTokens.has(input.tokenHash)) throw new StoreInputError("tokenHash already exists");
-    this.families.set(input.familyId, this.families.get(input.familyId) ?? null);
-    this.refreshTokens.set(input.tokenHash, { ...input, consumedAt: null });
+    if (this.refreshTokens.has(safeInput.tokenHash)) throw new StoreInputError("tokenHash already exists");
+    this.families.set(safeInput.familyId, this.families.get(safeInput.familyId) ?? null);
+    this.refreshTokens.set(safeInput.tokenHash, { ...safeInput, consumedAt: null });
   }
 
   async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
-    validateRotation(tokenHash, next, nowIso);
+    const safeNext = requireRotationInput(tokenHash, next, nowIso);
     const current = this.refreshTokens.get(tokenHash) ?? null;
     if (!current || this.families.get(current.familyId)) return null;
     if (current.consumedAt) {
       await this.revokeRefreshTokenFamily(current.familyId, nowIso);
       return null;
     }
-    if (current.expiresAt <= nowIso || next.familyId !== current.familyId) return null;
+    if (current.expiresAt <= nowIso || safeNext.familyId !== current.familyId) return null;
     // §12.2 invariant 8: successor-hash collision ⇒ null WITHOUT consuming the
     // predecessor (mirrors sqlite's check-before-update / mysql's insert-first).
-    if (this.refreshTokens.has(next.tokenHash)) return null;
+    if (this.refreshTokens.has(safeNext.tokenHash)) return null;
     current.consumedAt = nowIso;
     // Fix #3 backfill: successor takes clientId/subject/scopes from the consumed row.
-    await this.saveRefreshToken({ ...next, clientId: current.clientId, subject: current.subject, scopes: current.scopes });
+    await this.saveRefreshToken({ ...safeNext, clientId: current.clientId, subject: current.subject, scopes: current.scopes });
     return toRecord(current);
   }
 
@@ -135,23 +136,4 @@ function toRecord(stored: StoredRefresh): RefreshTokenRecord {
     tokenHash: stored.tokenHash, familyId: stored.familyId, previousTokenHash: stored.previousTokenHash,
     clientId: stored.clientId, subject: stored.subject, scopes: stored.scopes, expiresAt: stored.expiresAt,
   };
-}
-
-function validateAuthCode(input: SaveAuthCodeInput): void {
-  assertSha256Hex(input.codeHash, "codeHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-  if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
-}
-
-function validateRefreshToken(input: SaveRefreshTokenInput): void {
-  assertSha256Hex(input.tokenHash, "tokenHash");
-  if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-}
-
-function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
-  assertSha256Hex(tokenHash, "tokenHash");
-  validateRefreshToken(next);
-  assertUtcIsoTimestamp(nowIso, "nowIso");
-  if (next.previousTokenHash !== tokenHash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
 }

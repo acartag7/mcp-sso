@@ -3,7 +3,9 @@
 // `scope` (+ optional error), not a bare `Bearer` (the source bug).
 
 import type { BridgeConfig } from "./config.ts";
-import { originOf } from "./config.ts";
+import { assertBridgeConfig, originOf } from "./config.ts";
+import { snapshotOwnDataRecord, snapshotOwnStringArray } from "./own-property.ts";
+import { isScopeToken } from "./scopes.ts";
 
 export interface ChallengeOptions {
   /** Catalog the client may request (space-joined into `scope`). */
@@ -16,17 +18,31 @@ export interface ChallengeOptions {
 /** The PRM URL advertised in the challenge (resource origin, root form — the
  *  path-inserted form is also served, §9.1). */
 export function protectedResourceMetadataUrl(config: BridgeConfig): string {
+  assertBridgeConfig(config);
   return `${originOf(config.resource)}/.well-known/oauth-protected-resource`;
 }
 
 /** Build the exact `WWW-Authenticate` value for a 401. */
 export function buildUnauthorizedChallenge(config: BridgeConfig, opts: ChallengeOptions = {}): string {
+  assertBridgeConfig(config);
+  const fields = snapshotOwnDataRecord(opts);
+  if (fields === null) throw new TypeError("challenge options must be own data properties");
+  const scope = fields.scope === undefined ? undefined : snapshotOwnStringArray(fields.scope);
+  if (scope === null || (scope && !scope.every(isScopeToken))) {
+    throw new TypeError("challenge scope must be a dense array of scope tokens");
+  }
+  if (fields.error !== undefined && (typeof fields.error !== "string"
+    || !/^[A-Za-z0-9_]+$/.test(fields.error))) throw new TypeError("challenge error is malformed");
+  if (fields.errorDescription !== undefined && (typeof fields.errorDescription !== "string"
+    || /[\u0000-\u001f\u007f]/.test(fields.errorDescription))) {
+    throw new TypeError("challenge errorDescription is malformed");
+  }
   const params: string[] = [];
   params.push(`Bearer resource_metadata="${protectedResourceMetadataUrl(config)}"`);
-  if (opts.scope && opts.scope.length > 0) params.push(`scope="${opts.scope.join(" ")}"`);
-  if (opts.error) {
-    params.push(`error="${opts.error}"`);
-    if (opts.errorDescription) params.push(`error_description="${escapeQuoted(opts.errorDescription)}"`);
+  if (scope && scope.length > 0) params.push(`scope="${scope.join(" ")}"`);
+  if (fields.error) {
+    params.push(`error="${fields.error}"`);
+    if (fields.errorDescription) params.push(`error_description="${escapeQuoted(fields.errorDescription as string)}"`);
   }
   return params.join(", ");
 }
@@ -38,6 +54,7 @@ export function buildUnauthorizedChallenge(config: BridgeConfig, opts: Challenge
  *  *client*, not the bearer. Realm = the AS issuer (RFC 7617 realm is opaque;
  *  the issuer is a stable AS identifier). `charset="UTF-8"` per RFC 7617 §2.1. */
 export function buildBasicClientChallenge(config: BridgeConfig): string {
+  assertBridgeConfig(config);
   return `Basic realm="${escapeQuoted(config.issuer)}", charset="UTF-8"`;
 }
 

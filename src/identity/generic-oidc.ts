@@ -22,7 +22,7 @@
 //   3. Approve → the bridge mints its OWN token; IdP tokens discarded (never logged/forwarded).
 //   4. Negatives: a multi-aud id_token, a non-allowlisted subject, or a bad iss/nonce/at_hash ⇒ rejected.
 
-import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWK } from "jose";
+import { errors, jwtVerify } from "jose";
 import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
 import {
   validateGenericOidcIdToken, resolveAllowedAlgs,
@@ -32,96 +32,50 @@ import {
   resolveEndpoints, defaultTokenTransport, assertValidHttpsEndpoint, formUrlEncode,
   type GenericOidcEndpoints, type GenericOidcTokenTransport, type DiscoveryTransport, type ResolvedEndpoints, type TokenAuthMethod,
 } from "./generic-oidc-discovery.ts";
+import { snapshotOwnDataArray, snapshotOwnDataRecord } from "../own-property.ts";
+import { createValidatedRemoteJWKSet } from "./remote-jwks.ts";
+import { captureHttpResponse } from "./util.ts";
+import { snapshotGenericOidcConfig } from "./generic-oidc-config.ts";
+import type {
+  GenericOidcAuthorizeRequest, GenericOidcConfig, GenericOidcIdentity,
+  GenericOidcIdentityOpts, GenericOidcTokenResponse, GenericOidcVerifyKey,
+  GenericOidcVerifyOpts, VerifyKey,
+} from "./generic-oidc-types.ts";
+
+export type {
+  GenericOidcAuthorizeRequest, GenericOidcConfig, GenericOidcIdentity,
+  GenericOidcIdentityOpts, GenericOidcTokenResponse, GenericOidcVerifyKey,
+  GenericOidcVerifyOpts,
+} from "./generic-oidc-types.ts";
 
 export type { GenericOidcEndpoints, GenericOidcManualEndpoints } from "./generic-oidc-discovery.ts";
 
-export interface GenericOidcConfig {
-  /** https issuer — the exact-match anchor for the id_token `iss` and the
-   *  discovery document `issuer` (OIDC Discovery §4.3). */
-  issuer: string;
-  clientId: string;
-  /** Confidential-client secret. Omit for a public client (PKCE only). */
-  clientSecret?: string;
-  /** Override the token-endpoint auth method for a confidential client. */
-  tokenEndpointAuthMethod?: TokenAuthMethod;
-  /** The bridge's OIDC callback URL (registered at the IdP). */
-  redirectUri: string;
-  /** "discover" (fetch OIDC discovery at boot) or manual endpoints (zero fetch). */
-  endpoints: GenericOidcEndpoints;
-  /** Upstream scopes requested; default "openid profile email". */
-  scopes?: string;
-  /** Optional defense-in-depth allowlist (matches `sub` exactly — case-sensitive;
-   *  only an opt-in verified email is matched case-insensitively). */
-  subjectAllowlist?: string[];
-  /** Opt-in: also match a VERIFIED email against `subjectAllowlist`
-   *  (`email_verified === true` strict). */
-  allowEmailAllowlist?: boolean;
-  /** Opt-in: accept a discovery that omits PKCE S256 (loud warning). */
-  allowProviderWithoutPkce?: boolean;
-}
-
-export interface GenericOidcAuthorizeRequest {
-  state: string;
-  /** Required — the generic port always sends + verifies the nonce (§17.6). */
-  nonce: string;
-  codeChallenge: string;
-  codeChallengeMethod?: "S256";
-}
-
-export interface GenericOidcTokenResponse {
-  id_token: string;
-  /** REQUIRED in the code flow (§3.1.3.3) — for `at_hash`, then discarded; requiring
-   *  it guarantees a present at_hash is validated (no header-mode skip in code flow). */
-  access_token: string;
-}
-
-/** A concrete key (CryptoKey/Uint8Array/JWK) or the JWKS resolver (derived from
- *  jose's helpers; `typeof key === "function"` picks the getKey overload). */
-type VerifyKey = Uint8Array | JWK | Awaited<ReturnType<typeof importJWK>> | ReturnType<typeof createRemoteJWKSet>;
-export type GenericOidcVerifyKey = Awaited<ReturnType<typeof importJWK>>;
-
-export interface GenericOidcVerifyOpts extends GenericOidcValidateOpts {
-  /** Override the verify clock (test-only; the JWKS path uses wall-clock). */
-  currentDate?: Date;
-  /** Override the allowed algs (test-only; defaults to the boot-resolved set). */
-  allowedAlgs?: string[];
-  /** Verify against this key instead of the JWKS (test-only). */
-  verifyKey?: VerifyKey;
-}
-
-export interface GenericOidcIdentity {
-  readonly redirectUri: string;
-  getAuthorizationUrl(req: GenericOidcAuthorizeRequest): string;
-  exchangeCodeForToken(args: { code: string; codeVerifier: string }, transport?: GenericOidcTokenTransport): Promise<GenericOidcTokenResponse>;
-  verify(input: unknown, opts?: GenericOidcVerifyOpts): Promise<IdentityResult>;
-}
-
-/** Options for `createGenericOidcIdentity`. */
-export interface GenericOidcIdentityOpts {
-  /** Injectable discovery transport (tests avoid the network). */
-  discoveryFetch?: DiscoveryTransport;
-  /** Override the claim validator. Defaults to the generic validator bound to
-   *  `config`; the Google preset injects its own to add `hd`/`email_verified`
-   *  gating on top of the shared generic checks (no claim-logic duplication). */
-  validate?: (payload: GenericOidcIdTokenPayload, opts: GenericOidcValidateOpts) => IdentityResult;
-}
-
 export function getAuthorizationUrl(config: GenericOidcConfig, resolved: ResolvedEndpoints, req: GenericOidcAuthorizeRequest): string {
+  const safeConfig = snapshotGenericOidcConfig(config);
+  const endpointFields = snapshotOwnDataRecord(resolved);
+  const request = snapshotOwnDataRecord(req);
+  if (endpointFields === null || typeof endpointFields.authorizationEndpoint !== "string"
+    || request === null || typeof request.state !== "string" || !request.state
+    || typeof request.nonce !== "string" || !request.nonce
+    || typeof request.codeChallenge !== "string" || !request.codeChallenge) {
+    throw new Error("generic_oidc_bad_config: authorization input is malformed");
+  }
+  assertValidHttpsEndpoint(endpointFields.authorizationEndpoint, "authorizationEndpoint");
   // PKCE is always S256 (§17.6) — reject any runtime override (e.g. `as any` "plain").
-  if (req.codeChallengeMethod !== undefined && req.codeChallengeMethod !== "S256") throw new Error("generic_oidc_bad_config: codeChallengeMethod must be S256 (PKCE plain/other rejected — §17.6)");
+  if (request.codeChallengeMethod !== undefined && request.codeChallengeMethod !== "S256") throw new Error("generic_oidc_bad_config: codeChallengeMethod must be S256 (PKCE plain/other rejected — §17.6)");
   const params = new URLSearchParams({
-    client_id: config.clientId,
+    client_id: safeConfig.clientId,
     response_type: "code",
-    redirect_uri: config.redirectUri,
+    redirect_uri: safeConfig.redirectUri,
     response_mode: "query",
-    scope: config.scopes ?? "openid profile email",
-    state: req.state,
-    nonce: req.nonce,
-    code_challenge: req.codeChallenge,
-    code_challenge_method: req.codeChallengeMethod ?? "S256",
+    scope: safeConfig.scopes ?? "openid profile email",
+    state: request.state,
+    nonce: request.nonce,
+    code_challenge: request.codeChallenge,
+    code_challenge_method: request.codeChallengeMethod as "S256" | undefined ?? "S256",
   });
   // Build via URL so an endpoint that already carries a query is preserved (no 2nd `?`).
-  const url = new URL(resolved.authorizationEndpoint);
+  const url = new URL(endpointFields.authorizationEndpoint);
   for (const [k, v] of params.entries()) url.searchParams.set(k, v);
   return url.toString();
 }
@@ -133,23 +87,38 @@ export async function exchangeCodeForToken(
   args: { code: string; codeVerifier: string },
   transport: GenericOidcTokenTransport,
 ): Promise<GenericOidcTokenResponse> {
+  const safeConfig = snapshotGenericOidcConfig(config);
+  const endpointFields = snapshotOwnDataRecord(resolved);
+  const fields = snapshotOwnDataRecord(args);
+  if (endpointFields === null || typeof endpointFields.tokenEndpoint !== "string"
+    || (endpointFields.tokenAuthMethod !== "client_secret_post" && endpointFields.tokenAuthMethod !== "client_secret_basic")
+    || fields === null || typeof fields.code !== "string" || !fields.code
+    || typeof fields.codeVerifier !== "string" || !fields.codeVerifier) {
+    throw new Error("generic_oidc_exchange_failed: exchange input is malformed");
+  }
+  assertValidHttpsEndpoint(endpointFields.tokenEndpoint, "tokenEndpoint");
   const body = new URLSearchParams({
     grant_type: "authorization_code",
-    code: args.code,
-    redirect_uri: config.redirectUri,
-    code_verifier: args.codeVerifier,
+    code: fields.code,
+    redirect_uri: safeConfig.redirectUri,
+    code_verifier: fields.codeVerifier,
   });
   const headers: Record<string, string> = {};
-  if (config.clientSecret && resolved.tokenAuthMethod === "client_secret_basic") {
+  if (safeConfig.clientSecret && endpointFields.tokenAuthMethod === "client_secret_basic") {
     // basic ⇒ clientId + secret in the Authorization header ONLY (RFC 6749 §2.3.1) — not duplicated in the body.
-    headers.authorization = `Basic ${Buffer.from(`${formUrlEncode(config.clientId)}:${formUrlEncode(config.clientSecret)}`).toString("base64")}`;
+    headers.authorization = `Basic ${Buffer.from(`${formUrlEncode(safeConfig.clientId)}:${formUrlEncode(safeConfig.clientSecret)}`).toString("base64")}`;
   } else {
-    body.set("client_id", config.clientId); // public + post: client identification lives in the body
-    if (config.clientSecret) body.set("client_secret", config.clientSecret); // post
+    body.set("client_id", safeConfig.clientId); // public + post: client identification lives in the body
+    if (safeConfig.clientSecret) body.set("client_secret", safeConfig.clientSecret); // post
   }
-  const resp = await transport.postForm(resolved.tokenEndpoint, body, headers);
-  if (resp.status !== 200) { let detail = ""; try { const e = JSON.parse(await resp.text()) as { error?: unknown; error_description?: unknown }; if (typeof e.error === "string") detail = `: ${e.error}${typeof e.error_description === "string" ? ` — ${String(e.error_description).replace(/[\r\n]+/g, " ")}` : ""}`; } catch { /* non-JSON error body — the HTTP status is the detail */ } throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${resp.status}${detail}`); }
-  const parsed = JSON.parse(await resp.text()) as Partial<GenericOidcTokenResponse>;
+  const response = captureHttpResponse(
+    await transport.postForm(endpointFields.tokenEndpoint, body, headers), "text",
+  );
+  if (response === null) throw new Error("generic_oidc_exchange_failed: malformed transport response");
+  if (response.status !== 200) { let detail = ""; try { const text = await response.read(); if (typeof text !== "string") throw new Error("malformed response body"); const e = snapshotOwnDataRecord(JSON.parse(text)); if (e && typeof e.error === "string") detail = `: ${e.error}${typeof e.error_description === "string" ? ` — ${e.error_description.replace(/[\r\n]+/g, " ")}` : ""}`; } catch { /* non-JSON error body — the HTTP status is the detail */ } throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${response.status}${detail}`); }
+  const text = await response.read();
+  const parsed = typeof text === "string" ? snapshotOwnDataRecord(JSON.parse(text)) : null;
+  if (parsed === null) throw new Error("generic_oidc_exchange_failed: token response must be a JSON data object");
   if (typeof parsed.id_token !== "string" || !parsed.id_token) throw new Error("generic_oidc_exchange_failed: token response missing id_token");
   // access_token is REQUIRED in the code flow (OIDC §3.1.3.3) — requiring it also
   // guarantees a present at_hash is validated (no header-mode skip in the code flow).
@@ -169,17 +138,24 @@ export interface VerifyIdTokenArgs {
 }
 export async function verifyIdTokenWithKey(token: string, key: VerifyKey, args: VerifyIdTokenArgs): Promise<IdentityResult> {
   try {
+    const argsSnapshot = snapshotOwnDataRecord(args);
+    const allowedAlgs = argsSnapshot && snapshotOwnDataArray(argsSnapshot.allowedAlgs);
+    if (argsSnapshot === null || allowedAlgs === null
+      || !allowedAlgs.every((alg) => typeof alg === "string")
+      || typeof argsSnapshot.validate !== "function") throw new Error("invalid verify options");
     // jose's `jwtVerify` is overloaded (concrete key vs getKey resolver). The JWKS
     // resolver is callable; concrete keys are not — narrow by `typeof === "function"`
     // so each branch matches its overload (a union arg would fail resolution).
-    const verifyOpts = { algorithms: args.allowedAlgs, currentDate: args.currentDate };
+    const verifyOpts = { algorithms: allowedAlgs as string[], currentDate: argsSnapshot.currentDate as Date | undefined };
     const { payload, protectedHeader } = typeof key === "function"
       ? await jwtVerify(token, key, verifyOpts)
       : await jwtVerify(token, key, verifyOpts);
-    return args.validate(payload as GenericOidcIdTokenPayload, {
-      expectedNonce: args.expectedNonce,
-      accessToken: args.accessToken,
-      alg: typeof protectedHeader?.alg === "string" ? protectedHeader.alg : undefined,
+    const headerSnapshot = snapshotOwnDataRecord(protectedHeader);
+    if (headerSnapshot === null) throw new Error("invalid protected header");
+    return (argsSnapshot.validate as VerifyIdTokenArgs["validate"])(payload as GenericOidcIdTokenPayload, {
+      expectedNonce: argsSnapshot.expectedNonce as string | undefined,
+      accessToken: argsSnapshot.accessToken as string | undefined,
+      alg: typeof headerSnapshot.alg === "string" ? headerSnapshot.alg : undefined,
     });
   } catch (error) {
     return { ok: false, reason: jwtErrorReason(error) };
@@ -204,38 +180,41 @@ export function jwtErrorReason(error: unknown): string {
 
 /** Verify an id_token against an explicit key (testable with a known key, no JWKS). */
 export async function verifyGenericOidcIdToken(token: string, key: VerifyKey, config: GenericOidcConfig, opts?: GenericOidcVerifyOpts): Promise<IdentityResult> {
+  const optionSnapshot = opts === undefined ? undefined : snapshotOwnDataRecord(opts);
+  if (optionSnapshot === null) return { ok: false, reason: "generic_oidc_bad_claim" };
   return verifyIdTokenWithKey(token, key, {
-    allowedAlgs: opts?.allowedAlgs ?? resolveAllowedAlgs(undefined),
+    allowedAlgs: optionSnapshot?.allowedAlgs as string[] | undefined ?? resolveAllowedAlgs(undefined),
     validate: (p, o) => validateGenericOidcIdToken(p, config, o),
-    expectedNonce: opts?.expectedNonce,
-    accessToken: opts?.accessToken,
-    currentDate: opts?.currentDate,
+    expectedNonce: optionSnapshot?.expectedNonce as string | undefined,
+    accessToken: optionSnapshot?.accessToken as string | undefined,
+    currentDate: optionSnapshot?.currentDate as Date | undefined,
   });
 }
 
 /** Build the generic OIDC identity port (async: discovery is a boot fetch). */
 export async function createGenericOidcIdentity(config: GenericOidcConfig, opts?: GenericOidcIdentityOpts): Promise<GenericOidcIdentity> {
-  assertValidHttpsEndpoint(config.issuer, "issuer");
-  if (typeof config.clientId !== "string" || !config.clientId.trim()) throw new Error("generic_oidc_bad_config: clientId is required (an empty clientId makes the aud check vacuous)");
-  if (typeof config.redirectUri !== "string" || !config.redirectUri.trim()) throw new Error("generic_oidc_bad_config: redirectUri is required");
-  if (config.clientSecret !== undefined && !config.clientSecret.trim()) throw new Error("generic_oidc_bad_config: clientSecret must be a non-empty string if set (an empty value would silently use public-client auth)");
-  if (config.scopes !== undefined && (!config.scopes.trim() || !config.scopes.split(/\s+/).includes("openid"))) throw new Error("generic_oidc_bad_config: scopes must be a non-empty, space-separated list including 'openid' (omit for the default 'openid profile email')");
-  if (config.subjectAllowlist !== undefined && (!Array.isArray(config.subjectAllowlist) || !config.subjectAllowlist.every((e) => typeof e === "string"))) throw new Error("generic_oidc_bad_config: subjectAllowlist must be an array of strings");
-  const resolved = await resolveEndpoints(config, opts?.discoveryFetch);
-  const jwks = createRemoteJWKSet(new URL(resolved.jwksUri), { cacheMaxAge: 5 * 60 * 1000 });
-  const validate = opts?.validate ?? ((p, o) => validateGenericOidcIdToken(p, config, o));
+  const optionSnapshot = opts === undefined ? undefined : snapshotOwnDataRecord(opts);
+  if (optionSnapshot === null) throw new Error("generic_oidc_bad_config: options must be data objects");
+  const safeConfig = snapshotGenericOidcConfig(config);
+  assertValidHttpsEndpoint(safeConfig.issuer, "issuer");
+  const resolved = await resolveEndpoints(safeConfig, optionSnapshot?.discoveryFetch as DiscoveryTransport | undefined);
+  const jwks = createValidatedRemoteJWKSet(new URL(resolved.jwksUri), { cacheMaxAge: 5 * 60 * 1000 });
+  const validate = optionSnapshot?.validate as GenericOidcIdentityOpts["validate"]
+    ?? ((p, o) => validateGenericOidcIdToken(p, safeConfig, o));
   return {
-    redirectUri: config.redirectUri,
-    getAuthorizationUrl: (req) => getAuthorizationUrl(config, resolved, req),
-    exchangeCodeForToken: (args, transport) => exchangeCodeForToken(config, resolved, args, transport ?? defaultTokenTransport),
+    redirectUri: safeConfig.redirectUri,
+    getAuthorizationUrl: (req) => getAuthorizationUrl(safeConfig, resolved, req),
+    exchangeCodeForToken: (args, transport) => exchangeCodeForToken(safeConfig, resolved, args, transport ?? defaultTokenTransport),
     async verify(input, vopts) {
       if (typeof input !== "string" || !input) return { ok: false, reason: "generic_oidc_id_token_missing" };
-      return verifyIdTokenWithKey(input, vopts?.verifyKey ?? jwks, {
-        allowedAlgs: vopts?.allowedAlgs ?? resolved.allowedAlgs,
+      const verifySnapshot = vopts === undefined ? undefined : snapshotOwnDataRecord(vopts);
+      if (verifySnapshot === null) return { ok: false, reason: "generic_oidc_bad_claim" };
+      return verifyIdTokenWithKey(input, verifySnapshot?.verifyKey as VerifyKey | undefined ?? jwks, {
+        allowedAlgs: verifySnapshot?.allowedAlgs as string[] | undefined ?? resolved.allowedAlgs,
         validate,
-        expectedNonce: vopts?.expectedNonce,
-        accessToken: vopts?.accessToken,
-        currentDate: vopts?.currentDate,
+        expectedNonce: verifySnapshot?.expectedNonce as string | undefined,
+        accessToken: verifySnapshot?.accessToken as string | undefined,
+        currentDate: verifySnapshot?.currentDate as Date | undefined,
       });
     },
   };

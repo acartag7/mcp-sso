@@ -6,6 +6,7 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
+import { ownBooleanTrue, ownDataValue } from "../own-property.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
@@ -27,7 +28,20 @@ export interface ExpressAdapterOptions {
 
 export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   const router = Router();
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
+  const bridge = ownDataValue(opts, "bridge") as Bridge;
+  const identity = ownDataValue(opts, "identity") as IdentityPort | undefined;
+  const identityHeaderOption = ownDataValue(opts, "identityHeader");
+  if (identityHeaderOption !== undefined
+    && (typeof identityHeaderOption !== "string" || !identityHeaderOption)) {
+    throw new TypeError("createOAuthRouter: identityHeader must be a non-empty string");
+  }
+  const identityHeader = identityHeaderOption as string | undefined ?? "cf-access-jwt-assertion";
+  const upstream = ownDataValue(opts, "upstream") as UpstreamRedirectFlow | undefined;
+  const skipAuthorize = ownBooleanTrue(opts, "skipAuthorize");
+
+  if (upstream && (identity || identityHeaderOption !== undefined || skipAuthorize)) {
+    throw new Error("createOAuthRouter: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  }
 
   const toNorm = (req: Request): NormRequest => ({
     query: req.query as NormRequest["query"],
@@ -53,9 +67,6 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   router.get(`/.well-known/oauth-protected-resource${resourcePath}`, wrap(async (_req, res) => send(res, await bridge.handleProtectedResourceMetadata())));
   router.get("/oauth/jwks", wrap(async (_req, res) => send(res, await bridge.handleJwks())));
   router.post("/oauth/register", wrap(async (req, res) => send(res, await bridge.handleRegister(toNorm(req)))));
-  if (upstream && (identity || skipAuthorize)) {
-    throw new Error("createOAuthRouter: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
-  }
   if (upstream) {
     const up = upstream;
     router.get("/oauth/authorize", wrap(async (req, res) => send(res, await up.handleAuthorize(toNorm(req)))));

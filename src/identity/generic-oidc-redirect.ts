@@ -16,6 +16,7 @@ import type { IdentityClaims, RedirectExchangeResult, RedirectIdentityPort } fro
 import { createGenericOidcIdentity, type GenericOidcConfig, type GenericOidcIdentity, type GenericOidcVerifyOpts } from "./generic-oidc.ts";
 import type { DiscoveryTransport, GenericOidcTokenTransport } from "./generic-oidc-discovery.ts";
 import { redactForStderr } from "../audit/util.ts";
+import { snapshotOwnDataRecord } from "../own-property.ts";
 
 export interface GenericOidcRedirectOpts {
   discoveryFetch?: DiscoveryTransport;
@@ -35,6 +36,11 @@ export function wrapRedirectIdentity(
   base: GenericOidcIdentity,
   opts: { transport?: GenericOidcTokenTransport; verifyKey?: GenericOidcVerifyOpts["verifyKey"]; currentDate?: Date } = {},
 ): RedirectIdentityPort {
+  const optionSnapshot = snapshotOwnDataRecord(opts);
+  if (optionSnapshot === null) throw new TypeError("redirect identity options must be a data object");
+  const transport = optionSnapshot.transport as GenericOidcTokenTransport | undefined;
+  const verifyKey = optionSnapshot.verifyKey as GenericOidcVerifyOpts["verifyKey"];
+  const currentDate = optionSnapshot.currentDate as Date | undefined;
   return {
     redirectUri: base.redirectUri,
     buildAuthorizationUrl(req) {
@@ -46,7 +52,7 @@ export function wrapRedirectIdentity(
     async exchangeAndVerify({ code, codeVerifier, nonce }): Promise<RedirectExchangeResult> {
       let tokens: { id_token: string; access_token?: string };
       try {
-        tokens = await base.exchangeCodeForToken({ code, codeVerifier }, opts.transport);
+        tokens = await base.exchangeCodeForToken({ code, codeVerifier }, transport);
       } catch (e) {
         // Transport/protocol failure (non-200, timeout, malformed body, missing id_token) —
         // no identity decision. Propagate the primitive's cause (carries the upstream error
@@ -55,7 +61,7 @@ export function wrapRedirectIdentity(
       }
       const result = await base.verify(tokens.id_token, {
         expectedNonce: nonce, accessToken: tokens.access_token,
-        verifyKey: opts.verifyKey, currentDate: opts.currentDate,
+        verifyKey, currentDate,
       });
       if (!result.ok) {
         // §17.11 throw-rule: an infrastructure failure during verify (no identity
@@ -75,6 +81,14 @@ export function wrapRedirectIdentity(
 
 /** Build a generic OIDC `RedirectIdentityPort` (async: discovery is a boot fetch). */
 export async function createGenericOidcRedirectIdentity(config: GenericOidcConfig, opts?: GenericOidcRedirectOpts): Promise<RedirectIdentityPort> {
-  const base = await createGenericOidcIdentity(config, { discoveryFetch: opts?.discoveryFetch });
-  return wrapRedirectIdentity(base, { transport: opts?.transport, verifyKey: opts?.verifyKey, currentDate: opts?.currentDate });
+  const snapshot = opts === undefined ? undefined : snapshotOwnDataRecord(opts);
+  if (snapshot === null) throw new TypeError("generic OIDC redirect options must be a data object");
+  const base = await createGenericOidcIdentity(config, {
+    discoveryFetch: snapshot?.discoveryFetch as DiscoveryTransport | undefined,
+  });
+  return wrapRedirectIdentity(base, {
+    transport: snapshot?.transport as GenericOidcTokenTransport | undefined,
+    verifyKey: snapshot?.verifyKey as GenericOidcVerifyOpts["verifyKey"],
+    currentDate: snapshot?.currentDate as Date | undefined,
+  });
 }

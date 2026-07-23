@@ -55,6 +55,20 @@ test("validateGoogleIdToken + createGoogleIdentity: a blank hostedDomain is fail
   // a present-but-blank hostedDomain must reject, not skip the Workspace gate
   assert.equal(validateGoogleIdToken(gp({ hd: "example.com" }), { ...CONFIG, hostedDomain: "" }).ok, false);
   assert.equal(validateGoogleIdToken(gp({ hd: "example.com" }), { ...CONFIG, hostedDomain: "  " }).ok, false);
+  assert.equal(validateGoogleIdToken(
+    gp({ hd: "example.com" }),
+    { ...CONFIG, hostedDomain: { trim: () => "example.com" } as unknown as string },
+  ).ok, false);
+});
+
+test("createGoogleIdentity rejects a non-string hostedDomain before discovery", async () => {
+  await assert.rejects(
+    createGoogleIdentity({
+      ...CONFIG,
+      hostedDomain: { trim: () => "example.com" } as unknown as string,
+    }),
+    /google_bad_config: hostedDomain must be a non-empty string/,
+  );
 });
 
 test("validateGoogleIdToken: email surfaced only when email_verified === true (strict)", () => {
@@ -66,6 +80,33 @@ test("validateGoogleIdToken: email surfaced only when email_verified === true (s
   assert.equal(unverified.ok && (unverified.identity.claims?.email ?? undefined), undefined); // stripped
   const strTrue = validateGoogleIdToken(gp({ email: "u@example.com", email_verified: "true" }), CONFIG);
   assert.equal(strTrue.ok && (strTrue.identity.claims?.email ?? undefined), undefined); // string "true" ⇒ stripped (strict)
+});
+
+test("validateGoogleIdToken: hosted-domain and verification selectors use own data only", () => {
+  const inheritedHd = Object.assign(Object.create({ hd: "example.com" }), gp()) as GoogleIdTokenPayload;
+  const hdResult = validateGoogleIdToken(inheritedHd, { ...CONFIG, hostedDomain: "example.com" });
+  assert.equal(hdResult.ok, false);
+  if (!hdResult.ok) assert.equal(hdResult.reason, "google_missing_hosted_domain");
+
+  const inheritedVerified = Object.assign(
+    Object.create({ email_verified: true }),
+    gp({ email: "u@example.com" }),
+  ) as GoogleIdTokenPayload;
+  const emailResult = validateGoogleIdToken(inheritedVerified, CONFIG);
+  assert.equal(emailResult.ok, true);
+  assert.equal(emailResult.ok && (emailResult.identity.claims?.email ?? undefined), undefined);
+
+  let reads = 0;
+  const accessorPayload = gp();
+  Object.defineProperty(accessorPayload, "hd", {
+    enumerable: true,
+    get() { reads += 1; return "example.com"; },
+  });
+  assert.equal(validateGoogleIdToken(
+    accessorPayload,
+    { ...CONFIG, hostedDomain: "example.com" },
+  ).ok, false);
+  assert.equal(reads, 0);
 });
 
 test("validateGoogleIdToken: reuses generic gates (multi-audience, iat, nonce)", () => {
@@ -95,6 +136,29 @@ test("createGoogleIdentity: clientSecret required at boot; builds via discovery"
   assert.equal(id.redirectUri, REDIRECT_URI);
   assert.match(id.getAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c" }), /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
   assert.equal((await id.verify(undefined)).ok, false); // non-string — no JWKS fetch
+});
+
+test("createGoogleIdentity requires own required config fields", async () => {
+  const inherited = {
+    clientId: CLIENT_ID, clientSecret: SECRET, redirectUri: REDIRECT_URI,
+  };
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const [key, value] of Object.entries(inherited)) {
+    previous.set(key, Object.getOwnPropertyDescriptor(Object.prototype, key));
+    Object.defineProperty(Object.prototype, key, { configurable: true, value });
+  }
+  try {
+    await assert.rejects(
+      createGoogleIdentity({} as GoogleConfig, { discoveryFetch: googleDiscovery() }),
+      /google_client_secret_required|generic_oidc_bad_config/,
+    );
+  } finally {
+    for (const key of Object.keys(inherited)) {
+      const descriptor = previous.get(key);
+      if (descriptor === undefined) delete (Object.prototype as Record<string, unknown>)[key];
+      else Object.defineProperty(Object.prototype, key, descriptor);
+    }
+  }
 });
 
 test("verifyGoogleIdToken: RS256 accept + Google hd/email_verified shaping", async () => {

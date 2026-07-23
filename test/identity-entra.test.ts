@@ -68,6 +68,7 @@ test("subjectAllowed: oid-primary; mutable claims opt-in only", () => {
   // opt-in -> mutable claims match (case-insensitive)
   assert.equal(subjectAllowed({ preferred_username: "U@X.test" }, ["u@x.test"], true), true);
   assert.equal(subjectAllowed({ email: "a@b.test" }, ["a@b.test"], true), true);
+  assert.equal(subjectAllowed({ oid: 7 } as never, ["7"]), false);
 });
 
 test("validateEntraIdToken: subjectAllowlist matches oid by default, mutable only when opted in", () => {
@@ -79,6 +80,49 @@ test("validateEntraIdToken: subjectAllowlist matches oid by default, mutable onl
   assert.equal(validateEntraIdToken(payload({ oid: undefined, preferred_username: "user@example.com" }) as never, allowEmail).ok, false);
   const allowEmailMutable: EntraConfig = { ...CONFIG, subjectAllowlist: ["user@example.com"], allowMutableClaims: true };
   assert.equal(validateEntraIdToken(payload({ oid: undefined, preferred_username: "user@example.com" }) as never, allowEmailMutable).ok, true);
+});
+
+test("validateEntraIdToken: subject and mutable-claim opt-in use own data only", () => {
+  for (const inherited of [
+    { oid: "oid-abc" },
+    { preferred_username: "user@example.com" },
+    { email: "user@example.com" },
+  ]) {
+    const claims = Object.assign(
+      Object.create(inherited),
+      { iss: entraIssuer(TENANT), aud: CONFIG.clientId, tid: TENANT, exp: NOW + 3600, iat: NOW },
+    );
+    const result = validateEntraIdToken(claims as never, CONFIG);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, "entra_no_subject");
+  }
+
+  const inheritedOptIn = Object.assign(
+    Object.create({ allowMutableClaims: true }),
+    { ...CONFIG, subjectAllowlist: ["user@example.com"] },
+  ) as EntraConfig;
+  assert.equal(validateEntraIdToken(
+    payload({ oid: undefined, preferred_username: "user@example.com" }) as never,
+    inheritedOptIn,
+  ).ok, false);
+
+  let reads = 0;
+  const accessorPayload = payload();
+  Object.defineProperty(accessorPayload, "oid", {
+    enumerable: true,
+    get() { reads += 1; return "oid-abc"; },
+  });
+  assert.equal(validateEntraIdToken(accessorPayload as never, CONFIG).ok, false);
+  assert.equal(reads, 0);
+});
+
+test("validateEntraIdToken rejects wrong-typed subject claims without throwing", () => {
+  const result = validateEntraIdToken(
+    payload({ oid: { value: "oid-abc" }, preferred_username: "user@example.com" }) as never,
+    { ...CONFIG, subjectAllowlist: ["user@example.com"], allowMutableClaims: true },
+  );
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, "entra_bad_claim");
 });
 
 test("verifyEntraIdToken: recorded fixture (known RS256 key, no JWKS fetch)", async () => {
@@ -112,6 +156,37 @@ test("exchangeCodeForToken: posts to the token endpoint and returns the id_token
   assert.equal(idToken, fakeIdToken);
   const failing: EntraTokenTransport = { async postForm() { return { status: 400, async text() { return "{}"; } }; } };
   await assert.rejects(exchangeCodeForToken(CONFIG, { code: "c", codeVerifier: "v" }, failing));
+});
+
+test("exchangeCodeForToken accepts a native Fetch Response without trusting Object.prototype", async () => {
+  const transport: EntraTokenTransport = {
+    async postForm() {
+      return new Response(JSON.stringify({ id_token: "native-response-token" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    },
+  };
+  assert.equal(
+    await exchangeCodeForToken(CONFIG, { code: "c", codeVerifier: "v" }, transport),
+    "native-response-token",
+  );
+});
+
+test("exchangeCodeForToken rejects response fields from a plain prototype", async () => {
+  let reads = 0;
+  const prototype = Object.create(null) as Record<string, unknown>;
+  Object.defineProperty(prototype, "status", {
+    get() { reads += 1; return 200; },
+  });
+  const response = Object.assign(Object.create(prototype), {
+    async text() { return JSON.stringify({ id_token: "token" }); },
+  });
+  await assert.rejects(exchangeCodeForToken(
+    CONFIG,
+    { code: "c", codeVerifier: "v" },
+    { async postForm() { return response; } },
+  ));
+  assert.equal(reads, 0);
 });
 
 test("createEntraIdentity: fails closed on blank tenantId/clientId (empty == missing config)", () => {

@@ -7,6 +7,8 @@
 
 import type { ClientRegistration } from "./ports/client-store.ts";
 import { OAuthError } from "./errors.ts";
+import { parseClientRegistration } from "./stored-records.ts";
+import { snapshotOwnStringArray } from "./own-property.ts";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -23,6 +25,8 @@ export const DEFAULT_ALLOWED_REDIRECT_ORIGINS = Object.freeze([
 /** Validate a redirect_uri against the global allowlist (built-ins + config).
  *  Returns the normalized URI. Throws invalid_redirect_uri on rejection. */
 export function assertAllowedRedirectUri(value: string, allowlist: string[]): string {
+  const entries = snapshotOwnStringArray(allowlist);
+  if (entries === null) throw new OAuthError("invalid_redirect_uri", "redirect allowlist is malformed");
   let url: URL;
   try {
     url = new URL(value);
@@ -35,7 +39,7 @@ export function assertAllowedRedirectUri(value: string, allowlist: string[]): st
   url.hash = "";
   const normalized = url.href;
   const origin = `${url.protocol}//${url.host}`;
-  const effective = [...DEFAULT_ALLOWED_REDIRECT_ORIGINS, ...allowlist];
+  const effective = [...DEFAULT_ALLOWED_REDIRECT_ORIGINS, ...entries];
   const ok = effective.some((entry) => {
     if (entry === "*") return false;
     if (entry === normalized) return true;
@@ -63,12 +67,16 @@ export function assertAllowedRedirectUri(value: string, allowlist: string[]): st
  *            match a registered loopback URI (port ignored);
  *   web    → https only, exact match against a registered redirect_uri. */
 export function assertRedirectAllowedForClient(redirectUri: string, client: ClientRegistration): string {
+  const parsedClient = parseClientRegistration(client);
+  if (parsedClient === null) {
+    throw new OAuthError("invalid_client", "Stored client record is malformed", 401);
+  }
   // §17.2: machine clients have no redirect (redirectUris is []) and are rejected
   // at /oauth/authorize (invalid_client). Guarded here too as defense-in-depth so
   // any path that resolves a redirect for a stored client fails closed loudly
   // (with the contract's error code) rather than falling through the native
   // branch. Also makes the function exhaustive over ApplicationType.
-  if (client.applicationType === "machine") {
+  if (parsedClient.applicationType === "machine") {
     throw new OAuthError("invalid_client", "Machine clients cannot use the authorization-code flow", 401);
   }
   let url: URL;
@@ -82,8 +90,8 @@ export function assertRedirectAllowedForClient(redirectUri: string, client: Clie
   }
   url.hash = "";
   const normalized = url.href;
-  if (client.applicationType === "web") {
-    if (url.protocol !== "https:" || !client.redirectUris.includes(normalized)) {
+  if (parsedClient.applicationType === "web") {
+    if (url.protocol !== "https:" || !parsedClient.redirectUris.includes(normalized)) {
       throw new OAuthError("invalid_redirect_uri", "redirect_uri is not registered for this web client");
     }
     return normalized;
@@ -92,7 +100,7 @@ export function assertRedirectAllowedForClient(redirectUri: string, client: Clie
   if ((url.protocol !== "http:" && url.protocol !== "https:") || !LOOPBACK_HOSTS.has(url.hostname)) {
     throw new OAuthError("invalid_redirect_uri", "native redirect_uri must be loopback");
   }
-  const matches = client.redirectUris.some((registered) => {
+  const matches = parsedClient.redirectUris.some((registered) => {
     let r: URL;
     try {
       r = new URL(registered);

@@ -8,7 +8,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Redis } from "ioredis";
-import { RedisRateLimit } from "../src/rate-limit/redis.ts";
+import {
+  RedisRateLimit, type RedisRateLimitConfig,
+} from "../src/rate-limit/redis.ts";
 
 const RUN_INTEGRATION = process.env.RUN_INTEGRATION === "true";
 const REDIS_URL = process.env.REDIS_URL;
@@ -38,6 +40,22 @@ test("RedisRateLimit: rejects non-positive windowSeconds/limit at construction (
   assert.throws(() => new RedisRateLimit(stub, { windowSeconds: 1, limit: 1.5 }));
 });
 
+test("RedisRateLimit: required config fields must be own data", () => {
+  const stub = {} as Redis;
+  assert.throws(() => new RedisRateLimit(
+    stub,
+    Object.create({ windowSeconds: 60, limit: 1 }) as RedisRateLimitConfig,
+  ));
+  let reads = 0;
+  const accessor = { limit: 1 } as RedisRateLimitConfig;
+  Object.defineProperty(accessor, "windowSeconds", {
+    enumerable: true,
+    get() { reads += 1; return 60; },
+  });
+  assert.throws(() => new RedisRateLimit(stub, accessor));
+  assert.equal(reads, 0);
+});
+
 test("RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws (fail-open) — review M1", async () => {
   // The hot path tries EVALSHA first. A non-NOSCRIPT error (Redis outage, WRONGTYPE, etc.)
   // must propagate so the bridge guard() catches it and allows the request. This stub
@@ -46,6 +64,27 @@ test("RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws (fa
   const broken = { evalsha: async () => { throw new Error("redis down"); } } as unknown as Redis;
   const rl = new RedisRateLimit(broken, { windowSeconds: 60, limit: 1 });
   await assert.rejects(rl.check("k"), /redis down/);
+});
+
+test("RedisRateLimit: inherited NOSCRIPT text cannot trigger the fallback", async () => {
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, "message");
+  Object.defineProperty(Object.prototype, "message", {
+    configurable: true, value: "NOSCRIPT inherited",
+  });
+  try {
+    let fallbackCalls = 0;
+    const failure = {};
+    const client = {
+      evalsha: async () => { throw failure; },
+      eval: async () => { fallbackCalls += 1; return 1; },
+    } as unknown as Redis;
+    const limiter = new RedisRateLimit(client, { windowSeconds: 60, limit: 1 });
+    await assert.rejects(limiter.check("k"), (error) => error === failure);
+    assert.equal(fallbackCalls, 0);
+  } finally {
+    if (previous === undefined) delete (Object.prototype as Record<string, unknown>).message;
+    else Object.defineProperty(Object.prototype, "message", previous);
+  }
 });
 
 test("RedisRateLimit: if EVALSHA returns NOSCRIPT and EVAL also fails, the EVAL error propagates (fail-open)", async () => {

@@ -8,13 +8,17 @@
 // needs no salt, and bcrypt on the token hot path is a DoS lever). Comparison is
 // constant-time. The raw secret is returned ONCE and never retrievable.
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { ClientStore, ClientSecret, MachineClientRegistration } from "./ports/client-store.ts";
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import { sha256Hex } from "./crypto.ts";
-import { isScopeToken } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
+import { snapshotOwnDataArray } from "./own-property.ts";
+import { parseFoundClientRegistration } from "./stored-records.ts";
+import {
+  epochSeconds, inputFields, isPositiveInteger, machineDeps, mintClientSecret,
+  mintMachineClientId, snapshotRotationSecret, timingSafeHexEqual, validateAllowedScopes,
+} from "./machine-client-internals.ts";
 
 /** Default rotation grace (the two-active-secrets overlap window). 24 h. */
 export const DEFAULT_ROTATION_GRACE_SECONDS = 86_400;
@@ -71,15 +75,17 @@ export async function provisionMachineClient(
   deps: MachineClientDeps,
   input: ProvisionMachineClientInput,
 ): Promise<ProvisionedMachineClient> {
+  const safeDeps = machineDeps(deps);
   try {
-    const allowedScopes = validateAllowedScopes(input.allowedScopes, deps.catalog);
-    if (input.name !== undefined && (typeof input.name !== "string" || input.name.length === 0)) {
+    const fields = inputFields(input);
+    const allowedScopes = validateAllowedScopes(fields.allowedScopes, safeDeps.catalog);
+    if (fields.name !== undefined && (typeof fields.name !== "string" || fields.name.length === 0)) {
       throw new OAuthError("invalid_request", "name must be a non-empty string when provided");
     }
-    if (input.secretTtlSeconds !== undefined && !isPositiveInteger(input.secretTtlSeconds)) {
+    if (fields.secretTtlSeconds !== undefined && !isPositiveInteger(fields.secretTtlSeconds as number)) {
       throw new OAuthError("invalid_request", "secretTtlSeconds must be a positive integer (seconds)");
     }
-    const now = epochSeconds(deps.clock);
+    const now = epochSeconds(safeDeps.clock);
     const clientId = mintMachineClientId();
     const clientSecret = mintClientSecret();
     const record: MachineClientRegistration = {
@@ -87,26 +93,26 @@ export async function provisionMachineClient(
       redirectUris: [],
       applicationType: "machine",
       issuedAtEpoch: now,
-      name: input.name,
+      name: fields.name as string | undefined,
       allowedScopes,
       // Single active secret. 128-bit id ⇒ collision negligible; a custom
       // ClientStore.save must preserve the ≤2-active invariant.
       secrets: [{
         hash: sha256Hex(clientSecret),
         createdAtEpoch: now,
-        expiresAtEpoch: input.secretTtlSeconds !== undefined ? now + input.secretTtlSeconds : undefined,
+        expiresAtEpoch: fields.secretTtlSeconds !== undefined ? now + (fields.secretTtlSeconds as number) : undefined,
       }],
     };
-    await deps.store.save(record);
-    await deps.audit.writeAuthEvent({
-      occurredAt: new Date(deps.clock.nowMs()).toISOString(),
+    await safeDeps.store.save(record);
+    await safeDeps.audit.writeAuthEvent({
+      occurredAt: new Date(safeDeps.clock.nowMs()).toISOString(),
       event: "oauth.client.provision", status: "success",
       clientId, scopes: allowedScopes,
     });
     return { clientId, clientSecret };
   } catch (error) {
-    await deps.audit.writeAuthEvent({
-      occurredAt: new Date(deps.clock.nowMs()).toISOString(),
+    await safeDeps.audit.writeAuthEvent({
+      occurredAt: new Date(safeDeps.clock.nowMs()).toISOString(),
       event: "oauth.client.provision", status: "failure",
       reason: error instanceof OAuthError ? error.code : "internal_error",
     });
@@ -123,28 +129,31 @@ export async function rotateMachineClientSecret(
   clientId: string,
   opts?: RotateSecretOptions,
 ): Promise<RotatedSecret> {
+  const safeDeps = machineDeps(deps);
   try {
-    const graceSeconds = opts?.graceSeconds ?? DEFAULT_ROTATION_GRACE_SECONDS;
-    if (!isPositiveInteger(graceSeconds)) {
+    const optionFields = opts === undefined ? undefined : inputFields(opts);
+    const rawGraceSeconds = optionFields?.graceSeconds ?? DEFAULT_ROTATION_GRACE_SECONDS;
+    if (typeof rawGraceSeconds !== "number" || !isPositiveInteger(rawGraceSeconds)) {
       throw new OAuthError("invalid_request", "graceSeconds must be a positive integer (seconds)");
     }
-    const client = await deps.store.find(clientId);
+    const graceSeconds = rawGraceSeconds;
+    const client = parseFoundClientRegistration(await safeDeps.store.find(clientId), clientId);
     if (!client) throw new OAuthError("invalid_client", "Unknown clientId", 401);
     if (client.applicationType !== "machine") throw new OAuthError("invalid_client", "clientId is not a machine client", 401);
-    if (!Array.isArray(client.secrets)) throw new OAuthError("invalid_client", "Machine client record is malformed (secrets is not an array)", 401);
-    const now = epochSeconds(deps.clock);
+    if (!clientId.startsWith("mcc_")) throw new OAuthError("invalid_client", "clientId is not a valid machine client", 401);
+    const now = epochSeconds(safeDeps.clock);
     const clientSecret = mintClientSecret();
     const secrets = rotateSecrets(client.secrets, now, graceSeconds, sha256Hex(clientSecret));
-    await deps.store.save({ ...client, secrets });
-    await deps.audit.writeAuthEvent({
-      occurredAt: new Date(deps.clock.nowMs()).toISOString(),
+    await safeDeps.store.save({ ...client, secrets });
+    await safeDeps.audit.writeAuthEvent({
+      occurredAt: new Date(safeDeps.clock.nowMs()).toISOString(),
       event: "oauth.client.rotate_secret", status: "success",
       clientId, scopes: client.allowedScopes,
     });
     return { clientSecret };
   } catch (error) {
-    await deps.audit.writeAuthEvent({
-      occurredAt: new Date(deps.clock.nowMs()).toISOString(),
+    await safeDeps.audit.writeAuthEvent({
+      occurredAt: new Date(safeDeps.clock.nowMs()).toISOString(),
       event: "oauth.client.rotate_secret", status: "failure",
       clientId,
       reason: error instanceof OAuthError ? error.code : "internal_error",
@@ -163,14 +172,26 @@ export async function verifyMachineClientSecret(
   clientId: string,
   presentedSecret: string,
 ): Promise<boolean> {
-  if (typeof presentedSecret !== "string" || presentedSecret.length === 0) return false;
+  return (await authenticateMachineClient(deps, clientId, presentedSecret)) !== null;
+}
+
+/** Internal grant helper: one store read binds secret verification and scope
+ * authorization to the same immutable record snapshot. */
+export async function authenticateMachineClient(
+  deps: MachineClientDeps,
+  clientId: string,
+  presentedSecret: string,
+): Promise<MachineClientRegistration | null> {
+  if (typeof presentedSecret !== "string" || presentedSecret.length === 0) return null;
+  const safeDeps = machineDeps(deps);
   const presented = sha256Hex(presentedSecret);
-  const client = await deps.store.find(clientId);
-  const now = epochSeconds(deps.clock);
+  const parsed = parseFoundClientRegistration(await safeDeps.store.find(clientId), clientId);
+  const client = parsed?.applicationType === "machine" && clientId.startsWith("mcc_") ? parsed : null;
+  const now = epochSeconds(safeDeps.clock);
   // Active = well-formed (64-hex) + unexpired, only for a real machine record;
   // anything else, or > 2 active (poisoned, §17.2), ⇒ [] (fail closed).
   let active: string[] = [];
-  if (client?.applicationType === "machine" && Array.isArray(client.secrets)) {
+  if (client) {
     active = client.secrets
       .filter((s): s is ClientSecret => s !== null && typeof s === "object"
         && typeof s.hash === "string" && SHA256_HEX_RE.test(s.hash)
@@ -183,7 +204,7 @@ export async function verifyMachineClientSecret(
   for (let i = 0; i < MAX_ACTIVE_SECRETS; i++) {
     if (timingSafeHexEqual(presented, active[i] ?? ZERO_HASH)) matched = true;
   }
-  return matched;
+  return matched ? client : null;
 }
 
 /** Pure rotation model (exported for tests): the permitted active set after a
@@ -198,7 +219,15 @@ export function rotateSecrets(
   graceSeconds: number,
   newHash: string,
 ): ClientSecret[] {
-  const unexpired = existing.filter((s) => s.expiresAtEpoch === undefined || s.expiresAtEpoch > now);
+  const values = snapshotOwnDataArray(existing);
+  if (values === null) throw new OAuthError("invalid_client", "Machine client secret record is malformed", 401);
+  const parsed: ClientSecret[] = [];
+  for (const value of values) {
+    const secret = snapshotRotationSecret(value);
+    if (secret === null) throw new OAuthError("invalid_client", "Machine client secret record is malformed", 401);
+    parsed.push(secret);
+  }
+  const unexpired = parsed.filter((s) => s.expiresAtEpoch === undefined || s.expiresAtEpoch > now);
   if (unexpired.length === 0) return [{ hash: newHash, createdAtEpoch: now }];
   const demoteSource = unexpired.find((s) => s.expiresAtEpoch === undefined)
     ?? [...unexpired].sort((a, b) => b.createdAtEpoch - a.createdAtEpoch)[0]!;
@@ -207,43 +236,3 @@ export function rotateSecrets(
     { hash: newHash, createdAtEpoch: now },
   ];
 }
-
-function validateAllowedScopes(input: unknown, catalog: readonly string[]): string[] {
-  if (!Array.isArray(input) || input.length === 0) {
-    throw new OAuthError("invalid_scope", "allowedScopes must be a non-empty array");
-  }
-  const allowed = new Set(catalog);
-  const out: string[] = [];
-  for (const scope of input) {
-    if (typeof scope !== "string" || !isScopeToken(scope)) {
-      throw new OAuthError("invalid_scope", "allowedScopes entries must be single RFC 6749 scope tokens");
-    }
-    if (!allowed.has(scope)) {
-      throw new OAuthError("invalid_scope", "allowedScopes must be a subset of scopeCatalog");
-    }
-    if (!out.includes(scope)) out.push(scope);
-  }
-  return out;
-}
-
-/** Constant-time digest equality. Compares BYTE length (not JS-char length): a
- *  corrupted hash that is 64 code units but non-ASCII would otherwise make
- *  timingSafeEqual throw — so this never throws. Belt-and-suspenders behind the
- *  64-hex filter. */
-function timingSafeHexEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ba.length !== bb.length) return false;
-  return timingSafeEqual(ba, bb);
-}
-
-function isPositiveInteger(value: number): boolean {
-  return Number.isInteger(value) && value > 0;
-}
-
-function epochSeconds(clock: ClockPort): number {
-  return Math.floor(clock.nowMs() / 1000);
-}
-
-function mintMachineClientId(): string { return `mcc_${randomBytes(16).toString("base64url")}`; }
-function mintClientSecret(): string { return `mcs_${randomBytes(32).toString("base64url")}`; }

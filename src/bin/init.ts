@@ -11,6 +11,7 @@ import { constants as fsc, readFileSync, realpathSync } from "node:fs";
 import { basename, join, parse, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { templateFiles } from "./templates.ts";
+import { isErrorWithCode } from "../quickstart-errors.ts";
 
 // O_NOFOLLOW refuses a symlink (dangling or not — no write outside the target via a
 // symlink); O_EXCL fails if the path already exists; O_CREAT creates. Atomic + no-follow
@@ -78,7 +79,7 @@ async function assertSafeScaffoldTarget(dir: string): Promise<void> {
       let pm: number;
       try { pm = (await stat(parent)).mode; } // stat follows a symlink parent → its destination
       catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`${parent} is a dangling symlink (broken path); mcp-sso init cannot scaffold through it.`);
+        if (isErrorWithCode(error, ["ENOENT"])) throw new Error(`${parent} is a dangling symlink (broken path); mcp-sso init cannot scaffold through it.`);
         throw error;
       }
       writable = (pm & 0o022) !== 0;
@@ -87,7 +88,7 @@ async function assertSafeScaffoldTarget(dir: string): Promise<void> {
     let st;
     try { st = await lstat(current); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (!isErrorWithCode(error, ["ENOENT"])) throw error;
       if (writable) throw new Error(`${current} would be created under a group/other-writable parent (${parent}); mcp-sso init refuses — a symlink could be raced in before creation (write-redirection risk). Use a directory under a non-group/other-writable parent.`);
       return; // owner-only (or Windows) parent → safe to mkdir the missing tail
     }
@@ -126,9 +127,8 @@ async function reserveAll(files: { path: string; content: string }[], dir: strin
       reserved.push({ fh: await open(fullPath, EXCLUSIVE_CREATE, 0o644), content: f.content, relPath: f.path, fullPath });
     } catch (error) {
       for (const r of reserved) { await r.fh.close().catch(() => {}); await rm(r.fullPath, { force: true }).catch(() => {}); }
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "EEXIST") throw new Error(`refusing to overwrite a file that appeared mid-scaffold: ${fullPath}`);
-      if (code === "ELOOP") throw new Error(`refusing to follow a symlink that appeared mid-scaffold: ${fullPath}`);
+      if (isErrorWithCode(error, ["EEXIST"])) throw new Error(`refusing to overwrite a file that appeared mid-scaffold: ${fullPath}`);
+      if (isErrorWithCode(error, ["ELOOP"])) throw new Error(`refusing to follow a symlink that appeared mid-scaffold: ${fullPath}`);
       throw error;
     }
   }
@@ -149,7 +149,7 @@ export async function run(argv: string[]): Promise<string[]> {
       throw new Error(`${dir} is a symlink; point mcp-sso init at a real directory (writes must not follow the target).`);
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; // ENOENT is fine — mkdir creates it
+    if (!isErrorWithCode(error, ["ENOENT"])) throw error; // ENOENT is fine — mkdir creates it
   }
   await assertSafeScaffoldTarget(dir);
   const name = basename(dir) || "mcp-sso-server";

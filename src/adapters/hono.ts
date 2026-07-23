@@ -6,9 +6,12 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
+import { ownBooleanTrue, ownDataValue } from "../own-property.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
-import { oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import {
+  oauthErrorResponse, parseUrlEncodedForm, type NormRequest, type NormResponse,
+} from "./http.ts";
 
 export interface HonoAdapterOptions {
   bridge: Bridge;
@@ -36,22 +39,38 @@ export interface HonoAdapterOptions {
 
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   const app = new Hono();
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, clientIp } = opts;
+  const bridge = ownDataValue(opts, "bridge") as Bridge;
+  const identity = ownDataValue(opts, "identity") as IdentityPort | undefined;
+  const identityHeaderOption = ownDataValue(opts, "identityHeader");
+  if (identityHeaderOption !== undefined
+    && (typeof identityHeaderOption !== "string" || !identityHeaderOption)) {
+    throw new TypeError("createOAuthApp: identityHeader must be a non-empty string");
+  }
+  const identityHeader = identityHeaderOption as string | undefined ?? "cf-access-jwt-assertion";
+  const upstream = ownDataValue(opts, "upstream") as UpstreamRedirectFlow | undefined;
+  const clientIp = ownDataValue(opts, "clientIp") as HonoAdapterOptions["clientIp"];
+  const skipAuthorize = ownBooleanTrue(opts, "skipAuthorize");
+
+  if (upstream && (identity || identityHeaderOption !== undefined || skipAuthorize)) {
+    throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  }
 
   const toNorm = async (c: Context): Promise<NormRequest> => {
     const ct = c.req.header("content-type") ?? "";
     let body: unknown;
     try {
       if (ct.includes("application/json")) body = await c.req.json();
-      else if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) body = await c.req.parseBody();
+      else if (ct.includes("application/x-www-form-urlencoded")) {
+        body = parseUrlEncodedForm(await c.req.text());
+      } else if (ct.includes("multipart/form-data")) body = await c.req.parseBody();
     } catch { body = undefined; }
-    const headers: NormRequest["headers"] = {};
+    const headers = Object.create(null) as NormRequest["headers"];
     c.req.raw.headers.forEach((value, key) => { headers[key] = value; });
     // Parse the raw query so repeated keys survive as arrays — Hono's c.req.query()
     // collapses duplicates to the first value, which would defeat the RFC 6749 §3.1
     // duplicate-param checks (contracts §17.11 authorize step 2 / callback row 1).
     // Single-valued params stay strings (unchanged behavior for every other route).
-    const query: NormRequest["query"] = {};
+    const query = Object.create(null) as NormRequest["query"];
     for (const [k, v] of new URL(c.req.raw.url, "http://localhost").searchParams.entries()) {
       const ex = query[k];
       if (ex === undefined) query[k] = v;
@@ -81,9 +100,6 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (c) => send(c, await bridge.handleProtectedResourceMetadata()));
   app.get("/oauth/jwks", async (c) => send(c, await bridge.handleJwks()));
   app.post("/oauth/register", async (c) => send(c, await bridge.handleRegister(await toNorm(c))));
-  if (upstream && (identity || skipAuthorize)) {
-    throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
-  }
   if (upstream) {
     const up = upstream;
     app.get("/oauth/authorize", async (c) => send(c, await up.handleAuthorize(await toNorm(c))));

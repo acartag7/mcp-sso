@@ -19,40 +19,16 @@
 
 import { AuthConfigError } from "../config.ts";
 import { isScopeToken } from "../scopes.ts";
+import {
+  ownBooleanTrue, snapshotOwnDataArray, snapshotOwnDataRecord, snapshotOwnStringArray,
+} from "../own-property.ts";
+import type { GroupAuthorization, GroupClaimSource } from "./entra-group-types.ts";
 
-/** Deployer mapping: Entra group OBJECT ID (GUID) → the scopes membership
- *  grants. Combined by UNION (no tier precedence — order-independent, matches
- *  how directory membership composes). */
-export interface GroupAuthorization {
-  /** Entra group object ID (GUID) → scopes. GUID-only (display names rejected
-   *  at boot). Case-insensitive matching: Entra emits lowercase GUIDs, so any
-   *  case is accepted and matched on its lowercase form. */
-  mapping: Record<string, string[]>;
-  /** Scopes every authenticated subject gets regardless of group membership.
-   *  Default `[]` (then a user in zero mapped groups fails with
-   *  `entra_no_groups`). */
-  baseScopes?: string[];
-}
+export type { GroupAuthorization, GroupClaimSource } from "./entra-group-types.ts";
 
 /** RFC 4122 GUID shape (8-4-4-4-12 hex), any case. Entra group object IDs are
   *  standard GUIDs; no version-digit is enforced (any GUID version is legal). */
 const GUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-
-/** The overage-related payload shape this module accepts. The full Entra
-  *  id_token payload is structurally compatible. `_claim_sources` is part of
-  *  the real overage shape, so it is accepted here for honest typing — but it
-  *  is read-nowhere: its endpoint URL is NEVER dereferenced (data, not
-  *  instructions). */
-export interface GroupClaimSource {
-  /** Group object IDs (GUID strings) when present and non-overage. */
-  groups?: unknown;
-  /** Access-token-style overage marker (checked defensively on id_tokens). */
-  hasgroups?: unknown;
-  /** id_token overage marker: `{ groups: "<sourceName>" }`. */
-  _claim_names?: unknown;
-  /** Overage source map — accepted but NEVER read or dereferenced. */
-  _claim_sources?: unknown;
-}
 
 /** Boot-validate a group-authorization mapping (contracts §17.4). Throws
   *  `AuthConfigError` (never degrades to a silent default) on: a falsy/non-object
@@ -71,21 +47,28 @@ export interface GroupClaimSource {
 export function assertGroupAuthorizationMapping(
   groupAuth: GroupAuthorization | undefined,
   scopeCatalog?: readonly string[],
-): void {
+): GroupAuthorization | undefined {
+  const catalog = scopeCatalog === undefined ? undefined : snapshotOwnStringArray(scopeCatalog);
+  if (catalog === null) throw new AuthConfigError("scopeCatalog must be a dense string array");
   // Only the canonical "absent" sentinel (undefined) bypasses validation. A
   // falsy/malformed value reaching here from JS/JSON config (null, false, 0, "",
   // an array, a primitive) MUST be rejected — treating it as absent would run
   // the Entra port with NO allowedScopes ceiling and grant the full catalog, a
   // fail-open for the shipped Gate 2 control (Codex P2). null !== undefined.
-  if (groupAuth === undefined) return;
+  if (groupAuth === undefined) return undefined;
   if (groupAuth === null || typeof groupAuth !== "object" || Array.isArray(groupAuth)) {
     throw new AuthConfigError("groupAuthorization must be an object (or omitted) — a falsy/malformed value never degrades to a silent no-ceiling default");
   }
-  const mapping = groupAuth.mapping;
-  if (mapping === null || typeof mapping !== "object" || Array.isArray(mapping)) {
+  const groupSnapshot = snapshotOwnDataRecord(groupAuth);
+  if (groupSnapshot === null) {
+    throw new AuthConfigError("groupAuthorization must contain only own enumerable data properties");
+  }
+  const mapping = snapshotOwnDataRecord(groupSnapshot.mapping);
+  if (mapping === null) {
     throw new AuthConfigError("groupAuthorization.mapping must be a Record<GUID, string[]>");
   }
   const seenLower = new Set<string>();
+  const mappingSnapshot = Object.create(null) as Record<string, string[]>;
   for (const [key, scopes] of Object.entries(mapping)) {
     if (!GUID_RE.test(key)) {
       throw new AuthConfigError(
@@ -97,26 +80,32 @@ export function assertGroupAuthorizationMapping(
       throw new AuthConfigError(`groupAuthorization duplicate (case-insensitive) mapping key "${key}"`);
     }
     seenLower.add(lower);
-    if (!Array.isArray(scopes) || scopes.length === 0) {
+    const scopeSnapshot = snapshotOwnStringArray(scopes);
+    if (scopeSnapshot === null || scopeSnapshot.length === 0) {
       throw new AuthConfigError(`groupAuthorization mapping for "${key}" must be a non-empty string[]`);
     }
-    for (const scope of scopes) {
-      assertMappedScope(scope, key, scopeCatalog);
+    for (const scope of scopeSnapshot) {
+      assertMappedScope(scope, key, catalog);
     }
+    mappingSnapshot[key] = Object.freeze([...scopeSnapshot]) as string[];
   }
   // baseScopes MUST be undefined or a string[]. A string (e.g. "mcp:read" from a
   // JSON typo) is iterable, so `for...of` would silently walk its characters —
   // each a valid single-char scope token — and computeGroupScopes would build a
   // nonsensical char-by-char ceiling. Reject at boot (Codex P2).
-  const baseScopes = groupAuth.baseScopes;
+  const baseScopes = groupSnapshot.baseScopes;
+  let baseSnapshot: string[] | undefined;
   if (baseScopes !== undefined) {
-    if (!Array.isArray(baseScopes)) {
+    const values = snapshotOwnStringArray(baseScopes);
+    if (values === null) {
       throw new AuthConfigError("groupAuthorization.baseScopes must be a string[] (or omitted) — a string is iterated char-by-char, producing a nonsensical ceiling");
     }
-    for (const scope of baseScopes) {
-      assertBaseScope(scope, scopeCatalog);
+    for (const scope of values) {
+      assertBaseScope(scope, catalog);
     }
+    baseSnapshot = Object.freeze([...values]) as string[];
   }
+  return Object.freeze({ mapping: Object.freeze(mappingSnapshot), baseScopes: baseSnapshot });
 }
 
 function assertMappedScope(scope: unknown, key: string, scopeCatalog: readonly string[] | undefined): void {
@@ -156,21 +145,24 @@ function assertBaseScope(scope: unknown, scopeCatalog: readonly string[] | undef
   *  claim. Reads `_claim_names.groups` and `hasgroups` as DATA only; never
   *  touches `_claim_sources` (its endpoint URL is never dereferenced). */
 export function hasOverageMarker(payload: GroupClaimSource): boolean {
-  const claimNames = payload._claim_names;
-  if (claimNames && typeof claimNames === "object" && !Array.isArray(claimNames) && "groups" in claimNames) {
+  const payloadSnapshot = snapshotOwnDataRecord(payload);
+  if (payloadSnapshot === null) return false;
+  const claimNames = snapshotOwnDataRecord(payloadSnapshot._claim_names);
+  if (claimNames !== null && Object.hasOwn(claimNames, "groups")) {
     return true;
   }
-  return payload.hasgroups === true;
+  return ownBooleanTrue(payloadSnapshot, "hasgroups");
 }
 
 /** Coerce the raw `groups` claim to a deduped list of string GUIDs. Non-array
   *  or non-string entries are dropped (treated as unmapped), never thrown — a
   *  malformed claim yields an empty set and flows to the no-groups branch. */
 function normalizeGroups(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [];
+  const values = snapshotOwnStringArray(raw);
+  if (values === null) return [];
   const out: string[] = [];
-  for (const entry of raw) {
-    if (typeof entry === "string" && entry && !out.includes(entry)) out.push(entry);
+  for (const entry of values) {
+    if (entry && !out.includes(entry)) out.push(entry);
   }
   return out;
 }
@@ -181,12 +173,19 @@ function normalizeGroups(raw: unknown): string[] {
   *  GUIDs; mapping keys are validated GUIDs of any case). Insertion order:
   *  baseScopes first, then matched groups in claim order. */
 export function computeGroupScopes(groups: readonly string[] | undefined, groupAuth: GroupAuthorization): string[] {
+  let safeGroupAuth: GroupAuthorization | undefined;
+  try { safeGroupAuth = assertGroupAuthorizationMapping(groupAuth); } catch { return []; }
+  if (safeGroupAuth === undefined) return [];
+  const groupValues = groups === undefined ? undefined : snapshotOwnStringArray(groups);
+  if (groupValues === null) return [];
   const ceiling = new Set<string>();
-  for (const scope of groupAuth.baseScopes ?? []) ceiling.add(scope);
-  if (groups && groups.length > 0) {
+  for (const scope of safeGroupAuth.baseScopes ?? []) ceiling.add(scope);
+  if (groupValues && groupValues.length > 0) {
     const lower = new Map<string, string[]>();
-    for (const [key, scopes] of Object.entries(groupAuth.mapping)) lower.set(key.toLowerCase(), scopes);
-    for (const guid of groups) {
+    for (const [key, scopes] of Object.entries(safeGroupAuth.mapping)) {
+      lower.set(key.toLowerCase(), scopes);
+    }
+    for (const guid of groupValues) {
       const scopes = lower.get(guid.toLowerCase());
       if (scopes) for (const scope of scopes) ceiling.add(scope);
     }
@@ -210,9 +209,17 @@ export function resolveGroupCeiling(
   payload: GroupClaimSource,
   groupAuth: GroupAuthorization,
 ): { ok: true; allowedScopes: string[] } | { ok: false; reason: "entra_groups_overage" | "entra_no_groups" | "entra_no_mapped_groups" } {
-  const groups = normalizeGroups(payload.groups);
+  const payloadSnapshot = snapshotOwnDataRecord(payload);
+  if (payloadSnapshot === null) return { ok: false, reason: "entra_no_groups" };
+  if (payloadSnapshot.groups !== undefined) {
+    const rawGroups = snapshotOwnDataArray(payloadSnapshot.groups);
+    if (rawGroups === null || !rawGroups.every((group) => typeof group === "string")) {
+      return { ok: false, reason: "entra_no_groups" };
+    }
+  }
+  const groups = normalizeGroups(payloadSnapshot?.groups);
   const hasGroupsClaim = groups.length > 0;
-  if (!hasGroupsClaim && hasOverageMarker(payload)) {
+  if (!hasGroupsClaim && hasOverageMarker(payloadSnapshot)) {
     return { ok: false, reason: "entra_groups_overage" };
   }
   // No groups ⇒ only baseScopes survive (computeGroupScopes unions baseScopes

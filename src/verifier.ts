@@ -4,11 +4,12 @@
 
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
-import type { BridgeConfig } from "./config.ts";
+import { assertBridgeConfig, type BridgeConfig } from "./config.ts";
 import type { AuthorizedSubject } from "./scopes.ts";
 import { requireScope } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { verifyAccessToken } from "./crypto.ts";
+import { snapshotOwnDataArray, snapshotOwnDataRecord } from "./own-property.ts";
 
 export interface RequestAuthDeps {
   config: BridgeConfig;
@@ -29,21 +30,30 @@ export class RequestAuthorizer {
   private readonly audit: AuditPort;
 
   constructor(deps: RequestAuthDeps) {
-    this.config = deps.config;
-    this.clock = deps.clock;
-    this.audit = deps.audit;
+    const fields = snapshotOwnDataRecord(deps);
+    if (fields === null || !fields.config || !fields.clock || !fields.audit) {
+      throw new TypeError("Request-authorizer dependencies must be own data properties");
+    }
+    this.config = assertBridgeConfig(fields.config);
+    this.clock = fields.clock as ClockPort;
+    this.audit = fields.audit as AuditPort;
   }
 
   async authorize(input: RequestAuthInput): Promise<RequestAuthResult> {
     try {
-      const token = bearerToken(input.authorization);
+      const fields = snapshotOwnDataRecord(input);
+      if (fields === null) throw new OAuthError("invalid_token", "Authorization input is malformed", 401);
+      const token = bearerToken(fields.authorization);
       const verified = await verifyAccessToken(token, this.config, this.clock);
-      if (input.requiredScope) requireScope(verified, input.requiredScope);
+      if (fields.requiredScope !== undefined && typeof fields.requiredScope !== "string") {
+        throw new OAuthError("invalid_token", "requiredScope is malformed", 401);
+      }
+      if (fields.requiredScope) requireScope(verified, fields.requiredScope);
       await this.audit.writeAuthEvent({
         occurredAt: new Date(this.clock.nowMs()).toISOString(),
         event: "auth.request", status: "success",
         clientId: verified.clientId, subject: verified.subject, scopes: verified.scopes,
-        reason: input.requiredScope,
+        reason: fields.requiredScope as string | undefined,
       });
       return verified;
     } catch (error) {
@@ -61,8 +71,10 @@ export function createRequestAuthorizer(deps: RequestAuthDeps): RequestAuthorize
   return new RequestAuthorizer(deps);
 }
 
-function bearerToken(header: string | string[] | undefined): string {
-  const value = Array.isArray(header) ? header[0] : header;
+function bearerToken(header: unknown): string {
+  const values = snapshotOwnDataArray(header);
+  const value = values === null ? header : values[0];
+  if (typeof value !== "string") throw new OAuthError("invalid_token", "Bearer token is required", 401);
   if (!value) throw new OAuthError("invalid_token", "Bearer token is required", 401);
   // Capture a whitespace-free token68 (RFC 6750 §2.1: `Bearer 1*SP b64token`). The
   // prior `(.+)` shared the space character with `\s+` (a `\s`/`.` overlap), the

@@ -13,6 +13,7 @@
 // evidence, not a gate (§17.7).
 
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
+import { safeAuditEventLabel } from "./util.ts";
 
 export function combineAudit(...sinks: AuditPort[]): AuditPort {
   if (sinks.length === 0) {
@@ -40,7 +41,7 @@ export function combineAudit(...sinks: AuditPort[]): AuditPort {
         // Never echo the payload (metadata-only though it is) and never echo the
         // rejection reason verbatim — a misbehaving sink could put anything there.
         console.error(
-          `[mcp-sso] audit combine: ${failed}/${sinks.length} sink(s) rejected for ${event.event}/${event.status}`,
+          `[mcp-sso] audit combine: ${failed}/${sinks.length} sink(s) rejected for ${safeAuditEventLabel(event)}`,
         );
       }
     },

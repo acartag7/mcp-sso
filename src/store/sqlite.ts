@@ -8,8 +8,11 @@ import { chmodSync } from "node:fs";
 import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
-import { StoreInputError, assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
+import { assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
+import {
+  requireRotationInput, requireSaveAuthCodeInput, requireSaveRefreshTokenInput,
+} from "../stored-records.ts";
 
 interface AuthCodeRow {
   code_hash: string; client_id: string; subject: string; redirect_uri: string; resource: string;
@@ -30,13 +33,13 @@ export class SqliteStore implements StorePort {
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();
-    validateAuthCode(input);
+    const safeInput = requireSaveAuthCodeInput(input);
     this.db.prepare(`INSERT INTO oauth_auth_codes (
       code_hash, client_id, subject, redirect_uri, resource, scopes_json,
       code_challenge, code_challenge_method, expires_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      input.codeHash, input.clientId, input.subject, input.redirectUri, input.resource,
-      JSON.stringify(input.scopes), input.codeChallenge, input.codeChallengeMethod, input.expiresAt,
+      safeInput.codeHash, safeInput.clientId, safeInput.subject, safeInput.redirectUri, safeInput.resource,
+      JSON.stringify(safeInput.scopes), safeInput.codeChallenge, safeInput.codeChallengeMethod, safeInput.expiresAt,
     );
   }
 
@@ -63,18 +66,18 @@ export class SqliteStore implements StorePort {
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
-    validateRefreshToken(input);
+    const safeInput = requireSaveRefreshTokenInput(input);
     this.transaction(() => {
       this.db.prepare(
         `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, NULL) ON CONFLICT(family_id) DO NOTHING`,
-      ).run(input.familyId);
-      insertRefreshToken(this.db, input);
+      ).run(safeInput.familyId);
+      insertRefreshToken(this.db, safeInput);
     });
   }
 
   async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
-    validateRotation(tokenHash, next, nowIso);
+    const safeNext = requireRotationInput(tokenHash, next, nowIso);
     return this.transaction(() => {
       const row = this.db.prepare(
         `SELECT t.*, f.revoked_at FROM oauth_refresh_tokens t
@@ -85,11 +88,11 @@ export class SqliteStore implements StorePort {
         revokeFamily(this.db, row.family_id, nowIso);
         return null;
       }
-      if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
-      if (this.db.prepare(`SELECT token_hash FROM oauth_refresh_tokens WHERE token_hash = ?`).get(next.tokenHash)) return null;
+      if (row.expires_at <= nowIso || safeNext.familyId !== row.family_id) return null;
+      if (this.db.prepare(`SELECT token_hash FROM oauth_refresh_tokens WHERE token_hash = ?`).get(safeNext.tokenHash)) return null;
       this.db.prepare(`UPDATE oauth_refresh_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL`).run(nowIso, tokenHash);
       // Fix #3 backfill: successor takes clientId/subject/scopes from the consumed row.
-      insertRefreshToken(this.db, nextFromRow(next, row));
+      insertRefreshToken(this.db, nextFromRow(safeNext, row));
       return refreshTokenFromRow(row);
     });
   }
@@ -204,25 +207,6 @@ function revokeFamily(db: DatabaseSync, familyId: string, revokedAtIso: string):
     `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, ?)
      ON CONFLICT(family_id) DO UPDATE SET revoked_at = COALESCE(oauth_refresh_token_families.revoked_at, excluded.revoked_at)`,
   ).run(familyId, revokedAtIso);
-}
-
-function validateAuthCode(input: SaveAuthCodeInput): void {
-  assertSha256Hex(input.codeHash, "codeHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-  if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
-}
-
-function validateRefreshToken(input: SaveRefreshTokenInput): void {
-  assertSha256Hex(input.tokenHash, "tokenHash");
-  if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-}
-
-function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
-  assertSha256Hex(tokenHash, "tokenHash");
-  validateRefreshToken(next);
-  assertUtcIsoTimestamp(nowIso, "nowIso");
-  if (next.previousTokenHash !== tokenHash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
 }
 
 function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {

@@ -21,6 +21,9 @@
 import { createHash } from "node:crypto";
 import type { JWTPayload } from "jose";
 import type { IdentityClaims } from "../ports/identity.ts";
+import {
+  ownBooleanTrue, ownDataValue, snapshotOwnDataRecord, snapshotOwnStringArray,
+} from "../own-property.ts";
 
 /** An id_token's decoded payload. `nonce`/`at_hash`/`exp`/`iat`/`iss`/`aud`/`sub`
  *  come from `JWTPayload`; `email`/`email_verified` are the standard OIDC claims. */
@@ -58,8 +61,10 @@ export interface GenericOidcValidateOpts {
  *  (boot-fail: no usable alg). */
 export function resolveAllowedAlgs(advertised: string[] | undefined): string[] {
   const PIN: ReadonlyArray<string> = ["RS256", "ES256"];
-  if (!Array.isArray(advertised)) return [...PIN];
-  const set = advertised.filter((a) => a === "RS256" || a === "ES256");
+  if (advertised === undefined) return [...PIN];
+  const values = snapshotOwnStringArray(advertised);
+  if (values === null) throw new Error("generic_oidc_no_supported_alg: malformed signing algorithm list");
+  const set = values.filter((a) => a === "RS256" || a === "ES256");
   if (set.length === 0) {
     throw new Error("generic_oidc_no_supported_alg: issuer advertises no RS256/ES256 id_token signing alg");
   }
@@ -81,9 +86,9 @@ export function computeAtHash(accessToken: string, alg: string): string | null {
 function normalizeAud(aud: JWTPayload["aud"]): string[] | null {
   if (aud === undefined || aud === null) return null;
   if (Array.isArray(aud)) {
-    if (aud.length === 0) return null;
-    if (!aud.every((a) => typeof a === "string")) return null;
-    return aud;
+    const values = snapshotOwnStringArray(aud);
+    if (values === null || values.length === 0) return null;
+    return [...values];
   }
   if (typeof aud === "string") return [aud];
   return null;
@@ -99,10 +104,12 @@ export function subjectAllowedGeneric(
   allowlist: string[],
   allowEmail: boolean,
 ): boolean {
-  if (allowlist.includes(sub)) return true;
-  if (allowEmail && emailVerified && email !== undefined) {
+  const entries = snapshotOwnStringArray(allowlist);
+  if (entries === null) return false;
+  if (entries.includes(sub)) return true;
+  if (allowEmail === true && emailVerified === true && email !== undefined) {
     const e = email.trim().toLowerCase();
-    if (allowlist.some((entry) => entry.trim().toLowerCase() === e)) return true;
+    if (entries.some((entry) => entry.trim().toLowerCase() === e)) return true;
   }
   return false;
 }
@@ -114,32 +121,42 @@ export function validateGenericOidcIdToken(
   config: GenericOidcClaimConfig,
   opts?: GenericOidcValidateOpts,
 ): { ok: true; identity: IdentityClaims } | { ok: false; reason: string } {
-  if (payload.iss !== config.issuer) return { ok: false, reason: "generic_oidc_bad_iss" };
-  const aud = normalizeAud(payload.aud);
+  const snapshot = snapshotOwnDataRecord(payload);
+  const configSnapshot = snapshotGenericClaimConfig(config);
+  const optionSnapshot = opts === undefined ? undefined : snapshotOwnDataRecord(opts);
+  if (snapshot === null || configSnapshot === null || optionSnapshot === null) return { ok: false, reason: "generic_oidc_bad_claim" };
+  const claims = snapshot as GenericOidcIdTokenPayload;
+  if (claims.iss !== configSnapshot.issuer) return { ok: false, reason: "generic_oidc_bad_iss" };
+  const aud = normalizeAud(claims.aud);
   if (aud === null || aud.length === 0) return { ok: false, reason: "generic_oidc_bad_aud" };
   if (aud.length > 1) return { ok: false, reason: "generic_oidc_multi_audience" };
-  if (aud[0] !== config.clientId) return { ok: false, reason: "generic_oidc_bad_aud" };
-  if (!payload.exp) return { ok: false, reason: "generic_oidc_missing_exp" };
-  if (!payload.iat) return { ok: false, reason: "generic_oidc_missing_iat" };
-  if (opts?.expectedNonce !== undefined) {
-    if (typeof payload.nonce !== "string" || payload.nonce !== opts.expectedNonce) {
+  if (aud[0] !== configSnapshot.clientId) return { ok: false, reason: "generic_oidc_bad_aud" };
+  if (!claims.exp) return { ok: false, reason: "generic_oidc_missing_exp" };
+  if (!claims.iat) return { ok: false, reason: "generic_oidc_missing_iat" };
+  const expectedNonce = ownDataValue(optionSnapshot, "expectedNonce");
+  const accessToken = ownDataValue(optionSnapshot, "accessToken");
+  const alg = ownDataValue(optionSnapshot, "alg");
+  if (expectedNonce !== undefined) {
+    if (typeof expectedNonce !== "string" || typeof claims.nonce !== "string" || claims.nonce !== expectedNonce) {
       return { ok: false, reason: "generic_oidc_bad_nonce" };
     }
   }
   // at_hash: validate ONLY in the code flow (access_token available). Header mode
   // (no access_token) skips it — the documented residual. Never hash undefined.
-  if (payload.at_hash !== undefined && opts?.accessToken !== undefined) {
-    if (typeof opts.alg !== "string") return { ok: false, reason: "generic_oidc_bad_at_hash" };
-    const computed = computeAtHash(opts.accessToken, opts.alg);
-    if (computed === null || computed !== payload.at_hash) return { ok: false, reason: "generic_oidc_bad_at_hash" };
+  if (claims.at_hash !== undefined && accessToken !== undefined) {
+    if (typeof accessToken !== "string" || typeof alg !== "string") return { ok: false, reason: "generic_oidc_bad_at_hash" };
+    const computed = computeAtHash(accessToken, alg);
+    if (computed === null || computed !== claims.at_hash) return { ok: false, reason: "generic_oidc_bad_at_hash" };
   }
-  if (typeof payload.sub !== "string" || !payload.sub) return { ok: false, reason: "generic_oidc_no_subject" };
+  if (typeof claims.sub !== "string" || !claims.sub) return { ok: false, reason: "generic_oidc_no_subject" };
   // `email` is an untrusted claim — a non-string value (e.g. 123, {}) would otherwise
   // reach subjectAllowedGeneric's .trim() and throw ⇒ exchange_failed; coerce to
   // string|undefined before matching or surfacing it.
-  const email = typeof payload.email === "string" ? payload.email : undefined;
-  if (config.subjectAllowlist && config.subjectAllowlist.length > 0) {
-    if (!subjectAllowedGeneric(payload.sub, email, payload.email_verified === true, config.subjectAllowlist, config.allowEmailAllowlist === true)) {
+  const email = typeof claims.email === "string" ? claims.email : undefined;
+  const emailVerified = ownBooleanTrue(claims, "email_verified");
+  if (configSnapshot.subjectAllowlist && configSnapshot.subjectAllowlist.length > 0) {
+    if (!subjectAllowedGeneric(claims.sub, email, emailVerified,
+      configSnapshot.subjectAllowlist, configSnapshot.allowEmailAllowlist === true)) {
       return { ok: false, reason: "generic_oidc_subject_not_allowed" };
     }
   }
@@ -151,14 +168,30 @@ export function validateGenericOidcIdToken(
       // stored-DCR store reused after changing issuers) must not inherit another
       // issuer's grants. Entra oid / CF sub are globally-unique (GUID/UUID); a
       // generic `sub` is not, so it is namespaced with the configured issuer.
-      subject: `${config.issuer}|${payload.sub}`,
+      subject: `${configSnapshot.issuer}|${claims.sub}`,
       claims: {
         email,
-        emailVerified: payload.email_verified === true,
-        issuer: config.issuer,
-        expiresAt: payload.exp,
-        issuedAt: payload.iat,
+        emailVerified,
+        issuer: configSnapshot.issuer,
+        expiresAt: claims.exp,
+        issuedAt: claims.iat,
       },
     },
   };
+}
+
+function snapshotGenericClaimConfig(config: unknown): Readonly<GenericOidcClaimConfig> | null {
+  const fields = snapshotOwnDataRecord(config);
+  if (fields === null || typeof fields.issuer !== "string" || !fields.issuer
+    || typeof fields.clientId !== "string" || !fields.clientId
+    || (fields.allowEmailAllowlist !== undefined && typeof fields.allowEmailAllowlist !== "boolean")) return null;
+  const subjectAllowlist = fields.subjectAllowlist === undefined
+    ? undefined : snapshotOwnStringArray(fields.subjectAllowlist);
+  if (subjectAllowlist === null) return null;
+  return Object.freeze({
+    issuer: fields.issuer,
+    clientId: fields.clientId,
+    subjectAllowlist: subjectAllowlist && Object.freeze([...subjectAllowlist]) as string[],
+    allowEmailAllowlist: fields.allowEmailAllowlist === true,
+  });
 }

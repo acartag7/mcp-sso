@@ -63,6 +63,11 @@ test("redactSecrets: benign diagnostic messages pass through unchanged", () => {
 test("safeErrorMessage: includes the error name when more specific than 'Error'", () => {
   const e = Object.assign(new Error("aborted due to timeout"), { name: "TimeoutError" });
   assert.equal(safeErrorMessage(e), "TimeoutError: aborted due to timeout");
+  assert.equal(safeErrorMessage(new TypeError("wrong type")), "TypeError: wrong type");
+  assert.equal(
+    safeErrorMessage(new DOMException("request expired", "TimeoutError")),
+    "TimeoutError: request expired",
+  );
 });
 
 test("safeErrorMessage: omits a plain 'Error' name, redacts the message", () => {
@@ -92,6 +97,26 @@ test("safeErrorMessage: never throws on a hostile error (throwing message/name g
   assert.equal(safeErrorMessage(hostileGetter), "unknown error");
   const hostileToString = { toString() { throw new Error("toString boom"); } };
   assert.equal(safeErrorMessage(hostileToString), "unknown error");
+});
+
+test("safeErrorMessage ignores inherited diagnostics and always emits one bounded line", () => {
+  let reads = 0;
+  const message = Object.getOwnPropertyDescriptor(Object.prototype, "message");
+  Object.defineProperty(Object.prototype, "message", {
+    configurable: true,
+    get() { reads += 1; return "inherited\nforged"; },
+  });
+  try {
+    assert.equal(safeErrorMessage({}), "unknown error");
+    assert.equal(reads, 0);
+    const output = safeErrorMessage(new Error("first\nsecond\rthird"));
+    assert.equal(output.includes("\n"), false);
+    assert.equal(output.includes("\r"), false);
+    assert.ok(output.length <= 200);
+  } finally {
+    if (message === undefined) delete (Object.prototype as Record<string, unknown>).message;
+    else Object.defineProperty(Object.prototype, "message", message);
+  }
 });
 
 test("safeErrorMessage: a long opaque password embedded in a userinfo URL is redacted", () => {

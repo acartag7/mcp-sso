@@ -44,10 +44,11 @@ import type {
 } from "../ports/identity.ts";
 import {
   type EntraConfig, type EntraTokenTransport, type EntraVerifyKey,
-  createEntraIdentity, exchangeCodeForToken, getAuthorizationUrl,
-  verifyEntraIdToken,
+  createEntraIdentity, verifyEntraIdToken,
 } from "./entra.ts";
 import { redactForStderr } from "../audit/util.ts";
+import { snapshotOwnDataRecord } from "../own-property.ts";
+import { snapshotEntraConfig } from "./entra-config.ts";
 
 /** The exact upstream scope this port requests — `offline_access` is omitted on
  *  purpose (the bridge never uses an upstream refresh token). */
@@ -74,6 +75,7 @@ const defaultTransport: EntraTokenTransport = {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: body.toString(),
+      redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
     return { status: resp.status, text: () => resp.text() };
@@ -87,15 +89,23 @@ export function createEntraRedirectIdentity(
   config: EntraConfig,
   opts?: EntraRedirectOptions,
 ): RedirectIdentityPort {
+  const optionSnapshot = opts === undefined ? undefined : snapshotOwnDataRecord(opts);
+  if (optionSnapshot === null) throw new TypeError("Entra redirect options must be a data object");
+  const verifyKey = optionSnapshot?.verifyKey as EntraVerifyKey | undefined;
+  const currentDate = optionSnapshot?.currentDate as Date | undefined;
+  const safeConfig = snapshotEntraConfig(config,
+    optionSnapshot?.scopeCatalog as readonly string[] | undefined);
   // Reuse the shipped identity for the JWKS verify path (caching + group-ceiling
   // resolution + boot validation of the group mapping subset).
-  const base = createEntraIdentity(config, { scopeCatalog: opts?.scopeCatalog });
-  const transport = opts?.transport ?? defaultTransport;
+  const base = createEntraIdentity(safeConfig as EntraConfig, {
+    scopeCatalog: optionSnapshot?.scopeCatalog as readonly string[] | undefined,
+  });
+  const transport = optionSnapshot?.transport as EntraTokenTransport | undefined ?? defaultTransport;
 
   return {
-    redirectUri: config.redirectUri,
+    redirectUri: safeConfig.redirectUri,
     buildAuthorizationUrl(req) {
-      return getAuthorizationUrl(config, {
+      return base.getAuthorizationUrl({
         state: req.state,
         nonce: req.nonce,
         codeChallenge: req.codeChallenge,
@@ -106,15 +116,15 @@ export function createEntraRedirectIdentity(
     async exchangeAndVerify({ code, codeVerifier, nonce }): Promise<RedirectExchangeResult> {
       let idToken: string;
       try {
-        idToken = await exchangeCodeForToken(config, { code, codeVerifier }, transport);
+        idToken = await base.exchangeCodeForToken({ code, codeVerifier }, transport);
       } catch (e) {
         // Transport/protocol failure (non-200, timeout, malformed body, missing id_token) —
         // no identity decision. Propagate the primitive's cause (carries the upstream error
         // code) so upstream-flow logs it instead of a fixed generic string.
         return { ok: false, kind: "exchange_failed", reason: redactForStderr(e) };
       }
-      const result = opts?.verifyKey
-        ? await verifyEntraIdToken(idToken, opts.verifyKey, config, { expectedNonce: nonce, currentDate: opts.currentDate })
+      const result = verifyKey
+        ? await verifyEntraIdToken(idToken, verifyKey, safeConfig as EntraConfig, { expectedNonce: nonce, currentDate })
         : await base.verify(idToken, { expectedNonce: nonce });
       if (!result.ok) {
         // §17.11 deterministic throw-rule: an *infrastructure* failure during

@@ -7,12 +7,15 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { SignJWT, importJWK, jwtVerify } from "jose";
 import type { JWK, JWTPayload } from "jose";
 import type { ClockPort } from "./ports/clock.ts";
-import type { BridgeConfig } from "./config.ts";
+import { assertBridgeConfig, type BridgeConfig } from "./config.ts";
 import { scopeString } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
+import { ownBooleanTrue, snapshotOwnDataRecord } from "./own-property.ts";
+import {
+  accessClaims, audienceMatches, consentClaims, CONSENT_TYP, requiredString, stringClaim,
+} from "./crypto-claims.ts";
 
 const CONSENT_AUDIENCE = "mcp-sso/consent";
-const CONSENT_TYP = "mcp-sso-consent";
 const CODE_PREFIX = "ac";
 const REFRESH_PREFIX = "rt";
 
@@ -89,28 +92,33 @@ export function pkceChallenge(verifier: string): string {
 }
 
 export async function signConsentToken(claims: ConsentRequestClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
+  assertBridgeConfig(config);
+  const claimSnapshot = snapshotOwnDataRecord(claims);
+  if (claimSnapshot === null) throw new Error("consent claims must be a data object");
+  const safeClaims = claimSnapshot as unknown as ConsentRequestClaims;
   const now = nowSeconds(clock);
   return await new SignJWT({
     typ: CONSENT_TYP,
     jti: generateConsentJti(),
-    client_id: claims.clientId,
-    redirect_uri: claims.redirectUri,
-    resource: claims.resource,
-    scope: scopeString(claims.scopes),
-    code_challenge: claims.codeChallenge,
-    code_challenge_method: claims.codeChallengeMethod,
-    state: claims.state,
-    allowed_scopes: claims.allowedScopes?.length ? scopeString(claims.allowedScopes) : undefined,
+    client_id: safeClaims.clientId,
+    redirect_uri: safeClaims.redirectUri,
+    resource: safeClaims.resource,
+    scope: scopeString(safeClaims.scopes),
+    code_challenge: safeClaims.codeChallenge,
+    code_challenge_method: safeClaims.codeChallengeMethod,
+    state: safeClaims.state,
+    allowed_scopes: safeClaims.allowedScopes?.length ? scopeString(safeClaims.allowedScopes) : undefined,
   }).setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(config.issuer)
     .setAudience(CONSENT_AUDIENCE)
-    .setSubject(claims.subject)
+    .setSubject(safeClaims.subject)
     .setIssuedAt(now)
     .setExpirationTime(now + config.consentTokenTtlSeconds)
     .sign(consentSecret(config));
 }
 
 export async function verifyConsentToken(token: string, config: BridgeConfig, clock: ClockPort): Promise<ConsentRequestClaims & { jti: string }> {
+  assertBridgeConfig(config);
   try {
     const { payload } = await jwtVerify(token, consentSecret(config), {
       algorithms: ["HS256"],
@@ -118,19 +126,29 @@ export async function verifyConsentToken(token: string, config: BridgeConfig, cl
       audience: CONSENT_AUDIENCE,
       currentDate: new Date(clock.nowMs()),
     });
-    return { ...consentClaims(payload), jti: requiredString(payload.jti, "jti") };
+    const snapshot = snapshotOwnDataRecord(payload);
+    if (snapshot === null) throw new Error("invalid consent claims");
+    const claims = snapshot as JWTPayload;
+    if (claims.iss !== config.issuer || !audienceMatches(claims.aud, CONSENT_AUDIENCE)
+      || typeof claims.exp !== "number") throw new Error("invalid consent trust claims");
+    return { ...consentClaims(claims), jti: requiredString(claims.jti, "jti") };
   } catch {
     throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
   }
 }
 
 export async function signAccessToken(claims: AccessTokenClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
+  assertBridgeConfig(config);
+  const claimSnapshot = snapshotOwnDataRecord(claims);
+  if (claimSnapshot === null) throw new Error("access-token claims must be a data object");
+  const safeClaims = claimSnapshot as unknown as AccessTokenClaims;
   const now = nowSeconds(clock);
   const key = await signKey(config);
-  return await new SignJWT({ client_id: claims.clientId, scope: scopeString(claims.scopes), ...(claims.machine ? { gty: "client_credentials" } : {}) })
+  return await new SignJWT({ client_id: safeClaims.clientId, scope: scopeString(safeClaims.scopes),
+    ...(ownBooleanTrue(safeClaims, "machine") ? { gty: "client_credentials" } : {}) })
     .setProtectedHeader({ alg: "ES256", kid: keyId(config), typ: "JWT" })
     .setIssuer(config.issuer)
-    .setSubject(claims.subject)
+    .setSubject(safeClaims.subject)
     .setAudience(config.resource)
     .setIssuedAt(now)
     .setExpirationTime(now + config.accessTokenTtlSeconds)
@@ -138,6 +156,7 @@ export async function signAccessToken(claims: AccessTokenClaims, config: BridgeC
 }
 
 export async function verifyAccessToken(token: string, config: BridgeConfig, clock: ClockPort): Promise<VerifiedAccessToken> {
+  assertBridgeConfig(config);
   try {
     const key = await verifyKey(config);
     const { payload } = await jwtVerify(token, key, {
@@ -146,8 +165,13 @@ export async function verifyAccessToken(token: string, config: BridgeConfig, clo
       audience: config.resource,
       currentDate: new Date(clock.nowMs()),
     });
-    const claims = accessClaims(payload);
-    if (claims.subject.startsWith("mcc_") && !(claims.clientId === claims.subject && payload.gty === "client_credentials")) throw new Error("reserved-namespace sub without machine binding"); // machine tokens carry sub===client_id AND the gty marker (§17.2); anything else = pre-guard masquerade
+    const snapshot = snapshotOwnDataRecord(payload);
+    if (snapshot === null) throw new Error("invalid access-token claims");
+    const payloadClaims = snapshot as JWTPayload;
+    if (payloadClaims.iss !== config.issuer || !audienceMatches(payloadClaims.aud, config.resource)
+      || typeof payloadClaims.exp !== "number") throw new Error("invalid access-token trust claims");
+    const claims = accessClaims(payloadClaims);
+    if (claims.subject.startsWith("mcc_") && !(claims.clientId === claims.subject && payloadClaims.gty === "client_credentials")) throw new Error("reserved-namespace sub without machine binding"); // machine tokens carry sub===client_id AND the gty marker (§17.2); anything else = pre-guard masquerade
     return claims;
   } catch {
     throw new OAuthError("invalid_token", "Bearer token is invalid", 401);
@@ -155,6 +179,7 @@ export async function verifyAccessToken(token: string, config: BridgeConfig, clo
 }
 
 export function publicJwk(config: BridgeConfig): JWK {
+  assertBridgeConfig(config);
   const jwk = config.signingPrivateJwk;
   return { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, alg: "ES256", use: "sig", kid: keyId(config) };
 }
@@ -202,42 +227,6 @@ function consentSecret(config: BridgeConfig): Uint8Array {
 
 function keyId(config: BridgeConfig): string | undefined {
   return config.signingKeyId ?? stringClaim(config.signingPrivateJwk.kid);
-}
-
-function consentClaims(payload: JWTPayload): ConsentRequestClaims {
-  if (payload.typ !== CONSENT_TYP) throw new Error("wrong token type");
-  const scopes = typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [];
-  const allowedScopes = typeof payload.allowed_scopes === "string" && payload.allowed_scopes.trim()
-    ? payload.allowed_scopes.split(/\s+/)
-    : undefined;
-  return {
-    clientId: requiredString(payload.client_id, "client_id"),
-    redirectUri: requiredString(payload.redirect_uri, "redirect_uri"),
-    resource: requiredString(payload.resource, "resource"),
-    scopes,
-    codeChallenge: requiredString(payload.code_challenge, "code_challenge"),
-    codeChallengeMethod: "S256",
-    state: stringClaim(payload.state),
-    subject: requiredString(payload.sub, "sub"),
-    allowedScopes,
-  };
-}
-
-function accessClaims(payload: JWTPayload): VerifiedAccessToken {
-  return {
-    subject: requiredString(payload.sub, "sub"),
-    clientId: requiredString(payload.client_id, "client_id"),
-    scopes: typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [],
-  };
-}
-
-function requiredString(value: unknown, label: string): string {
-  if (typeof value === "string" && value) return value;
-  throw new Error(`missing ${label}`);
-}
-
-function stringClaim(value: unknown): string | undefined {
-  return typeof value === "string" && value ? value : undefined;
 }
 
 function nowSeconds(clock: ClockPort): number {

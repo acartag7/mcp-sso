@@ -9,14 +9,12 @@ import { SignJWT, jwtVerify } from "jose";
 import { AuthConfigError } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildErrorRedirect } from "../challenge.ts";
-import { headerString, type NormRequest, type NormResponse } from "./http.ts";
+import { snapshotOwnDataArray, snapshotOwnDataRecord } from "../own-property.ts";
+import { headerString, OAUTH_AUTHORIZE_PARAM_KEYS, type NormRequest, type NormResponse } from "./http.ts";
 
 /** The client OAuth params that round-trip through the signed flow cookie —
  *  exactly the §9.3 authorize inputs (same set pairing-flow.ts hidden-fields). */
-export const OAUTH_PARAM_KEYS = [
-  "response_type", "client_id", "redirect_uri", "code_challenge",
-  "code_challenge_method", "resource", "scope", "state",
-] as const;
+export const OAUTH_PARAM_KEYS = OAUTH_AUTHORIZE_PARAM_KEYS;
 
 /** Callback query params checked for RFC 6749 §3.1 duplicates (failure row 1). */
 const CALLBACK_DUP_KEYS = ["state", "code", "error", "error_description"] as const;
@@ -160,22 +158,27 @@ export async function verifyFlowToken(token: string, secret: string, issuer: str
   const { payload } = await jwtVerify(token, flowSecret(secret), {
     algorithms: ["HS256"], issuer, audience: FLOW_AUDIENCE, currentDate: new Date(0),
   });
-  const rawParams = payload.params;
-  if (typeof rawParams !== "object" || rawParams === null || Array.isArray(rawParams)) {
+  const claims = snapshotOwnDataRecord(payload);
+  if (claims === null) throw new Error("flow claims invalid");
+  if (claims.iss !== issuer || !audienceMatches(claims.aud, FLOW_AUDIENCE)) {
+    throw new Error("flow trust claims invalid");
+  }
+  const rawParams = snapshotOwnDataRecord(claims.params);
+  if (rawParams === null) {
     throw new Error("flow params missing");
   }
-  const params: Record<string, string> = {};
+  const params = Object.create(null) as Record<string, string>;
   for (const [k, v] of Object.entries(rawParams)) if (typeof v === "string") params[k] = v;
   return {
-    jti: requiredString(payload.jti, "jti"),
-    state: requiredString(payload.state, "state"),
-    nonce: requiredString(payload.nonce, "nonce"),
-    codeVerifier: requiredString(payload.code_verifier, "code_verifier"),
-    params,
+    jti: requiredString(claims.jti, "jti"),
+    state: requiredString(claims.state, "state"),
+    nonce: requiredString(claims.nonce, "nonce"),
+    codeVerifier: requiredString(claims.code_verifier, "code_verifier"),
+    params: Object.freeze(params),
     // exp is always set by signFlowToken; a signed token missing it (or non-numeric)
     // is structurally malformed ⇒ throw ⇒ row 3 flow_cookie_invalid. Never coerce
     // to 0 (that would silently skip the row-4 expiry check).
-    exp: requiredPositiveNumber(payload.exp, "exp"),
+    exp: requiredPositiveNumber(claims.exp, "exp"),
   };
 }
 
@@ -189,22 +192,18 @@ function requiredString(value: unknown, label: string): string {
   return value;
 }
 
+function audienceMatches(value: unknown, expected: string): boolean {
+  if (typeof value === "string") return value === expected;
+  const values = snapshotOwnDataArray(value);
+  return values !== null && values.every((entry) => typeof entry === "string")
+    && values.includes(expected);
+}
+
 /** Timing-safe string compare; length mismatch fails (returns false). */
 export function timingSafeStringEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
   return left.length > 0 && left.length === right.length && timingSafeEqual(left, right);
-}
-
-/** RFC 6749 §3.1 duplicate-param check: any key present more than once (array
- *  length > 1 in the normalized query) ⇒ reject, never pick first/last. */
-export function findDuplicatedKeys(query: NormRequest["query"], keys: readonly string[]): string[] {
-  const dup: string[] = [];
-  for (const k of keys) {
-    const v = query[k];
-    if (Array.isArray(v) && v.length > 1) dup.push(k);
-  }
-  return dup;
 }
 
 export const CALLBACK_DUP_KEYS_EXPORT = CALLBACK_DUP_KEYS;

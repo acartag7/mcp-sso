@@ -8,9 +8,10 @@
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { ApplicationType } from "./ports/client-store.ts";
-import type { BridgeConfig } from "./config.ts";
+import { assertBridgeConfig, type BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri } from "./redirect.ts";
+import { snapshotOwnDataRecord, snapshotOwnStringArray } from "./own-property.ts";
 
 export interface RegisterDeps {
   config: BridgeConfig;
@@ -38,26 +39,36 @@ export interface RegisteredClient {
 }
 
 export async function registerClient(deps: RegisterDeps, input: RegisterInput): Promise<RegisteredClient> {
-  const { config, clock, audit } = deps;
+  const depFields = snapshotOwnDataRecord(deps);
+  if (depFields === null || !depFields.config || !depFields.clock || !depFields.audit) {
+    throw new TypeError("Registration dependencies must be own data properties");
+  }
+  const config = assertBridgeConfig(depFields.config);
+  const clock = depFields.clock as ClockPort;
+  const audit = depFields.audit as AuditPort;
   try {
+    const inputSnapshot = snapshotOwnDataRecord(input);
+    if (inputSnapshot === null) throw new OAuthError("invalid_request", "registration input must be a data object");
+    const safeInput = inputSnapshot as unknown as RegisterInput;
     // §17.2: reject machine-shaped registrations FIRST. Open DCR must never mint
     // a secret-bearing (machine) client — only out-of-band provisioning can.
-    if (input.tokenEndpointAuthMethod !== undefined && input.tokenEndpointAuthMethod !== "none") {
+    if (safeInput.tokenEndpointAuthMethod !== undefined && safeInput.tokenEndpointAuthMethod !== "none") {
       throw new OAuthError(
         "invalid_client_metadata",
         "token_endpoint_auth_method other than 'none' is not accepted via open registration (§17.2)",
       );
     }
-    if (input.grantTypes?.includes("client_credentials")) {
+    const grantTypes = optionalStringArray(safeInput.grantTypes, "grant_types");
+    if (grantTypes?.includes("client_credentials")) {
       throw new OAuthError(
         "invalid_client_metadata",
         "grant_types containing client_credentials is not accepted via open registration (§17.2)",
       );
     }
-    const redirectUris = arrayOfStrings(input.redirectUris);
-    if (redirectUris.length === 0) throw new OAuthError("invalid_request", "redirect_uris is required");
+    const redirectUris = optionalStringArray(safeInput.redirectUris, "redirect_uris");
+    if (!redirectUris || redirectUris.length === 0) throw new OAuthError("invalid_request", "redirect_uris is required");
     for (const uri of redirectUris) assertAllowedRedirectUri(uri, config.redirectAllowlist);
-    const applicationType: ApplicationType = input.applicationType ?? "web";
+    const applicationType: ApplicationType = safeInput.applicationType ?? "web";
     if (applicationType !== "native" && applicationType !== "web") {
       // application_type is client metadata (RFC 7591 §3.1); an invalid value —
       // including "machine", which is a §17.2 machine-shape signal — is
@@ -88,8 +99,13 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
   }
 }
 
-function arrayOfStrings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+function optionalStringArray(value: unknown, label: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  const snapshot = snapshotOwnStringArray(value);
+  if (snapshot === null || snapshot.some((item) => item.length === 0)) {
+    throw new OAuthError("invalid_request", `${label} must be a dense array of non-empty strings`);
+  }
+  return [...snapshot];
 }
 
 function cryptoRandom(): string {

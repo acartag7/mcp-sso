@@ -11,6 +11,17 @@
 // always preferable to leaking a token); it preserves the error's structure so
 // operators can still diagnose "ENOTDIR" vs "TimeoutError" vs "network down".
 
+import { classDataValue, snapshotOwnDataRecord } from "../own-property.ts";
+
+const EVENT_NAMES = new Set([
+  "oauth.register", "oauth.authorize.prepare", "oauth.authorize.approve",
+  "oauth.token.authorization_code", "oauth.token.refresh", "oauth.revoke",
+  "auth.request", "identity.verify", "oauth.pairing.attempt",
+  "oauth.device.authorization", "oauth.device.approve", "oauth.token.device_code",
+  "oauth.token.client_credentials", "oauth.client.provision",
+  "oauth.client.rotate_secret", "oauth.cimd.fetch", "oauth.upstream.callback",
+]);
+
 // Ordered most-specific first. Each replaces its match with "[redacted]".
 const SECRET_PATTERNS = [
   /Bearer\s+[A-Za-z0-9._~+/=-]+/gi, // RFC 6750 bearer credentials
@@ -48,14 +59,29 @@ export function redactSecrets(input: string): string {
  *  caught and falls back to a fixed string. */
 export function safeErrorMessage(error: unknown): string {
   try {
-    const e = error as { message?: unknown; name?: unknown } | null;
-    const msg = redactSecrets(String(e?.message ?? error ?? "unknown error"));
-    const name = typeof e?.name === "string" ? e.name : "";
-    if (name && name !== "Error" && !msg.startsWith(name)) return `${name}: ${msg}`;
-    return msg || "unknown error";
+    const safeMessage = classDataValue(error, "message");
+    const raw = typeof safeMessage === "string" ? safeMessage
+      : typeof error === "string" ? error
+        : typeof error === "number" || typeof error === "boolean" || typeof error === "bigint"
+          ? String(error) : "unknown error";
+    const safeName = classDataValue(error, "name");
+    const name = typeof safeName === "string" ? safeName : "";
+    const combined = name && name !== "Error" && !raw.startsWith(name) ? `${name}: ${raw}` : raw;
+    return stderrDiagnostic(combined) || "unknown error";
   } catch {
     return "unknown error";
   }
+}
+
+/** Fixed-vocabulary event label for failure diagnostics. Never invokes event
+ * accessors and never emits an attacker-controlled string. */
+export function safeAuditEventLabel(event: unknown): string {
+  const fields = snapshotOwnDataRecord(event);
+  const name = fields && typeof fields.event === "string" && EVENT_NAMES.has(fields.event)
+    ? fields.event : "unknown";
+  const status = fields?.status === "success" || fields?.status === "failure"
+    ? fields.status : "unknown";
+  return `${name}/${status}`;
 }
 
 // Line-breaking + terminal-control chars stripped from stderr diagnostics so an
@@ -64,6 +90,10 @@ export function safeErrorMessage(error: unknown): string {
 // separators. Built from code points so this source file holds NO literal line
 // terminators (a literal U+2028/U+2029 would itself break parsing).
 const STDERR_LINE_BREAKS = new RegExp("[\\x00-\\x1f\\x7f-\\x9f" + String.fromCodePoint(0x2028) + String.fromCodePoint(0x2029) + "]+", "g");
+
+function stderrDiagnostic(input: string): string {
+  return redactSecrets(input).slice(0, 200).replace(STDERR_LINE_BREAKS, " ").trim();
+}
 
 /** Single-line, secret-redacted form for arbitrary stderr diagnostics that may be
  *  attacker- or provider-controlled (a stateless `client_id`, an IdP
@@ -78,7 +108,7 @@ export function redactForStderr(input: unknown): string {
   // Redact BEFORE bounding: a secret starting near the cap must be fully matched
   // (≥32 chars) before slice() can fragment it below the opaque-token threshold.
   try {
-    return redactSecrets(String(input ?? "").replace(STDERR_LINE_BREAKS, " ")).slice(0, 200).trim();
+    return stderrDiagnostic(String(input ?? ""));
   } catch {
     return "[redacted]";
   }

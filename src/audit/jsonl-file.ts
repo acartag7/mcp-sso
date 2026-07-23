@@ -26,7 +26,7 @@
 
 import { open, constants as fsc } from "node:fs/promises";
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
-import { safeErrorMessage } from "./util.ts";
+import { safeAuditEventLabel, safeErrorMessage } from "./util.ts";
 
 // O_NONBLOCK stops open() blocking on a FIFO/special file at the audit path (a
 // plain O_WRONLY open on a FIFO waits for a reader — that would hang the awaited
@@ -67,14 +67,9 @@ export class JsonlFileAudit implements AuditPort {
       // toJSON could put anything in an Error.message), so it is redacted via
       // safeErrorMessage before reaching stderr (threat-model #14).
       console.error(
-        `[mcp-sso] audit jsonl write failed (${this.eventLabel(event)}): ${safeErrorMessage(error)}`,
+        `[mcp-sso] audit jsonl write failed (${safeAuditEventLabel(event)}): ${safeErrorMessage(error)}`,
       );
     }
-  }
-
-  private eventLabel(event: AuthAuditEvent): string {
-    // Avoid logging the payload; just enough to correlate a failure to an event.
-    return `${event.event}/${event.status}`;
   }
 }
 

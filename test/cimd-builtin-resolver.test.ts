@@ -27,6 +27,20 @@ test("built-in resolver: a non-nodata resolver error rejects the whole lookup (f
   await assert.rejects(() => r.resolve("example.com"));
 });
 
+test("built-in resolver ignores inherited error codes", async () => {
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, "code");
+  Object.defineProperty(Object.prototype, "code", { configurable: true, value: "ENODATA" });
+  try {
+    const r = new NodeDnsResolver();
+    (r.resolver as unknown as { resolve4: unknown }).resolve4 = async () => { throw new Error("unexpected"); };
+    (r.resolver as unknown as { resolve6: unknown }).resolve6 = async () => ["2001:4860:4860::8888"];
+    await assert.rejects(() => r.resolve("example.com"), /unexpected/);
+  } finally {
+    if (previous === undefined) delete (Object.prototype as Record<string, unknown>).code;
+    else Object.defineProperty(Object.prototype, "code", previous);
+  }
+});
+
 test("built-in resolver: localhost / *.localhost map to loopback (c-ares bypasses /etc/hosts)", async () => {
   const r = new NodeDnsResolver();
   const loopback = [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }];

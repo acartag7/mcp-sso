@@ -4,41 +4,36 @@ import { admitCimdUrl, type AdmittedUrl } from "./admission.ts";
 import { isBlockedIp, parseIp, type ParsedIp } from "./blocklist.ts";
 import { validateCimdDocument, type CimdDocument } from "./document.ts";
 import { CimdError } from "./errors.ts";
+import {
+  bindDataMethod, classDataValue, ownDataValue, snapshotOwnDataArray, snapshotOwnDataRecord,
+} from "../own-property.ts";
+import { readCimdBody } from "./body-reader.ts";
+import {
+  parseGuardedFetcherOptions,
+  type CimdTransport,
+  type DnsResolver,
+  type GuardedFetcherOptions,
+} from "./fetcher-options.ts";
+export type { CimdTransport, DnsResolver, GuardedFetcherOptions } from "./fetcher-options.ts";
 const BRAND: unique symbol = Symbol("GuardedFetcher");
 export interface CimdFetchResult { readonly document: CimdDocument; }
 export interface GuardedFetcher { readonly [BRAND]: true; fetch(rawClientId: string): Promise<CimdFetchResult>; }
-export interface DnsResolver {
-  resolve(hostname: string): Promise<{ address: string; family: 4 | 6 }[]>; cancel?(): void;
-}
-export interface CimdTransport {
-  connectAndGet(req: {
-    readonly connectIp: string; readonly family: 4 | 6; readonly port: number;
-    readonly servername: string; readonly hostHeader: string; readonly requestTarget: string;
-    readonly signal: AbortSignal; readonly redirect: "manual";
-  }): Promise<{
-    readonly status: number; readonly redirected: boolean; readonly finalUrl: string;
-    readonly headersDistinct: Readonly<Record<string, readonly string[]>>;
-    readonly encodedBody: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>;
-  }>;
-}
 interface ResolvedAddress {
   readonly address: string; readonly family: 4 | 6; readonly parsed: ParsedIp;
 }
 const INSTANCES = new WeakSet<object>();
 const NODE_TRANSPORT: CimdTransport = { connectAndGet: nodeConnectAndGet };
-export function createGuardedFetcher(opts: {
-  transport?: CimdTransport; resolver?: DnsResolver; allowLoopback?: boolean;
-  maxDocumentBytes?: number; fetchTimeoutMs?: number;
-} = {}): GuardedFetcher {
-  assertOptions(opts);
-  const transport = opts.transport ?? NODE_TRANSPORT;
-  const maxBytes = integerOption(opts.maxDocumentBytes, 5120, 1024, 65536, "maxDocumentBytes");
-  const timeoutMs = integerOption(opts.fetchTimeoutMs, 5000, 1000, 30000, "fetchTimeoutMs");
-  const allowLoopback = opts.allowLoopback === true;
+export function createGuardedFetcher(opts: GuardedFetcherOptions = {}): GuardedFetcher {
+  const options = parseGuardedFetcherOptions(opts);
+  const transport = options.transport ?? NODE_TRANSPORT;
+  const injectedResolver = options.resolver;
+  const maxBytes = options.maxDocumentBytes;
+  const timeoutMs = options.fetchTimeoutMs;
+  const allowLoopback = options.allowLoopback;
   const fetcher = {
     async fetch(rawClientId: string): Promise<CimdFetchResult> {
       const admitted = admitCimdUrl(rawClientId, { allowLoopback });
-      return fetchWithDeadline(admitted, opts.resolver ?? new NodeDnsResolver(), transport,
+      return fetchWithDeadline(admitted, injectedResolver ?? new NodeDnsResolver(), transport,
         allowLoopback, maxBytes, timeoutMs);
     },
   };
@@ -59,7 +54,7 @@ async function fetchWithDeadline(admitted: AdmittedUrl, resolver: DnsResolver, t
     timer = setTimeout(() => {
       expired = true;
       controller.abort();
-      try { resolver.cancel?.(); } catch { /* deadline still rejects */ }
+      cancelResolver(resolver);
       reject(new CimdError("timeout"));
     }, timeoutMs);
   });
@@ -82,7 +77,7 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
   try { answer = await resolver.resolve(admitted.hostname); }
   catch {
     if (controller.signal.aborted) throw new CimdError("timeout");
-    try { resolver.cancel?.(); } catch { /* DNS failure remains closed */ }
+    cancelResolver(resolver);
     throw new CimdError("dns_failed");
   }
   const addresses = validateAnswer(answer);
@@ -95,12 +90,13 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
   }
   const target = addresses[0]!;
   const url = new URL(admitted.raw);
-  const response = await transport.connectAndGet({
+  const response = captureTransportResponse(await transport.connectAndGet({
     connectIp: target.address, family: target.family, port: admitted.port,
     servername: admitted.hostname,
     hostHeader: admitted.hostname + (url.port === "" ? "" : `:${url.port}`),
     requestTarget: url.pathname + url.search, signal: controller.signal, redirect: "manual",
-  });
+  }));
+  if (response === null) throw new CimdError("fetch_failed");
   // redirected===false is load-bearing; sameSerializedUrl is defense-in-depth (seam-only).
   if (response.redirected !== false || !sameSerializedUrl(response.finalUrl, admitted.raw)) {
     throw new CimdError("redirect_refused");
@@ -110,19 +106,35 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
   if (contentType === null || contentType === undefined || contentType.length !== 1
     || !isJsonMediaType(contentType[0]!)) throw new CimdError("content_type");
   if (headerValues(response.headersDistinct, "content-encoding") !== undefined) throw new CimdError("encoding");
-  const body = await readBody(response.encodedBody, maxBytes);
+  const body = await readCimdBody(response.encodedBody, maxBytes);
   return { document: validateCimdDocument(body, admitted.raw) };
 }
+function captureTransportResponse(value: unknown): Readonly<Record<string, unknown>> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return Object.freeze({
+    status: classDataValue(value, "status"),
+    redirected: classDataValue(value, "redirected"),
+    finalUrl: classDataValue(value, "finalUrl"),
+    headersDistinct: classDataValue(value, "headersDistinct"),
+    encodedBody: classDataValue(value, "encodedBody"),
+  });
+}
 function validateAnswer(answer: unknown): ResolvedAddress[] {
-  if (!Array.isArray(answer) || answer.length < 1 || answer.length > 64) throw new CimdError("dns_failed");
-  return answer.map((entry: unknown) => {
-    if (typeof entry !== "object" || entry === null) throw new CimdError("dns_failed");
-    const { address, family } = entry as Record<string, unknown>;
+  const entries = snapshotOwnDataArray(answer);
+  if (entries === null || entries.length < 1 || entries.length > 64) throw new CimdError("dns_failed");
+  return entries.map((entry: unknown) => {
+    const fields = snapshotOwnDataRecord(entry);
+    if (fields === null) throw new CimdError("dns_failed");
+    const { address, family } = fields;
     if (typeof address !== "string" || (family !== 4 && family !== 6)) throw new CimdError("dns_failed");
     const parsed = parseIp(address);
     if (parsed === null || parsed.family !== family) throw new CimdError("dns_failed");
     return { address, family, parsed };
   });
+}
+function cancelResolver(resolver: DnsResolver): void {
+  const cancel = bindDataMethod<() => void>(resolver, "cancel");
+  if (cancel !== undefined) try { cancel(); } catch { /* primary failure remains closed */ }
 }
 function isLoopback(value: ResolvedAddress): boolean {
   if (value.family === 4) return value.parsed.bytes[0] === 127;
@@ -130,14 +142,16 @@ function isLoopback(value: ResolvedAddress): boolean {
     && value.parsed.bytes[15] === 1;
 }
 function headerValues(headers: unknown, name: string): string[] | undefined | null {
-  if (typeof headers !== "object" || headers === null || Array.isArray(headers)) return null;
+  const fields = snapshotOwnDataRecord(headers);
+  if (fields === null) return null;
   const values: string[] = [];
   let present = false;
-  for (const [key, value] of Object.entries(headers)) {
+  for (const [key, value] of Object.entries(fields)) {
     if (key.toLowerCase() !== name) continue;
     present = true;
-    if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null;
-    values.push(...value);
+    const entries = snapshotOwnDataArray(value);
+    if (entries === null || !entries.every((item) => typeof item === "string")) return null;
+    values.push(...entries as string[]);
   }
   return present ? values : undefined;
 }
@@ -151,59 +165,6 @@ function sameSerializedUrl(finalUrl: unknown, requested: string): boolean {
   if (typeof finalUrl !== "string") return false;
   try { return new URL(finalUrl).href === new URL(requested).href; }
   catch { return false; }
-}
-async function readBody(body: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>,
-  maxBytes: number): Promise<string> {
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for await (const chunk of bodyChunks(body)) {
-    if (!(chunk instanceof Uint8Array)) throw new CimdError("fetch_failed");
-    total += chunk.byteLength;
-    if (total > maxBytes) throw new CimdError("size_exceeded");
-    chunks.push(chunk);
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-  catch { throw new CimdError("document_invalid"); }
-}
-async function* bodyChunks(body: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>) {
-  if (body && typeof (body as AsyncIterable<Uint8Array>)[Symbol.asyncIterator] === "function") {
-    yield* body as AsyncIterable<Uint8Array>;
-    return;
-  }
-  if (!body || typeof (body as ReadableStream<Uint8Array>).getReader !== "function") {
-    throw new CimdError("fetch_failed");
-  }
-  const reader = (body as ReadableStream<Uint8Array>).getReader();
-  try {
-    while (true) {
-      const item = await reader.read();
-      if (item.done) return;
-      yield item.value;
-    }
-  } finally { reader.releaseLock(); }
-}
-function integerOption(value: number | undefined, fallback: number, min: number,
-  max: number, name: string): number {
-  const result = value === undefined ? fallback : value; // null/NaN/etc are present-but-invalid -> reject below
-  if (!Number.isInteger(result) || result < min || result > max) throw new TypeError(`${name} is out of range`);
-  return result;
-}
-function assertOptions(opts: unknown): asserts opts is Record<string, unknown> {
-  if (typeof opts !== "object" || opts === null || Array.isArray(opts)) throw new TypeError("CIMD fetcher options are invalid");
-  const value = opts as Record<string, unknown>;
-  for (const k of Object.keys(value)) if (!["transport", "resolver", "allowLoopback", "maxDocumentBytes", "fetchTimeoutMs"].includes(k)) throw new TypeError(`unknown CIMD fetcher option: ${k}`);
-  if (value.allowLoopback !== undefined && typeof value.allowLoopback !== "boolean") throw new TypeError("allowLoopback must be boolean");
-  if (value.transport !== undefined && (typeof value.transport !== "object"
-    || value.transport === null || typeof (value.transport as CimdTransport).connectAndGet !== "function")) {
-    throw new TypeError("transport is invalid");
-  }
-  if (value.resolver !== undefined && (typeof value.resolver !== "object"
-    || value.resolver === null || typeof (value.resolver as DnsResolver).resolve !== "function")) {
-    throw new TypeError("resolver is invalid");
-  }
 }
 export class NodeDnsResolver implements DnsResolver {
   readonly resolver = new Resolver();
@@ -220,8 +181,7 @@ export class NodeDnsResolver implements DnsResolver {
 async function resolveFamily(promise: Promise<string[]>, family: 4 | 6) {
   try { return (await promise).map((address) => ({ address, family })); }
   catch (error) {
-    const code = typeof error === "object" && error !== null
-      ? (error as { code?: unknown }).code : undefined;
+    const code = ownDataValue(error, "code");
     if (code === "ENODATA" || code === "ENOTFOUND") return [];
     throw error;
   }
@@ -232,7 +192,7 @@ function nodeConnectAndGet(req: Parameters<CimdTransport["connectAndGet"]>[0]) {
       hostname: req.connectIp, family: req.family, port: req.port, servername: req.servername,
       method: "GET", path: req.requestTarget,
       headers: { Host: req.hostHeader, Accept: "application/json", "Accept-Encoding": "identity" },
-      agent: false, signal: req.signal, rejectUnauthorized: true, // enforce TLS even under NODE_TLS_REJECT_UNAUTHORIZED=0
+      agent: false, signal: req.signal, rejectUnauthorized: true, // pin TLS verification independently of ambient process settings
     }, (response) => {
       const headersDistinct: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
       for (let index = 0; index < response.rawHeaders.length; index += 2) {

@@ -88,6 +88,22 @@ test("WebhookAudit: constructor rejects userinfo (user:pass@) — credentials be
   }
 });
 
+test("WebhookAudit options require own data without invoking accessors", () => {
+  const inherited = Object.assign(Object.create({ timeoutMs: 0 }), {
+    fetchImpl: makeFetch("ok", { calls: [] }),
+  });
+  assert.doesNotThrow(() => new WebhookAudit("https://siem.test/ingest", inherited));
+
+  let reads = 0;
+  const accessor = {};
+  Object.defineProperty(accessor, "fetchImpl", {
+    enumerable: true,
+    get() { reads += 1; return makeFetch("ok", { calls: [] }); },
+  });
+  assert.throws(() => new WebhookAudit("https://siem.test/ingest", accessor));
+  assert.equal(reads, 0);
+});
+
 test("WebhookAudit: per-event POST is application/json with merged headers", async () => {
   const state = { calls: [] as Recorded[] };
   const sink = new WebhookAudit("https://siem.test/ingest", {

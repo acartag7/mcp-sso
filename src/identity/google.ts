@@ -47,6 +47,7 @@ import {
 } from "./generic-oidc.ts";
 import type { DiscoveryTransport, GenericOidcTokenTransport } from "./generic-oidc-discovery.ts";
 import { wrapRedirectIdentity } from "./generic-oidc-redirect.ts";
+import { ownBooleanTrue, snapshotOwnDataRecord, snapshotOwnStringArray } from "../own-property.ts";
 
 export const GOOGLE_ISSUER = "https://accounts.google.com";
 
@@ -77,32 +78,40 @@ export function validateGoogleIdToken(
   config: GoogleConfig,
   opts?: GenericOidcValidateOpts,
 ): IdentityResult {
+  const payloadSnapshot = snapshotOwnDataRecord(payload);
+  const configSnapshot = snapshotOwnDataRecord(config);
+  if (payloadSnapshot === null || configSnapshot === null) return { ok: false, reason: "generic_oidc_bad_claim" };
+  const hostedDomain = normalizedHostedDomain(configSnapshot.hostedDomain);
+  if (hostedDomain === null) {
+    return { ok: false, reason: "google_bad_hosted_domain" };
+  }
+  const claims = payloadSnapshot as GoogleIdTokenPayload;
+  const safeConfig = configSnapshot as unknown as GoogleConfig;
   const genericConfig: GenericOidcClaimConfig = {
     issuer: GOOGLE_ISSUER,
-    clientId: config.clientId,
-    subjectAllowlist: config.subjectAllowlist,
-    allowEmailAllowlist: config.allowEmailAllowlist,
+    clientId: safeConfig.clientId,
+    subjectAllowlist: safeConfig.subjectAllowlist,
+    allowEmailAllowlist: ownBooleanTrue(safeConfig, "allowEmailAllowlist"),
   };
-  const result = validateGenericOidcIdToken(payload, genericConfig, opts);
+  const result = validateGenericOidcIdToken(claims, genericConfig, opts);
   if (!result.ok) return result;
   // Google's `sub` is a stable, globally-unique numeric id — return it raw (the Google contract
   // says subject = sub). The generic validator namespaces opaque subs as `${issuer}|${sub}` to
   // defend cross-issuer collisions; Google's sub needs no namespace, so unwrap it (the generic
   // validator already confirmed payload.sub is a non-empty string).
-  if (typeof payload.sub !== "string") return { ok: false, reason: "generic_oidc_no_subject" };
-  let identity = { ...result.identity, subject: payload.sub };
+  if (typeof claims.sub !== "string") return { ok: false, reason: "generic_oidc_no_subject" };
+  let identity = { ...result.identity, subject: claims.sub };
   // hostedDomain configured ⇒ the Workspace gate is ON. A defined-but-blank value
   // is a misconfig (e.g. an empty env var) that must NOT silently disable the gate.
-  if (config.hostedDomain !== undefined) {
-    const expected = config.hostedDomain.trim().toLowerCase();
-    if (!expected) return { ok: false, reason: "google_bad_hosted_domain" };
-    const actual = typeof payload.hd === "string" ? payload.hd.trim().toLowerCase() : null;
+  if (hostedDomain !== undefined) {
+    const expected = hostedDomain;
+    const actual = typeof claims.hd === "string" ? claims.hd.trim().toLowerCase() : null;
     if (actual !== expected) {
-      return { ok: false, reason: typeof payload.hd === "string" ? "google_bad_hosted_domain" : "google_missing_hosted_domain" };
+      return { ok: false, reason: typeof claims.hd === "string" ? "google_bad_hosted_domain" : "google_missing_hosted_domain" };
     }
   }
   // email surfaced only when email_verified === true (strict).
-  if (payload.email_verified !== true && identity.claims && "email" in identity.claims) {
+  if (!ownBooleanTrue(claims, "email_verified") && identity.claims && "email" in identity.claims) {
     const claims = { ...identity.claims };
     delete claims.email;
     identity = { ...identity, claims };
@@ -117,39 +126,65 @@ export async function verifyGoogleIdToken(
   config: GoogleConfig,
   opts?: Omit<GenericOidcVerifyOpts, "verifyKey">,
 ): Promise<IdentityResult> {
+  const optionSnapshot = opts === undefined ? undefined : snapshotOwnDataRecord(opts);
+  if (optionSnapshot === null) return { ok: false, reason: "generic_oidc_bad_claim" };
   return verifyIdTokenWithKey(token, key, {
-    allowedAlgs: opts?.allowedAlgs ?? resolveAllowedAlgs(undefined),
+    allowedAlgs: optionSnapshot?.allowedAlgs as string[] | undefined ?? resolveAllowedAlgs(undefined),
     validate: (p, o) => validateGoogleIdToken(p as GoogleIdTokenPayload, config, o),
-    expectedNonce: opts?.expectedNonce,
-    accessToken: opts?.accessToken,
-    currentDate: opts?.currentDate,
+    expectedNonce: optionSnapshot?.expectedNonce as string | undefined,
+    accessToken: optionSnapshot?.accessToken as string | undefined,
+    currentDate: optionSnapshot?.currentDate as Date | undefined,
   });
 }
 
 /** Build the Google identity (the generic port pinned to accounts.google.com).
  *  clientSecret is required; discovery is fetched at boot against GOOGLE_ISSUER. */
 export async function createGoogleIdentity(config: GoogleConfig, opts?: { discoveryFetch?: DiscoveryTransport }): Promise<GenericOidcIdentity> {
-  if (typeof config.clientSecret !== "string" || !config.clientSecret) {
-    throw new Error("google_client_secret_required: Google requires a client secret (its token auth methods are secret-based; the docs' newer 'Optional' marking is unverified — treated as required)");
-  }
-  if (config.hostedDomain !== undefined && !config.hostedDomain.trim()) {
+  const configSnapshot = snapshotOwnDataRecord(config);
+  const optionSnapshot = opts === undefined ? undefined : snapshotOwnDataRecord(opts);
+  if (configSnapshot === null || optionSnapshot === null) throw new Error("google_bad_config: options must be data objects");
+  const configFields = configSnapshot as unknown as GoogleConfig;
+  const subjectAllowlist = configFields.subjectAllowlist === undefined ? undefined
+    : snapshotOwnStringArray(configFields.subjectAllowlist);
+  if (subjectAllowlist === null) throw new Error("google_bad_config: subjectAllowlist must be a dense string array");
+  const hostedDomain = normalizedHostedDomain(configSnapshot.hostedDomain);
+  if (hostedDomain === null) {
     throw new Error("google_bad_config: hostedDomain must be a non-empty string (a blank value would silently disable the Workspace gate)");
+  }
+  const safeConfig = Object.freeze({
+    clientId: configSnapshot.clientId,
+    clientSecret: configSnapshot.clientSecret,
+    redirectUri: configSnapshot.redirectUri,
+    hostedDomain,
+    subjectAllowlist: subjectAllowlist && Object.freeze([...subjectAllowlist]) as string[],
+    allowEmailAllowlist: configSnapshot.allowEmailAllowlist,
+    scopes: configSnapshot.scopes,
+  }) as Readonly<GoogleConfig>;
+  if (typeof safeConfig.clientSecret !== "string" || !safeConfig.clientSecret) {
+    throw new Error("google_client_secret_required: Google requires a client secret (its token auth methods are secret-based; the docs' newer 'Optional' marking is unverified — treated as required)");
   }
   assertHttpsRaw(GOOGLE_ISSUER, "google issuer");
   const genericConfig: GenericOidcConfig = {
     issuer: GOOGLE_ISSUER,
-    clientId: config.clientId,
-    clientSecret: config.clientSecret,
-    redirectUri: config.redirectUri,
+    clientId: safeConfig.clientId,
+    clientSecret: safeConfig.clientSecret,
+    redirectUri: safeConfig.redirectUri,
     endpoints: "discover",
-    scopes: config.scopes,
-    subjectAllowlist: config.subjectAllowlist,
-    allowEmailAllowlist: config.allowEmailAllowlist,
+    scopes: safeConfig.scopes,
+    subjectAllowlist: safeConfig.subjectAllowlist,
+    allowEmailAllowlist: ownBooleanTrue(safeConfig, "allowEmailAllowlist"),
   };
   return createGenericOidcIdentity(genericConfig, {
-    discoveryFetch: opts?.discoveryFetch,
-    validate: (p, o) => validateGoogleIdToken(p as GoogleIdTokenPayload, config, o),
+    discoveryFetch: optionSnapshot?.discoveryFetch as DiscoveryTransport | undefined,
+    validate: (p, o) => validateGoogleIdToken(p as GoogleIdTokenPayload, safeConfig, o),
   });
+}
+
+function normalizedHostedDomain(value: unknown): string | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
 }
 
 export interface GoogleRedirectOpts {
@@ -161,6 +196,14 @@ export interface GoogleRedirectOpts {
 
 /** Build a Google `RedirectIdentityPort` (async: discovery at boot). */
 export async function createGoogleRedirectIdentity(config: GoogleConfig, opts?: GoogleRedirectOpts): Promise<RedirectIdentityPort> {
-  const base = await createGoogleIdentity(config, { discoveryFetch: opts?.discoveryFetch });
-  return wrapRedirectIdentity(base, { transport: opts?.transport, verifyKey: opts?.verifyKey, currentDate: opts?.currentDate });
+  const snapshot = opts === undefined ? undefined : snapshotOwnDataRecord(opts);
+  if (snapshot === null) throw new TypeError("Google redirect options must be a data object");
+  const base = await createGoogleIdentity(config, {
+    discoveryFetch: snapshot?.discoveryFetch as DiscoveryTransport | undefined,
+  });
+  return wrapRedirectIdentity(base, {
+    transport: snapshot?.transport as GenericOidcTokenTransport | undefined,
+    verifyKey: snapshot?.verifyKey as GenericOidcVerifyOpts["verifyKey"],
+    currentDate: snapshot?.currentDate as Date | undefined,
+  });
 }

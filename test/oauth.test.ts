@@ -429,6 +429,30 @@ test("config fail-closed: https-only, secret length, key shape, catalog, default
   assert.throws(() => createBridgeConfig({ ...base, issuer: "http://api.test", dev: { allowInsecureLocalhost: true } }), AuthConfigError); // non-loopback
 });
 
+test("config signing key requires own key material", () => {
+  const base = baseInput();
+  const inherited = {
+    kty: "EC", crv: "P-256", d: "inherited-d", x: "inherited-x", y: "inherited-y",
+  };
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const [key, value] of Object.entries(inherited)) {
+    previous.set(key, Object.getOwnPropertyDescriptor(Object.prototype, key));
+    Object.defineProperty(Object.prototype, key, { configurable: true, value });
+  }
+  try {
+    assert.throws(
+      () => createBridgeConfig({ ...base, signingPrivateJwk: {} }),
+      AuthConfigError,
+    );
+  } finally {
+    for (const key of Object.keys(inherited)) {
+      const descriptor = previous.get(key);
+      if (descriptor === undefined) delete (Object.prototype as Record<string, unknown>)[key];
+      else Object.defineProperty(Object.prototype, key, descriptor);
+    }
+  }
+});
+
 test("config fail-closed: unknown top-level keys rejected with the key named", () => {
   const base = baseInput();
 
@@ -474,11 +498,9 @@ test("config fail-closed: a parked secret never reaches the frozen bridge.config
   assert.deepEqual(Reflect.ownKeys(config).filter((k) => typeof k === "symbol"), []);
 });
 
-test("config TOCTOU: a getter-backed issuer cannot smuggle http past https validation", () => {
-  // Pre-fix, createBridgeConfig validated `input.issuer` then built the output via
-  // `{...input}` — two reads, so a getter returning https on the validate-read and
-  // http on the spread-read smuggled http onto the frozen config. The fix reads
-  // each field ONCE; validation and the frozen output share that single read.
+test("config TOCTOU: a getter-backed issuer is rejected without invoking it", () => {
+  // Accessors are not configuration data. Reject them at the parse boundary so
+  // validation and construction can never observe different values or effects.
   const base = baseInput();
   let reads = 0;
   const input = { ...base } as BridgeConfig;
@@ -486,9 +508,45 @@ test("config TOCTOU: a getter-backed issuer cannot smuggle http past https valid
     enumerable: true, configurable: true,
     get() { reads += 1; return reads === 1 ? "https://auth.test" : "http://evil.test"; },
   });
-  const config = createBridgeConfig(input);
-  assert.equal(config.issuer, "https://auth.test", "the validated (first-read) value is what ships");
-  assert.equal(reads, 1, "issuer read exactly once");
+  assert.throws(() => createBridgeConfig(input), AuthConfigError);
+  assert.equal(reads, 0, "issuer accessor was never invoked");
+});
+
+test("config type boundary rejects coercible URL, secret, key id, and JWK members", () => {
+  const base = baseInput();
+  const coercibleUrl = { toString: () => "https://auth.test" };
+  const coercibleSecret = { trim: () => "x".repeat(32), toString: () => "" };
+  for (const input of [
+    { ...base, issuer: coercibleUrl },
+    { ...base, resource: coercibleUrl },
+    { ...base, consentSigningSecret: coercibleSecret },
+    { ...base, signingKeyId: { toString: () => "kid" } },
+    { ...base, signingPrivateJwk: { ...base.signingPrivateJwk, d: {} } },
+  ]) {
+    assert.throws(() => createBridgeConfig(input as unknown as BridgeConfig), AuthConfigError);
+  }
+});
+
+test("config URL boundary rejects parser-normalized schemes and ambiguous components", () => {
+  const base = baseInput();
+  for (const key of ["issuer", "resource"] as const) {
+    for (const value of [
+      "https:/auth.test", "HTTPS://auth.test", "https://user@auth.test",
+      "https://auth.test/path?mode=x", "https://auth.test/path#fragment",
+    ]) {
+      assert.throws(
+        () => createBridgeConfig({ ...base, [key]: value }),
+        AuthConfigError,
+        `${key} accepted ${value}`,
+      );
+    }
+  }
+  assert.throws(() => createBridgeConfig({
+    ...base,
+    issuer: "ftp://localhost/app",
+    resource: "ftp://localhost/mcp",
+    dev: { allowInsecureLocalhost: true },
+  }), AuthConfigError);
 });
 
 test("config TOCTOU: a Proxy ownKeys trap cannot inject an unknown key via the spread", () => {

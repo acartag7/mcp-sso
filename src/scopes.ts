@@ -3,6 +3,7 @@
 // rejected with invalid_scope. `requireScope` drives the 403 step-up (§8.3).
 
 import { OAuthError } from "./errors.ts";
+import { snapshotOwnDataArray, snapshotOwnDataRecord, snapshotOwnStringArray } from "./own-property.ts";
 
 export interface AuthorizedSubject {
   subject: string;
@@ -17,8 +18,19 @@ export function normalizeScopes(
   catalog: readonly string[],
   defaults: readonly string[],
 ): string[] {
-  const allowed = new Set(catalog);
-  const raw = Array.isArray(scope) ? scope : (scope ?? defaults.join(" ")).split(/\s+/);
+  const catalogValues = snapshotOwnStringArray(catalog);
+  const defaultValues = snapshotOwnStringArray(defaults);
+  if (catalogValues === null || defaultValues === null) {
+    throw new OAuthError("invalid_scope", "Scope policy is malformed");
+  }
+  const allowed = new Set(catalogValues);
+  const arrayScope = Array.isArray(scope) ? snapshotOwnDataArray(scope) : undefined;
+  if (arrayScope === null || (arrayScope && !arrayScope.every((item) => typeof item === "string"))) {
+    throw new OAuthError("invalid_scope", "Requested scope is malformed");
+  }
+  const raw: readonly string[] = Array.isArray(scope)
+    ? arrayScope as readonly string[]
+    : (scope ?? defaultValues.join(" ")).split(/\s+/);
   const out: string[] = [];
   for (const value of raw.map((item) => item.trim()).filter(Boolean)) {
     if (!allowed.has(value)) {
@@ -26,12 +38,14 @@ export function normalizeScopes(
     }
     if (!out.includes(value)) out.push(value);
   }
-  return out.length ? out : [...defaults];
+  return out.length ? out : [...defaultValues];
 }
 
 /** Stable scope string: sorted, space-joined. Used for token `scope` claims. */
 export function scopeString(scopes: readonly string[]): string {
-  return [...scopes].sort().join(" ");
+  const values = snapshotOwnStringArray(scopes);
+  if (values === null) throw new OAuthError("invalid_scope", "Scope list is malformed");
+  return [...values].sort().join(" ");
 }
 
 /** RFC 6749 §3.3 `scope-token = 1*NQCHAR` — no space, no `"`, no `\`, no control
@@ -47,7 +61,7 @@ const SCOPE_TOKEN_RE = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
  *  otherwise serialize into the space-joined `allowed_scopes` claim, re-split at
  *  `approve`, and widen the ceiling (threat-model row 22; Codex P1 on PR #8). */
 export function isScopeToken(value: string): boolean {
-  return SCOPE_TOKEN_RE.test(value);
+  return typeof value === "string" && SCOPE_TOKEN_RE.test(value);
 }
 
 /** Validate an identity-port `allowedScopes` ceiling (contracts §17.4). Returns
@@ -65,7 +79,8 @@ export function isScopeToken(value: string): boolean {
  *  cannot skip it. */
 export function assertAllowedScopesCeiling(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
-  if (Array.isArray(value) && value.every((s) => typeof s === "string" && isScopeToken(s))) return value;
+  const snapshot = snapshotOwnDataArray(value);
+  if (snapshot && snapshot.every((s) => typeof s === "string" && isScopeToken(s))) return [...snapshot] as string[];
   throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
 }
 
@@ -80,9 +95,15 @@ export function assertAllowedScopesCeiling(value: unknown): string[] | undefined
  *  invalid_scope until the client is re-provisioned — the same discipline a
  *  drifted user refresh token imposes. De-dupes, preserves request order. */
 export function resolveClientCredentialsScope(requested: string | undefined, ceiling: readonly string[], catalog: readonly string[]): string[] {
-  const ceilingSet = new Set(ceiling);
-  const catalogSet = new Set(catalog);
-  const requestedList = requested === undefined || requested.trim() === "" ? [...ceiling] : requested.split(/\s+/).filter(Boolean);
+  const ceilingValues = snapshotOwnStringArray(ceiling);
+  const catalogValues = snapshotOwnStringArray(catalog);
+  if (ceilingValues === null || catalogValues === null
+    || !ceilingValues.every(isScopeToken) || !catalogValues.every(isScopeToken)) {
+    throw new OAuthError("invalid_scope", "Scope policy is malformed");
+  }
+  const ceilingSet = new Set(ceilingValues);
+  const catalogSet = new Set(catalogValues);
+  const requestedList = requested === undefined || requested.trim() === "" ? [...ceilingValues] : requested.split(/\s+/).filter(Boolean);
   const out: string[] = [];
   for (const token of requestedList) {
     if (!ceilingSet.has(token)) throw new OAuthError("invalid_scope", "Requested scope exceeds the client's allowedScopes");
@@ -94,7 +115,10 @@ export function resolveClientCredentialsScope(requested: string | undefined, cei
 
 /** 403 insufficient_scope step-up if the subject lacks `required`. */
 export function requireScope(auth: AuthorizedSubject, required: string): void {
-  if (!auth.scopes.includes(required)) {
+  const fields = snapshotOwnDataRecord(auth);
+  const scopes = fields && snapshotOwnStringArray(fields.scopes);
+  if (typeof required !== "string" || !required || fields === null || scopes === null
+    || !scopes.includes(required)) {
     throw new OAuthError("insufficient_scope", `Missing required scope: ${required}`, 403);
   }
 }

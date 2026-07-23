@@ -4,6 +4,10 @@
 // boundary so the core never depends on a specific IdP; concrete implementations
 // (CloudflareAccessIdentity, EntraIdentity) arrive in Phase 3.
 
+import {
+  snapshotClassDataRecord, snapshotOwnDataRecord, snapshotOwnStringArray,
+} from "../own-property.ts";
+
 export interface IdentityClaims {
   subject: string;
   /** Optional authorization ceiling (contracts §17.4): when present, the
@@ -62,3 +66,54 @@ export type RedirectExchangeResult =
   /** Verified-context denial — bad iss/aud/tid/nonce, allowlist, group
    *  rejection. An identity decision WAS made: the user is refused. */
   | { ok: false; kind: "identity_rejected"; reason: string };
+
+/** Parse an untrusted port result into an own-data identity decision. */
+export function parseIdentityResult(value: unknown): IdentityResult | null {
+  const result = snapshotClassDataRecord(value, ["ok", "reason", "identity"]);
+  if (result === null) return null;
+  if (result.ok === false) {
+    return typeof result.reason === "string" && result.reason
+      ? Object.freeze({ ok: false, reason: result.reason }) : null;
+  }
+  if (result.ok !== true) return null;
+  const identityFields = snapshotClassDataRecord(
+    result.identity,
+    ["subject", "allowedScopes", "claims"],
+  );
+  if (identityFields !== null && typeof identityFields.subject === "string"
+    && identityFields.subject && identityFields.allowedScopes !== undefined
+    && snapshotOwnStringArray(identityFields.allowedScopes) === null) {
+    // Preserve the boundary's specific audit classification while still
+    // converting the malformed success result into a closed decision.
+    return Object.freeze({ ok: false, reason: "malformed_allowed_scopes" });
+  }
+  const identity = parseIdentityClaims(result.identity);
+  return identity ? Object.freeze({ ok: true, identity }) : null;
+}
+
+export function parseRedirectExchangeResult(value: unknown): RedirectExchangeResult | null {
+  const result = snapshotClassDataRecord(value, ["ok", "kind", "reason", "identity"]);
+  if (result === null) return null;
+  if (result.ok === true) {
+    const identity = parseIdentityClaims(result.identity);
+    return identity ? Object.freeze({ ok: true, identity }) : null;
+  }
+  if (result.ok !== false || (result.kind !== "exchange_failed" && result.kind !== "identity_rejected")
+    || typeof result.reason !== "string" || !result.reason) return null;
+  return Object.freeze({ ok: false, kind: result.kind, reason: result.reason });
+}
+
+function parseIdentityClaims(value: unknown): IdentityClaims | null {
+  const identity = snapshotClassDataRecord(value, ["subject", "allowedScopes", "claims"]);
+  if (identity === null || typeof identity.subject !== "string" || !identity.subject) return null;
+  const scopes = identity.allowedScopes === undefined ? undefined
+    : snapshotOwnStringArray(identity.allowedScopes);
+  if (scopes === null) return null;
+  const claims = identity.claims === undefined ? undefined : snapshotOwnDataRecord(identity.claims);
+  if (claims === null) return null;
+  return Object.freeze({
+    subject: identity.subject,
+    allowedScopes: scopes === undefined ? undefined : Object.freeze([...scopes]) as string[],
+    claims,
+  });
+}

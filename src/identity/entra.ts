@@ -18,46 +18,23 @@
 //      (entra_no_mapped_groups). groupAuthorization keys MUST be group object-ID GUIDs, never
 //      display names (spoof vector). Guest/B2B group behavior is unverified — check before relying on it.
 
-import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWTPayload } from "jose";
+import { errors, jwtVerify } from "jose";
 import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
-import { type GroupAuthorization, assertGroupAuthorizationMapping, resolveGroupCeiling } from "./entra-groups.ts";
-import { assertHttpsRaw } from "./util.ts";
+import { type GroupAuthorization, resolveGroupCeiling } from "./entra-groups.ts";
+import { assertHttpsRaw, captureHttpResponse } from "./util.ts";
 import { AuthConfigError } from "../config.ts";
+import { ownBooleanTrue, snapshotOwnDataRecord, snapshotOwnStringArray } from "../own-property.ts";
+import { createValidatedRemoteJWKSet } from "./remote-jwks.ts";
+import { snapshotEntraConfig } from "./entra-config.ts";
+import type {
+  EntraAuthorizeRequest, EntraConfig, EntraIdentity, EntraPayload,
+  EntraTokenTransport, EntraVerifyKey, EntraVerifyOptions,
+} from "./entra-types.ts";
 
-export interface EntraConfig {
-  tenantId: string;
-  clientId: string;
-  /** Confidential-client secret. Omit for a public client (PKCE only). */
-  clientSecret?: string;
-  /** The bridge's Entra-callback URL (may be http://localhost for dev). */
-  redirectUri: string;
-  /** Allowed `tid` values; defaults to [tenantId]. */
-  allowedTenantIds?: string[];
-  /** Optional defense-in-depth subject allowlist (case-insensitive). Matches the
-   *  immutable `oid` by default; set `allowMutableClaims` to also match the mutable
-   *  preferred_username/email (Microsoft warns against those for authorization). */
-  subjectAllowlist?: string[];
-  /** Opt-in: also match the allowlist against preferred_username/email. Default false. */
-  allowMutableClaims?: boolean;
-  /** Opt-in group→scope authorization ceiling (contracts §17.4). When set, a
-   *  subject's granted scopes are capped by the union of their matched Entra
-   *  groups' mapped scopes plus `baseScopes`. Boot-rejects non-GUID keys and
-   *  empty scope values; mapped/base scopes must be ⊆ `scopeCatalog` when that
-   *  is passed to `createEntraIdentity`. */
-  groupAuthorization?: GroupAuthorization;
-}
-
-type EntraPayload = JWTPayload & {
-  oid?: string; email?: string; preferred_username?: string; tid?: string;
-  /** Group object IDs (GUIDs) when configured and ≤200 groups. */
-  groups?: unknown;
-  /** Access-token overage marker (defensively checked on id_tokens). */
-  hasgroups?: unknown;
-  /** id_token overage marker: `{ groups: "<sourceName>" }`. */
-  _claim_names?: unknown;
-  /** Read-nowhere — the `_claim_sources` endpoint URL is NEVER dereferenced. */
-  _claim_sources?: unknown;
-};
+export type {
+  EntraAuthorizeRequest, EntraConfig, EntraIdentity, EntraTokenTransport,
+  EntraVerifyKey, EntraVerifyOptions,
+} from "./entra-types.ts";
 
 const ENTRA_BASE = "https://login.microsoftonline.com";
 
@@ -66,35 +43,27 @@ export function entraAuthorizeEndpoint(tenantId: string): string { return `${ENT
 export function entraTokenEndpoint(tenantId: string): string { return `${ENTRA_BASE}/${tenantId}/oauth2/v2.0/token`; }
 export function entraJwksUrl(tenantId: string): string { return `${ENTRA_BASE}/${tenantId}/discovery/v2.0/keys`; }
 
-export interface EntraAuthorizeRequest {
-  state: string;
-  codeChallenge: string;
-  codeChallengeMethod?: "S256";
-  scope?: string;
-  /** OIDC nonce — bind the returned id_token to this request (recommended). */
-  nonce?: string;
-}
-
 /** Build the Entra v2.0 authorization URL (auth-code + PKCE S256). */
 export function getAuthorizationUrl(config: EntraConfig, req: EntraAuthorizeRequest): string {
-  if (req.codeChallengeMethod !== undefined && req.codeChallengeMethod !== "S256") throw new Error("entra_bad_config: codeChallengeMethod must be S256 (PKCE plain/other rejected — sibling of generic-oidc)");
+  const safeConfig = snapshotEntraConfig(config);
+  const fields = snapshotOwnDataRecord(req);
+  if (fields === null || typeof fields.state !== "string" || !fields.state
+    || typeof fields.codeChallenge !== "string" || !fields.codeChallenge) {
+    throw new Error("entra_bad_config: authorization request is malformed");
+  }
+  if (fields.codeChallengeMethod !== undefined && fields.codeChallengeMethod !== "S256") throw new Error("entra_bad_config: codeChallengeMethod must be S256 (PKCE plain/other rejected — sibling of generic-oidc)");
   const params = new URLSearchParams({
-    client_id: config.clientId,
+    client_id: safeConfig.clientId,
     response_type: "code",
-    redirect_uri: config.redirectUri,
+    redirect_uri: safeConfig.redirectUri,
     response_mode: "query",
-    scope: req.scope ?? "openid profile email offline_access",
-    state: req.state,
-    code_challenge: req.codeChallenge,
-    code_challenge_method: req.codeChallengeMethod ?? "S256",
-    ...(req.nonce ? { nonce: req.nonce } : {}),
+    scope: typeof fields.scope === "string" ? fields.scope : "openid profile email offline_access",
+    state: fields.state,
+    code_challenge: fields.codeChallenge,
+    code_challenge_method: fields.codeChallengeMethod as "S256" | undefined ?? "S256",
+    ...(typeof fields.nonce === "string" && fields.nonce ? { nonce: fields.nonce } : {}),
   });
-  return `${entraAuthorizeEndpoint(config.tenantId)}?${params.toString()}`;
-}
-
-/** Injectable transport for the token endpoint (so tests avoid the network). */
-export interface EntraTokenTransport {
-  postForm(url: string, body: URLSearchParams): Promise<{ status: number; text(): Promise<string> }>;
+  return `${entraAuthorizeEndpoint(safeConfig.tenantId)}?${params.toString()}`;
 }
 
 export async function exchangeCodeForToken(
@@ -102,18 +71,30 @@ export async function exchangeCodeForToken(
   args: { code: string; codeVerifier: string },
   transport: EntraTokenTransport,
 ): Promise<string> {
+  const safeConfig = snapshotEntraConfig(config);
+  const fields = snapshotOwnDataRecord(args);
+  if (fields === null || typeof fields.code !== "string" || !fields.code
+    || typeof fields.codeVerifier !== "string" || !fields.codeVerifier) {
+    throw new Error("entra token exchange input is malformed");
+  }
   const body = new URLSearchParams({
-    client_id: config.clientId,
+    client_id: safeConfig.clientId,
     grant_type: "authorization_code",
-    code: args.code,
-    redirect_uri: config.redirectUri,
-    code_verifier: args.codeVerifier,
-    ...(config.clientSecret ? { client_secret: config.clientSecret } : { scope: "openid profile email" }),
+    code: fields.code,
+    redirect_uri: safeConfig.redirectUri,
+    code_verifier: fields.codeVerifier,
+    ...(safeConfig.clientSecret ? { client_secret: safeConfig.clientSecret } : { scope: "openid profile email" }),
   });
-  const resp = await transport.postForm(entraTokenEndpoint(config.tenantId), body);
-  if (resp.status !== 200) { let detail = ""; try { const e = JSON.parse(await resp.text()) as { error?: unknown; error_description?: unknown }; if (typeof e.error === "string") detail = `: ${e.error}${typeof e.error_description === "string" ? ` — ${String(e.error_description).replace(/[\r\n]+/g, " ")}` : ""}`; } catch { /* non-JSON error body — the HTTP status is the detail */ } throw new Error(`entra token exchange failed: HTTP ${resp.status}${detail}`); }
-  const parsed = JSON.parse(await resp.text()) as { id_token?: string };
-  if (!parsed.id_token) throw new Error("entra token exchange returned no id_token");
+  const response = captureHttpResponse(
+    await transport.postForm(entraTokenEndpoint(safeConfig.tenantId), body), "text",
+  );
+  if (response === null) throw new Error("entra token exchange returned a malformed response");
+  if (response.status !== 200) { let detail = ""; try { const text = await response.read(); if (typeof text !== "string") throw new Error("malformed response body"); const e = snapshotOwnDataRecord(JSON.parse(text)); if (e && typeof e.error === "string") detail = `: ${e.error}${typeof e.error_description === "string" ? ` — ${e.error_description.replace(/[\r\n]+/g, " ")}` : ""}`; } catch { /* non-JSON error body — the HTTP status is the detail */ } throw new Error(`entra token exchange failed: HTTP ${response.status}${detail}`); }
+  const text = await response.read();
+  const parsed = typeof text === "string" ? snapshotOwnDataRecord(JSON.parse(text)) : null;
+  if (parsed === null || typeof parsed.id_token !== "string" || !parsed.id_token) {
+    throw new Error("entra token exchange returned no id_token");
+  }
   return parsed.id_token;
 }
 
@@ -124,28 +105,41 @@ export async function exchangeCodeForToken(
  *  Entra multi-tenant issuer pattern). Single-tenant (unset): `iss` must equal
  *  `entraIssuer(config.tenantId)` exactly. */
 export function validateEntraIdToken(payload: EntraPayload, config: EntraConfig, expectedNonce?: string): { ok: true; identity: IdentityClaims } | { ok: false; reason: string } {
-  if (config.allowedTenantIds && config.allowedTenantIds.length > 0) {
-    if (!payload.tid || !config.allowedTenantIds.includes(payload.tid)) return { ok: false, reason: "entra_bad_tid" };
-    if (payload.iss !== entraIssuer(payload.tid)) return { ok: false, reason: "entra_bad_iss" };
+  const payloadSnapshot = snapshotOwnDataRecord(payload);
+  let safeConfig: Readonly<EntraConfig>;
+  try { safeConfig = snapshotEntraConfig(config); } catch { return { ok: false, reason: "entra_bad_claim" }; }
+  if (payloadSnapshot === null) return { ok: false, reason: "entra_bad_claim" };
+  const claimsPayload = payloadSnapshot as EntraPayload;
+  if (safeConfig.allowedTenantIds && safeConfig.allowedTenantIds.length > 0) {
+    if (!claimsPayload.tid || !safeConfig.allowedTenantIds.includes(claimsPayload.tid)) return { ok: false, reason: "entra_bad_tid" };
+    if (claimsPayload.iss !== entraIssuer(claimsPayload.tid)) return { ok: false, reason: "entra_bad_iss" };
   } else {
-    if (payload.iss !== entraIssuer(config.tenantId)) return { ok: false, reason: "entra_bad_iss" };
-    if (payload.tid && payload.tid !== config.tenantId) return { ok: false, reason: "entra_bad_tid" };
+    if (claimsPayload.iss !== entraIssuer(safeConfig.tenantId)) return { ok: false, reason: "entra_bad_iss" };
+    if (claimsPayload.tid && claimsPayload.tid !== safeConfig.tenantId) return { ok: false, reason: "entra_bad_tid" };
   }
-  if (payload.aud !== config.clientId) return { ok: false, reason: "entra_bad_aud" };
-  if (expectedNonce !== undefined && payload.nonce !== expectedNonce) return { ok: false, reason: "entra_bad_nonce" };
-  if (!payload.exp) return { ok: false, reason: "entra_missing_exp" };
-  const subject = payload.oid ?? payload.preferred_username ?? payload.email;
+  if (claimsPayload.aud !== safeConfig.clientId) return { ok: false, reason: "entra_bad_aud" };
+  if (expectedNonce !== undefined && claimsPayload.nonce !== expectedNonce) return { ok: false, reason: "entra_bad_nonce" };
+  if (!claimsPayload.exp) return { ok: false, reason: "entra_missing_exp" };
+  for (const key of ["oid", "preferred_username", "email"] as const) {
+    if (claimsPayload[key] !== undefined && typeof claimsPayload[key] !== "string") {
+      return { ok: false, reason: "entra_bad_claim" };
+    }
+  }
+  const subject = [claimsPayload.oid, claimsPayload.preferred_username, claimsPayload.email]
+    .find((value): value is string => typeof value === "string" && value.length > 0);
   if (!subject) return { ok: false, reason: "entra_no_subject" };
-  if (config.subjectAllowlist && config.subjectAllowlist.length > 0 && !subjectAllowed(payload, config.subjectAllowlist, config.allowMutableClaims)) {
+  if (safeConfig.subjectAllowlist && safeConfig.subjectAllowlist.length > 0
+    && !subjectAllowed(claimsPayload, safeConfig.subjectAllowlist, ownBooleanTrue(safeConfig, "allowMutableClaims"))) {
     return { ok: false, reason: "entra_subject_not_allowed" };
   }
-  const claims = { oid: payload.oid, email: payload.email ?? payload.preferred_username, tid: payload.tid, expiresAt: payload.exp };
+  const claims = { oid: claimsPayload.oid, email: claimsPayload.email ?? claimsPayload.preferred_username,
+    tid: claimsPayload.tid, expiresAt: claimsPayload.exp };
   // §17.4: when group→scope mapping is configured, resolve the ceiling from the
   // VERIFIED payload (signature already checked by the caller). Unconfigured ⇒
   // unchanged v0.1 behavior (no ceiling). Overage/no-groups fail CLOSED here so
   // the bridge's resolveIdentity emits identity.verify with the Entra reason.
-  if (config.groupAuthorization) {
-    const ceiling = resolveGroupCeiling(payload, config.groupAuthorization);
+  if (safeConfig.groupAuthorization) {
+    const ceiling = resolveGroupCeiling(claimsPayload, safeConfig.groupAuthorization);
     if (!ceiling.ok) return ceiling; // entra_groups_overage | entra_no_groups
     return { ok: true, identity: { subject, allowedScopes: ceiling.allowedScopes, claims } };
   }
@@ -156,38 +150,34 @@ export function validateEntraIdToken(payload: EntraPayload, config: EntraConfig,
  *  matches the mutable preferred_username/email when `allowMutable` is true
  *  (Microsoft warns against using those claims for authorization). */
 export function subjectAllowed(payload: EntraPayload, allowlist: string[], allowMutable = false): boolean {
+  const payloadSnapshot = snapshotOwnDataRecord(payload);
+  const entries = snapshotOwnStringArray(allowlist);
+  if (payloadSnapshot === null || entries === null) return false;
+  const claims = payloadSnapshot as EntraPayload;
   const candidates: string[] = [];
-  if (payload.oid) candidates.push(payload.oid);
-  if (allowMutable) {
-    if (payload.preferred_username) candidates.push(payload.preferred_username);
-    if (payload.email) candidates.push(payload.email);
+  if (typeof claims.oid === "string" && claims.oid) candidates.push(claims.oid);
+  if (allowMutable === true) {
+    if (typeof claims.preferred_username === "string" && claims.preferred_username) {
+      candidates.push(claims.preferred_username);
+    }
+    if (typeof claims.email === "string" && claims.email) candidates.push(claims.email);
   }
-  return candidates.some((c) => allowlist.some((entry) => entry.trim().toLowerCase() === c.trim().toLowerCase()));
-}
-
-export type EntraVerifyKey = Awaited<ReturnType<typeof importJWK>>;
-
-export interface EntraVerifyOptions {
-  currentDate?: Date;
-  /** If set, the id_token's `nonce` claim must equal this (OIDC request binding). If UNSET — e.g. header-driven deployments where a fronting proxy delivers the id_token — the token is NOT replay-bound here; the proxy that minted the nonce owns replay protection (threat-model row 12). */
-  expectedNonce?: string;
+  return candidates.some((c) => entries.some((entry) => entry.trim().toLowerCase() === c.trim().toLowerCase()));
 }
 
 /** Verify an Entra id_token against an explicit key (CryptoKey/Uint8Array). Exported
  *  so the full path is testable with a known key — no JWKS fetch. */
 export async function verifyEntraIdToken(token: string, key: EntraVerifyKey, config: EntraConfig, options?: EntraVerifyOptions): Promise<IdentityResult> {
   try {
-    const { payload } = await jwtVerify<EntraPayload>(token, key, { algorithms: ["RS256"], currentDate: options?.currentDate });
-    return validateEntraIdToken(payload, config, options?.expectedNonce);
+    const optionSnapshot = options === undefined ? undefined : snapshotOwnDataRecord(options);
+    if (optionSnapshot === null) return { ok: false, reason: "entra_bad_claim" };
+    const { payload } = await jwtVerify<EntraPayload>(token, key, {
+      algorithms: ["RS256"], currentDate: optionSnapshot?.currentDate as Date | undefined,
+    });
+    return validateEntraIdToken(payload, config, optionSnapshot?.expectedNonce as string | undefined);
   } catch (error) {
     return { ok: false, reason: jwtErrorReason(error) };
   }
-}
-
-export interface EntraIdentity {
-  getAuthorizationUrl(req: EntraAuthorizeRequest): string;
-  exchangeCodeForToken(args: { code: string; codeVerifier: string }, transport: EntraTokenTransport): Promise<string>;
-  verify(input: unknown, options?: { expectedNonce?: string }): Promise<IdentityResult>;
 }
 
 /** Build the Entra identity port. `verify` takes a raw id_token string; the adapter
@@ -197,23 +187,25 @@ export interface EntraIdentity {
  *  validated ⊆ scopeCatalog at boot (§17.4). Omit it only if the deployer
  *  validates the subset elsewhere — passing it is recommended. */
 export function createEntraIdentity(config: EntraConfig, opts?: { scopeCatalog?: readonly string[] }): EntraIdentity {
+  const optionSnapshot = opts === undefined ? undefined : snapshotOwnDataRecord(opts);
+  if (optionSnapshot === null) throw new AuthConfigError("Entra options must be a data object");
+  const safeConfig = snapshotEntraConfig(config,
+    optionSnapshot?.scopeCatalog as readonly string[] | undefined);
   assertHttpsRaw(ENTRA_BASE, "entra base");
   // Fail closed on blank required config (empty == missing) — sibling of the CF
   // empty-audience guard: a blank tenantId/clientId builds malformed URLs / a vacuous aud check.
-  if (!config.tenantId || !config.tenantId.trim()) throw new AuthConfigError("tenantId is required (a non-empty Entra tenant id)");
-  if (!config.clientId || !config.clientId.trim()) throw new AuthConfigError("clientId is required (a non-empty Entra app/client id)");
-  // §17.4 boot validation: GUID-only keys, non-empty scope values (+ subset ⊆
-  // catalog when supplied). Fail closed at construction, never a silent default.
-  assertGroupAuthorizationMapping(config.groupAuthorization, opts?.scopeCatalog);
-  const jwks = createRemoteJWKSet(new URL(entraJwksUrl(config.tenantId)), { cacheMaxAge: 5 * 60 * 1000 });
+  const jwks = createValidatedRemoteJWKSet(new URL(entraJwksUrl(safeConfig.tenantId)), { cacheMaxAge: 5 * 60 * 1000 });
   return {
-    getAuthorizationUrl: (req) => getAuthorizationUrl(config, req),
-    exchangeCodeForToken: (args, transport) => exchangeCodeForToken(config, args, transport),
+    getAuthorizationUrl: (req) => getAuthorizationUrl(safeConfig, req),
+    exchangeCodeForToken: (args, transport) => exchangeCodeForToken(safeConfig, args, transport),
     async verify(input: unknown, options?: { expectedNonce?: string }): Promise<IdentityResult> {
       if (typeof input !== "string" || !input) return { ok: false, reason: "entra_id_token_missing" };
       try {
+        const verifySnapshot = options === undefined ? undefined : snapshotOwnDataRecord(options);
+        if (verifySnapshot === null) return { ok: false, reason: "entra_bad_claim" };
         const { payload } = await jwtVerify<EntraPayload>(input, jwks, { algorithms: ["RS256"] });
-        return validateEntraIdToken(payload, config, options?.expectedNonce);
+        return validateEntraIdToken(payload, safeConfig,
+          verifySnapshot?.expectedNonce as string | undefined);
       } catch (error) {
         return { ok: false, reason: jwtErrorReason(error) };
       }

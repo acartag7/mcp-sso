@@ -13,7 +13,7 @@
 // NEVER appear in an AuthAuditEvent. It doesn't.
 // NON-GOAL (banner): shared-log pipelines extend the boundary — use a real IdP.
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { ClockPort } from "../ports/clock.ts";
 import { SystemClock } from "../ports/clock.ts";
 import type { AuditPort } from "../ports/audit.ts";
@@ -21,14 +21,15 @@ import { noopAudit } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
 import type { IdentityClaims, IdentityPort, IdentityResult } from "../ports/identity.ts";
+import { snapshotOwnDataRecord } from "../own-property.ts";
+import {
+  asVerifyInput, canonicalizePairingCode, formatPairingCode, generatePairingCode,
+  positiveIntegerOption, timingSafeStringEqual,
+} from "./console-pairing-internals.ts";
 
-// RFC 8628 §6.1 unambiguous base-20 alphabet (no vowels, no Y, no digits).
-const CHARSET = "BCDFGHJKLMNPQRSTVWXZ";
-const BASE = 20;
-const CODE_LENGTH = 12;
-// Largest multiple of BASE <= 256; bytes at/above this are rejected so byte % BASE
-// is uniform (rejection sampling). 240/256 = 93.75% acceptance per byte.
-const REJECT_THRESHOLD = Math.floor(256 / BASE) * BASE; // 240
+export {
+  canonicalizePairingCode, formatPairingCode, generatePairingCode, PAIRING_CHARSET,
+} from "./console-pairing-internals.ts";
 
 export interface ConsolePairingOptions {
   /** Verified subject minted on a successful pairing. Default "console-operator". */
@@ -73,20 +74,19 @@ export interface ConsolePairingIdentity extends IdentityPort {
 }
 
 export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): ConsolePairingIdentity {
-  const subject = opts.subject ?? "console-operator";
-  const codeTtlSeconds = opts.codeTtlSeconds ?? 600;
-  const maxAttempts = opts.maxAttempts ?? 5;
-  const output = opts.output ?? process.stderr;
-  const clock: ClockPort = opts.clock ?? new SystemClock();
-  const rateLimit: RateLimitPort = opts.rateLimit ?? noopRateLimit;
-  const audit: AuditPort = opts.audit ?? noopAudit;
-
-  if (!Number.isInteger(codeTtlSeconds) || codeTtlSeconds <= 0) {
-    throw new TypeError("codeTtlSeconds must be a positive integer");
+  const snapshot = snapshotOwnDataRecord(opts);
+  if (snapshot === null) throw new TypeError("console pairing options must be a data object");
+  const subjectValue = snapshot.subject;
+  if (subjectValue !== undefined && (typeof subjectValue !== "string" || subjectValue.length === 0)) {
+    throw new TypeError("subject must be a non-empty string");
   }
-  if (!Number.isInteger(maxAttempts) || maxAttempts <= 0) {
-    throw new TypeError("maxAttempts must be a positive integer");
-  }
+  const subject = subjectValue ?? "console-operator";
+  const codeTtlSeconds = positiveIntegerOption(snapshot.codeTtlSeconds, 600, "codeTtlSeconds");
+  const maxAttempts = positiveIntegerOption(snapshot.maxAttempts, 5, "maxAttempts");
+  const output = (snapshot.output as ConsolePairingOptions["output"]) ?? process.stderr;
+  const clock = (snapshot.clock as ClockPort | undefined) ?? new SystemClock();
+  const rateLimit = (snapshot.rateLimit as RateLimitPort | undefined) ?? noopRateLimit;
+  const audit = (snapshot.audit as AuditPort | undefined) ?? noopAudit;
 
   // Process-memory only — NEVER persisted. Restart = clean slate (fail-closed).
   let active: ActiveCode | null = null;
@@ -204,46 +204,3 @@ export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): 
 
   return identity;
 }
-
-/** Uppercase + strip every character outside the base-20 charset (§17.3/§6.1). */
-export function canonicalizePairingCode(input: string): string {
-  let out = "";
-  for (const ch of input.toUpperCase()) {
-    if (CHARSET.includes(ch)) out += ch;
-  }
-  return out;
-}
-
-function timingSafeStringEqual(a: string, b: string): boolean {
-  // BYTE length, not JS .length: a non-ASCII nonce of matching .length (e.g. 24
-  // "é") encodes to more bytes and would otherwise make timingSafeEqual throw.
-  const ab = Buffer.from(a, "utf8"), bb = Buffer.from(b, "utf8");
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
-}
-
-export function generatePairingCode(): string {
-  let out = "";
-  while (out.length < CODE_LENGTH) {
-    const buf = randomBytes(CODE_LENGTH * 2); // over-generate to absorb rejections
-    for (let i = 0; i < buf.length && out.length < CODE_LENGTH; i++) {
-      const byte = buf[i];
-      if (byte === undefined || byte >= REJECT_THRESHOLD) continue;
-      out += CHARSET[byte % BASE]!; // byte < 240 ⇒ byte % 20 uniform; CHARSET has 20 entries
-    }
-  }
-  return out;
-}
-
-export function formatPairingCode(code: string): string {
-  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8, 12)}`; // XXXX-XXXX-XXXX
-}
-
-function asVerifyInput(input: unknown): { code?: string; nonce?: string; ip?: string } {
-  if (typeof input === "string") return { code: input, nonce: "" };
-  if (typeof input !== "object" || input === null || Array.isArray(input)) return {};
-  const o = input as Record<string, unknown>;
-  const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
-  return { code: str(o.code), nonce: str(o.nonce), ip: str(o.ip) };
-}
-
-export { CHARSET as PAIRING_CHARSET };

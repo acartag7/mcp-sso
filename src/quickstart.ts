@@ -20,6 +20,8 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { exportJWK, generateKeyPair, type JWK } from "jose";
 import { AuthConfigError } from "./config.ts";
+import { snapshotOwnDataRecord } from "./own-property.ts";
+import { errorMessage as errMsg, isErrorWithCode } from "./quickstart-errors.ts";
 
 // O_NOFOLLOW refuses symlinks; O_NONBLOCK stops a FIFO/special file hanging open.
 const O_NOFOLLOW: number | undefined = (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW;
@@ -46,7 +48,12 @@ const DIR_MODE = 0o700;
 export async function loadOrCreateQuickstartSecrets(
   opts: QuickstartOptions = {},
 ): Promise<QuickstartSecrets> {
-  const dir = opts.dir ?? "./.mcp-sso";
+  const optionSnapshot = snapshotOwnDataRecord(opts);
+  if (optionSnapshot === null) throw new AuthConfigError("quickstart options must be a data object");
+  const unknown = Object.keys(optionSnapshot).filter((key) => key !== "dir");
+  if (unknown.length > 0) throw new AuthConfigError(`quickstart unknown option: ${unknown[0]}`);
+  const dir = optionSnapshot.dir ?? "./.mcp-sso";
+  if (typeof dir !== "string" || dir.length === 0) throw new AuthConfigError("quickstart dir must be a non-empty string");
   const secretsPath = join(dir, SECRETS_FILE);
 
   if (await pathExists(secretsPath)) {
@@ -75,31 +82,32 @@ async function loadExisting(dir: string, secretsPath: string): Promise<Quickstar
 }
 
 function validateSecrets(parsed: unknown, secretsPath: string): QuickstartSecrets {
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+  const obj = snapshotOwnDataRecord(parsed);
+  if (obj === null) {
     throw new AuthConfigError(`quickstart: ${secretsPath} must be a JSON object`);
   }
-  const obj = parsed as Record<string, unknown>;
   const signingPrivateJwk = obj.signingPrivateJwk;
   const consentSigningSecret = obj.consentSigningSecret;
   if (typeof consentSigningSecret !== "string" || consentSigningSecret.trim().length < 32) {
     throw new AuthConfigError(`quickstart: ${secretsPath} consentSigningSecret missing or < 32 chars`);
   }
   // Mirror config.ts §5 shape validation so loaded material always passes createBridgeConfig.
-  if (!isValidSigningJwk(signingPrivateJwk)) {
+  const jwk = snapshotSigningJwk(signingPrivateJwk);
+  if (jwk === null) {
     throw new AuthConfigError(`quickstart: ${secretsPath} signingPrivateJwk must be an EC P-256 key with d, x, y`);
   }
-  return { signingPrivateJwk: signingPrivateJwk as JWK, consentSigningSecret };
+  return { signingPrivateJwk: jwk, consentSigningSecret };
 }
 
-function isValidSigningJwk(value: unknown): value is JWK {
-  if (typeof value !== "object" || value === null) return false;
-  const jwk = value as Record<string, unknown>;
+function snapshotSigningJwk(value: unknown): JWK | null {
+  const jwk = snapshotOwnDataRecord(value);
+  if (jwk === null) return null;
   return (
     jwk.kty === "EC" && jwk.crv === "P-256" &&
     typeof jwk.d === "string" && jwk.d.length > 0 &&
     typeof jwk.x === "string" && jwk.x.length > 0 &&
     typeof jwk.y === "string" && jwk.y.length > 0
-  );
+  ) ? Object.freeze({ ...jwk }) as JWK : null;
 }
 
 async function generateAndPersist(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
@@ -234,16 +242,5 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-function isExist(error: unknown): boolean {
-  return isErrorWithCode(error, ["EEXIST"]);
-}
-function isNotFound(error: unknown): boolean {
-  return isErrorWithCode(error, ["ENOENT"]);
-}
-function isErrorWithCode(error: unknown, codes: string[]): boolean {
-  return typeof error === "object" && error !== null && "code" in error &&
-    codes.includes((error as { code: string }).code);
-}
-function errMsg(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+function isExist(error: unknown): boolean { return isErrorWithCode(error, ["EEXIST"]); }
+function isNotFound(error: unknown): boolean { return isErrorWithCode(error, ["ENOENT"]); }

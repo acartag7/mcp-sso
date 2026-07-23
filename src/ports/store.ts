@@ -85,7 +85,7 @@ export class StoreInputError extends Error {
 }
 
 export function assertSha256Hex(value: string, label: string): void {
-  if (!/^[a-f0-9]{64}$/i.test(value)) {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/i.test(value)) {
     throw new StoreInputError(`${label} must be a SHA-256 hex digest`);
   }
 }
@@ -94,7 +94,7 @@ export function assertUtcIsoTimestamp(value: string, label: string): void {
   // EXACTLY 3 millisecond digits are required (addendum 9): stores compare expiry
   // strings lexicographically (SQLite TEXT / in-memory compare), and mixed precision
   // inverts ordering ("...00Z" sorts after "...00.500Z" -> expired flips to valid).
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
     throw new StoreInputError(`${label} must be a UTC ISO timestamp with exactly 3 ms digits (e.g. 2026-07-03T13:00:00.000Z)`);
   }
 }

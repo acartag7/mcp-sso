@@ -109,6 +109,30 @@ test("bridge: pre-validation redirect error is a direct 400 (no Location)", asyn
   assert.equal(res.redirect, undefined);
 });
 
+test("bridge: every duplicate-sensitive authorization parameter is rejected before redirect resolution", async () => {
+  const duplicateSensitive = [
+    "response_type", "client_id", "redirect_uri", "code_challenge",
+    "code_challenge_method", "resource", "scope", "state",
+  ] as const;
+  const base = {
+    response_type: "code",
+    client_id: "c",
+    redirect_uri: REDIRECT,
+    code_challenge: pkceChallenge("v-123456789012345678901234567890123"),
+    code_challenge_method: "S256",
+    resource: "https://api.test/mcp",
+    scope: "mcp:read",
+    state: "client-state",
+  };
+  for (const key of duplicateSensitive) {
+    const query: NormRequest["query"] = { ...base, [key]: [base[key], "duplicate"] };
+    const res = await setup().bridge.handleAuthorize(req({ query }), { subject: SUBJECT });
+    assert.equal(res.status, 400, `${key} duplicate was not rejected directly`);
+    assert.equal(res.redirect, undefined, `${key} duplicate reached redirect resolution`);
+    assert.equal((res.body as { error: string }).error, "invalid_request");
+  }
+});
+
 test("bridge: post-validation scope error is a 302 to redirect_uri?error=invalid_scope", async () => {
   const ctx = setup();
   const res = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: REDIRECT, code_challenge: pkceChallenge("v-123456789012345678901234567890123"), code_challenge_method: "S256", scope: "mcp:admin", state: "s" } }), { subject: SUBJECT });
@@ -169,4 +193,18 @@ test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Red
   const ctx = setup(boom);
   const res = await ctx.bridge.handleRegister(req({ body: { redirect_uris: [REDIRECT] } }));
   assert.equal(res.status, 201); // not 429 — the bridge guard() caught the throw and allowed
+});
+
+test("bridge: malformed registration members reject instead of being filtered", async () => {
+  const ctx = setup();
+  const bodies: unknown[] = [
+    { redirect_uris: [REDIRECT, 7] },
+    { redirect_uris: [REDIRECT], application_type: 7 },
+    { redirect_uris: [REDIRECT], token_endpoint_auth_method: 7 },
+    { redirect_uris: [REDIRECT], grant_types: ["authorization_code", 7] },
+  ];
+  for (const body of bodies) {
+    const response = await ctx.bridge.handleRegister(req({ body }));
+    assert.equal(response.status, 400);
+  }
 });

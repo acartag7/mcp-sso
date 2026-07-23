@@ -7,9 +7,12 @@ import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefresh
 import { assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
-  authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
+  authCodeFromRow, refreshTokenFromRow, parseScopes,
   type AuthCodeRow, type RefreshTokenRow,
 } from "./mysql-schema.ts";
+import {
+  requireRotationInput, requireSaveAuthCodeInput, requireSaveRefreshTokenInput,
+} from "../stored-records.ts";
 
 export class MysqlStore implements StorePort {
   private closed = false;
@@ -26,10 +29,10 @@ export class MysqlStore implements StorePort {
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();
-    validateAuthCode(input);
+    const safeInput = requireSaveAuthCodeInput(input);
     await this.pool.query(
       `INSERT INTO oauth_auth_codes (code_hash, client_id, subject, redirect_uri, resource, scopes_json, code_challenge, code_challenge_method, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [input.codeHash, input.clientId, input.subject, input.redirectUri, input.resource, JSON.stringify(input.scopes), input.codeChallenge, input.codeChallengeMethod, input.expiresAt],
+      [safeInput.codeHash, safeInput.clientId, safeInput.subject, safeInput.redirectUri, safeInput.resource, JSON.stringify(safeInput.scopes), safeInput.codeChallenge, safeInput.codeChallengeMethod, safeInput.expiresAt],
     );
   }
 
@@ -61,19 +64,19 @@ export class MysqlStore implements StorePort {
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
-    validateRefreshToken(input);
+    const safeInput = requireSaveRefreshTokenInput(input);
     await this.transaction(async (conn) => {
       await conn.query(
         `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, NULL) AS new ON DUPLICATE KEY UPDATE revoked_at = oauth_refresh_token_families.revoked_at`,
-        [input.familyId],
+        [safeInput.familyId],
       );
-      await insertRefreshToken(conn, input);
+      await insertRefreshToken(conn, safeInput);
     });
   }
 
   async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
-    validateRotation(tokenHash, next, nowIso);
+    const safeNext = requireRotationInput(tokenHash, next, nowIso);
     return this.transaction(async (conn) => {
       const [rows] = await conn.query<RowDataPacket[]>(
         `SELECT t.*, f.revoked_at AS f_revoked_at FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ? FOR UPDATE`,
@@ -82,11 +85,11 @@ export class MysqlStore implements StorePort {
       const row = rows[0] as RefreshTokenRow | undefined;
       if (!row || row.f_revoked_at !== null) return null;
       if (row.consumed_at !== null) { await revokeFamily(conn, row.family_id, nowIso); return null; } // SAME conn — review B1
-      if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
+      if (row.expires_at <= nowIso || safeNext.familyId !== row.family_id) return null;
       // Insert successor BEFORE marking the predecessor consumed: a colliding successor
       // hash returns null WITHOUT consuming the predecessor (sqlite parity; Codex P2).
       try {
-        await insertRefreshToken(conn, nextFromRow(next, row)); // Fix #3 backfill from the consumed row
+        await insertRefreshToken(conn, nextFromRow(safeNext, row)); // Fix #3 backfill from the consumed row
       } catch (error) {
         if (isDuplicateEntry(error)) return null;
         throw error;

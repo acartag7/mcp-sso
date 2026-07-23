@@ -1,4 +1,5 @@
 import { CimdError } from "./errors.ts";
+import { snapshotOwnDataRecord } from "../own-property.ts";
 
 export interface CimdDocument {
   readonly client_id: string;
@@ -19,30 +20,31 @@ export function validateCimdDocument(rawBody: string, rawClientId: string): Cimd
   } catch {
     throw invalid();
   }
-  if (!isObject(parsed)) throw invalid();
+  const document = snapshotOwnDataRecord(parsed);
+  if (document === null) throw invalid();
 
-  const clientId = parsed.client_id;
-  const clientName = parsed.client_name;
-  const redirectUris = parsed.redirect_uris;
+  const clientId = document.client_id;
+  const clientName = document.client_name;
+  const redirectUris = document.redirect_uris;
   if (typeof clientId !== "string" || clientId !== rawClientId) throw invalid();
   if (typeof clientName !== "string" || clientName.length === 0 || clientName.length > 256) throw invalid();
   if (!Array.isArray(redirectUris) || redirectUris.length < 1 || redirectUris.length > 16) throw invalid();
   for (const redirectUri of redirectUris) assertCimdRedirectUri(redirectUri);
 
-  if (Object.hasOwn(parsed, "token_endpoint_auth_method")
-    && parsed.token_endpoint_auth_method !== "none") throw invalid();
-  if (Object.hasOwn(parsed, "client_secret") || Object.hasOwn(parsed, "client_secret_expires_at")) {
+  if (Object.hasOwn(document, "token_endpoint_auth_method")
+    && document.token_endpoint_auth_method !== "none") throw invalid();
+  if (Object.hasOwn(document, "client_secret") || Object.hasOwn(document, "client_secret_expires_at")) {
     throw invalid();
   }
-  if (Object.hasOwn(parsed, "jwks")) assertPublicJwks(parsed.jwks);
-  if (Object.hasOwn(parsed, "response_types")) assertResponseTypes(parsed.response_types);
-  if (Object.hasOwn(parsed, "grant_types")) assertGrantTypes(parsed.grant_types);
+  if (Object.hasOwn(document, "jwks")) assertPublicJwks(document.jwks);
+  if (Object.hasOwn(document, "response_types")) assertResponseTypes(document.response_types);
+  if (Object.hasOwn(document, "grant_types")) assertGrantTypes(document.grant_types);
 
   return {
     client_id: clientId,
     client_name: clientName,
     redirect_uris: [...redirectUris] as string[],
-    raw: parsed,
+    raw: document,
   };
 }
 
@@ -74,9 +76,11 @@ export function assertCimdRedirectUri(raw: string): void {
 }
 
 function assertPublicJwks(value: unknown): void {
-  if (!isObject(value) || !Array.isArray(value.keys)) throw invalid();
-  for (const key of value.keys) {
-    if (!isObject(key)) throw invalid();
+  const jwks = snapshotOwnDataRecord(value);
+  if (jwks === null || !Array.isArray(jwks.keys)) throw invalid();
+  for (const value of jwks.keys) {
+    const key = snapshotOwnDataRecord(value);
+    if (key === null) throw invalid();
     for (const member of PRIVATE_JWK_MEMBERS) {
       if (Object.hasOwn(key, member)) throw invalid();
     }
@@ -106,10 +110,6 @@ function rawAuthorityHost(authority: string): string {
   }
   const colon = authority.lastIndexOf(":");
   return colon < 0 ? authority : authority.slice(0, colon);
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function invalid(): CimdError {

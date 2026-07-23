@@ -52,17 +52,46 @@ test("emailAllowed: case-insensitive, trimmed, rejects empty", () => {
 });
 
 test("validateCloudflareAccessClaims: gates", () => {
-  assert.equal(validateCloudflareAccessClaims({ email: "u@x.test", exp: NOW }, CONFIG).ok, true);
-  const ok = validateCloudflareAccessClaims({ email: "u@x.test", exp: NOW, sub: "sub-1" }, CONFIG);
+  const claims = (value: Record<string, unknown>) => ({
+    iss: CONFIG.issuer, aud: CONFIG.audience, ...value,
+  });
+  assert.equal(validateCloudflareAccessClaims(claims({ email: "u@x.test", exp: NOW }), CONFIG).ok, true);
+  const ok = validateCloudflareAccessClaims(claims({ email: "u@x.test", exp: NOW, sub: "sub-1" }), CONFIG);
   assert.equal(ok.ok && ok.identity.subject, "sub-1"); // sub preferred over email
-  const noSub = validateCloudflareAccessClaims({ email: "u@x.test", exp: NOW }, CONFIG);
+  const noSub = validateCloudflareAccessClaims(claims({ email: "u@x.test", exp: NOW }), CONFIG);
   assert.equal(noSub.ok && noSub.identity.subject, "u@x.test"); // falls back to email
-  assert.equal(validateCloudflareAccessClaims({ email: "u@x.test" }, CONFIG).ok, false); // no exp
-  assert.equal(validateCloudflareAccessClaims({ exp: NOW }, CONFIG).ok, false); // no email
-  const allowOk = validateCloudflareAccessClaims({ email: "u@x.test", exp: NOW }, { ...CONFIG, emailAllowlist: ["U@X.test"] });
+  assert.equal(validateCloudflareAccessClaims(claims({ email: "u@x.test" }), CONFIG).ok, false); // no exp
+  assert.equal(validateCloudflareAccessClaims(claims({ exp: NOW }), CONFIG).ok, false); // no email
+  const allowOk = validateCloudflareAccessClaims(claims({ email: "u@x.test", exp: NOW }), { ...CONFIG, emailAllowlist: ["U@X.test"] });
   assert.equal(allowOk.ok, true); // case-insensitive allowlist
-  const allowNo = validateCloudflareAccessClaims({ email: "u@x.test", exp: NOW }, { ...CONFIG, emailAllowlist: ["other@x.test"] });
+  const allowNo = validateCloudflareAccessClaims(claims({ email: "u@x.test", exp: NOW }), { ...CONFIG, emailAllowlist: ["other@x.test"] });
   assert.equal(allowNo.ok, false); // not in allowlist
+});
+
+test("validateCloudflareAccessClaims: claim and config decisions use own data only", () => {
+  const inheritedClaims = Object.assign(
+    Object.create({ email: "u@x.test", sub: "inherited-sub" }),
+    { iss: CONFIG.issuer, aud: CONFIG.audience, exp: NOW },
+  ) as never;
+  const inheritedResult = validateCloudflareAccessClaims(inheritedClaims, CONFIG);
+  assert.equal(inheritedResult.ok, false);
+  if (!inheritedResult.ok) assert.equal(inheritedResult.reason, "access_jwt_email_not_allowed");
+
+  let reads = 0;
+  const accessorClaims = { iss: CONFIG.issuer, aud: CONFIG.audience, exp: NOW } as Record<string, unknown>;
+  Object.defineProperty(accessorClaims, "email", {
+    enumerable: true,
+    get() { reads += 1; return "u@x.test"; },
+  });
+  const accessorResult = validateCloudflareAccessClaims(accessorClaims as never, CONFIG);
+  assert.equal(accessorResult.ok, false);
+  assert.equal(reads, 0);
+
+  const inheritedAllowlist = Object.assign(Object.create({ emailAllowlist: ["u@x.test"] }), CONFIG);
+  assert.equal(validateCloudflareAccessClaims(
+    { iss: CONFIG.issuer, aud: CONFIG.audience, exp: NOW, email: "other@x.test" },
+    inheritedAllowlist,
+  ).ok, true);
 });
 
 test("assertHttpsTrustRoot: raw prefix check before URL parsing (addendum 11)", () => {

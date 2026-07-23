@@ -16,7 +16,8 @@
 
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput } from "../ports/store.ts";
-import { StoreInputError, assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
+import { StoreInputError } from "../ports/store.ts";
+import { ownDataValue } from "../own-property.ts";
 
 export const MYSQL_OAUTH_TABLES = [
   "oauth_auth_codes", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_consent_jtis",
@@ -76,7 +77,9 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
 
 async function assertStrictMode(conn: PoolConnection): Promise<void> {
   const [rows] = await conn.query<RowDataPacket[]>("SELECT @@session.sql_mode AS sql_mode");
-  const modes = String((rows[0] as { sql_mode?: string } | undefined)?.sql_mode ?? "").split(",");
+  const row = ownDataValue(rows, 0);
+  const mode = ownDataValue(row, "sql_mode");
+  const modes = (typeof mode === "string" ? mode : "").split(",");
   // Either strict flag suffices for InnoDB (transactional) tables — they differ only for
   // non-transactional engines. Accepting both avoids false-failing a STRICT_ALL_TABLES config.
   if (!modes.includes("STRICT_TRANS_TABLES") && !modes.includes("STRICT_ALL_TABLES")) {
@@ -145,7 +148,7 @@ export async function revokeFamily(conn: PoolConnection, familyId: string, revok
 }
 
 export function isDuplicateEntry(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as { code?: string }).code === "ER_DUP_ENTRY";
+  return ownDataValue(error, "code") === "ER_DUP_ENTRY";
 }
 
 export function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow): SaveRefreshTokenInput {
@@ -158,25 +161,6 @@ export function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {
 
 export function refreshTokenFromRow(row: RefreshTokenRow): RefreshTokenRecord {
   return { tokenHash: row.token_hash, familyId: row.family_id, previousTokenHash: row.previous_token_hash, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), expiresAt: row.expires_at };
-}
-
-export function validateAuthCode(input: SaveAuthCodeInput): void {
-  assertSha256Hex(input.codeHash, "codeHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-  if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
-}
-
-export function validateRefreshToken(input: SaveRefreshTokenInput): void {
-  assertSha256Hex(input.tokenHash, "tokenHash");
-  if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-}
-
-export function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
-  assertSha256Hex(tokenHash, "tokenHash");
-  validateRefreshToken(next);
-  assertUtcIsoTimestamp(nowIso, "nowIso");
-  if (next.previousTokenHash !== tokenHash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
 }
 
 export function parseScopes(value: string): string[] {

@@ -120,3 +120,22 @@ test("combineAudit: a rejected sink's reason never reaches stderr", async () => 
   assert.equal(stderr.includes("LEAKED-REFRESH"), false, "rejection reason leaked to stderr");
   assert.ok(stderr.includes("1/2"), "the failure count was surfaced");
 });
+
+test("combineAudit: hostile event-label accessors cannot turn a sink rejection into a composite rejection", async () => {
+  const captured = captureConsoleError();
+  try {
+    for (const field of ["event", "status"] as const) {
+      let reads = 0;
+      const hostile = { ...event };
+      Object.defineProperty(hostile, field, {
+        enumerable: true,
+        get() { reads += 1; throw new Error(`${field} getter`); },
+      });
+      const combined = combineAudit(new ThrowingSink());
+      await assert.doesNotReject(() => combined.writeAuthEvent(hostile));
+      assert.equal(reads, 0, `${field} accessor was invoked while formatting the failure`);
+    }
+  } finally {
+    captured.restore();
+  }
+});

@@ -113,10 +113,41 @@ test("resolveGroupCeiling: malformed groups claim (non-array) treated as no grou
   assert.equal(!r.ok && r.reason, "entra_no_groups");
 });
 
-test("resolveGroupCeiling: non-string group entries are dropped, valid ones still match (defensive)", () => {
+test("resolveGroupCeiling: a non-string group entry rejects the whole claim", () => {
   const r = resolveGroupCeiling({ groups: [123, READERS, null, ""] }, { mapping: { [READERS]: ["mcp:read"] }, baseScopes: [] });
-  assert.equal(r.ok, true);
-  assert.deepEqual(r.ok && [...r.allowedScopes].sort(), ["mcp:read"]);
+  assert.equal(r.ok, false);
+  assert.equal(!r.ok && r.reason, "entra_no_groups");
+});
+
+test("resolveGroupCeiling: group claims and authorization mapping use own data only", () => {
+  const inheritedGroups = Object.create({ groups: [READERS] }) as Record<string, unknown>;
+  const inheritedClaimResult = resolveGroupCeiling(
+    inheritedGroups,
+    { mapping: { [READERS]: ["mcp:read"] }, baseScopes: [] },
+  );
+  assert.equal(inheritedClaimResult.ok, false);
+  if (!inheritedClaimResult.ok) assert.equal(inheritedClaimResult.reason, "entra_no_groups");
+
+  const inheritedMapping = Object.create({ mapping: { [READERS]: ["mcp:read"] } }) as GroupAuthorization;
+  assert.deepEqual(computeGroupScopes([READERS], inheritedMapping), []);
+
+  const inheritedBaseScopes = Object.assign(
+    Object.create({ baseScopes: ["mcp:base"] }),
+    { mapping: { [READERS]: ["mcp:read"] } },
+  ) as GroupAuthorization;
+  assert.deepEqual(computeGroupScopes([], inheritedBaseScopes), []);
+
+  let reads = 0;
+  const accessorClaim: Record<string, unknown> = {};
+  Object.defineProperty(accessorClaim, "groups", {
+    enumerable: true,
+    get() { reads += 1; return [READERS]; },
+  });
+  assert.equal(resolveGroupCeiling(
+    accessorClaim,
+    { mapping: { [READERS]: ["mcp:read"] }, baseScopes: [] },
+  ).ok, false);
+  assert.equal(reads, 0);
 });
 
 test("hasOverageMarker: _claim_names.groups and hasgroups both detected; absent otherwise", () => {

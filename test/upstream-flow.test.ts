@@ -582,12 +582,15 @@ test("callback: cookie cleared on every response that had a readable cookie (suc
 // Adapter mutual-exclusion (fastify/express/hono) — exactly one authorize mode
 // ============================================================================
 
-function adapterMutualExclusion(label: string, mount: (mode: "upstream+identity" | "upstream+skip" | "upstream-only" | "identity-only") => Promise<unknown>): void {
+function adapterMutualExclusion(label: string, mount: (mode: "upstream+identity" | "upstream+header" | "upstream+skip" | "upstream-only" | "identity-only") => Promise<unknown>): void {
   test(`adapter (${label}): upstream + identity throws at registration`, async () => {
     await assert.rejects(() => mount("upstream+identity"), /mutually exclusive/);
   });
   test(`adapter (${label}): upstream + skipAuthorize throws at registration`, async () => {
     await assert.rejects(() => mount("upstream+skip"), /mutually exclusive/);
+  });
+  test(`adapter (${label}): upstream + identityHeader throws at registration`, async () => {
+    await assert.rejects(() => mount("upstream+header"), /mutually exclusive/);
   });
   test(`adapter (${label}): upstream-only registers /oauth/authorize + callbackPath`, async () => {
     await mount("upstream-only"); // must not throw
@@ -605,6 +608,7 @@ function adapterBase(c: BridgeConfig): Bridge { return new Bridge({ config: c, s
 function adapterOpts(mode: string, c: BridgeConfig): Record<string, unknown> {
   const opts: Record<string, unknown> = { bridge: adapterBase(c) };
   if (mode === "upstream+identity") { opts.upstream = stubFlow(c); opts.identity = headerIdentity() as never; }
+  else if (mode === "upstream+header") { opts.upstream = stubFlow(c); opts.identityHeader = "x-identity"; }
   else if (mode === "upstream+skip") { opts.upstream = stubFlow(c); opts.skipAuthorize = true; }
   else if (mode === "upstream-only") { opts.upstream = stubFlow(c); }
   else { opts.identity = headerIdentity() as never; }
@@ -614,6 +618,98 @@ function adapterOpts(mode: string, c: BridgeConfig): Record<string, unknown> {
 adapterMutualExclusion("fastify", async (mode) => { const c = config(); const app = Fastify(); await registerOAuthRoutes(app, adapterOpts(mode, c) as never); });
 adapterMutualExclusion("express", async (mode) => { const c = config(); return createOAuthRouter(adapterOpts(mode, c) as never); });
 adapterMutualExclusion("hono", async (mode) => { const c = config(); return createOAuthApp(adapterOpts(mode, c) as never); });
+
+function inheritedSkipOptions(kind: "inherited" | "accessor"): {
+  options: Record<string, unknown>;
+  reads: () => number;
+} {
+  let getterReads = 0;
+  const options = kind === "inherited"
+    ? Object.create({ skipAuthorize: true }) as Record<string, unknown>
+    : {} as Record<string, unknown>;
+  options.bridge = adapterBase(config());
+  if (kind === "accessor") {
+    Object.defineProperty(options, "skipAuthorize", {
+      enumerable: true,
+      get() { getterReads += 1; return true; },
+    });
+  }
+  return { options, reads: () => getterReads };
+}
+
+function adapterSkipAuthorizeBoundary(
+  label: string,
+  mount: (options: Record<string, unknown>) => Promise<unknown>,
+): void {
+  for (const kind of ["inherited", "accessor"] as const) {
+    test(`adapter (${label}): ${kind} skipAuthorize cannot suppress the identity-required gate`, async () => {
+      const probe = inheritedSkipOptions(kind);
+      await assert.rejects(() => mount(probe.options), /identity is required/);
+      assert.equal(probe.reads(), 0, "skipAuthorize accessor was invoked");
+    });
+  }
+}
+
+adapterSkipAuthorizeBoundary("fastify", async (options) => {
+  const app = Fastify();
+  try { await registerOAuthRoutes(app, options as never); } finally { await app.close(); }
+});
+adapterSkipAuthorizeBoundary("express", async (options) => createOAuthRouter(options as never));
+adapterSkipAuthorizeBoundary("hono", async (options) => createOAuthApp(options as never));
+
+function adapterIdentityHeaderBoundary(
+  label: string,
+  mount: (options: Record<string, unknown>) => Promise<unknown>,
+): void {
+  for (const kind of ["inherited", "accessor"] as const) {
+    test(`adapter (${label}): ${kind} identityHeader does not alter upstream mode`, async () => {
+      let reads = 0;
+      const options = kind === "inherited"
+        ? Object.create({ identityHeader: "x-inherited" }) as Record<string, unknown>
+        : {} as Record<string, unknown>;
+      options.bridge = adapterBase(config());
+      options.upstream = stubFlow(config());
+      if (kind === "accessor") {
+        Object.defineProperty(options, "identityHeader", {
+          enumerable: true,
+          get() { reads += 1; return "x-accessor"; },
+        });
+      }
+      await assert.doesNotReject(() => mount(options));
+      assert.equal(reads, 0);
+    });
+  }
+}
+
+adapterIdentityHeaderBoundary("fastify", async (options) => {
+  const app = Fastify();
+  try { await registerOAuthRoutes(app, options as never); } finally { await app.close(); }
+});
+adapterIdentityHeaderBoundary("express", async (options) => createOAuthRouter(options as never));
+adapterIdentityHeaderBoundary("hono", async (options) => createOAuthApp(options as never));
+
+test("entra-redirect: the default token transport refuses redirects", async () => {
+  const tenantId = "11111111-2222-3333-4444-555555555555";
+  const redirectUri = `${originOf(config().issuer)}${CALLBACK_PATH}`;
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async (_input, init) => {
+    calls += 1;
+    assert.equal(init?.method, "POST");
+    assert.equal(init?.redirect, "error");
+    return new Response("upstream unavailable", { status: 503 });
+  }) as typeof fetch;
+  try {
+    const identity = createEntraRedirectIdentity({ tenantId, clientId: "cid", redirectUri });
+    const result = await identity.exchangeAndVerify({
+      code: "code", codeVerifier: "v".repeat(43), nonce: "nonce",
+    });
+    assert.equal(result.ok, false);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
 
 test("adapter wiring + cookie delivery: all three adapters mount GET /oauth/authorize -> handleAuthorize (302 + Set-Cookie) and GET callbackPath -> handleCallback", async () => {
   const c = config();

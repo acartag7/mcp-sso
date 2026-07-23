@@ -1,3 +1,5 @@
+import { ownBooleanTrue, snapshotOwnDataRecord } from "../own-property.ts";
+
 export interface ParsedIp {
   readonly family: 4 | 6;
   readonly bytes: Uint8Array;
@@ -11,20 +13,25 @@ interface CidrRange {
 export function parseIp(text: string): ParsedIp | null {
   if (typeof text !== "string" || text === "" || text.includes("%")) return null;
   const v4 = parseIpv4(text);
-  if (v4) return { family: 4, bytes: v4 };
+  if (v4) return Object.freeze({ family: 4 as const, bytes: v4 });
   if (!text.includes(":")) return null;
   const v6 = parseIpv6(text);
-  return v6 ? { family: 6, bytes: v6 } : null;
+  return v6 ? Object.freeze({ family: 6 as const, bytes: v6 }) : null;
 }
 
 export function isBlockedIp(ip: ParsedIp, opts: { allowLoopback?: boolean } = {}): boolean {
-  if (!isParsedIp(ip)) return true;
-  if (opts.allowLoopback === true) {
-    if (ip.family === 4 && ip.bytes[0] === 127) return false;
-    if (ip.family === 6 && isIpv6Loopback(ip.bytes)) return false;
+  const parsed = snapshotOwnDataRecord(ip);
+  const family = parsed?.family;
+  const rawBytes = parsed?.bytes;
+  if ((family !== 4 && family !== 6) || !(rawBytes instanceof Uint8Array)
+    || rawBytes.length !== (family === 4 ? 4 : 16)) return true;
+  const bytes = new Uint8Array(rawBytes);
+  if (ownBooleanTrue(opts, "allowLoopback")) {
+    if (family === 4 && bytes[0] === 127) return false;
+    if (family === 6 && isIpv6Loopback(bytes)) return false;
   }
-  const ranges = ip.family === 4 ? IPV4_RANGES : IPV6_RANGES;
-  return ranges.some((range) => contains(range, ip.bytes));
+  const ranges = family === 4 ? IPV4_RANGES : IPV6_RANGES;
+  return ranges.some((range) => contains(range, bytes));
 }
 
 export function isBlockedAddress(text: string, opts: { allowLoopback?: boolean } = {}): boolean {
@@ -83,13 +90,6 @@ function parseHextets(text: string): number[] | null {
   const parts = text.split(":");
   if (parts.some((part) => !/^[0-9a-f]{1,4}$/i.test(part))) return null;
   return parts.map((part) => Number.parseInt(part, 16));
-}
-
-function isParsedIp(value: ParsedIp): boolean {
-  return value !== null && typeof value === "object"
-    && (value.family === 4 || value.family === 6)
-    && value.bytes instanceof Uint8Array
-    && value.bytes.length === (value.family === 4 ? 4 : 16);
 }
 
 function isIpv6Loopback(bytes: Uint8Array): boolean {
