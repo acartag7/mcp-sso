@@ -1,7 +1,7 @@
 import { Resolver } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
 import { admitCimdUrl, type AdmittedUrl } from "./admission.ts";
-import { isBlockedIp, parseIp, type ParsedIp } from "./blocklist.ts";
+import { isBlockedIp, ownBooleanTrue, parseIp, type ParsedIp } from "./blocklist.ts";
 import { validateCimdDocument, type CimdDocument } from "./document.ts";
 import { CimdError } from "./errors.ts";
 const BRAND: unique symbol = Symbol("GuardedFetcher");
@@ -34,7 +34,7 @@ export function createGuardedFetcher(opts: {
   const transport = opts.transport ?? NODE_TRANSPORT;
   const maxBytes = integerOption(opts.maxDocumentBytes, 5120, 1024, 65536, "maxDocumentBytes");
   const timeoutMs = integerOption(opts.fetchTimeoutMs, 5000, 1000, 30000, "fetchTimeoutMs");
-  const allowLoopback = opts.allowLoopback === true;
+  const allowLoopback = ownBooleanTrue(opts, "allowLoopback");
   const fetcher = {
     async fetch(rawClientId: string): Promise<CimdFetchResult> {
       const admitted = admitCimdUrl(rawClientId, { allowLoopback });
@@ -90,7 +90,7 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
     && (admitted.hostname === "localhost" || admitted.hostname.endsWith(".localhost"));
   if (loopbackHost) {
     if (!addresses.every(isLoopback)) throw new CimdError("dns_failed");
-  } else if (addresses.some(({ parsed }) => isBlockedIp(parsed))) {
+  } else if (addresses.some(({ parsed }) => isBlockedIp(parsed, { allowLoopback: false }))) {
     throw new CimdError("ip_blocked");
   }
   const target = addresses[0]!;

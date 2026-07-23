@@ -1,3 +1,7 @@
+export function ownBooleanTrue(o: unknown, k: string): boolean {
+  return typeof o === "object" && o !== null && Object.hasOwn(o, k) && (o as Record<string, unknown>)[k] === true;
+}
+
 export interface ParsedIp {
   readonly family: 4 | 6;
   readonly bytes: Uint8Array;
@@ -19,7 +23,7 @@ export function parseIp(text: string): ParsedIp | null {
 
 export function isBlockedIp(ip: ParsedIp, opts: { allowLoopback?: boolean } = {}): boolean {
   if (!isParsedIp(ip)) return true;
-  if (opts.allowLoopback === true) {
+  if (ownBooleanTrue(opts, "allowLoopback")) {
     if (ip.family === 4 && ip.bytes[0] === 127) return false;
     if (ip.family === 6 && isIpv6Loopback(ip.bytes)) return false;
   }
