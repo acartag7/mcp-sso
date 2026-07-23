@@ -236,7 +236,7 @@ its enforcement evidence.
 
 | # | Scenario | Assert |
 |---|---|---|
-| S6b.1 | Boot config | Branded fetcher accepted; unbranded fetcher rejected; default guarded fetcher constructed. |
+| S6b.1 | Boot config | **No whole `cimd.fetcher` config knob** (removed — §17.1.6 decision 5): the core constructs the default guarded fetcher from the `cimd` caps + `allowLoopback` derived solely from `dev.allowInsecureLocalhost`; only the below-guard `cimdTransport`/`cimdResolver` seams (never a whole `GuardedFetcher`, never a `BridgeConfig` field) inject in tests. |
 | S6b.2 | Happy path | URL-shaped `client_id` fetches the doc, validates; authorize→token→`/mcp` succeeds. |
 | S6b.3 | Generic client error | Every CIMD failure returns identical client-facing error text. |
 | S6b.4 | Audit detail | `oauth.cimd.fetch` records the specific reason without leaking the document body or secrets. |

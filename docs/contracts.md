@@ -1944,7 +1944,12 @@ unauthenticated caller sending sequential authorize requests for one valid CIMD 
 would drive an unbounded series of outbound fetches (single-flight coalesces only
 CONCURRENT requests; `maxInFlight` caps only concurrency; the rate limiter is optional
 + fail-open). Carrying the doc through one flow prevents a callback re-fetch; the
-cache prevents the cross-request amplification. `CimdFetchResult`
+cache collapses repeated same-id fetches to one per freshness window **for cacheable
+responses only** — a deliberately non-cacheable response (`no-store`, absent
+`Cache-Control`, or `max-age` below 60, all attacker-controllable) is re-fetched on
+each request and is bounded only by the optional `cimd:<ip>` limiter (documented
+residual, threat rows 25/35; a mandatory origin-independent success budget is the §18
+option, not built in v0.2). `CimdFetchResult`
 (guarded-fetcher.ts:8, `{ document }`) is extended additively with a **minimal
 duplicate-aware cache view** — the `Cache-Control` directive occurrences and the
 `Age` field occurrences ONLY (from the transport's `headersDistinct`, rule 14) — NOT
