@@ -153,9 +153,9 @@ test("WebhookAudit: a 3xx response is not followed (manual), and never rejects",
   assert.equal(state.calls.length, 1, "a redirect must NOT be followed and must NOT be retried");
 });
 
-test("WebhookAudit: omitting fetchImpl binds the global fetch at construction", async () => {
-  // Proves behaviorally that the default is globalThis.fetch (captured at
-  // construction), not just that the constructor does not throw.
+test("WebhookAudit: omitting fetchImpl uses the guarded global fetch", async () => {
+  // Proves behaviorally that the default delegates to globalThis.fetch when
+  // process-wide TLS verification remains enabled.
   const original = globalThis.fetch;
   let called = 0;
   globalThis.fetch = (async () => {

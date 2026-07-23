@@ -15,6 +15,7 @@ import { resolveAllowedAlgs } from "./generic-oidc-claims.ts";
 import {
   bindClassDataMethod, ownBooleanTrue, snapshotOwnDataRecord, snapshotOwnStringArray,
 } from "../own-property.ts";
+import { guardedGlobalFetch } from "../outbound-tls.ts";
 import { captureHttpResponse } from "./util.ts";
 
 /** Manual endpoint mode — zero boot-time fetching. */
@@ -56,7 +57,11 @@ export interface GenericOidcTokenTransport {
  *  surfaces as status !== 200 ⇒ fail closed), 10 s hard deadline. */
 export const defaultDiscoveryTransport: DiscoveryTransport = {
   async get(url) {
-    const resp = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { accept: "application/json" } });
+    const resp = await guardedGlobalFetch(url, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(10_000),
+      headers: { accept: "application/json" },
+    });
     return { status: resp.status, json: () => resp.json() };
   },
 };
@@ -68,7 +73,7 @@ export const defaultDiscoveryTransport: DiscoveryTransport = {
  *  https-validated + deployer-trusted, so a redirect is never legitimate). */
 export const defaultTokenTransport: GenericOidcTokenTransport = {
   async postForm(url, body, headers) {
-    const resp = await fetch(url, {
+    const resp = await guardedGlobalFetch(url, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded", ...(headers ?? {}) },
       body: body.toString(),

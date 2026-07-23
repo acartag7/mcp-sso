@@ -35,6 +35,7 @@
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
 import { safeErrorMessage } from "./util.ts";
 import { snapshotOwnDataRecord } from "../own-property.ts";
+import { guardedGlobalFetch } from "../outbound-tls.ts";
 
 export interface WebhookAuditOptions {
   /** Per-request deadline. Default 5000 ms (§17.7). */
@@ -104,7 +105,7 @@ export class WebhookAudit implements AuditPort {
     }
     this.timeoutMs = timeoutMs;
     this.headers = Object.freeze({ "Content-Type": "application/json", ...extraHeaders });
-    this.fetchImpl = (optionFields.fetchImpl as typeof fetch | undefined) ?? globalThis.fetch;
+    this.fetchImpl = (optionFields.fetchImpl as typeof fetch | undefined) ?? guardedGlobalFetch;
   }
 
   async writeAuthEvent(event: AuthAuditEvent): Promise<void> {

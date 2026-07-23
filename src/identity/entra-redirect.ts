@@ -48,6 +48,7 @@ import {
 } from "./entra.ts";
 import { redactForStderr } from "../audit/util.ts";
 import { snapshotOwnDataRecord } from "../own-property.ts";
+import { guardedGlobalFetch } from "../outbound-tls.ts";
 import { snapshotEntraConfig } from "./entra-config.ts";
 
 /** The exact upstream scope this port requests — `offline_access` is omitted on
@@ -71,7 +72,7 @@ export interface EntraRedirectOptions {
  *  the URL `exchangeCodeForToken` supplies (always the hardcoded Entra endpoint). */
 const defaultTransport: EntraTokenTransport = {
   async postForm(url, body) {
-    const resp = await fetch(url, {
+    const resp = await guardedGlobalFetch(url, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: body.toString(),

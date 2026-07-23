@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, customFetch, errors, jwksCache } from "jose";
 import { ownDataValue, snapshotOwnDataArray, snapshotOwnDataRecord } from "../own-property.ts";
+import { guardedGlobalFetch } from "../outbound-tls.ts";
 import { captureHttpResponse } from "./util.ts";
 
 type RemoteJwkSet = ReturnType<typeof createRemoteJWKSet>;
@@ -35,7 +36,7 @@ export function createValidatedRemoteJWKSet(
     throw new TypeError("validated remote JWKS does not accept an external cache");
   }
   const upstream = (configuredFetch as FetchImplementation | undefined)
-    ?? globalThis.fetch as FetchImplementation;
+    ?? guardedGlobalFetch as FetchImplementation;
   const guardedFetch: FetchImplementation = async (...args) => {
     const response = captureHttpResponse(await upstream(...args), "json");
     if (response === null) throw new errors.JWKSInvalid("JWKS response is malformed");
