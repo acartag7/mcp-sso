@@ -4,6 +4,15 @@
     "cimd/admission.test.ts": "341463656dfee93f1ed6c29dd93805f6ce0f128bf4e0eb17b1a67b862278d869",
     "cimd/blocklist.test.ts": "776d8ad97ee0fb2296cb7377bf06f6caa73d9c3a44d76037b1192876f6aebc66",
     "cimd/document.test.ts": "7e45170890ea9e0242b8f8ad0464ccb324ce9e03a7f556ba6946e42c9b1108a6",
-    "cimd/guarded-fetcher.test.ts": "6b1480d502067351fdcae87e120f3c7779e61be6a52f10899a4c31121dce3ab0"
+    "cimd/guarded-fetcher.test.ts": "6b1480d502067351fdcae87e120f3c7779e61be6a52f10899a4c31121dce3ab0",
+    "cimd/s6b-anti-oracle.test.ts": "c08bcbdc47cf87714387e3aaff89b2f9e3dfd877b8f9f94644e7f01740cdf2a2",
+    "cimd/s6b-audit.test.ts": "f1e33342fc6da5dbb8ae28e52e133704a3dfeea714f04764f2e3e1028ab9b9f4",
+    "cimd/s6b-boot.test.ts": "54732a6381a65f6b8c183ed3bd47ac51ad6612c71add75ab9b899bec9a14ebcf",
+    "cimd/s6b-cache.test.ts": "42ecab89c8456d0bcbc1310bc69e8eeec101a4975a166a1beef4d42e0ec6f36e",
+    "cimd/s6b-consent.test.ts": "203d54cc6e8a94c7ae13aecb1026deaf9be31c7859000bacba71e03b7734f44a",
+    "cimd/s6b-dispatch.test.ts": "77898471e0bc70aa398d606efa25e2432b847bb95c667a5a28742c006862a9e4",
+    "cimd/s6b-metadata.test.ts": "a7976b0c2aa9298f2057b19ff65c228578f46746e722aa4d32d913059ffcdd36",
+    "cimd/s6b-redirect.test.ts": "55b0713f3b8652dfd9444096a1b4a19fd03a41fdaeb74221efa059a547f1b141",
+    "cimd/s6b-scope.test.ts": "8478138636261026dcf87e88ed76adf601ccded6be7e98788ad5dbd6d80361c3"
   }
 }
