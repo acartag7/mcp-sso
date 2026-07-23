@@ -160,8 +160,8 @@ function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JWTExpired) return "access_jwt_expired";
   if (error instanceof errors.JWTClaimValidationFailed) return "access_jwt_bad_claim";
   if (error instanceof errors.JOSEAlgNotAllowed) return "access_jwt_unsupported_alg";
-  if (error instanceof errors.JWKSNoMatchingKey) return "access_jwt_unknown_key";
   if (isRemoteJwksInfrastructureError(error)) return "access_jwt_verify_failed";
+  if (error instanceof errors.JWKSNoMatchingKey) return "access_jwt_unknown_key";
   if (error instanceof errors.JOSEError) return "access_jwt_invalid";
   return "access_jwt_verify_failed";
 }

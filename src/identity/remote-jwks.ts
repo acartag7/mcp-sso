@@ -59,8 +59,10 @@ export function createValidatedRemoteJWKSet(
       key = await remote(...args);
     } catch (error) {
       const kid = ownDataValue(args[0], "kid");
-      if (error instanceof errors.JWKSMultipleMatchingKeys
-        && typeof kid === "string" && kid.length > 0) {
+      if (typeof kid === "string" && kid.length > 0
+        && (error instanceof errors.JWKSMultipleMatchingKeys
+          || (error instanceof errors.JWKSNoMatchingKey
+            && cachedJwksHasOwnKid(remote, kid)))) {
         REMOTE_JWKS_SOURCE_ERRORS.add(error);
       }
       throw error;
@@ -93,7 +95,14 @@ function sanitizeJwks(value: unknown): Readonly<Record<string, unknown>> {
     throw new errors.JWKSInvalid("JSON Web Key Set must contain own data properties");
   }
   const safe = Object.create(null) as Record<string, unknown>;
-  const safeKeys = keys.map((entry) => sanitizeJwk(entry));
+  const safeKeys: Readonly<Record<string, unknown>>[] = [];
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = sanitizeJwk(keys[index]);
+    if (key !== null) safeKeys[safeKeys.length] = key;
+  }
+  if (safeKeys.length === 0) {
+    throw new errors.JWKSInvalid("JSON Web Key Set must contain a supported public key");
+  }
   safe.keys = Object.freeze(safeKeys);
   return Object.freeze(safe);
 }
@@ -102,7 +111,7 @@ const SELECTOR_FIELDS = ["kty", "kid", "alg", "use", "key_ops", "crv"] as const;
 
 /** Copy only public key material and jose's key-selection fields. Unknown JWK
  * extensions are ignored without traversing their values. */
-function sanitizeJwk(value: unknown): Readonly<Record<string, unknown>> {
+function sanitizeJwk(value: unknown): Readonly<Record<string, unknown>> | null {
   const jwk = snapshotOwnDataRecord(value);
   if (jwk === null) throw new errors.JWKSInvalid("JSON Web Key Set members must be data objects");
   const safe = Object.create(null) as Record<string, unknown>;
@@ -111,6 +120,7 @@ function sanitizeJwk(value: unknown): Readonly<Record<string, unknown>> {
       throw new errors.JWKSInvalid("JSON Web Key Set members must be public keys");
     }
   }
+  if (jwk.kty !== "RSA" && jwk.kty !== "EC") return null;
   for (const field of PUBLIC_JWK_STRING_FIELDS) {
     if (Object.hasOwn(jwk, field)) {
       if (typeof jwk[field] !== "string") {
@@ -131,6 +141,22 @@ function sanitizeJwk(value: unknown): Readonly<Record<string, unknown>> {
     if (!Object.hasOwn(safe, field)) safe[field] = undefined;
   }
   return Object.freeze(safe);
+}
+
+function cachedJwksHasOwnKid(remote: RemoteJwkSet, expectedKid: string): boolean {
+  let value: unknown;
+  try {
+    value = remote.jwks();
+  } catch {
+    return false;
+  }
+  const jwks = snapshotOwnDataRecord(value);
+  const keys = jwks === null ? null : snapshotOwnDataArray(jwks.keys);
+  if (keys === null) return false;
+  for (let index = 0; index < keys.length; index += 1) {
+    if (ownDataValue(keys[index], "kid") === expectedKid) return true;
+  }
+  return false;
 }
 
 function assertOwnPublicKeyMaterial(jwk: Readonly<Record<string, unknown>>): void {

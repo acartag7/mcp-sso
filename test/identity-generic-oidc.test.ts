@@ -668,6 +668,7 @@ test("createGenericOidcRedirectIdentity: unusable remote key sets are exchange_f
   const keySets = [
     [nonPublicJwk],
     [{ ...publicJwk, oth: [] }],
+    [{ ...publicJwk, key_ops: ["encrypt"] }],
     [publicJwk, { ...publicJwk }],
   ];
   const realFetch = globalThis.fetch;

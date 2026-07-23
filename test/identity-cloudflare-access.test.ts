@@ -138,12 +138,17 @@ test("createCloudflareAccessIdentity classifies an unusable remote key as a veri
     .setIssuer(CONFIG.issuer).setAudience(CONFIG.audience)
     .setIssuedAt(NOW).setExpirationTime(NOW + 3600).sign(rsa.privateKey);
   const nonPublicJwk = { ...await exportJWK(rsa.privateKey), kid: "selected-key", alg: "RS256" };
+  const nonVerifyingJwk = {
+    ...await exportJWK(rsa.publicKey), kid: "selected-key", alg: "RS256", key_ops: ["encrypt"],
+  };
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ keys: [nonPublicJwk] }), { status: 200 })) as typeof fetch;
   try {
-    const result = await createCloudflareAccessIdentity(CONFIG).verify(token);
-    assert.deepEqual(result, { ok: false, reason: "access_jwt_verify_failed" });
+    for (const jwk of [nonPublicJwk, nonVerifyingJwk]) {
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ keys: [jwk] }), { status: 200 })) as typeof fetch;
+      const result = await createCloudflareAccessIdentity(CONFIG).verify(token);
+      assert.deepEqual(result, { ok: false, reason: "access_jwt_verify_failed" });
+    }
   } finally {
     globalThis.fetch = realFetch;
   }

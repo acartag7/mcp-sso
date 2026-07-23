@@ -136,6 +136,65 @@ test("validated remote JWKS preserves key_ops restrictions", async () => {
   );
 });
 
+test("validated remote JWKS classifies unusable matching keys as source failures", async () => {
+  const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+  const publicJwk = {
+    ...await exportJWK(publicKey),
+    kid: "selected-key",
+    alg: "RS256",
+    key_ops: ["encrypt"],
+  };
+  const response = () => new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 });
+  const tokenFor = (kid: string) => new SignJWT({ sub: "subject" })
+    .setProtectedHeader({ alg: "RS256", kid })
+    .setExpirationTime("5m")
+    .sign(privateKey);
+
+  const matching = createValidatedRemoteJWKSet(
+    new URL("https://issuer.test/unusable-matching-key"),
+    { [customFetch]: async () => response() },
+  );
+  await assert.rejects(
+    jwtVerify(await tokenFor("selected-key"), matching, { algorithms: ["RS256"] }),
+    (error: unknown) => error instanceof errors.JWKSNoMatchingKey
+      && isRemoteJwksInfrastructureError(error),
+  );
+
+  const absent = createValidatedRemoteJWKSet(
+    new URL("https://issuer.test/absent-key"),
+    { [customFetch]: async () => response() },
+  );
+  await assert.rejects(
+    jwtVerify(await tokenFor("absent-key"), absent, { algorithms: ["RS256"] }),
+    (error: unknown) => error instanceof errors.JWKSNoMatchingKey
+      && !isRemoteJwksInfrastructureError(error),
+  );
+});
+
+test("validated remote JWKS ignores unrelated public key families", async () => {
+  const signing = await generateKeyPair("RS256", { extractable: true });
+  const unrelated = await generateKeyPair("EdDSA", { extractable: true });
+  const token = await new SignJWT({ sub: "subject" })
+    .setProtectedHeader({ alg: "RS256", kid: "selected-key" })
+    .setExpirationTime("5m")
+    .sign(signing.privateKey);
+  const keys = [
+    { ...await exportJWK(unrelated.publicKey), kid: "unrelated-key", alg: "EdDSA" },
+    { ...await exportJWK(signing.publicKey), kid: "selected-key", alg: "RS256" },
+  ];
+  const guarded = createValidatedRemoteJWKSet(
+    new URL("https://issuer.test/heterogeneous-jwks"),
+    {
+      [customFetch]: async () =>
+        new Response(JSON.stringify({ keys }), { status: 200 }),
+    },
+  );
+
+  await assert.doesNotReject(jwtVerify(token, guarded, { algorithms: ["RS256"] }));
+  const cached = guarded.jwks() as { keys: unknown[] };
+  assert.equal(cached.keys.length, 1);
+});
+
 test("validated remote JWKS requires RSA and EC key material to be own data", async () => {
   const cases = [
     { alg: "RS256", kty: "RSA", material: ["n", "e"] as const },

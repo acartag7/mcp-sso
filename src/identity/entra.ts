@@ -222,10 +222,10 @@ function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JWTExpired) return "entra_token_expired";
   if (error instanceof errors.JWTClaimValidationFailed) return "entra_bad_claim";
   if (error instanceof errors.JOSEAlgNotAllowed) return "entra_unsupported_alg";
-  if (error instanceof errors.JWKSNoMatchingKey) return "entra_unknown_key";
   // A remote key-source timeout, malformed response, or unusable matching key
   // means no identity decision was possible (§17.11). Sibling of generic OIDC.
   if (isRemoteJwksInfrastructureError(error)) return "entra_verify_failed";
+  if (error instanceof errors.JWKSNoMatchingKey) return "entra_unknown_key";
   if (error instanceof errors.JOSEError) return "entra_token_invalid";
   return "entra_verify_failed";
 }

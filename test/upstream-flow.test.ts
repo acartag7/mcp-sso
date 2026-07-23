@@ -991,15 +991,20 @@ test("entra-redirect: an unusable remote key is exchange_failed", async () => {
     },
   };
   const nonPublicJwk = { ...await exportJWK(rsa.privateKey), kid: "selected-key", alg: "RS256" };
+  const nonVerifyingJwk = {
+    ...await exportJWK(rsa.publicKey), kid: "selected-key", alg: "RS256", key_ops: ["encrypt"],
+  };
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ keys: [nonPublicJwk] }), { status: 200 })) as typeof fetch;
   try {
-    const identity = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport });
-    const result = await identity.exchangeAndVerify({
-      code: "c", codeVerifier: "v".repeat(43), nonce: "N1",
-    });
-    assert.ok(!result.ok && result.kind === "exchange_failed");
+    for (const jwk of [nonPublicJwk, nonVerifyingJwk]) {
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ keys: [jwk] }), { status: 200 })) as typeof fetch;
+      const identity = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport });
+      const result = await identity.exchangeAndVerify({
+        code: "c", codeVerifier: "v".repeat(43), nonce: "N1",
+      });
+      assert.ok(!result.ok && result.kind === "exchange_failed");
+    }
   } finally {
     globalThis.fetch = realFetch;
   }

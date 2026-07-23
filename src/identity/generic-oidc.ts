@@ -175,11 +175,11 @@ export function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JWTExpired) return "generic_oidc_token_expired";
   if (error instanceof errors.JWTClaimValidationFailed) return "generic_oidc_bad_claim";
   if (error instanceof errors.JOSEAlgNotAllowed) return "generic_oidc_unsupported_alg";
-  if (error instanceof errors.JWKSNoMatchingKey) return "generic_oidc_unknown_key";
   // A remote key-source timeout, malformed response, or unusable matching key
   // means no identity decision was possible. Redirect flows classify this
   // infrastructure bucket as exchange_failed (§17.11).
   if (isRemoteJwksInfrastructureError(error)) return "generic_oidc_verify_failed";
+  if (error instanceof errors.JWKSNoMatchingKey) return "generic_oidc_unknown_key";
   if (error instanceof errors.JOSEError) return "generic_oidc_token_invalid";
   return "generic_oidc_verify_failed";
 }

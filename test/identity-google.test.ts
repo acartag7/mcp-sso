@@ -213,15 +213,20 @@ test("createGoogleRedirectIdentity: an unusable remote key is exchange_failed", 
     },
   };
   const nonPublicJwk = { ...await exportJWK(rsa.privateKey), kid: "selected-key", alg: "RS256" };
+  const nonVerifyingJwk = {
+    ...await exportJWK(rsa.publicKey), kid: "selected-key", alg: "RS256", key_ops: ["encrypt"],
+  };
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ keys: [nonPublicJwk] }), { status: 200 })) as typeof fetch;
   try {
-    const port = await createGoogleRedirectIdentity(CONFIG, {
-      discoveryFetch: googleDiscovery(), transport, currentDate: new Date(NOW * 1000),
-    });
-    const result = await port.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
-    assert.ok(!result.ok && result.kind === "exchange_failed");
+    for (const jwk of [nonPublicJwk, nonVerifyingJwk]) {
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ keys: [jwk] }), { status: 200 })) as typeof fetch;
+      const port = await createGoogleRedirectIdentity(CONFIG, {
+        discoveryFetch: googleDiscovery(), transport, currentDate: new Date(NOW * 1000),
+      });
+      const result = await port.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+      assert.ok(!result.ok && result.kind === "exchange_failed");
+    }
   } finally {
     globalThis.fetch = realFetch;
   }
