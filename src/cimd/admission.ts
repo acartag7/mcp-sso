@@ -1,5 +1,5 @@
 import { CimdError } from "./errors.ts";
-import { parseIp } from "./blocklist.ts";
+import { ownBooleanTrue, parseIp } from "./blocklist.ts";
 
 export interface AdmittedUrl {
   readonly raw: string;
@@ -17,7 +17,7 @@ export function admitCimdUrl(
   opts: { allowLoopback?: boolean } = {},
 ): AdmittedUrl {
   try {
-    return admit(rawClientId, opts.allowLoopback === true);
+    return admit(rawClientId, ownBooleanTrue(opts, "allowLoopback"));
   } catch (error) {
     if (error instanceof CimdError) throw error;
     throw denied();
