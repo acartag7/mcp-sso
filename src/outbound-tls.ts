@@ -6,14 +6,23 @@ const TLS_DISABLED_ERROR = "default_outbound_tls_verification_disabled";
 /** Refuse Node's process-wide certificate-verification bypass before egress.
  * Explicitly injected transports own their own TLS policy. */
 export function assertDefaultTlsVerification(): void {
-  let descriptor: PropertyDescriptor | undefined;
+  let current: object | null = process.env;
+  const visited = new Set<object>();
   try {
-    descriptor = Object.getOwnPropertyDescriptor(process.env, TLS_REJECTION_ENV);
+    while (current !== null) {
+      if (visited.has(current) || visited.size >= 32) throw new Error(TLS_DISABLED_ERROR);
+      visited.add(current);
+      const descriptor = Object.getOwnPropertyDescriptor(current, TLS_REJECTION_ENV);
+      if (descriptor !== undefined) {
+        if (current !== process.env
+          || !isDataDescriptor(descriptor) || descriptor.value === "0") {
+          throw new Error(TLS_DISABLED_ERROR);
+        }
+        return;
+      }
+      current = Object.getPrototypeOf(current) as object | null;
+    }
   } catch {
-    throw new Error(TLS_DISABLED_ERROR);
-  }
-  if (descriptor !== undefined
-    && (!isDataDescriptor(descriptor) || descriptor.value === "0")) {
     throw new Error(TLS_DISABLED_ERROR);
   }
 }

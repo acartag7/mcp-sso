@@ -11,6 +11,10 @@ import { guardedGlobalFetch } from "../src/outbound-tls.ts";
 
 test("default outbound transports refuse disabled TLS verification before fetch", async () => {
   const previousEnv = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  const previousInherited = Object.getOwnPropertyDescriptor(
+    Object.prototype,
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+  );
   const previousFetch = globalThis.fetch;
   const previousError = console.error;
   let fetchCalls = 0;
@@ -19,9 +23,20 @@ test("default outbound transports refuse disabled TLS verification before fetch"
     return new Response("unexpected transport call", { status: 503 });
   }) as typeof fetch;
   console.error = () => undefined;
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
   try {
+    delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    Object.defineProperty(Object.prototype, "NODE_TLS_REJECT_UNAUTHORIZED", {
+      configurable: true,
+      value: "0",
+    });
+    await assert.rejects(
+      () => guardedGlobalFetch("https://identity.test/inherited-tls-setting"),
+      /default_outbound_tls_verification_disabled/,
+    );
+    delete (Object.prototype as Record<string, unknown>).NODE_TLS_REJECT_UNAUTHORIZED;
+
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
     await assert.rejects(
       () => guardedGlobalFetch("https://identity.test/metadata"),
       /default_outbound_tls_verification_disabled/,
@@ -69,6 +84,15 @@ test("default outbound transports refuse disabled TLS verification before fetch"
   } finally {
     if (previousEnv === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previousEnv;
+    if (previousInherited === undefined) {
+      delete (Object.prototype as Record<string, unknown>).NODE_TLS_REJECT_UNAUTHORIZED;
+    } else {
+      Object.defineProperty(
+        Object.prototype,
+        "NODE_TLS_REJECT_UNAUTHORIZED",
+        previousInherited,
+      );
+    }
     globalThis.fetch = previousFetch;
     console.error = previousError;
   }
