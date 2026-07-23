@@ -236,15 +236,16 @@ its enforcement evidence.
 
 | # | Scenario | Assert |
 |---|---|---|
-| S6b.1 | Boot config | Branded fetcher accepted; unbranded fetcher rejected; default guarded fetcher constructed. |
+| S6b.1 | Boot config | **No whole `cimd.fetcher` config knob** (removed — §17.1.6 decision 5): the core constructs the default guarded fetcher from the `cimd` caps + `allowLoopback` derived solely from `dev.allowInsecureLocalhost`; only the below-guard `cimdTransport`/`cimdResolver` seams (never a whole `GuardedFetcher`, never a `BridgeConfig` field) inject in tests. |
 | S6b.2 | Happy path | URL-shaped `client_id` fetches the doc, validates; authorize→token→`/mcp` succeeds. |
 | S6b.3 | Generic client error | Every CIMD failure returns identical client-facing error text. |
 | S6b.4 | Audit detail | `oauth.cimd.fetch` records the specific reason without leaking the document body or secrets. |
 | S6b.5 | Redirect URI match | Exact match required; loopback any-port exception honored. |
-| S6b.6 | Scope accumulation | CIMD ids accumulate scopes in stateless and stored DCR modes. |
+| S6b.6 | Scope accumulation (CIMD deferred) | CIMD ids do NOT accumulate: a genuine CIMD authorization reports `priorScopes = []` and mints only the requested (ceiling-bounded) scopes in BOTH DCR modes; seed an active legacy URL-keyed refresh row with a broader scope and prove it is never unioned. Control: an opaque stored-DCR client still accumulates. (§17.1.6 decision 3.) |
 | S6b.7 | Metadata flag | `client_id_metadata_document_supported` appears only when enabled. |
-| S6b.8 | Cache | Cache hit, RFC 9111 clamp, no error cache, no invalid-doc cache, single-flight keyed by the raw presented `client_id` string, global in-flight cap. |
+| S6b.8 | Cache (freshness) | Cache HIT reuses the doc (no fetch). Freshness = `min(valid max-age, cacheTtlCapSeconds) − Age − elapsed`; **`max-age`<60 / `no-store` / `no-cache` / absent, duplicate, or quoted `Cache-Control`/`max-age` ⇒ NON-cacheable (re-fetch), never clamped up** (§17.1.6 decision 4); bounded LRU eviction; no error/invalid-doc cache; the SAME cache serves direct-mode `prepare` AND upstream-redirect authorize; single-flight keyed by the raw `client_id`; global in-flight cap (`overloaded` at the cap). |
 | S6b.9 | SSRF negative suite | Encoded dot segments, IP-literal tricks, blocked DNS records, rebinding, redirect-to-blocked-host, over-cap body, slow endpoint, mismatched `client_id`, and `client_secret` doc all fail with identical client-facing text. |
+| S6b.10 | Upstream-redirect CIMD | Doc resolved + validated ONCE at authorize, carried in the signed `cimd` flow claim, consumed at callback with **NO re-fetch**: inject a fetcher whose `fetch()` THROWS at callback and prove the CIMD flow still completes (carry-forward). Three-way dispatch: `HTTPS://` / `http://` / `ftp://`, and lowercase-`https://` while `cimd` is disabled ⇒ direct `invalid_client` (never a stateless fallback, never an IdP hop). Callback claim/mode/redirect matrix (row 5a) rejects a mismatch as `flow_cookie_invalid`; approve-time scheme gate rejects a legacy URL-shaped stateless token as `invalid_consent`. |
 
 A happy path alone does not close S6b. The negative SSRF suite is the security
 evidence.
