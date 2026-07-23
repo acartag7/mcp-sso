@@ -12,7 +12,9 @@
 > contracts — most shipped in v0.2; CIMD (§17.1), device flow (§17.3), and the
 > GitHub identity port (§17.6) remain contract-locked, implementation pending.
 > Threats 29–33 cover the shipped [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
-> upstream redirect-leg orchestrator.
+> upstream redirect-leg orchestrator. Threat 34 records the contract-only,
+> implementation-pending dynamic-key boundary in
+> [§4.1](./contracts.md#41-dynamic-key-and-parsed-record-composition-boundary).
 
 ## Assets
 
@@ -176,6 +178,7 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 31 | (v0.2) Upstream authorization-code injection/substitution (a stolen or attacker-obtained code redeemed inside another flow) | Spoofing / Elevation | Mandatory upstream PKCE S256 — the verifier lives only in the victim flow's cookie, so a foreign code fails the exchange; OIDC `nonce` binds the id_token to the same flow; both values are orchestrator-generated CSPRNG 256-bit | Providers with no id_token (the future §17.6 GitHub port) lack the nonce layer — state + upstream PKCE remain; documented per-port, never silent |
 | 32 | (v0.2) Attacker-influenced IdP callback params abused for open redirect / error-echo injection | Spoofing / Info disclosure | Upstream `error`/`error_description` are mapped to a fixed enum with fixed description strings and NEVER echoed; redirects go only to the §10-validated `redirect_uri` inside the *signed* flow context; `state`/`code`/id_tokens never logged — audit carries enum reasons only | None (row 5's invariant extends: a redirect only ever targets a §10-validated URI) |
 | 33 | (v0.2) Flow-cookie theft or tampering (the cookie carries the upstream PKCE verifier + round-tripped client params) | Tampering / Info disclosure | HS256 signature (consent secret, `aud`-pinned `mcp-sso/upstream-flow` — cannot be replayed as a consent token or vice-versa); tampering ⇒ signature failure ⇒ direct 400; `HttpOnly` + `Secure`/`__Host-` on https; flow TTL default 600 s (a deployer may raise it to at most 3600 s, widening this window — [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)); single-use jti; upstream tokens never enter the cookie | A full browser/endpoint compromise exposes only the in-flight flow (bounded by TTL + single-use); the cookie is signed, not encrypted — the browser's owner can read their own flow params, which is by design |
+| 34 | Prototype-chain confusion at attacker-controlled dynamic-key or parsed-record composition sites | Tampering / Elevation | Contract locked in [§4.1](./contracts.md#41-dynamic-key-and-parsed-record-composition-boundary): dynamic lookups use `Map`, null-prototype records, or `Object.hasOwn`; dynamic writes cannot invoke inherited setters; parsed records are explicitly projected rather than spread wholesale. Initial gates are Entra group mapping, adapter-owned request normalization, and CIMD document projection. Acceptance and implementation are separate follow-up PRs | Host-level prototype pollution and hostile in-process ports/adapters are OUT OF SCOPE: code already executing in-process can replace the verifier. Fixed named-field reads are not claimed to withstand arbitrary intrinsic mutation |
 
 ### Row 12 — header-mode nonce residual
 
