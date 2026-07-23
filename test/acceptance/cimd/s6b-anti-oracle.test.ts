@@ -78,11 +78,23 @@ if (phases["s6b-cimd-flow"] !== true) {
   const authQ = (over: any = {}) => ({ response_type: "code", client_id: CIMD_ID, redirect_uri: CIMD_REDIRECT, code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256", scope: "mcp:read", ...over });
   const fetchFail = (audit: any) => audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure");
   const fetchOk = (audit: any) => audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "success");
+  // Decision 2: every CIMD resolution FAILURE must collapse to ONE client-visible
+  // response — status + headers + code + description — or a header/status differential
+  // is a residual SSRF oracle. Capture the canonical failure from the impl's OWN output
+  // (not a hardcoded header map, which would freeze incidental headers) so every failure
+  // must be byte-identical to it, across BOTH resolution boundaries (direct + upstream).
+  const CANONICAL = await (async () => {
+    const { b } = makeBridge({ cimd: { enabled: true }, cimdTransport: transport(() => okResult()), cimdResolver: resolver([{ address: "10.0.0.1", family: 4 }]) });
+    const res = await b.handleAuthorize(req(authQ()), { subject: "agent@test" });
+    return { status: res.status, headers: res.headers, body: res.body };
+  })();
   function assertGeneric(res: any) {
     assert.equal(res.status, 401);
     assert.deepEqual(res.body, GENERIC);
     assert.equal(res.redirect, undefined);
     assert.equal(res.headers?.location, undefined);
+    // byte-identical to the canonical failure (status + headers + body) — closes the header oracle
+    assert.deepEqual({ status: res.status, headers: res.headers, body: res.body }, CANONICAL);
   }
 
   // Each failure MUST produce the identical client-facing outcome (401 + GENERIC,

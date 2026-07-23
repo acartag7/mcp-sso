@@ -5,7 +5,7 @@
     "cimd/blocklist.test.ts": "776d8ad97ee0fb2296cb7377bf06f6caa73d9c3a44d76037b1192876f6aebc66",
     "cimd/document.test.ts": "7e45170890ea9e0242b8f8ad0464ccb324ce9e03a7f556ba6946e42c9b1108a6",
     "cimd/guarded-fetcher.test.ts": "6b1480d502067351fdcae87e120f3c7779e61be6a52f10899a4c31121dce3ab0",
-    "cimd/s6b-anti-oracle.test.ts": "c08bcbdc47cf87714387e3aaff89b2f9e3dfd877b8f9f94644e7f01740cdf2a2",
+    "cimd/s6b-anti-oracle.test.ts": "ccff9b1afed78ab7071ffb0a31cd51acbdf6901ecc14860c392e86cada5d77ce",
     "cimd/s6b-audit.test.ts": "f1e33342fc6da5dbb8ae28e52e133704a3dfeea714f04764f2e3e1028ab9b9f4",
     "cimd/s6b-boot.test.ts": "54732a6381a65f6b8c183ed3bd47ac51ad6612c71add75ab9b899bec9a14ebcf",
     "cimd/s6b-cache.test.ts": "42ecab89c8456d0bcbc1310bc69e8eeec101a4975a166a1beef4d42e0ec6f36e",
