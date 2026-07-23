@@ -78,8 +78,10 @@ if (phases["s6b-cimd-flow"] !== true) {
 
   test("shows the client_id host and the redirect host", async () => {
     const html = await render(cfg(), doc(), HTTPS_REDIRECT);
-    assert.ok(html.includes("cdn.example.com"), "client_id host shown");
-    assert.ok(html.includes("app.example.com"), "redirect host shown");
+    const cimdHost = new URL(CIMD_ID).host; // derived, not a hostname string-literal (avoids a false URL-substring-sanitization flag)
+    const redirectHost = new URL(HTTPS_REDIRECT).host;
+    assert.ok(html.includes(cimdHost), "client_id host shown");
+    assert.ok(html.includes(redirectHost), "redirect host shown");
   });
 
   test("SHOULD warn when EVERY registered redirect is loopback (soft — a warning indicator is present; wording not pinned)", async () => {

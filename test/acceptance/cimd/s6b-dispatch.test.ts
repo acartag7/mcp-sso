@@ -65,7 +65,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   }
   function makeBridge(opts: any = {}) {
     const store = opts.store ?? new MemoryStore();
-    const config = opts.config ?? cfg({ cimd: opts.cimd ?? { enabled: true }, dcr: opts.dcr });
+    const config = opts.config ?? cfg({ cimd: "cimd" in opts ? opts.cimd : { enabled: true }, dcr: opts.dcr });
     const b = new Bridge({ config, store, clock: new FakeClock(NOW), audit: new MemoryAudit(), cimdTransport: opts.cimdTransport, cimdResolver: opts.cimdResolver });
     return { b, store };
   }
@@ -80,7 +80,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const store = opts.store ?? new MemoryStore();
     const clock = new FakeClock(NOW);
     const audit = new MemoryAudit();
-    const config = cfg({ cimd: opts.cimd ?? { enabled: true }, dcr: opts.dcr });
+    const config = cfg({ cimd: "cimd" in opts ? opts.cimd : { enabled: true }, dcr: opts.dcr });
     const b = new Bridge({ config, store, clock, audit, cimdTransport: opts.cimdTransport, cimdResolver: opts.cimdResolver });
     const flow = createUpstreamRedirectFlow({ bridge: b, identity: stubIdentity(), store, clock, audit, cimdTransport: opts.cimdTransport, cimdResolver: opts.cimdResolver });
     return { flow, b, store };

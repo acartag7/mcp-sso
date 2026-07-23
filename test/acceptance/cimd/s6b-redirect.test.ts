@@ -90,7 +90,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const store = opts.store ?? new MemoryStore();
     const clock = new FakeClock(NOW);
     const audit = new MemoryAudit();
-    const config = cfg(opts.cimd ?? { enabled: true });
+    const config = cfg("cimd" in opts ? opts.cimd : { enabled: true }); // explicit undefined ⇒ disabled (never re-enabled)
     // The bridge-side seams default to THROWING so a callback re-fetch is caught.
     const b = new Bridge({ config, store, clock, audit, cimdTransport: opts.bridgeTransport ?? throwingTransport, cimdResolver: opts.bridgeResolver ?? throwingResolver });
     const identity = opts.identity ?? stubIdentity();
@@ -212,7 +212,8 @@ if (phases["s6b-cimd-flow"] !== true) {
     const matrix: Array<{ label: string; cimdEnabled?: boolean; cimd: any; params: any }> = [
       { label: "CIMD id without a cimd claim", cimd: undefined, params: baseParams() },
       { label: "CIMD id with cimd DISABLED", cimdEnabled: false, cimd: validClaim(), params: baseParams() },
-      { label: "non-CIMD (opaque) id carrying a cimd claim", cimd: validClaim({ client_id: "opaque-abc" }), params: baseParams({ client_id: "opaque-abc", redirect_uri: "https://client.test/cb" }) },
+      // redirect_uris MATCH the opaque params so the SOLE 5a trigger is "a non-CIMD id carries a cimd claim" (not a redirect mismatch).
+      { label: "non-CIMD (opaque) id carrying a cimd claim", cimd: validClaim({ client_id: "opaque-abc", redirect_uris: ["https://client.test/cb"] }), params: baseParams({ client_id: "opaque-abc", redirect_uri: "https://client.test/cb" }) },
       { label: "params.redirect_uri not in the claim's redirect_uris", cimd: validClaim(), params: baseParams({ redirect_uri: "https://client.test/cb" }) },
     ];
     for (const m of matrix) {
