@@ -193,6 +193,19 @@ test("validated remote JWKS ignores unrelated public key families", async () => 
   await assert.doesNotReject(jwtVerify(token, guarded, { algorithms: ["RS256"] }));
   const cached = guarded.jwks() as { keys: unknown[] };
   assert.equal(cached.keys.length, 1);
+
+  const privateFamily = createValidatedRemoteJWKSet(
+    new URL("https://issuer.test/heterogeneous-private-jwks"),
+    {
+      [customFetch]: async () => new Response(JSON.stringify({
+        keys: [
+          { ...await exportJWK(unrelated.privateKey), kid: "unrelated-key", alg: "EdDSA" },
+          keys[1],
+        ],
+      }), { status: 200 }),
+    },
+  );
+  await assert.rejects(jwtVerify(token, privateFamily, { algorithms: ["RS256"] }));
 });
 
 test("validated remote JWKS requires RSA and EC key material to be own data", async () => {
