@@ -31,14 +31,15 @@ export function createGuardedFetcher(opts: {
   maxDocumentBytes?: number; fetchTimeoutMs?: number;
 } = {}): GuardedFetcher {
   assertOptions(opts);
-  const transport = opts.transport ?? NODE_TRANSPORT;
-  const maxBytes = integerOption(opts.maxDocumentBytes, 5120, 1024, 65536, "maxDocumentBytes");
-  const timeoutMs = integerOption(opts.fetchTimeoutMs, 5000, 1000, 30000, "fetchTimeoutMs");
+  const transport = (Object.hasOwn(opts, "transport") ? opts.transport : undefined) ?? NODE_TRANSPORT;
+  const resolver = Object.hasOwn(opts, "resolver") ? opts.resolver : undefined;
+  const maxBytes = integerOption(Object.hasOwn(opts, "maxDocumentBytes") ? opts.maxDocumentBytes : undefined, 5120, 1024, 65536, "maxDocumentBytes");
+  const timeoutMs = integerOption(Object.hasOwn(opts, "fetchTimeoutMs") ? opts.fetchTimeoutMs : undefined, 5000, 1000, 30000, "fetchTimeoutMs");
   const allowLoopback = ownBooleanTrue(opts, "allowLoopback");
   const fetcher = {
     async fetch(rawClientId: string): Promise<CimdFetchResult> {
       const admitted = admitCimdUrl(rawClientId, { allowLoopback });
-      return fetchWithDeadline(admitted, opts.resolver ?? new NodeDnsResolver(), transport,
+      return fetchWithDeadline(admitted, resolver ?? new NodeDnsResolver(), transport,
         allowLoopback, maxBytes, timeoutMs);
     },
   };
@@ -185,25 +186,22 @@ async function* bodyChunks(body: AsyncIterable<Uint8Array> | ReadableStream<Uint
     }
   } finally { reader.releaseLock(); }
 }
-function integerOption(value: number | undefined, fallback: number, min: number,
-  max: number, name: string): number {
+function integerOption(value: unknown, fallback: number, min: number, max: number, name: string): number {
   const result = value === undefined ? fallback : value; // null/NaN/etc are present-but-invalid -> reject below
-  if (!Number.isInteger(result) || result < min || result > max) throw new TypeError(`${name} is out of range`);
+  if (typeof result !== "number" || !Number.isInteger(result) || result < min || result > max) throw new TypeError(`${name} is out of range`);
   return result;
 }
 function assertOptions(opts: unknown): asserts opts is Record<string, unknown> {
   if (typeof opts !== "object" || opts === null || Array.isArray(opts)) throw new TypeError("CIMD fetcher options are invalid");
   const value = opts as Record<string, unknown>;
   for (const k of Object.keys(value)) if (!["transport", "resolver", "allowLoopback", "maxDocumentBytes", "fetchTimeoutMs"].includes(k)) throw new TypeError(`unknown CIMD fetcher option: ${k}`);
-  if (value.allowLoopback !== undefined && typeof value.allowLoopback !== "boolean") throw new TypeError("allowLoopback must be boolean");
-  if (value.transport !== undefined && (typeof value.transport !== "object"
-    || value.transport === null || typeof (value.transport as CimdTransport).connectAndGet !== "function")) {
-    throw new TypeError("transport is invalid");
-  }
-  if (value.resolver !== undefined && (typeof value.resolver !== "object"
-    || value.resolver === null || typeof (value.resolver as DnsResolver).resolve !== "function")) {
-    throw new TypeError("resolver is invalid");
-  }
+  const allowLoopback = Object.hasOwn(value, "allowLoopback") ? value.allowLoopback : undefined;
+  const transport = Object.hasOwn(value, "transport") ? value.transport : undefined, resolver = Object.hasOwn(value, "resolver") ? value.resolver : undefined;
+  if (allowLoopback !== undefined && typeof allowLoopback !== "boolean") throw new TypeError("allowLoopback must be boolean");
+  if (transport !== undefined && (typeof transport !== "object"
+    || transport === null || typeof (transport as CimdTransport).connectAndGet !== "function")) throw new TypeError("transport is invalid");
+  if (resolver !== undefined && (typeof resolver !== "object"
+    || resolver === null || typeof (resolver as DnsResolver).resolve !== "function")) throw new TypeError("resolver is invalid");
 }
 export class NodeDnsResolver implements DnsResolver {
   readonly resolver = new Resolver();

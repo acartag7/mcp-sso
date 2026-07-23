@@ -19,6 +19,24 @@ test("createGuardedFetcher accepts exactly the documented option keys", () => {
     createGuardedFetcher({ allowLoopback: true, maxDocumentBytes: 2048, fetchTimeoutMs: 2000 }));
 });
 
+test("createGuardedFetcher ignores inherited values for every documented option", () => {
+  for (const key of [
+    "transport", "resolver", "allowLoopback", "maxDocumentBytes", "fetchTimeoutMs",
+  ]) {
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, key);
+    Object.defineProperty(Object.prototype, key, {
+      configurable: true,
+      get() { throw new Error(`inherited ${key} must not be read`); },
+    });
+    try {
+      assert.doesNotThrow(() => createGuardedFetcher({}));
+    } finally {
+      if (previous === undefined) delete (Object.prototype as Record<string, unknown>)[key];
+      else Object.defineProperty(Object.prototype, key, previous);
+    }
+  }
+});
+
 test("prototype state cannot enable loopback admission or transport", async () => {
   const previous = Object.getOwnPropertyDescriptor(Object.prototype, "allowLoopback");
   Object.defineProperty(Object.prototype, "allowLoopback", {

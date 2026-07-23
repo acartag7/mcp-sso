@@ -47,6 +47,77 @@ test("default HTTPS transport explicitly enables certificate verification", asyn
   }
 });
 
+test("inherited transport cannot replace the built-in HTTPS transport", async () => {
+  const require = createRequire(import.meta.url);
+  const https = require("node:https") as typeof import("node:https");
+  const mutableHttps = https as { request: typeof https.request };
+  const originalRequest = mutableHttps.request;
+  let builtInCalls = 0;
+  let inheritedOptionReads = 0;
+  let inheritedCalls = 0;
+  let errorListener: ((error: Error) => void) | undefined;
+
+  mutableHttps.request = (() => {
+    builtInCalls += 1;
+    return {
+      once(_event: string, listener: (error: Error) => void) {
+        errorListener = listener;
+        return this;
+      },
+      end() {
+        queueMicrotask(() => errorListener?.(new Error("test transport stop")));
+      },
+    };
+  }) as unknown as typeof https.request;
+  syncBuiltinESMExports();
+
+  try {
+    const module = await import(
+      `../src/cimd/guarded-fetcher.ts?transport-owncheck=${Date.now()}`
+    );
+    const originalResolve = module.NodeDnsResolver.prototype.resolve;
+    const previousTransport = Object.getOwnPropertyDescriptor(Object.prototype, "transport");
+    const inheritedTransport = {};
+    Object.defineProperty(inheritedTransport, "connectAndGet", {
+      get() {
+        inheritedOptionReads += 1;
+        return async () => {
+          inheritedCalls += 1;
+          throw new Error("inherited transport ran");
+        };
+      },
+    });
+    Object.defineProperty(Object.prototype, "transport", {
+      configurable: true,
+      value: inheritedTransport,
+    });
+
+    try {
+      module.NodeDnsResolver.prototype.resolve = async () => [
+        { address: "93.184.216.34", family: 4 as const },
+      ];
+      const fetcher = module.createGuardedFetcher({});
+      await assert.rejects(
+        () => fetcher.fetch("https://transport.example/client"),
+        (error: unknown) => hasReason(error, "fetch_failed"),
+      );
+      assert.equal(inheritedOptionReads, 0);
+      assert.equal(inheritedCalls, 0);
+      assert.equal(builtInCalls, 1);
+    } finally {
+      module.NodeDnsResolver.prototype.resolve = originalResolve;
+      if (previousTransport === undefined) {
+        delete (Object.prototype as Record<string, unknown>).transport;
+      } else {
+        Object.defineProperty(Object.prototype, "transport", previousTransport);
+      }
+    }
+  } finally {
+    mutableHttps.request = originalRequest;
+    syncBuiltinESMExports();
+  }
+});
+
 function hasReason(error: unknown, reason: string): boolean {
   return typeof error === "object" && error !== null
     && "reason" in error && error.reason === reason;
