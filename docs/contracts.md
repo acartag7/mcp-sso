@@ -1668,7 +1668,201 @@ tracks CIMD as pending.
     to [60, `cacheTtlCapSeconds`] (a value below 60 on an otherwise-cacheable
     response is clamped UP to 60 — the documented minimum — never treated as
     non-cacheable); `Age` is subtracted from the effective lifetime. A quoted
-    `max-age` value is treated as malformed (no cache entry).
+    `max-age` value is treated as malformed (no cache entry). **Superseded by
+    §17.1.6 decision 4:** a `max-age` below 60 is honored exactly OR treated as
+    non-cacheable — never clamped UP — and the effective lifetime is
+    `min(valid max-age, cacheTtlCapSeconds)`.
+
+### 17.1.6 S6b flow-integration amendments (decisions 1–6, 2026-07-23)
+
+Resolves the S6b cross-family flow-integration critique (GPT-5.6 Sol / Grok / GLM)
+against current `main` (post #85–#91). **Contract text; enforcement lands with the
+S6b code + frozen suite.** Decision 1 is the owner-chosen "extend §17.11"
+(2026-07-23): CIMD is a first-class client type in upstream-redirect mode
+(Hosted-Claude + Entra target). These TIGHTEN §17.1.4, §17.1.5 H (22–25), and
+extend §17.11; where a rule here differs, this subsection wins. Every rule is
+fail-closed.
+
+**Design stance (read first — this is the anti-over-scope boundary).** The
+authorization decision for a CIMD client is made ONCE, at authorize, and carried
+forward to the callback under the flow cookie's existing HS256 signature. The
+validated CIMD registration handed to `bridge.handleAuthorize` at callback is
+**orchestrator-resolved trusted state — the same trust category as `subject` and
+`allowedScopes` already on that options object.** Its integrity source is the flow
+cookie signature (`consentSigningSecret`) + the single-use `upf_` jti; **no
+separate capability/brand/registry system is introduced.** An in-process caller
+fabricating that field is at the same trust level as the library core — there is no
+external attacker sink, and it is deliberately NOT defended with new machinery
+(the §17.1 `GuardedFetcher` rationale applied honestly, and the boundary that keeps
+this from becoming a descriptor-snapshot edifice). `prepare`'s redirect re-check
+(1d) is the fail-closed defense-in-depth; the trust model and residuals below are
+pinned so review VERIFIES conformance rather than re-deriving the threat model each
+round.
+
+**Decision 1 — CIMD in upstream-redirect mode (§17.11 extension).**
+
+*Problem.* §17.11 calls `bridge.handleAuthorize` at **callback** (upstream-flow.ts:152)
+from a synthetic request; `prepare` — where CIMD otherwise resolves — fires after
+the IdP hop. `resolveAuthorizeRedirect` (upstream-flow.ts:99) validates
+`redirect_uri` at authorize. For a CIMD id both are wrong as written, and
+re-fetching at callback is a second fetch + a TOCTOU window + a late failure after
+the user has already authenticated. Fix: resolve once at authorize, carry forward.
+
+*1a. Shape-first dispatch; CIMD REPLACES §10 for CIMD ids.* Before the stored-mode
+`store.find` and `resolveAuthorizeRedirect`'s §10 logic, dispatch on shape: a
+literal-lowercase-`https://` client_id (rule 22) with `cimd` enabled takes the CIMD
+path, which REPLACES redirect validation for that id — the "Unknown client_id"
+store-miss MUST NOT fire (else every CIMD id dies on a stored-DCR deployment and
+Hosted-Claude+Entra never works). Resolve the document via the branded guarded
+fetcher (all §17.1.5 rules; under the `cimd:<ip>` rate-limit + single-flight +
+`maxInFlight` cap, alongside the existing `upstream:<ip>` guard); validate the
+presented `redirect_uri` exact-match ∈ `document.redirect_uris` (rule 20/23: https
+exact-string, loopback any-port). **This is the one and only fetch of the flow.** A
+non-CIMD id, or `cimd` disabled, takes the unchanged §10 path; a `https://`-shaped
+id under `cimd` disabled ⇒ `invalid_client` (rule 22, never stateless fallback).
+
+*1b. Anti-oracle ordering.* Resolve + redirect exact-match complete BEFORE
+`Set-Cookie` / the IdP 302. Any failure ⇒ the decision-2 generic (`invalid_client`
+401) and `oauth.cimd.fetch` (failure, reason); success ⇒ `oauth.cimd.fetch`
+(success). The 4096-byte `Set-Cookie` oversize guard (upstream-flow.ts:104), for a
+CIMD id, maps to the SAME generic `invalid_client` (never `invalid_request`) so it
+is not a content oracle. Hosted-Claude-class registrations (a short URL + a few
+redirects) serialize to ~1–2 KiB and fit comfortably. **Documented residual:**
+because the validated projection rides the signed flow cookie, redirect-mode
+effective document size is **cookie-bound (≤4096 serialized), not only
+`maxDocumentBytes`-bound** — a document-*valid* registration with many or long
+`redirect_uris` (still within rule 19 / `maxDocumentBytes`) can exceed the cookie
+budget and then fails closed as `invalid_client`, whereas direct mode would accept
+it. This is a deliberate least-machinery tradeoff (no compression, truncation, or
+second store is added to enlarge the redirect-mode ceiling).
+
+*1c. Carry the validated registration forward under signature.* The flow JWT gains
+a `cimd` claim = the validated `CimdDocument` named projection `{client_id,
+client_name?, redirect_uris}` (§17.1.3; never the raw parsed object; no key
+material), covered by the existing HS256 signature + single-use jti. At callback,
+after the flow JWT is verified, the orchestrator passes this registration to
+`bridge.handleAuthorize` on the SAME options object that already carries
+`{subject, allowedScopes}`. `prepare`, for the CIMD id, uses the passed
+registration and **does NOT re-fetch** — the decision is atomic at authorize and
+carried forward (no post-authentication late fetch that can fail; no TOCTOU; the
+consent page shows exactly the validated document).
+
+*1d. Fail-closed consistency (a signed-claim schema check — NOT a capability
+system).* At callback, after flow-JWT verification and BEFORE jti consumption /
+exchange / any redirect-channel response: a literal-lowercase-`https://` client_id
+MUST carry a strict-parsed `cimd` claim (object; `client_id` a primitive string
+raw-equal to `params.client_id`; `redirect_uris` an array length 1..16 of strings;
+`client_name` absent or a string ≤256) AND `cimd` enabled — else `flow_cookie_invalid`
+(direct). A non-CIMD client_id MUST carry NO `cimd` claim (else `flow_cookie_invalid`).
+Malformed / partial / contradictory / disabled-mode ⇒ `flow_cookie_invalid`, never
+coerced or dropped (the flow-JWT verifier strict-parses this claim, unlike its
+lenient string-only `params` handling). `prepare` defensively re-checks
+`params.redirect_uri` ∈ `registration.redirect_uris` (fail-closed). `prepare`'s
+redirect-mode CIMD branch NEVER fetches. **Frozen S6b test:** inject a fetcher whose
+`fetch()` throws; assert the callback→prepare path still completes for a CIMD id —
+proving carry-forward, not re-fetch.
+
+*1e. Direct/header mode unchanged.* `prepare` fetches at prepare and validates
+there (base S6b). Only redirect mode pre-resolves at authorize and carries forward.
+Mode mutual-exclusion (§17.11 adapter wiring) unchanged.
+
+*Trust model + residuals (pinned — review verifies these, does not re-derive):*
+- The `cimd` registration on `handleAuthorize` options is orchestrator-resolved
+  trusted state (integrity = flow-cookie signature), NOT a new deployer-facing
+  trust boundary. No brand/capability system; in-process fabrication is the same
+  trust level as the core (no external sink; undefended by design). `prepare`'s
+  redirect re-check is defense-in-depth.
+- *Residual (inherent, shared):* CIMD resolution runs at authorize BEFORE the user
+  authenticates, so an unauthenticated caller can trigger one outbound guarded
+  fetch to a blocklist-passing URL. Bounded by `cimd:<ip>` rate-limit +
+  single-flight + `maxInFlight` + the SSRF guard; inherent to validating a redirect
+  before the IdP hop; not eliminated.
+- *Residual:* the flow JWT now integrity-covers `redirect_uris`, so a leaked
+  `consentSigningSecret` elevates flow-JWT forgery to CIMD-registration
+  substitution — same secret/trust §17.11 already assumes.
+
+**Decision 2 — CimdError → one anti-oracle OAuth error (mapped at the resolution
+boundary).** Every `CimdError` (all `CimdReason`s incl. decision-6 `overloaded`)
+AND any unexpected throw in the CIMD resolution path ⇒ `invalid_client` 401, body
+`{"error":"invalid_client","error_description":"client_id could not be resolved"}`,
+mapped INSIDE the resolution boundary (a single `mapCimdError` at `prepare`'s CIMD
+branch and at upstream `handleAuthorize`'s CIMD branch) so a bare `CimdError` NEVER
+reaches `asOAuth` (bridge.ts:227-229 → `internal_error` 500, a distinguishable
+channel) and NEVER surfaces as a 500 on the callback redirect path. `mapCimdError`
+is exhaustive over `CimdReason` with a fail-closed default (an unknown/future reason
+still → generic, still audited). The reason goes to `oauth.cimd.fetch` (failure)
+ONLY. *Enforced property (no overclaim):* all CIMD resolution OUTCOMES collapse to
+one client-visible **status + headers + OAuth code + description** — closing the
+SSRF content/reachability oracle. Response **timing is NOT equalized** (block ≈
+instant, timeout ≈ `fetchTimeoutMs`, success slowest) and remains a bounded residual
+side channel, bounded by rate-limit + single-flight + `maxInFlight` + DNS-pinning +
+blocklist + the deadline. The earlier "matches unknown-stored-client" parity wording
+is DROPPED (that sibling uses description "Unknown client_id" — authorize.ts:192 /
+upstream-flow.ts:176 — so parity is not claimed).
+
+**Decision 3 — scope-accumulation provenance (both sites + approve-time sibling).**
+`ConsentRequestClaims` (crypto.ts:19-34) gains `cimdVerified?: true`, minted into
+the consent JWT as `cimd_verified: true` ONLY when `prepare` established the CIMD
+registration by genuine validation this flow — its own validated fetch/cache result
+(direct mode; a cache HIT is also validated, so it is set WITHOUT a network fetch)
+OR the carried-forward validated registration (redirect mode, 1c).
+`signConsentToken` OMITS the claim when absent/false (never `cimd_verified:false`);
+strict `payload.cimd_verified === true` is the sole true path; any present non-`true`
+value INVALIDATES the token (fail-closed). Scope accumulation gates on
+`this.config.dcr.mode === "stored" || claims.cimdVerified === true` at BOTH sites —
+prepare-time (authorize.ts:124) and approve-time (authorize.ts:158) — **NEVER on
+`clientId.startsWith("https://")`.** Explicitly supersedes §9.3 step 5's "stored-DCR
+mode only" text. *Approve-time scheme gate (stored-state sibling of rule 22).* After
+consent-token verification and BEFORE jti consumption or any auth-code write,
+`approve` re-applies the scheme gate to the stored token: a lowercase-`https://`
+client_id is approvable only when `cimd_verified === true` AND `cimd` is still
+enabled; any other scheme-shaped client_id rejects; `cimd_verified:true` on a
+non-CIMD-shaped client_id rejects the token as invalid. This stops a legacy
+stateless consent token (URL-shaped client_id + attacker-allowlisted redirect,
+minted before/without CIMD) from being redeemed into an auth code at all. §7 + §17.1
+schema change; both exit paths covered.
+
+**Decision 4 — CimdFetchResult minimal cache view; RFC-9111-correct freshness
+(direct-mode cache only — redirect mode carries the doc, 1c).** `CimdFetchResult`
+(guarded-fetcher.ts:8, `{ document }`) is extended additively with a **minimal
+duplicate-aware cache view** — the `Cache-Control` directive occurrences and the
+`Age` field occurrences ONLY (from the transport's `headersDistinct`, rule 14) — NOT
+the full header map (an unnecessary trust-boundary expansion). Error/invalid results
+carry no cache view and are never cached. SUPERSEDES rule 25's upward clamp:
+effective freshness lifetime = `min(valid max-age, cacheTtlCapSeconds)`, with `Age` +
+elapsed fetch time subtracted; a non-positive remainder is not cached. A valid
+`max-age` below 60 is honored exactly OR treated as non-cacheable — **never
+increased**. `Age` is cacheable only as exactly one occurrence matching `^[0-9]+$`
+within the safe-integer bound; duplicate/list/signed/whitespaced ⇒ non-cacheable.
+`no-store`/`no-cache`, duplicate/conflicting `Cache-Control`/`max-age`, or a quoted
+`max-age` ⇒ no cache entry. Expiry uses `ClockPort`.
+
+**Decision 5 — loopback derives from the dev flag; the core owns fetcher
+construction (least machinery).** `allowLoopback` is **never a `cimd` config field**
+(confirmed absent from `config.ts`); its effective value derives SOLELY from the
+already-validated `dev.allowInsecureLocalhost === true`. The core CONSTRUCTS the
+branded guarded fetcher itself from the validated `cimd` cap profile (rule-21
+domains) + `allowLoopback` from the dev flag. A deployer-supplied **whole
+`cimd.fetcher` is not a production config knob** — test injection uses the
+`transport`/`resolver` seams (rule 14, already below the guard), which cannot widen
+`allowLoopback` or the caps. This closes the prod loopback bypass
+(`createGuardedFetcher({allowLoopback:true})` injected where
+`dev.allowInsecureLocalhost` is off) by removing the injection point rather than
+adding a profile-equality checker. Supersedes §17.1's "CIMD config accepts a branded
+fetcher" wording. #90 already closed the prototype/inherited-option and unknown-key
+vectors on the constructed fetcher's own options.
+
+**Decision 6 — overload reason code (exhaustive mapper).** `CimdReason` (errors.ts)
+gains `overloaded` for the rule-24 in-flight-cap rejection (a DISTINCT-client fetch
+while `maxInFlight` distinct fetches are already in flight). Audited to
+`oauth.cimd.fetch` as `overloaded`; client-facing mapping is the decision-2 generic.
+One value (`in_flight_capped` folds in). Covered by `mapCimdError`'s exhaustiveness +
+fail-closed default (decision 2).
+
+**Threat-model additions** (see [`threat-model.md`](threat-model.md) — CIMD ×
+upstream-redirect row): (1) approve-then-swap CLOSED (validate-once + carry-forward);
+(2) unauthenticated outbound-fetch-at-authorize RESIDUAL; (3) `consentSigningSecret`
+value elevation RESIDUAL; (4) resolution-timing side channel RESIDUAL.
 
 ### 17.2 `client_credentials` grant (MCP extension `io.modelcontextprotocol/oauth-client-credentials`)
 
