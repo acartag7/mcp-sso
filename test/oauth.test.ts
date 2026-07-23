@@ -79,9 +79,19 @@ function makeConfig(opts: { redirectAllowlist?: string[]; scopeCatalog?: string[
   });
 }
 
-function setup(opts: { redirectAllowlist?: string[]; dcr?: BridgeConfig["dcr"] } = {}): Ctx {
+function setup(opts: {
+  redirectAllowlist?: string[];
+  scopeCatalog?: string[];
+  defaultScopes?: string[];
+  dcr?: BridgeConfig["dcr"];
+} = {}): Ctx {
   const clientStore = opts.dcr?.mode === "stored" ? new InMemoryClientStore() : undefined;
-  const config = makeConfig({ redirectAllowlist: opts.redirectAllowlist, dcr: opts.dcr ?? (clientStore ? { mode: "stored", store: clientStore } : undefined) });
+  const config = makeConfig({
+    redirectAllowlist: opts.redirectAllowlist,
+    scopeCatalog: opts.scopeCatalog,
+    defaultScopes: opts.defaultScopes,
+    dcr: opts.dcr ?? (clientStore ? { mode: "stored", store: clientStore } : undefined),
+  });
   const clock = new FakeClock(NOW_MS);
   const store = new MemoryStore();
   const audit = new MemoryAudit();
@@ -375,6 +385,50 @@ test("token issuance rejects a LEGACY stored grant whose subject is in the reser
   assert.deepEqual(await ctx.store.findGrantedScopes("mcc_legacy", "client-1", nowIso), []);
   // ...and the audit trail shows NO success for the reserved subject — only failures.
   assert.ok(ctx.audit.events.every((e) => !(e.subject === "mcc_legacy" && e.status === "success")), "no success event for a reserved-namespace subject");
+  await ctx.store.close();
+});
+
+test("empty persisted scopes remain empty instead of expanding to defaults", async () => {
+  const ctx = setup();
+  const rawCode = "empty-scope-code";
+  const verifier = "empty-scope-verifier-0123456789abcdef012345678901";
+  await ctx.store.saveAuthCode({
+    codeHash: sha256Hex(rawCode), clientId: "client-1", subject: SUBJECT,
+    redirectUri: REDIRECT, resource: ctx.config.resource, scopes: [],
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  const response = await ctx.token.exchangeAuthorizationCode({
+    grantType: "authorization_code", code: rawCode, clientId: "client-1",
+    redirectUri: REDIRECT, codeVerifier: verifier,
+  });
+  assert.equal(response.scope, "");
+  const stored = await ctx.store.findRefreshToken(sha256Hex(response.refresh_token));
+  assert.deepEqual(stored?.scopes, []);
+  await ctx.store.close();
+});
+
+test("scopeless authorize round-trips empty scopes through consent and access tokens", async () => {
+  const ctx = setup({ defaultScopes: [] });
+  const verifier = "scopeless-verifier-0123456789abcdef012345678901234";
+  const prepared = await ctx.auth.prepare({
+    clientId: "client-1", redirectUri: REDIRECT, responseType: "code",
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256",
+    subject: SUBJECT,
+  });
+  assert.deepEqual(prepared.scopes, []);
+  const approved = await ctx.auth.approve({
+    consentToken: prepared.consentToken, approved: true, origin: "https://auth.test",
+  });
+  assert.ok(approved.code);
+  const response = await ctx.token.exchangeAuthorizationCode({
+    grantType: "authorization_code", code: approved.code, clientId: "client-1",
+    redirectUri: REDIRECT, codeVerifier: verifier,
+  });
+  assert.equal(response.scope, "");
+  assert.deepEqual((await verifyAccessToken(response.access_token, ctx.config, ctx.clock)).scopes, []);
+  const stored = await ctx.store.findRefreshToken(sha256Hex(response.refresh_token));
+  assert.deepEqual(stored?.scopes, []);
   await ctx.store.close();
 });
 

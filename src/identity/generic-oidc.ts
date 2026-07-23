@@ -191,12 +191,12 @@ export function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JWTClaimValidationFailed) return "generic_oidc_bad_claim";
   if (error instanceof errors.JOSEAlgNotAllowed) return "generic_oidc_unsupported_alg";
   if (error instanceof errors.JWKSNoMatchingKey) return "generic_oidc_unknown_key";
-  // JWKS-fetch transport failures (jose throws the base JOSEError, code
-  // ERR_JOSE_GENERIC, ONLY from its JWKS fetch on non-200/malformed; and
-  // JWKSTimeout on its 5s timeout) ⇒ `generic_oidc_verify_failed` ⇒ exchange_failed
+  // Remote JWKS failures (ERR_JOSE_GENERIC on non-200/malformed JSON,
+  // JWKSInvalid on an unusable set shape, and JWKSTimeout) map to
+  // `generic_oidc_verify_failed` ⇒ exchange_failed
   // (§17.11; no identity decision). Subclasses have their own codes, so the
   // ERR_JOSE_GENERIC check never misclassifies a signature/claim error.
-  if (error instanceof errors.JWKSTimeout) return "generic_oidc_verify_failed";
+  if (error instanceof errors.JWKSTimeout || error instanceof errors.JWKSInvalid) return "generic_oidc_verify_failed";
   if (error instanceof errors.JOSEError && error.code === "ERR_JOSE_GENERIC") return "generic_oidc_verify_failed";
   if (error instanceof errors.JOSEError) return "generic_oidc_token_invalid";
   return "generic_oidc_verify_failed";

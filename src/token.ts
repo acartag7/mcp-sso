@@ -6,7 +6,7 @@ import type { AuthCodeRecord, RefreshTokenRecord, StorePort } from "./ports/stor
 import type { BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { expiresAtIso, generateRefreshToken, parseRefreshFamilyId, sha256Hex, signAccessToken, verifyPkceS256 } from "./crypto.ts";
-import { isScopeToken, normalizeScopes, resolveClientCredentialsScope, scopeString } from "./scopes.ts";
+import { isScopeToken, resolveClientCredentialsScope, scopeString, storedScopes } from "./scopes.ts";
 import { verifyMachineClientSecret } from "./machine-client.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 
@@ -219,7 +219,7 @@ export class OAuthTokenUseCase {
   }
 
   private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string): Promise<UserTokenResponse> {
-    const scopes = normalizeScopes(record.scopes, this.config.scopeCatalog, this.config.defaultScopes);
+    const scopes = storedScopes(record.scopes, this.config.scopeCatalog);
     const accessToken = await signAccessToken({ subject: record.subject, clientId: record.clientId, scopes }, this.config, this.clock);
     return {
       access_token: accessToken, token_type: "Bearer",

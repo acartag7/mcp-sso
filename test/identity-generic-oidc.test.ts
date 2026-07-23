@@ -507,6 +507,19 @@ test("createGenericOidcRedirectIdentity: a JWKS HTTP 500 (jose base JOSEError, E
   } finally { globalThis.fetch = realFetch; }
 });
 
+test("createGenericOidcRedirectIdentity: malformed remote JWKS (ERR_JWKS_INVALID) is exchange_failed", async () => {
+  const rsa = await generateKeyPair("RS256");
+  const idToken = await sign({ iss: ISSUER, aud: CLIENT_ID, sub: "s", exp: NOW + 3600, iat: NOW, nonce: "n" }, "RS256", rsa.privateKey);
+  const transport: GenericOidcTokenTransport = { async postForm() { return { status: 200, async text() { return JSON.stringify({ id_token: idToken, access_token: "atk" }); } }; } };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({}), { status: 200 })) as typeof fetch;
+  try {
+    const port = await createGenericOidcRedirectIdentity(CONFIG, { transport });
+    const result = await port.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+    assert.ok(!result.ok && result.kind === "exchange_failed");
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test("createGenericOidcRedirectIdentity: code-flow response with at_hash but NO access_token ⇒ exchange_failed (fail-closed — Codex P2: at_hash must be validatable, never header-mode-skipped in the code flow)", async () => {
   const rsa = await generateKeyPair("RS256");
   const now = new Date(NOW * 1000);
