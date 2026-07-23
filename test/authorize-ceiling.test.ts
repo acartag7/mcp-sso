@@ -20,7 +20,10 @@ import { Bridge } from "../src/adapters/bridge.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { OAuthError } from "../src/errors.ts";
 import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
-import { pkceChallenge } from "../src/crypto.ts";
+import {
+  pkceChallenge, sha256Hex, signConsentToken, verifyConsentToken,
+} from "../src/crypto.ts";
+import { consentClaims, CONSENT_TYP } from "../src/crypto-claims.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
@@ -52,12 +55,14 @@ function config(store: ClientStore, defaultScopes: string[] = ["mcp:read"]): Bri
   });
 }
 
-interface Ctx { bridge: Bridge; audit: MemoryAudit; }
+interface Ctx { bridge: Bridge; audit: MemoryAudit; store: MemoryStore; clock: FakeClock; }
 function setup(defaultScopes: string[] = ["mcp:read"]): Ctx {
   const audit = new MemoryAudit();
   const clientStore = new InMemoryClientStore();
-  const bridge = new Bridge({ config: config(clientStore, defaultScopes), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit });
-  return { bridge, audit };
+  const store = new MemoryStore();
+  const clock = new FakeClock(NOW_MS);
+  const bridge = new Bridge({ config: config(clientStore, defaultScopes), store, clock, audit });
+  return { bridge, audit, store, clock };
 }
 
 function req(partial: Partial<NormRequest> & { query?: NormRequest["query"]; body?: unknown }): NormRequest {
@@ -264,6 +269,64 @@ test("an empty-array ceiling denies all scopes (entitled to nothing ⇒ access_d
   const page = await resolveAndAuthorize(ctx, fakeIdentity([]), clientId, "mcp:read", "v-empty-array-0123456789abcdef012345678901234");
   assert.equal(page.status, 302);
   assert.equal(new URL(page.headers.location as string).searchParams.get("error"), "access_denied");
+});
+
+test("an empty ceiling survives the consent codec and cannot resurrect a prior grant", async () => {
+  const ctx = setup();
+  const clientId = await register(ctx);
+  const verifier = "v-empty-codec-0123456789abcdef01234567890123";
+  await ctx.store.saveRefreshToken({
+    tokenHash: "a".repeat(64),
+    familyId: "family-existing-0123456789",
+    previousTokenHash: null,
+    clientId,
+    subject: SUBJECT,
+    scopes: ["mcp:read"],
+    expiresAt: "2026-07-03T13:00:00.000Z",
+  });
+  const consentToken = await signConsentToken({
+    clientId,
+    redirectUri: REDIRECT,
+    resource: ctx.bridge.config.resource,
+    scopes: [],
+    codeChallenge: pkceChallenge(verifier),
+    codeChallengeMethod: "S256",
+    subject: SUBJECT,
+    allowedScopes: [],
+  }, ctx.bridge.config, ctx.clock);
+  const encoded = decodeJwt(consentToken);
+  assert.equal(Object.hasOwn(encoded, "allowed_scopes"), true);
+  assert.equal(encoded.allowed_scopes, "");
+  assert.deepEqual((await verifyConsentToken(
+    consentToken, ctx.bridge.config, ctx.clock,
+  )).allowedScopes, []);
+
+  const approved = await ctx.bridge.handleApprove(req({
+    body: { consent_token: consentToken, approved: true },
+    headers: { origin: "https://auth.test" },
+  }));
+  const code = new URL(approved.headers.location as string).searchParams.get("code");
+  assert.ok(code);
+  const record = await ctx.store.consumeAuthCode(
+    sha256Hex(code), new Date(NOW_MS).toISOString(),
+  );
+  assert.deepEqual(record?.scopes, []);
+});
+
+test("a malformed present consent ceiling is rejected instead of becoming unbounded", () => {
+  const base = {
+    typ: CONSENT_TYP,
+    client_id: "client",
+    redirect_uri: REDIRECT,
+    resource: "https://api.test/mcp",
+    scope: "",
+    code_challenge: "challenge",
+    code_challenge_method: "S256",
+    sub: SUBJECT,
+  };
+  for (const allowed_scopes of [[], 42, " ", "mcp:read  mcp:write", "mcp:read\tmcp:write"]) {
+    assert.throws(() => consentClaims({ ...base, allowed_scopes } as never));
+  }
 });
 
 test("no ceiling + empty defaultScopes + scopeless authorize is unchanged v0.1 behavior (200, not access_denied)", async () => {

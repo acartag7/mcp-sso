@@ -30,7 +30,7 @@ runAdapterFlow("hono", async (bridge, identity) => {
     },
   };
   return client;
-});
+}, "unknown");
 
 // §6.7: the hono adapter must NEVER derive the client IP from X-Forwarded-For on
 // its own — an attacker-chosen header would select the rate-limit bucket
@@ -64,6 +64,7 @@ test("hono: X-Forwarded-For does NOT select the rate-limit bucket or the audit i
   }
   assert.deepEqual(keys, ["token:unknown", "token:unknown"], "every request shares ONE bucket — a forged XFF must not create per-attacker buckets");
   await app.request("/oauth/authorize?x=1", { headers: { "cf-access-jwt-assertion": "t", "x-forwarded-for": "6.6.6.3" } });
+  assert.deepEqual(keys, ["token:unknown", "token:unknown", "authorize:unknown"]);
   const verify = events.find((e) => e.event === "identity.verify");
   assert.ok(verify, "identity.verify emitted");
   assert.equal(verify.ip, undefined, "audit ip is absent, never the forged XFF value");
@@ -77,6 +78,7 @@ test("hono: a deployer-supplied clientIp extractor keys the rate limit and audit
   });
   assert.deepEqual(keys, ["token:9.9.9.9"]);
   await app.request("/oauth/authorize?x=1", { headers: { "cf-access-jwt-assertion": "t" } });
+  assert.deepEqual(keys, ["token:9.9.9.9", "authorize:9.9.9.9"]);
   const verify = events.find((e) => e.event === "identity.verify");
   assert.equal(verify?.ip, "9.9.9.9");
 });

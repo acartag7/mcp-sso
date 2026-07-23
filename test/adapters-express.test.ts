@@ -35,4 +35,4 @@ runAdapterFlow("express", async (bridge, identity) => {
     async close() { await new Promise<void>((resolve) => server.close(() => resolve())); },
   };
   return client;
-});
+}, "127.0.0.1");

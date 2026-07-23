@@ -19,7 +19,7 @@ import { OAuthError } from "../errors.ts";
 import { assertAllowedScopesCeiling } from "../scopes.ts";
 import { isBasicAttempt } from "../client-auth.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
-import { snapshotOwnDataRecord } from "../own-property.ts";
+import { ownDataValue, snapshotOwnDataRecord } from "../own-property.ts";
 import { renderConsentPage } from "./consent-page.ts";
 import {
   findDuplicatedKeys, formField, formObject, headerString, OAUTH_AUTHORIZE_PARAM_KEYS,
@@ -74,7 +74,7 @@ export class Bridge {
   async handleRegister(req: NormRequest): Promise<NormResponse> {
     try {
       const request = requiredRequest(req);
-      await this.guard(request, "register");
+      await this.guard(request.ip, "register");
       const body = formObject(request.body);
       // Preserve the original value types for the core validator. Best-effort
       // filtering here would turn malformed metadata into a valid registration.
@@ -137,6 +137,7 @@ export class Bridge {
    *  empty array is a valid "entitled to nothing" ceiling (prepare's empty
    *  intersection denies). undefined ⇒ no ceiling (v0.1 behavior). */
   async resolveIdentity(identity: IdentityPort, input: unknown, ip?: string): Promise<{ subject: string; allowedScopes?: string[] }> {
+    await this.guard(ip, "authorize");
     let result: IdentityResult;
     try {
       const rawResult = await identity.verify(input);
@@ -177,7 +178,7 @@ export class Bridge {
       const consentToken = formField(body, "consent_token") ?? consentCookie(request);
       const result = await this.auth.approve({
         consentToken,
-        approved: parseApproved(formField(body, "approved")),
+        approved: parseApproved(ownDataValue(body, "approved")),
         origin: headerString(request.headers, "origin"),
       });
       return { status: 302, headers: { location: result.redirectTo }, redirect: result.redirectTo };
@@ -191,7 +192,7 @@ export class Bridge {
     try {
       const request = requiredRequest(req);
       authorization = headerString(request.headers, "authorization");
-      await this.guard(request, "token");
+      await this.guard(request.ip, "token");
       const body = formObject(request.body);
       const grantType = formField(body, "grant_type");
       let response: UserTokenResponse | MachineTokenResponse;
@@ -234,10 +235,10 @@ export class Bridge {
     }
   }
 
-  private async guard(req: NormRequest, prefix: string): Promise<void> {
+  private async guard(ip: string | undefined, prefix: string): Promise<void> {
     let allowed = true;
     try {
-      allowed = await this.rateLimit.check(`${prefix}:${req.ip ?? "unknown"}`);
+      allowed = await this.rateLimit.check(`${prefix}:${ip ?? "unknown"}`);
     } catch {
       allowed = true; // fail-open: a rate-limiter outage must not lock out auth
     }

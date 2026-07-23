@@ -212,9 +212,12 @@ interface BridgeConfig {
 - `signingPrivateJwk` parses to an EC P-256 key with `d`, `x`, `y` present. (jose
   rejects zero-length keys; we validate shape explicitly so a misconfigured boot
   fails closed independent of jose upgrades.)
-- `defaultScopes ⊆ scopeCatalog` and `scopeCatalog` is non-empty. An empty
-  catalog means the resource honors no scopes and every authorize fails closed —
-  the deployer MUST declare scopes explicitly.
+- `defaultScopes ⊆ scopeCatalog` and `scopeCatalog` is non-empty. Every entry in
+  both lists is one RFC 6749 §3.3 `scope-token`; empty, whitespace-bearing,
+  quote-bearing, backslash-bearing, control-bearing, inherited, accessor, or
+  sparse entries reject at boot. An empty catalog means the resource honors no
+  scopes and every authorize fails closed — the deployer MUST declare scopes
+  explicitly.
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
 
@@ -379,8 +382,11 @@ interface RateLimitPort { check(key: string): Promise<boolean>; }
 const noopRateLimit: RateLimitPort = { async check(): Promise<boolean> { return true; } };
 ```
 Optional DoS defense for the unauthenticated `/oauth/register` + `/oauth/token`
-endpoints (threat-model #8). The adapter calls `check("register:<ip>")` /
-`check("token:<ip>")` before the use-case; `false` ⇒ **429 Too Many Requests**.
+endpoints and the header-driven `/oauth/authorize` identity-verification step
+(threat-model #8). The bridge calls `check("register:<ip>")` /
+`check("token:<ip>")` before those use-cases and
+`check("authorize:<ip>")` **before** invoking `IdentityPort.verify`; `false` ⇒
+**429 Too Many Requests** without attempting identity verification.
 The default `noopRateLimit` allows everything (rate-limiting is advisory, not a
 hard gate). A thrown error is treated as **fail-open** (allow) — a rate-limiter
 outage must not lock out all auth; this is defense-in-depth, not a security boundary.
@@ -664,10 +670,11 @@ the response. Wiring rules:
   `authorizationServerMetadata`; GET `/.well-known/oauth-protected-resource` AND
   its path-inserted form → `protectedResourceMetadata` (§9.1); GET `/oauth/jwks` →
   `jwks`; POST `/oauth/register` → `registerClient` (behind `RateLimitPort`,
-  §6.7); GET `/oauth/authorize` → resolve subject via `IdentityPort` → `prepare`,
-  render the consent page; POST `/oauth/authorize/approve` → `approve`; POST
-  `/oauth/token` → `exchangeAuthorizationCode`/`refresh` (behind `RateLimitPort`);
-  POST `/oauth/revoke` → `revoke` (always 200).
+  §6.7); GET `/oauth/authorize` → check `RateLimitPort` before resolving the
+  subject via `IdentityPort` → `prepare`, render the consent page; POST
+  `/oauth/authorize/approve` → `approve`; POST `/oauth/token` →
+  `exchangeAuthorizationCode`/`refresh` (behind `RateLimitPort`); POST
+  `/oauth/revoke` → `revoke` (always 200).
 - **Error → response:** an `OAuthError` with `.redirect` ⇒ **302** to the tagged
   `redirect_uri?error=…`; otherwise direct — status `error.status`, body
   `oauthErrorBody(error)` (§9.5). On the protected `/mcp` surface, 401/403 set the
@@ -1931,9 +1938,8 @@ groupAuthorization?: {
   is the honest, enforceable junction. A mapped scope absent from the catalog can
   never be granted anyway — the engine intersects against catalog-validated
   requested scopes — so the subset check is a deployer foot gun guard surfacing
-  misconfiguration loudly at boot, not a security boundary. The separate
-  `scopeCatalog`/`defaultScopes` entry shape-validation is a tracked backlog
-  item, NOT bundled here.)
+  misconfiguration loudly at boot, not a security boundary. The bridge validates
+  every `scopeCatalog`/`defaultScopes` entry as one RFC 6749 scope token at boot.)
 - **Combination model: UNION.** A subject's scope ceiling
   `allowedScopes = baseScopes ∪ ⋃ mapping[g]` over every group GUID `g` in
   the verified `groups` claim that has a mapping entry. No tier precedence,

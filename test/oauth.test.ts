@@ -10,7 +10,7 @@ import {
 } from "../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../src/errors.ts";
 import { pkceChallenge, sha256Hex, signAccessToken, verifyAccessToken } from "../src/crypto.ts";
-import { requireScope } from "../src/scopes.ts";
+import { requireScope, scopeString } from "../src/scopes.ts";
 import { buildUnauthorizedChallenge } from "../src/challenge.ts";
 import {
   authorizationServerMetadata, jwks, protectedResourceMetadata, protectedResourceMetadataUrls,
@@ -343,6 +343,24 @@ test("verifier accepts an mcc_ sub only with sub==client_id AND the gty marker â
   await ctx.store.close();
 });
 
+test("scope serialization accepts only individual RFC 6749 scope tokens", async () => {
+  assert.equal(scopeString(["mcp:write", "mcp:read"]), "mcp:read mcp:write");
+  const ctx = setup();
+  for (const malformed of ["", "mcp:read mcp:admin", 'quoted"', "back\\slash", "control\u0000"]) {
+    assert.throws(
+      () => scopeString(["mcp:read", malformed]),
+      (error: unknown) => error instanceof OAuthError && error.code === "invalid_scope",
+    );
+  }
+  await assert.rejects(
+    signAccessToken({
+      subject: SUBJECT, clientId: "client-1", scopes: ["mcp:read mcp:admin"],
+    }, ctx.config, ctx.clock),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_scope",
+  );
+  await ctx.store.close();
+});
+
 test("token issuance rejects a LEGACY stored grant whose subject is in the reserved mcc_ namespace (both paths)", async () => {
   const ctx = setup();
   const verifier = "valid-verifier-123456789012345678901234567890123";
@@ -421,6 +439,12 @@ test("config fail-closed: https-only, secret length, key shape, catalog, default
   assert.throws(() => createBridgeConfig({ ...base, consentSigningSecret: "short" }), AuthConfigError); // <32
   assert.throws(() => createBridgeConfig({ ...base, signingPrivateJwk: { kty: "EC", crv: "P-256" } }), AuthConfigError); // no d/x/y
   assert.throws(() => createBridgeConfig({ ...base, scopeCatalog: [] }), AuthConfigError); // empty catalog
+  for (const malformed of ["", "two scopes", 'quoted"', "back\\slash", "control\u0000"]) {
+    assert.throws(
+      () => createBridgeConfig({ ...base, scopeCatalog: ["mcp:read", malformed] }),
+      AuthConfigError,
+    );
+  }
   assert.throws(() => createBridgeConfig({ ...base, defaultScopes: ["mcp:admin"] }), AuthConfigError); // default not in catalog
   assert.throws(() => createBridgeConfig({ ...base, accessTokenTtlSeconds: 0 }), AuthConfigError); // bad ttl
   // dev loopback flag permits http on loopback only

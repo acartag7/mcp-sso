@@ -1,7 +1,7 @@
 // Shared end-to-end adapter flow (contracts §9.6). Each framework adapter test
 // mounts its app + client and calls runAdapterFlow, so all three are exercised
 // identically: metadata -> register -> authorize (consent page) -> approve -> token,
-// plus the verification.md T1.HF identity-rejection parity matrix (HF.1–HF.3).
+// plus the verification.md T1.HF identity/rejection parity matrix (HF.1–HF.4).
 
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
@@ -12,6 +12,7 @@ import { createBridgeConfig } from "../../src/config.ts";
 import { pkceChallenge } from "../../src/crypto.ts";
 import { OAuthError, withRedirect } from "../../src/errors.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
+import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
@@ -23,7 +24,7 @@ const IDENTITY_HEADER = "cf-access-jwt-assertion";
 class FakeClock { private ms: number; constructor(ms: number) { this.ms = ms; } nowMs(): number { return this.ms; } }
 class MemoryAudit { async writeAuthEvent(): Promise<void> {} }
 
-function makeBridge(): Bridge {
+function makeBridge(rateLimit?: RateLimitPort): Bridge {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const signingPrivateJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK;
   const config = createBridgeConfig({
@@ -33,7 +34,9 @@ function makeBridge(): Bridge {
     allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" },
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
-  return new Bridge({ config, store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit: new MemoryAudit() });
+  return new Bridge({
+    config, store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit: new MemoryAudit(), rateLimit,
+  });
 }
 
 const stubIdentity: IdentityPort = {
@@ -50,7 +53,11 @@ export interface AdapterClient {
   close?(): Promise<void>;
 }
 
-export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: IdentityPort) => Promise<AdapterClient>): void {
+export function runAdapterFlow(
+  name: string,
+  mount: (bridge: Bridge, identity: IdentityPort) => Promise<AdapterClient>,
+  expectedAuthorizeIp: string,
+): void {
   test(`${name} adapter: metadata -> register -> authorize -> approve -> token`, async () => {
     const client = await mount(makeBridge(), stubIdentity);
     try {
@@ -72,7 +79,11 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       const consentToken = /name="consent_token" value="([^"]+)"/.exec(authPage.body)?.[1];
       assert.ok(consentToken, "consent token in page");
 
-      const approve = await client.postForm("/oauth/authorize/approve", { consent_token: consentToken as string, approved: "true" }, { origin: "https://auth.test" });
+      const approve = await client.postForm(
+        "/oauth/authorize/approve",
+        { consent_token: consentToken as string, approved: "true" },
+        { origin: "https://auth.test" },
+      );
       assert.equal(approve.status, 302);
       const code = new URL(approve.headers.location as string).searchParams.get("code");
       assert.ok(code);
@@ -80,6 +91,58 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       const token = await client.postForm("/oauth/token", { grant_type: "authorization_code", code: code as string, redirect_uri: REDIRECT, client_id: clientId, code_verifier: verifier });
       assert.equal(token.status, 200);
       assert.match(JSON.parse(token.body).access_token, /^[^.]+\.[^.]+\.[^.]+$/);
+    } finally {
+      await client.close?.();
+    }
+  });
+
+  test(`${name} adapter: JSON boolean approval is preserved`, async () => {
+    const client = await mount(makeBridge(), stubIdentity);
+    try {
+      const verifier = "json-approval-verifier-0123456789abcdef0123456789";
+      const reg = await client.postJson("/oauth/register", { redirect_uris: [REDIRECT] });
+      const clientId = JSON.parse(reg.body).client_id;
+      const authPage = await client.get(`/oauth/authorize?${new URLSearchParams({
+        response_type: "code", client_id: clientId, redirect_uri: REDIRECT,
+        code_challenge: pkceChallenge(verifier), code_challenge_method: "S256",
+        scope: "mcp:read", state: "json",
+      })}`, { [IDENTITY_HEADER]: STUB_TOKEN });
+      const consentToken = /name="consent_token" value="([^"]+)"/.exec(authPage.body)?.[1];
+      assert.ok(consentToken, "consent token in page");
+      const approve = await client.postJson(
+        "/oauth/authorize/approve",
+        { consent_token: consentToken as string, approved: true },
+        { origin: "https://auth.test" },
+      );
+      assert.equal(approve.status, 302);
+      const redirect = new URL(approve.headers.location as string);
+      assert.ok(redirect.searchParams.get("code"), "boolean approval mints a code");
+      assert.equal(redirect.searchParams.get("error"), null);
+    } finally {
+      await client.close?.();
+    }
+  });
+
+  test(`${name} adapter: header authorize limiter runs before identity verification`, async () => {
+    const keys: string[] = [];
+    let verifications = 0;
+    const limiter: RateLimitPort = {
+      async check(key: string) { keys.push(key); return false; },
+    };
+    const identity: IdentityPort = {
+      async verify() {
+        verifications += 1;
+        return { ok: true, identity: { subject: SUBJECT } };
+      },
+    };
+    const client = await mount(makeBridge(limiter), identity);
+    try {
+      const auth = await client.get("/oauth/authorize", { [IDENTITY_HEADER]: STUB_TOKEN });
+      assert.equal(auth.status, 429);
+      assert.equal(auth.headers.location, undefined, "limiter denial is direct, never a redirect");
+      assert.equal(JSON.parse(auth.body).error, "temporarily_unavailable");
+      assert.deepEqual(keys, [`authorize:${expectedAuthorizeIp}`]);
+      assert.equal(verifications, 0);
     } finally {
       await client.close?.();
     }

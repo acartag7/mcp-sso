@@ -18,4 +18,4 @@ runAdapterFlow("fastify", async (bridge, identity) => {
     async close() { await app.close(); },
   };
   return client;
-});
+}, "127.0.0.1");

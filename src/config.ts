@@ -6,6 +6,7 @@
 import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import { snapshotOwnDataArray, snapshotOwnDataRecord } from "./own-property.ts";
+import { isScopeToken } from "./scopes.ts";
 import type { BridgeConfig } from "./config-types.ts";
 
 export type {
@@ -95,8 +96,8 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
     throw new AuthConfigError("consentSigningSecret must be at least 32 characters");
   }
   validateSigningKey(signingPrivateJwk);
-  if (!Array.isArray(scopeCatalog) || scopeCatalog.length === 0) {
-    throw new AuthConfigError("scopeCatalog must be a non-empty array");
+  if (scopeCatalog.length === 0 || !scopeCatalog.every(isScopeToken)) {
+    throw new AuthConfigError("scopeCatalog must be a non-empty array of scope tokens");
   }
   if (!defaultScopes.every((s) => scopeCatalog.includes(s))) {
     throw new AuthConfigError("defaultScopes must be a subset of scopeCatalog");

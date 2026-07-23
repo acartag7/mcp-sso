@@ -65,6 +65,7 @@ Run before S2.
 | HF.1 | `IdentityPort` returns `{ ok: false }` on authorize | All adapters return HTTP 401 with RFC-shaped `{ error: "access_denied", error_description: ... }`. |
 | HF.2 | `IdentityPort` throws `OAuthError("access_denied", 401)` | Same HTTP 401 body on Fastify, Express, and Hono. |
 | HF.3 | Non-OAuth error thrown inside a handler | 500 with a top-level string error body, never a framework-specific envelope. |
+| HF.4 | Header-mode authorize limiter denies or throws | Denial is a direct 429 before `IdentityPort.verify` with no identity audit; limiter outage fails open; Fastify, Express, and Hono pass their trusted client-IP value into the same `authorize:<ip>` key. |
 
 ### T1.S0a — MySQL store and Redis/Valkey limiter
 

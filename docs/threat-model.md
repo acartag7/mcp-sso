@@ -150,7 +150,7 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 5 | Open-redirect / `redirect_uri` abuse | Spoofing / Elevation | Anchored allowlist ([§10](./contracts.md#10-redirect-uri-policy)); error redirects target only validated `redirect_uri`s | None (a redirect can only go to a §10-validated URI) |
 | 6 | Token substitution across resources | Elevation | Audience fail-closed ([§7.2](./contracts.md#72-access-token-es256-audience-bound-fail-closed)) | None |
 | 7 | PRM/metadata substitution (client-side) | Spoofing | https-only (TLS); RFC 9728 §3.3 client validates `resource` matches; bridge emits `resource`=config | MITM on non-TLS — excluded by https-only (loopback dev aside) |
-| 8 | DCR flooding / audit spam | DoS | Stateless registrations are cheap; audit is metadata-only; `RateLimitPort` hook exists (fix #7) | The hook defaults to no-op — `/oauth/register` + `/oauth/token` can be hammered unless a deployer injects a real limiter or fronts the bridge with a rate-limiting proxy |
+| 8 | DCR/token flooding or header-mode identity-verification abuse | DoS | `RateLimitPort` checks `register:<ip>`, `token:<ip>`, and `authorize:<ip>` before the corresponding work; authorization denial happens before `IdentityPort.verify`; audit is metadata-only | The hook defaults to no-op — these endpoints can be hammered unless a deployer injects a real limiter or fronts the bridge with a rate-limiting proxy |
 | 9 | Stored-mode client spoofing (claim another's redirect) | Spoofing / Elevation | Registration validates each `redirect_uri` via the global allowlist ([§10.1](./contracts.md#101-global-allowlist-stateless-dcr-mode--assertallowedredirecturi)); `application_type` per-type policy blocks a web client widening via native | None (only already-trusted URIs registerable) |
 | 10 | Scope escalation | Elevation | `normalizeScopes` vs catalog (unknown ⇒ reject); server-authoritative prior-scopes (derived, not client-claimed); consent shows the delta; `requireScope` at the RS | None |
 | 11 | Consent replay | Tampering | Single-use consent JTI; atomic `consumeConsentJti` | None |
@@ -285,8 +285,9 @@ deployer acts on.
   TTL bounds exposure (row 1).
 - **The rate-limit hook (`RateLimitPort`, fix #7) defaults to a no-op that
   allows everything.** Without a real limiter at the composition root, the
-  unauthenticated DCR/token endpoints can be flooded (DoS, though audit is
-  metadata-only). A reference distributed limiter ships at `/rate-limit/redis`
+  unauthenticated DCR/token endpoints and header-mode identity verification can
+  be flooded (DoS, though audit is metadata-only). A reference distributed
+  limiter ships at `/rate-limit/redis`
   (v0.1.2, [§17.10](./contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)):
   a Redis/Valkey fixed-window counter closes the multi-instance gap (threat #19)
   where a per-process limiter is bypassed by spreading requests across
@@ -301,10 +302,11 @@ deployer acts on.
   - Saturation surfaces as a 500 (NOT fail-open — fail-open applies only to
     `RateLimitPort` per [§6.7](./contracts.md#67-ratelimitport-fix-7)); wiring
     the Redis `RateLimitPort` is the in-band DoS mitigation.
-  - Performance posture: the hot path (the rate-limit check on `/oauth/register`
-    + `/oauth/token`) uses Redis `EVALSHA`, so once the script is cached only its
-    hash crosses the wire (the post-restart / `SCRIPT FLUSH` path re-sends the
-    body once via `EVAL`). The MySQL adapter uses the text protocol and
+  - Performance posture: the hot path (the rate-limit check on `/oauth/register`,
+    `/oauth/token`, and header-driven `/oauth/authorize`) uses Redis `EVALSHA`,
+    so once the script is cached only its hash crosses the wire (the post-restart
+    / `SCRIPT FLUSH` path re-sends the body once via `EVAL`). The MySQL adapter
+    uses the text protocol and
     per-transaction `READ COMMITTED`
     ([§12.3](./contracts.md#123-reference-adapters) for the two accepted
     trade-offs).

@@ -1,5 +1,6 @@
 import type { JWTPayload } from "jose";
 import { snapshotOwnDataArray } from "./own-property.ts";
+import { isScopeToken } from "./scopes.ts";
 import type { ConsentRequestClaims, VerifiedAccessToken } from "./crypto.ts";
 
 export const CONSENT_TYP = "mcp-sso-consent";
@@ -7,8 +8,7 @@ export const CONSENT_TYP = "mcp-sso-consent";
 export function consentClaims(payload: JWTPayload): ConsentRequestClaims {
   if (payload.typ !== CONSENT_TYP) throw new Error("wrong token type");
   const scopes = scopeClaim(payload.scope);
-  const allowedScopes = typeof payload.allowed_scopes === "string" && payload.allowed_scopes.trim()
-    ? payload.allowed_scopes.split(/\s+/) : undefined;
+  const allowedScopes = optionalScopeClaim(payload.allowed_scopes);
   return {
     clientId: requiredString(payload.client_id, "client_id"),
     redirectUri: requiredString(payload.redirect_uri, "redirect_uri"),
@@ -32,6 +32,15 @@ export function accessClaims(payload: JWTPayload): VerifiedAccessToken {
 
 function scopeClaim(value: unknown): string[] {
   return typeof value === "string" && value.trim() ? value.split(/\s+/) : [];
+}
+
+function optionalScopeClaim(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (value === "") return [];
+  if (typeof value !== "string") throw new Error("invalid allowed_scopes");
+  const values = value.split(" ");
+  if (!values.every(isScopeToken)) throw new Error("invalid allowed_scopes");
+  return values;
 }
 
 export function requiredString(value: unknown, label: string): string {

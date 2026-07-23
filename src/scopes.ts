@@ -44,7 +44,9 @@ export function normalizeScopes(
 /** Stable scope string: sorted, space-joined. Used for token `scope` claims. */
 export function scopeString(scopes: readonly string[]): string {
   const values = snapshotOwnStringArray(scopes);
-  if (values === null) throw new OAuthError("invalid_scope", "Scope list is malformed");
+  if (values === null || !values.every(isScopeToken)) {
+    throw new OAuthError("invalid_scope", "Scope list is malformed");
+  }
   return [...values].sort().join(" ");
 }
 

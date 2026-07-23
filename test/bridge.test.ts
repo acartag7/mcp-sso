@@ -29,9 +29,16 @@ function config(): BridgeConfig {
   });
 }
 
-interface Ctx { bridge: Bridge; }
+interface Ctx { bridge: Bridge; audit: MemoryAudit; }
 function setup(rateLimit?: RateLimitPort): Ctx {
-  return { bridge: new Bridge({ config: config(), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit: new MemoryAudit(), rateLimit }) };
+  const audit = new MemoryAudit();
+  return {
+    bridge: new Bridge({
+      config: config(), store: new MemoryStore(),
+      clock: new FakeClock(NOW_MS), audit, rateLimit,
+    }),
+    audit,
+  };
 }
 function req(partial: Partial<NormRequest> & { query?: NormRequest["query"]; body?: unknown }): NormRequest {
   return { query: partial.query ?? {}, body: partial.body, headers: partial.headers ?? {}, ip: partial.ip ?? "1.2.3.4" };
@@ -193,6 +200,43 @@ test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Red
   const ctx = setup(boom);
   const res = await ctx.bridge.handleRegister(req({ body: { redirect_uris: [REDIRECT] } }));
   assert.equal(res.status, 201); // not 429 — the bridge guard() caught the throw and allowed
+});
+
+test("bridge: authorize rate-limit denial happens before identity verification", async () => {
+  const keys: string[] = [];
+  let verifications = 0;
+  const deny: RateLimitPort = {
+    async check(key: string) { keys.push(key); return false; },
+  };
+  const identity = {
+    async verify() {
+      verifications += 1;
+      return { ok: true as const, identity: { subject: SUBJECT } };
+    },
+  };
+  const ctx = setup(deny);
+  await assert.rejects(
+    ctx.bridge.resolveIdentity(identity, "credential", "1.2.3.4"),
+    (error: unknown) => error instanceof Error
+      && (error as { code?: unknown }).code === "temporarily_unavailable",
+  );
+  assert.deepEqual(keys, ["authorize:1.2.3.4"]);
+  assert.equal(verifications, 0);
+  assert.equal(ctx.audit.events.filter((event) => event.event === "identity.verify").length, 0);
+});
+
+test("bridge: authorize rate-limit outage fails open and still verifies identity", async () => {
+  let verifications = 0;
+  const throwing: RateLimitPort = { async check() { throw new Error("limiter down"); } };
+  const identity = {
+    async verify() {
+      verifications += 1;
+      return { ok: true as const, identity: { subject: SUBJECT } };
+    },
+  };
+  const resolved = await setup(throwing).bridge.resolveIdentity(identity, "credential", "1.2.3.4");
+  assert.equal(resolved.subject, SUBJECT);
+  assert.equal(verifications, 1);
 });
 
 test("bridge: malformed registration members reject instead of being filtered", async () => {

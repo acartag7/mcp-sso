@@ -8,7 +8,7 @@ import { SignJWT, importJWK, jwtVerify } from "jose";
 import type { JWK, JWTPayload } from "jose";
 import type { ClockPort } from "./ports/clock.ts";
 import { assertBridgeConfig, type BridgeConfig } from "./config.ts";
-import { scopeString } from "./scopes.ts";
+import { assertAllowedScopesCeiling, scopeString } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { ownBooleanTrue, snapshotOwnDataRecord } from "./own-property.ts";
 import {
@@ -96,6 +96,7 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
   const claimSnapshot = snapshotOwnDataRecord(claims);
   if (claimSnapshot === null) throw new Error("consent claims must be a data object");
   const safeClaims = claimSnapshot as unknown as ConsentRequestClaims;
+  const allowedScopes = assertAllowedScopesCeiling(safeClaims.allowedScopes);
   const now = nowSeconds(clock);
   return await new SignJWT({
     typ: CONSENT_TYP,
@@ -107,7 +108,7 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
     code_challenge: safeClaims.codeChallenge,
     code_challenge_method: safeClaims.codeChallengeMethod,
     state: safeClaims.state,
-    allowed_scopes: safeClaims.allowedScopes?.length ? scopeString(safeClaims.allowedScopes) : undefined,
+    allowed_scopes: allowedScopes === undefined ? undefined : scopeString(allowedScopes),
   }).setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(config.issuer)
     .setAudience(CONSENT_AUDIENCE)
