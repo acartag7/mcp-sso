@@ -6,7 +6,9 @@ import type { BridgeConfig } from "../config.ts";
 import { assertBridgeConfig, originOf } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildErrorRedirect, buildUnauthorizedChallenge } from "../challenge.ts";
-import { snapshotOwnDataArray, snapshotOwnDataRecord } from "../own-property.ts";
+import {
+  isDataDescriptor, snapshotOwnDataArray, snapshotOwnDataRecord,
+} from "../own-property.ts";
 
 export interface NormRequest {
   query: Record<string, string | string[] | undefined>;
@@ -103,7 +105,7 @@ export function headerString(headers: NormRequest["headers"], name: string): str
   for (const key of Reflect.ownKeys(descriptors)) {
     const descriptor = descriptors[key]!;
     if (typeof key === "string" && key.toLowerCase() === lower
-      && descriptor.enumerable && "value" in descriptor) {
+      && descriptor.enumerable && isDataDescriptor(descriptor)) {
       const value = descriptor.value as unknown;
       if (Array.isArray(value)) {
         const values = snapshotOwnDataArray(value);
@@ -153,7 +155,8 @@ function ownEnumerableDataValue(value: unknown, key: PropertyKey): unknown {
   if (typeof value !== "object" || value === null) return undefined;
   try {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
+    return descriptor?.enumerable === true && isDataDescriptor(descriptor)
+      ? descriptor.value : undefined;
   } catch {
     return undefined;
   }

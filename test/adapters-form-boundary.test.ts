@@ -4,9 +4,33 @@ import Fastify from "fastify";
 import type { Bridge } from "../src/adapters/bridge.ts";
 import { registerOAuthRoutes } from "../src/adapters/fastify.ts";
 import { createOAuthApp } from "../src/adapters/hono.ts";
-import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
+import {
+  formField, headerString, queryString, type NormRequest, type NormResponse,
+} from "../src/adapters/http.ts";
 
 const FORM = "client_id=first&client_id=second&scope=one";
+
+test("HTTP field helpers require own descriptor values", () => {
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+  let reads = 0;
+  const record = {};
+  Object.defineProperty(record, "field", {
+    enumerable: true,
+    get() { reads += 1; return "accessor-field"; },
+  });
+  Object.defineProperty(Object.prototype, "value", {
+    configurable: true, value: "ambient-field",
+  });
+  try {
+    assert.equal(headerString(record as NormRequest["headers"], "field"), undefined);
+    assert.equal(queryString(record as NormRequest["query"], "field"), undefined);
+    assert.equal(formField(record, "field"), undefined);
+    assert.equal(reads, 0);
+  } finally {
+    if (previous === undefined) delete (Object.prototype as Record<string, unknown>).value;
+    else Object.defineProperty(Object.prototype, "value", previous);
+  }
+});
 
 function bridgeProbe(onToken: (request: NormRequest) => void): Bridge {
   const response: NormResponse = { status: 400, headers: {}, body: { error: "probe" } };

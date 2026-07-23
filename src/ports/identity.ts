@@ -5,6 +5,7 @@
 // (CloudflareAccessIdentity, EntraIdentity) arrive in Phase 3.
 
 import {
+  bindClassDataMethod, classDataValue, inspectClassDataRecord,
   snapshotClassDataRecord, snapshotOwnDataRecord, snapshotOwnStringArray,
 } from "../own-property.ts";
 
@@ -51,7 +52,9 @@ export interface RedirectIdentityPort {
    *  through the same result type — that gap is documented per-port, never silent.
    *  A THROW is always classified `exchange_failed` by the orchestrator (one
    *  deterministic rule, so the two failure channels never depend on which
-   *  exception a port happened to raise); `identity_rejected` is returned only. */
+   *  exception a port happened to raise); `identity_rejected` is returned only
+   *  for a verified-context denial or malformed authorization ceiling after a
+   *  subject decision was reached. */
   exchangeAndVerify(args: {
     code: string; codeVerifier: string; nonce: string;
   }): Promise<RedirectExchangeResult>;
@@ -60,12 +63,37 @@ export interface RedirectIdentityPort {
 /** Outcome of a redirect exchange+verify (§17.11). */
 export type RedirectExchangeResult =
   | { ok: true; identity: IdentityClaims }
-  /** Transport/protocol failure — non-200, timeout, malformed body, missing
-   *  id_token (for a provider that issues them). No identity decision made. */
+  /** Transport/protocol failure — non-200, timeout, malformed upstream
+   *  response/JWKS, missing id_token. No identity decision made. */
   | { ok: false; kind: "exchange_failed"; reason: string }
   /** Verified-context denial — bad iss/aud/tid/nonce, allowlist, group
-   *  rejection. An identity decision WAS made: the user is refused. */
+   *  rejection, or malformed authorization ceiling after a valid subject.
+   *  An identity decision WAS made: the user is refused. */
   | { ok: false; kind: "identity_rejected"; reason: string };
+
+/** Capture caller-supplied identity ports once without consulting plain
+ * prototypes or accessors. Returned methods stay bound to their source. */
+export function captureIdentityPort(value: unknown): Readonly<IdentityPort> | null {
+  const verify = bindClassDataMethod<IdentityPort["verify"]>(value, "verify");
+  return verify === undefined ? null : Object.freeze({ verify });
+}
+
+export function captureRedirectIdentityPort(
+  value: unknown,
+): Readonly<RedirectIdentityPort> | null {
+  const redirectUri = classDataValue(value, "redirectUri");
+  const buildAuthorizationUrl =
+    bindClassDataMethod<RedirectIdentityPort["buildAuthorizationUrl"]>(
+      value, "buildAuthorizationUrl",
+    );
+  const exchangeAndVerify =
+    bindClassDataMethod<RedirectIdentityPort["exchangeAndVerify"]>(
+      value, "exchangeAndVerify",
+    );
+  if (typeof redirectUri !== "string" || buildAuthorizationUrl === undefined
+    || exchangeAndVerify === undefined) return null;
+  return Object.freeze({ redirectUri, buildAuthorizationUrl, exchangeAndVerify });
+}
 
 /** Parse an untrusted port result into an own-data identity decision. */
 export function parseIdentityResult(value: unknown): IdentityResult | null {
@@ -76,44 +104,56 @@ export function parseIdentityResult(value: unknown): IdentityResult | null {
       ? Object.freeze({ ok: false, reason: result.reason }) : null;
   }
   if (result.ok !== true) return null;
-  const identityFields = snapshotClassDataRecord(
-    result.identity,
-    ["subject", "allowedScopes", "claims"],
-  );
-  if (identityFields !== null && typeof identityFields.subject === "string"
-    && identityFields.subject && identityFields.allowedScopes !== undefined
-    && snapshotOwnStringArray(identityFields.allowedScopes) === null) {
-    // Preserve the boundary's specific audit classification while still
-    // converting the malformed success result into a closed decision.
+  const parsed = parseIdentityClaims(result.identity);
+  if (!parsed.ok && parsed.reason === "malformed_allowed_scopes") {
     return Object.freeze({ ok: false, reason: "malformed_allowed_scopes" });
   }
-  const identity = parseIdentityClaims(result.identity);
-  return identity ? Object.freeze({ ok: true, identity }) : null;
+  return parsed.ok ? Object.freeze({ ok: true, identity: parsed.identity }) : null;
 }
 
 export function parseRedirectExchangeResult(value: unknown): RedirectExchangeResult | null {
   const result = snapshotClassDataRecord(value, ["ok", "kind", "reason", "identity"]);
   if (result === null) return null;
   if (result.ok === true) {
-    const identity = parseIdentityClaims(result.identity);
-    return identity ? Object.freeze({ ok: true, identity }) : null;
+    const parsed = parseIdentityClaims(result.identity);
+    if (!parsed.ok && parsed.reason === "malformed_allowed_scopes") {
+      return Object.freeze({
+        ok: false, kind: "identity_rejected", reason: "malformed_allowed_scopes",
+      });
+    }
+    return parsed.ok ? Object.freeze({ ok: true, identity: parsed.identity }) : null;
   }
   if (result.ok !== false || (result.kind !== "exchange_failed" && result.kind !== "identity_rejected")
     || typeof result.reason !== "string" || !result.reason) return null;
   return Object.freeze({ ok: false, kind: result.kind, reason: result.reason });
 }
 
-function parseIdentityClaims(value: unknown): IdentityClaims | null {
-  const identity = snapshotClassDataRecord(value, ["subject", "allowedScopes", "claims"]);
-  if (identity === null || typeof identity.subject !== "string" || !identity.subject) return null;
-  const scopes = identity.allowedScopes === undefined ? undefined
-    : snapshotOwnStringArray(identity.allowedScopes);
-  if (scopes === null) return null;
-  const claims = identity.claims === undefined ? undefined : snapshotOwnDataRecord(identity.claims);
-  if (claims === null) return null;
-  return Object.freeze({
-    subject: identity.subject,
+type ParsedIdentityClaims =
+  | { readonly ok: true; readonly identity: IdentityClaims }
+  | { readonly ok: false; readonly reason: "malformed_identity" | "malformed_allowed_scopes" };
+
+function parseIdentityClaims(value: unknown): ParsedIdentityClaims {
+  const inspected = inspectClassDataRecord(value, ["subject", "allowedScopes", "claims"]);
+  if (inspected === null) return { ok: false, reason: "malformed_identity" };
+  const identity = inspected.values;
+  const validSubject = typeof identity.subject === "string" && identity.subject;
+  if (inspected.invalidField !== undefined) {
+    return {
+      ok: false,
+      reason: inspected.invalidField === "allowedScopes" && validSubject
+        ? "malformed_allowed_scopes" : "malformed_identity",
+    };
+  }
+  if (!validSubject) return { ok: false, reason: "malformed_identity" };
+  const scopes = identity.allowedScopes === undefined
+    ? undefined : snapshotOwnStringArray(identity.allowedScopes);
+  if (scopes === null) return { ok: false, reason: "malformed_allowed_scopes" };
+  const claims = identity.claims === undefined
+    ? undefined : snapshotOwnDataRecord(identity.claims);
+  if (claims === null) return { ok: false, reason: "malformed_identity" };
+  return { ok: true, identity: Object.freeze({
+    subject: identity.subject as string,
     allowedScopes: scopes === undefined ? undefined : Object.freeze([...scopes]) as string[],
     claims,
-  });
+  }) };
 }

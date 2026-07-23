@@ -4,11 +4,13 @@
 // adapter resolves the subject from `identityHeader` (default Cf-Access-Jwt-Assertion).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { IdentityPort } from "../ports/identity.ts";
+import { captureIdentityPort, type IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { classDataValue, ownBooleanTrue, ownDataValue } from "../own-property.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
-import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
+import {
+  captureUpstreamRedirectFlow, type UpstreamRedirectFlow,
+} from "./upstream-flow.ts";
 import {
   headerString, oauthErrorResponse, parseUrlEncodedForm,
   type NormRequest, type NormResponse,
@@ -33,14 +35,23 @@ export interface FastifyAdapterOptions {
 
 export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
   const bridge = ownDataValue(opts, "bridge") as Bridge;
-  const identity = ownDataValue(opts, "identity") as IdentityPort | undefined;
+  const identityInput = ownDataValue(opts, "identity");
+  const identity = identityInput === undefined ? undefined : captureIdentityPort(identityInput);
+  if (identityInput !== undefined && identity === null) {
+    throw new TypeError("registerOAuthRoutes: identity is invalid");
+  }
   const identityHeaderOption = ownDataValue(opts, "identityHeader");
   if (identityHeaderOption !== undefined
     && (typeof identityHeaderOption !== "string" || !identityHeaderOption)) {
     throw new TypeError("registerOAuthRoutes: identityHeader must be a non-empty string");
   }
   const identityHeader = identityHeaderOption as string | undefined ?? "cf-access-jwt-assertion";
-  const upstream = ownDataValue(opts, "upstream") as UpstreamRedirectFlow | undefined;
+  const upstreamInput = ownDataValue(opts, "upstream");
+  const upstream = upstreamInput === undefined
+    ? undefined : captureUpstreamRedirectFlow(upstreamInput);
+  if (upstreamInput !== undefined && upstream === null) {
+    throw new TypeError("registerOAuthRoutes: upstream is invalid");
+  }
   const skipAuthorize = ownBooleanTrue(opts, "skipAuthorize");
 
   if (upstream && (identity || identityHeaderOption !== undefined || skipAuthorize)) {

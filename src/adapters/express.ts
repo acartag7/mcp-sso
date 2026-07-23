@@ -4,11 +4,13 @@
 
 import { Router } from "express";
 import type { Request, Response } from "express";
-import type { IdentityPort } from "../ports/identity.ts";
+import { captureIdentityPort, type IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { ownBooleanTrue, ownDataValue } from "../own-property.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
-import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
+import {
+  captureUpstreamRedirectFlow, type UpstreamRedirectFlow,
+} from "./upstream-flow.ts";
 import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface ExpressAdapterOptions {
@@ -29,14 +31,23 @@ export interface ExpressAdapterOptions {
 export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   const router = Router();
   const bridge = ownDataValue(opts, "bridge") as Bridge;
-  const identity = ownDataValue(opts, "identity") as IdentityPort | undefined;
+  const identityInput = ownDataValue(opts, "identity");
+  const identity = identityInput === undefined ? undefined : captureIdentityPort(identityInput);
+  if (identityInput !== undefined && identity === null) {
+    throw new TypeError("createOAuthRouter: identity is invalid");
+  }
   const identityHeaderOption = ownDataValue(opts, "identityHeader");
   if (identityHeaderOption !== undefined
     && (typeof identityHeaderOption !== "string" || !identityHeaderOption)) {
     throw new TypeError("createOAuthRouter: identityHeader must be a non-empty string");
   }
   const identityHeader = identityHeaderOption as string | undefined ?? "cf-access-jwt-assertion";
-  const upstream = ownDataValue(opts, "upstream") as UpstreamRedirectFlow | undefined;
+  const upstreamInput = ownDataValue(opts, "upstream");
+  const upstream = upstreamInput === undefined
+    ? undefined : captureUpstreamRedirectFlow(upstreamInput);
+  if (upstreamInput !== undefined && upstream === null) {
+    throw new TypeError("createOAuthRouter: upstream is invalid");
+  }
   const skipAuthorize = ownBooleanTrue(opts, "skipAuthorize");
 
   if (upstream && (identity || identityHeaderOption !== undefined || skipAuthorize)) {

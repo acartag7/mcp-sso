@@ -1,4 +1,4 @@
-import { bindDataMethod, ownDataValue } from "../own-property.ts";
+import { bindClassDataMethod, isDataDescriptor, ownDataValue } from "../own-property.ts";
 
 export interface DnsResolver {
   resolve(hostname: string): Promise<{ address: string; family: 4 | 6 }[]>;
@@ -59,7 +59,7 @@ export function parseGuardedFetcherOptions(opts: unknown): ParsedGuardedFetcherO
       throw new TypeError(`unknown CIMD fetcher option: ${String(key)}`);
     }
     const descriptor = descriptors[key]!;
-    if (!descriptor.enumerable || !("value" in descriptor)) throw invalidOptions();
+    if (!descriptor.enumerable || !isDataDescriptor(descriptor)) throw invalidOptions();
   }
 
   const transportInput = value<unknown>(descriptors, "transport");
@@ -86,7 +86,8 @@ export function parseGuardedFetcherOptions(opts: unknown): ParsedGuardedFetcherO
 function snapshotTransport(value: unknown): CimdTransport | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "object" || value === null) throw new TypeError("transport is invalid");
-  const connectAndGet = bindDataMethod<CimdTransport["connectAndGet"]>(value, "connectAndGet");
+  const connectAndGet =
+    bindClassDataMethod<CimdTransport["connectAndGet"]>(value, "connectAndGet");
   if (connectAndGet === undefined) throw new TypeError("transport is invalid");
   return Object.freeze({ connectAndGet });
 }
@@ -94,15 +95,15 @@ function snapshotTransport(value: unknown): CimdTransport | undefined {
 function snapshotResolver(value: unknown): DnsResolver | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "object" || value === null) throw new TypeError("resolver is invalid");
-  const resolve = bindDataMethod<DnsResolver["resolve"]>(value, "resolve");
+  const resolve = bindClassDataMethod<DnsResolver["resolve"]>(value, "resolve");
   if (resolve === undefined) throw new TypeError("resolver is invalid");
-  const cancel = bindDataMethod<NonNullable<DnsResolver["cancel"]>>(value, "cancel");
+  const cancel = bindClassDataMethod<NonNullable<DnsResolver["cancel"]>>(value, "cancel");
   return Object.freeze({ resolve, ...(cancel === undefined ? {} : { cancel }) });
 }
 
 function value<T>(descriptors: Record<PropertyKey, PropertyDescriptor>, key: string): T | undefined {
   const descriptor = ownDataValue(descriptors, key) as PropertyDescriptor | undefined;
-  return descriptor && "value" in descriptor ? descriptor.value as T : undefined;
+  return isDataDescriptor(descriptor) ? descriptor.value as T : undefined;
 }
 
 function integerOption(value: number | undefined, fallback: number, min: number,

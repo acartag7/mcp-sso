@@ -14,14 +14,14 @@
 
 import type { Bridge } from "./bridge.ts";
 import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
-import { parseIdentityResult } from "../ports/identity.ts";
+import { captureIdentityPort, parseIdentityResult } from "../ports/identity.ts";
 import {
   findDuplicatedKeys, formField, formObject, oauthErrorResponse,
   OAUTH_AUTHORIZE_PARAM_KEYS, parseNormRequest, queryString,
   type NormRequest, type NormResponse,
 } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
-import { snapshotOwnDataRecord } from "../own-property.ts";
+import { bindClassDataMethod, snapshotOwnDataRecord } from "../own-property.ts";
 import { OAuthError } from "../errors.ts";
 
 // Mirrors bridge.ts CONSENT_HEADERS (text/html + CSP + nosniff) for the pairing page.
@@ -48,7 +48,15 @@ export async function handlePairingAuthorize(
     throw new OAuthError("invalid_request", "Pairing request is malformed");
   }
   const bridge = fields.bridge as Bridge;
-  const pairing = fields.pairing as ConsolePairingIdentity;
+  const identity = captureIdentityPort(fields.pairing);
+  const beginSession =
+    bindClassDataMethod<ConsolePairingIdentity["beginSession"]>(
+      fields.pairing, "beginSession",
+    );
+  if (identity === null || beginSession === undefined) {
+    throw new OAuthError("invalid_request", "Pairing identity is malformed");
+  }
+  const pairing = Object.freeze({ verify: identity.verify, beginSession });
   if (hasAmbiguousOAuthParams(request)) {
     return oauthErrorResponse(new OAuthError(
       "invalid_request", "Duplicate authorization request parameters",

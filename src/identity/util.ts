@@ -7,7 +7,7 @@
 // URL, which would let an http JWKS/issuer slip through → a MITM substitutes
 // signing keys → total auth bypass.
 
-import { bindDataMethod, classDataValue } from "../own-property.ts";
+import { bindClassDataMethod, classDataValue } from "../own-property.ts";
 
 /** Throw unless `value` starts with the literal `https://`. The label names the
  *  offending field in the thrown message (errors may be logged; the value
@@ -30,7 +30,7 @@ export function captureHttpResponse(
   method: "json" | "text",
 ): CapturedHttpResponse | null {
   const status = classDataValue(value, "status");
-  const read = bindDataMethod<() => Promise<unknown>>(value, method);
+  const read = bindClassDataMethod<() => Promise<unknown>>(value, method);
   if (typeof status !== "number" || !Number.isFinite(status) || read === undefined) return null;
   return Object.freeze({ status, read });
 }

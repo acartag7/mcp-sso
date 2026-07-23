@@ -9,6 +9,7 @@ import type { NormRequest } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { pkceChallenge } from "../src/crypto.ts";
+import { OAuthError } from "../src/errors.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
@@ -237,6 +238,21 @@ test("bridge: authorize rate-limit outage fails open and still verifies identity
   const resolved = await setup(throwing).bridge.resolveIdentity(identity, "credential", "1.2.3.4");
   assert.equal(resolved.subject, SUBJECT);
   assert.equal(verifications, 1);
+});
+
+test("bridge: identity verification cannot come from a plain prototype", async () => {
+  let verifications = 0;
+  const identity = Object.create({
+    async verify() {
+      verifications += 1;
+      return { ok: true, identity: { subject: SUBJECT } };
+    },
+  });
+  await assert.rejects(
+    setup().bridge.resolveIdentity(identity, "credential", "1.2.3.4"),
+    (error: unknown) => error instanceof OAuthError && error.code === "access_denied",
+  );
+  assert.equal(verifications, 0);
 });
 
 test("bridge: malformed registration members reject instead of being filtered", async () => {

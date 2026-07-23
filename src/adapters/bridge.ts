@@ -10,7 +10,7 @@ import type { StorePort } from "../ports/store.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
 import type { ApplicationType } from "../ports/client-store.ts";
-import { parseIdentityResult, type IdentityPort, type IdentityResult } from "../ports/identity.ts";
+import { captureIdentityPort, parseIdentityResult, type IdentityPort, type IdentityResult } from "../ports/identity.ts";
 import { OAuthAuthorizationUseCase, type PreparedConsent } from "../authorize.ts";
 import { OAuthTokenUseCase, type UserTokenResponse, type MachineTokenResponse } from "../token.ts";
 import { registerClient } from "../register.ts";
@@ -140,7 +140,9 @@ export class Bridge {
     await this.guard(ip, "authorize");
     let result: IdentityResult;
     try {
-      const rawResult = await identity.verify(input);
+      const captured = captureIdentityPort(identity);
+      if (captured === null) throw new OAuthError("access_denied", "Identity port is malformed", 401);
+      const rawResult = await captured.verify(input);
       const parsedResult = parseIdentityResult(rawResult);
       if (parsedResult === null) throw new OAuthError("access_denied", "Identity port returned a malformed result", 401);
       result = parsedResult;

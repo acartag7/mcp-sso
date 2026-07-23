@@ -12,7 +12,9 @@
 
 import { assertHttpsRaw } from "./util.ts";
 import { resolveAllowedAlgs } from "./generic-oidc-claims.ts";
-import { ownBooleanTrue, snapshotOwnDataRecord, snapshotOwnStringArray } from "../own-property.ts";
+import {
+  bindClassDataMethod, ownBooleanTrue, snapshotOwnDataRecord, snapshotOwnStringArray,
+} from "../own-property.ts";
 import { captureHttpResponse } from "./util.ts";
 
 /** Manual endpoint mode — zero boot-time fetching. */
@@ -165,7 +167,11 @@ export async function resolveEndpoints(
     while (issuer.endsWith("/")) issuer = issuer.slice(0, -1);
     const discoveryUrl = issuer + "/.well-known/openid-configuration";
     const fetcher = transport ?? defaultDiscoveryTransport;
-    const resp = captureHttpResponse(await fetcher.get(discoveryUrl), "json");
+    const get = bindClassDataMethod<DiscoveryTransport["get"]>(fetcher, "get");
+    if (get === undefined) {
+      throw new Error("generic_oidc_discovery_failed: discovery transport is malformed");
+    }
+    const resp = captureHttpResponse(await get(discoveryUrl), "json");
     if (resp === null) throw new Error("generic_oidc_discovery_failed: malformed transport response");
     if (resp.status !== 200) throw new Error(`generic_oidc_discovery_failed: discovery fetch returned HTTP ${resp.status} (redirects are not followed)`);
     const docRaw = await resp.read();

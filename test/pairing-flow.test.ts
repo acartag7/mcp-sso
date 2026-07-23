@@ -18,6 +18,7 @@ function dependencies() {
   } as unknown as Bridge;
   const pairing = {
     async beginSession() { sessions += 1; return { nonce: "n", expiresAt: "2099-01-01T00:00:00.000Z" }; },
+    async verify() { return { ok: false as const, reason: "not-used" }; },
   } as unknown as ConsolePairingIdentity;
   return { bridge, pairing, counts: () => ({ sessions, authorizations }) };
 }
@@ -57,4 +58,33 @@ test("pairing authorize rejects repeated body parameters and cross-channel dupli
   );
   assert.equal(crossResponse.status, 400);
   assert.deepEqual(crossChannel.counts(), { sessions: 0, authorizations: 0 });
+});
+
+test("pairing authorize rejects methods supplied by a plain prototype", async () => {
+  let calls = 0;
+  const pairing = Object.create({
+    async beginSession() {
+      calls += 1;
+      return { nonce: "n", expiresAt: "2099-01-01T00:00:00.000Z" };
+    },
+    async verify() {
+      calls += 1;
+      return { ok: true, identity: { subject: "ambient-user" } };
+    },
+  });
+  await assert.rejects(
+    handlePairingAuthorize(
+      {
+        bridge: {
+          async handleAuthorize() { throw new Error("must not authorize"); },
+        } as unknown as Bridge,
+        pairing,
+      },
+      "POST",
+      request({}, { pairing_code: "code", pairing_nonce: "nonce" }),
+    ),
+    (error: unknown) => error instanceof Error
+      && "code" in error && error.code === "invalid_request",
+  );
+  assert.equal(calls, 0);
 });

@@ -4,11 +4,13 @@
 
 import { Hono } from "hono";
 import type { Context } from "hono";
-import type { IdentityPort } from "../ports/identity.ts";
+import { captureIdentityPort, type IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { ownBooleanTrue, ownDataValue } from "../own-property.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
-import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
+import {
+  captureUpstreamRedirectFlow, type UpstreamRedirectFlow,
+} from "./upstream-flow.ts";
 import {
   oauthErrorResponse, parseUrlEncodedForm, type NormRequest, type NormResponse,
 } from "./http.ts";
@@ -40,14 +42,23 @@ export interface HonoAdapterOptions {
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   const app = new Hono();
   const bridge = ownDataValue(opts, "bridge") as Bridge;
-  const identity = ownDataValue(opts, "identity") as IdentityPort | undefined;
+  const identityInput = ownDataValue(opts, "identity");
+  const identity = identityInput === undefined ? undefined : captureIdentityPort(identityInput);
+  if (identityInput !== undefined && identity === null) {
+    throw new TypeError("createOAuthApp: identity is invalid");
+  }
   const identityHeaderOption = ownDataValue(opts, "identityHeader");
   if (identityHeaderOption !== undefined
     && (typeof identityHeaderOption !== "string" || !identityHeaderOption)) {
     throw new TypeError("createOAuthApp: identityHeader must be a non-empty string");
   }
   const identityHeader = identityHeaderOption as string | undefined ?? "cf-access-jwt-assertion";
-  const upstream = ownDataValue(opts, "upstream") as UpstreamRedirectFlow | undefined;
+  const upstreamInput = ownDataValue(opts, "upstream");
+  const upstream = upstreamInput === undefined
+    ? undefined : captureUpstreamRedirectFlow(upstreamInput);
+  if (upstreamInput !== undefined && upstream === null) {
+    throw new TypeError("createOAuthApp: upstream is invalid");
+  }
   const clientIp = ownDataValue(opts, "clientIp") as HonoAdapterOptions["clientIp"];
   const skipAuthorize = ownBooleanTrue(opts, "skipAuthorize");
 

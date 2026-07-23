@@ -87,8 +87,17 @@ test("option accessors and unsupported own keys reject without invoking getters"
     enumerable: true,
     get() { getterCalls += 1; return true; },
   });
-  assert.throws(() => createGuardedFetcher(accessor));
-  assert.equal(getterCalls, 0);
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+  Object.defineProperty(Object.prototype, "value", {
+    configurable: true, value: true,
+  });
+  try {
+    assert.throws(() => createGuardedFetcher(accessor));
+    assert.equal(getterCalls, 0);
+  } finally {
+    if (previous === undefined) delete (Object.prototype as Record<string, unknown>).value;
+    else Object.defineProperty(Object.prototype, "value", previous);
+  }
 
   assert.throws(() => createGuardedFetcher({ [Symbol("option")]: true } as never));
 
@@ -128,6 +137,19 @@ test("injected seam methods are captured as data without consulting Object.proto
     cancel() {}
   }
   assert.doesNotThrow(() => createGuardedFetcher({ resolver: new ResolverClass() }));
+});
+
+test("injected seam methods cannot come from plain prototypes", () => {
+  const resolver = Object.create({
+    async resolve() { return [{ address: "93.184.216.34", family: 4 as const }]; },
+    cancel() {},
+  });
+  const transport = Object.create({
+    async connectAndGet() { throw new Error("must not connect"); },
+  });
+
+  assert.throws(() => createGuardedFetcher({ resolver }));
+  assert.throws(() => createGuardedFetcher({ transport }));
 });
 
 test("an omitted resolver cancel hook does not consult Object.prototype", async () => {

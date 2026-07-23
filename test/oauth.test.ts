@@ -532,8 +532,17 @@ test("config TOCTOU: a getter-backed issuer is rejected without invoking it", ()
     enumerable: true, configurable: true,
     get() { reads += 1; return reads === 1 ? "https://auth.test" : "http://evil.test"; },
   });
-  assert.throws(() => createBridgeConfig(input), AuthConfigError);
-  assert.equal(reads, 0, "issuer accessor was never invoked");
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+  Object.defineProperty(Object.prototype, "value", {
+    configurable: true, value: "https://auth.test",
+  });
+  try {
+    assert.throws(() => createBridgeConfig(input), AuthConfigError);
+    assert.equal(reads, 0, "issuer accessor was never invoked");
+  } finally {
+    if (previous === undefined) delete (Object.prototype as Record<string, unknown>).value;
+    else Object.defineProperty(Object.prototype, "value", previous);
+  }
 });
 
 test("config type boundary rejects coercible URL, secret, key id, and JWK members", () => {

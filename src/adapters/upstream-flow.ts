@@ -9,9 +9,11 @@
 // SAME instances to both.
 
 import { randomBytes } from "node:crypto";
-import type { Bridge } from "./bridge.ts";
+import { Bridge } from "./bridge.ts";
 import type { RedirectIdentityPort } from "../ports/identity.ts";
-import { parseRedirectExchangeResult } from "../ports/identity.ts";
+import {
+  captureRedirectIdentityPort, parseRedirectExchangeResult,
+} from "../ports/identity.ts";
 import type { StorePort } from "../ports/store.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
@@ -30,7 +32,10 @@ import {
   verifyFlowToken, timingSafeStringEqual, redirectErrorResponse,
   directErrorResponse, type FlowClaims,
 } from "./upstream-flow-internals.ts";
-import { snapshotOwnDataRecord } from "../own-property.ts";
+import {
+  bindClassDataMethod, classDataValue, snapshotOwnDataRecord,
+} from "../own-property.ts";
+import { assertAllowedScopesCeiling } from "../scopes.ts";
 
 export interface UpstreamFlowDeps {
   bridge: Bridge;
@@ -55,12 +60,27 @@ export interface UpstreamRedirectFlow {
   readonly callbackPath: string;
 }
 
+export function captureUpstreamRedirectFlow(value: unknown): Readonly<UpstreamRedirectFlow> | null {
+  const callbackPath = classDataValue(value, "callbackPath");
+  const handleAuthorize =
+    bindClassDataMethod<UpstreamRedirectFlow["handleAuthorize"]>(value, "handleAuthorize");
+  const handleCallback =
+    bindClassDataMethod<UpstreamRedirectFlow["handleCallback"]>(value, "handleCallback");
+  if (typeof callbackPath !== "string" || handleAuthorize === undefined
+    || handleCallback === undefined) return null;
+  return Object.freeze({ callbackPath, handleAuthorize, handleCallback });
+}
+
 export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedirectFlow {
   const fields = snapshotOwnDataRecord(deps);
   if (fields === null || !fields.bridge || !fields.identity || !fields.store
     || !fields.clock || !fields.audit) throw new AuthConfigError("upstream-flow dependencies must be own data properties");
-  const bridge = fields.bridge as Bridge;
-  const identity = fields.identity as RedirectIdentityPort;
+  if (!(fields.bridge instanceof Bridge)) {
+    throw new AuthConfigError("upstream-flow bridge is invalid");
+  }
+  const bridge = fields.bridge;
+  const identity = captureRedirectIdentityPort(fields.identity);
+  if (identity === null) throw new AuthConfigError("upstream-flow identity is invalid");
   const store = fields.store as StorePort;
   const clock = fields.clock as ClockPort;
   const audit = fields.audit as AuditPort;
@@ -165,10 +185,18 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
         if (exchange.kind === "exchange_failed") { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(exchange.reason)); await emit("failure", "exchange_failed", clientId); return clear(redirectErrorResponse(clientRedirectUri, "server_error", clientState, "upstream identity provider error")); }
         await emitIdentityVerify("failure", exchange.reason, undefined, ip); await emit("failure", "identity_rejected", clientId); return clear(redirectErrorResponse(clientRedirectUri, "access_denied", clientState, "upstream identity verification failed")); // row 11 (§9.3 extension)
       }
+      let allowedScopes: string[] | undefined;
+      try {
+        allowedScopes = assertAllowedScopesCeiling(exchange.identity.allowedScopes);
+      } catch {
+        await emitIdentityVerify("failure", "malformed_allowed_scopes", undefined, ip);
+        await emit("failure", "identity_rejected", clientId);
+        return clear(redirectErrorResponse(clientRedirectUri, "access_denied", clientState, "upstream identity verification failed"));
+      }
       await emitIdentityVerify("success", undefined, exchange.identity.subject, ip); // identity decision reached
       const synthetic: NormRequest = { query: pickOAuthParams(claims.params), body: undefined, headers: request.headers, ip }; // rows 12/13 — ceiling travels
       let bridgeResp: NormResponse;
-      try { bridgeResp = await bridge.handleAuthorize(synthetic, { subject: exchange.identity.subject, allowedScopes: exchange.identity.allowedScopes }); }
+      try { bridgeResp = await bridge.handleAuthorize(synthetic, { subject: exchange.identity.subject, allowedScopes }); }
       catch { await emit("failure", "internal_error", clientId); return clear(directErrorResponse("internal_error", "OAuth request failed", 500)); }
       if (bridgeResp.status === 200) { await emit("success", undefined, clientId); return clear(bridgeResp); } // row 13: consent page (the direct callback response)
       await emit("failure", "bridge_error", clientId); return clear(bridgeResp); // row 12: the bridge's own §9.3 channel

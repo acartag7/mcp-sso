@@ -5,7 +5,9 @@
 
 import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
-import { snapshotOwnDataArray, snapshotOwnDataRecord } from "./own-property.ts";
+import {
+  isDataDescriptor, snapshotOwnDataArray, snapshotOwnDataRecord,
+} from "./own-property.ts";
 import { isScopeToken } from "./scopes.ts";
 import type { BridgeConfig } from "./config-types.ts";
 
@@ -163,7 +165,7 @@ function snapshotBridgeConfigInput(input: unknown): Readonly<Record<string, unkn
       );
     }
     const descriptor = descriptors[key]!;
-    if (!descriptor.enumerable || !("value" in descriptor)) {
+    if (!descriptor.enumerable || !isDataDescriptor(descriptor)) {
       throw new AuthConfigError("BridgeConfig must contain only own enumerable data properties");
     }
     snapshot[key] = descriptor.value;
