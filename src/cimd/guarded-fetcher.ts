@@ -1,7 +1,7 @@
 import { Resolver } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
 import { admitCimdUrl, type AdmittedUrl } from "./admission.ts";
-import { isBlockedIp, parseIp, type ParsedIp } from "./blocklist.ts";
+import { isBlockedIp, ownBooleanTrue, ownValue, parseIp, type ParsedIp } from "./blocklist.ts";
 import { validateCimdDocument, type CimdDocument } from "./document.ts";
 import { CimdError } from "./errors.ts";
 const BRAND: unique symbol = Symbol("GuardedFetcher");
@@ -31,14 +31,15 @@ export function createGuardedFetcher(opts: {
   maxDocumentBytes?: number; fetchTimeoutMs?: number;
 } = {}): GuardedFetcher {
   assertOptions(opts);
-  const transport = opts.transport ?? NODE_TRANSPORT;
-  const maxBytes = integerOption(opts.maxDocumentBytes, 5120, 1024, 65536, "maxDocumentBytes");
-  const timeoutMs = integerOption(opts.fetchTimeoutMs, 5000, 1000, 30000, "fetchTimeoutMs");
-  const allowLoopback = opts.allowLoopback === true;
+  const transport = (ownValue(opts, "transport") as CimdTransport | undefined) ?? NODE_TRANSPORT;
+  const resolver = ownValue(opts, "resolver") as DnsResolver | undefined;
+  const maxBytes = integerOption(ownValue(opts, "maxDocumentBytes"), 5120, 1024, 65536, "maxDocumentBytes");
+  const timeoutMs = integerOption(ownValue(opts, "fetchTimeoutMs"), 5000, 1000, 30000, "fetchTimeoutMs");
+  const allowLoopback = ownBooleanTrue(opts, "allowLoopback");
   const fetcher = {
     async fetch(rawClientId: string): Promise<CimdFetchResult> {
       const admitted = admitCimdUrl(rawClientId, { allowLoopback });
-      return fetchWithDeadline(admitted, opts.resolver ?? new NodeDnsResolver(), transport,
+      return fetchWithDeadline(admitted, resolver ?? new NodeDnsResolver(), transport,
         allowLoopback, maxBytes, timeoutMs);
     },
   };
@@ -90,7 +91,7 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
     && (admitted.hostname === "localhost" || admitted.hostname.endsWith(".localhost"));
   if (loopbackHost) {
     if (!addresses.every(isLoopback)) throw new CimdError("dns_failed");
-  } else if (addresses.some(({ parsed }) => isBlockedIp(parsed))) {
+  } else if (addresses.some(({ parsed }) => isBlockedIp(parsed, { allowLoopback: false }))) {
     throw new CimdError("ip_blocked");
   }
   const target = addresses[0]!;
@@ -185,25 +186,22 @@ async function* bodyChunks(body: AsyncIterable<Uint8Array> | ReadableStream<Uint
     }
   } finally { reader.releaseLock(); }
 }
-function integerOption(value: number | undefined, fallback: number, min: number,
-  max: number, name: string): number {
+function integerOption(value: unknown, fallback: number, min: number, max: number, name: string): number {
   const result = value === undefined ? fallback : value; // null/NaN/etc are present-but-invalid -> reject below
-  if (!Number.isInteger(result) || result < min || result > max) throw new TypeError(`${name} is out of range`);
+  if (typeof result !== "number" || !Number.isInteger(result) || result < min || result > max) throw new TypeError(`${name} is out of range`);
   return result;
 }
 function assertOptions(opts: unknown): asserts opts is Record<string, unknown> {
   if (typeof opts !== "object" || opts === null || Array.isArray(opts)) throw new TypeError("CIMD fetcher options are invalid");
   const value = opts as Record<string, unknown>;
   for (const k of Object.keys(value)) if (!["transport", "resolver", "allowLoopback", "maxDocumentBytes", "fetchTimeoutMs"].includes(k)) throw new TypeError(`unknown CIMD fetcher option: ${k}`);
-  if (value.allowLoopback !== undefined && typeof value.allowLoopback !== "boolean") throw new TypeError("allowLoopback must be boolean");
-  if (value.transport !== undefined && (typeof value.transport !== "object"
-    || value.transport === null || typeof (value.transport as CimdTransport).connectAndGet !== "function")) {
-    throw new TypeError("transport is invalid");
-  }
-  if (value.resolver !== undefined && (typeof value.resolver !== "object"
-    || value.resolver === null || typeof (value.resolver as DnsResolver).resolve !== "function")) {
-    throw new TypeError("resolver is invalid");
-  }
+  const allowLoopback = ownValue(value, "allowLoopback");
+  const transport = ownValue(value, "transport"), resolver = ownValue(value, "resolver");
+  if (allowLoopback !== undefined && typeof allowLoopback !== "boolean") throw new TypeError("allowLoopback must be boolean");
+  if (transport !== undefined && (typeof transport !== "object"
+    || transport === null || typeof (transport as CimdTransport).connectAndGet !== "function")) throw new TypeError("transport is invalid");
+  if (resolver !== undefined && (typeof resolver !== "object"
+    || resolver === null || typeof (resolver as DnsResolver).resolve !== "function")) throw new TypeError("resolver is invalid");
 }
 export class NodeDnsResolver implements DnsResolver {
   readonly resolver = new Resolver();
