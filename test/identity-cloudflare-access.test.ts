@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { generateKeyPair, SignJWT } from "jose";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import {
   type CloudflareAccessConfig, assertHttpsTrustRoot, createCloudflareAccessIdentity,
   emailAllowed, validateCloudflareAccessClaims, verifyCloudflareAccessToken,
@@ -129,4 +129,22 @@ test("verifyCloudflareAccessToken: recorded fixture (known RS256 key, no JWKS fe
   assert.equal((await verifyCloudflareAccessToken(await sign({ sub: "sub-1" }), publicKey, CONFIG, AT)).ok, false); // missing email claim
   const allowCfg = { ...CONFIG, emailAllowlist: ["other@x.test"] };
   assert.equal((await verifyCloudflareAccessToken(await sign({ email: "u@x.test" }), publicKey, allowCfg, AT)).ok, false); // allowlist mismatch
+});
+
+test("createCloudflareAccessIdentity classifies an unusable remote key as a verification failure", async () => {
+  const rsa = await generateKeyPair("RS256", { extractable: true });
+  const token = await new SignJWT({ email: "u@x.test", sub: "sub-1" })
+    .setProtectedHeader({ alg: "RS256", kid: "selected-key" })
+    .setIssuer(CONFIG.issuer).setAudience(CONFIG.audience)
+    .setIssuedAt(NOW).setExpirationTime(NOW + 3600).sign(rsa.privateKey);
+  const nonPublicJwk = { ...await exportJWK(rsa.privateKey), kid: "selected-key", alg: "RS256" };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ keys: [nonPublicJwk] }), { status: 200 })) as typeof fetch;
+  try {
+    const result = await createCloudflareAccessIdentity(CONFIG).verify(token);
+    assert.deepEqual(result, { ok: false, reason: "access_jwt_verify_failed" });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

@@ -189,6 +189,21 @@ test("exchangeCodeForToken rejects response fields from a plain prototype", asyn
   assert.equal(reads, 0);
 });
 
+test("exchangeCodeForToken rejects a transport method from a plain prototype", async () => {
+  let calls = 0;
+  const transport = Object.create({
+    async postForm() {
+      calls += 1;
+      return new Response(JSON.stringify({ id_token: "ambient-token" }), { status: 200 });
+    },
+  });
+  await assert.rejects(
+    exchangeCodeForToken(CONFIG, { code: "c", codeVerifier: "v" }, transport),
+    /transport is malformed/,
+  );
+  assert.equal(calls, 0);
+});
+
 test("createEntraIdentity: fails closed on blank tenantId/clientId (empty == missing config)", () => {
   assert.throws(() => createEntraIdentity({ ...CONFIG, tenantId: "" }), /tenantId is required/);
   assert.throws(() => createEntraIdentity({ ...CONFIG, tenantId: "   " }), /tenantId is required/);

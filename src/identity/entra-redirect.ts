@@ -13,8 +13,8 @@
 // requesting a long-lived upstream refresh token it will never use violates
 // least-grant. Outcome mapping: an exchange throw/non-200/missing-id_token ⇒
 // `exchange_failed`; a verify `{ ok:false }` ⇒ `identity_rejected` EXCEPT the
-// `entra_verify_failed` reason (Entra's non-JOSEError catch-all — a JWKS-fetch
-// network/transport failure), which is `exchange_failed` per §17.11's deterministic
+// `entra_verify_failed` reason (Entra's remote-key-source and unexpected-
+// infrastructure bucket), which is `exchange_failed` per §17.11's deterministic
 // throw-rule (an infrastructure failure makes no identity decision). A throw from
 // `exchangeAndVerify` is always classified `exchange_failed` by the orchestrator.
 //
@@ -129,9 +129,9 @@ export function createEntraRedirectIdentity(
       if (!result.ok) {
         // §17.11 deterministic throw-rule: an *infrastructure* failure during
         // exchangeAndVerify (no identity decision made) is exchange_failed, never
-        // identity_rejected. Entra's `jwtErrorReason` funnels every non-JOSEError
-        // throw — i.e. a JWKS-fetch network/transport failure — into the
-        // `entra_verify_failed` bucket; that is the one reason classified here as
+        // identity_rejected. Entra's `jwtErrorReason` funnels remote-key-source
+        // and unexpected infrastructure failures into the `entra_verify_failed`
+        // bucket; that is the one reason classified here as
         // exchange_failed (so the callback redirects server_error and emits NO
         // identity.verify). Every other reason is a verified-context denial (bad
         // iss/aud/tid/nonce/signature/allowlist/group) ⇒ identity_rejected.

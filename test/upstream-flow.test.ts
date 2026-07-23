@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
-import { decodeJwt, generateKeyPair, SignJWT, type JWK } from "jose";
+import { decodeJwt, exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { RedirectExchangeResult, RedirectIdentityPort } from "../src/ports/identity.ts";
@@ -164,6 +164,46 @@ test("boot: identity.redirectUri must equal issuerOrigin + callbackPath and carr
   assert.throws(() => createUpstreamRedirectFlow({ bridge, identity: make("https://auth.test/wrong/callback"), store, clock, audit }), AuthConfigError, "mismatch rejected");
   // exact match succeeds.
   createUpstreamRedirectFlow({ bridge, identity: make(goodUri), store, clock, audit });
+});
+
+test("boot: redirect identity members cannot come from a plain prototype", () => {
+  const c = config();
+  const store = new MemoryStore(); const clock = new FakeClock(NOW_MS); const audit = new MemoryAudit();
+  const bridge = new Bridge({ config: c, store, clock, audit });
+  let calls = 0;
+  const identity = Object.create({
+    redirectUri: `${originOf(c.issuer)}${CALLBACK_PATH}`,
+    buildAuthorizationUrl() { calls += 1; return "https://idp.test/authorize"; },
+    async exchangeAndVerify() {
+      calls += 1;
+      return { ok: true, identity: { subject: "ambient-user" } };
+    },
+  });
+  assert.throws(
+    () => createUpstreamRedirectFlow({ bridge, identity, store, clock, audit }),
+    AuthConfigError,
+  );
+  assert.equal(calls, 0);
+});
+
+test("boot: redirect identity class getters are captured once", () => {
+  const c = config();
+  const store = new MemoryStore(); const clock = new FakeClock(NOW_MS); const audit = new MemoryAudit();
+  const bridge = new Bridge({ config: c, store, clock, audit });
+  class Identity {
+    reads = 0;
+    get redirectUri() {
+      this.reads += 1;
+      return `${originOf(c.issuer)}${CALLBACK_PATH}`;
+    }
+    buildAuthorizationUrl() { return "https://idp.test/authorize"; }
+    async exchangeAndVerify() {
+      return { ok: true as const, identity: { subject: "class-user" } };
+    }
+  }
+  const identity = new Identity();
+  createUpstreamRedirectFlow({ bridge, identity, store, clock, audit });
+  assert.equal(identity.reads, 1);
 });
 
 test("boot: flowTtlSeconds must be a positive integer <= 3600", () => {
@@ -499,6 +539,51 @@ test("callback row 11: identity_rejected => 302 access_denied + identity.verify 
   assert.equal(idv?.reason, "entra_bad_nonce", "the port's reason lands in identity.verify");
 });
 
+test("callback row 11: malformed authorization ceilings are identity rejections", async () => {
+  const c = config();
+  const malformed = [
+    "mcp:read",
+    ["mcp:read mcp:write"],
+  ];
+  for (const allowedScopes of malformed) {
+    const id = fakeIdentity(c);
+    id.set({
+      ok: true,
+      identity: { subject: "user-1", allowedScopes },
+    } as unknown as RedirectExchangeResult);
+    const { flow, audit } = makeFlow(c, id);
+    const initiated = await initiate(c, flow);
+    const response = await flow.handleCallback(callbackReq(c, initiated.cookieValue, {
+      state: initiated.claims.state, code: "c",
+    }));
+    assert.equal(response.status, 302);
+    assert.match(hLoc(response), /error=access_denied/);
+    assert.equal(audit.callback().at(-1)?.reason, "identity_rejected");
+    assert.deepEqual(audit.identity().map(({ status, reason }) => ({ status, reason })), [{
+      status: "failure", reason: "malformed_allowed_scopes",
+    }]);
+  }
+
+  let reads = 0;
+  const accessorIdentity = { subject: "user-1" };
+  Object.defineProperty(accessorIdentity, "allowedScopes", {
+    enumerable: true,
+    get() { reads += 1; return []; },
+  });
+  const id = fakeIdentity(c);
+  id.set({ ok: true, identity: accessorIdentity } as unknown as RedirectExchangeResult);
+  const { flow, audit } = makeFlow(c, id);
+  const initiated = await initiate(c, flow);
+  const response = await flow.handleCallback(callbackReq(c, initiated.cookieValue, {
+    state: initiated.claims.state, code: "c",
+  }));
+  assert.equal(response.status, 302);
+  assert.match(hLoc(response), /error=access_denied/);
+  assert.equal(audit.callback().at(-1)?.reason, "identity_rejected");
+  assert.equal(audit.identity().at(-1)?.reason, "malformed_allowed_scopes");
+  assert.equal(reads, 0);
+});
+
 test("callback rows 12/13: success => 200 consent page + identity.verify success + oauth.upstream.callback success", async () => {
   const c = config(); const { flow, audit } = makeFlow(c, fakeIdentity(c));
   const { claims, cookieValue } = await initiate(c, flow);
@@ -656,6 +741,46 @@ adapterSkipAuthorizeBoundary("fastify", async (options) => {
 });
 adapterSkipAuthorizeBoundary("express", async (options) => createOAuthRouter(options as never));
 adapterSkipAuthorizeBoundary("hono", async (options) => createOAuthApp(options as never));
+
+function adapterPortBoundary(
+  label: string,
+  mount: (options: Record<string, unknown>) => Promise<unknown>,
+): void {
+  test(`adapter (${label}): identity methods cannot come from a plain prototype`, async () => {
+    let calls = 0;
+    const identity = Object.create({
+      async verify() {
+        calls += 1;
+        return { ok: true, identity: { subject: "ambient-user" } };
+      },
+    });
+    await assert.rejects(
+      () => mount({ bridge: adapterBase(config()), identity }),
+      /identity is invalid/,
+    );
+    assert.equal(calls, 0);
+  });
+  test(`adapter (${label}): upstream flow members cannot come from a plain prototype`, async () => {
+    let calls = 0;
+    const upstream = Object.create({
+      callbackPath: CALLBACK_PATH,
+      async handleAuthorize() { calls += 1; return { status: 500, headers: {} }; },
+      async handleCallback() { calls += 1; return { status: 500, headers: {} }; },
+    });
+    await assert.rejects(
+      () => mount({ bridge: adapterBase(config()), upstream }),
+      /upstream is invalid/,
+    );
+    assert.equal(calls, 0);
+  });
+}
+
+adapterPortBoundary("fastify", async (options) => {
+  const app = Fastify();
+  try { await registerOAuthRoutes(app, options as never); } finally { await app.close(); }
+});
+adapterPortBoundary("express", async (options) => createOAuthRouter(options as never));
+adapterPortBoundary("hono", async (options) => createOAuthApp(options as never));
 
 function adapterIdentityHeaderBoundary(
   label: string,
@@ -848,6 +973,36 @@ test("entra-redirect: a JWKS HTTP 500 (jose throws base JOSEError, code ERR_JOSE
     assert.equal(r.ok, false, "verify did not succeed (JWKS returned 500)");
     if (!r.ok) assert.equal(r.kind, "exchange_failed", "a JWKS HTTP 500 is infrastructure ⇒ exchange_failed (never identity_rejected)");
   } finally { globalThis.fetch = realFetch; }
+});
+
+test("entra-redirect: an unusable remote key is exchange_failed", async () => {
+  const tenantId = "11111111-2222-3333-4444-555555555555";
+  const clientId = "cid";
+  const redirectUri = `${originOf(config().issuer)}${CALLBACK_PATH}`;
+  const rsa = await generateKeyPair("RS256", { extractable: true });
+  const now = Math.floor(NOW_MS / 1000);
+  const idToken = await new SignJWT({ oid: "entra-user-oid", tid: tenantId, nonce: "N1" })
+    .setProtectedHeader({ alg: "RS256", kid: "selected-key" })
+    .setIssuer(entraIssuer(tenantId)).setAudience(clientId)
+    .setIssuedAt(now).setExpirationTime(now + 3600).sign(rsa.privateKey);
+  const transport = {
+    async postForm() {
+      return { status: 200, text: async () => JSON.stringify({ id_token: idToken }) };
+    },
+  };
+  const nonPublicJwk = { ...await exportJWK(rsa.privateKey), kid: "selected-key", alg: "RS256" };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ keys: [nonPublicJwk] }), { status: 200 })) as typeof fetch;
+  try {
+    const identity = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport });
+    const result = await identity.exchangeAndVerify({
+      code: "c", codeVerifier: "v".repeat(43), nonce: "N1",
+    });
+    assert.ok(!result.ok && result.kind === "exchange_failed");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test("entra-redirect: re-exported from the ./identity/entra subpath source (createEntraRedirectIdentity)", async () => {

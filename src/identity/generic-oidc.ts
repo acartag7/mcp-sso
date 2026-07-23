@@ -32,8 +32,12 @@ import {
   resolveEndpoints, defaultTokenTransport, assertValidHttpsEndpoint, formUrlEncode,
   type GenericOidcEndpoints, type GenericOidcTokenTransport, type DiscoveryTransport, type ResolvedEndpoints, type TokenAuthMethod,
 } from "./generic-oidc-discovery.ts";
-import { snapshotOwnDataArray, snapshotOwnDataRecord } from "../own-property.ts";
-import { createValidatedRemoteJWKSet } from "./remote-jwks.ts";
+import {
+  bindClassDataMethod, snapshotOwnDataArray, snapshotOwnDataRecord,
+} from "../own-property.ts";
+import {
+  createValidatedRemoteJWKSet, isRemoteJwksInfrastructureError,
+} from "./remote-jwks.ts";
 import { captureHttpResponse } from "./util.ts";
 import { snapshotGenericOidcConfig } from "./generic-oidc-config.ts";
 import type {
@@ -111,8 +115,13 @@ export async function exchangeCodeForToken(
     body.set("client_id", safeConfig.clientId); // public + post: client identification lives in the body
     if (safeConfig.clientSecret) body.set("client_secret", safeConfig.clientSecret); // post
   }
+  const postForm =
+    bindClassDataMethod<GenericOidcTokenTransport["postForm"]>(transport, "postForm");
+  if (postForm === undefined) {
+    throw new Error("generic_oidc_exchange_failed: token transport is malformed");
+  }
   const response = captureHttpResponse(
-    await transport.postForm(endpointFields.tokenEndpoint, body, headers), "text",
+    await postForm(endpointFields.tokenEndpoint, body, headers), "text",
   );
   if (response === null) throw new Error("generic_oidc_exchange_failed: malformed transport response");
   if (response.status !== 200) { let detail = ""; try { const text = await response.read(); if (typeof text !== "string") throw new Error("malformed response body"); const e = snapshotOwnDataRecord(JSON.parse(text)); if (e && typeof e.error === "string") detail = `: ${e.error}${typeof e.error_description === "string" ? ` — ${e.error_description.replace(/[\r\n]+/g, " ")}` : ""}`; } catch { /* non-JSON error body — the HTTP status is the detail */ } throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${response.status}${detail}`); }
@@ -167,13 +176,10 @@ export function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JWTClaimValidationFailed) return "generic_oidc_bad_claim";
   if (error instanceof errors.JOSEAlgNotAllowed) return "generic_oidc_unsupported_alg";
   if (error instanceof errors.JWKSNoMatchingKey) return "generic_oidc_unknown_key";
-  // JWKS-fetch transport failures (jose throws the base JOSEError, code
-  // ERR_JOSE_GENERIC, ONLY from its JWKS fetch on non-200/malformed; and
-  // JWKSTimeout on its 5s timeout) ⇒ `generic_oidc_verify_failed` ⇒ exchange_failed
-  // (§17.11; no identity decision). Subclasses have their own codes, so the
-  // ERR_JOSE_GENERIC check never misclassifies a signature/claim error.
-  if (error instanceof errors.JWKSTimeout) return "generic_oidc_verify_failed";
-  if (error instanceof errors.JOSEError && error.code === "ERR_JOSE_GENERIC") return "generic_oidc_verify_failed";
+  // A remote key-source timeout, malformed response, or unusable matching key
+  // means no identity decision was possible. Redirect flows classify this
+  // infrastructure bucket as exchange_failed (§17.11).
+  if (isRemoteJwksInfrastructureError(error)) return "generic_oidc_verify_failed";
   if (error instanceof errors.JOSEError) return "generic_oidc_token_invalid";
   return "generic_oidc_verify_failed";
 }

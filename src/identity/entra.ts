@@ -23,8 +23,12 @@ import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
 import { type GroupAuthorization, resolveGroupCeiling } from "./entra-groups.ts";
 import { assertHttpsRaw, captureHttpResponse } from "./util.ts";
 import { AuthConfigError } from "../config.ts";
-import { ownBooleanTrue, snapshotOwnDataRecord, snapshotOwnStringArray } from "../own-property.ts";
-import { createValidatedRemoteJWKSet } from "./remote-jwks.ts";
+import {
+  bindClassDataMethod, ownBooleanTrue, snapshotOwnDataRecord, snapshotOwnStringArray,
+} from "../own-property.ts";
+import {
+  createValidatedRemoteJWKSet, isRemoteJwksInfrastructureError,
+} from "./remote-jwks.ts";
 import { snapshotEntraConfig } from "./entra-config.ts";
 import type {
   EntraAuthorizeRequest, EntraConfig, EntraIdentity, EntraPayload,
@@ -85,8 +89,10 @@ export async function exchangeCodeForToken(
     code_verifier: fields.codeVerifier,
     ...(safeConfig.clientSecret ? { client_secret: safeConfig.clientSecret } : { scope: "openid profile email" }),
   });
+  const postForm = bindClassDataMethod<EntraTokenTransport["postForm"]>(transport, "postForm");
+  if (postForm === undefined) throw new Error("entra token transport is malformed");
   const response = captureHttpResponse(
-    await transport.postForm(entraTokenEndpoint(safeConfig.tenantId), body), "text",
+    await postForm(entraTokenEndpoint(safeConfig.tenantId), body), "text",
   );
   if (response === null) throw new Error("entra token exchange returned a malformed response");
   if (response.status !== 200) { let detail = ""; try { const text = await response.read(); if (typeof text !== "string") throw new Error("malformed response body"); const e = snapshotOwnDataRecord(JSON.parse(text)); if (e && typeof e.error === "string") detail = `: ${e.error}${typeof e.error_description === "string" ? ` — ${e.error_description.replace(/[\r\n]+/g, " ")}` : ""}`; } catch { /* non-JSON error body — the HTTP status is the detail */ } throw new Error(`entra token exchange failed: HTTP ${response.status}${detail}`); }
@@ -217,9 +223,9 @@ function jwtErrorReason(error: unknown): string {
   if (error instanceof errors.JWTClaimValidationFailed) return "entra_bad_claim";
   if (error instanceof errors.JOSEAlgNotAllowed) return "entra_unsupported_alg";
   if (error instanceof errors.JWKSNoMatchingKey) return "entra_unknown_key";
-  // JWKS-fetch transport failures (base JOSEError non-200/malformed + JWKSTimeout) ⇒ entra_verify_failed ⇒ exchange_failed (§17.11). Sibling of generic-oidc.ts.
-  if (error instanceof errors.JWKSTimeout) return "entra_verify_failed";
-  if (error instanceof errors.JOSEError && error.code === "ERR_JOSE_GENERIC") return "entra_verify_failed";
+  // A remote key-source timeout, malformed response, or unusable matching key
+  // means no identity decision was possible (§17.11). Sibling of generic OIDC.
+  if (isRemoteJwksInfrastructureError(error)) return "entra_verify_failed";
   if (error instanceof errors.JOSEError) return "entra_token_invalid";
   return "entra_verify_failed";
 }

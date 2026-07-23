@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { generateKeyPair, SignJWT } from "jose";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import {
   validateGoogleIdToken, verifyGoogleIdToken, createGoogleIdentity, createGoogleRedirectIdentity,
   GOOGLE_ISSUER, type GoogleConfig, type GoogleIdTokenPayload,
@@ -194,4 +194,35 @@ test("createGoogleRedirectIdentity: exchangeAndVerify ok + google_bad_hosted_dom
   const badPort = await createGoogleRedirectIdentity({ ...CONFIG, hostedDomain: "example.com" }, { discoveryFetch: googleDiscovery(), verifyKey: publicKey, currentDate: now, transport: transport("evil.com") });
   const bad = await badPort.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
   assert.ok(!bad.ok && bad.kind === "identity_rejected");
+});
+
+test("createGoogleRedirectIdentity: an unusable remote key is exchange_failed", async () => {
+  const rsa = await generateKeyPair("RS256", { extractable: true });
+  const claims = {
+    iss: GOOGLE_ISSUER, aud: CLIENT_ID, sub: "g-1", exp: NOW + 3600, iat: NOW, nonce: "n",
+  };
+  const idToken = await new SignJWT(claims)
+    .setProtectedHeader({ alg: "RS256", kid: "selected-key" })
+    .sign(rsa.privateKey);
+  const transport: GenericOidcTokenTransport = {
+    async postForm() {
+      return {
+        status: 200,
+        async text() { return JSON.stringify({ id_token: idToken, access_token: "atk" }); },
+      };
+    },
+  };
+  const nonPublicJwk = { ...await exportJWK(rsa.privateKey), kid: "selected-key", alg: "RS256" };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ keys: [nonPublicJwk] }), { status: 200 })) as typeof fetch;
+  try {
+    const port = await createGoogleRedirectIdentity(CONFIG, {
+      discoveryFetch: googleDiscovery(), transport, currentDate: new Date(NOW * 1000),
+    });
+    const result = await port.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+    assert.ok(!result.ok && result.kind === "exchange_failed");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

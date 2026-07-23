@@ -7,8 +7,8 @@
 // Outcome mapping mirrors Entra's `entra-redirect.ts` (the §17.11 throw-rule):
 // an exchange throw/non-200/missing-id_token ⇒ `exchange_failed` (no identity
 // decision); a verify `{ok:false}` whose reason is `generic_oidc_verify_failed`
-// (the non-JOSEError catch-all = a JWKS-fetch network/transport failure) is ALSO
-// `exchange_failed` (an infrastructure failure makes no identity decision);
+// (the remote-key-source and unexpected-infrastructure bucket) is ALSO
+// `exchange_failed` because no identity decision was possible;
 // every other verify reason ⇒ `identity_rejected` (a verified-context denial).
 // Transport: injectable (default = global fetch + 10s `AbortSignal.timeout`).
 
@@ -65,9 +65,9 @@ export function wrapRedirectIdentity(
       });
       if (!result.ok) {
         // §17.11 throw-rule: an infrastructure failure during verify (no identity
-        // decision) is exchange_failed. `generic_oidc_verify_failed` is the non-
-        // JOSEError catch-all (a JWKS-fetch network failure); every other reason
-        // is a verified-context denial ⇒ identity_rejected.
+        // decision) is exchange_failed. `generic_oidc_verify_failed` is the
+        // remote-key-source and unexpected-infrastructure bucket; every other
+        // reason is a verified-context denial ⇒ identity_rejected.
         if (result.reason === "generic_oidc_verify_failed") {
           return { ok: false, kind: "exchange_failed", reason: result.reason };
         }

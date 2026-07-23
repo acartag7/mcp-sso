@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
-import { generateKeyPair, SignJWT, type CryptoKey, type JWK } from "jose";
+import { exportJWK, generateKeyPair, SignJWT, type CryptoKey, type JWK } from "jose";
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
@@ -306,6 +306,30 @@ test("token and discovery transports reject response fields from a plain prototy
     { async get() { return discoveryResponse; } },
   ));
   assert.equal(reads, 0);
+});
+
+test("token and discovery transport methods cannot come from a plain prototype", async () => {
+  let calls = 0;
+  const tokenTransport = Object.create({
+    async postForm() {
+      calls += 1;
+      return new Response(JSON.stringify({ id_token: "idt", access_token: "atk" }));
+    },
+  });
+  await assert.rejects(exchangeCodeForToken(
+    CONFIG, RESOLVED, { code: "c", codeVerifier: "v" }, tokenTransport,
+  ), /transport is malformed/);
+
+  const discoveryTransport = Object.create({
+    async get() {
+      calls += 1;
+      return new Response(JSON.stringify(discoveryDoc()), { status: 200 });
+    },
+  });
+  await assert.rejects(resolveEndpoints(
+    { issuer: ISSUER, endpoints: "discover" }, discoveryTransport,
+  ), /transport is malformed/);
+  assert.equal(calls, 0);
 });
 
 // --- resolveEndpoints (discover + manual) -----------------------------------
@@ -620,6 +644,77 @@ test("createGenericOidcRedirectIdentity: a JWKS HTTP 500 (jose base JOSEError, E
     assert.equal(r.ok, false, "verify did not succeed (JWKS returned 500)");
     assert.ok(!r.ok && r.kind === "exchange_failed", "a JWKS HTTP 500 is infrastructure ⇒ exchange_failed (never identity_rejected)");
   } finally { globalThis.fetch = realFetch; }
+});
+
+test("createGenericOidcRedirectIdentity: unusable remote key sets are exchange_failed", async () => {
+  const rsa = await generateKeyPair("RS256", { extractable: true });
+  const now = new Date(NOW * 1000);
+  const idToken = await sign(
+    { iss: ISSUER, aud: CLIENT_ID, sub: "s", exp: NOW + 3600, iat: NOW, nonce: "n" },
+    "RS256",
+    rsa.privateKey,
+    { kid: "selected-key" },
+  );
+  const transport: GenericOidcTokenTransport = {
+    async postForm() {
+      return {
+        status: 200,
+        async text() { return JSON.stringify({ id_token: idToken, access_token: "atk" }); },
+      };
+    },
+  };
+  const nonPublicJwk = { ...await exportJWK(rsa.privateKey), kid: "selected-key", alg: "RS256" };
+  const publicJwk = { ...await exportJWK(rsa.publicKey), kid: "selected-key", alg: "RS256" };
+  const keySets = [
+    [nonPublicJwk],
+    [{ ...publicJwk, oth: [] }],
+    [publicJwk, { ...publicJwk }],
+  ];
+  const realFetch = globalThis.fetch;
+  try {
+    for (const keys of keySets) {
+      globalThis.fetch = (async () =>
+        new Response(JSON.stringify({ keys }), { status: 200 })) as typeof fetch;
+      const port = await createGenericOidcRedirectIdentity(CONFIG, { transport, currentDate: now });
+      const result = await port.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+      assert.ok(!result.ok && result.kind === "exchange_failed");
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("createGenericOidcRedirectIdentity: a missing kid with multiple keys is identity_rejected", async () => {
+  const signing = await generateKeyPair("RS256", { extractable: true });
+  const other = await generateKeyPair("RS256", { extractable: true });
+  const now = new Date(NOW * 1000);
+  const idToken = await sign(
+    { iss: ISSUER, aud: CLIENT_ID, sub: "s", exp: NOW + 3600, iat: NOW, nonce: "n" },
+    "RS256",
+    signing.privateKey,
+  );
+  const transport: GenericOidcTokenTransport = {
+    async postForm() {
+      return {
+        status: 200,
+        async text() { return JSON.stringify({ id_token: idToken, access_token: "atk" }); },
+      };
+    },
+  };
+  const keys = [
+    { ...await exportJWK(signing.publicKey), alg: "RS256" },
+    { ...await exportJWK(other.publicKey), alg: "RS256" },
+  ];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ keys }), { status: 200 })) as typeof fetch;
+  try {
+    const port = await createGenericOidcRedirectIdentity(CONFIG, { transport, currentDate: now });
+    const result = await port.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
+    assert.ok(!result.ok && result.kind === "identity_rejected");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test("createGenericOidcRedirectIdentity: code-flow response with at_hash but NO access_token ⇒ exchange_failed (fail-closed — Codex P2: at_hash must be validatable, never header-mode-skipped in the code flow)", async () => {
