@@ -1,7 +1,7 @@
 import { Resolver } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
 import { admitCimdUrl, type AdmittedUrl } from "./admission.ts";
-import { isBlockedIp, ownBooleanTrue, parseIp, type ParsedIp } from "./blocklist.ts";
+import { isBlockedIp, ownBooleanTrue, ownValue, parseIp, type ParsedIp } from "./blocklist.ts";
 import { validateCimdDocument, type CimdDocument } from "./document.ts";
 import { CimdError } from "./errors.ts";
 const BRAND: unique symbol = Symbol("GuardedFetcher");
@@ -31,10 +31,10 @@ export function createGuardedFetcher(opts: {
   maxDocumentBytes?: number; fetchTimeoutMs?: number;
 } = {}): GuardedFetcher {
   assertOptions(opts);
-  const transport = (Object.hasOwn(opts, "transport") ? opts.transport : undefined) ?? NODE_TRANSPORT;
-  const resolver = Object.hasOwn(opts, "resolver") ? opts.resolver : undefined;
-  const maxBytes = integerOption(Object.hasOwn(opts, "maxDocumentBytes") ? opts.maxDocumentBytes : undefined, 5120, 1024, 65536, "maxDocumentBytes");
-  const timeoutMs = integerOption(Object.hasOwn(opts, "fetchTimeoutMs") ? opts.fetchTimeoutMs : undefined, 5000, 1000, 30000, "fetchTimeoutMs");
+  const transport = (ownValue(opts, "transport") as CimdTransport | undefined) ?? NODE_TRANSPORT;
+  const resolver = ownValue(opts, "resolver") as DnsResolver | undefined;
+  const maxBytes = integerOption(ownValue(opts, "maxDocumentBytes"), 5120, 1024, 65536, "maxDocumentBytes");
+  const timeoutMs = integerOption(ownValue(opts, "fetchTimeoutMs"), 5000, 1000, 30000, "fetchTimeoutMs");
   const allowLoopback = ownBooleanTrue(opts, "allowLoopback");
   const fetcher = {
     async fetch(rawClientId: string): Promise<CimdFetchResult> {
@@ -195,8 +195,8 @@ function assertOptions(opts: unknown): asserts opts is Record<string, unknown> {
   if (typeof opts !== "object" || opts === null || Array.isArray(opts)) throw new TypeError("CIMD fetcher options are invalid");
   const value = opts as Record<string, unknown>;
   for (const k of Object.keys(value)) if (!["transport", "resolver", "allowLoopback", "maxDocumentBytes", "fetchTimeoutMs"].includes(k)) throw new TypeError(`unknown CIMD fetcher option: ${k}`);
-  const allowLoopback = Object.hasOwn(value, "allowLoopback") ? value.allowLoopback : undefined;
-  const transport = Object.hasOwn(value, "transport") ? value.transport : undefined, resolver = Object.hasOwn(value, "resolver") ? value.resolver : undefined;
+  const allowLoopback = ownValue(value, "allowLoopback");
+  const transport = ownValue(value, "transport"), resolver = ownValue(value, "resolver");
   if (allowLoopback !== undefined && typeof allowLoopback !== "boolean") throw new TypeError("allowLoopback must be boolean");
   if (transport !== undefined && (typeof transport !== "object"
     || transport === null || typeof (transport as CimdTransport).connectAndGet !== "function")) throw new TypeError("transport is invalid");

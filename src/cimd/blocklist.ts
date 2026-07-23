@@ -2,6 +2,10 @@ export function ownBooleanTrue(o: unknown, k: string): boolean {
   return typeof o === "object" && o !== null && Object.hasOwn(o, k) && (o as Record<string, unknown>)[k] === true;
 }
 
+export function ownValue(o: unknown, k: string): unknown {
+  return typeof o === "object" && o !== null && Object.hasOwn(o, k) ? (o as Record<string, unknown>)[k] : undefined;
+}
+
 export interface ParsedIp {
   readonly family: 4 | 6;
   readonly bytes: Uint8Array;
