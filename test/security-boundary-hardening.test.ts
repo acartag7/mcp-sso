@@ -96,19 +96,26 @@ function validAuthCode(rawCode: string, cfg: BridgeConfig): AuthCodeRecord {
 
 test("token exchange rejects inherited and accessor-backed store records", async () => {
   const cfg = config();
-  for (const kind of ["inherited", "accessor"] as const) {
+  for (const kind of ["inherited", "accessor", "class"] as const) {
     const rawCode = `boundary-${kind}`;
     const valid = validAuthCode(rawCode, cfg);
     let getterCalls = 0;
-    const record = kind === "inherited"
+    let record = kind === "inherited"
       ? Object.assign(Object.create({ resource: valid.resource }), { ...valid, resource: undefined })
       : { ...valid };
     if (kind === "inherited") delete record.resource;
-    else {
+    else if (kind === "accessor") {
       Object.defineProperty(record, "resource", {
         enumerable: true,
         get() { getterCalls += 1; return valid.resource; },
       });
+    } else {
+      class AuthCodeDto {
+        get resource(): string { getterCalls += 1; return valid.resource; }
+      }
+      const ownFields = { ...valid } as { resource?: string };
+      delete ownFields.resource;
+      record = Object.assign(new AuthCodeDto(), ownFields) as AuthCodeRecord;
     }
     let refreshWrites = 0;
     const store = stubStore({
@@ -276,18 +283,19 @@ test("revocation only uses a lookup-bound own-data refresh record", async () => 
   assert.equal(revokedFamily, familyId, "a bound record remains revocable after token expiry");
 });
 
-test("revocation accepts a structurally valid class-based store record", async () => {
+test("revocation rejects class-prototype store records", async () => {
   const cfg = config();
   const familyId = "family-0123456789abcdef";
   const raw = `rt.${familyId}.class-record`;
+  let getterCalls = 0;
   class RefreshDto {
-    get tokenHash() { return sha256Hex(raw); }
-    get familyId() { return familyId; }
-    get previousTokenHash() { return null; }
-    get clientId() { return "client-1"; }
-    get subject() { return "user-1"; }
-    get scopes() { return ["mcp:read"]; }
-    get expiresAt() { return FUTURE; }
+    get tokenHash() { getterCalls += 1; return sha256Hex(raw); }
+    get familyId() { getterCalls += 1; return familyId; }
+    get previousTokenHash() { getterCalls += 1; return null; }
+    get clientId() { getterCalls += 1; return "client-1"; }
+    get subject() { getterCalls += 1; return "user-1"; }
+    get scopes() { getterCalls += 1; return ["mcp:read"]; }
+    get expiresAt() { getterCalls += 1; return FUTURE; }
   }
   let revoked: string | undefined;
   const tokens = new OAuthTokenUseCase({
@@ -299,7 +307,8 @@ test("revocation accepts a structurally valid class-based store record", async (
     clock, audit,
   });
   await tokens.revoke(raw);
-  assert.equal(revoked, familyId);
+  assert.equal(revoked, undefined);
+  assert.equal(getterCalls, 0);
 });
 
 test("returned client registrations require own-data identity, type, and secret entries", async () => {
@@ -343,12 +352,25 @@ test("returned client registrations require own-data identity, type, and secret 
     enumerable: true,
     get() { getterCalls += 1; return sha256Hex(secret); },
   });
+  class ClientDto {
+    get applicationType(): "machine" { getterCalls += 1; return "machine"; }
+  }
+  const clientFields = { ...validMachine } as { applicationType?: string };
+  delete clientFields.applicationType;
+  const classClient = Object.assign(new ClientDto(), clientFields) as MachineClientRegistration;
+  class SecretDto {
+    readonly createdAtEpoch = epoch;
+    get hash(): string { getterCalls += 1; return sha256Hex(secret); }
+  }
+  const classSecret = { ...validMachine, secrets: [new SecretDto()] };
 
   const storeFor = (record: ClientRegistration): ClientStore => ({
     async save() {},
     async find() { return record; },
   });
-  for (const record of [inheritedIdentity, typeAccessor, inheritedSecret, secretAccessor]) {
+  for (const record of [
+    inheritedIdentity, typeAccessor, inheritedSecret, secretAccessor, classClient, classSecret,
+  ]) {
     assert.equal(
       await verifyMachineClientSecret(
         { store: storeFor(record), catalog: ["mcp:read"], clock, audit },

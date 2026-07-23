@@ -8,7 +8,7 @@ import type {
 import { StoreInputError, assertSha256Hex, assertUtcIsoTimestamp } from "./ports/store.ts";
 import { isScopeToken } from "./scopes.ts";
 import {
-  snapshotClassDataRecord, snapshotOwnDataArray, snapshotOwnDataRecord, snapshotOwnStringArray,
+  snapshotOwnDataArray, snapshotOwnDataRecord, snapshotOwnStringArray,
 } from "./own-property.ts";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/i;
@@ -17,10 +17,7 @@ const UTC_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 export function parseClientRegistration(
   value: unknown,
 ): ClientRegistration | null {
-  const record = snapshotClassDataRecord(value, [
-    "clientId", "redirectUris", "applicationType", "issuedAtEpoch",
-    "name", "allowedScopes", "secrets",
-  ]);
+  const record = snapshotOwnDataRecord(value);
   if (record === null || !nonempty(record.clientId)
     || !integer(record.issuedAtEpoch)) return null;
   const redirectUris = stringArray(record.redirectUris);
@@ -64,11 +61,8 @@ export function parseFoundClientRegistration(
   return record?.clientId === expectedClientId ? record : null;
 }
 
-function parseAuthCodeRecord(value: unknown, portResult = false): AuthCodeRecord | null {
-  const record = portResult ? snapshotClassDataRecord(value, [
-    "codeHash", "clientId", "subject", "redirectUri", "resource", "scopes",
-    "codeChallenge", "codeChallengeMethod", "expiresAt",
-  ]) : snapshotOwnDataRecord(value);
+function parseAuthCodeRecord(value: unknown): AuthCodeRecord | null {
+  const record = snapshotOwnDataRecord(value);
   const scopes = record === null ? null : scopeArray(record.scopes);
   if (record === null || scopes === null || !digest(record.codeHash)
     || !nonempty(record.clientId) || !nonempty(record.subject)
@@ -93,7 +87,7 @@ export function parseConsumedAuthCode(
   value: unknown,
   expected: { codeHash: string; resource: string; nowIso: string },
 ): AuthCodeRecord | null {
-  const record = parseAuthCodeRecord(value, true);
+  const record = parseAuthCodeRecord(value);
   return record?.codeHash === expected.codeHash && record.resource === expected.resource
     && record.expiresAt > expected.nowIso ? record : null;
 }
@@ -111,11 +105,8 @@ export function requireSaveAuthCodeInput(value: unknown): SaveAuthCodeInput {
 function parseRefreshTokenRecord(
   value: unknown,
   allowIdentityPlaceholders = false,
-  portResult = false,
 ): RefreshTokenRecord | null {
-  const record = portResult ? snapshotClassDataRecord(value, [
-    "tokenHash", "familyId", "previousTokenHash", "clientId", "subject", "scopes", "expiresAt",
-  ]) : snapshotOwnDataRecord(value);
+  const record = snapshotOwnDataRecord(value);
   const scopes = record === null ? null : scopeArray(record.scopes);
   if (record === null || scopes === null || !digest(record.tokenHash)
     || !nonempty(record.familyId)
@@ -139,7 +130,7 @@ export function parseRotatedRefreshToken(
   value: unknown,
   expected: { tokenHash: string; familyId: string; nowIso: string },
 ): RefreshTokenRecord | null {
-  const record = parseRefreshTokenRecord(value, false, true);
+  const record = parseRefreshTokenRecord(value);
   return record?.tokenHash === expected.tokenHash && record.familyId === expected.familyId
     && record.expiresAt > expected.nowIso ? record : null;
 }
@@ -148,7 +139,7 @@ export function parseFoundRefreshToken(
   value: unknown,
   expectedTokenHash: string,
 ): RefreshTokenRecord | null {
-  const record = parseRefreshTokenRecord(value, false, true);
+  const record = parseRefreshTokenRecord(value);
   return record?.tokenHash === expectedTokenHash ? record : null;
 }
 
@@ -188,7 +179,7 @@ export function parseGrantedScopes(value: unknown, catalog: readonly string[]): 
 }
 
 export function parseClientSecretRecord(value: unknown): ClientSecret | null {
-  const secret = snapshotClassDataRecord(value, ["hash", "createdAtEpoch", "expiresAtEpoch"]);
+  const secret = snapshotOwnDataRecord(value);
   if (secret === null || !digest(secret.hash) || !integer(secret.createdAtEpoch)
     || (secret.expiresAtEpoch !== undefined && !integer(secret.expiresAtEpoch))) return null;
   return Object.freeze({
