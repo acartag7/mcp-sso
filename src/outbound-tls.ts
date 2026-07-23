@@ -3,8 +3,8 @@ import { isDataDescriptor } from "./own-property.ts";
 const TLS_REJECTION_ENV = "NODE_TLS_REJECT_UNAUTHORIZED";
 const TLS_DISABLED_ERROR = "default_outbound_tls_verification_disabled";
 
-/** Refuse Node's process-wide certificate-verification bypass before egress.
- * Explicitly injected transports own their own TLS policy. */
+/** Refuse Node's standard ambient TLS-disable switch before default egress.
+ * Injected transports and host-replaced global fetch/dispatchers own TLS policy. */
 export function assertDefaultTlsVerification(): void {
   let current: object | null = process.env;
   const visited = new Set<object>();

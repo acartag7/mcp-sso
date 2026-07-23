@@ -7,7 +7,57 @@ import {
 } from "../src/identity/generic-oidc-discovery.ts";
 import { createEntraRedirectIdentity } from "../src/identity/entra-redirect.ts";
 import { createValidatedRemoteJWKSet } from "../src/identity/remote-jwks.ts";
-import { guardedGlobalFetch } from "../src/outbound-tls.ts";
+import {
+  assertDefaultTlsVerification, guardedGlobalFetch,
+} from "../src/outbound-tls.ts";
+
+test("ambient TLS guard walks descriptors without accessors and enforces a fixed bound", () => {
+  const key = "NODE_TLS_REJECT_UNAUTHORIZED";
+  const previousEnv = process.env[key];
+  const originalPrototype = Object.getPrototypeOf(process.env) as object | null;
+  let accessorReads = 0;
+  try {
+    delete process.env[key];
+    const accessorPrototype = Object.create(originalPrototype) as object;
+    Object.defineProperty(accessorPrototype, key, {
+      configurable: true,
+      get() { accessorReads += 1; return "0"; },
+    });
+    Object.setPrototypeOf(process.env, accessorPrototype);
+    assert.throws(
+      assertDefaultTlsVerification,
+      /default_outbound_tls_verification_disabled/,
+    );
+    assert.equal(accessorReads, 0);
+
+    const trappedPrototype = new Proxy(Object.create(originalPrototype) as object, {
+      getOwnPropertyDescriptor() { throw new Error("descriptor trap"); },
+    });
+    Object.setPrototypeOf(process.env, trappedPrototype);
+    assert.throws(
+      assertDefaultTlsVerification,
+      /default_outbound_tls_verification_disabled/,
+    );
+
+    let longPrototype: object | null = null;
+    for (let index = 0; index < 33; index += 1) {
+      longPrototype = Object.create(longPrototype) as object;
+    }
+    Object.setPrototypeOf(process.env, longPrototype);
+    assert.throws(
+      assertDefaultTlsVerification,
+      /default_outbound_tls_verification_disabled/,
+    );
+
+    Object.setPrototypeOf(process.env, originalPrototype);
+    process.env[key] = "1";
+    assert.doesNotThrow(assertDefaultTlsVerification);
+  } finally {
+    Object.setPrototypeOf(process.env, originalPrototype);
+    if (previousEnv === undefined) delete process.env[key];
+    else process.env[key] = previousEnv;
+  }
+});
 
 test("default outbound transports refuse disabled TLS verification before fetch", async () => {
   const previousEnv = process.env.NODE_TLS_REJECT_UNAUTHORIZED;

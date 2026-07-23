@@ -341,10 +341,11 @@ scope ceiling) is locked in §17.4.
   Validate with a **raw `^https://` prefix check BEFORE `new URL()`** (Node's lenient
   URL parser normalizes `https:/host` into a valid-looking URL). Applies to
   CloudflareAccessIdentity and EntraIdentity.
-- **Default identity egress requires certificate verification.** The reference
-  discovery, JWKS, and token transports reject before network I/O when Node's
-  process-wide TLS certificate verification is disabled. An explicitly injected
-  transport owns its own TLS policy.
+- **Default identity egress rejects Node's ambient TLS-disable switch.** The
+  reference discovery, JWKS, and token transports reject before network I/O
+  when `NODE_TLS_REJECT_UNAUTHORIZED` is disabled or inherited ambiguously.
+  An explicitly injected transport or host-replaced global fetch/dispatcher
+  owns its own TLS policy.
 - **Required construction config MUST be non-empty.** A blank required field —
   CloudflareAccess `audience`, Entra `tenantId`/`clientId`, generic-OIDC
   `clientId`/`issuer`/`redirectUri` — fails closed at construction (empty ==
@@ -2234,9 +2235,10 @@ gate replaces no-gate).
     NOT behind the 17.1 SSRF guard: the URL is static deployer config (trusted),
     and SIEM collectors legitimately live on private networks — documented
     rationale. `fetchImpl` is an optional DI seam (defaults to a guarded global
-    `fetch` that refuses process-wide TLS certificate-verification disablement)
-    for test-injecting the transport without an https server; not a deployer-facing
-    knob. Error messages reaching stderr are redacted
+    `fetch` that refuses Node's ambient TLS-disable switch) for test-injecting
+    the transport without an https server; not a deployer-facing knob. A
+    host-replaced global fetch/dispatcher owns its TLS policy. Error messages
+    reaching stderr are redacted
     (`src/audit/util.ts`) and the configured header values and URL query-string
     params scrubbed — a transport that echoes request headers, the URL, or a
     credential-bearing query (`?access_token=…`) into an Error.message cannot
