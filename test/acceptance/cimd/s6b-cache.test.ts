@@ -252,4 +252,32 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(redirectRes.status, 302);
     assert.equal(t.calls, 1, "the redirect authorize served the SAME cache entry — no second fetch");
   });
+
+  // Codex: a cache HIT reuses the fetched DOCUMENT, never the authorization decision — the
+  // shared CIMD redirect matcher must re-run per request, so a later request for the same raw
+  // client_id with a redirect_uri OUTSIDE the cached document must fail closed (no bypass).
+  test("direct: a cache HIT still re-validates redirect_uri against the cached document (no redirect bypass)", async () => {
+    const t = echoTransport();
+    const s = setup({ t });
+    assert.equal((await s.bridge.handleAuthorize(request(ID), { subject: "user-1" })).status, 200); // caches the doc (redirect_uris = [REDIRECT])
+    assert.equal(t.calls, 1);
+    const evil = request(ID); (evil.query as any).redirect_uri = "https://evil.example/cb"; // not in the cached document
+    const res = await s.bridge.handleAuthorize(evil, { subject: "user-1" });
+    assert.notEqual(res.status, 302);
+    assert.notEqual(res.status, 200);
+    assert.equal((res.body as any)?.error, "invalid_client");
+    assert.equal(t.calls, 1, "served from cache (no re-fetch) yet the unregistered redirect is still rejected");
+  });
+
+  test("upstream: a cache HIT still re-validates redirect_uri against the cached document (no redirect bypass)", async () => {
+    const t = echoTransport();
+    const { flow } = makeFlow(t);
+    assert.equal((await flow.handleAuthorize(request(ID))).status, 302); // caches the doc
+    assert.equal(t.calls, 1);
+    const evil = request(ID); (evil.query as any).redirect_uri = "https://evil.example/cb";
+    const res = await flow.handleAuthorize(evil);
+    assert.notEqual(res.status, 302);
+    assert.equal((res.body as any)?.error, "invalid_client");
+    assert.equal(t.calls, 1, "cache hit, no re-fetch, unregistered redirect still rejected");
+  });
 }

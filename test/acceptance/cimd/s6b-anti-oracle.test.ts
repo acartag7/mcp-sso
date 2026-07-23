@@ -188,15 +188,31 @@ if (phases["s6b-cimd-flow"] !== true) {
   // Decision 2: the map covers BOTH named resolution boundaries. A CimdError at the
   // UPSTREAM authorize resolve must be mapped inside resolution and NEVER escape to
   // the upstream catch as internal_error 500, and no IdP hop occurs.
-  test("upstream boundary: a CimdError at authorize resolve maps to the generic 401, never internal_error 500, no IdP hop", async () => {
-    const { b, store, clock, audit } = makeBridge({ cimdTransport: transport(() => okResult()), cimdResolver: resolver([{ address: "10.0.0.1", family: 4 }]) });
-    const identity = stubIdentity();
-    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: transport(() => okResult()), cimdResolver: resolver([{ address: "10.0.0.1", family: 4 }]) });
-    const res = await flow.handleAuthorize(req(authQ()));
-    assertGeneric(res);
-    assert.equal(identity.hops, 0, "no IdP hop on a resolution failure");
-    assert.ok(fetchFail(audit).some((e: any) => e.reason === "ip_blocked"));
-  });
+  // Decision 2 boundary (1): the FULL failure matrix must ALSO collapse at the UPSTREAM
+  // authorize resolve (flow.handleAuthorize) — byte-identical to the direct CANONICAL,
+  // never escaping the flow's own catch as internal_error 500, never hopping to the IdP.
+  const upstreamCases: Array<{ name: string; t?: any; r?: any; cimd?: any }> = [
+    { name: "ip_blocked", r: () => resolver([{ address: "10.0.0.1", family: 4 }]) },
+    { name: "status !== 200", t: () => transport(() => okResult({ status: 404 })) },
+    { name: "wrong content-type", t: () => transport(() => okResult({ headersDistinct: { "content-type": ["text/html"] } })) },
+    { name: "document client_id mismatch", t: () => transport(() => okResult({ doc: { client_id: "https://evil.example/x", client_name: "x", redirect_uris: [CIMD_REDIRECT] } })) },
+    { name: "non-CimdError throw", t: () => transport(null, { throw: true }) },
+    { name: "over-cap body", cimd: { enabled: true, maxDocumentBytes: 1024 }, t: () => transport(() => okResult({ body: one(enc("x".repeat(4000))) })) },
+    { name: "slow endpoint (timeout)", cimd: { enabled: true, fetchTimeoutMs: 1000 }, t: () => transport(null, { never: true }) },
+  ];
+  for (const c of upstreamCases) {
+    test(`anti-oracle (upstream boundary): ${c.name} ⇒ identical generic 401, never 500, no IdP hop`, async () => {
+      const t = c.t ? c.t() : transport(() => okResult());
+      const r = c.r ? c.r() : resolver();
+      const { b, store, clock, audit } = makeBridge({ cimd: c.cimd ?? { enabled: true }, cimdTransport: t, cimdResolver: r });
+      const identity = stubIdentity();
+      const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: t, cimdResolver: r });
+      const res = await flow.handleAuthorize(req(authQ()));
+      assertGeneric(res); // byte-identical to the direct CANONICAL — parity across BOTH named boundaries
+      assert.equal(identity.hops, 0, `${c.name}: no IdP hop on a resolution failure`);
+      assert.ok(fetchFail(audit).length >= 1, `${c.name}: audited to oauth.cimd.fetch (failure)`);
+    });
+  }
 
   // The cimd:<ip> RateLimitPort denial is OUTSIDE the anti-oracle map: a
   // pre-resolution DIRECT 429 temporarily_unavailable, at BOTH direct + upstream,

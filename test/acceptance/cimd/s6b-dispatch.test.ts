@@ -102,7 +102,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   });
 
   test("direct (2): any other scheme-shaped id ⇒ direct invalid_client, no fetch, no fallthrough", async () => {
-    for (const id of ["HTTPS://cdn.example.com/client", "http://cdn.example.com/client", "ftp://cdn.example.com/client", "HttP://cdn.example.com/client"]) {
+    for (const id of ["HTTPS://cdn.example.com/client", "http://cdn.example.com/client", "ftp://cdn.example.com/client", "HttP://cdn.example.com/client", "web+foo://cdn.example.com/client", "x-y.z://cdn.example.com/client"]) {
       const t = transport(() => okResult());
       const { b } = makeBridge({ cimdTransport: t, cimdResolver: resolver() });
       const res = await b.handleAuthorize(req(directAuthQ({ client_id: id })), { subject: "agent@test" });
@@ -159,7 +159,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   });
 
   test("redirect (2): scheme-shaped variants + https-while-disabled ⇒ direct invalid_client, no 302, no fetch", async () => {
-    for (const id of ["HTTPS://cdn.example.com/client", "http://cdn.example.com/client", "ftp://cdn.example.com/client"]) {
+    for (const id of ["HTTPS://cdn.example.com/client", "http://cdn.example.com/client", "ftp://cdn.example.com/client", "web+foo://cdn.example.com/client", "x-y.z://cdn.example.com/client"]) {
       const t = transport(() => okResult());
       const { flow } = makeFlow({ cimdTransport: t, cimdResolver: resolver() });
       const res = await flow.handleAuthorize(req(directAuthQ({ client_id: id })));

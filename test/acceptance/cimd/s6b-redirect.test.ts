@@ -127,6 +127,11 @@ if (phases["s6b-cimd-flow"] !== true) {
     const cb = await flow.handleCallback(req({ code: "THE_CODE", state }, { cookie: `${COOKIE}=${jwt}` }));
     assert.equal(cb.status, 200, "callback completes from the carried registration (no re-fetch)");
     assert.equal(authTransport.calls, 1, "the authorize transport was NOT called again at callback");
+    // The carried registration must set cimd_verified so the approve-time scheme gate
+    // passes — else redirect-mode CIMD users would hit invalid_consent at approve (dec 3).
+    const consentToken = /name="consent_token" value="([^"]+)"/.exec(String(cb.body))?.[1];
+    assert.ok(consentToken, "the callback rendered a consent token");
+    assert.equal(jose.decodeJwt(consentToken!).cimd_verified, true, "carried registration sets cimd_verified for redirect-mode CIMD");
   });
 
   // ---- 1c: the carried cimd claim projects EXACTLY the three named fields ----
