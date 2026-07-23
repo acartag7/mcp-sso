@@ -31,6 +31,11 @@ Tier-1 tests must be deterministic:
 - Every new store-record invariant goes into the shared store-conformance suite,
   so memory/sqlite/mysql prove identical behavior.
 - Keep the baseline official MCP SDK flow green after every session.
+- Trust-boundary object parsers require negative coverage for inherited fields,
+  accessors, symbols, and sparse/extra-key arrays where each shape applies.
+  Cross-boundary evidence includes `test/security-boundary-hardening.test.ts`;
+  descriptor, foreign-realm, fixed-hop, and revoked-proxy evidence lives in
+  `test/own-property.test.ts`, with boundary-specific cases beside each adapter.
 
 Tier-3 live checks are still required for provider/client claims. Live checks
 never replace CI security tests.

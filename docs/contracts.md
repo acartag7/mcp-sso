@@ -131,6 +131,15 @@ the **issuer** origin (these may be different hosts).
   (Cloudflare Access, Entra) shipped in Phase 3.
 - **Fail-closed everywhere.** Ambiguous config, a missing identity, an unknown
   audience, or a replayed token is a hard failure, never a degraded default.
+- **Trust-boundary objects are parsed from descriptors, not property lookup.**
+  Plain records and arrays used in security decisions MUST be snapshotted from
+  own enumerable data properties before use. Inherited values are never input
+  fields; accessors, symbol keys, and sparse or extra-key arrays reject. A boundary explicitly
+  accepting class-backed identity ports/results, redirect flows, HTTP responses,
+  or injected discovery/token/CIMD transports may read only named members
+  through a fixed-hop class-prototype walk, once per member. Strict boundary
+  walks never enter null-prototype roots; protocol walks stop at recognizable
+  realm object roots.
 
 > The library defines only the contract surface above and the reference adapters.
 > It does **not** name or depend on any particular database, host, or downstream
@@ -1997,6 +2006,9 @@ groupAuthorization?: {
   6. The device-approval path (§17.3 `DeviceConsentClaims`) carries the same
      field the same way.
 - **Core enforcement (IdP-agnostic):** with the ceiling present,
+  `allowedScopes: []` is an explicit entitled-to-nothing ceiling: it denies all
+  scopes and survives the consent codec as an empty `allowed_scopes` claim;
+  `allowedScopes: undefined` means no ceiling.
   `prepare` (and the device-flow approval) **narrows by intersection** with
   the ceiling — RFC 6749 permits granting fewer scopes than requested, and
   the token response `scope` + consent page reflect the narrowed set (this is
@@ -2361,11 +2373,12 @@ interface RedirectIdentityPort {
 
 type RedirectExchangeResult =
   | { ok: true; identity: IdentityClaims }
-  /** Transport/protocol failure — non-200, timeout, malformed body, missing
-   *  id_token (for a provider that issues them). No identity decision made. */
+  /** Transport/protocol failure — non-200, timeout, malformed upstream
+   *  response/JWKS, missing id_token. No identity decision made. */
   | { ok: false; kind: "exchange_failed"; reason: string }
   /** Verified-context denial — bad iss/aud/tid/nonce, allowlist, group
-   *  rejection. An identity decision WAS made: the user is refused. */
+   *  rejection, or malformed authorization ceiling after a valid subject.
+   *  An identity decision WAS made: the user is refused. */
   | { ok: false; kind: "identity_rejected"; reason: string };
 ```
 
@@ -2546,7 +2559,7 @@ redirect**:
 | 8 | IdP `error` param = anything else | **302 redirect** `server_error` | `upstream_error` |
 | 9 | no `code` param (and no `error`) | direct 400 `invalid_request` | `missing_code` |
 | 10 | `exchangeAndVerify` returns `kind: "exchange_failed"` **or throws** (non-200, timeout, malformed body, missing id_token from an id_token-issuing provider) | **302 redirect** `server_error` | `exchange_failed` |
-| 11 | `exchangeAndVerify` returns `kind: "identity_rejected"` (id_token invalid, nonce mismatch, tid/allowlist/group rejection) | **302 redirect** `access_denied` | `identity_rejected` (detail in `identity.verify`) |
+| 11 | `exchangeAndVerify` returns `kind: "identity_rejected"`, or a successful identity carries a malformed authorization ceiling (id_token invalid, nonce mismatch, tid/allowlist/group rejection) | **302 redirect** `access_denied` | `identity_rejected` (detail in `identity.verify`) |
 | 12 | `bridge.handleAuthorize` errors | its own §9.3 channels | unchanged |
 | 13 | success | 200 consent page | — |
 
@@ -2611,9 +2624,10 @@ synthetic request's `query` reconstructed from the verified `params`
 `AuthAuditEventName` at implementation) — emitted on **every** callback outcome
 with `status` success/failure and `reason` from the fixed enum in the failure
 table; optional `clientId` (from `params`) and `ip`. `identity.verify` is
-emitted whenever an identity **decision was reached** — `ok: true` (success)
-and `kind: "identity_rejected"` (failure, with the port's reason) — with the
-same shape and semantics as `Bridge.resolveIdentity`'s emission (S2a);
+emitted whenever an identity **decision was reached** — a well-formed `ok: true`
+identity (success), or `kind: "identity_rejected"` / a malformed authorization
+ceiling after a valid subject (failure, with the port's reason) — with the same
+shape and semantics as `Bridge.resolveIdentity`'s emission (S2a);
 `exchange_failed` reaches no identity decision, so it emits only the
 `oauth.upstream.callback` failure, never a spurious `identity.verify`. Whether
 the implementation routes through `resolveIdentity` internally or emits
