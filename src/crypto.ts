@@ -100,7 +100,7 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
     code_challenge: claims.codeChallenge,
     code_challenge_method: claims.codeChallengeMethod,
     state: claims.state,
-    allowed_scopes: claims.allowedScopes?.length ? scopeString(claims.allowedScopes) : undefined,
+    allowed_scopes: claims.allowedScopes === undefined ? undefined : scopeString(claims.allowedScopes),
   }).setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(config.issuer)
     .setAudience(CONSENT_AUDIENCE)
@@ -207,8 +207,8 @@ function keyId(config: BridgeConfig): string | undefined {
 function consentClaims(payload: JWTPayload): ConsentRequestClaims {
   if (payload.typ !== CONSENT_TYP) throw new Error("wrong token type");
   const scopes = typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [];
-  const allowedScopes = typeof payload.allowed_scopes === "string" && payload.allowed_scopes.trim()
-    ? payload.allowed_scopes.split(/\s+/)
+  const allowedScopes = payload.allowed_scopes === "" ? []
+    : typeof payload.allowed_scopes === "string" && payload.allowed_scopes.trim() ? payload.allowed_scopes.split(/\s+/)
     : undefined;
   return {
     clientId: requiredString(payload.client_id, "client_id"),

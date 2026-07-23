@@ -20,7 +20,7 @@ import { Bridge } from "../src/adapters/bridge.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { OAuthError } from "../src/errors.ts";
 import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
-import { pkceChallenge } from "../src/crypto.ts";
+import { pkceChallenge, signConsentToken, verifyConsentToken } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
@@ -264,6 +264,25 @@ test("an empty-array ceiling denies all scopes (entitled to nothing ⇒ access_d
   const page = await resolveAndAuthorize(ctx, fakeIdentity([]), clientId, "mcp:read", "v-empty-array-0123456789abcdef012345678901234");
   assert.equal(page.status, 302);
   assert.equal(new URL(page.headers.location as string).searchParams.get("error"), "access_denied");
+});
+
+test("an empty ceiling survives the consent codec as entitled to nothing", async () => {
+  const ctx = setup();
+  const clock = new FakeClock(NOW_MS);
+  const token = await signConsentToken({
+    clientId: "client-1",
+    redirectUri: REDIRECT,
+    resource: ctx.bridge.config.resource,
+    scopes: [],
+    codeChallenge: pkceChallenge("v-empty-codec-0123456789abcdef01234567890123"),
+    codeChallengeMethod: "S256",
+    subject: SUBJECT,
+    allowedScopes: [],
+  }, ctx.bridge.config, clock);
+  const encoded = decodeJwt(token);
+  assert.equal(Object.hasOwn(encoded, "allowed_scopes"), true);
+  assert.equal(encoded.allowed_scopes, "");
+  assert.deepEqual((await verifyConsentToken(token, ctx.bridge.config, clock)).allowedScopes, []);
 });
 
 test("no ceiling + empty defaultScopes + scopeless authorize is unchanged v0.1 behavior (200, not access_denied)", async () => {

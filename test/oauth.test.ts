@@ -378,6 +378,26 @@ test("token issuance rejects a LEGACY stored grant whose subject is in the reser
   await ctx.store.close();
 });
 
+test("empty persisted scopes remain empty instead of expanding to defaults", async () => {
+  const ctx = setup();
+  const rawCode = "empty-scope-code";
+  const verifier = "empty-scope-verifier-0123456789abcdef012345678901";
+  await ctx.store.saveAuthCode({
+    codeHash: sha256Hex(rawCode), clientId: "client-1", subject: SUBJECT,
+    redirectUri: REDIRECT, resource: ctx.config.resource, scopes: [],
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  const response = await ctx.token.exchangeAuthorizationCode({
+    grantType: "authorization_code", code: rawCode, clientId: "client-1",
+    redirectUri: REDIRECT, codeVerifier: verifier,
+  });
+  assert.equal(response.scope, "");
+  const stored = await ctx.store.findRefreshToken(sha256Hex(response.refresh_token));
+  assert.deepEqual(stored?.scopes, []);
+  await ctx.store.close();
+});
+
 test("approve without an explicit approved:true is a Deny at the CORE layer (§9.3 fail-closed)", async () => {
   const ctx = setup();
   const prepared = await ctx.auth.prepare({

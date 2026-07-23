@@ -754,6 +754,22 @@ test("entra-redirect: a JWKS HTTP 500 (jose throws base JOSEError, code ERR_JOSE
   } finally { globalThis.fetch = realFetch; }
 });
 
+test("entra-redirect: malformed remote JWKS (ERR_JWKS_INVALID) is exchange_failed", async () => {
+  const tenantId = "11111111-2222-3333-4444-555555555555"; const clientId = "cid";
+  const redirectUri = `${originOf(config().issuer)}${CALLBACK_PATH}`;
+  const { privateKey } = await generateKeyPair("RS256");
+  const now = Math.floor(NOW_MS / 1000);
+  const idToken = await new SignJWT({ oid: "entra-user-oid", tid: tenantId, nonce: "N1" }).setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "k1" }).setIssuer(entraIssuer(tenantId)).setAudience(clientId).setIssuedAt(now).setExpirationTime(now + 3600).sign(privateKey);
+  const transport = { async postForm(): Promise<{ status: number; text(): Promise<string> }> { return { status: 200, text: async () => JSON.stringify({ id_token: idToken }) }; } };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({}), { status: 200 })) as typeof fetch;
+  try {
+    const id = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport });
+    const result = await id.exchangeAndVerify({ code: "c", codeVerifier: "v".repeat(43), nonce: "N1" });
+    assert.ok(!result.ok && result.kind === "exchange_failed");
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test("entra-redirect: re-exported from the ./identity/entra subpath source (createEntraRedirectIdentity)", async () => {
   const mod = await import("../src/identity/entra.ts");
   assert.equal(typeof mod.createEntraRedirectIdentity, "function");

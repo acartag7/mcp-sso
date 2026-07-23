@@ -29,6 +29,15 @@ export function normalizeScopes(
   return out.length ? out : [...defaults];
 }
 
+/** Validate stored grant scopes without applying request-time defaults. */
+export function storedScopes(value: unknown, catalog: readonly string[]): string[] {
+  if (!Array.isArray(value) || !value.every((scope) =>
+    typeof scope === "string" && isScopeToken(scope) && catalog.includes(scope))) {
+    throw new OAuthError("invalid_grant", "Stored grant scopes are malformed");
+  }
+  return [...value] as string[];
+}
+
 /** Stable scope string: sorted, space-joined. Used for token `scope` claims. */
 export function scopeString(scopes: readonly string[]): string {
   return [...scopes].sort().join(" ");
