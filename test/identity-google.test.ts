@@ -196,7 +196,7 @@ test("createGoogleRedirectIdentity: exchangeAndVerify ok + google_bad_hosted_dom
   assert.ok(!bad.ok && bad.kind === "identity_rejected");
 });
 
-test("createGoogleRedirectIdentity: an unusable remote key is exchange_failed", async () => {
+test("createGoogleRedirectIdentity separates malformed keys from selection misses", async () => {
   const rsa = await generateKeyPair("RS256", { extractable: true });
   const claims = {
     iss: GOOGLE_ISSUER, aud: CLIENT_ID, sub: "g-1", exp: NOW + 3600, iat: NOW, nonce: "n",
@@ -218,14 +218,17 @@ test("createGoogleRedirectIdentity: an unusable remote key is exchange_failed", 
   };
   const realFetch = globalThis.fetch;
   try {
-    for (const jwk of [nonPublicJwk, nonVerifyingJwk]) {
+    for (const { jwk, kind } of [
+      { jwk: nonPublicJwk, kind: "exchange_failed" },
+      { jwk: nonVerifyingJwk, kind: "identity_rejected" },
+    ] as const) {
       globalThis.fetch = (async () =>
         new Response(JSON.stringify({ keys: [jwk] }), { status: 200 })) as typeof fetch;
       const port = await createGoogleRedirectIdentity(CONFIG, {
         discoveryFetch: googleDiscovery(), transport, currentDate: new Date(NOW * 1000),
       });
       const result = await port.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
-      assert.ok(!result.ok && result.kind === "exchange_failed");
+      assert.ok(!result.ok && result.kind === kind);
     }
   } finally {
     globalThis.fetch = realFetch;

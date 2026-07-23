@@ -646,8 +646,9 @@ test("createGenericOidcRedirectIdentity: a JWKS HTTP 500 (jose base JOSEError, E
   } finally { globalThis.fetch = realFetch; }
 });
 
-test("createGenericOidcRedirectIdentity: unusable remote key sets are exchange_failed", async () => {
+test("createGenericOidcRedirectIdentity: malformed key sets and selection misses use distinct channels", async () => {
   const rsa = await generateKeyPair("RS256", { extractable: true });
+  const ec = await generateKeyPair("ES256", { extractable: true });
   const now = new Date(NOW * 1000);
   const idToken = await sign(
     { iss: ISSUER, aud: CLIENT_ID, sub: "s", exp: NOW + 3600, iat: NOW, nonce: "n" },
@@ -666,19 +667,25 @@ test("createGenericOidcRedirectIdentity: unusable remote key sets are exchange_f
   const nonPublicJwk = { ...await exportJWK(rsa.privateKey), kid: "selected-key", alg: "RS256" };
   const publicJwk = { ...await exportJWK(rsa.publicKey), kid: "selected-key", alg: "RS256" };
   const keySets = [
-    [nonPublicJwk],
-    [{ ...publicJwk, oth: [] }],
-    [{ ...publicJwk, key_ops: ["encrypt"] }],
-    [publicJwk, { ...publicJwk }],
+    { keys: [nonPublicJwk], kind: "exchange_failed" },
+    { keys: [{ ...publicJwk, oth: [] }], kind: "exchange_failed" },
+    { keys: [{ ...publicJwk, key_ops: ["encrypt"] }], kind: "identity_rejected" },
+    {
+      keys: [{
+        ...await exportJWK(ec.publicKey), kid: "selected-key", alg: "ES256",
+      }],
+      kind: "identity_rejected",
+    },
+    { keys: [publicJwk, { ...publicJwk }], kind: "identity_rejected" },
   ];
   const realFetch = globalThis.fetch;
   try {
-    for (const keys of keySets) {
+    for (const { keys, kind } of keySets) {
       globalThis.fetch = (async () =>
         new Response(JSON.stringify({ keys }), { status: 200 })) as typeof fetch;
       const port = await createGenericOidcRedirectIdentity(CONFIG, { transport, currentDate: now });
       const result = await port.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
-      assert.ok(!result.ok && result.kind === "exchange_failed");
+      assert.ok(!result.ok && result.kind === kind);
     }
   } finally {
     globalThis.fetch = realFetch;

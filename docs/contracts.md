@@ -2390,6 +2390,9 @@ type RedirectExchangeResult =
   | { ok: false; kind: "identity_rejected"; reason: string };
 ```
 
+A JWKS fetch/parse failure is `exchange_failed`; a syntactically valid source
+that yields no unique verification key for the token is `identity_rejected`.
+
 A **throw** from `exchangeAndVerify` is always classified `exchange_failed`
 (unexpected infrastructure failure — one deterministic rule, so the two
 failure channels below can never depend on which exception a port happened to

@@ -975,7 +975,7 @@ test("entra-redirect: a JWKS HTTP 500 (jose throws base JOSEError, code ERR_JOSE
   } finally { globalThis.fetch = realFetch; }
 });
 
-test("entra-redirect: an unusable remote key is exchange_failed", async () => {
+test("entra-redirect: malformed keys and selection misses use distinct channels", async () => {
   const tenantId = "11111111-2222-3333-4444-555555555555";
   const clientId = "cid";
   const redirectUri = `${originOf(config().issuer)}${CALLBACK_PATH}`;
@@ -996,14 +996,17 @@ test("entra-redirect: an unusable remote key is exchange_failed", async () => {
   };
   const realFetch = globalThis.fetch;
   try {
-    for (const jwk of [nonPublicJwk, nonVerifyingJwk]) {
+    for (const { jwk, kind } of [
+      { jwk: nonPublicJwk, kind: "exchange_failed" },
+      { jwk: nonVerifyingJwk, kind: "identity_rejected" },
+    ] as const) {
       globalThis.fetch = (async () =>
         new Response(JSON.stringify({ keys: [jwk] }), { status: 200 })) as typeof fetch;
       const identity = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport });
       const result = await identity.exchangeAndVerify({
         code: "c", codeVerifier: "v".repeat(43), nonce: "N1",
       });
-      assert.ok(!result.ok && result.kind === "exchange_failed");
+      assert.ok(!result.ok && result.kind === kind);
     }
   } finally {
     globalThis.fetch = realFetch;

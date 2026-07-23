@@ -136,39 +136,49 @@ test("validated remote JWKS preserves key_ops restrictions", async () => {
   );
 });
 
-test("validated remote JWKS classifies unusable matching keys as source failures", async () => {
+test("validated remote JWKS keeps key-selection misses out of the infrastructure channel", async () => {
   const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+  const ec = await generateKeyPair("ES256", { extractable: true });
   const publicJwk = {
     ...await exportJWK(publicKey),
     kid: "selected-key",
     alg: "RS256",
     key_ops: ["encrypt"],
   };
-  const response = () => new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 });
   const tokenFor = (kid: string) => new SignJWT({ sub: "subject" })
     .setProtectedHeader({ alg: "RS256", kid })
     .setExpirationTime("5m")
     .sign(privateKey);
 
-  const matching = createValidatedRemoteJWKSet(
-    new URL("https://issuer.test/unusable-matching-key"),
-    { [customFetch]: async () => response() },
-  );
-  await assert.rejects(
-    jwtVerify(await tokenFor("selected-key"), matching, { algorithms: ["RS256"] }),
-    (error: unknown) => error instanceof errors.JWKSNoMatchingKey
-      && isRemoteJwksInfrastructureError(error),
-  );
-
-  const absent = createValidatedRemoteJWKSet(
-    new URL("https://issuer.test/absent-key"),
-    { [customFetch]: async () => response() },
-  );
-  await assert.rejects(
-    jwtVerify(await tokenFor("absent-key"), absent, { algorithms: ["RS256"] }),
-    (error: unknown) => error instanceof errors.JWKSNoMatchingKey
-      && !isRemoteJwksInfrastructureError(error),
-  );
+  const cases = [
+    { name: "non-verifying-key", kid: "selected-key", keys: [publicJwk] },
+    { name: "absent-key", kid: "absent-key", keys: [publicJwk] },
+    {
+      name: "different-key-family",
+      kid: "selected-key",
+      keys: [{ ...await exportJWK(ec.publicKey), kid: "selected-key", alg: "ES256" }],
+    },
+    { name: "ambiguous-key", kid: "selected-key", keys: [
+      { ...publicJwk, key_ops: ["verify"] },
+      { ...publicJwk, key_ops: ["verify"] },
+    ] },
+  ];
+  for (const { name, kid, keys } of cases) {
+    const source = createValidatedRemoteJWKSet(
+      new URL(`https://issuer.test/${name}`),
+      {
+        [customFetch]: async () =>
+          new Response(JSON.stringify({ keys }), { status: 200 }),
+      },
+    );
+    await assert.rejects(
+      jwtVerify(await tokenFor(kid), source, { algorithms: ["RS256"] }),
+      (error: unknown) =>
+        (error instanceof errors.JWKSNoMatchingKey
+          || error instanceof errors.JWKSMultipleMatchingKeys)
+        && !isRemoteJwksInfrastructureError(error),
+    );
+  }
 });
 
 test("validated remote JWKS ignores unrelated public key families", async () => {

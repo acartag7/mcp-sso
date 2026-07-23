@@ -4,20 +4,15 @@ import { guardedGlobalFetch } from "../outbound-tls.ts";
 import { captureHttpResponse } from "./util.ts";
 
 type RemoteJwkSet = ReturnType<typeof createRemoteJWKSet>;
-const REMOTE_JWKS_SOURCE_ERRORS = new WeakSet<object>();
 const PRIVATE_JWK_FIELDS = ["d", "p", "q", "dp", "dq", "qi", "oth", "k", "priv"] as const;
 const PUBLIC_JWK_STRING_FIELDS = [
   "kty", "kid", "alg", "use", "crv", "n", "e", "x", "y",
 ] as const;
 
-/** Failures that mean the remote key source could not produce a usable key,
- * rather than a verified token being denied. Redirect flows map these to their
- * infrastructure channel. */
+/** Remote fetch and parse failures that prevent an identity decision. */
 export function isRemoteJwksInfrastructureError(error: unknown): boolean {
   return error instanceof errors.JWKSTimeout
     || error instanceof errors.JWKSInvalid
-    || ((typeof error === "object" || typeof error === "function") && error !== null
-      && REMOTE_JWKS_SOURCE_ERRORS.has(error))
     || (error instanceof errors.JOSEError && error.code === "ERR_JOSE_GENERIC");
 }
 
@@ -54,19 +49,7 @@ export function createValidatedRemoteJWKSet(
     [jwksCache]: undefined,
   });
   const guarded = async (...args: Parameters<RemoteJwkSet>) => {
-    let key;
-    try {
-      key = await remote(...args);
-    } catch (error) {
-      const kid = ownDataValue(args[0], "kid");
-      if (typeof kid === "string" && kid.length > 0
-        && (error instanceof errors.JWKSMultipleMatchingKeys
-          || (error instanceof errors.JWKSNoMatchingKey
-            && cachedJwksHasOwnKid(remote, kid)))) {
-        REMOTE_JWKS_SOURCE_ERRORS.add(error);
-      }
-      throw error;
-    }
+    const key = await remote(...args);
     assertOwnJwks(remote.jwks());
     return key;
   };
@@ -141,22 +124,6 @@ function sanitizeJwk(value: unknown): Readonly<Record<string, unknown>> | null {
     if (!Object.hasOwn(safe, field)) safe[field] = undefined;
   }
   return Object.freeze(safe);
-}
-
-function cachedJwksHasOwnKid(remote: RemoteJwkSet, expectedKid: string): boolean {
-  let value: unknown;
-  try {
-    value = remote.jwks();
-  } catch {
-    return false;
-  }
-  const jwks = snapshotOwnDataRecord(value);
-  const keys = jwks === null ? null : snapshotOwnDataArray(jwks.keys);
-  if (keys === null) return false;
-  for (let index = 0; index < keys.length; index += 1) {
-    if (ownDataValue(keys[index], "kid") === expectedKid) return true;
-  }
-  return false;
 }
 
 function assertOwnPublicKeyMaterial(jwk: Readonly<Record<string, unknown>>): void {

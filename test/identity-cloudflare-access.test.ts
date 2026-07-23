@@ -131,7 +131,7 @@ test("verifyCloudflareAccessToken: recorded fixture (known RS256 key, no JWKS fe
   assert.equal((await verifyCloudflareAccessToken(await sign({ email: "u@x.test" }), publicKey, allowCfg, AT)).ok, false); // allowlist mismatch
 });
 
-test("createCloudflareAccessIdentity classifies an unusable remote key as a verification failure", async () => {
+test("createCloudflareAccessIdentity separates malformed keys from selection misses", async () => {
   const rsa = await generateKeyPair("RS256", { extractable: true });
   const token = await new SignJWT({ email: "u@x.test", sub: "sub-1" })
     .setProtectedHeader({ alg: "RS256", kid: "selected-key" })
@@ -143,11 +143,14 @@ test("createCloudflareAccessIdentity classifies an unusable remote key as a veri
   };
   const realFetch = globalThis.fetch;
   try {
-    for (const jwk of [nonPublicJwk, nonVerifyingJwk]) {
+    for (const { jwk, reason } of [
+      { jwk: nonPublicJwk, reason: "access_jwt_verify_failed" },
+      { jwk: nonVerifyingJwk, reason: "access_jwt_unknown_key" },
+    ] as const) {
       globalThis.fetch = (async () =>
         new Response(JSON.stringify({ keys: [jwk] }), { status: 200 })) as typeof fetch;
       const result = await createCloudflareAccessIdentity(CONFIG).verify(token);
-      assert.deepEqual(result, { ok: false, reason: "access_jwt_verify_failed" });
+      assert.deepEqual(result, { ok: false, reason });
     }
   } finally {
     globalThis.fetch = realFetch;
