@@ -150,10 +150,10 @@ field reads.
 - A dynamic lookup uses `Map`, a null-prototype record, or an `Object.hasOwn`
   guard. An inherited entry is absent and follows that boundary's existing
   missing/unmapped failure.
-- A dynamic write cannot invoke an inherited setter. It uses `Map`, a
-  null-prototype record, or an own-property definition. `__proto__` and
-  `constructor` either remain inert data in that container or are excluded by
-  an explicit projection before composition.
+- A dynamic write cannot invoke an inherited setter. It uses `Map` or a
+  null-prototype record. `__proto__` and `constructor` either remain inert data
+  in that container or are excluded by an explicit projection before
+  composition.
 - An untrusted parsed record is never spread or assigned wholesale into an
   ordinary security-sensitive record. Code projects the named fields the
   boundary consumes; unknown fields remain ignored.
@@ -164,7 +164,7 @@ The first bounded gates are:
 
 | Boundary | Required behavior | Existing failure behavior |
 |---|---|---|
-| Hono-owned header/query-name accumulation (§9.6) | Attacker-controlled keys are written to a null-prototype or equivalent own-write container; `__proto__`/`constructor` cannot change the normalized record's prototype | Missing or malformed OAuth fields retain the endpoint's existing `invalid_request` or field-specific rejection; no new error taxonomy |
+| Hono-owned header/query-name accumulation (§9.6) | Attacker-controlled keys are written to a null-prototype record; `__proto__`/`constructor` cannot change the normalized record's prototype | Missing or malformed OAuth fields retain the endpoint's existing `invalid_request` or field-specific rejection; no new error taxonomy |
 | Entra group→scope lookup (§17.4) | A verified group GUID can select only an own mapping entry or equivalent `Map` entry; an inherited match contributes no scopes | With groups present, no own mapped group, and empty `baseScopes`: `entra_no_mapped_groups` |
 | CIMD parsed document composition (§17.1.3) | The returned document is the named projection of `client_id`, `client_name`, and `redirect_uris`; the parsed source record is not exposed for a later spread/merge. Unknown `__proto__`/`constructor` members are ignored like other extensions | Malformed known members remain `document_invalid`; the unknown names alone do not reject an otherwise valid document |
 
@@ -724,10 +724,9 @@ the response. Wiring rules:
   anything added to `devDependencies` for testing gets a `dependency-ledger` entry
   with the 15-day check.
 - **Attacker-key normalization (§4.1):** when an adapter accumulates raw header
-  or query names, the destination is a null-prototype record or equivalent
-  own-write container. `__proto__`/`constructor` input cannot alter its
-  prototype. This does not turn fixed OAuth-field reads into generic object
-  snapshots.
+  or query names, the destination is a null-prototype record.
+  `__proto__`/`constructor` input cannot alter its prototype. This does not turn
+  fixed OAuth-field reads into generic object snapshots.
 
 ## 10. Redirect-URI policy
 
