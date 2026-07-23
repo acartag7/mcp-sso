@@ -132,14 +132,17 @@ the **issuer** origin (these may be different hosts).
 - **Fail-closed everywhere.** Ambiguous config, a missing identity, an unknown
   audience, or a replayed token is a hard failure, never a degraded default.
 - **Trust-boundary objects are parsed from descriptors, not property lookup.**
-  Plain records and arrays used in security decisions MUST be snapshotted from
-  own enumerable data properties before use. Inherited values are never input
-  fields; accessors, symbol keys, and sparse or extra-key arrays reject. A boundary explicitly
-  accepting class-backed identity ports/results, redirect flows, HTTP responses,
-  or injected discovery/token/CIMD transports may read only named members
-  through a fixed-hop class-prototype walk, once per member. Strict boundary
-  walks never enter null-prototype roots; protocol walks stop at recognizable
-  realm object roots.
+  Plain records and arrays received through external object seams and used in
+  security decisions MUST be snapshotted from own enumerable data properties
+  before use. Inherited values are never input fields; accessors, symbol keys,
+  and sparse or extra-key arrays reject. Data created directly by a
+  library-owned `JSON.parse` may be consumed under that JSON-origin guarantee;
+  mutated language intrinsics are outside it. A boundary explicitly accepting
+  class-backed identity ports/results, redirect flows, HTTP responses, or
+  injected discovery/token/CIMD transports may read only named members through
+  a fixed-hop class-prototype walk, once per member. Strict boundary walks never
+  enter null-prototype roots; protocol walks stop at recognizable realm object
+  roots.
 
 > The library defines only the contract surface above and the reference adapters.
 > It does **not** name or depend on any particular database, host, or downstream
@@ -338,6 +341,10 @@ scope ceiling) is locked in §17.4.
   Validate with a **raw `^https://` prefix check BEFORE `new URL()`** (Node's lenient
   URL parser normalizes `https:/host` into a valid-looking URL). Applies to
   CloudflareAccessIdentity and EntraIdentity.
+- **Default identity egress requires certificate verification.** The reference
+  discovery, JWKS, and token transports reject before network I/O when Node's
+  process-wide TLS certificate verification is disabled. An explicitly injected
+  transport owns its own TLS policy.
 - **Required construction config MUST be non-empty.** A blank required field —
   CloudflareAccess `audience`, Entra `tenantId`/`clientId`, generic-OIDC
   `clientId`/`issuer`/`redirectUri` — fails closed at construction (empty ==
@@ -2226,9 +2233,10 @@ gate replaces no-gate).
     echo the URL), redirects not followed, at-most-once (no retry). Deliberately
     NOT behind the 17.1 SSRF guard: the URL is static deployer config (trusted),
     and SIEM collectors legitimately live on private networks — documented
-    rationale. `fetchImpl` is an optional DI seam (defaults to the global
-    `fetch`) for test-injecting the transport without an https server; not a
-    deployer-facing knob. Error messages reaching stderr are redacted
+    rationale. `fetchImpl` is an optional DI seam (defaults to a guarded global
+    `fetch` that refuses process-wide TLS certificate-verification disablement)
+    for test-injecting the transport without an https server; not a deployer-facing
+    knob. Error messages reaching stderr are redacted
     (`src/audit/util.ts`) and the configured header values and URL query-string
     params scrubbed — a transport that echoes request headers, the URL, or a
     credential-bearing query (`?access_token=…`) into an Error.message cannot

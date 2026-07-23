@@ -8,8 +8,9 @@ Three tiers:
 - **Tier 2 — packed-artifact gate.** Proves the npm package shape works, not just the source tree.
 - **Tier 3 — manual live verification.** Real IdPs, real MCP clients, production dogfood evidence.
 
-The contracts these tests enforce live in [`docs/contracts.md` §17](contracts.md); the
-threat rows they close are 13 and 17-25 in [`docs/threat-model.md`](threat-model.md).
+The contracts these tests enforce live in [`docs/contracts.md` §§4 and 17](contracts.md);
+the threat rows they close are 13, 17-25, and 34 in
+[`docs/threat-model.md`](threat-model.md).
 
 Baseline (v0.1): `test/e2e-mcp-sdk.test.ts` drives register → authorize → token →
 protected `/mcp` with the official MCP SDK client → refresh → replay/family
