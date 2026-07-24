@@ -144,6 +144,8 @@ if (phases["s6b-cimd-flow"] !== true) {
       { clientId: "HTTPS://cdn.example.com/client", verified: true }, // other scheme-shaped
       { clientId: "http://cdn.example.com/client", verified: true },
       { clientId: "ftp://cdn.example.com/client", verified: true },
+      { clientId: "web+foo://cdn.example.com/client", verified: true }, // full scheme-shape, not just http/https/ftp (mirror of the dispatch classifier)
+      { clientId: "x-y.z://cdn.example.com/client", verified: true },
       { clientId: OPAQUE_ID, verified: true }, // cimd_verified on a non-CIMD id
       { clientId: "https://legacy.example/client" }, // legacy URL-shaped stateless token cannot be redeemed at all
     ];

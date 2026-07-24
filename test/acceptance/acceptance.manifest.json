@@ -13,6 +13,6 @@
     "cimd/s6b-dispatch.test.ts": "0230b9e40a3bb8efc0bcf785dc0866477422f6833ec6d14a8475b3b7e15e2c93",
     "cimd/s6b-metadata.test.ts": "cd7160121f054aa15b98bf974b51e1ebad58cb9a16bd99b941fa1c6a1e2779ef",
     "cimd/s6b-redirect.test.ts": "3ad77d9e190f18fc6e8beeb746c4f7ee7b57c83ad5c3efce92b1fa417c192ee6",
-    "cimd/s6b-scope.test.ts": "8478138636261026dcf87e88ed76adf601ccded6be7e98788ad5dbd6d80361c3"
+    "cimd/s6b-scope.test.ts": "9ab4f815c7dd1935c184ec2048b8377ce09da9efbcc8eaaf04ce0e4bda974d65"
   }
 }
