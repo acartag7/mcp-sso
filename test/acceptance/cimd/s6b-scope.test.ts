@@ -98,6 +98,37 @@ if (phases["s6b-cimd-flow"] !== true) {
     });
   }
 
+  // The upstream-redirect path reaches `prepare` with a SUPPLIED registration (carry-forward),
+  // a different branch from the direct fetch. An impl suppressing findGrantedScopes only in the
+  // direct branch would still union a legacy URL-keyed grant here and mint over-broad tokens for
+  // Hosted-Claude/Entra CIMD flows — so run the same seeded-grant/spy check through that branch.
+  test("CIMD carried-registration (upstream callback→prepare): the seeded legacy grant is never read or unioned", async () => {
+    const FLOW_MOD = "../../../src/adapters/upstream-flow.ts";
+    const { createUpstreamRedirectFlow } = (await import(FLOW_MOD)) as any;
+    const c = config("stateless");
+    const store = new MemoryStore();
+    await seedGrant(store, CIMD_ID, ["mcp:admin"]); // broader prior grant keyed by the URL
+    let grantReads = 0;
+    const original = store.findGrantedScopes.bind(store);
+    store.findGrantedScopes = async (...args: any[]) => { grantReads++; return original(...args); };
+    const clock = new FakeClock(NOW);
+    const audit = new MemoryAudit();
+    const t = transport();
+    const b = new Bridge({ config: c, store, clock, audit, cimdTransport: t, cimdResolver: resolver() });
+    const identity = { redirectUri: "https://auth.test/oauth/callback", buildAuthorizationUrl({ state }: any) { return `https://idp.test/a?state=${state}`; }, async exchangeAndVerify() { return { ok: true, identity: { subject: SUBJECT, allowedScopes: ["mcp:read"] } }; } };
+    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: t, cimdResolver: resolver() });
+    const auth = await flow.handleAuthorize({ query: { ...authQ(CIMD_ID), state: "st-up" }, body: undefined, headers: {}, ip: "1.2.3.4" });
+    assert.equal(auth.status, 302, "resolved once at authorize");
+    const setCookie = auth.headers["set-cookie"] as string;
+    const jwt = setCookie.slice(setCookie.indexOf("=") + 1, setCookie.indexOf(";"));
+    const state = jose.decodeJwt(jwt).state as string;
+    const page = await flow.handleCallback({ query: { code: "C", state }, body: undefined, headers: { cookie: `__Host-mcp-sso-upstream=${jwt}` }, ip: "1.2.3.4" });
+    assert.equal(page.status, 200, "callback rendered consent from the carried registration");
+    const scopes = await approveAndExchange(b, page, CIMD_ID);
+    assert.deepEqual(scopes, ["mcp:read"], "carried-registration path mints only the requested, ceiling-bounded scope");
+    assert.equal(grantReads, 0, "findGrantedScopes never consulted on the carried-registration branch either");
+  });
+
   test("CONTROL: an opaque stored-DCR client STILL accumulates the seeded prior grant", async () => {
     const clients = new ClientStore();
     await clients.save({ clientId: OPAQUE_ID, redirectUris: [CIMD_REDIRECT], applicationType: "web" });

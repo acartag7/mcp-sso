@@ -106,7 +106,9 @@ if (phases["s6b-cimd-flow"] !== true) {
     for (const id of ["HTTPS://cdn.example.com/client", "http://cdn.example.com/client", "ftp://cdn.example.com/client", "HttP://cdn.example.com/client", "web+foo://cdn.example.com/client", "x-y.z://cdn.example.com/client"]) {
       const t = transport(() => okResult());
       const { b } = makeBridge({ cimdTransport: t, cimdResolver: resolver() });
-      const res = await b.handleAuthorize(req(directAuthQ({ client_id: id })), { subject: "agent@test" });
+      // redirect_uri is globally ALLOWLISTED: a §10 stateless fallthrough would return 200/302,
+      // so a rejection here can only come from the scheme-shape gate (no false pass).
+      const res = await b.handleAuthorize(req(directAuthQ({ client_id: id, redirect_uri: OPAQUE_REDIRECT })), { subject: "agent@test" });
       assert.notEqual(res.status, 302, `${id}: not a redirect/fallthrough`);
       assert.notEqual(res.status, 200, `${id}: not a success channel either`);
       assert.equal(bodyErr(res), "invalid_client", `${id}: direct invalid_client`);
@@ -117,7 +119,8 @@ if (phases["s6b-cimd-flow"] !== true) {
   test("direct (2b): lowercase https id while cimd DISABLED ⇒ direct invalid_client, never a stateless-DCR client", async () => {
     const t = transport(() => okResult());
     const { b } = makeBridge({ cimd: undefined, cimdTransport: t, cimdResolver: resolver() });
-    const res = await b.handleAuthorize(req(directAuthQ()), { subject: "agent@test" });
+    // allowlisted redirect ⇒ a stateless §10 fallthrough would SUCCEED; only the gate can reject
+    const res = await b.handleAuthorize(req(directAuthQ({ redirect_uri: OPAQUE_REDIRECT })), { subject: "agent@test" });
     assert.notEqual(res.status, 302);
     assert.notEqual(res.status, 200);
     assert.equal(bodyErr(res), "invalid_client");
@@ -151,7 +154,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   });
 
   test("direct (stored-mode): a REGISTERED scheme-shaped client_id is STILL direct invalid_client — rejected by shape BEFORE store.find", async () => {
-    for (const id of ["ftp://cdn.example.com/client", "web+foo://cdn.example.com/client", "HTTPS://cdn.example.com/client", "http://cdn.example.com/client"]) {
+    for (const id of ["ftp://cdn.example.com/client", "web+foo://cdn.example.com/client", "HTTPS://cdn.example.com/client", "http://cdn.example.com/client", "HttP://cdn.example.com/client", "x-y.z://cdn.example.com/client"]) {
       const t = transport(() => okResult());
       const clientStore = new CountingClientStore();
       await clientStore.save({ clientId: id, redirectUris: [OPAQUE_REDIRECT], applicationType: "web" }); // registered — but shape rejection MUST win
@@ -205,7 +208,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     for (const id of ["HTTPS://cdn.example.com/client", "http://cdn.example.com/client", "ftp://cdn.example.com/client", "web+foo://cdn.example.com/client", "x-y.z://cdn.example.com/client"]) {
       const t = transport(() => okResult());
       const { flow } = makeFlow({ cimdTransport: t, cimdResolver: resolver() });
-      const res = await flow.handleAuthorize(req(directAuthQ({ client_id: id })));
+      const res = await flow.handleAuthorize(req(directAuthQ({ client_id: id, redirect_uri: OPAQUE_REDIRECT })));
       assert.notEqual(res.status, 302, `${id}: no IdP hop`);
       assert.notEqual(res.status, 200, `${id}: not a success channel either`);
       assert.equal(bodyErr(res), "invalid_client", `${id}: direct invalid_client`);
@@ -214,7 +217,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     }
     const t = transport(() => okResult());
     const { flow } = makeFlow({ cimd: undefined, cimdTransport: t, cimdResolver: resolver() });
-    const res = await flow.handleAuthorize(req(directAuthQ()));
+    const res = await flow.handleAuthorize(req(directAuthQ({ redirect_uri: OPAQUE_REDIRECT })));
     assert.notEqual(res.status, 302);
     assert.notEqual(res.status, 200);
     assert.equal(bodyErr(res), "invalid_client");
@@ -246,7 +249,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   });
 
   test("redirect (stored-mode): a REGISTERED scheme-shaped client_id is STILL direct invalid_client — rejected by shape BEFORE store.find, no IdP hop", async () => {
-    for (const id of ["ftp://cdn.example.com/client", "web+foo://cdn.example.com/client", "HTTPS://cdn.example.com/client", "http://cdn.example.com/client"]) {
+    for (const id of ["ftp://cdn.example.com/client", "web+foo://cdn.example.com/client", "HTTPS://cdn.example.com/client", "http://cdn.example.com/client", "HttP://cdn.example.com/client", "x-y.z://cdn.example.com/client"]) {
       const clientStore = new CountingClientStore();
       await clientStore.save({ clientId: id, redirectUris: [OPAQUE_REDIRECT], applicationType: "web" });
       const t = transport(() => okResult());
