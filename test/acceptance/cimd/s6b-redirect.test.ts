@@ -252,6 +252,17 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(res.status, 200, "passed row 5a → consent page");
   });
 
+  // The shared matcher runs at authorize AND callback AND prepare; prove the loopback
+  // any-port case at callback (row 5a + prepare re-check), not only at authorize — an
+  // exact `includes` here would pass authorize then fail after the IdP hop.
+  test("callback row 5a: a loopback redirect matches ANY port (shared matcher), presented :7000 vs registered :5000 ⇒ 200", async () => {
+    const { res } = await callbackWith({
+      cimd: { client_id: CIMD_ID, client_name: "Example App", redirect_uris: ["http://127.0.0.1:5000/cb"] },
+      params: baseParams({ redirect_uri: "http://127.0.0.1:7000/cb" }),
+    });
+    assert.equal(res.status, 200, "any-port loopback match passes row 5a + prepare re-check at the callback");
+  });
+
   test("callback ordering: row 5 (state) precedes row 5a — a state mismatch audits `state_mismatch`, not `flow_cookie_invalid`", async () => {
     const { res, audit } = await callbackWith({ cimd: undefined, params: baseParams(), cbQuery: { code: "C", state: "DIFFERENT" } });
     assert.equal(res.status, 400);
@@ -313,5 +324,12 @@ if (phases["s6b-cimd-flow"] !== true) {
     const b = new Bridge({ config, store: new MemoryStore(), clock: new FakeClock(NOW), audit: new MemoryAudit(), cimdTransport: throwingTransport, cimdResolver: throwingResolver });
     const res = await b.handleAuthorize(req(authQ({ redirect_uri: CIMD_REDIRECT })), { subject: "up@test", registration: { client_id: CIMD_ID, client_name: "Example App", redirect_uris: [CIMD_REDIRECT] } });
     assert.equal(res.status, 200, "consent rendered from the supplied registration with no fetch");
+  });
+
+  test("prepare (direct, supplied registration): a loopback redirect matches ANY port (shared matcher, not exact includes)", async () => {
+    const config = cfg({ enabled: true });
+    const b = new Bridge({ config, store: new MemoryStore(), clock: new FakeClock(NOW), audit: new MemoryAudit(), cimdTransport: throwingTransport, cimdResolver: throwingResolver });
+    const res = await b.handleAuthorize(req(authQ({ redirect_uri: "http://127.0.0.1:7000/cb" })), { subject: "up@test", registration: { client_id: CIMD_ID, client_name: "Example App", redirect_uris: ["http://127.0.0.1:5000/cb"] } });
+    assert.equal(res.status, 200, "prepare's re-check uses the any-port loopback matcher");
   });
 }

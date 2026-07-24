@@ -200,11 +200,23 @@ if (phases["s6b-cimd-flow"] !== true) {
   // Decision 2 boundary (1): the FULL failure matrix must ALSO collapse at the UPSTREAM
   // authorize resolve (flow.handleAuthorize) — byte-identical to the direct CANONICAL,
   // never escaping the flow's own catch as internal_error 500, never hopping to the IdP.
-  const upstreamCases: Array<{ name: string; t?: any; r?: any; cimd?: any }> = [
+  // Mirror the FULL direct failure/SSRF class set through the upstream boundary — an impl
+  // could map a class at direct prepare yet let it escape flow.handleAuthorize as a 500.
+  const upstreamCases: Array<{ name: string; t?: any; r?: any; clientId?: string; cimd?: any; poison?: string }> = [
     { name: "ip_blocked", r: () => resolver([{ address: "10.0.0.1", family: 4 }]) },
+    { name: "multi-record rebinding (one blocked)", r: () => resolver([PUBLIC, { address: "10.0.0.1", family: 4 }]) },
+    { name: "dns zero-record", r: () => resolver([]) },
+    { name: "blocked IPv6 ULA", r: () => resolver([{ address: "fd00::1", family: 6 }]) },
+    { name: "redirect followed to a blocked host", t: () => transport(() => okResult({ redirected: true, finalUrl: "https://127.0.0.1/private" })) },
     { name: "status !== 200", t: () => transport(() => okResult({ status: 404 })) },
     { name: "wrong content-type", t: () => transport(() => okResult({ headersDistinct: { "content-type": ["text/html"] } })) },
+    { name: "present content-encoding", t: () => transport(() => okResult({ headersDistinct: { "content-type": ["application/json"], "content-encoding": ["gzip"] } })) },
     { name: "document client_id mismatch", t: () => transport(() => okResult({ doc: { client_id: "https://evil.example/x", client_name: "x", redirect_uris: [CIMD_REDIRECT] } })) },
+    { name: "private JWK document", poison: "UP_JWK_SECRET", t: () => transport(() => okResult({ doc: cimdDoc({ jwks: { keys: [{ kty: "EC", d: "UP_JWK_SECRET" }] } }) })) },
+    { name: "client_secret document", poison: "UP_CS_SECRET", t: () => transport(() => okResult({ doc: cimdDoc({ client_secret: "UP_CS_SECRET" }) })) },
+    { name: "encoded dot-segment admission", clientId: "https://cdn.example.com/a/%2e%2e/b" },
+    { name: "IP-literal admission", clientId: "https://127.0.0.1/client" },
+    { name: "IP-literal dword admission", clientId: "https://2130706433/meta" },
     { name: "non-CimdError throw", t: () => transport(null, { throw: true }) },
     { name: "over-cap body", cimd: { enabled: true, maxDocumentBytes: 1024 }, t: () => transport(() => okResult({ body: one(enc("x".repeat(4000))) })) },
     { name: "slow endpoint (timeout)", cimd: { enabled: true, fetchTimeoutMs: 1000 }, t: () => transport(null, { never: true }) },
@@ -216,7 +228,8 @@ if (phases["s6b-cimd-flow"] !== true) {
       const { b, store, clock, audit } = makeBridge({ cimd: c.cimd ?? { enabled: true }, cimdTransport: t, cimdResolver: r });
       const identity = stubIdentity();
       const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: t, cimdResolver: r });
-      const res = await withDeadline(flow.handleAuthorize(req(authQ())));
+      const res = await withDeadline(flow.handleAuthorize(req(authQ({ client_id: c.clientId ?? CIMD_ID }))));
+      if (c.poison) assert.equal(JSON.stringify(res).includes(c.poison), false, `${c.name}: no document secret leaks at the upstream boundary`);
       assertGeneric(res); // byte-identical to the direct CANONICAL — parity across BOTH named boundaries
       assert.equal(identity.hops, 0, `${c.name}: no IdP hop on a resolution failure`);
       assert.ok(fetchFail(audit).length >= 1, `${c.name}: audited to oauth.cimd.fetch (failure)`);
