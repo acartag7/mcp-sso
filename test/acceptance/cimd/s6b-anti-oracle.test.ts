@@ -143,11 +143,14 @@ if (phases["s6b-cimd-flow"] !== true) {
   // leaks. (Header maps are NOT frozen — only status+body+no-redirect + no-leak.)
   test("full SSRF/document negative table collapses to the identical generic and leaks no secret", async () => {
     const POISON = "DOCUMENT_SECRET_POISON";
-    const ssrf: Array<{ name: string; t?: any; r?: any; clientId?: string; cimd?: any }> = [
-      { name: "encoded dot segment", clientId: "https://cdn.example.com/a/%2E%2e/meta" },
-      { name: "IP-literal dword", clientId: "https://2130706433/meta" },
-      { name: "IP-literal octal", clientId: "https://0177.0.0.1/meta" },
-      { name: "IP-literal hex", clientId: "https://0x7f000001/meta" },
+    const ssrf: Array<{ name: string; t?: any; r?: any; clientId?: string; cimd?: any; noFetch?: true }> = [
+      // noFetch: URL ADMISSION must reject these BEFORE any DNS/connect — otherwise a
+      // missing admission guard would still 401 (on the doc client_id mismatch) while an
+      // SSRF-shaped fetch actually occurred.
+      { name: "encoded dot segment", clientId: "https://cdn.example.com/a/%2E%2e/meta", noFetch: true },
+      { name: "IP-literal dword", clientId: "https://2130706433/meta", noFetch: true },
+      { name: "IP-literal octal", clientId: "https://0177.0.0.1/meta", noFetch: true },
+      { name: "IP-literal hex", clientId: "https://0x7f000001/meta", noFetch: true },
       { name: "blocked IPv4 DNS", r: () => resolver([{ address: "169.254.169.254", family: 4 }]) },
       { name: "blocked IPv6 ULA DNS", r: () => resolver([{ address: "fd00::1", family: 6 }]) },
       { name: "mixed rebinding answer", r: () => resolver([PUBLIC, { address: "127.0.0.1", family: 4 }]) },
@@ -166,6 +169,10 @@ if (phases["s6b-cimd-flow"] !== true) {
       assertGeneric(res);
       assert.equal(JSON.stringify(res).includes(POISON), false, `${c.name}: document secret must not leak`);
       assert.ok(fetchFail(audit).length >= 1, `${c.name}: failure audited`);
+      if (c.noFetch) {
+        assert.equal((r as any).calls, 0, `${c.name}: admission must block BEFORE DNS resolution`);
+        assert.equal((t as any).calls, 0, `${c.name}: admission must block BEFORE any connect (no SSRF fetch)`);
+      }
     }
   });
 
@@ -202,7 +209,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   // never escaping the flow's own catch as internal_error 500, never hopping to the IdP.
   // Mirror the FULL direct failure/SSRF class set through the upstream boundary — an impl
   // could map a class at direct prepare yet let it escape flow.handleAuthorize as a 500.
-  const upstreamCases: Array<{ name: string; t?: any; r?: any; clientId?: string; cimd?: any; poison?: string }> = [
+  const upstreamCases: Array<{ name: string; t?: any; r?: any; clientId?: string; cimd?: any; poison?: string; noFetch?: true; reason?: string }> = [
     { name: "ip_blocked", r: () => resolver([{ address: "10.0.0.1", family: 4 }]) },
     { name: "multi-record rebinding (one blocked)", r: () => resolver([PUBLIC, { address: "10.0.0.1", family: 4 }]) },
     { name: "dns zero-record", r: () => resolver([]) },
@@ -214,12 +221,12 @@ if (phases["s6b-cimd-flow"] !== true) {
     { name: "document client_id mismatch", t: () => transport(() => okResult({ doc: { client_id: "https://evil.example/x", client_name: "x", redirect_uris: [CIMD_REDIRECT] } })) },
     { name: "private JWK document", poison: "UP_JWK_SECRET", t: () => transport(() => okResult({ doc: cimdDoc({ jwks: { keys: [{ kty: "EC", d: "UP_JWK_SECRET" }] } }) })) },
     { name: "client_secret document", poison: "UP_CS_SECRET", t: () => transport(() => okResult({ doc: cimdDoc({ client_secret: "UP_CS_SECRET" }) })) },
-    { name: "encoded dot-segment admission", clientId: "https://cdn.example.com/a/%2e%2e/b" },
-    { name: "IP-literal admission", clientId: "https://127.0.0.1/client" },
-    { name: "IP-literal dword admission", clientId: "https://2130706433/meta" },
-    { name: "IP-literal octal admission", clientId: "https://0177.0.0.1/meta" },
-    { name: "IP-literal hex admission", clientId: "https://0x7f000001/meta" },
-    { name: "non-CimdError throw", t: () => transport(null, { throw: true }) },
+    { name: "encoded dot-segment admission", clientId: "https://cdn.example.com/a/%2e%2e/b", noFetch: true },
+    { name: "IP-literal admission", clientId: "https://127.0.0.1/client", noFetch: true },
+    { name: "IP-literal dword admission", clientId: "https://2130706433/meta", noFetch: true },
+    { name: "IP-literal octal admission", clientId: "https://0177.0.0.1/meta", noFetch: true },
+    { name: "IP-literal hex admission", clientId: "https://0x7f000001/meta", noFetch: true },
+    { name: "non-CimdError throw", t: () => transport(null, { throw: true }), reason: "fetch_failed" },
     { name: "over-cap body", cimd: { enabled: true, maxDocumentBytes: 1024 }, t: () => transport(() => okResult({ body: one(enc("x".repeat(4000))) })) },
     { name: "slow endpoint (timeout)", cimd: { enabled: true, fetchTimeoutMs: 1000 }, t: () => transport(null, { never: true }) },
   ];
@@ -235,6 +242,14 @@ if (phases["s6b-cimd-flow"] !== true) {
       assertGeneric(res); // byte-identical to the direct CANONICAL — parity across BOTH named boundaries
       assert.equal(identity.hops, 0, `${c.name}: no IdP hop on a resolution failure`);
       assert.ok(fetchFail(audit).length >= 1, `${c.name}: audited to oauth.cimd.fetch (failure)`);
+      if (c.noFetch) {
+        assert.equal((r as any).calls, 0, `${c.name}: admission blocks BEFORE DNS at the upstream boundary`);
+        assert.equal((t as any).calls, 0, `${c.name}: admission blocks BEFORE any connect (no SSRF fetch)`);
+      }
+      if (c.reason) {
+        assert.ok(fetchFail(audit).some((e: any) => e.reason === c.reason), `${c.name}: fixed allowlisted reason ${c.reason} at the upstream boundary`);
+        assert.equal(JSON.stringify(audit.events).includes("TRANSPORT_BOOM_SECRET"), false, `${c.name}: exception text never in the upstream audit`);
+      }
     });
   }
 
