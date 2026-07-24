@@ -217,6 +217,8 @@ if (phases["s6b-cimd-flow"] !== true) {
     { name: "encoded dot-segment admission", clientId: "https://cdn.example.com/a/%2e%2e/b" },
     { name: "IP-literal admission", clientId: "https://127.0.0.1/client" },
     { name: "IP-literal dword admission", clientId: "https://2130706433/meta" },
+    { name: "IP-literal octal admission", clientId: "https://0177.0.0.1/meta" },
+    { name: "IP-literal hex admission", clientId: "https://0x7f000001/meta" },
     { name: "non-CimdError throw", t: () => transport(null, { throw: true }) },
     { name: "over-cap body", cimd: { enabled: true, maxDocumentBytes: 1024 }, t: () => transport(() => okResult({ body: one(enc("x".repeat(4000))) })) },
     { name: "slow endpoint (timeout)", cimd: { enabled: true, fetchTimeoutMs: 1000 }, t: () => transport(null, { never: true }) },

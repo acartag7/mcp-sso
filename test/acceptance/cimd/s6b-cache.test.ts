@@ -235,7 +235,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const bridge = new Bridge({ config: config(), store, clock, audit, cimdTransport: t, cimdResolver: resolver() });
     const identity = { redirectUri: "https://auth.test/oauth/callback", buildAuthorizationUrl({ state }: any) { return `https://idp.test/a?state=${state}`; }, async exchangeAndVerify() { return { ok: true, identity: { subject: "up@test" } }; } };
     const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit, cimdTransport: t, cimdResolver: resolver() });
-    return { flow, bridge };
+    return { flow, bridge, audit };
   }
 
   test("redirect-mode: two sequential upstream authorizes for one CIMD id ⇒ one fetch (shared success cache)", async () => {
@@ -281,22 +281,34 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal((await s.bridge.handleAuthorize(request(ID), { subject: "user-1" })).status, 200); // caches the doc (redirect_uris = [REDIRECT])
     assert.equal(t.calls, 1);
     const evil = request(ID); (evil.query as any).redirect_uri = ALLOWED2; // globally allowlisted, absent from the fetched document → only the document matcher can reject it // not in the cached document
+    const okBefore = s.audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "success").length;
+    const failBefore = s.audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure").length;
     const res = await s.bridge.handleAuthorize(evil, { subject: "user-1" });
     assert.notEqual(res.status, 302);
     assert.notEqual(res.status, 200);
     assert.equal((res.body as any)?.error, "invalid_client");
     assert.equal(t.calls, 1, "served from cache (no re-fetch) yet the unregistered redirect is still rejected");
+    // Guard ordering: a cache HIT must not emit a NEW success audit that is then followed by
+    // a failure for the same authorization (a success-then-reject trail misreports the outcome).
+    const okAfter = s.audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "success").length;
+    const failAfter = s.audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure").length;
+    assert.equal(okAfter, okBefore, "no additional success audit for the rejected cache-hit request");
+    assert.ok(failAfter > failBefore, "the redirect mismatch is audited as a failure");
   });
 
   test("upstream: a cache HIT still re-validates redirect_uri against the cached document (no redirect bypass)", async () => {
     const t = echoTransport();
-    const { flow } = makeFlow(t);
+    const { flow, audit } = makeFlow(t);
     assert.equal((await flow.handleAuthorize(request(ID))).status, 302); // caches the doc
     assert.equal(t.calls, 1);
     const evil = request(ID); (evil.query as any).redirect_uri = ALLOWED2; // globally allowlisted, absent from the fetched document → only the document matcher can reject it
+    const okBefore = audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "success").length;
+    const failBefore = audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure").length;
     const res = await flow.handleAuthorize(evil);
     assert.notEqual(res.status, 302);
     assert.equal((res.body as any)?.error, "invalid_client");
     assert.equal(t.calls, 1, "cache hit, no re-fetch, unregistered redirect still rejected");
+    assert.equal(audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "success").length, okBefore, "no additional success audit for the rejected cache-hit request");
+    assert.ok(audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure").length > failBefore, "the redirect mismatch is audited as a failure");
   });
 }
