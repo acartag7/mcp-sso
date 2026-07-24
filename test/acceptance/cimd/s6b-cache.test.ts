@@ -74,6 +74,14 @@ if (phases["s6b-cimd-flow"] !== true) {
     return { c, clock, store, audit, t, bridge };
   }
   const authorize = (b: any) => b.handleAuthorize(request(), { subject: "user-1" });
+  // Non-cacheable ⇒ the response is still a VALID authorization that is merely re-fetched.
+  // Asserting 200 stops an impl that REJECTS these documents (e.g. invalid_client on
+  // max-age=59) from passing a fetch-count-only row.
+  const authorizeOk = async (b: any, msg = "non-cacheable response still authorizes (200)") => {
+    const res = await authorize(b);
+    assert.equal(res.status, 200, msg);
+    return res;
+  };
   // Bound any await that depends on the impl's concurrency behavior — a queuing (non-coalescing)
   // or unbounded impl would otherwise HANG node --test (no per-test timeout) instead of failing.
   const withDeadline = (p: any, ms = 3000): Promise<any> => { let tm: any; const d = new Promise((_, rej) => { tm = setTimeout(() => rej(new Error(`test deadline ${ms}ms exceeded — single-flight follower not coalesced / overload not rejected`)), ms); }); return Promise.race([p, d]).finally(() => clearTimeout(tm)); };
@@ -88,7 +96,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   test("Cache-Control directive and header names are ASCII case-insensitive", async () => {
     const t = echoTransport({ "content-type": ["application/json"], "Cache-Control": ["MaX-aGe=120"], "AGE": ["0"] });
     const s = setup({ t });
-    await authorize(s.bridge); await authorize(s.bridge);
+    await authorizeOk(s.bridge); await authorizeOk(s.bridge);
     assert.equal(t.calls, 1);
   });
 
@@ -99,17 +107,17 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal((await authorize(s.bridge)).status, 200);
     assert.equal(t.calls, 1);
     clock.advance(64); // still within t1+65s
-    await authorize(s.bridge);
+    await authorizeOk(s.bridge);
     assert.equal(t.calls, 1, "still fresh before t1+65s");
     clock.advance(2);
-    await authorize(s.bridge);
+    await authorizeOk(s.bridge);
     assert.equal(t.calls, 2, "expired after the effective lifetime");
   });
 
   test("max-age below 60 is non-cacheable, never clamped upward", async () => {
     const t = echoTransport({ "content-type": ["application/json"], "cache-control": ["max-age=59"] });
     const s = setup({ t });
-    await authorize(s.bridge); await authorize(s.bridge);
+    await authorizeOk(s.bridge); await authorizeOk(s.bridge);
     assert.equal(t.calls, 2);
   });
 
@@ -125,7 +133,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     for (const headers of cases) {
       const t = echoTransport(headers);
       const s = setup({ t });
-      await authorize(s.bridge); await authorize(s.bridge);
+      await authorizeOk(s.bridge); await authorizeOk(s.bridge);
       assert.equal(t.calls, 2, JSON.stringify(headers));
     }
   });
@@ -136,12 +144,12 @@ if (phases["s6b-cimd-flow"] !== true) {
       const headers: any = { "content-type": ["application/json"], "cache-control": ["max-age=120"], age };
       const t = echoTransport(headers);
       const s = setup({ t });
-      await authorize(s.bridge); await authorize(s.bridge);
+      await authorizeOk(s.bridge); await authorizeOk(s.bridge);
       assert.equal(t.calls, 2, `Age=${JSON.stringify(age)}`);
     }
     const noAge = echoTransport({ "content-type": ["application/json"], "cache-control": ["max-age=120"] });
     const ok = setup({ t: noAge });
-    await authorize(ok.bridge); await authorize(ok.bridge);
+    await authorizeOk(ok.bridge); await authorizeOk(ok.bridge);
     assert.equal(noAge.calls, 1, "absent Age means zero");
   });
 
@@ -151,7 +159,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       const clock = { ms: START, nowMs() { if (armed) { armed = false; return anomaly === "negative" ? this.ms - 1000 : NaN; } return this.ms; } };
       const t = echoTransport(undefined, () => { armed = true; });
       const s = setup({ clock, t });
-      await authorize(s.bridge); await authorize(s.bridge);
+      await authorizeOk(s.bridge); await authorizeOk(s.bridge);
       assert.equal(t.calls, 2, anomaly);
     }
   });
@@ -168,7 +176,10 @@ if (phases["s6b-cimd-flow"] !== true) {
     let invalidCalls = 0;
     const invalid = { async connectAndGet() { invalidCalls++; return { ...response(ID), encodedBody: one(enc(bodyFor("https://other.example/meta"))) }; } };
     const bad = setup({ t: invalid });
-    await authorize(bad.bridge); await authorize(bad.bridge);
+    // Here a REJECTION is the correct outcome (invalid document) — assert it explicitly
+    // rather than ignoring the result, so the row can't pass on fetch-count alone.
+    assert.equal((await authorize(bad.bridge)).status, 401, "invalid document ⇒ generic rejection");
+    assert.equal((await authorize(bad.bridge)).status, 401, "still rejected on the second attempt");
     assert.equal(invalidCalls, 2, "invalid (client_id-mismatch) documents are never cached");
   });
 
