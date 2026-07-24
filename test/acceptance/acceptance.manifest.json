@@ -10,7 +10,7 @@
     "cimd/s6b-boot.test.ts": "e5e0f9d38adbb0b590a37f46ae9bb1ce78147be93412bb860a891a369a31f5ae",
     "cimd/s6b-cache.test.ts": "f497f517540ac8dcd953896d08bea9a9819036ab026e20ff613fab8017fbfaf8",
     "cimd/s6b-consent.test.ts": "e27d089880e423c92f5c24d0a06405e9d6552f1ed4477cf7094b3a9b60cff252",
-    "cimd/s6b-dispatch.test.ts": "e12888622fe378611def6aff185b5d9409dc6ffafdbd342b6f73034ec8989d9e",
+    "cimd/s6b-dispatch.test.ts": "62b859193fa433712a39bb285b97495ff5d3f8dfaf69d6104c483d947d8ed835",
     "cimd/s6b-metadata.test.ts": "cd7160121f054aa15b98bf974b51e1ebad58cb9a16bd99b941fa1c6a1e2779ef",
     "cimd/s6b-redirect.test.ts": "608acb7fbe386e35d6bc71fa6e9c2a12a0a7c1817e2cc7c3c56c29c33c5731f4",
     "cimd/s6b-scope.test.ts": "9309f2b07fecb540a6da391a70416b2343a81842a2fc3fd3975102d0a8bb6ea7"

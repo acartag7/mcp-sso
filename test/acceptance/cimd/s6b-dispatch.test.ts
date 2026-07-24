@@ -164,6 +164,31 @@ if (phases["s6b-cimd-flow"] !== true) {
     }
   });
 
+  test("direct (stored-mode, CIMD DISABLED): a REGISTERED lowercase-https client_id is STILL direct invalid_client — no store.find, no fallthrough", async () => {
+    const t = transport(() => okResult());
+    const clientStore = new CountingClientStore();
+    await clientStore.save({ clientId: CIMD_ID, redirectUris: [CIMD_REDIRECT], applicationType: "web" }); // a registered https client
+    const { b } = makeBridge({ cimd: undefined, dcr: { mode: "stored", store: clientStore }, cimdTransport: t, cimdResolver: resolver() }); // CIMD disabled
+    const res = await b.handleAuthorize(req(directAuthQ()), { subject: "agent@test" });
+    assert.notEqual(res.status, 302);
+    assert.notEqual(res.status, 200);
+    assert.equal(bodyErr(res), "invalid_client", "lowercase-https while CIMD disabled ⇒ direct invalid_client, even if registered (1a branch 2)");
+    assert.equal(clientStore.finds, 0, "rejected by shape BEFORE store.find (never a stored-DCR fallthrough)");
+    assert.equal(t.calls, 0);
+  });
+
+  test("redirect (stored-mode, CIMD DISABLED): a REGISTERED lowercase-https client_id is STILL direct invalid_client — no store.find, no IdP hop", async () => {
+    const clientStore = new CountingClientStore();
+    await clientStore.save({ clientId: CIMD_ID, redirectUris: [CIMD_REDIRECT], applicationType: "web" });
+    const t = transport(() => okResult());
+    const { flow } = makeFlow({ cimd: undefined, dcr: { mode: "stored", store: clientStore }, cimdTransport: t, cimdResolver: resolver() });
+    const res = await flow.handleAuthorize(req(directAuthQ()));
+    assert.notEqual(res.status, 302, "no IdP hop for a disabled-CIMD https id");
+    assert.equal(bodyErr(res), "invalid_client");
+    assert.equal(clientStore.finds, 0, "rejected by shape BEFORE store.find");
+    assert.equal(t.calls, 0);
+  });
+
   // ---------------- UPSTREAM-REDIRECT MODE (handleAuthorize) ----------------
 
   test("redirect (1): CIMD id + cimd enabled ⇒ resolve-once at authorize then 302 to IdP + cookie", async () => {
