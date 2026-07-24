@@ -247,6 +247,23 @@ if (phases["s6b-cimd-flow"] !== true) {
     }
   });
 
+  // Row 5a must run BEFORE the IdP-error branch (rows 7/8) — otherwise an inconsistent
+  // signed cookie would 302 to the unmatched params.redirect_uri carrying an OAuth error.
+  test("callback row 5a precedes the IdP-error branch: an error callback with a 5a violation ⇒ direct 400, no location, no jti consume", async () => {
+    for (const idpError of ["access_denied", "server_error"]) {
+      const { res, audit, consumes } = await callbackWith({
+        cimd: undefined, // CIMD id with NO cimd claim = 5a violation
+        params: baseParams(),
+        cbQuery: { error: idpError, state: "st-1" }, // IdP-error callback, no code
+      });
+      assert.equal(res.status, 400, `${idpError}: direct 400 (5a beats the redirect-channel branch)`);
+      assert.equal(bodyErr(res), "invalid_request", `${idpError}`);
+      assert.equal(res.headers?.location, undefined, `${idpError}: never a 302 to the unmatched redirect_uri`);
+      assert.ok(callbackFail(audit).some((e: any) => e.reason === "flow_cookie_invalid"), `${idpError}: audited flow_cookie_invalid`);
+      assert.equal(consumes, 0, `${idpError}: jti not consumed`);
+    }
+  });
+
   test("callback row 5a (control OK): a valid cimd claim + matching redirect + state match ⇒ passes the gate (200)", async () => {
     const { res } = await callbackWith({ cimd: validClaim(), params: baseParams() });
     assert.equal(res.status, 200, "passed row 5a → consent page");

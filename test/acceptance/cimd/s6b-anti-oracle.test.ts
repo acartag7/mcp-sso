@@ -123,6 +123,10 @@ if (phases["s6b-cimd-flow"] !== true) {
     { name: "IP-literal admission", clientId: "https://127.0.0.1/client" },
     { name: "non-CimdError transport throw", t: () => transport(null, { throw: true }) },
     { name: "over-cap body", t: () => transport(() => okResult({ body: one(enc("x".repeat(4000))) })), cimd: { enabled: true, maxDocumentBytes: 1024 } },
+    // dec 2 explicitly includes REDIRECT-MATCH failures in the indistinguishable map: a valid
+    // fetched document whose redirect_uris exclude the presented redirect_uri must produce the
+    // byte-identical canonical failure (else the redirect-mismatch header oracle stays open).
+    { name: "redirect_uri outside the validated document", t: () => transport(() => okResult({ doc: cimdDoc({ redirect_uris: ["https://other.app.example/cb"] }) })) },
   ];
 
   for (const c of cases) {
@@ -229,6 +233,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     { name: "non-CimdError throw", t: () => transport(null, { throw: true }), reason: "fetch_failed" },
     { name: "over-cap body", cimd: { enabled: true, maxDocumentBytes: 1024 }, t: () => transport(() => okResult({ body: one(enc("x".repeat(4000))) })) },
     { name: "slow endpoint (timeout)", cimd: { enabled: true, fetchTimeoutMs: 1000 }, t: () => transport(null, { never: true }) },
+    { name: "redirect_uri outside the validated document", t: () => transport(() => okResult({ doc: cimdDoc({ redirect_uris: ["https://other.app.example/cb"] }) })) },
   ];
   for (const c of upstreamCases) {
     test(`anti-oracle (upstream boundary): ${c.name} ⇒ identical generic 401, never 500, no IdP hop`, async () => {
