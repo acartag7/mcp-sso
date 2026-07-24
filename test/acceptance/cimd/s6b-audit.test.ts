@@ -61,11 +61,13 @@ if (phases["s6b-cimd-flow"] !== true) {
   }
   const fetchEvents = (audit: any) => audit.events.filter((e: any) => e.event === "oauth.cimd.fetch");
 
-  test("success: a resolved CIMD document emits oauth.cimd.fetch (status success)", async () => {
-    const { run, audit } = drive(transport(() => okResult()), resolver());
+  test("success: a resolved CIMD document emits oauth.cimd.fetch (success) WITHOUT leaking document field values", async () => {
+    const DOC_SENTINEL = "SUCCESS_DOC_FIELD_SENTINEL_zzz";
+    const { run, audit } = drive(transport(() => okResult({ doc: cimdDoc({ client_name: DOC_SENTINEL }) })), resolver());
     const res = await run();
     assert.equal(res.status, 200);
     assert.ok(fetchEvents(audit).some((e: any) => e.status === "success"), "success event recorded");
+    assert.equal(JSON.stringify(audit.events).includes(DOC_SENTINEL), false, "the success event must not carry fetched document field values");
   });
 
   test("failure: a blocked resolution emits oauth.cimd.fetch failure with the SPECIFIC reason", async () => {

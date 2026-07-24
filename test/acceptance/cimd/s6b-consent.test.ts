@@ -74,6 +74,10 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(html.includes(evil), false, "raw client_name markup never injected");
     assert.equal(html.includes("<script>"), false, "no raw <script> tag from client_name");
     assert.match(html, /unverif|untrust|not[ -]?verif/i, "client_name labeled as unverified/untrusted (exact wording not pinned)");
+    // Positive: a benign name is actually RENDERED — a renderer that DROPPED client_name
+    // entirely would satisfy the negative-only checks above.
+    const shown = await render(cfg(), doc({ client_name: "Acme-Sentinel-Widgets" }), HTTPS_REDIRECT);
+    assert.ok(shown.includes("Acme-Sentinel-Widgets"), "the client_name is positively rendered, not dropped");
   });
 
   test("shows the client_id host and the redirect host", async () => {
