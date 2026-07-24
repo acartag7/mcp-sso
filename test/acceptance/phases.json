@@ -1,3 +1,4 @@
 {
-  "s6a-cimd-primitives": true
+  "s6a-cimd-primitives": true,
+  "s6b-cimd-flow": false
 }
