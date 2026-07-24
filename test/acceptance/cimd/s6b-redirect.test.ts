@@ -14,7 +14,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 
 const phases = JSON.parse(readFileSync(new URL("../phases.json", import.meta.url), "utf8"));
 
@@ -108,11 +108,16 @@ if (phases["s6b-cimd-flow"] !== true) {
   const GENERIC = { error: "invalid_client", error_description: "client_id could not be resolved" };
   const cimdFetchEvents = (audit: any) => audit.events.filter((e: any) => e.event === "oauth.cimd.fetch");
   const callbackFail = (audit: any) => audit.events.filter((e: any) => e.event === "oauth.upstream.callback" && e.status === "failure");
+  // Row 5a can only be exercised if the cookie SURVIVES verifyFlowToken — a malformed jti
+  // would fail closed at row 3 with the SAME observable (400 / flow_cookie_invalid / no
+  // consume), so the forged jti must match the real shape: `upf_` + 32 random bytes base64url
+  // (upstream-flow.ts randomToken).
+  const realJti = () => `upf_${randomBytes(32).toString("base64url")}`;
   // Mint a validly-signed flow cookie (same structure as signFlowToken) with an
   // optional top-level `cimd` claim — models exactly what verifyFlowToken sees.
   async function forge(config: any, o: any) {
     const now = Math.floor(NOW / 1000);
-    const payload: any = { jti: o.jti ?? "upf_forged", state: o.state, nonce: o.nonce ?? "n", code_verifier: o.codeVerifier ?? "cv-0123456789012345678901234567890123456789012", params: o.params };
+    const payload: any = { jti: o.jti ?? realJti(), state: o.state, nonce: o.nonce ?? "n", code_verifier: o.codeVerifier ?? "cv-0123456789012345678901234567890123456789012", params: o.params };
     if (o.cimd !== undefined) payload.cimd = o.cimd;
     return await new jose.SignJWT(payload).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setIssuer(config.issuer).setAudience(FLOW_AUDIENCE).setIssuedAt(now).setExpirationTime(now + 600).sign(enc(config.consentSigningSecret));
   }
@@ -294,10 +299,11 @@ if (phases["s6b-cimd-flow"] !== true) {
   test("callback row 5a does NOT consume the flow jti: a 5a-rejected cookie's jti still works on a later valid cookie", async () => {
     const tracked = trackingStore();
     const { flow } = makeFlow({ cimd: { enabled: true }, store: tracked.store });
-    const jwtA = await forge(cfg(CIMD_ON), { state: "st-1", params: baseParams(), cimd: undefined, jti: "upf_shared" }); // 5a violation
+    const sharedJti = realJti();
+    const jwtA = await forge(cfg(CIMD_ON), { state: "st-1", params: baseParams(), cimd: undefined, jti: sharedJti }); // 5a violation
     const rej = await flow.handleCallback(req({ code: "C", state: "st-1" }, { cookie: `${COOKIE}=${jwtA}` }));
     assert.equal(bodyErr(rej), "invalid_request", "A rejected at 5a");
-    const jwtB = await forge(cfg(CIMD_ON), { state: "st-1", params: baseParams(), cimd: validClaim(), jti: "upf_shared" });
+    const jwtB = await forge(cfg(CIMD_ON), { state: "st-1", params: baseParams(), cimd: validClaim(), jti: sharedJti });
     const ok = await flow.handleCallback(req({ code: "C2", state: "st-1" }, { cookie: `${COOKIE}=${jwtB}` }));
     assert.equal(ok.status, 200, "B succeeds on the same jti ⇒ 5a did not consume it");
   });

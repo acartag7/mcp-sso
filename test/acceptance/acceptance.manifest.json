@@ -9,10 +9,10 @@
     "cimd/s6b-audit.test.ts": "e7e9201b6ed30385ad4469b3d87b06bd34de57ca891d8a87f6c3ffacf963245e",
     "cimd/s6b-boot.test.ts": "9846bc379c34af449c31a903c862c66eda60772ff331125dd764114ab9ba26b9",
     "cimd/s6b-cache.test.ts": "23928eef824000e3a2523bcd5658100e2169f027dadbd8903b255d16def5488b",
-    "cimd/s6b-consent.test.ts": "8c1d7189980fb4647fa6661d794be8f8622d7271237ab4ed483e384dba419beb",
+    "cimd/s6b-consent.test.ts": "e55edf432f2a7483d6cc24668798e5b74507dbaad86ee014a0cd3dbf1a635e18",
     "cimd/s6b-dispatch.test.ts": "2842ed45468876290e45c17ed3eeb99904434fec05ce05d8678c927b25c98b42",
     "cimd/s6b-metadata.test.ts": "cd7160121f054aa15b98bf974b51e1ebad58cb9a16bd99b941fa1c6a1e2779ef",
-    "cimd/s6b-redirect.test.ts": "edf3e9a9a00e3be828c4484de5d1bc60253f803a49f68163a0e9a31cb204f054",
+    "cimd/s6b-redirect.test.ts": "1fba1cbaf3699b3a524d235121a57d1f71fdf2f99027435e489c9fc0c2a353ba",
     "cimd/s6b-scope.test.ts": "1911bce87fc76e10658e2895b0c28d62590a5b7332fc7ff45f8d010604ee06ca"
   }
 }

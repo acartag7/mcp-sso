@@ -68,6 +68,39 @@ if (phases["s6b-cimd-flow"] !== true) {
   }
   const consentOf = (html: string) => { const m = /name="consent_token" value="([^"]+)"/.exec(html); assert.ok(m?.[1], "consent token"); return m[1]!; };
 
+  // The upstream-redirect branch reaches the consent renderer through flow.handleCallback with
+  // a CARRIED registration — a different path from the direct fetch. If it forgets the
+  // display-only CIMD fields, Hosted-Claude/Entra consent pages would omit the unverified
+  // client_name / host display while every direct-mode row above still passes.
+  async function renderViaUpstream(config: any, d: any, redirectUri: string): Promise<string> {
+    const FLOW_MOD = "../../../src/adapters/upstream-flow.ts";
+    const { createUpstreamRedirectFlow } = (await import(FLOW_MOD)) as any;
+    const store = new MemoryStore();
+    const clock = new FakeClock(NOW);
+    const audit = new MemoryAudit();
+    const b = new Bridge({ config, store, clock, audit, cimdTransport: transport(d), cimdResolver: resolver() });
+    const identity = { redirectUri: "https://auth.test/oauth/callback", buildAuthorizationUrl({ state }: any) { return `https://idp.test/a?state=${state}`; }, async exchangeAndVerify() { return { ok: true, identity: { subject: "agent@test" } }; } };
+    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: transport(d), cimdResolver: resolver() });
+    const auth = await flow.handleAuthorize({ query: { response_type: "code", client_id: CIMD_ID, redirect_uri: redirectUri, code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256", scope: "mcp:read", state: "s-up" }, body: undefined, headers: {}, ip: "1.2.3.4" });
+    assert.equal(auth.status, 302, "upstream authorize resolved + hopped to the IdP");
+    const setCookie = auth.headers["set-cookie"] as string;
+    const jwt = setCookie.slice(setCookie.indexOf("=") + 1, setCookie.indexOf(";"));
+    const state = jose.decodeJwt(jwt).state as string;
+    const cb = await flow.handleCallback({ query: { code: "C", state }, body: undefined, headers: { cookie: `__Host-mcp-sso-upstream=${jwt}` }, ip: "1.2.3.4" });
+    assert.equal(cb.status, 200, "callback rendered consent from the carried registration");
+    return String(cb.body);
+  }
+
+  test("carried-registration consent (upstream callback) renders the SAME display obligations: escaped unverified client_name + both hosts", async () => {
+    const evil = `<script>alert("x")</script>`;
+    const html = await renderViaUpstream(cfg(), doc({ client_name: evil }), HTTPS_REDIRECT);
+    assert.equal(html.includes(evil), false, "raw client_name markup never injected on the carried path");
+    assert.equal(html.includes("<script>"), false, "no raw <script> tag from client_name");
+    assert.match(html, /unverif|untrust|not[ -]?verif/i, "client_name labeled unverified on the carried path too");
+    assert.ok(html.includes(new URL(CIMD_ID).host), "client_id host shown (MUST)");
+    assert.ok(html.includes(new URL(HTTPS_REDIRECT).host), "redirect host shown (MUST)");
+  });
+
   test("client_name is HTML-escaped (raw markup absent, threat row 17 XSS) and shown as unverified", async () => {
     const evil = `<script>alert("x")</script>`;
     const html = await render(cfg(), doc({ client_name: evil }), HTTPS_REDIRECT);
