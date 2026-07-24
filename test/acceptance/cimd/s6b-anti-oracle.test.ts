@@ -243,7 +243,11 @@ if (phases["s6b-cimd-flow"] !== true) {
       const identity = stubIdentity();
       const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: t, cimdResolver: r });
       const res = await withDeadline(flow.handleAuthorize(req(authQ({ client_id: c.clientId ?? CIMD_ID }))));
-      if (c.poison) assert.equal(JSON.stringify(res).includes(c.poison), false, `${c.name}: no document secret leaks at the upstream boundary`);
+      if (c.poison) {
+        assert.equal(JSON.stringify(res).includes(c.poison), false, `${c.name}: no document secret leaks into the upstream RESPONSE`);
+        // S6b.4 no-leak applies to the audit sink at BOTH boundaries, not just direct.
+        assert.equal(JSON.stringify(audit.events).includes(c.poison), false, `${c.name}: no document secret leaks into the upstream AUDIT stream`);
+      }
       assertGeneric(res); // byte-identical to the direct CANONICAL — parity across BOTH named boundaries
       assert.equal(identity.hops, 0, `${c.name}: no IdP hop on a resolution failure`);
       assert.ok(fetchFail(audit).length >= 1, `${c.name}: audited to oauth.cimd.fetch (failure)`);

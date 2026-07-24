@@ -80,9 +80,12 @@ if (phases["s6b-cimd-flow"] !== true) {
     const audit = new MemoryAudit();
     const store = new MemoryStore();
     const clock = new FakeClock(NOW);
-    const b = new Bridge({ config: cfg(), store, clock, audit, cimdTransport: transport(() => okResult()), cimdResolver: resolver() });
+    // The sentinel document is served on BOTH seams: if the impl resolved upstream CIMD via
+    // the bridge-side seam/cache instead, a non-sentinel doc would make the no-leak check vacuous.
+    const sentinelTransport = () => transport(() => okResult({ doc: cimdDoc({ client_name: UP_SENTINEL }) }));
+    const b = new Bridge({ config: cfg(), store, clock, audit, cimdTransport: sentinelTransport(), cimdResolver: resolver() });
     const identity = { redirectUri: "https://auth.test/oauth/callback", buildAuthorizationUrl({ state }: any) { return `https://idp.test/a?state=${state}`; }, async exchangeAndVerify() { return { ok: true, identity: { subject: "up@test" } }; } };
-    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: transport(() => okResult({ doc: cimdDoc({ client_name: UP_SENTINEL }) })), cimdResolver: resolver() });
+    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: sentinelTransport(), cimdResolver: resolver() });
     const res = await flow.handleAuthorize({ query: { response_type: "code", client_id: CIMD_ID, redirect_uri: CIMD_REDIRECT, code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256", scope: "mcp:read", state: "s" }, body: undefined, headers: {}, ip: "1.2.3.4" });
     assert.equal(res.status, 302, "resolved + 302 to the IdP");
     assert.ok(fetchEvents(audit).some((e: any) => e.status === "success"), "upstream success event recorded (dec 1b)");
