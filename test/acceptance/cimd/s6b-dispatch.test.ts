@@ -27,6 +27,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   const { MemoryStore } = (await import(STORE)) as any;
   const CRYPTO = "../../../src/crypto.ts";
   const { pkceChallenge } = (await import(CRYPTO)) as any;
+  const jose = (await import("jose")) as any;
 
   const NOW = Date.parse("2026-07-03T12:00:00.000Z");
   const CIMD_ID = "https://cdn.example.com/client";
@@ -235,6 +236,13 @@ if (phases["s6b-cimd-flow"] !== true) {
     const res = await flow.handleAuthorize(req(directAuthQ()));
     assert.equal(res.status, 302, "CIMD resolves + hops to the IdP without a stored registration");
     assert.equal(clientStore.finds, 0, "CIMD path MUST NOT consult the client store");
+    // Skipping store.find is NOT enough: prove the document was actually RESOLVED and the
+    // validated registration carried in the cookie — else a bare IdP redirect (no resolution)
+    // would pass here and leave the callback with no carried registration.
+    assert.equal(t.calls, 1, "the CIMD document was fetched in stored mode");
+    const jwt = (res.headers["set-cookie"] as string).slice((res.headers["set-cookie"] as string).indexOf("=") + 1, (res.headers["set-cookie"] as string).indexOf(";"));
+    const claims: any = jose.decodeJwt(jwt);
+    assert.equal(claims.cimd?.client_id, CIMD_ID, "the flow cookie carries the projected cimd registration");
   });
 
   test("redirect (stored-mode): a REGISTERED scheme-shaped client_id is STILL direct invalid_client — rejected by shape BEFORE store.find, no IdP hop", async () => {

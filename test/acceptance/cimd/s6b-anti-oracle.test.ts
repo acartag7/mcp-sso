@@ -289,5 +289,9 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(identity.hops, 0);
     assert.equal(t.calls, 0);
     assert.equal(audit.events.some((e: any) => e.event === "oauth.cimd.fetch"), false, "no fetch audit for a pre-resolution denial (sibling parity with the direct case)");
+    // Guard-before-side-effects: a limiter running AFTER flow-cookie signing would leave
+    // browser state behind on a rejected authorize.
+    assert.equal(res.headers?.["set-cookie"], undefined, "a rate-limited authorize sets NO flow cookie");
+    assert.equal(res.headers?.location, undefined, "and no redirect");
   });
 }
