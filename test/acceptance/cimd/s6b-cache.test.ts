@@ -197,9 +197,13 @@ if (phases["s6b-cimd-flow"] !== true) {
     const s = setup({ c: config({ maxInFlight: 1 }), t });
     const a = s.bridge.handleAuthorize(request("https://cdn.example.com/a"), { subject: "user-1" });
     const b = s.bridge.handleAuthorize(request("https://cdn.example.com/a"), { subject: "user-1" });
-    await new Promise<void>((r) => setImmediate(r));
+    for (let i = 0; i < 50 && calls < 1; i++) await new Promise<void>((r) => setImmediate(r)); // poll, not a single tick — avoids a false red on a correct multi-turn pipeline
     assert.equal(calls, 1, "same raw id ⇒ one in-flight fetch");
-    const overloaded = await s.bridge.handleAuthorize(request("https://cdn.example.com/b"), { subject: "user-1" });
+    // A DISTINCT id at the cap must REJECT (overloaded), never QUEUE — a queuing impl would
+    // hang here (the slot frees only on release, which is after this await), so bound it.
+    let tm: any;
+    const deadline = new Promise((_, rej) => { tm = setTimeout(() => rej(new Error("distinct id at maxInFlight must reject overloaded, not queue")), 3000); });
+    const overloaded = await Promise.race([s.bridge.handleAuthorize(request("https://cdn.example.com/b"), { subject: "user-1" }), deadline]).finally(() => clearTimeout(tm)) as any;
     assert.deepEqual(overloaded.body, GENERIC, "overloaded maps to the decision-2 generic");
     assert.equal(overloaded.status, 401);
     assert.ok(s.audit.events.some((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure" && e.reason === "overloaded"), "audited reason overloaded (decision 6)");

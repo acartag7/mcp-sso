@@ -44,9 +44,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.ok(meta.token_endpoint_auth_methods_supported.includes("none"), "`none` is unconditional");
   });
 
-  test("cimd { enabled: false } ⇒ the flag is ABSENT (not false)", () => {
-    const meta = authorizationServerMetadata(cfg({ enabled: false }));
-    assert.ok(!(KEY in meta), "explicit disable omits the flag entirely");
-    assert.ok(meta.token_endpoint_auth_methods_supported.includes("none"));
-  });
+  // "Disabled" is represented by OMITTING the cimd block (config shape is
+  // cimd?: { enabled: true }); the "cimd absent ⇒ flag absent" test above IS the
+  // disabled case. { enabled: false } is not a valid config, so it is not asserted here.
 }

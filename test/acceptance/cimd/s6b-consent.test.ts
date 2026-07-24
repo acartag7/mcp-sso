@@ -73,7 +73,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const html = await render(cfg(), doc({ client_name: evil }), HTTPS_REDIRECT);
     assert.equal(html.includes(evil), false, "raw client_name markup never injected");
     assert.equal(html.includes("<script>"), false, "no raw <script> tag from client_name");
-    assert.match(html, /unverified/i, "client_name shown as unverified text");
+    assert.match(html, /unverif|untrust|not[ -]?verif/i, "client_name labeled as unverified/untrusted (exact wording not pinned)");
   });
 
   test("shows the client_id host and the redirect host", async () => {
@@ -84,10 +84,9 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.ok(html.includes(redirectHost), "redirect host shown");
   });
 
-  test("SHOULD warn when EVERY registered redirect is loopback (soft — a warning indicator is present; wording not pinned)", async () => {
-    const html = await render(cfg(), doc({ redirect_uris: ["http://127.0.0.1:3000/cb", "http://localhost:4000/cb"] }), LOOPBACK_REDIRECT);
-    assert.match(html, /loopback|localhost|local (callback|device)|this device/i, "an all-loopback registration surfaces a warning indicator");
-  });
+  // Loopback SHOULD-warn (§17.1.4) is intentionally NOT frozen: the contract pins no
+  // warning marker, so a host-substring match ("localhost") is a false oracle (it matches
+  // the rendered redirect host, not a warning), and any pinned copy would be brittle.
 
   test("only cimd_verified is copied into the consent JWT (no other CIMD document fields)", async () => {
     const html = await render(cfg(), doc({ logo_uri: "https://cdn.example.com/logo.png" }), HTTPS_REDIRECT);
@@ -98,21 +97,23 @@ if (phases["s6b-cimd-flow"] !== true) {
     }
   });
 
-  // Decision 3 fail-closed: a present non-true cimd_verified INVALIDATES the token.
-  // signConsentToken never emits `false`, so we forge a token in the exact consent
-  // shape verifyConsentToken accepts, with cimd_verified:false.
-  test("a present non-true cimd_verified claim invalidates the consent token (fail-closed)", async () => {
-    const config = cfg();
-    const b = bridgeFor(config, doc());
-    const now = Math.floor(NOW / 1000);
-    const token = await new jose.SignJWT({
-      typ: CONSENT_TYP, jti: "j".repeat(24), client_id: CIMD_ID, redirect_uri: HTTPS_REDIRECT,
-      resource: config.resource, scope: "mcp:read", code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
-      cimd_verified: false,
-    }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setIssuer(config.issuer).setAudience(CONSENT_AUDIENCE)
-      .setSubject("agent@test").setIssuedAt(now).setExpirationTime(now + 300).sign(enc(config.consentSigningSecret));
-    const res = await b.handleApprove({ query: {}, body: { consent_token: token, approved: "true" }, headers: { origin: "https://auth.test" }, ip: "1.2.3.4" });
-    assert.equal(res.status, 400);
-    assert.equal((res.body as any).error, "invalid_consent");
-  });
+  // Decision 3: the SOLE true path is strict `=== true`; ANY other present value invalidates
+  // the token (a `!!cimd_verified` or `== true` impl would wrongly accept 1 / "true"). signConsentToken
+  // never emits these, so forge the exact consent wire shape verifyConsentToken accepts.
+  for (const bad of [false, "true", 1, 0, null, "false"] as any[]) {
+    test(`a present non-true cimd_verified (${JSON.stringify(bad)}) invalidates the consent token (strict === true, fail-closed)`, async () => {
+      const config = cfg();
+      const b = bridgeFor(config, doc());
+      const now = Math.floor(NOW / 1000);
+      const token = await new jose.SignJWT({
+        typ: CONSENT_TYP, jti: "j".repeat(24), client_id: CIMD_ID, redirect_uri: HTTPS_REDIRECT,
+        resource: config.resource, scope: "mcp:read", code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+        cimd_verified: bad,
+      }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setIssuer(config.issuer).setAudience(CONSENT_AUDIENCE)
+        .setSubject("agent@test").setIssuedAt(now).setExpirationTime(now + 300).sign(enc(config.consentSigningSecret));
+      const res = await b.handleApprove({ query: {}, body: { consent_token: token, approved: "true" }, headers: { origin: "https://auth.test" }, ip: "1.2.3.4" });
+      assert.equal(res.status, 400);
+      assert.equal((res.body as any).error, "invalid_consent");
+    });
+  }
 }

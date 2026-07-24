@@ -107,6 +107,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       const { b } = makeBridge({ cimdTransport: t, cimdResolver: resolver() });
       const res = await b.handleAuthorize(req(directAuthQ({ client_id: id })), { subject: "agent@test" });
       assert.notEqual(res.status, 302, `${id}: not a redirect/fallthrough`);
+      assert.notEqual(res.status, 200, `${id}: not a success channel either`);
       assert.equal(bodyErr(res), "invalid_client", `${id}: direct invalid_client`);
       assert.equal(t.calls, 0, `${id}: never fetched`);
     }
@@ -117,6 +118,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const { b } = makeBridge({ cimd: undefined, cimdTransport: t, cimdResolver: resolver() });
     const res = await b.handleAuthorize(req(directAuthQ()), { subject: "agent@test" });
     assert.notEqual(res.status, 302);
+    assert.notEqual(res.status, 200);
     assert.equal(bodyErr(res), "invalid_client");
     assert.equal(t.calls, 0);
   });
@@ -164,6 +166,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       const { flow } = makeFlow({ cimdTransport: t, cimdResolver: resolver() });
       const res = await flow.handleAuthorize(req(directAuthQ({ client_id: id })));
       assert.notEqual(res.status, 302, `${id}: no IdP hop`);
+      assert.notEqual(res.status, 200, `${id}: not a success channel either`);
       assert.equal(bodyErr(res), "invalid_client", `${id}: direct invalid_client`);
       assert.ok(!res.headers["set-cookie"], `${id}: no cookie set`);
       assert.equal(t.calls, 0, `${id}: never fetched`);
@@ -172,6 +175,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const { flow } = makeFlow({ cimd: undefined, cimdTransport: t, cimdResolver: resolver() });
     const res = await flow.handleAuthorize(req(directAuthQ()));
     assert.notEqual(res.status, 302);
+    assert.notEqual(res.status, 200);
     assert.equal(bodyErr(res), "invalid_client");
     assert.equal(t.calls, 0);
   });

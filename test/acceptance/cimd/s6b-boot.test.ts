@@ -121,6 +121,24 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(calls, 1, "the below-guard transport seam was used");
   });
 
+  // Decision 5 (fail-closed sibling of the positive above): WITHOUT the dev flag a
+  // loopback CIMD id is blocked — loopback effectiveness is gated SOLELY by
+  // dev.allowInsecureLocalhost, never enabled by default. A wiring bug hardcoding
+  // allowLoopback would leak an SSRF to localhost that only this negative catches.
+  test("a loopback CIMD id is REJECTED without dev.allowInsecureLocalhost (loopback gated solely by the dev flag)", async () => {
+    const LOOP_ID = "https://localhost:8443/meta";
+    const config = createBridgeConfig(rawConfig({ cimd: { enabled: true } })); // normal https issuer, NO dev block
+    let calls = 0;
+    const transport = { connectAndGet() { calls++; return Promise.resolve({ status: 200, redirected: false, finalUrl: LOOP_ID, headersDistinct: { "content-type": ["application/json"] }, encodedBody: one(enc(JSON.stringify({ client_id: LOOP_ID, client_name: "L", redirect_uris: ["https://client.test/cb"] }))) }); } };
+    const resolver = { resolve() { return Promise.resolve([{ address: "127.0.0.1", family: 4 }]); }, cancel() {} };
+    const b = new Bridge({ config, store: new MemoryStore(), clock: new FakeClock(NOW), audit: new MemoryAudit(), cimdTransport: transport, cimdResolver: resolver });
+    const res = await b.handleAuthorize({ query: { response_type: "code", client_id: LOOP_ID, redirect_uri: "https://client.test/cb", code_challenge: "x".repeat(43), code_challenge_method: "S256", scope: "mcp:read" }, body: undefined, headers: {}, ip: "1.2.3.4" }, { subject: "agent@test" });
+    assert.equal((res.body as any)?.error, "invalid_client", "loopback CIMD id blocked without the dev flag");
+    assert.notEqual(res.status, 302);
+    assert.notEqual(res.status, 200);
+    assert.equal(calls, 0, "blocked before any connect (loopback not admissible/resolvable without the dev flag)");
+  });
+
   // Decision 6: `overloaded` is a real, stable CimdReason value (rule-24
   // in-flight-cap rejection). Constructible at runtime.
   test("`overloaded` is a constructible stable CimdReason (decision 6)", () => {

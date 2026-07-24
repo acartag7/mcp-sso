@@ -96,6 +96,15 @@ if (phases["s6b-cimd-flow"] !== true) {
     // byte-identical to the canonical failure (status + headers + body) — closes the header oracle
     assert.deepEqual({ status: res.status, headers: res.headers, body: res.body }, CANONICAL);
   }
+  // A never-settling transport relies on the impl's fetch-timeout to abort; if that
+  // regresses (the very failure the slow-endpoint rows target) the await would hang, and
+  // node --test has NO per-test timeout — so bound every failure-matrix call with an
+  // explicit test-side deadline (> fetchTimeoutMs) that fails fast instead of hanging CI.
+  const withDeadline = (p: any, ms = 5000): Promise<any> => {
+    let timer: any;
+    const deadline = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`test deadline ${ms}ms exceeded — fetch-timeout missing/regressed`)), ms); });
+    return Promise.race([p, deadline]).finally(() => clearTimeout(timer));
+  };
 
   // Each failure MUST produce the identical client-facing outcome (401 + GENERIC,
   // never a 500 internal_error) and audit a failure to oauth.cimd.fetch.
@@ -121,7 +130,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       const t = c.t ? c.t() : transport(() => okResult());
       const r = c.r ? c.r() : resolver();
       const { b, audit } = makeBridge({ cimd: c.cimd ?? { enabled: true }, cimdTransport: t, cimdResolver: r });
-      const res = await b.handleAuthorize(req(authQ({ client_id: c.clientId ?? CIMD_ID })), { subject: "agent@test" });
+      const res = await withDeadline(b.handleAuthorize(req(authQ({ client_id: c.clientId ?? CIMD_ID })), { subject: "agent@test" }));
       assertGeneric(res);
       assert.ok(fetchFail(audit).length >= 1, `${c.name}: audited to oauth.cimd.fetch (failure)`);
       assert.equal(fetchOk(audit).length, 0, `${c.name}: no success event for a failure`);
@@ -142,7 +151,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       { name: "blocked IPv4 DNS", r: () => resolver([{ address: "169.254.169.254", family: 4 }]) },
       { name: "blocked IPv6 ULA DNS", r: () => resolver([{ address: "fd00::1", family: 6 }]) },
       { name: "mixed rebinding answer", r: () => resolver([PUBLIC, { address: "127.0.0.1", family: 4 }]) },
-      { name: "redirect to blocked host", t: () => transport(() => okResult({ status: 302, headersDistinct: { "content-type": ["application/json"], location: ["https://127.0.0.1/private"] } })) },
+      { name: "redirect FOLLOWED to a blocked host (redirected===true, not just a bare 302)", t: () => transport(() => okResult({ redirected: true, finalUrl: "https://127.0.0.1/private" })) },
       { name: "over-cap body", cimd: { enabled: true, maxDocumentBytes: 1024 }, t: () => transport(() => okResult({ body: one(enc("x".repeat(2048))) })) },
       { name: "slow endpoint (timeout)", cimd: { enabled: true, fetchTimeoutMs: 1000 }, t: () => transport(null, { never: true }) },
       { name: "mismatched client_id", t: () => transport(() => okResult({ doc: { client_id: "https://other.example/meta", client_name: "x", redirect_uris: [CIMD_REDIRECT] } })) },
@@ -153,7 +162,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       const t = c.t ? c.t() : transport(() => okResult());
       const r = c.r ? c.r() : resolver();
       const { b, audit } = makeBridge({ cimd: c.cimd ?? { enabled: true }, cimdTransport: t, cimdResolver: r });
-      const res = await b.handleAuthorize(req(authQ({ client_id: c.clientId ?? CIMD_ID })), { subject: "agent@test" });
+      const res = await withDeadline(b.handleAuthorize(req(authQ({ client_id: c.clientId ?? CIMD_ID })), { subject: "agent@test" }));
       assertGeneric(res);
       assert.equal(JSON.stringify(res).includes(POISON), false, `${c.name}: document secret must not leak`);
       assert.ok(fetchFail(audit).length >= 1, `${c.name}: failure audited`);
@@ -207,7 +216,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       const { b, store, clock, audit } = makeBridge({ cimd: c.cimd ?? { enabled: true }, cimdTransport: t, cimdResolver: r });
       const identity = stubIdentity();
       const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: t, cimdResolver: r });
-      const res = await flow.handleAuthorize(req(authQ()));
+      const res = await withDeadline(flow.handleAuthorize(req(authQ())));
       assertGeneric(res); // byte-identical to the direct CANONICAL — parity across BOTH named boundaries
       assert.equal(identity.hops, 0, `${c.name}: no IdP hop on a resolution failure`);
       assert.ok(fetchFail(audit).length >= 1, `${c.name}: audited to oauth.cimd.fetch (failure)`);
@@ -245,5 +254,6 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.ok(seen.includes("upstream:203.0.113.7"));
     assert.equal(identity.hops, 0);
     assert.equal(t.calls, 0);
+    assert.equal(audit.events.some((e: any) => e.event === "oauth.cimd.fetch"), false, "no fetch audit for a pre-resolution denial (sibling parity with the direct case)");
   });
 }

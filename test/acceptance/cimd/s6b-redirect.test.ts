@@ -143,6 +143,9 @@ if (phases["s6b-cimd-flow"] !== true) {
     const jwt = cookieJwtOf(auth.headers["set-cookie"] as string);
     const claims = jose.decodeJwt(jwt);
     assert.deepEqual(Object.keys(claims.cimd).sort(), ["client_id", "client_name", "redirect_uris"]);
+    assert.equal(claims.cimd.client_id, CIMD_ID, "projected value from the VALIDATED document, not attacker-chosen");
+    assert.equal(claims.cimd.client_name, "Example App");
+    assert.deepEqual(claims.cimd.redirect_uris, [CIMD_REDIRECT]);
     assert.equal(JSON.stringify(claims.cimd).includes("ATTACKER_MEMBER_SECRET"), false, "no attacker-controlled member rides the cookie");
   });
 
@@ -156,10 +159,11 @@ if (phases["s6b-cimd-flow"] !== true) {
     for (const presented of ["https://app.example.com:443/cb", "https://app.example.com/cb?x=1", "https://app.example.com/cb/"]) {
       const { flow, audit } = makeFlow({ cimdTransport: transport(() => docResult()), cimdResolver: resolver() });
       const res = await flow.handleAuthorize(req(authQ({ redirect_uri: presented })));
-      assert.notEqual(res.status, 302, `${presented}: not a 302`);
+      assert.equal(res.status, 401, `${presented}: 401 generic (decision 2)`);
       assert.equal(bodyErr(res), "invalid_client", `${presented}: generic invalid_client`);
       assert.deepEqual(res.body, GENERIC, `${presented}: identical generic body`);
       assert.ok(cimdFetchEvents(audit).some((e: any) => e.status === "failure"), `${presented}: audited failure`);
+      assert.equal(cimdFetchEvents(audit).some((e: any) => e.status === "success"), false, `${presented}: no success audit before a match failure (1b)`);
     }
   });
   test("matcher: an explicit non-default https port matches when raw-equal", async () => {
@@ -178,10 +182,20 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.notEqual((await mk().flow.handleAuthorize(req(authQ({ redirect_uri: "http://localhost:5000/cb" })))).status, 302, "localhost != 127.0.0.1 under the matcher");
   });
   test("matcher: a presented redirect absent from the doc fails closed (generic invalid_client)", async () => {
-    const { flow } = makeFlow({ cimdTransport: transport(() => docResult()), cimdResolver: resolver() });
+    const { flow, audit } = makeFlow({ cimdTransport: transport(() => docResult()), cimdResolver: resolver() });
     const res = await flow.handleAuthorize(req(authQ({ redirect_uri: "https://evil.example/cb" })));
-    assert.notEqual(res.status, 302);
+    assert.equal(res.status, 401);
     assert.deepEqual(res.body, GENERIC);
+    assert.equal(cimdFetchEvents(audit).some((e: any) => e.status === "success"), false, "no success audit before a redirect-match failure (1b)");
+  });
+
+  // ---- 1a/1d: an opaque (non-CIMD) id must NOT carry a cimd claim in the flow cookie ----
+  test("opaque upstream authorize sets a flow cookie carrying NO cimd claim (the inverse of the row-5a opaque-with-claim row)", async () => {
+    const { flow } = makeFlow({ cimdTransport: transport(() => docResult()), cimdResolver: resolver() });
+    const res = await flow.handleAuthorize(req(authQ({ client_id: "opaque-xyz", redirect_uri: "https://client.test/cb" })));
+    assert.equal(res.status, 302, "opaque id follows the §10 path to the IdP");
+    const claims: any = jose.decodeJwt(cookieJwtOf(res.headers["set-cookie"] as string));
+    assert.equal("cimd" in claims, false, "no cimd claim rides the cookie for an opaque client_id");
   });
 
   // ---- 1b cookie-oversize residual ----
@@ -190,7 +204,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const doc = cimdDoc({ redirect_uris: many });
     const { flow, audit, identity } = makeFlow({ cimd: { enabled: true, maxDocumentBytes: 65536 }, cimdTransport: transport(() => docResult({ doc })), cimdResolver: resolver() });
     const res = await flow.handleAuthorize(req(authQ({ redirect_uri: many[0] })));
-    assert.notEqual(res.status, 302, "not a 302 to the IdP");
+    assert.equal(res.status, 401, "generic 401 (not a 302 to the IdP)");
     assert.ok(!res.headers["set-cookie"], "no oversized cookie set");
     assert.deepEqual(res.body, GENERIC, "generic invalid_client (not invalid_request)");
     assert.equal(identity.exchanges, 0);
@@ -205,7 +219,8 @@ if (phases["s6b-cimd-flow"] !== true) {
 
   async function callbackWith(opts: { cimdEnabled?: boolean; cimd: any; params: any; jti?: string; cbState?: string; cbQuery?: any }) {
     const tracked = trackingStore();
-    const { flow, audit, identity } = makeFlow({ cimd: { enabled: opts.cimdEnabled ?? true }, store: tracked.store });
+    // Contract shape is cimd?: { enabled: true } — "disabled" is OMITTING the block, never { enabled: false }.
+    const { flow, audit, identity } = makeFlow({ cimd: opts.cimdEnabled === false ? undefined : { enabled: true }, store: tracked.store });
     const state = opts.params.state;
     const jwt = await forge(cfg(), { state, params: opts.params, cimd: opts.cimd, jti: opts.jti });
     const cbQuery = opts.cbQuery ?? { code: "C", state: opts.cbState ?? state };
