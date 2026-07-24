@@ -187,6 +187,11 @@ if (phases["s6b-cimd-flow"] !== true) {
   // minted access token is ACCEPTED at the resource-server / protected /mcp boundary
   // (framework-free RequestAuthorizer — no peer dep) — not just decoded. Closes the gap
   // where a CIMD-minted token could carry a wrong audience/subject and fail RS verification.
+  // SCOPE: RequestAuthorizer IS the library's /mcp auth gate (adapters just extract the
+  // bearer and call it); the CIMD token is an ordinary audience-bound ES256 bridge token,
+  // so the transport/SDK layer is CIMD-agnostic. The full official-MCP-SDK round-trip is a
+  // non-frozen integration concern (test/e2e-mcp-sdk.test.ts, extended in the impl PR) and
+  // the owner-run CIMD-LIVE gate — deliberately NOT a peer-SDK dependency in this frozen suite.
   test("S6b.2 end-to-end: CIMD authorize → token → protected /mcp (RequestAuthorizer) succeeds", async () => {
     const VERIFIER_MOD = "../../../src/verifier.ts";
     const { RequestAuthorizer } = (await import(VERIFIER_MOD)) as any;
