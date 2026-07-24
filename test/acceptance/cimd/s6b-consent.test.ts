@@ -120,4 +120,26 @@ if (phases["s6b-cimd-flow"] !== true) {
       assert.equal((res.body as any).error, "invalid_consent");
     });
   }
+
+  // ISOLATION: the rows above all use a CIMD (lowercase-https) client_id, so the approve-time
+  // SCHEME gate would reject them anyway — they don't prove the claim-validity rule itself.
+  // With an OPAQUE client_id the scheme gate is satisfied, so ONLY the strict `=== true`
+  // check can reject: an impl that ignores a non-true cimd_verified would wrongly APPROVE.
+  for (const bad of [false, "true", 1] as any[]) {
+    test(`an OPAQUE client_id carrying a non-true cimd_verified (${JSON.stringify(bad)}) still invalidates the token (isolates claim validity from the scheme gate)`, async () => {
+      const config = cfg();
+      const b = bridgeFor(config, doc());
+      const now = Math.floor(NOW / 1000);
+      const token = await new jose.SignJWT({
+        typ: CONSENT_TYP, jti: "k".repeat(24), client_id: "opaque-consent-client", redirect_uri: HTTPS_REDIRECT,
+        resource: config.resource, scope: "mcp:read", code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+        cimd_verified: bad,
+      }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setIssuer(config.issuer).setAudience(CONSENT_AUDIENCE)
+        .setSubject("agent@test").setIssuedAt(now).setExpirationTime(now + 300).sign(enc(config.consentSigningSecret));
+      const res = await b.handleApprove({ query: {}, body: { consent_token: token, approved: "true" }, headers: { origin: "https://auth.test" }, ip: "1.2.3.4" });
+      assert.notEqual(res.status, 302, "must NOT be approved (no code issued)");
+      assert.equal(res.status, 400);
+      assert.equal((res.body as any).error, "invalid_consent");
+    });
+  }
 }

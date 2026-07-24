@@ -236,6 +236,27 @@ if (phases["s6b-cimd-flow"] !== true) {
     });
   }
 
+  // Decision 1a/6: the maxInFlight cap also bounds the UNAUTHENTICATED pre-IdP upstream
+  // resolve — an impl enforcing/auditing it only in direct prepare (letting upstream queue
+  // or bypass the cap) would otherwise pass. Saturate the cap through flow.handleAuthorize
+  // with a distinct id and assert the generic 401 + reason `overloaded`.
+  test("upstream boundary: a DISTINCT id at maxInFlight ⇒ generic 401 + audit reason `overloaded` (cap bounds the pre-IdP resolve)", async () => {
+    let release: (() => void) | undefined;
+    const hangingTransport = { connectAndGet() { return new Promise<any>((resolve) => { release = () => resolve(okResult()); }); } };
+    const { b, store, clock, audit } = makeBridge({ cimd: { enabled: true, maxInFlight: 1 }, cimdTransport: hangingTransport, cimdResolver: resolver() });
+    const identity = stubIdentity();
+    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: hangingTransport, cimdResolver: resolver() });
+    const first = flow.handleAuthorize(req(authQ())); // occupies the single in-flight slot
+    for (let i = 0; i < 50; i++) await new Promise<void>((r) => setImmediate(r));
+    // A capping impl REJECTS the distinct id; a queuing impl would hang here — bound it.
+    const overloaded = await withDeadline(flow.handleAuthorize(req(authQ({ client_id: "https://cdn.example.com/other" }))), 3000);
+    assertGeneric(overloaded);
+    assert.ok(fetchFail(audit).some((e: any) => e.reason === "overloaded"), "audited reason overloaded at the upstream boundary");
+    assert.equal(identity.hops, 0, "no IdP hop for an overloaded resolution");
+    release?.();
+    await withDeadline(first, 3000).catch(() => {});
+  });
+
   // The cimd:<ip> RateLimitPort denial is OUTSIDE the anti-oracle map: a
   // pre-resolution DIRECT 429 temporarily_unavailable, at BOTH direct + upstream,
   // keyed cimd:<ip> (alongside the existing upstream:<ip> guard on the flow path).
