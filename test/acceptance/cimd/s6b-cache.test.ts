@@ -35,6 +35,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   const START = Date.parse("2026-07-03T12:00:00.000Z");
   const ID = "https://cdn.example.com/client";
   const REDIRECT = "https://app.example.com/cb";
+  const ALLOWED2 = "https://also-allowed.example/cb"; // globally allowlisted, but ABSENT from the fetched CIMD document
   const PUBLIC = { address: "93.184.216.34", family: 4 };
   const GENERIC = { error: "invalid_client", error_description: "client_id could not be resolved" };
   const enc = (s: string) => new TextEncoder().encode(s);
@@ -48,7 +49,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     return createBridgeConfig({
       issuer: "https://auth.test", resource: "https://api.test/mcp",
       consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: jwk(), signingKeyId: "k",
-      redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
+      redirectAllowlist: [REDIRECT, ALLOWED2], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
       allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" }, cimd: { enabled: true, ...opts },
       accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 3600, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
     });
@@ -268,7 +269,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const s = setup({ t });
     assert.equal((await s.bridge.handleAuthorize(request(ID), { subject: "user-1" })).status, 200); // caches the doc (redirect_uris = [REDIRECT])
     assert.equal(t.calls, 1);
-    const evil = request(ID); (evil.query as any).redirect_uri = "https://evil.example/cb"; // not in the cached document
+    const evil = request(ID); (evil.query as any).redirect_uri = ALLOWED2; // globally allowlisted, absent from the fetched document → only the document matcher can reject it // not in the cached document
     const res = await s.bridge.handleAuthorize(evil, { subject: "user-1" });
     assert.notEqual(res.status, 302);
     assert.notEqual(res.status, 200);
@@ -281,7 +282,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const { flow } = makeFlow(t);
     assert.equal((await flow.handleAuthorize(request(ID))).status, 302); // caches the doc
     assert.equal(t.calls, 1);
-    const evil = request(ID); (evil.query as any).redirect_uri = "https://evil.example/cb";
+    const evil = request(ID); (evil.query as any).redirect_uri = ALLOWED2; // globally allowlisted, absent from the fetched document → only the document matcher can reject it
     const res = await flow.handleAuthorize(evil);
     assert.notEqual(res.status, 302);
     assert.equal((res.body as any)?.error, "invalid_client");

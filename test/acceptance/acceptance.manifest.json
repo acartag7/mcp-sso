@@ -8,7 +8,7 @@
     "cimd/s6b-anti-oracle.test.ts": "09bf012d9e972182d48cbaab2e839c26804ddce77250eaeb1d3a7fea7a7314da",
     "cimd/s6b-audit.test.ts": "17c8660147bc90dd685febad73e7f5bae198e1dc9290b90cd410ac7f44600bb2",
     "cimd/s6b-boot.test.ts": "e5e0f9d38adbb0b590a37f46ae9bb1ce78147be93412bb860a891a369a31f5ae",
-    "cimd/s6b-cache.test.ts": "f497f517540ac8dcd953896d08bea9a9819036ab026e20ff613fab8017fbfaf8",
+    "cimd/s6b-cache.test.ts": "330cb0373fec43c6d34459e87e8c1df011c945b0dcc5ce7a7281ea50ce8cd34e",
     "cimd/s6b-consent.test.ts": "e27d089880e423c92f5c24d0a06405e9d6552f1ed4477cf7094b3a9b60cff252",
     "cimd/s6b-dispatch.test.ts": "62b859193fa433712a39bb285b97495ff5d3f8dfaf69d6104c483d947d8ed835",
     "cimd/s6b-metadata.test.ts": "cd7160121f054aa15b98bf974b51e1ebad58cb9a16bd99b941fa1c6a1e2779ef",
