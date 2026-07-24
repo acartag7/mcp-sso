@@ -182,4 +182,27 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(res.status, 302);
     assert.ok(new URL(res.headers.location as string).searchParams.get("code"));
   });
+
+  // S6b.2 (verification.md): a CIMD client completes authorize → approve → token AND the
+  // minted access token is ACCEPTED at the resource-server / protected /mcp boundary
+  // (framework-free RequestAuthorizer — no peer dep) — not just decoded. Closes the gap
+  // where a CIMD-minted token could carry a wrong audience/subject and fail RS verification.
+  test("S6b.2 end-to-end: CIMD authorize → token → protected /mcp (RequestAuthorizer) succeeds", async () => {
+    const VERIFIER_MOD = "../../../src/verifier.ts";
+    const { RequestAuthorizer } = (await import(VERIFIER_MOD)) as any;
+    const c = config("stateless"); // cimd enabled by default
+    const clock = new FakeClock(NOW);
+    const b = new Bridge({ config: c, store: new MemoryStore(), clock, audit: new MemoryAudit(), cimdTransport: transport(), cimdResolver: resolver() });
+    const page = await b.handleAuthorize(reqQ(authQ(CIMD_ID, "mcp:read")), { subject: SUBJECT, allowedScopes: ["mcp:read"] });
+    assert.equal(page.status, 200, "CIMD authorize renders consent");
+    const approve = await b.handleApprove(reqB({ consent_token: consentOf(String(page.body)), approved: "true" }, { origin: "https://auth.test" }));
+    assert.equal(approve.status, 302, "approved → code");
+    const code = new URL(approve.headers.location as string).searchParams.get("code");
+    const token = await b.handleToken(reqB({ grant_type: "authorization_code", code, redirect_uri: CIMD_REDIRECT, client_id: CIMD_ID, code_verifier: VERIFIER }));
+    assert.equal(token.status, 200, "token minted for the CIMD client");
+    const accessToken = (token.body as any).access_token;
+    const rs = new RequestAuthorizer({ config: c, clock, audit: new MemoryAudit() });
+    const verified = await rs.authorize({ authorization: `Bearer ${accessToken}`, requiredScope: "mcp:read" });
+    assert.equal(verified.subject, SUBJECT, "the CIMD-minted token verifies at the resource server with the resolved subject");
+  });
 }
