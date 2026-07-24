@@ -70,6 +70,25 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(JSON.stringify(audit.events).includes(DOC_SENTINEL), false, "the success event must not carry fetched document field values");
   });
 
+  // Decision 1b: the upstream authorize resolve (flow.handleAuthorize, before the IdP 302)
+  // also pins an oauth.cimd.fetch SUCCESS — an impl auditing it in direct prepare but not
+  // in the flow would leave Hosted-Claude/Entra CIMD successes unaudited.
+  test("upstream success: flow.handleAuthorize resolves the CIMD doc and audits oauth.cimd.fetch success WITHOUT leaking document fields", async () => {
+    const FLOW_MOD = "../../../src/adapters/upstream-flow.ts";
+    const { createUpstreamRedirectFlow } = (await import(FLOW_MOD)) as any;
+    const UP_SENTINEL = "UPSTREAM_SUCCESS_DOC_SENTINEL_zzz";
+    const audit = new MemoryAudit();
+    const store = new MemoryStore();
+    const clock = new FakeClock(NOW);
+    const b = new Bridge({ config: cfg(), store, clock, audit, cimdTransport: transport(() => okResult()), cimdResolver: resolver() });
+    const identity = { redirectUri: "https://auth.test/oauth/callback", buildAuthorizationUrl({ state }: any) { return `https://idp.test/a?state=${state}`; }, async exchangeAndVerify() { return { ok: true, identity: { subject: "up@test" } }; } };
+    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: transport(() => okResult({ doc: cimdDoc({ client_name: UP_SENTINEL }) })), cimdResolver: resolver() });
+    const res = await flow.handleAuthorize({ query: { response_type: "code", client_id: CIMD_ID, redirect_uri: CIMD_REDIRECT, code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256", scope: "mcp:read", state: "s" }, body: undefined, headers: {}, ip: "1.2.3.4" });
+    assert.equal(res.status, 302, "resolved + 302 to the IdP");
+    assert.ok(fetchEvents(audit).some((e: any) => e.status === "success"), "upstream success event recorded (dec 1b)");
+    assert.equal(JSON.stringify(audit.events).includes(UP_SENTINEL), false, "no document field leaks into the upstream success audit");
+  });
+
   test("failure: a blocked resolution emits oauth.cimd.fetch failure with the SPECIFIC reason", async () => {
     const { run, audit } = drive(transport(() => okResult()), resolver([{ address: "10.0.0.1", family: 4 }]));
     await run();

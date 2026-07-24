@@ -303,10 +303,16 @@ if (phases["s6b-cimd-flow"] !== true) {
     }
   });
 
-  test("flow-token parse ignores unknown members of a valid cimd claim (projects fresh named fields only)", async () => {
+  test("flow-token parse ignores unknown members; the consent JWT carries ONLY cimd_verified (no CIMD field base64url-smuggled)", async () => {
     const { res } = await callbackWith({ cimd: validClaim({ unknown: "SIGNED_UNKNOWN_MEMBER_SECRET" }), params: baseParams() });
     assert.equal(res.status, 200, "unknown members are ignored; the flow proceeds");
-    assert.equal(String(res.body).includes("SIGNED_UNKNOWN_MEMBER_SECRET"), false, "the unknown member never surfaces");
+    assert.equal(String(res.body).includes("SIGNED_UNKNOWN_MEMBER_SECRET"), false, "the unknown member never surfaces in the HTML");
+    // Decode the consent JWT — a raw-HTML search would MISS a field base64url-encoded into the token (dec 1c).
+    const ct = /name="consent_token" value="([^"]+)"/.exec(String(res.body))?.[1];
+    assert.ok(ct, "consent token rendered");
+    const payload: any = jose.decodeJwt(ct!);
+    assert.equal(JSON.stringify(payload).includes("SIGNED_UNKNOWN_MEMBER_SECRET"), false, "the unknown member is not smuggled into the consent JWT");
+    for (const f of ["cimd", "client_name", "redirect_uris", "unknown"]) assert.equal(Object.hasOwn(payload, f), false, `consent JWT must not carry CIMD field ${f}`);
   });
 
   // ---- prepare's defensive redirect re-check (direct, via the registration option) ----
