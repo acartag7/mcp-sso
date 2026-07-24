@@ -37,21 +37,22 @@ if (phases["s6b-cimd-flow"] !== true) {
   async function* one(u8: Uint8Array) { yield u8; }
   const cimdDoc = (over: any = {}) => ({ client_id: CIMD_ID, client_name: "Example App", redirect_uris: [CIMD_REDIRECT], ...over });
   const okResult = (o: any = {}) => ({ status: o.status ?? 200, redirected: o.redirected ?? false, finalUrl: CIMD_ID, headersDistinct: o.headersDistinct ?? { "content-type": ["application/json"] }, encodedBody: o.body ?? one(enc(JSON.stringify(o.doc ?? cimdDoc()))) });
-  function transport(factory: any, opts: any = {}) { return { connectAndGet() { if (opts.throw) return Promise.reject(new Error("EXC_TEXT_LEAK_SECRET")); return Promise.resolve(typeof factory === "function" ? factory() : factory); } }; }
+  function transport(factory: any, opts: any = {}) { return { connectAndGet() { if (opts.never) return new Promise(() => {}); if (opts.throw) return Promise.reject(new Error("EXC_TEXT_LEAK_SECRET")); return Promise.resolve(typeof factory === "function" ? factory() : factory); } }; }
   function resolver(answer: any = [PUBLIC]) { return { resolve() { return Promise.resolve(answer); }, cancel() {} }; }
 
   class FakeClock { ms: number; constructor(ms: number) { this.ms = ms; } nowMs() { return this.ms; } }
   class MemoryAudit { events: any[] = []; async writeAuthEvent(e: any) { this.events.push(e); } }
   function jwk(): any { const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" }); return { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" }; }
-  function cfg(): any {
+  function cfg(cimd: any = { enabled: true }): any {
     return createBridgeConfig({
       issuer: "https://auth.test", resource: "https://api.test/mcp",
       consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: jwk(), signingKeyId: "k",
       redirectAllowlist: ["https://client.test/cb"], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
-      allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" }, cimd: { enabled: true },
+      allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" }, cimd,
       accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
     });
   }
+  const withDeadline = (p: any, ms = 5000): Promise<any> => { let tm: any; const d = new Promise((_, rej) => { tm = setTimeout(() => rej(new Error(`deadline ${ms}ms`)), ms); }); return Promise.race([p, d]).finally(() => clearTimeout(tm)); };
   function drive(t: any, r: any) {
     const audit = new MemoryAudit();
     const b = new Bridge({ config: cfg(), store: new MemoryStore(), clock: new FakeClock(NOW), audit, cimdTransport: t, cimdResolver: r });
@@ -92,4 +93,29 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.ok(!JSON.stringify(audit.events).includes("EXC_TEXT_LEAK_SECRET"), "exception text never in audit");
     assert.ok(fetchEvents(audit).some((e: any) => e.status === "failure" && e.reason === "fetch_failed"), "fixed allowlisted reason fetch_failed");
   });
+
+  // S6b.4 / decision 2: the reason is a STABLE per-failure machine code operators rely on —
+  // pin EVERY CimdReason to its specific stimulus, not just "some failure event exists".
+  const reasonCases: Array<{ name: string; reason: string; t?: any; r?: any; clientId?: string; cimd?: any }> = [
+    { name: "admission (encoded dot-segment)", reason: "url_admission_denied", clientId: "https://cdn.example.com/a/%2e%2e/b" },
+    { name: "dns zero-record", reason: "dns_failed", r: () => resolver([]) },
+    { name: "ip_blocked", reason: "ip_blocked", r: () => resolver([{ address: "10.0.0.1", family: 4 }]) },
+    { name: "redirect refused", reason: "redirect_refused", t: () => transport(() => okResult({ redirected: true })) },
+    { name: "status !== 200", reason: "status_not_200", t: () => transport(() => okResult({ status: 404 })) },
+    { name: "wrong content-type", reason: "content_type", t: () => transport(() => okResult({ headersDistinct: { "content-type": ["text/html"] } })) },
+    { name: "content-encoding present", reason: "encoding", t: () => transport(() => okResult({ headersDistinct: { "content-type": ["application/json"], "content-encoding": ["gzip"] } })) },
+    { name: "over-cap body", reason: "size_exceeded", cimd: { enabled: true, maxDocumentBytes: 1024 }, t: () => transport(() => okResult({ body: one(enc("x".repeat(4000))) })) },
+    { name: "timeout", reason: "timeout", cimd: { enabled: true, fetchTimeoutMs: 1000 }, t: () => transport(null, { never: true }) },
+    { name: "document invalid (client_id mismatch)", reason: "document_invalid", t: () => transport(() => okResult({ doc: { client_id: "https://evil.example/x", client_name: "x", redirect_uris: [CIMD_REDIRECT] } })) },
+    { name: "non-CimdError throw", reason: "fetch_failed", t: () => transport(null, { throw: true }) },
+  ];
+  for (const rc of reasonCases) {
+    test(`audit reason matrix: ${rc.name} ⇒ oauth.cimd.fetch failure reason "${rc.reason}"`, async () => {
+      const audit = new MemoryAudit();
+      const b = new Bridge({ config: cfg(rc.cimd ?? { enabled: true }), store: new MemoryStore(), clock: new FakeClock(NOW), audit, cimdTransport: rc.t ? rc.t() : transport(() => okResult()), cimdResolver: rc.r ? rc.r() : resolver() });
+      const req = { query: { response_type: "code", client_id: rc.clientId ?? CIMD_ID, redirect_uri: CIMD_REDIRECT, code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256", scope: "mcp:read" }, body: undefined, headers: {}, ip: "1.2.3.4" };
+      await withDeadline(b.handleAuthorize(req, { subject: "agent@test" }));
+      assert.ok(fetchEvents(audit).some((e: any) => e.status === "failure" && e.reason === rc.reason), `expected oauth.cimd.fetch failure reason "${rc.reason}"`);
+    });
+  }
 }

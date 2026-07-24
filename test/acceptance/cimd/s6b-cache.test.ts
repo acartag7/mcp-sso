@@ -73,6 +73,9 @@ if (phases["s6b-cimd-flow"] !== true) {
     return { c, clock, store, audit, t, bridge };
   }
   const authorize = (b: any) => b.handleAuthorize(request(), { subject: "user-1" });
+  // Bound any await that depends on the impl's concurrency behavior — a queuing (non-coalescing)
+  // or unbounded impl would otherwise HANG node --test (no per-test timeout) instead of failing.
+  const withDeadline = (p: any, ms = 3000): Promise<any> => { let tm: any; const d = new Promise((_, rej) => { tm = setTimeout(() => rej(new Error(`test deadline ${ms}ms exceeded — single-flight follower not coalesced / overload not rejected`)), ms); }); return Promise.race([p, d]).finally(() => clearTimeout(tm)); };
 
   test("direct-mode prepare serves a fresh cache hit with no second fetch", async () => {
     const s = setup();
@@ -201,14 +204,14 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(calls, 1, "same raw id ⇒ one in-flight fetch");
     // A DISTINCT id at the cap must REJECT (overloaded), never QUEUE — a queuing impl would
     // hang here (the slot frees only on release, which is after this await), so bound it.
-    let tm: any;
-    const deadline = new Promise((_, rej) => { tm = setTimeout(() => rej(new Error("distinct id at maxInFlight must reject overloaded, not queue")), 3000); });
-    const overloaded = await Promise.race([s.bridge.handleAuthorize(request("https://cdn.example.com/b"), { subject: "user-1" }), deadline]).finally(() => clearTimeout(tm)) as any;
+    const overloaded = await withDeadline(s.bridge.handleAuthorize(request("https://cdn.example.com/b"), { subject: "user-1" })) as any;
     assert.deepEqual(overloaded.body, GENERIC, "overloaded maps to the decision-2 generic");
     assert.equal(overloaded.status, 401);
     assert.ok(s.audit.events.some((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure" && e.reason === "overloaded"), "audited reason overloaded (decision 6)");
     release?.();
-    assert.equal((await a).status, 200); assert.equal((await b).status, 200);
+    // A QUEUING (non-coalescing) impl leaves b's second fetch unreleased, so an unbounded
+    // `await b` would HANG node --test — bound both follower awaits so the regression fails fast.
+    assert.equal((await withDeadline(a)).status, 200); assert.equal((await withDeadline(b)).status, 200);
     assert.equal(calls, 1, "the follower coalesced onto the single in-flight fetch");
   });
 
