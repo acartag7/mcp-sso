@@ -2,13 +2,15 @@
 // Error channels follow RFC 6749 §4.1.2.1: pre-validation errors are direct 4xx
 // (untrusted redirect destination); post-validation errors are tagged with a
 // redirect target so the adapter can 302 them. Scope accumulation (RC item c)
-// runs in stored-DCR mode only, deriving prior grants from active refresh tokens.
+// runs for stored-DCR OPAQUE clients only — every scheme-shaped (CIMD) client
+// stands alone (§17.1.6 decision 3). CIMD resolution is one of the two named
+// resolution boundaries (decision 2): it happens inside `prepare`'s
+// pre-validation, and every failure maps to the anti-oracle generic there.
 
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { StorePort } from "./ports/store.ts";
 import type { BridgeConfig } from "./config.ts";
-import { originOf } from "./config.ts";
 import type { ConsentRequestClaims } from "./crypto.ts";
 import { OAuthError, withRedirect } from "./errors.ts";
 import {
@@ -16,14 +18,23 @@ import {
   signConsentToken, verifyConsentToken,
 } from "./crypto.ts";
 import { assertAllowedScopesCeiling, normalizeScopes } from "./scopes.ts";
-import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "./redirect.ts";
 import { buildErrorRedirect } from "./challenge.ts";
+import type { CimdResolver } from "./cimd/resolve.ts";
+import type { CimdRegistration } from "./cimd/registration.ts";
+import {
+  accumulationAllowed, assertApproveCimdGate, assertApproveOrigin, cimdDisplay, dedupe, hostOf,
+  redirectWithCode, requiredStr, resolveAuthorizeClient,
+  type CimdConsentDisplay,
+} from "./authorize-internals.ts";
 
 export interface OAuthAuthorizationDeps {
   config: BridgeConfig;
   store: StorePort;
   clock: ClockPort;
   audit: AuditPort;
+  /** The shared CIMD resolution service (§17.1.6 decision 1a/4) — the Bridge
+   *  constructs one per instance so direct and upstream share ONE cache. */
+  cimd?: CimdResolver;
 }
 
 export interface AuthorizeRequestInput {
@@ -41,13 +52,25 @@ export interface AuthorizeRequestInput {
    *  present, requested/default scopes are narrowed by intersection and the
    *  ceiling is embedded in the consent token for `approve` to re-intersect. */
   allowedScopes?: string[];
+  /** A CIMD registration already validated THIS flow and carried forward under
+   *  the flow cookie's signature (§17.1.6 decision 1c). Orchestrator-resolved
+   *  TRUSTED state, the same category as `subject`/`allowedScopes`: ONLY
+   *  `createUpstreamRedirectFlow` (after its row-5a gate) may set it, and
+   *  adapters MUST NEVER bind it to any client-controlled request field. When
+   *  present `prepare` uses it and does NOT re-fetch. */
+  registration?: CimdRegistration;
+  /** Client IP for the `cimd:<ip>` pre-resolution rate-limit key. */
+  ip?: string;
 }
 
 export interface PreparedConsent extends ConsentRequestClaims {
   consentToken: string;
-  /** Already-granted scopes for (subject, clientId); [] in stateless mode.
+  /** Already-granted scopes for (subject, clientId); [] in stateless mode AND
+   *  for every scheme-shaped client_id (§17.1.6 decision 3).
    *  The consent UI renders scopes not in this set as "new". */
   priorScopes: string[];
+  /** Display-only CIMD fields (§17.1.4); absent for non-CIMD flows. */
+  cimd?: CimdConsentDisplay;
 }
 
 export interface ApproveInput {
@@ -71,12 +94,14 @@ export class OAuthAuthorizationUseCase {
   private readonly store: StorePort;
   private readonly clock: ClockPort;
   private readonly audit: AuditPort;
+  private readonly cimd?: CimdResolver;
 
   constructor(deps: OAuthAuthorizationDeps) {
     this.config = deps.config;
     this.store = deps.store;
     this.clock = deps.clock;
     this.audit = deps.audit;
+    this.cimd = deps.cimd;
   }
 
   async prepare(input: AuthorizeRequestInput): Promise<PreparedConsent> {
@@ -90,7 +115,15 @@ export class OAuthAuthorizationUseCase {
       // so a direct caller bypassing Bridge.resolveIdentity is still guarded.
       const ceiling = assertAllowedScopesCeiling(input.allowedScopes);
       clientId = requiredStr(input.clientId, "client_id");
-      redirectUri = await this.resolveRedirect(input.redirectUri, clientId);
+      // §17.1.6 decision 1a: shape-first dispatch. For a CIMD id this REPLACES
+      // the §10 check entirely (no store.find miss); every other scheme-shaped
+      // value is a direct invalid_client.
+      const resolved = await resolveAuthorizeClient({
+        config: this.config, cimd: this.cimd, clientId,
+        redirectUri: requiredStr(input.redirectUri, "redirect_uri"),
+        registration: input.registration, ip: input.ip,
+      });
+      redirectUri = resolved.redirectUri;
       const state = input.state;
 
       // --- POST-VALIDATION: redirect-tagged errors ---
@@ -115,20 +148,32 @@ export class OAuthAuthorizationUseCase {
         if (ceiling && scopes.length === 0) {
           throw new OAuthError("access_denied", "No requested scopes are within the authorized ceiling");
         }
-        claims = { clientId, redirectUri, resource, scopes, codeChallenge, codeChallengeMethod: "S256", state, subject: input.subject, allowedScopes: ceiling };
+        claims = {
+          clientId, redirectUri, resource, scopes, codeChallenge, codeChallengeMethod: "S256",
+          state, subject: input.subject, allowedScopes: ceiling,
+          // Provenance for THIS flow only (decision 3): a genuinely-validated
+          // CIMD registration — its own fetch/cache hit, or the carried one.
+          ...(resolved.registration ? { cimdVerified: true as const } : {}),
+        };
       } catch (error) {
         if (error instanceof OAuthError && !error.redirect) throw withRedirect(error, redirectUri, state);
         throw error;
       }
 
-      const rawPrior = this.config.dcr.mode === "stored"
+      // §17.1.6 decision 3 (NEGATIVE class): accumulate iff stored-DCR AND NOT
+      // scheme-shaped. Never keyed on cimd_verified.
+      const rawPrior = accumulationAllowed(this.config, clientId)
         ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString())
         : [];
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
       const priorScopes = claims.allowedScopes ? rawPrior.filter((s) => claims.allowedScopes!.includes(s)) : rawPrior;
       const consentToken = await signConsentToken(claims, this.config, this.clock);
+      await resolved.emitCimdSuccess(); // decision 1b: success audited only once the flow proceeds
       await this.auditSuccess(AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject: input.subject });
-      return { consentToken, ...claims, priorScopes };
+      return {
+        consentToken, ...claims, priorScopes,
+        ...(resolved.registration ? { cimd: cimdDisplay(resolved.registration, redirectUri) } : {}),
+      };
     } catch (error) {
       await this.auditFailure(AUDIT_PREPARE, error, clientId, input.redirectUri);
       throw error;
@@ -137,9 +182,13 @@ export class OAuthAuthorizationUseCase {
 
   async approve(input: ApproveInput): Promise<ApproveResult> {
     try {
-      this.assertOrigin(input.origin);
+      assertApproveOrigin(this.config, input.origin);
       const token = requiredStr(input.consentToken, "consent_token");
       const consent = await verifyConsentToken(token, this.config, this.clock);
+      // §17.1.6 decision 3: the scheme/claim gate runs FIRST — before the Deny
+      // branch (which would 302 to the token's redirectUri), before any jti
+      // consume or code storage. A legacy URL-shaped token cannot be redeemed.
+      assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
 
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
       if (input.approved !== true) {
@@ -154,8 +203,8 @@ export class OAuthAuthorizationUseCase {
         throw new OAuthError("invalid_grant", "Consent token has already been used");
       }
 
-      // Scope accumulation: stored mode unions requested + active grants (RC c).
-      const priorScopes = this.config.dcr.mode === "stored"
+      // Scope accumulation: stored-DCR OPAQUE clients only (§17.1.6 decision 3).
+      const priorScopes = accumulationAllowed(this.config, consent.clientId)
         ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(this.clock.nowMs()).toISOString())
         : [];
       const union = dedupe([...consent.scopes, ...priorScopes]);
@@ -183,25 +232,6 @@ export class OAuthAuthorizationUseCase {
     }
   }
 
-  /** Pre-validation redirect resolution. Stored mode: per-client policy (RC b);
-   *  stateless: the global allowlist. Both throw direct (untrusted destination). */
-  private async resolveRedirect(value: string | undefined, clientId: string): Promise<string> {
-    const raw = requiredStr(value, "redirect_uri");
-    if (this.config.dcr.mode === "stored") {
-      const client = await this.config.dcr.store.find(clientId);
-      if (!client) throw new OAuthError("invalid_client", "Unknown client_id", 401);
-      return assertRedirectAllowedForClient(raw, client);
-    }
-    return assertAllowedRedirectUri(raw, this.config.redirectAllowlist);
-  }
-
-  private assertOrigin(origin: string | undefined): void {
-    const issuerOrigin = originOf(this.config.issuer);
-    if (!origin || (!this.config.allowedOrigins.includes(origin) && origin !== issuerOrigin)) {
-      throw new OAuthError("invalid_origin", "Origin not allowed", 403);
-    }
-  }
-
   private async auditSuccess(event: typeof AUDIT_PREPARE | typeof AUDIT_APPROVE, r: { clientId: string; redirectUri: string; resource: string; scopes: string[]; subject: string; }): Promise<void> {
     await this.audit.writeAuthEvent({
       occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status: "success",
@@ -216,33 +246,4 @@ export class OAuthAuthorizationUseCase {
       reason: error instanceof OAuthError ? error.code : "internal_error",
     });
   }
-}
-
-function redirectWithCode(redirectUri: string, code: string, issuer: string, state?: string): string {
-  const url = new URL(redirectUri);
-  url.searchParams.set("code", code);
-  url.searchParams.set("iss", issuer); // RFC 9207 (RC item a)
-  if (state) url.searchParams.set("state", state);
-  url.hash = "";
-  return url.href;
-}
-
-function hostOf(value: string): string | undefined {
-  try {
-    const u = new URL(value);
-    return `${u.protocol}//${u.host}`;
-  } catch {
-    return undefined;
-  }
-}
-
-function dedupe(values: string[]): string[] {
-  const out: string[] = [];
-  for (const v of values) if (!out.includes(v)) out.push(v);
-  return out;
-}
-
-function requiredStr(value: string | undefined, label: string): string {
-  if (typeof value === "string" && value) return value;
-  throw new OAuthError("invalid_request", `${label} is required`);
 }

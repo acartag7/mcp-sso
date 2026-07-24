@@ -10,6 +10,7 @@ import type { ClockPort } from "./ports/clock.ts";
 import type { BridgeConfig } from "./config.ts";
 import { scopeString } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
+import { consentSecret, signKey, verifyKey } from "./crypto-keys.ts";
 
 const CONSENT_AUDIENCE = "mcp-sso/consent";
 const CONSENT_TYP = "mcp-sso-consent";
@@ -31,6 +32,11 @@ export interface ConsentRequestClaims {
    *  not from client-resupplied input. Undefined when the identity port set no
    *  ceiling (old behavior: no narrowing). */
   allowedScopes?: string[];
+  /** CIMD provenance for the CURRENT flow (§17.1.6 decision 3): minted as
+   *  `cimd_verified: true` ONLY when `prepare` established the registration by
+   *  genuine validation this flow. OMITTED when absent/false — never
+   *  `cimd_verified: false`. It is NEVER a scope-accumulation entitlement. */
+  cimdVerified?: true;
 }
 
 export interface AccessTokenClaims {
@@ -101,6 +107,7 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
     code_challenge_method: claims.codeChallengeMethod,
     state: claims.state,
     allowed_scopes: claims.allowedScopes === undefined ? undefined : scopeString(claims.allowedScopes),
+    ...(claims.cimdVerified === true ? { cimd_verified: true } : {}),
   }).setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(config.issuer)
     .setAudience(CONSENT_AUDIENCE)
@@ -163,43 +170,6 @@ export function expiresAtIso(clock: ClockPort, ttlSeconds: number): string {
   return new Date(clock.nowMs() + ttlSeconds * 1000).toISOString();
 }
 
-// --- fix #6: memoized key imports (WeakMap keyed by the stable private-JWK ref) ---
-// jose's importJWK returns CryptoKey | Uint8Array (CryptoKey for our EC keys). We
-// infer it via the function's own return type rather than naming CryptoKey
-// directly (that global's availability depends on the DOM lib / @types/node).
-type ImportedKey = Awaited<ReturnType<typeof importJWK>>;
-
-const signKeyCache = new WeakMap<JWK, Promise<ImportedKey>>();
-const verifyKeyCache = new WeakMap<JWK, Promise<ImportedKey>>();
-
-function signKey(config: BridgeConfig): Promise<ImportedKey> {
-  return cached(signKeyCache, config.signingPrivateJwk, () => importJWK(config.signingPrivateJwk, "ES256"));
-}
-
-function verifyKey(config: BridgeConfig): Promise<ImportedKey> {
-  return cached(verifyKeyCache, config.signingPrivateJwk, () => importJWK(publicJwk(config), "ES256"));
-}
-
-function cached(map: WeakMap<JWK, Promise<ImportedKey>>, jwk: JWK, load: () => Promise<ImportedKey>): Promise<ImportedKey> {
-  let p = map.get(jwk);
-  if (!p) {
-    p = load();
-    map.set(jwk, p);
-  }
-  return p;
-}
-
-// Same fix-#6 discipline for the HS256 consent key: encode once per (frozen) config.
-const consentSecretCache = new WeakMap<BridgeConfig, Uint8Array>();
-function consentSecret(config: BridgeConfig): Uint8Array {
-  let secret = consentSecretCache.get(config);
-  if (!secret) {
-    secret = new TextEncoder().encode(config.consentSigningSecret);
-    consentSecretCache.set(config, secret);
-  }
-  return secret;
-}
-
 function keyId(config: BridgeConfig): string | undefined {
   return config.signingKeyId ?? stringClaim(config.signingPrivateJwk.kid);
 }
@@ -220,7 +190,17 @@ function consentClaims(payload: JWTPayload): ConsentRequestClaims {
     state: stringClaim(payload.state),
     subject: requiredString(payload.sub, "sub"),
     allowedScopes,
+    ...cimdVerifiedClaim(payload),
   };
+}
+
+/** Strict `=== true` is the SOLE true path (§17.1.6 decision 3). ANY present
+ *  non-`true` value (`false`, `"true"`, `1`, `0`, `null`) INVALIDATES the
+ *  token — a `!!x`/`== true` read would wrongly accept `1`/`"true"`. */
+function cimdVerifiedClaim(payload: JWTPayload): { cimdVerified?: true } {
+  if (!Object.hasOwn(payload, "cimd_verified")) return {};
+  if (payload.cimd_verified !== true) throw new Error("cimd_verified must be true when present");
+  return { cimdVerified: true };
 }
 
 function accessClaims(payload: JWTPayload): VerifiedAccessToken {

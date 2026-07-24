@@ -16,12 +16,13 @@ import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
-import { AuthConfigError, originOf, pathAfterOrigin, type BridgeConfig } from "../config.ts";
+import { AuthConfigError, originOf, pathAfterOrigin } from "../config.ts";
 import { OAuthError } from "../errors.ts";
-import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "../redirect.ts";
 import { pkceChallenge } from "../crypto.ts";
 import { queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { redactForStderr } from "../audit/util.ts";
+import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
+import { resolveUpstreamAuthorizeClient, assertCallbackCimdPolicy } from "./upstream-flow-cimd.ts";
 import {
   OAUTH_PARAM_KEYS, CALLBACK_DUP_KEYS_EXPORT, assertCallbackPath, resolveCookieProfile,
   setCookieValue, clearCookieValue, readFlowCookie, flowCookieOversized, signFlowToken,
@@ -44,6 +45,11 @@ export interface UpstreamFlowDeps {
   callbackPath?: string;
   /** Flow-cookie TTL in seconds; default 600, max 3600. */
   flowTtlSeconds?: number;
+  /** BELOW-GUARD CIMD test seams (§17.1.5 rule 14 / §17.1.6 decision 1e),
+   *  mirroring `BridgeDeps`. The guard pipeline always runs around them and
+   *  they can never widen `allowLoopback` or the caps. */
+  cimdTransport?: CimdTransport;
+  cimdResolver?: DnsResolver;
 }
 
 export interface UpstreamRedirectFlow {
@@ -74,6 +80,14 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
     throw new AuthConfigError(`identity.redirectUri must equal issuerOrigin + callbackPath ('${issuerOrigin + callbackPath}')`);
   }
   const cookieProfile = resolveCookieProfile(issuer);
+  // §17.1.6 decision 4: the SAME CimdResolver instance the Bridge owns, so its
+  // success cache / single-flight / in-flight cap are shared across BOTH modes.
+  // Only the below-guard fetcher differs when this factory carries its own
+  // seams — the caps and allowLoopback still come from the validated config.
+  const cimd = bridge.cimd;
+  const cimdFetcher = cimd.enabled && (deps.cimdTransport !== undefined || deps.cimdResolver !== undefined)
+    ? cimd.createFetcher(deps.cimdTransport, deps.cimdResolver)
+    : undefined;
 
   const guard = async (req: NormRequest, prefix: string): Promise<void> => {
     let allowed = true;
@@ -91,17 +105,33 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       }
       const clientId = queryString(req.query, "client_id");
       if (!clientId) return directErrorResponse("invalid_request", "client_id is required"); // step 3
-      // §10 pre-validation — the redirect_uri signed into the flow cookie must be
-      // validated to the MODE-APPROPRIATE policy so the callback's redirect-channel
-      // errors (rows 7/8/10/11, which fire before bridge.handleAuthorize→prepare)
-      // only ever target a §10-validated URI. Mirrors authorize.ts resolveRedirect:
-      // stored mode ⇒ §10.2 per-client (resolve the client first); stateless ⇒ §10.1.
-      await resolveAuthorizeRedirect(bridge.config, clientId, queryString(req.query, "redirect_uri") ?? "");
+      // Step 3a — §17.1.6 decision 1a/1b: shape-first dispatch + (for a CIMD id)
+      // resolve-once through the SHARED success cache and match the presented
+      // redirect_uri against the validated document, ALL before any Set-Cookie
+      // or IdP 302. For an opaque id this is the unchanged mode-appropriate §10
+      // pre-validation, so the callback's redirect-channel errors (rows
+      // 7/8/10/11) only ever target a validated URI. Every CIMD failure is
+      // mapped to the decision-2 generic INSIDE this boundary.
+      const presentedRedirect = queryString(req.query, "redirect_uri") ?? "";
+      const resolved = await resolveUpstreamAuthorizeClient({
+        config: bridge.config, cimd, fetcher: cimdFetcher, clientId,
+        redirectUri: presentedRedirect, ip: req.ip,
+      });
       const params = gatherOAuthParams(req); // step 4
       const state = randomToken(), nonce = randomToken(), codeVerifier = randomToken();
       const jti = `upf_${randomToken()}`;
-      const flowJwt = await signFlowToken({ secret, issuer, clock, jti, state, nonce, codeVerifier, params, ttlSeconds: flowTtlSeconds });
-      if (flowCookieOversized(cookieProfile, flowJwt, flowTtlSeconds)) return directErrorResponse("invalid_request", "request parameters too large");
+      const flowJwt = await signFlowToken({
+        secret, issuer, clock, jti, state, nonce, codeVerifier, params, ttlSeconds: flowTtlSeconds,
+        ...(resolved.registration === undefined ? {} : { cimd: resolved.registration }),
+      });
+      if (flowCookieOversized(cookieProfile, flowJwt, flowTtlSeconds)) {
+        // 1b: for a CIMD id the oversize residual maps to the SAME generic
+        // invalid_client (never invalid_request — that would be a content
+        // oracle) and audits a FAILURE reason `oversize`, never a success.
+        if (resolved.registration !== undefined) throw await cimd.rejectAfterResolve("oversize", clientId, req.ip);
+        return directErrorResponse("invalid_request", "request parameters too large");
+      }
+      await resolved.emitSuccess(); // decision 1b: success only AFTER the oversize guard
       const location = identity.buildAuthorizationUrl({ state, nonce, codeChallenge: pkceChallenge(codeVerifier), codeChallengeMethod: "S256" });
       return { status: 302, headers: { location, "set-cookie": setCookieValue(cookieProfile, flowJwt, flowTtlSeconds) }, redirect: location };
     } catch (error) {
@@ -130,6 +160,12 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       if (!clientRedirectUri) { await emit("failure", "flow_cookie_invalid"); return clear(directErrorResponse("invalid_request", "flow cookie invalid")); }
       const queryState = queryString(req.query, "state");
       if (!queryState || !timingSafeStringEqual(queryState, claims.state)) { await emit("failure", "state_mismatch", clientId); return clear(directErrorResponse("invalid_request", "state mismatch")); } // row 5
+      // Row 5a (§17.1.6 decision 1d(ii)): the CIMD claim/mode/redirect matrix,
+      // AFTER the state match and BEFORE jti consumption, the exchange, and
+      // every redirect-channel branch (rows 7/8/10/11) — otherwise an
+      // internally-inconsistent signed cookie would 302 an OAuth error to an
+      // unmatched params.redirect_uri.
+      if (!assertCallbackCimdPolicy(bridge.config, claims)) { await emit("failure", "flow_cookie_invalid", clientId); return clear(directErrorResponse("invalid_request", "flow cookie invalid")); }
       let firstUse: boolean; // row 6: single-use jti — consumed BEFORE the IdP-error branch and the exchange
       try { firstUse = await store.consumeConsentJti(claims.jti, new Date(claims.exp * 1000).toISOString()); } catch { await emit("failure", "internal_error", clientId); return clear(directErrorResponse("internal_error", "OAuth request failed", 500)); }
       if (!firstUse) { await emit("failure", "flow_replayed", clientId); return clear(directErrorResponse("invalid_request", "flow already used")); }
@@ -149,7 +185,15 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       await emitIdentityVerify("success", undefined, exchange.identity.subject, ip); // identity decision reached
       const synthetic: NormRequest = { query: pickOAuthParams(claims.params), body: undefined, headers: req.headers, ip }; // rows 12/13 — ceiling travels
       let bridgeResp: NormResponse;
-      try { bridgeResp = await bridge.handleAuthorize(synthetic, { subject: exchange.identity.subject, allowedScopes: exchange.identity.allowedScopes }); }
+      try {
+        bridgeResp = await bridge.handleAuthorize(synthetic, {
+          subject: exchange.identity.subject, allowedScopes: exchange.identity.allowedScopes,
+          // §17.1.6 decision 1c/1d: the carried registration — validated once at
+          // authorize, integrity-covered by the flow-cookie signature, gated by
+          // row 5a above. `prepare` uses it and does NOT re-fetch.
+          ...(claims.cimd === undefined ? {} : { registration: claims.cimd }),
+        });
+      }
       catch { await emit("failure", "internal_error", clientId); return clear(directErrorResponse("internal_error", "OAuth request failed", 500)); }
       if (bridgeResp.status === 200) { await emit("success", undefined, clientId); return clear(bridgeResp); } // row 13: consent page (the direct callback response)
       await emit("failure", "bridge_error", clientId); return clear(bridgeResp); // row 12: the bridge's own §9.3 channel
@@ -164,20 +208,6 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
 
 function randomToken(): string {
   return randomBytes(32).toString("base64url");
-}
-
-/** Mode-appropriate §10 redirect validation at authorize — mirrors authorize.ts
- *  resolveRedirect. Stored mode resolves the client and applies the per-client
- *  policy (§10.2); stateless applies the global allowlist (§10.1). Throws a
- *  direct OAuthError (invalid_client / invalid_redirect_uri). */
-async function resolveAuthorizeRedirect(config: BridgeConfig, clientId: string, redirectUri: string): Promise<void> {
-  if (config.dcr.mode === "stored") {
-    const client = await config.dcr.store.find(clientId);
-    if (!client) throw new OAuthError("invalid_client", "Unknown client_id", 401);
-    assertRedirectAllowedForClient(redirectUri, client);
-    return;
-  }
-  assertAllowedRedirectUri(redirectUri, config.redirectAllowlist);
 }
 
 function gatherOAuthParams(req: NormRequest): Record<string, string> {

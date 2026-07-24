@@ -33,6 +33,9 @@ export function authorizationServerMetadata(config: BridgeConfig): Record<string
       : ["none"],
     scopes_supported: config.scopeCatalog,
     authorization_response_iss_parameter_supported: true,
+    // draft §5 MUST when supported. OMITTED entirely when CIMD is disabled —
+    // never `false` (§17.1 / verification row S6b.7).
+    ...(config.cimd?.enabled === true ? { client_id_metadata_document_supported: true } : {}),
   };
 }
 

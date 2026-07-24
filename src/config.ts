@@ -5,6 +5,9 @@
 
 import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
+import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
+
+export type { CimdOptions } from "./cimd/options.ts";
 
 export type DcrMode = { mode: "stateless" } | { mode: "stored"; store: ClientStore };
 
@@ -36,6 +39,7 @@ export interface BridgeConfig {
   dcr: DcrMode;
   dev?: DevOptions;
   clientCredentials?: ClientCredentialsOptions;
+  cimd?: CimdOptions;
   accessTokenTtlSeconds: number;
   refreshTokenTtlSeconds: number;
   consentTokenTtlSeconds: number;
@@ -59,7 +63,7 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "issuer", "resource", "consentSigningSecret", "signingPrivateJwk",
   "signingKeyId", "redirectAllowlist", "scopeCatalog", "defaultScopes",
-  "allowedOrigins", "dcr", "dev", "clientCredentials",
+  "allowedOrigins", "dcr", "dev", "clientCredentials", "cimd",
   "accessTokenTtlSeconds", "refreshTokenTtlSeconds", "consentTokenTtlSeconds",
   "authorizationCodeTtlSeconds",
 ]);
@@ -108,6 +112,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const allowInsecureLocalhost = dev?.allowInsecureLocalhost === true;
   const clientCredentials = input.clientCredentials;
   const clientCredentialsEnabled = clientCredentials?.enabled;
+  const cimd = input.cimd;
   const accessTokenTtlSeconds = input.accessTokenTtlSeconds;
   const refreshTokenTtlSeconds = input.refreshTokenTtlSeconds;
   const consentTokenTtlSeconds = input.consentTokenTtlSeconds;
@@ -146,6 +151,10 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
       throw new AuthConfigError("clientCredentials.enabled requires dcr.mode 'stored' (machine clients are provisioned into the ClientStore — §17.2)");
     }
   }
+  if (cimd !== undefined) {
+    const problem = cimdConfigProblem(cimd);
+    if (problem !== null) throw new AuthConfigError(problem);
+  }
   if (allowInsecureLocalhost) {
     // Defense-in-depth advisory (threat-model #16): the loopback-only check above
     // already passed; this surfaces that the dev escape hatch is ACTIVE, so an
@@ -157,7 +166,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   return Object.freeze({
     issuer, resource, consentSigningSecret, signingPrivateJwk, signingKeyId,
     redirectAllowlist, scopeCatalog, defaultScopes, allowedOrigins, dcr, dev,
-    clientCredentials, accessTokenTtlSeconds, refreshTokenTtlSeconds,
+    clientCredentials, cimd, accessTokenTtlSeconds, refreshTokenTtlSeconds,
     consentTokenTtlSeconds, authorizationCodeTtlSeconds,
   });
 }
