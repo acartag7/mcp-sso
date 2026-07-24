@@ -290,13 +290,15 @@ if (phases["s6b-cimd-flow"] !== true) {
     const t = transport(() => okResult());
     const seen: string[] = [];
     const rateLimit = { async check(key: string) { seen.push(key); return !key.startsWith("cimd:"); } };
-    const { b, audit } = makeBridge({ cimdTransport: t, cimdResolver: resolver(), rateLimit });
+    const rlResolver = resolver();
+    const { b, audit } = makeBridge({ cimdTransport: t, cimdResolver: rlResolver, rateLimit });
     const res = await b.handleAuthorize(req(authQ()), { subject: "agent@test" });
     assert.equal(res.status, 429);
     assert.equal((res.body as any).error, "temporarily_unavailable");
     assert.notDeepEqual(res.body, GENERIC);
     assert.ok(seen.includes("cimd:203.0.113.7"), "rate-limit keyed cimd:<ip>");
-    assert.equal(t.calls, 0, "denied before any resolution/fetch");
+    assert.equal(t.calls, 0, "denied before any connect");
+    assert.equal(rlResolver.calls, 0, "PRE-resolution: a rate-limited authorize causes no DNS side effect either");
     assert.equal(audit.events.some((e: any) => e.event === "oauth.cimd.fetch"), false, "no fetch audit for a pre-resolution denial");
   });
 
@@ -304,9 +306,11 @@ if (phases["s6b-cimd-flow"] !== true) {
     const t = transport(() => okResult());
     const seen: string[] = [];
     const rateLimit = { async check(key: string) { seen.push(key); return !key.startsWith("cimd:"); } };
-    const { b, store, clock, audit } = makeBridge({ cimdTransport: t, cimdResolver: resolver(), rateLimit });
+    const rlResolverBridge = resolver();
+    const rlResolverFlow = resolver();
+    const { b, store, clock, audit } = makeBridge({ cimdTransport: t, cimdResolver: rlResolverBridge, rateLimit });
     const identity = stubIdentity();
-    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, rateLimit, cimdTransport: t, cimdResolver: resolver() });
+    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, rateLimit, cimdTransport: t, cimdResolver: rlResolverFlow });
     const res = await flow.handleAuthorize(req(authQ()));
     assert.equal(res.status, 429);
     assert.equal((res.body as any).error, "temporarily_unavailable");
@@ -315,6 +319,8 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(identity.hops, 0);
     assert.equal(t.calls, 0);
     assert.equal(audit.events.some((e: any) => e.event === "oauth.cimd.fetch"), false, "no fetch audit for a pre-resolution denial (sibling parity with the direct case)");
+    assert.equal(rlResolverFlow.calls, 0, "PRE-resolution at the upstream boundary: no DNS side effect");
+    assert.equal(rlResolverBridge.calls, 0, "and none via the bridge seam either");
     // Guard-before-side-effects: a limiter running AFTER flow-cookie signing would leave
     // browser state behind on a rejected authorize.
     assert.equal(res.headers?.["set-cookie"], undefined, "a rate-limited authorize sets NO flow cookie");
