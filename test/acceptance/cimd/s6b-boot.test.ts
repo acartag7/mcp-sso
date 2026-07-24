@@ -139,10 +139,19 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(calls, 0, "blocked before any connect (loopback not admissible/resolvable without the dev flag)");
   });
 
-  // Decision 6: `overloaded` is a real, stable CimdReason value (rule-24
-  // in-flight-cap rejection). Constructible at runtime.
-  test("`overloaded` is a constructible stable CimdReason (decision 6)", () => {
+  // Decision 6: `overloaded` must be a member of the EXPORTED CimdReason surface, not just
+  // any string CimdError happens to carry (the import is `as any`, and TS types erase — so
+  // `new CimdError("overloaded")` alone would pass even if the union never gained it).
+  // The reason surface is asserted from the module's own source text: the exported union
+  // must literally declare "overloaded". (A static `const x: CimdReason = "overloaded"`
+  // would be stronger, but it cannot compile until the impl lands — and this frozen suite
+  // must typecheck green BEFORE the implementation, so the check runs here, phase-gated.)
+  test("`overloaded` is a member of the exported CimdReason union (decision 6)", () => {
+    const src = readFileSync(new URL("../../../src/cimd/errors.ts", import.meta.url), "utf8");
+    const union = /export type CimdReason\s*=([\s\S]*?);/.exec(src)?.[1] ?? "";
+    assert.ok(union.length > 0, "CimdReason union found in src/cimd/errors.ts");
+    assert.match(union, /"overloaded"/, "the exported CimdReason union declares `overloaded`");
     const e = new CimdError("overloaded");
-    assert.equal(e.reason, "overloaded");
+    assert.equal(e.reason, "overloaded", "and it round-trips as a CimdError reason");
   });
 }

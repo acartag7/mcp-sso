@@ -7,7 +7,7 @@
     "cimd/guarded-fetcher.test.ts": "6b1480d502067351fdcae87e120f3c7779e61be6a52f10899a4c31121dce3ab0",
     "cimd/s6b-anti-oracle.test.ts": "516245c951c5f9634994257d8bbd3d5f294ec823e849eaaf6bbf01bd59aefeae",
     "cimd/s6b-audit.test.ts": "e7e9201b6ed30385ad4469b3d87b06bd34de57ca891d8a87f6c3ffacf963245e",
-    "cimd/s6b-boot.test.ts": "e5e0f9d38adbb0b590a37f46ae9bb1ce78147be93412bb860a891a369a31f5ae",
+    "cimd/s6b-boot.test.ts": "9846bc379c34af449c31a903c862c66eda60772ff331125dd764114ab9ba26b9",
     "cimd/s6b-cache.test.ts": "acecce0c8543cb7de27c55b363aa0ca82cbfcb701cac229deaa7c90defa9a78a",
     "cimd/s6b-consent.test.ts": "8c1d7189980fb4647fa6661d794be8f8622d7271237ab4ed483e384dba419beb",
     "cimd/s6b-dispatch.test.ts": "9bcf6db5725039bc54840383e00466ba7a2d58471b1f9c9be3b1af2d5fb4ce01",
