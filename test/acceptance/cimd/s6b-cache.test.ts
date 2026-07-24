@@ -286,7 +286,10 @@ if (phases["s6b-cimd-flow"] !== true) {
     const res = await s.bridge.handleAuthorize(evil, { subject: "user-1" });
     assert.notEqual(res.status, 302);
     assert.notEqual(res.status, 200);
-    assert.equal((res.body as any)?.error, "invalid_client");
+    // dec 2: a cache-hit mismatch must be INDISTINGUISHABLE from a cache-miss mismatch —
+    // asserting only the code would leave a cache-state oracle (body/status differential).
+    assert.equal(res.status, 401, "same status as the cache-miss redirect mismatch");
+    assert.deepEqual(res.body, GENERIC, "identical generic body — no cache-state oracle");
     assert.equal(t.calls, 1, "served from cache (no re-fetch) yet the unregistered redirect is still rejected");
     // Guard ordering: a cache HIT must not emit a NEW success audit that is then followed by
     // a failure for the same authorization (a success-then-reject trail misreports the outcome).
@@ -306,7 +309,8 @@ if (phases["s6b-cimd-flow"] !== true) {
     const failBefore = audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure").length;
     const res = await flow.handleAuthorize(evil);
     assert.notEqual(res.status, 302);
-    assert.equal((res.body as any)?.error, "invalid_client");
+    assert.equal(res.status, 401, "same status as the cache-miss redirect mismatch");
+    assert.deepEqual(res.body, GENERIC, "identical generic body — no cache-state oracle");
     assert.equal(t.calls, 1, "cache hit, no re-fetch, unregistered redirect still rejected");
     assert.equal(audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "success").length, okBefore, "no additional success audit for the rejected cache-hit request");
     assert.ok(audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure").length > failBefore, "the redirect mismatch is audited as a failure");

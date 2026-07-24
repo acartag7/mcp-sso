@@ -151,7 +151,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   });
 
   test("direct (stored-mode): a REGISTERED scheme-shaped client_id is STILL direct invalid_client — rejected by shape BEFORE store.find", async () => {
-    for (const id of ["ftp://cdn.example.com/client", "web+foo://cdn.example.com/client"]) {
+    for (const id of ["ftp://cdn.example.com/client", "web+foo://cdn.example.com/client", "HTTPS://cdn.example.com/client", "http://cdn.example.com/client"]) {
       const t = transport(() => okResult());
       const clientStore = new CountingClientStore();
       await clientStore.save({ clientId: id, redirectUris: [OPAQUE_REDIRECT], applicationType: "web" }); // registered — but shape rejection MUST win
@@ -246,7 +246,7 @@ if (phases["s6b-cimd-flow"] !== true) {
   });
 
   test("redirect (stored-mode): a REGISTERED scheme-shaped client_id is STILL direct invalid_client — rejected by shape BEFORE store.find, no IdP hop", async () => {
-    for (const id of ["ftp://cdn.example.com/client", "web+foo://cdn.example.com/client"]) {
+    for (const id of ["ftp://cdn.example.com/client", "web+foo://cdn.example.com/client", "HTTPS://cdn.example.com/client", "http://cdn.example.com/client"]) {
       const clientStore = new CountingClientStore();
       await clientStore.save({ clientId: id, redirectUris: [OPAQUE_REDIRECT], applicationType: "web" });
       const t = transport(() => okResult());
