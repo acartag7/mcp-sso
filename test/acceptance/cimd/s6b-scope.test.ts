@@ -102,10 +102,11 @@ if (phases["s6b-cimd-flow"] !== true) {
   // a different branch from the direct fetch. An impl suppressing findGrantedScopes only in the
   // direct branch would still union a legacy URL-keyed grant here and mint over-broad tokens for
   // Hosted-Claude/Entra CIMD flows — so run the same seeded-grant/spy check through that branch.
-  test("CIMD carried-registration (upstream callback→prepare): the seeded legacy grant is never read or unioned", async () => {
+  for (const mode of ["stateless", "stored"] as const) {
+  test(`CIMD carried-registration (upstream callback→prepare, ${mode}): the seeded legacy grant is never read or unioned`, async () => {
     const FLOW_MOD = "../../../src/adapters/upstream-flow.ts";
     const { createUpstreamRedirectFlow } = (await import(FLOW_MOD)) as any;
-    const c = config("stateless");
+    const c = config(mode, new ClientStore());
     const store = new MemoryStore();
     await seedGrant(store, CIMD_ID, ["mcp:admin"]); // broader prior grant keyed by the URL
     let grantReads = 0;
@@ -128,6 +129,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.deepEqual(scopes, ["mcp:read"], "carried-registration path mints only the requested, ceiling-bounded scope");
     assert.equal(grantReads, 0, "findGrantedScopes never consulted on the carried-registration branch either");
   });
+  }
 
   test("CONTROL: an opaque stored-DCR client STILL accumulates the seeded prior grant", async () => {
     const clients = new ClientStore();

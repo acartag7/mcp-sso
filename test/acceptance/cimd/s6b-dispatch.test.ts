@@ -189,6 +189,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const res = await flow.handleAuthorize(req(directAuthQ()));
     assert.notEqual(res.status, 302, "no IdP hop for a disabled-CIMD https id");
     assert.equal(bodyErr(res), "invalid_client");
+    assert.ok(!res.headers["set-cookie"], "no flow cookie on a rejected disabled-CIMD authorize");
     assert.equal(clientStore.finds, 0, "rejected by shape BEFORE store.find");
     assert.equal(t.calls, 0);
   });
@@ -221,6 +222,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.notEqual(res.status, 302);
     assert.notEqual(res.status, 200);
     assert.equal(bodyErr(res), "invalid_client");
+    assert.ok(!res.headers["set-cookie"], "a rejected disabled-CIMD authorize signs NO flow cookie (guard before side effects)");
     assert.equal(t.calls, 0);
   });
 

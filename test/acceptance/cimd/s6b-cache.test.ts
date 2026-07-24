@@ -184,13 +184,17 @@ if (phases["s6b-cimd-flow"] !== true) {
   });
 
   test("cache keys are RAW client_id strings, not parsed URL serializations (`:443` ≠ default)", async () => {
-    const raw = ["https://cdn.example.com:443/client", "https://cdn.example.com/client"];
+    // Contract rule 20 names BOTH re-serialization effects: dropping an explicit :443 AND
+    // LOWERCASING the host. A cache keyed by a parsed URL that lowercases the host would
+    // conflate these two distinct raw client_ids, so both pairs must stay distinct entries.
+    const raw = ["https://cdn.example.com:443/client", "https://cdn.example.com/client", "https://CDN.EXAMPLE.COM/client"];
     let calls = 0;
     const t = { async connectAndGet() { const id = raw[calls++]!; return response(id); } };
     const s = setup({ t });
     assert.equal((await s.bridge.handleAuthorize(request(raw[0]!), { subject: "user-1" })).status, 200);
     assert.equal((await s.bridge.handleAuthorize(request(raw[1]!), { subject: "user-1" })).status, 200);
-    assert.equal(calls, 2, "the two raw keys are distinct cache entries");
+    assert.equal((await s.bridge.handleAuthorize(request(raw[2]!), { subject: "user-1" })).status, 200);
+    assert.equal(calls, 3, "port-explicit, default-port, and uppercase-host are three DISTINCT raw cache keys");
   });
 
   test("default bounded LRU evicts the least-recently-used entry at 256", async () => {
