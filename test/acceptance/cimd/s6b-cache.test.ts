@@ -315,6 +315,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.notEqual(res.status, 302);
     assert.equal(res.status, 401, "same status as the cache-miss redirect mismatch");
     assert.deepEqual(res.body, GENERIC, "identical generic body — no cache-state oracle");
+    assert.equal(res.headers?.["set-cookie"], undefined, "a rejected cache-hit authorize signs NO flow cookie (guard before side effects)");
     assert.equal(t.calls, 1, "cache hit, no re-fetch, unregistered redirect still rejected");
     assert.equal(audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "success").length, okBefore, "no additional success audit for the rejected cache-hit request");
     assert.ok(audit.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure").length > failBefore, "the redirect mismatch is audited as a failure");

@@ -250,6 +250,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       }
       assertGeneric(res); // byte-identical to the direct CANONICAL — parity across BOTH named boundaries
       assert.equal(identity.hops, 0, `${c.name}: no IdP hop on a resolution failure`);
+      assert.equal((res as any).headers?.["set-cookie"], undefined, `${c.name}: no flow cookie signed on a rejected upstream authorize`);
       assert.ok(fetchFail(audit).length >= 1, `${c.name}: audited to oauth.cimd.fetch (failure)`);
       if (c.noFetch) {
         assert.equal((r as any).calls, 0, `${c.name}: admission blocks BEFORE DNS at the upstream boundary`);
@@ -277,6 +278,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     // A capping impl REJECTS the distinct id; a queuing impl would hang here — bound it.
     const overloaded = await withDeadline(flow.handleAuthorize(req(authQ({ client_id: "https://cdn.example.com/other" }))), 3000);
     assertGeneric(overloaded);
+    assert.equal(overloaded.headers?.["set-cookie"], undefined, "no flow cookie signed on an overloaded upstream authorize");
     assert.ok(fetchFail(audit).some((e: any) => e.reason === "overloaded"), "audited reason overloaded at the upstream boundary");
     assert.equal(identity.hops, 0, "no IdP hop for an overloaded resolution");
     release?.();

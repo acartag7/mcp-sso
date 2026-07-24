@@ -163,6 +163,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       const { flow, audit } = makeFlow({ cimdTransport: transport(() => docResult()), cimdResolver: resolver() });
       const res = await flow.handleAuthorize(req(authQ({ redirect_uri: presented })));
       assert.equal(res.status, 401, `${presented}: 401 generic (decision 2)`);
+      assert.ok(!res.headers["set-cookie"], `${presented}: no flow cookie signed on a rejected authorize`);
       assert.equal(bodyErr(res), "invalid_client", `${presented}: generic invalid_client`);
       assert.deepEqual(res.body, GENERIC, `${presented}: identical generic body`);
       assert.ok(cimdFetchEvents(audit).some((e: any) => e.status === "failure"), `${presented}: audited failure`);
@@ -189,6 +190,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const res = await flow.handleAuthorize(req(authQ({ redirect_uri: "https://evil.example/cb" })));
     assert.equal(res.status, 401);
     assert.deepEqual(res.body, GENERIC);
+    assert.ok(!res.headers["set-cookie"], "no flow cookie signed on a rejected authorize");
     assert.equal(cimdFetchEvents(audit).some((e: any) => e.status === "success"), false, "no success audit before a redirect-match failure (1b)");
   });
 
