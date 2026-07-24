@@ -59,7 +59,10 @@ if (phases["s6b-cimd-flow"] !== true) {
   class FakeClock { ms: number; constructor(ms: number) { this.ms = ms; } nowMs() { return this.ms; } }
   class MemoryAudit { events: any[] = []; async writeAuthEvent(e: any) { this.events.push(e); } }
   function jwk(): any { const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" }); return { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" }; }
-  function cfg(cimd: any = { enabled: true }): any {
+  // NOTE: no DEFAULT PARAMETER — a default fires on `undefined`, which would silently
+  // re-enable CIMD for the deliberately-disabled rows (they pass undefined to mean "omit").
+  const CIMD_ON = { enabled: true };
+  function cfg(cimd: any): any {
     return createBridgeConfig({
       issuer: "https://auth.test", resource: "https://api.test/mcp",
       consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: jwk(), signingKeyId: "k",
@@ -222,7 +225,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     // Contract shape is cimd?: { enabled: true } — "disabled" is OMITTING the block, never { enabled: false }.
     const { flow, audit, identity } = makeFlow({ cimd: opts.cimdEnabled === false ? undefined : { enabled: true }, store: tracked.store });
     const state = opts.params.state;
-    const jwt = await forge(cfg(), { state, params: opts.params, cimd: opts.cimd, jti: opts.jti });
+    const jwt = await forge(cfg(CIMD_ON), { state, params: opts.params, cimd: opts.cimd, jti: opts.jti });
     const cbQuery = opts.cbQuery ?? { code: "C", state: opts.cbState ?? state };
     const res = await flow.handleCallback(req(cbQuery, { cookie: `${COOKIE}=${jwt}` }));
     return { res, audit, identity, consumes: tracked.consumes };
@@ -289,10 +292,10 @@ if (phases["s6b-cimd-flow"] !== true) {
   test("callback row 5a does NOT consume the flow jti: a 5a-rejected cookie's jti still works on a later valid cookie", async () => {
     const tracked = trackingStore();
     const { flow } = makeFlow({ cimd: { enabled: true }, store: tracked.store });
-    const jwtA = await forge(cfg(), { state: "st-1", params: baseParams(), cimd: undefined, jti: "upf_shared" }); // 5a violation
+    const jwtA = await forge(cfg(CIMD_ON), { state: "st-1", params: baseParams(), cimd: undefined, jti: "upf_shared" }); // 5a violation
     const rej = await flow.handleCallback(req({ code: "C", state: "st-1" }, { cookie: `${COOKIE}=${jwtA}` }));
     assert.equal(bodyErr(rej), "invalid_request", "A rejected at 5a");
-    const jwtB = await forge(cfg(), { state: "st-1", params: baseParams(), cimd: validClaim(), jti: "upf_shared" });
+    const jwtB = await forge(cfg(CIMD_ON), { state: "st-1", params: baseParams(), cimd: validClaim(), jti: "upf_shared" });
     const ok = await flow.handleCallback(req({ code: "C2", state: "st-1" }, { cookie: `${COOKIE}=${jwtB}` }));
     assert.equal(ok.status, 200, "B succeeds on the same jti ⇒ 5a did not consume it");
   });

@@ -10,9 +10,9 @@
     "cimd/s6b-boot.test.ts": "e5e0f9d38adbb0b590a37f46ae9bb1ce78147be93412bb860a891a369a31f5ae",
     "cimd/s6b-cache.test.ts": "acecce0c8543cb7de27c55b363aa0ca82cbfcb701cac229deaa7c90defa9a78a",
     "cimd/s6b-consent.test.ts": "8c1d7189980fb4647fa6661d794be8f8622d7271237ab4ed483e384dba419beb",
-    "cimd/s6b-dispatch.test.ts": "4d9d11d680de83e324a52f26fbce0746d2b02776f2d05e9dcfdb01d2b3615083",
+    "cimd/s6b-dispatch.test.ts": "9bcf6db5725039bc54840383e00466ba7a2d58471b1f9c9be3b1af2d5fb4ce01",
     "cimd/s6b-metadata.test.ts": "cd7160121f054aa15b98bf974b51e1ebad58cb9a16bd99b941fa1c6a1e2779ef",
-    "cimd/s6b-redirect.test.ts": "3167a2180c0d5893455194ad394683e8bca86b33eca2fe8d6a29273860cba8a7",
-    "cimd/s6b-scope.test.ts": "41d599e29755a6b7def88998a9e135640cdbd68161f4d187f513de3bd967b855"
+    "cimd/s6b-redirect.test.ts": "20e7747c5760ef25aeb844c2f32b8ea1a9a57adb35c17f6a81823647c30116d7",
+    "cimd/s6b-scope.test.ts": "19f47f03497396da72f7689c146c68bf6663f11eb9ab9f8f9b7b3ffc80334247"
   }
 }

@@ -174,6 +174,7 @@ if (phases["s6b-cimd-flow"] !== true) {
       { clientId: CIMD_ID }, // lowercase-https WITHOUT cimd_verified
       { clientId: "HTTPS://cdn.example.com/client", verified: true }, // other scheme-shaped
       { clientId: "http://cdn.example.com/client", verified: true },
+      { clientId: "HttP://cdn.example.com/client", verified: true }, // mixed case — mirrors the dispatch classifier
       { clientId: "ftp://cdn.example.com/client", verified: true },
       { clientId: "web+foo://cdn.example.com/client", verified: true }, // full scheme-shape, not just http/https/ftp (mirror of the dispatch classifier)
       { clientId: "x-y.z://cdn.example.com/client", verified: true },
