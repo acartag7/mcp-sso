@@ -1721,7 +1721,8 @@ tracks CIMD as pending.
     further follower for that same client_id rejects `overloaded` (the SAME
     `CimdReason`, the same decision-2 generic — no new client-visible surface, no
     new oracle). Total concurrent waiting resolutions are therefore bounded above
-    by `maxInFlight × maxWaitersPerFetch`. This does NOT reverse the
+    by `maxInFlight × (maxWaitersPerFetch + 1)` (the `+1` per entry is the
+    initiating resolution; the cap counts FOLLOWERS only). This does NOT reverse the
     no-slot rule above: a follower still consumes no FETCH slot, so one popular
     client_id can never starve distinct client_ids out of `maxInFlight`.
 25. Cache freshness (RFC 9111, in-memory per instance, keyed by raw client_id):
@@ -1735,7 +1736,7 @@ tracks CIMD as pending.
     `effectiveTtlSeconds` is not cached. A quoted `max-age` value is treated as
     malformed (no cache entry).
 
-### 17.1.6 S6b flow-integration amendments (decisions 1–7, 2026-07-23; decision 7 added 2026-07-25)
+### 17.1.6 S6b flow-integration amendments (decisions 1–6, 2026-07-23)
 
 Resolves the S6b cross-family flow-integration critique (GPT-5.6 Sol / Grok / GLM)
 against current `main` (post #85–#91). **Contract text; enforcement lands with the
@@ -2096,9 +2097,12 @@ in-flight entry:
 4. Rule 24's no-slot rule is UNCHANGED: a follower still consumes no FETCH slot.
    Decision 7 bounds a different quantity. Both properties hold together.
 5. Total concurrent waiting resolutions are bounded above by
-   **`maxInFlight × maxWaitersPerFetch`** (default `8 × 256 = 2048`, ≈ 3 MB at
-   the measured ~1.5 KB/waiter). This single composed number is the statement a
-   deployer can hand to a security review.
+   **`maxInFlight × (maxWaitersPerFetch + 1)`** — the `+1` is the INITIATING
+   resolution, which also waits on its own fetch. Default
+   `8 × (256 + 1) = 2056`, ≈ 3 MB at the measured ~1.5 KB/waiter. The cap counts
+   FOLLOWERS only; the leader is never rejected by it. This composed number is
+   the statement a deployer can hand to a security review, so it is stated
+   exactly rather than rounded.
 
 **Why 256 and not lower.** The cap must not break a legitimate thundering herd —
 e.g. a workforce opening an MCP client at the start of a shift, all naming the
