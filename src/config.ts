@@ -5,7 +5,7 @@
 
 import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
-import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
+import { cimdConfigProblem, snapshotCimdOptions, type CimdOptions } from "./cimd/options.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
 
@@ -112,7 +112,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const allowInsecureLocalhost = dev?.allowInsecureLocalhost === true;
   const clientCredentials = input.clientCredentials;
   const clientCredentialsEnabled = clientCredentials?.enabled;
-  const cimd = input.cimd;
+  let cimd = input.cimd;
   const accessTokenTtlSeconds = input.accessTokenTtlSeconds;
   const refreshTokenTtlSeconds = input.refreshTokenTtlSeconds;
   const consentTokenTtlSeconds = input.consentTokenTtlSeconds;
@@ -154,6 +154,9 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   if (cimd !== undefined) {
     const problem = cimdConfigProblem(cimd);
     if (problem !== null) throw new AuthConfigError(problem);
+    // Publish a frozen COPY: the outer Object.freeze is shallow, so returning
+    // the caller's object would leave every validated cap mutable post-boot.
+    cimd = snapshotCimdOptions(cimd);
   }
   if (allowInsecureLocalhost) {
     // Defense-in-depth advisory (threat-model #16): the loopback-only check above

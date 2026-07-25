@@ -13,7 +13,7 @@ import { noopRateLimit } from "../ports/rate-limit.ts";
 import { OAuthError } from "../errors.ts";
 import { AuthConfigError } from "../config.ts";
 import { CimdError, type CimdReason } from "./errors.ts";
-import { createGuardedFetcher, type GuardedFetcher } from "./guarded-fetcher.ts";
+import { createGuardedFetcher, isGuardedFetcher, type GuardedFetcher } from "./guarded-fetcher.ts";
 import type { CimdTransport, DnsResolver } from "./transport.ts";
 import { CimdSuccessCache, computeCacheExpiryMs } from "./cache.ts";
 import { cimdRedirectMatches, projectCimdRegistration, type CimdRegistration } from "./registration.ts";
@@ -149,7 +149,14 @@ export class CimdResolver {
     await this.rateGuard(input.ip);
     let fetched = false;
     try {
-      const outcome = await this.registrationFor(input.clientId, input.fetcher ?? this.fetcher());
+      // A supplied fetcher MUST carry the guarded brand. `resolve()` is
+      // reachable from the root-exported `bridge.cimd`, so a JS consumer could
+      // otherwise duck-type a `fetch()` returning an arbitrary document — it
+      // would be projected and cached with no URL admission, no DNS/IP checks,
+      // no size cap and no document validation. Unbranded ⇒ use ours.
+      const supplied = input.fetcher;
+      const fetcher = isGuardedFetcher(supplied) ? supplied : this.fetcher();
+      const outcome = await this.registrationFor(input.clientId, fetcher);
       fetched = outcome.fetched;
       // A cache HIT reuses the fetched DOCUMENT, never the authorization
       // decision: the shared matcher re-runs on EVERY request.

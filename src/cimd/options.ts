@@ -39,6 +39,21 @@ const CIMD_CAPS: ReadonlyArray<{ key: string; min: number; max: number }> = [
   { key: "maxInFlight", min: 1, max: 64 },
 ];
 
+/** A frozen COPY of the validated block. `Object.freeze` on the returned config
+ *  is shallow, so publishing the caller's own `cimd` object would leave every
+ *  cap live: a post-boot `maxInFlight = NaN` makes `size >= NaN` false forever
+ *  and silently removes the outbound-fetch concurrency bound (validated once at
+ *  boot, read per request). Snapshot instead — validate-then-copy, so the value
+ *  the resolver reads is the value boot approved. */
+export function snapshotCimdOptions(cimd: CimdOptions): CimdOptions {
+  const source = cimd as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = { enabled: true };
+  for (const cap of CIMD_CAPS) {
+    if (Object.hasOwn(source, cap.key)) out[cap.key] = source[cap.key];
+  }
+  return Object.freeze(out) as unknown as CimdOptions;
+}
+
 /** Returns a boot-failure message, or `null` when the block is acceptable. */
 export function cimdConfigProblem(cimd: unknown): string | null {
   if (typeof cimd !== "object" || cimd === null || Array.isArray(cimd)) return "cimd must be an object";
