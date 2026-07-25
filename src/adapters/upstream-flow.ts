@@ -116,7 +116,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       // mapped to the decision-2 generic INSIDE this boundary.
       const presentedRedirect = queryString(req.query, "redirect_uri") ?? "";
       const resolved = await resolveUpstreamAuthorizeClient({
-        config: bridge.config, cimd, seams: cimdSeams, clientId,
+        config: bridge.config, cimd, seams: cimdSeams, rateLimit, clientId,
         redirectUri: presentedRedirect, ip: req.ip,
       });
       const params = gatherOAuthParams(req); // step 4

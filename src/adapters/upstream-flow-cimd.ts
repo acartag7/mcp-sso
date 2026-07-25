@@ -15,6 +15,7 @@ import { OAuthError } from "../errors.ts";
 import type { CimdResolver } from "../cimd/resolve.ts";
 import { cimdGenericError, mapCimdError } from "../cimd/resolve.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/guarded-fetcher.ts";
+import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { cimdRedirectMatches, isCimdClientId, isSchemeShaped, type CimdRegistration } from "../cimd/registration.ts";
 import { resolveOpaqueRedirect } from "../authorize-internals.ts";
 import type { FlowClaims } from "./upstream-flow-internals.ts";
@@ -36,6 +37,7 @@ export async function resolveUpstreamAuthorizeClient(args: {
   config: BridgeConfig;
   cimd: CimdResolver;
   seams: { readonly transport?: CimdTransport; readonly resolver?: DnsResolver } | undefined;
+  rateLimit?: RateLimitPort;
   clientId: string;
   redirectUri: string;
   ip?: string;
@@ -47,6 +49,7 @@ export async function resolveUpstreamAuthorizeClient(args: {
       const resolution = await args.cimd.resolve({
         clientId: args.clientId, redirectUri: args.redirectUri, ip: args.ip,
         ...(args.seams === undefined ? {} : { seams: args.seams }),
+        ...(args.rateLimit === undefined ? {} : { rateLimit: args.rateLimit }),
       });
       return { registration: resolution.registration, emitSuccess: () => resolution.emitSuccess() };
     } catch (error) {

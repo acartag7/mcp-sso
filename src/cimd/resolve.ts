@@ -12,51 +12,14 @@ import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
 import { OAuthError } from "../errors.ts";
 import { AuthConfigError } from "../config.ts";
-import { CimdError, type CimdReason } from "./errors.ts";
+import { CimdError } from "./errors.ts";
+import { CIMD_AUDIT_EVENT, auditReason, cimdGenericError, mapCimdError } from "./anti-oracle.ts";
+// Re-exported so existing importers keep one import site for the CIMD surface.
+export { CIMD_AUDIT_EVENT, cimdGenericError, mapCimdError } from "./anti-oracle.ts";
 import { createGuardedFetcher, type GuardedFetcher } from "./guarded-fetcher.ts";
 import type { CimdTransport, DnsResolver } from "./transport.ts";
 import { CimdSuccessCache, computeCacheExpiryMs } from "./cache.ts";
 import { cimdRedirectMatches, projectCimdRegistration, type CimdRegistration } from "./registration.ts";
-
-/** The ONE client-facing description every CIMD resolution failure collapses to
- *  (decision 2 — the SSRF content/reachability oracle stays closed). */
-const GENERIC_DESCRIPTION = "client_id could not be resolved";
-
-/** Allowlisted audit reasons. An unrecognized (future) `CimdError.reason`, and
- *  any non-`CimdError` throw, audit the fixed `fetch_failed` — never free-form
- *  exception text (log injection / leak). */
-const AUDIT_REASONS: ReadonlySet<string> = new Set<CimdReason>([
-  "url_admission_denied", "dns_failed", "ip_blocked", "redirect_refused",
-  "status_not_200", "content_type", "encoding", "size_exceeded", "timeout",
-  "fetch_failed", "document_invalid", "overloaded",
-]);
-
-export const CIMD_AUDIT_EVENT = "oauth.cimd.fetch";
-
-export function cimdGenericError(): OAuthError {
-  return new OAuthError("invalid_client", GENERIC_DESCRIPTION, 401);
-}
-
-/** Exhaustive switch over `CimdReason` + a fail-closed default (decision 2/6). */
-export function mapCimdError(error: unknown): OAuthError {
-  if (error instanceof CimdError) {
-    switch (error.reason) {
-      case "url_admission_denied": case "dns_failed": case "ip_blocked":
-      case "redirect_refused": case "status_not_200": case "content_type":
-      case "encoding": case "size_exceeded": case "timeout":
-      case "fetch_failed": case "document_invalid": case "overloaded":
-        return cimdGenericError();
-      default:
-        return cimdGenericError(); // unknown/future reason ⇒ same fail-closed generic
-    }
-  }
-  return cimdGenericError();
-}
-
-function auditReason(error: unknown): string {
-  if (error instanceof CimdError && AUDIT_REASONS.has(error.reason)) return error.reason;
-  return "fetch_failed";
-}
 
 export interface CimdResolverDeps {
   config: BridgeConfig;
@@ -72,15 +35,17 @@ export interface CimdResolveInput {
   readonly clientId: string;
   readonly redirectUri: string;
   readonly ip?: string;
-  /** Below-guard seams ONLY (rule 14 / decision 1e). Deliberately NOT a whole
-   *  `GuardedFetcher`: the brand proves a fetcher came from
-   *  `createGuardedFetcher`, not that it carries THIS resolver's validated
-   *  profile — a genuine `createGuardedFetcher({allowLoopback: true})` is
-   *  branded, so accepting one would let a caller resolve and cache a
-   *  `https://localhost/...` document on a bridge whose config has loopback
-   *  disabled, and every later authorization reads it from the shared cache.
-   *  The fetcher is always constructed here from the validated caps. */
+  /** Below-guard seams ONLY (rule 14 / decision 1e) — never a whole
+   *  `GuardedFetcher`: the brand proves provenance, not that a fetcher carries
+   *  THIS resolver's validated profile (a genuine
+   *  `createGuardedFetcher({allowLoopback: true})` is branded, and the shared
+   *  cache would serve its document to every later authorization). */
   readonly seams?: { readonly transport?: CimdTransport; readonly resolver?: DnsResolver };
+  /** The calling boundary's own limiter for the `cimd:<ip>` guard.
+   *  `UpstreamFlowDeps.rateLimit` is independent of `BridgeDeps.rateLimit` and
+   *  the upstream flow shares the Bridge's resolver, so without this a limiter
+   *  wired only into `createUpstreamRedirectFlow` never ran. */
+  readonly rateLimit?: RateLimitPort;
 }
 
 export interface CimdResolution {
@@ -102,11 +67,9 @@ export class CimdResolver {
   private readonly cacheTtlCapSeconds: number;
   private defaultFetcher: GuardedFetcher | undefined;
   private readonly seams: { transport?: CimdTransport; resolver?: DnsResolver };
-  /** Captured ONCE at construction. `config.dev` is the caller's object and the
-   *  outer freeze is shallow, so reading it lazily (the default fetcher is
-   *  memoized; per-call seam fetchers re-read every request) would let a
-   *  post-boot `dev.allowInsecureLocalhost = true` widen loopback after boot
-   *  validated it disabled. Same read-once rule as the cap snapshot. */
+  /** Captured ONCE at construction (read-once rule): reading `config.dev`
+   *  lazily would let a post-boot `allowInsecureLocalhost = true` widen
+   *  loopback after boot validated it disabled. */
   private readonly allowLoopback: boolean;
   private readonly maxDocumentBytes: number;
   private readonly fetchTimeoutMs: number;
@@ -163,9 +126,13 @@ export class CimdResolver {
    *  anti-oracle map: a direct 429 `temporarily_unavailable`, no DNS, no
    *  connect, no `oauth.cimd.fetch` audit). Fail-open on a limiter outage,
    *  mirroring the existing register/token/upstream guards. */
-  private async rateGuard(ip: string | undefined): Promise<void> {
+  private async rateGuard(ip: string | undefined, limiter?: RateLimitPort): Promise<void> {
+    // Prefer the CALLING boundary's limiter: `UpstreamFlowDeps.rateLimit` is
+    // independent of `BridgeDeps.rateLimit` and the upstream flow shares this
+    // resolver, so a limiter wired only there would otherwise never run.
     let allowed = true;
-    try { allowed = await this.rateLimit.check(`cimd:${ip ?? "unknown"}`); } catch { allowed = true; }
+    const check = limiter ?? this.rateLimit;
+    try { allowed = await check.check(`cimd:${ip ?? "unknown"}`); } catch { allowed = true; }
     if (!allowed) throw new OAuthError("temporarily_unavailable", "Rate limit exceeded; retry later", 429);
   }
 
@@ -175,7 +142,7 @@ export class CimdResolver {
     // activity on a deployment that never enabled CIMD. Before the rate guard and
     // before any fetch — a rejection must cause no side effect.
     if (!this.enabled) throw cimdGenericError();
-    await this.rateGuard(input.ip);
+    await this.rateGuard(input.ip, input.rateLimit);
     try {
       // The fetcher is ALWAYS built here from this resolver's validated caps
       // and config-derived `allowLoopback`; a caller may substitute only the
