@@ -133,7 +133,14 @@ export class CimdResolver {
     // caller-supplied allow-all must NOT be able to weaken an operator's
     // configured guard. Either one denying is a denial.
     const key = `cimd:${ip ?? "unknown"}`;
-    for (const port of limiter === undefined ? [this.rateLimit] : [this.rateLimit, limiter]) {
+    // Deduplicate by IDENTITY: a deployer commonly passes ONE RateLimitPort to
+    // both `Bridge` and `createUpstreamRedirectFlow`. `check()` is a counting
+    // side effect (RedisRateLimit does an atomic INCR), so charging the same
+    // instance twice for one request halves the effective limit — and a limit
+    // of 1 would reject the very first CIMD authorization.
+    const ports = limiter === undefined || limiter === this.rateLimit
+      ? [this.rateLimit] : [this.rateLimit, limiter];
+    for (const port of ports) {
       let allowed = true;
       try { allowed = await port.check(key); } catch { allowed = true; } // fail-open on a limiter outage
       if (!allowed) throw new OAuthError("temporarily_unavailable", "Rate limit exceeded; retry later", 429);

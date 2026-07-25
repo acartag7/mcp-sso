@@ -14,6 +14,23 @@ const UNSIGNED_DECIMAL = /^[0-9]+$/;
 /** RFC 9110 token — the only shape a Cache-Control directive name may take.
  *  Anchored, bounded character class, no backtracking (ReDoS-safe). */
 const DIRECTIVE_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
+/** Split a Cache-Control field into directives on commas that are OUTSIDE a
+ *  quoted-string. A naive `split(",")` shreds a legal `foo="a,b"` into malformed
+ *  fragments, so a response carrying an unknown-but-well-formed extension would
+ *  become non-cacheable and re-fetch on every authorization. */
+function splitDirectives(header: string): string[] {
+  const out: string[] = [];
+  let start = 0, quoted = false;
+  for (let i = 0; i < header.length; i += 1) {
+    const c = header[i];
+    if (quoted && c === "\\") { i += 1; continue; } // quoted-pair: skip the escaped char
+    if (c === '"') { quoted = !quoted; continue; }
+    if (c === "," && !quoted) { out.push(header.slice(start, i)); start = i + 1; }
+  }
+  out.push(header.slice(start));
+  return out;
+}
+
 /** RFC 9110 quoted-string: DQUOTE *( qdtext / quoted-pair ) DQUOTE. qdtext
  *  EXCLUDES CTLs — a bare CR/LF/NUL inside a quoted value is malformed, not
  *  content (and a raw CR/LF would be a header-splitting shape). quoted-pair
@@ -96,7 +113,7 @@ function parseMaxAge(values: readonly string[] | undefined): number | null {
   if (typeof header !== "string") return null;
   let maxAge: number | null = null;
   let occurrences = 0;
-  for (const raw of header.split(",")) {
+  for (const raw of splitDirectives(header)) {
     const directive = raw.trim();
     if (directive === "") continue;
     const eq = directive.indexOf("=");
