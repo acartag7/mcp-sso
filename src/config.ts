@@ -112,16 +112,14 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const rawDefaultScopes = input.defaultScopes;
   const rawAllowedOrigins = input.allowedOrigins;
   const rawDcr = input.dcr;
-  // Read mode AND store exactly ONCE. Both are validated below and handed to
-  // `snapshotDcr`; re-reading either at snapshot time would let an accessor-
-  // backed block publish a value boot never approved (the read-once rule).
+  // Read-once rule for every nested value below: these locals are what the
+  // validation checks AND what the snapshots publish. Re-reading any of them at
+  // snapshot time would let an accessor-backed block return the approved value
+  // during validation and a different one afterwards — publishing what boot
+  // never approved.
   const dcrMode = rawDcr.mode;
   const dcrStore = dcrMode === "stored" ? (rawDcr as { store?: ClientStore }).store : undefined;
   const rawDev = input.dev;
-  // Read ONCE. This boolean is what validateUrl() below checks, so publishing a
-  // frozen snapshot of it (rather than the caller's live `dev` object) closes
-  // the validation→construction window: a consumer reading config.dev later
-  // cannot observe a value boot never validated.
   const allowInsecureLocalhost = rawDev?.allowInsecureLocalhost === true;
   const dev = rawDev === undefined ? undefined : Object.freeze({ allowInsecureLocalhost });
   const rawClientCredentials = input.clientCredentials;
