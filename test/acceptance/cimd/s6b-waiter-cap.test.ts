@@ -173,10 +173,20 @@ if (phases["s6b-waiter-cap"] !== true) {
     const b1 = s.bridge.handleAuthorize(request("https://cdn.example.com/b"), { subject: "u" });
     await settle();
     assert.equal(t.calls, 2, "the distinct id started its OWN fetch — the waiter cap did not consume a fetch slot");
+    // The cap is PER in-flight entry, not resolver-global. Id /b has ZERO waiters
+    // of its own, so its first follower MUST be admitted even though /a is at its
+    // cap. A single global counter rejects here — that would let one client_id
+    // deny service to unrelated client_ids (cross-client DoS).
+    const okBefore = overloadedEvents(s.audit).length;
+    const b2 = s.bridge.handleAuthorize(request("https://cdn.example.com/b"), { subject: "u" });
+    await settle();
+    assert.equal(overloadedEvents(s.audit).length, okBefore, "/b's FIRST follower is admitted — waiter counts are per client_id, never global");
+    assert.equal(t.calls, 2, "and it coalesced onto /b's existing fetch");
     t.releaseAll();
     assert.equal((await withDeadline(a1)).status, 200);
     assert.equal((await withDeadline(a2)).status, 200);
     assert.equal((await withDeadline(b1)).status, 200);
+    assert.equal((await withDeadline(b2)).status, 200, "/b's follower resolved normally");
   });
 
   test("waiter slots are RELEASED when the fetch settles — proven by a REFETCH, not by a cache hit", async () => {
@@ -209,8 +219,18 @@ if (phases["s6b-waiter-cap"] !== true) {
     const later = s.bridge.handleAuthorize(request(), { subject: "u" });
     await settle();
     assert.equal(calls, 2, "the settled entry was REMOVED — a fresh fetch started");
+    // A fresh LEADER is never rejected by the cap, so leader-only would be a
+    // vacuous check. Add a FOLLOWER on this second fetch: with maxWaitersPerFetch
+    // 1 it is admissible ONLY if the previous round's waiter count was actually
+    // decremented. An impl that increments and never releases rejects here.
+    const okBefore = overloadedEvents(s.audit).length;
+    const laterFollower = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(overloadedEvents(s.audit).length, okBefore, "the follower is admitted — the prior round's waiter slot was RELEASED, not leaked");
     for (const r of releases) r();
-    assert.equal((await withDeadline(later)).status, 200, "and the request was admitted, not rejected by a stale waiter count");
+    assert.equal((await withDeadline(later)).status, 200, "the retry leader resolved");
+    assert.equal((await withDeadline(laterFollower)).status, 200, "and its follower resolved on the same fetch");
+    assert.equal(calls, 2, "still only two fetches — the follower coalesced");
   });
 
   test("a FAILING fetch also releases waiter slots (no leak on the error path)", async () => {
