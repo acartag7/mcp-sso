@@ -289,8 +289,8 @@ interface BridgeConfig {
   `a.test` — a widened CSRF gate from what reads like a harmless config typo.)
 
 **Publication (what boot approves is what requests read).** `createBridgeConfig`
-returns a frozen object whose **nested blocks and arrays are frozen snapshots**,
-never the caller's own objects. `Object.freeze` is shallow, so returning the
+returns a frozen object whose **nested blocks, arrays, and the signing JWK are
+frozen snapshots**, never the caller's own objects. `Object.freeze` is shallow, so returning the
 caller's `dcr`/`dev`/`clientCredentials`/`cimd` block — or its arrays — would
 leave every validated security setting mutable after boot, and these are read
 **per request**, not captured at boot (`authorize.ts`, `register.ts`,
@@ -298,7 +298,11 @@ leave every validated security setting mutable after boot, and these are read
 post-boot would redirect client lookups and `save()` to an attacker-chosen
 store; flipping `clientCredentials.enabled` would switch on a deliberately
 disabled grant with no restart; pushing to `scopeCatalog` would widen what a
-token may carry. Each block is copied one level deep from an explicit key
+token may carry; mutating `signingPrivateJwk` would replace the validated
+signing/JWKS material before its first import, or desynchronize the memoized
+signer from the published JWKS afterwards (`crypto-keys.ts` keys its `WeakMap`
+on this object — that cache is sound only because the reference is a frozen
+snapshot). Each block is copied one level deep from an explicit key
 allowlist — `dcr.store` stays a live port reference by design (it is an object
 with methods), so the snapshot closes swap-the-store and flip-the-mode without
 touching the port itself. **Threat model, stated honestly:** this requires
