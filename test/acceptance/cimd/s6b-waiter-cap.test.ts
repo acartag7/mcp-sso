@@ -281,9 +281,18 @@ if (phases["s6b-waiter-cap"] !== true) {
     let calls = 0;
     const t = { async connectAndGet() { calls++; return new Promise<any>(() => { /* never settles */ }); }, get calls() { return calls; } };
     const s = setup({ c: config({ maxWaitersPerFetch: 1, fetchTimeoutMs: 1000 }), t });
-    const first = await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" }), 5000) as any;
+    const leader = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    // Park an in-cap FOLLOWER before the deadline fires. Without it the timed-out
+    // round has zero waiters, so an impl that drops the promise while leaking
+    // separately-tracked waiter counts has nothing to leak and passes vacuously.
+    const parked = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(overloadedEvents(s.audit).length, 0, "the follower parked within the cap");
+    const first = await withDeadline(leader, 5000) as any;
     assert.equal(first.status, 401, "the deadline fired and mapped to the generic");
     assert.deepEqual(first.body, GENERIC);
+    assert.equal((await withDeadline(parked, 5000) as any).status, 401, "the parked follower shares the timeout");
     assert.equal(calls, 1);
     // A later request must start a NEW fetch AND admit a follower — proving the
     // timed-out entry was removed, not left holding its waiter accounting.
