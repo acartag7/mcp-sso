@@ -13,6 +13,7 @@ import type { StorePort } from "./ports/store.ts";
 import type { BridgeConfig } from "./config.ts";
 import type { ConsentRequestClaims } from "./crypto.ts";
 import { OAuthError, withRedirect } from "./errors.ts";
+import { writeAuthorizeFailure, writeAuthorizeSuccess, type AuthorizeAuditEvent, type AuthorizeAuditSuccess } from "./authorize-audit.ts";
 import {
   expiresAtIso, generateAuthorizationCode, sha256Hex,
   signConsentToken, verifyConsentToken,
@@ -124,6 +125,12 @@ export class OAuthAuthorizationUseCase {
         registration: input.registration, ip: input.ip,
       });
       redirectUri = resolved.redirectUri;
+      // Audit the RESOLUTION as soon as it succeeds: deferring past the checks
+      // below hid a fetched+cached document whenever an unrelated OAuth check
+      // (response_type/resource/scope/PKCE) then threw. The upstream leg keeps
+      // its own deferral (upstream-flow.ts:136) — decision 1b ties ITS success
+      // to the cookie-oversize guard, which does not exist on this path.
+      await resolved.emitCimdSuccess();
       const state = input.state;
 
       // --- POST-VALIDATION: redirect-tagged errors ---
@@ -168,7 +175,6 @@ export class OAuthAuthorizationUseCase {
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
       const priorScopes = claims.allowedScopes ? rawPrior.filter((s) => claims.allowedScopes!.includes(s)) : rawPrior;
       const consentToken = await signConsentToken(claims, this.config, this.clock);
-      await resolved.emitCimdSuccess(); // decision 1b: success audited only once the flow proceeds
       await this.auditSuccess(AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject: input.subject });
       return {
         consentToken, ...claims, priorScopes,
@@ -232,18 +238,11 @@ export class OAuthAuthorizationUseCase {
     }
   }
 
-  private async auditSuccess(event: typeof AUDIT_PREPARE | typeof AUDIT_APPROVE, r: { clientId: string; redirectUri: string; resource: string; scopes: string[]; subject: string; }): Promise<void> {
-    await this.audit.writeAuthEvent({
-      occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status: "success",
-      clientId: r.clientId, subject: r.subject, resource: r.resource, scopes: r.scopes, redirectHost: hostOf(r.redirectUri),
-    });
+  private auditSuccess(event: AuthorizeAuditEvent, r: AuthorizeAuditSuccess): Promise<void> {
+    return writeAuthorizeSuccess(this.audit, this.clock, event, r);
   }
 
-  private async auditFailure(event: typeof AUDIT_PREPARE | typeof AUDIT_APPROVE, error: unknown, clientId?: string, redirectUri?: string, subject?: string): Promise<void> {
-    await this.audit.writeAuthEvent({
-      occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status: "failure",
-      clientId, subject, redirectHost: redirectUri ? hostOf(redirectUri) : undefined,
-      reason: error instanceof OAuthError ? error.code : "internal_error",
-    });
+  private auditFailure(event: AuthorizeAuditEvent, error: unknown, clientId?: string, redirectUri?: string, subject?: string): Promise<void> {
+    return writeAuthorizeFailure(this.audit, this.clock, event, error, clientId, redirectUri, subject);
   }
 }

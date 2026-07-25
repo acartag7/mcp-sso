@@ -64,6 +64,9 @@ export class CimdResolver {
   private readonly cache: CimdSuccessCache;
   private readonly inFlight = new Map<string, Promise<CimdRegistration>>();
   private readonly maxInFlight: number;
+  private readonly maxWaitersPerFetch: number;
+  /** Followers currently parked on each in-flight entry (decision 7). */
+  private readonly waiters = new Map<string, number>();
   private readonly cacheTtlCapSeconds: number;
   private defaultFetcher: GuardedFetcher | undefined;
   private readonly seams: { transport?: CimdTransport; resolver?: DnsResolver };
@@ -82,6 +85,7 @@ export class CimdResolver {
     const cimd = deps.config.cimd;
     this.enabled = cimd?.enabled === true;
     this.maxInFlight = cimd?.maxInFlight ?? 8;
+    this.maxWaitersPerFetch = cimd?.maxWaitersPerFetch ?? 256;
     this.cacheTtlCapSeconds = cimd?.cacheTtlCapSeconds ?? 3600;
     this.cache = new CimdSuccessCache();
     this.seams = { transport: deps.cimdTransport, resolver: deps.cimdResolver };
@@ -193,8 +197,27 @@ export class CimdResolver {
     const hit = this.cache.get(rawClientId, this.clock.nowMs());
     if (hit !== undefined) return { registration: hit, fetched: false };
     const existing = this.inFlight.get(rawClientId);
-    // A coalesced follower does NOT consume an in-flight slot (rule 24).
-    if (existing !== undefined) return { registration: await existing, fetched: false };
+    // A coalesced follower consumes no FETCH slot (rule 24) but IS bounded
+    // (decision 7): `maxInFlight` limits outbound fetches, not the inbound
+    // callers parked on one. Without this an unauthenticated caller pointing a
+    // flood at one slow attacker-hosted document parks unbounded requests for up
+    // to `fetchTimeoutMs`. The rejection uses the EXISTING `overloaded` reason,
+    // so it is byte-identical to every other resolution failure (decision 2).
+    if (existing !== undefined) {
+      const parked = this.waiters.get(rawClientId) ?? 0;
+      // A REJECTED caller never acquired a slot, so this path must not release
+      // one — freeing capacity it never took would admit the next follower.
+      if (parked >= this.maxWaitersPerFetch) throw new CimdError("overloaded");
+      this.waiters.set(rawClientId, parked + 1);
+      try {
+        return { registration: await existing, fetched: false };
+      } finally {
+        // Released on EVERY exit — success, error, timeout/cancellation.
+        const left = (this.waiters.get(rawClientId) ?? 1) - 1;
+        if (left <= 0) this.waiters.delete(rawClientId);
+        else this.waiters.set(rawClientId, left);
+      }
+    }
     if (this.inFlight.size >= this.maxInFlight) throw new CimdError("overloaded");
     const pending = this.fetchAndCache(rawClientId, fetcher);
     this.inFlight.set(rawClientId, pending);
