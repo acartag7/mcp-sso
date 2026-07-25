@@ -911,10 +911,11 @@ widens to any port only if it is an origin-only entry with no explicit port/path
 a port-scoped or path-specific loopback entry is NOT widened. Returns the
 normalized URI.
 
-Entries reaching this matcher are already §10.0-valid — `createBridgeConfig`
-refuses everything outside the grammar at boot — so its inputs are origin form
-or canonical exact-URI form only. It keeps its own `"*"` rejection as
-defense-in-depth.
+Once §10.0 is enforced (⚠️ **implementation pending** — see the §5 bullet), the
+entries reaching this matcher are §10.0-valid, so its inputs are origin form or
+canonical exact-URI form only. It keeps its own `"*"` rejection as
+defense-in-depth regardless, because it is also reachable with entries the
+config validator does not own.
 
 Two consequences that make §10.0's raw-syntax rules load-bearing rather than
 cosmetic:
