@@ -776,11 +776,20 @@ the response. Wiring rules:
 > "one negative test per rejected shape" left to judgment:**
 >
 > 1. A boot validator applying §10.0 to every `redirectAllowlist` entry.
-> 2. §10.2 applying §10.0 to every registered URI **it reads** (stored-state
->    sibling, below) — not only at registration.
-> 3. `assertCimdRedirectUri` enforcing §10.0 rather than its own shape rules
+> 2. **Registration-time enforcement (the write side):** stored DCR applies
+>    §10.0 to each `redirect_uris` entry BEFORE persisting, and persists the
+>    canonical form. Today `registerClient` calls `assertAllowedRedirectUri` but
+>    DISCARDS its normalized return and stores the raw value, so
+>    `https://a.test:443/cb` registers successfully and produces a record the
+>    read guard (3) then rejects — a client that can register but can never
+>    authorize. Write and read guards must land together or the pair is worse
+>    than neither.
+> 3. §10.2 applying §10.0 to every registered URI **it reads** (stored-state
+>    sibling, below) — not only at registration. Covers records written before
+>    this grammar existed or populated out-of-band.
+> 4. `assertCimdRedirectUri` enforcing §10.0 rather than its own shape rules
 >    (§17.1.5 rule 20, as amended there).
-> 4. **One rejection test per row of this closed list**, each asserting the
+> 5. **One rejection test per row of this closed list**, each asserting the
 >    error names the offending entry: `*`; any `*`-bearing entry; a non-`http(s)`
 >    scheme (`javascript:`, `data:`); userinfo (`https://u:p@a.test`) AND empty
 >    userinfo (`https://@a.test`); a query delimiter (`https://a.test?`); a
@@ -789,12 +798,13 @@ the response. Wiring rules:
 >    (`HTTPS://A.TEST`, `https://%65xample.com`, `https://a.test:443`); a
 >    non-canonical exact-URI (`https://a.test:443/cb`, `https://a.test/x/../cb`,
 >    `https://a.test/./cb`); a non-string entry; a non-array `redirectAllowlist`.
-> 5. **Positive tests** that the grammar does not over-reject: all four built-in
+> 6. **Positive tests** that the grammar does not over-reject: all four built-in
 >    defaults, `https://a.test` (omitted root slash), `https://a.test/`,
 >    `http://[::1]:9`, `https://xn--e1afmkfd.test` (punycode), and
 >    `https://a.test/cb%2F..%2Fadmin` (canonical, inert) all pass; and an empty
->    array remains valid.
-> 6. A **differential test**: for each row of the table below, all three
+>    array remains valid. Plus a **round-trip** test: a URI accepted at
+>    registration is still accepted at authorize (obligations 2 and 3 agree).
+> 7. A **differential test**: for each row of the table below, all three
 >    consumers now agree. That is the property this section exists to create, and
 >    without it the differential can silently return.
 
