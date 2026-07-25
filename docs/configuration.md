@@ -26,7 +26,7 @@ console pairing (local, zero IdP setup).
 | `OAUTH_CONSENT_SIGNING_SECRET` | required 🔒 | — | HS256 secret for consent + upstream-flow tokens (≥32 chars). |
 | `OAUTH_SIGNING_PRIVATE_JWK` | required 🔒 | — | ES256 access-token signing key, as a JSON JWK. |
 | `OAUTH_SIGNING_KEY_ID` | optional | — | `kid` for the signing JWK. |
-| `OAUTH_REDIRECT_ALLOWLIST` | optional | empty | Comma-separated client redirect URIs (DCR/consent). |
+| `OAUTH_REDIRECT_ALLOWLIST` | optional | empty | Comma-separated client redirect URIs (DCR/consent). Exact URIs or origins only — a `*` (allow-all or prefix) entry, a non-`http(s)` scheme, or an entry with userinfo/a fragment fails at boot. Empty is fine: the built-in defaults (`https://claude.ai`, `https://chatgpt.com`, loopback) already cover the common case. |
 | `OAUTH_SCOPE_CATALOG` | optional | `mcp:read,mcp:write` | The scopes clients may request. |
 | `OAUTH_DEFAULT_SCOPES` | optional | `mcp:read` | Scopes granted when none requested. |
 | `OAUTH_ALLOWED_ORIGINS` | optional | `OAUTH_ISSUER` | Comma-separated Origin allowlist for the `/mcp` DNS-rebinding gate (add your browser clients, e.g. `https://claude.ai`). |
