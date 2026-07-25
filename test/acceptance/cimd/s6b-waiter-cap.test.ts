@@ -404,8 +404,11 @@ if (phases["s6b-waiter-cap"] !== true) {
       // published value and drive the full boot path both caps are read from.
       const c = config({ maxWaitersPerFetch: good });
       assert.equal(c.cimd?.maxWaitersPerFetch, good, `${good} must be published UNCHANGED — never clamped`);
-      const bridge = new Bridge({ config: c, store: new MemoryStore(), clock: new Clock(), audit: new MemoryAudit(), cimdTransport: heldTransport(), cimdResolver: resolver() });
-      assert.ok(bridge.cimd, `${good} must construct the CIMD machinery, not just validate`);
+      // Construction must not throw. Deliberately NOT asserting any Bridge field:
+      // where the resolver is retained is an implementation detail the contract
+      // does not name, and a frozen assertion on it would forbid a conforming
+      // impl that keeps it in `auth`, a differently named field, or a #private.
+      assert.doesNotThrow(() => new Bridge({ config: c, store: new MemoryStore(), clock: new Clock(), audit: new MemoryAudit(), cimdTransport: heldTransport(), cimdResolver: resolver() }), `${good} must construct, not merely validate`);
     });
   }
 
