@@ -102,6 +102,14 @@ export class CimdResolver {
   private readonly cacheTtlCapSeconds: number;
   private defaultFetcher: GuardedFetcher | undefined;
   private readonly seams: { transport?: CimdTransport; resolver?: DnsResolver };
+  /** Captured ONCE at construction. `config.dev` is the caller's object and the
+   *  outer freeze is shallow, so reading it lazily (the default fetcher is
+   *  memoized; per-call seam fetchers re-read every request) would let a
+   *  post-boot `dev.allowInsecureLocalhost = true` widen loopback after boot
+   *  validated it disabled. Same read-once rule as the cap snapshot. */
+  private readonly allowLoopback: boolean;
+  private readonly maxDocumentBytes: number;
+  private readonly fetchTimeoutMs: number;
 
   constructor(deps: CimdResolverDeps) {
     this.config = deps.config;
@@ -114,6 +122,10 @@ export class CimdResolver {
     this.cacheTtlCapSeconds = cimd?.cacheTtlCapSeconds ?? 3600;
     this.cache = new CimdSuccessCache();
     this.seams = { transport: deps.cimdTransport, resolver: deps.cimdResolver };
+    // Read-once: capture every fetcher-profile value at construction.
+    this.allowLoopback = deps.config.dev?.allowInsecureLocalhost === true;
+    this.maxDocumentBytes = cimd?.maxDocumentBytes ?? 5120;
+    this.fetchTimeoutMs = cimd?.fetchTimeoutMs ?? 5000;
   }
 
   /** Build a guarded fetcher for a boundary's own below-guard seams. The caps
@@ -121,14 +133,13 @@ export class CimdResolver {
    *  never widen them (decision 5). A cap-domain `TypeError` from the primitive
    *  is reconciled to `AuthConfigError` so boot never leaks a raw TypeError. */
   createFetcher(transport?: CimdTransport, resolver?: DnsResolver): GuardedFetcher {
-    const cimd = this.config.cimd;
     try {
       return createGuardedFetcher({
         ...(transport === undefined ? {} : { transport }),
         ...(resolver === undefined ? {} : { resolver }),
-        allowLoopback: this.config.dev?.allowInsecureLocalhost === true,
-        maxDocumentBytes: cimd?.maxDocumentBytes ?? 5120,
-        fetchTimeoutMs: cimd?.fetchTimeoutMs ?? 5000,
+        allowLoopback: this.allowLoopback,
+        maxDocumentBytes: this.maxDocumentBytes,
+        fetchTimeoutMs: this.fetchTimeoutMs,
       });
     } catch (error) {
       throw error instanceof AuthConfigError ? error
@@ -160,21 +171,26 @@ export class CimdResolver {
 
   async resolve(input: CimdResolveInput): Promise<CimdResolution> {
     await this.rateGuard(input.ip);
-    let fetched = false;
     try {
       // The fetcher is ALWAYS built here from this resolver's validated caps
       // and config-derived `allowLoopback`; a caller may substitute only the
       // below-guard transport/resolver seams, never the guard itself.
       const outcome = await this.registrationFor(input.clientId, this.fetcherFor(input.seams));
-      fetched = outcome.fetched;
       // A cache HIT reuses the fetched DOCUMENT, never the authorization
       // decision: the shared matcher re-runs on EVERY request.
       if (!cimdRedirectMatches(input.redirectUri, outcome.registration.redirect_uris)) {
         throw new CimdError("document_invalid");
       }
-      const emitSuccess = fetched
-        ? () => this.emit("success", undefined, input.clientId, input.ip)
-        : async () => { /* no fetch occurred — no fetch event */ };
+      // Every SUCCESSFUL resolution emits success, cache hit included. Decision
+      // 1b's outcome rule is about the resolution, not about whether the network
+      // was touched, and the failure side ALREADY audits cache-hit rejections —
+      // so auditing only fetches made cached successes invisible while their
+      // failures stayed visible, and monitoring silently under-counted.
+      // The frozen "no additional success audit for the rejected cache-hit
+      // request" row still holds: this closure runs only on the success path,
+      // after the matcher passed.
+      const emitSuccess = (): Promise<void> =>
+        this.emit("success", undefined, input.clientId, input.ip);
       return { registration: outcome.registration, emitSuccess };
     } catch (error) {
       if (error instanceof OAuthError) throw error; // the rate-limit channel is not a resolution outcome
