@@ -264,6 +264,30 @@ if (phases["s6b-waiter-cap"] !== true) {
     assert.deepEqual(after.body, GENERIC);
   });
 
+  test("a TIMED-OUT fetch also releases the entry (rule 24: removed on success, error, OR timeout)", async () => {
+    // The transport NEVER settles — the guarded fetcher's own deadline must win.
+    // An impl that cleans up on transport rejection but not on its own timeout
+    // leaves this client_id saturated forever; later requests park or reject.
+    let calls = 0;
+    const t = { async connectAndGet() { calls++; return new Promise<any>(() => { /* never settles */ }); }, get calls() { return calls; } };
+    const s = setup({ c: config({ maxWaitersPerFetch: 1, fetchTimeoutMs: 1000 }), t });
+    const first = await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" }), 5000) as any;
+    assert.equal(first.status, 401, "the deadline fired and mapped to the generic");
+    assert.deepEqual(first.body, GENERIC);
+    assert.equal(calls, 1);
+    // A later request must start a NEW fetch AND admit a follower — proving the
+    // timed-out entry was removed, not left holding its waiter accounting.
+    const okBefore = overloadedEvents(s.audit).length;
+    const retry = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(calls, 2, "the timed-out entry was REMOVED — a fresh fetch started");
+    const follower = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(overloadedEvents(s.audit).length, okBefore, "and its follower is admitted — no waiter count survived the timeout");
+    assert.equal((await withDeadline(retry, 5000) as any).status, 401, "the retry times out too (transport still dead) — as a resolution failure");
+    assert.equal((await withDeadline(follower, 5000) as any).status, 401);
+  });
+
   // ---- boot validation (rule 21 domain, same fail-closed treatment as the other caps) ----
 
   for (const bad of [0, -1, 4097, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "256", null, true]) {
@@ -309,7 +333,11 @@ if (phases["s6b-waiter-cap"] !== true) {
     assert.equal(t.calls, 1, "leader started the fetch at the pre-identity boundary");
     const inCap = f.flow.handleAuthorize(request());
     await settle();
+    const okBefore = successEvents(f.audit).length;
     const over = await withDeadline(f.flow.handleAuthorize(request())) as any;
+    // Same guard as the direct boundary: an impl that emits success and THEN the
+    // overloaded failure for one operation misreports the outcome.
+    assert.equal(successEvents(f.audit).length, okBefore, "the rejected upstream follower emits NO success event");
     // Decision 1b: resolution completes BEFORE any Set-Cookie / IdP 302, so an
     // over-cap rejection is a DIRECT error — never a redirect to the IdP and
     // never a flow cookie. An impl that caps only `prepare` fails here.
