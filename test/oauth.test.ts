@@ -644,6 +644,32 @@ test("config publication TOCTOU: an accessor-backed dcr/clientCredentials cannot
   assert.equal(cfg2.clientCredentials?.enabled, false, "must publish the boolean validation approved");
 });
 
+test("config publication: the signing JWK is a frozen snapshot (§5) — the most sensitive nested value", () => {
+  const base = baseInput();
+  // signingPrivateJwk was published BY REFERENCE while signKey()/publicJwk()
+  // read it per use and crypto-keys.ts memoizes the imported key in a WeakMap
+  // keyed by this object (its header called that a "stable (frozen)"
+  // reference). A mutation before first import swapped the signing material; a
+  // mutation after it desynchronized the cached signer from the published JWKS.
+  const caller = { ...(base.signingPrivateJwk as Record<string, unknown>) } as typeof base.signingPrivateJwk;
+  const config = createBridgeConfig({ ...base, signingPrivateJwk: caller });
+  assert.notEqual(config.signingPrivateJwk, caller, "must not publish the caller's JWK by reference");
+  assert.equal(Object.isFrozen(config.signingPrivateJwk), true);
+
+  const originalKid = config.signingPrivateJwk.kid;
+  (caller as Record<string, unknown>).kid = "SWAPPED";
+  (caller as Record<string, unknown>).d = "TAMPERED";
+  assert.equal(config.signingPrivateJwk.kid, originalKid, "a post-boot mutation must not reach the config");
+  assert.notEqual(config.signingPrivateJwk.d, "TAMPERED");
+
+  // Unknown members are dropped, not published (fail-closed, like KNOWN_CONFIG_KEYS).
+  const withExtra = createBridgeConfig({
+    ...base,
+    signingPrivateJwk: { ...(base.signingPrivateJwk as Record<string, unknown>), backdoor: "x" } as typeof base.signingPrivateJwk,
+  });
+  assert.equal((withExtra.signingPrivateJwk as Record<string, unknown>).backdoor, undefined);
+});
+
 test("config publication: array fields are validated as string[] and frozen (§5)", () => {
   const base = baseInput();
 

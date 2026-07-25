@@ -8,7 +8,7 @@ import type { ClientStore } from "./ports/client-store.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
 import { redirectAllowlistProblem } from "./redirect-allowlist.ts";
 import {
-  checkedStringArray, snapshotClientCredentials, snapshotDcr,
+  checkedStringArray, isEcP256PrivateJwk, snapshotClientCredentials, snapshotDcr, snapshotJwk,
 } from "./config-snapshot.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
@@ -105,7 +105,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const issuer = input.issuer;
   const resource = input.resource;
   const consentSigningSecret = input.consentSigningSecret;
-  const signingPrivateJwk = input.signingPrivateJwk;
+  const rawSigningPrivateJwk = input.signingPrivateJwk;
   const signingKeyId = input.signingKeyId;
   const rawRedirectAllowlist = input.redirectAllowlist;
   const rawScopeCatalog = input.scopeCatalog;
@@ -135,7 +135,13 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   if (consentSigningSecret.trim().length < 32) {
     throw new AuthConfigError("consentSigningSecret must be at least 32 characters");
   }
-  validateSigningKey(signingPrivateJwk);
+  // Snapshot BEFORE validating, then publish that copy (rationale in
+  // config-snapshot.ts: read per use by signKey()/publicJwk(), and WeakMap-keyed
+  // in crypto-keys.ts, so a shared reference is a live swap window).
+  const signingPrivateJwk = snapshotJwk(rawSigningPrivateJwk);
+  if (!isEcP256PrivateJwk(signingPrivateJwk)) {
+    throw new AuthConfigError("signingPrivateJwk must be an EC P-256 key with d, x, y");
+  }
   // Snapshot-then-validate, then publish the snapshot: the array that was
   // checked is the array requests read (§5 "Publication"; issue #100).
   const scopeCatalog = checkedStringArray("scopeCatalog", rawScopeCatalog, (m) => new AuthConfigError(m));
@@ -222,12 +228,6 @@ function validateUrl(allowInsecureLocalhost: boolean, label: string, value: stri
     // loopback: http or https both permitted
   } else if (url.protocol !== "https:") {
     throw new AuthConfigError(`${label} must be https:// (use dev.allowInsecureLocalhost for local http)`);
-  }
-}
-
-function validateSigningKey(jwk: JWK): void {
-  if (jwk.kty !== "EC" || jwk.crv !== "P-256" || !jwk.d || !jwk.x || !jwk.y) {
-    throw new AuthConfigError("signingPrivateJwk must be an EC P-256 key with d, x, y");
   }
 }
 

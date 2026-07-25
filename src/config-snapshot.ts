@@ -11,6 +11,7 @@
 // instant it ran. Copying one level from an explicit key allowlist makes the
 // value read at request time the value boot approved.
 
+import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import type { ClientCredentialsOptions, DcrMode } from "./config.ts";
 
@@ -93,4 +94,40 @@ export function snapshotDcr(mode: DcrMode["mode"], store: ClientStore | undefine
  *  (§17.2). */
 export function snapshotClientCredentials(enabled: boolean): ClientCredentialsOptions {
   return Object.freeze({ enabled: enabled === true });
+}
+
+/** Frozen one-level copy of the signing JWK.
+ *
+ *  The most sensitive value in `BridgeConfig`, and it was published by
+ *  reference: `signKey()` and `publicJwk()` read its properties per use, and
+ *  `crypto-keys.ts` memoizes the imported key in a `WeakMap` keyed by this
+ *  object — its header calls that a "stable (frozen) reference", which was not
+ *  true. A mutation before the first import replaced the validated signing and
+ *  JWKS material; a mutation after it desynchronized the cached signer from the
+ *  published JWKS, breaking verification of every token the deployment issues.
+ *
+ *  Copied via an explicit key allowlist rather than a spread: a JWK is a plain
+ *  data record, so unknown members must not ride onto the published object.
+ *  `undefined` members are omitted so the shape matches what was validated. */
+export function snapshotJwk(jwk: JWK): JWK {
+  const out: Record<string, unknown> = {};
+  for (const key of JWK_KEYS) {
+    const value = (jwk as Record<string, unknown>)[key];
+    if (value !== undefined) out[key] = value;
+  }
+  return Object.freeze(out) as JWK;
+}
+
+/** Every JWK member this library reads or republishes: the EC key parameters
+ *  (RFC 7518 §6.2) plus the JOSE header-ish metadata `publicJwk`/`keyId` use.
+ *  A member outside this set is DROPPED, never published — the same fail-closed
+ *  direction as `KNOWN_CONFIG_KEYS`. */
+const JWK_KEYS: readonly string[] = [
+  "kty", "crv", "x", "y", "d", "alg", "kid", "use", "key_ops", "ext",
+];
+
+/** Shape predicate for the signing key: EC P-256 with the private scalar and
+ *  both public coordinates. Pure — the caller throws (no import cycle). */
+export function isEcP256PrivateJwk(jwk: JWK): boolean {
+  return jwk.kty === "EC" && jwk.crv === "P-256" && !!jwk.d && !!jwk.x && !!jwk.y;
 }
