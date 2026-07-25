@@ -200,6 +200,9 @@ interface BridgeConfig {
   signingKeyId?: string;          // optional; else derived from the JWK kid
 
   // --- redirect policy (stateless-DCR backstop; see §10) ---
+  // Every entry MUST satisfy the §10.0 redirect-entry grammar (origin form or
+  // canonical exact-URI form); createBridgeConfig rejects anything else at boot.
+  // An EMPTY array is valid — the built-in defaults cover the common case.
   redirectAllowlist: string[];    // ADDS to the built-in MCP-client defaults
 
   // --- scope contract (see §11); REQUIRED, fail-closed ---
@@ -265,6 +268,15 @@ interface BridgeConfig {
   the deployer MUST declare scopes explicitly.
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
+- `redirectAllowlist` is an array, and **every entry satisfies the §10.0
+  redirect-entry grammar** — origin form or canonical exact-URI form, `https`/
+  `http` only, no wildcard, userinfo, query, fragment, whitespace, control
+  character, backslash, or malformed percent-escape. Each rule is checked on the
+  RAW entry as well as any parsed field (§10.0 explains why: WHATWG
+  normalization erases the syntax the decision depends on). An empty array is
+  valid. The error **names the offending entry** and, for a non-canonical one,
+  shows its canonical form — a deployer with several origins configured must not
+  have to bisect.
 
 A config object is constructed via `createBridgeConfig(input)` (validates +
 freezes). The frozen object is the only thing passed to use-cases.
@@ -749,9 +761,79 @@ the response. Wiring rules:
   with the 15-day check.
 ## 10. Redirect-URI policy
 
-Two policies, by DCR mode. Both share the core rule: **no allow-all (`"*"`), no
-unanchored prefix, userinfo rejected, hash stripped.** Shared built-in defaults
-for MCP clients (these ADD to any config allowlist; a config cannot remove them):
+### 10.0 The redirect-entry grammar (ONE definition, every consumer)
+
+> **Status: contract-only — IMPLEMENTATION PENDING.** This section defines the
+> target; `main` does not yet enforce it, and the differential table below is
+> current shipped behavior, not history. Enforcement lands in the follow-up
+> implementation PR (boot validator + both matchers + one negative test per
+> rejected shape). Do **not** read this section as a conformance claim until
+> that lands and §16's row says so.
+
+Everything below — the §10.1 global allowlist, the §10.2 per-client policy, and
+the §17.1 CIMD document/matcher — decides against **this single grammar**. It is
+stated first because the alternative has been demonstrated: three call sites
+each inferred their own notion of a "valid entry" and disagreed on nearly every
+non-obvious input, which is a **parser differential**, not a set of unrelated
+bugs. Measured on `40d9f58`:
+
+| entry | §10.1 allowlist | CIMD matcher | CIMD doc validator |
+| --- | --- | --- | --- |
+| `*` | reject | **accept** | reject |
+| `https://a.test/cb*` | reject | **accept** | **accept** |
+| `javascript:alert(1)` | reject | **accept** | reject |
+| `https://u:p@a.test` | **accept** | **accept** | reject |
+| `https://@a.test` | **accept** | **accept** | reject |
+| `https://a.test?` | **accept** | **accept** | **accept** |
+| `HTTPS://a.test/cb` | reject | **accept** | **accept** |
+| `https://a.test:443/cb` | reject | **accept** | **accept** |
+| `https://a.test/x/../cb` | reject | **accept** | **accept** |
+
+**Definition.** A redirect entry — whether it comes from `redirectAllowlist`,
+a stored `ClientRegistration.redirectUris`, or a CIMD document's
+`redirect_uris` — is EXACTLY one of two forms, and nothing else:
+
+- **Origin form** — `scheme "://" host [ ":" port ]`, with **nothing after the
+  authority**: no path (or the single `/`), no query, no fragment, no userinfo.
+- **Exact-URI form** — origin form followed by a path, in **canonical form**
+  (byte-identical to `new URL(entry).href`): no query, no fragment, no userinfo.
+
+In both forms: `scheme` is `https` or `http` (an allowlist — `javascript:`,
+`data:`, `file:` and every other scheme are rejected, never enumerated as
+exceptions); the raw entry contains no `*`, no whitespace (leading, trailing, or
+interior), no control characters, no backslash, and no `%` that does not begin a
+valid percent-triplet.
+
+**Every rule is checked on the RAW string before, or in addition to, any parsed
+field.** WHATWG normalization erases the very syntax the decision depends on —
+`new URL` drops empty userinfo (`https://@a.test` yields `username === ""`),
+maps a bare `?` to `search === ""`, lowercases the scheme, strips the default
+port, and resolves `..` segments. A validator reading only parsed fields is
+therefore checking a different string than the one the deployer wrote and the
+matcher later compares.
+
+**Rejection is at the boundary the entry enters:** boot (`createBridgeConfig`)
+for `redirectAllowlist`, registration for stored DCR, document validation for
+CIMD. No consumer re-derives the grammar, and a malformed entry never reaches a
+matcher.
+
+**Why reject rather than normalize.** A non-canonical entry could be rewritten
+to its canonical form instead of refused. It is refused because config should
+mean what it says: silently rewriting `https://a.test:443/cb` leaves a manifest
+whose text no longer describes the deployed policy, and the same rewrite applied
+to an entry the deployer *intended* differently is an undetectable widening. The
+error names the offending entry and shows its canonical form to paste back.
+
+**Empty is valid, entries are not optional.** An empty `redirectAllowlist` is
+correct configuration (the built-in defaults below cover the common case). Only
+*entries* can be invalid, never emptiness.
+
+### The two matching policies
+
+Two policies, by DCR mode. Both consume entries already valid per §10.0, and
+share the core rule: **no allow-all (`"*"`), no unanchored prefix, userinfo
+rejected, hash stripped.** Shared built-in defaults for MCP clients (these ADD
+to any config allowlist; a config cannot remove them):
 
 ```
 https://claude.ai        // Claude (web) custom connectors
@@ -767,6 +849,26 @@ An entry matches if it is the exact redirect_uri, the exact ORIGIN
 widens to any port only if it is an origin-only entry with no explicit port/path;
 a port-scoped or path-specific loopback entry is NOT widened. Returns the
 normalized URI.
+
+Entries reaching this matcher are already §10.0-valid — `createBridgeConfig`
+refuses everything outside the grammar at boot — so its inputs are origin form
+or canonical exact-URI form only. It keeps its own `"*"` rejection as
+defense-in-depth.
+
+Two consequences that make §10.0's raw-syntax rules load-bearing rather than
+cosmetic:
+
+- **Origin-form entries match origin-wide** (any path on that origin). That is
+  the form's purpose, and it is exactly why the grammar forbids a query
+  delimiter or empty userinfo inside it: `https://ok.test?` and
+  `https://@ok.test` parse to an empty `search`/`username`, so a parsed-field
+  check classifies them origin-only and grants that origin-wide match — while
+  the text reads as something narrower.
+- **Exact-URI entries match by string equality** against the normalized
+  presented URI, which is why the grammar requires canonical form: a
+  non-canonical entry (`HTTPS://…`, `…:443/cb`, a `/x/../cb` dot segment,
+  surrounding whitespace) matches **nothing**, so the deployer's configured
+  callback fails at authorization instead of at boot.
 
 ### 10.2 Per-client policy (stored-DCR) — RC item (b)
 At authorize/token in stored mode, the client's registered `applicationType`
@@ -1444,10 +1546,11 @@ decision. Everything else in the pipeline still runs under the flag.
   would be accepted with the key material silently ignored. `jwks_uri` is a
   URL and is never fetched (17.1.4 / the no-second-fetch posture), so it
   cannot carry key material into the AS.
-- `redirect_uris` entries: https (exact-match at authorize, per draft §4.5 /
-  RFC 9700) or loopback http (RFC 8252 any-port at match time — consistent
-  with §10.2 native policy). Same hygiene as §10: no wildcards, no fragments,
-  no userinfo. If present: `response_types` must include `"code"`;
+- `redirect_uris` entries: **§10.0-valid** (that grammar governs — not a
+  restatement, and not a per-site re-derivation: the CIMD matcher previously
+  accepted `*`, `javascript:`, and non-canonical entries that §10.1 refused).
+  https entries exact-match at authorize (draft §4.5 / RFC 9700); loopback http
+  matches RFC 8252 any-port (consistent with §10.2 native policy). If present: `response_types` must include `"code"`;
   `grant_types` ⊆ `{authorization_code, refresh_token}`; else reject.
 - Unknown members ignored (the RFC 7591 registry allows extras). `logo_uri`
   is NOT fetched and NOT displayed in v0.2 (the draft requires
