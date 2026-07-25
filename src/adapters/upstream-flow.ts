@@ -85,8 +85,10 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
   // Only the below-guard fetcher differs when this factory carries its own
   // seams — the caps and allowLoopback still come from the validated config.
   const cimd = bridge.cimd;
-  const cimdFetcher = cimd.enabled && (deps.cimdTransport !== undefined || deps.cimdResolver !== undefined)
-    ? cimd.createFetcher(deps.cimdTransport, deps.cimdResolver)
+  // Pass the below-guard SEAMS, never a constructed fetcher: the resolver
+  // builds the guard itself from the validated profile (decision 1e).
+  const cimdSeams = deps.cimdTransport !== undefined || deps.cimdResolver !== undefined
+    ? { transport: deps.cimdTransport, resolver: deps.cimdResolver }
     : undefined;
 
   const guard = async (req: NormRequest, prefix: string): Promise<void> => {
@@ -114,7 +116,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       // mapped to the decision-2 generic INSIDE this boundary.
       const presentedRedirect = queryString(req.query, "redirect_uri") ?? "";
       const resolved = await resolveUpstreamAuthorizeClient({
-        config: bridge.config, cimd, fetcher: cimdFetcher, clientId,
+        config: bridge.config, cimd, seams: cimdSeams, clientId,
         redirectUri: presentedRedirect, ip: req.ip,
       });
       const params = gatherOAuthParams(req); // step 4

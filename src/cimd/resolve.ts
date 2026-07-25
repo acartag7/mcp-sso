@@ -13,7 +13,7 @@ import { noopRateLimit } from "../ports/rate-limit.ts";
 import { OAuthError } from "../errors.ts";
 import { AuthConfigError } from "../config.ts";
 import { CimdError, type CimdReason } from "./errors.ts";
-import { createGuardedFetcher, isGuardedFetcher, type GuardedFetcher } from "./guarded-fetcher.ts";
+import { createGuardedFetcher, type GuardedFetcher } from "./guarded-fetcher.ts";
 import type { CimdTransport, DnsResolver } from "./transport.ts";
 import { CimdSuccessCache, computeCacheExpiryMs } from "./cache.ts";
 import { cimdRedirectMatches, projectCimdRegistration, type CimdRegistration } from "./registration.ts";
@@ -72,9 +72,15 @@ export interface CimdResolveInput {
   readonly clientId: string;
   readonly redirectUri: string;
   readonly ip?: string;
-  /** The boundary's own guarded fetcher (the upstream orchestrator may carry
-   *  its own below-guard seams); defaults to this service's fetcher. */
-  readonly fetcher?: GuardedFetcher;
+  /** Below-guard seams ONLY (rule 14 / decision 1e). Deliberately NOT a whole
+   *  `GuardedFetcher`: the brand proves a fetcher came from
+   *  `createGuardedFetcher`, not that it carries THIS resolver's validated
+   *  profile — a genuine `createGuardedFetcher({allowLoopback: true})` is
+   *  branded, so accepting one would let a caller resolve and cache a
+   *  `https://localhost/...` document on a bridge whose config has loopback
+   *  disabled, and every later authorization reads it from the shared cache.
+   *  The fetcher is always constructed here from the validated caps. */
+  readonly seams?: { readonly transport?: CimdTransport; readonly resolver?: DnsResolver };
 }
 
 export interface CimdResolution {
@@ -135,6 +141,13 @@ export class CimdResolver {
     return this.defaultFetcher;
   }
 
+  /** Per-call below-guard seams (decision 1e) still yield a fetcher built from
+   *  the validated profile — only the transport/resolver differ. */
+  private fetcherFor(seams?: { readonly transport?: CimdTransport; readonly resolver?: DnsResolver }): GuardedFetcher {
+    if (seams?.transport === undefined && seams?.resolver === undefined) return this.fetcher();
+    return this.createFetcher(seams.transport, seams.resolver);
+  }
+
   /** Pre-resolution `cimd:<ip>` rate-limit guard (decision 2 — OUTSIDE the
    *  anti-oracle map: a direct 429 `temporarily_unavailable`, no DNS, no
    *  connect, no `oauth.cimd.fetch` audit). Fail-open on a limiter outage,
@@ -149,14 +162,10 @@ export class CimdResolver {
     await this.rateGuard(input.ip);
     let fetched = false;
     try {
-      // A supplied fetcher MUST carry the guarded brand. `resolve()` is
-      // reachable from the root-exported `bridge.cimd`, so a JS consumer could
-      // otherwise duck-type a `fetch()` returning an arbitrary document — it
-      // would be projected and cached with no URL admission, no DNS/IP checks,
-      // no size cap and no document validation. Unbranded ⇒ use ours.
-      const supplied = input.fetcher;
-      const fetcher = isGuardedFetcher(supplied) ? supplied : this.fetcher();
-      const outcome = await this.registrationFor(input.clientId, fetcher);
+      // The fetcher is ALWAYS built here from this resolver's validated caps
+      // and config-derived `allowLoopback`; a caller may substitute only the
+      // below-guard transport/resolver seams, never the guard itself.
+      const outcome = await this.registrationFor(input.clientId, this.fetcherFor(input.seams));
       fetched = outcome.fetched;
       // A cache HIT reuses the fetched DOCUMENT, never the authorization
       // decision: the shared matcher re-runs on EVERY request.

@@ -14,7 +14,7 @@ import type { BridgeConfig } from "../config.ts";
 import { OAuthError } from "../errors.ts";
 import type { CimdResolver } from "../cimd/resolve.ts";
 import { cimdGenericError, mapCimdError } from "../cimd/resolve.ts";
-import type { GuardedFetcher } from "../cimd/guarded-fetcher.ts";
+import type { CimdTransport, DnsResolver } from "../cimd/guarded-fetcher.ts";
 import { cimdRedirectMatches, isCimdClientId, isSchemeShaped, type CimdRegistration } from "../cimd/registration.ts";
 import { resolveOpaqueRedirect } from "../authorize-internals.ts";
 import type { FlowClaims } from "./upstream-flow-internals.ts";
@@ -35,7 +35,7 @@ export interface UpstreamCimdOutcome {
 export async function resolveUpstreamAuthorizeClient(args: {
   config: BridgeConfig;
   cimd: CimdResolver;
-  fetcher: GuardedFetcher | undefined;
+  seams: { readonly transport?: CimdTransport; readonly resolver?: DnsResolver } | undefined;
   clientId: string;
   redirectUri: string;
   ip?: string;
@@ -46,7 +46,7 @@ export async function resolveUpstreamAuthorizeClient(args: {
     try {
       const resolution = await args.cimd.resolve({
         clientId: args.clientId, redirectUri: args.redirectUri, ip: args.ip,
-        ...(args.fetcher === undefined ? {} : { fetcher: args.fetcher }),
+        ...(args.seams === undefined ? {} : { seams: args.seams }),
       });
       return { registration: resolution.registration, emitSuccess: () => resolution.emitSuccess() };
     } catch (error) {
