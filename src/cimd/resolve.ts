@@ -127,13 +127,17 @@ export class CimdResolver {
    *  connect, no `oauth.cimd.fetch` audit). Fail-open on a limiter outage,
    *  mirroring the existing register/token/upstream guards. */
   private async rateGuard(ip: string | undefined, limiter?: RateLimitPort): Promise<void> {
-    // Prefer the CALLING boundary's limiter: `UpstreamFlowDeps.rateLimit` is
+    // BOTH limiters apply — never replace. `UpstreamFlowDeps.rateLimit` is
     // independent of `BridgeDeps.rateLimit` and the upstream flow shares this
-    // resolver, so a limiter wired only there would otherwise never run.
-    let allowed = true;
-    const check = limiter ?? this.rateLimit;
-    try { allowed = await check.check(`cimd:${ip ?? "unknown"}`); } catch { allowed = true; }
-    if (!allowed) throw new OAuthError("temporarily_unavailable", "Rate limit exceeded; retry later", 429);
+    // resolver, so a limiter wired only there would otherwise never run; but a
+    // caller-supplied allow-all must NOT be able to weaken an operator's
+    // configured guard. Either one denying is a denial.
+    const key = `cimd:${ip ?? "unknown"}`;
+    for (const port of limiter === undefined ? [this.rateLimit] : [this.rateLimit, limiter]) {
+      let allowed = true;
+      try { allowed = await port.check(key); } catch { allowed = true; } // fail-open on a limiter outage
+      if (!allowed) throw new OAuthError("temporarily_unavailable", "Rate limit exceeded; retry later", 429);
+    }
   }
 
   async resolve(input: CimdResolveInput): Promise<CimdResolution> {

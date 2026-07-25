@@ -14,8 +14,11 @@ const UNSIGNED_DECIMAL = /^[0-9]+$/;
 /** RFC 9110 token — the only shape a Cache-Control directive name may take.
  *  Anchored, bounded character class, no backtracking (ReDoS-safe). */
 const DIRECTIVE_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
-/** RFC 9110 quoted-string: DQUOTE *( qdtext / quoted-pair ) DQUOTE. */
-const QUOTED_STRING = /^"(?:[^"\\]|\\.)*"$/;
+/** RFC 9110 quoted-string: DQUOTE *( qdtext / quoted-pair ) DQUOTE. qdtext
+ *  EXCLUDES CTLs — a bare CR/LF/NUL inside a quoted value is malformed, not
+ *  content (and a raw CR/LF would be a header-splitting shape). quoted-pair
+ *  likewise escapes only HTAB/SP/VCHAR/obs-text. */
+const QUOTED_STRING = /^"(?:[\t \x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t \x21-\x7e\x80-\xff])*"$/;
 
 interface CacheEntry {
   readonly registration: CimdRegistration;
