@@ -200,8 +200,8 @@ interface BridgeConfig {
   signingKeyId?: string;          // optional; else derived from the JWK kid
 
   // --- redirect policy (stateless-DCR backstop; see §10) ---
-  // Every entry MUST satisfy the §10.0 redirect-entry grammar (origin form or
-  // canonical exact-URI form); createBridgeConfig rejects anything else at boot.
+  // Every entry MUST satisfy the §10.0 redirect-entry grammar (canonical origin
+  // or exact-URI form). ⚠️ NOT YET ENFORCED — see the §5 boot-validation bullet.
   // An EMPTY array is valid — the built-in defaults cover the common case.
   redirectAllowlist: string[];    // ADDS to the built-in MCP-client defaults
 
@@ -269,7 +269,11 @@ interface BridgeConfig {
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
 - `redirectAllowlist` is an array, and **every entry satisfies the §10.0
-  redirect-entry grammar** — origin form or canonical exact-URI form, `https`/
+  redirect-entry grammar**. ⚠️ **IMPLEMENTATION PENDING at this commit** — today
+  `createBridgeConfig` copies `redirectAllowlist` through without so much as an
+  `Array.isArray` check, so a deployer reading this bullet alone would wrongly
+  believe `https://ok.test?` is already rejected. The rule below describes the
+  target; enforcement lands with the §10.0 implementation PR — origin form or canonical exact-URI form, `https`/
   `http` only, no wildcard, userinfo, query, fragment, whitespace, control
   character, backslash, or malformed percent-escape. Each rule is checked on the
   RAW entry as well as any parsed field (§10.0 explains why: WHATWG
@@ -795,8 +799,18 @@ a stored `ClientRegistration.redirectUris`, or a CIMD document's
 
 - **Origin form** — `scheme "://" host [ ":" port ]`, with **nothing after the
   authority**: no path (or the single `/`), no query, no fragment, no userinfo.
-- **Exact-URI form** — origin form followed by a path, in **canonical form**
-  (byte-identical to `new URL(entry).href`): no query, no fragment, no userinfo.
+- **Exact-URI form** — origin form followed by a path: no query, no fragment,
+  no userinfo.
+
+**Canonical spelling is required in BOTH forms**, not just exact-URI form: the
+raw entry MUST equal `new URL(entry).href`, with exactly one exemption — an
+origin-form entry MAY omit the root slash WHATWG appends (`https://a.test` is
+accepted for `https://a.test/`; nothing else is). Without this rule on origin
+form, `https://%65xample.com` is accepted, parses to `https://example.com`, and
+is then granted **origin-wide** access to `example.com` under §10.1 — an entry
+whose text names one host and whose effect names another, which is precisely
+what "reject, don't normalize" exists to prevent. The same applies to
+`HTTPS://EXAMPLE.com` and any other spelling WHATWG folds.
 
 In both forms: `scheme` is `https` or `http` (an allowlist — `javascript:`,
 `data:`, `file:` and every other scheme are rejected, never enumerated as
