@@ -280,9 +280,14 @@ if (phases["s6b-waiter-cap"] !== true) {
     const retryFollower = s.bridge.handleAuthorize(request(), { subject: "u" });
     await settle();
     assert.equal(overloadedEvents(s.audit).length, overBefore, "the retry's follower is admitted — the failed round's waiter count was released");
+    // Admitted is not enough: it must COALESCE. An impl that cleans up the failed
+    // entry but starts a THIRD fetch for the follower passes an admission-only
+    // check, because releaseAll() rejects both fetches identically (rule 24).
+    assert.equal(calls, 2, "the retry follower coalesced — no third fetch for the same client_id");
     for (const r of releases) r();
     const after = await withDeadline(retry) as any;
     assert.equal((await withDeadline(retryFollower) as any).status, 401, "the follower shares the retry's failure");
+    assert.equal(calls, 2, "…and still no third fetch after both settled");
     assert.equal(after.status, 401, "still fails (upstream down) — but as a resolution failure");
     assert.deepEqual(after.body, GENERIC);
   });
