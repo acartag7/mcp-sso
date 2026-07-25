@@ -108,8 +108,14 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const allowedOrigins = input.allowedOrigins;
   const dcr = input.dcr;
   const dcrMode = dcr.mode;
-  const dev = input.dev;
-  const allowInsecureLocalhost = dev?.allowInsecureLocalhost === true;
+  const rawDev = input.dev;
+  // Read ONCE. This boolean is what validateUrl() below checks, so publishing a
+  // frozen snapshot of it (rather than the caller's live `dev` object) closes
+  // the validation→construction window: a consumer reading config.dev later
+  // cannot observe a value boot never validated. See issue #100 for the
+  // remaining sibling blocks (dcr / clientCredentials) on main.
+  const allowInsecureLocalhost = rawDev?.allowInsecureLocalhost === true;
+  const dev = rawDev === undefined ? undefined : Object.freeze({ allowInsecureLocalhost });
   const clientCredentials = input.clientCredentials;
   const clientCredentialsEnabled = clientCredentials?.enabled;
   let cimd = input.cimd;

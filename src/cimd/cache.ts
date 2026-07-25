@@ -14,6 +14,8 @@ const UNSIGNED_DECIMAL = /^[0-9]+$/;
 /** RFC 9110 token — the only shape a Cache-Control directive name may take.
  *  Anchored, bounded character class, no backtracking (ReDoS-safe). */
 const DIRECTIVE_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
+/** RFC 9110 quoted-string: DQUOTE *( qdtext / quoted-pair ) DQUOTE. */
+const QUOTED_STRING = /^"(?:[^"\\]|\\.)*"$/;
 
 interface CacheEntry {
   readonly registration: CimdRegistration;
@@ -73,6 +75,14 @@ export function computeCacheExpiryMs(
   return t1Ms + ttlSeconds * 1000;
 }
 
+/** RFC 9111 `directive = token [ "=" ( token / quoted-string ) ]`. A bare token,
+ *  or a fully-terminated quoted-string with no stray unescaped quote. Both
+ *  patterns are anchored with bounded classes (ReDoS-safe). */
+function isWellFormedDirectiveValue(value: string): boolean {
+  if (DIRECTIVE_NAME.test(value.toLowerCase())) return true;
+  return QUOTED_STRING.test(value);
+}
+
 /** Exactly one `Cache-Control` header occurrence carrying exactly one
  *  `max-age` directive with an unquoted unsigned-decimal safe-integer value,
  *  and no `no-store`/`no-cache`. Anything else ⇒ non-cacheable. Directive
@@ -94,6 +104,11 @@ function parseMaxAge(values: readonly string[] | undefined): number | null {
     // malformed and makes the whole header non-cacheable. Skipping it instead
     // would cache on a header we could not fully parse.
     if (!DIRECTIVE_NAME.test(name)) return null;
+    // The VALUE must also be well-formed before we may ignore an unknown
+    // directive: `foo==bar` and an unterminated quoted string are malformed
+    // headers, and rule 25 makes a malformed Cache-Control non-cacheable.
+    // Ignoring only the name would cache on a header we could not fully parse.
+    if (eq >= 0 && !isWellFormedDirectiveValue(directive.slice(eq + 1))) return null;
     if (name === "no-store" || name === "no-cache") return null;
     if (name !== "max-age") continue;
     occurrences += 1;
