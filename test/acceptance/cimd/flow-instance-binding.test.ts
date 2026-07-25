@@ -14,11 +14,14 @@
 // unauthenticated, so a remote caller can start flow A and reuse its
 // state/challenge against IdP B.
 //
-// BLACK-BOX: drives only the public `createUpstreamRedirectFlow` surface
-// (handleAuthorize / handleCallback) plus the public Bridge + config seams. It
-// asserts OBSERVABLE behavior — which IdP's exchangeAndVerify runs, the response
-// status, and the audit reason — never the claim encoding, so an implementation
-// may bind via `aud` or a dedicated claim as long as the behavior holds.
+// BLACK-BOX over the public `createUpstreamRedirectFlow` surface
+// (handleAuthorize / handleCallback) plus the public Bridge + config seams —
+// with ONE deliberate exception: the minted cookie's `aud` is decoded and
+// asserted exactly. §17.11 does not merely require cross-flow rejection, it
+// requires `aud === "mcp-sso/upstream-flow" + callbackPath`. Behaviour-only
+// assertions would let an implementation keep the deployment-wide audience and
+// add a separate binding claim — passing this PERMANENTLY FROZEN suite while
+// violating the locked contract.
 //
 // FAITHFULNESS (the "could a WRONG implementation pass this?" pass):
 //   - Cross-flow rejection is asserted on the EXCHANGE, not just the status: an
@@ -119,16 +122,28 @@ if (phases["flow-instance-binding"] !== true) {
   const cookieOf = (res: any) => (res.headers["set-cookie"] ?? "").split(";")[0].split("=").slice(1).join("=");
   const upstreamState = (res: any) => new URL(res.headers.location).searchParams.get("state");
 
+  /** Decode a JWT payload without verifying (we assert claims, not signature). */
+  function payloadOf(jwt: string): any {
+    const part = jwt.split(".")[1] ?? "";
+    return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+  }
+
   /** Start a flow and return the browser-held cookie + the upstream state. */
-  async function begin(flow: any) {
+  async function begin(flow: any, callbackPath: string) {
     const res = await flow.handleAuthorize(req(query()));
     assert.equal(res.status, 302, "authorize must 302 to the IdP");
-    return { cookie: cookieOf(res), state: upstreamState(res) };
+    const cookie = cookieOf(res);
+    // §17.11: the audience is the contracted per-flow value, not a side claim.
+    assert.equal(
+      payloadOf(cookie).aud, `mcp-sso/upstream-flow${callbackPath}`,
+      "flow token aud must be the prefix + this flow's callbackPath",
+    );
+    return { cookie, state: upstreamState(res) };
   }
 
   test("§17.11 binding: a cookie minted by flow A is REJECTED at flow B's callback, and IdP B is never called", async () => {
     const { flowA, flowB, idA, idB, audit, store } = twoFlows();
-    const a = await begin(flowA);
+    const a = await begin(flowA, "/cb-a");
 
     // A's cookie + A's state presented to B's callback, with a code "issued by B".
     const res = await flowB.handleCallback(req(
@@ -145,6 +160,21 @@ if (phases["flow-instance-binding"] !== true) {
     assert.equal(res.status, 400, "cross-flow cookie is the existing row-3 direct 4xx");
     assert.equal(res.headers.location, undefined, "row 3 is direct — never a redirect");
     assert.ok(audit.callbackReasons().includes("flow_cookie_invalid"), "must audit the contracted row-3 reason");
+    // §17.11: EVERY callback response with a readable cookie clears it — this
+    // new rejection path included, or an invalid cross-flow cookie lingers in
+    // the browser until overwrite or expiry.
+    assert.match(String(res.headers["set-cookie"] ?? ""), /Max-Age=0/, "the rejected cookie must be cleared");
+
+    // ORDERING (§17.11: row 3 precedes row 6). An implementation could verify
+    // the deployment-wide audience, CONSUME claims.jti, then bind — satisfying
+    // every assertion above while burning A's single-use jti. A would then fail
+    // `flow_replayed`. Prove A can still redeem its own cookie afterwards.
+    const redeemed = await flowA.handleCallback(req(
+      { state: a.state, code: "code-from-idp-A" },
+      { cookie: `__Host-mcp-sso-upstream=${a.cookie}` },
+    ));
+    assert.equal(idA.exchangeCalls(), 1, "flow A must still redeem its own cookie after B rejected it");
+    assert.equal(redeemed.status, 200, "B's rejection must not have consumed A's jti");
     await store.close();
   });
 
@@ -152,7 +182,7 @@ if (phases["flow-instance-binding"] !== true) {
     // An implementation binding only one flow, or comparing with a substring or
     // prefix rule, would pass the first test and fail here.
     const { flowA, flowB, idA, idB, audit, store } = twoFlows();
-    const b = await begin(flowB);
+    const b = await begin(flowB, "/cb-b");
 
     const res = await flowA.handleCallback(req(
       { state: b.state, code: "code-from-idp-A" },
@@ -171,7 +201,7 @@ if (phases["flow-instance-binding"] !== true) {
     // "secure" and completely broken — would pass the suite.
     const { flowA, flowB, idA, idB, store } = twoFlows();
 
-    const a = await begin(flowA);
+    const a = await begin(flowA, "/cb-a");
     const resA = await flowA.handleCallback(req(
       { state: a.state, code: "code-from-idp-A" },
       { cookie: `__Host-mcp-sso-upstream=${a.cookie}` },
@@ -181,7 +211,7 @@ if (phases["flow-instance-binding"] !== true) {
     // it does not redirect.
     assert.equal(resA.status, 200, "a valid same-flow callback reaches the consent page");
 
-    const b = await begin(flowB);
+    const b = await begin(flowB, "/cb-b");
     const resB = await flowB.handleCallback(req(
       { state: b.state, code: "code-from-idp-B" },
       { cookie: `__Host-mcp-sso-upstream=${b.cookie}` },
@@ -202,7 +232,7 @@ if (phases["flow-instance-binding"] !== true) {
     const id = fakeIdentity("solo", "/oauth/callback");
     const flow = createUpstreamRedirectFlow({ bridge, identity: id.port, store, clock, audit });
 
-    const started = await begin(flow);
+    const started = await begin(flow, "/oauth/callback");
     const res = await flow.handleCallback(req(
       { state: started.state, code: "code-from-idp" },
       { cookie: `__Host-mcp-sso-upstream=${started.cookie}` },
@@ -218,7 +248,7 @@ if (phases["flow-instance-binding"] !== true) {
     // reason — otherwise the response tells a prober that a second flow exists
     // and that they hit a real one.
     const { flowA, flowB, audit, store } = twoFlows();
-    const a = await begin(flowA);
+    const a = await begin(flowA, "/cb-a");
 
     const crossFlow = await flowB.handleCallback(req(
       { state: a.state, code: "c" }, { cookie: `__Host-mcp-sso-upstream=${a.cookie}` },
@@ -230,6 +260,14 @@ if (phases["flow-instance-binding"] !== true) {
     assert.equal(crossFlow.status, garbage.status, "status must not distinguish a cross-flow cookie");
     assert.equal(crossFlow.headers.location, undefined);
     assert.equal(garbage.headers.location, undefined);
+    // The BODY is the oracle that a status-only check misses: an implementation
+    // can return a distinguishable `error`/`error_description` for an audience
+    // mismatch while garbage gets the generic row-3 body, and still audit
+    // `flow_cookie_invalid` for both. §17.11 requires the mismatch to use the
+    // EXISTING row-3 `invalid_request`, so compare the public bodies and pin
+    // the contracted code.
+    assert.deepEqual(crossFlow.body, garbage.body, "the response body must not distinguish a cross-flow cookie");
+    assert.equal((crossFlow.body as any)?.error, "invalid_request", "row 3 is the contracted invalid_request");
     const reasons = audit.callbackReasons();
     assert.equal(reasons.filter((r: string) => r === "flow_cookie_invalid").length, 2, "both must audit the same row-3 reason");
     await store.close();
