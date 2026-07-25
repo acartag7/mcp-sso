@@ -71,7 +71,7 @@ export class Bridge {
     this.audit = deps.audit;
     this.rateLimit = deps.rateLimit ?? noopRateLimit;
     this.cimd = new CimdResolver(deps);
-    if (this.cimd.enabled) this.cimd.createFetcher(deps.cimdTransport, deps.cimdResolver); // boot-validate the cap profile
+    if (this.cimd.enabled) this.cimd.assertCapProfile(deps.cimdTransport, deps.cimdResolver); // boot-validate the cap profile
     this.auth = new OAuthAuthorizationUseCase({ ...deps, cimd: this.cimd });
     this.token = new OAuthTokenUseCase(deps);
   }

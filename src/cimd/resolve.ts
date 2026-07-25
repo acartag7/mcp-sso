@@ -19,6 +19,7 @@ export { CIMD_AUDIT_EVENT, cimdGenericError, mapCimdError } from "./anti-oracle.
 import { createGuardedFetcher, type GuardedFetcher } from "./guarded-fetcher.ts";
 import type { CimdTransport, DnsResolver } from "./transport.ts";
 import { CimdSuccessCache, computeCacheExpiryMs } from "./cache.ts";
+import { WaiterCounts } from "./waiters.ts";
 import { cimdRedirectMatches, projectCimdRegistration, type CimdRegistration } from "./registration.ts";
 
 export interface CimdResolverDeps {
@@ -65,8 +66,7 @@ export class CimdResolver {
   private readonly inFlight = new Map<string, Promise<CimdRegistration>>();
   private readonly maxInFlight: number;
   private readonly maxWaitersPerFetch: number;
-  /** Followers currently parked on each in-flight entry (decision 7). */
-  private readonly waiters = new Map<string, number>();
+  private readonly waiters = new WaiterCounts();
   private readonly cacheTtlCapSeconds: number;
   private defaultFetcher: GuardedFetcher | undefined;
   private readonly seams: { transport?: CimdTransport; resolver?: DnsResolver };
@@ -95,11 +95,24 @@ export class CimdResolver {
     this.fetchTimeoutMs = cimd?.fetchTimeoutMs ?? 5000;
   }
 
-  /** Build a guarded fetcher for a boundary's own below-guard seams. The caps
-   *  and `allowLoopback` always come from the validated config — a seam can
-   *  never widen them (decision 5). A cap-domain `TypeError` from the primitive
-   *  is reconciled to `AuthConfigError` so boot never leaks a raw TypeError. */
-  createFetcher(transport?: CimdTransport, resolver?: DnsResolver): GuardedFetcher {
+  /** Boot-time validation of the cap profile. Constructs and DISCARDS a fetcher
+   *  so an out-of-domain cap fails at construction rather than on the first
+   *  request; returns nothing, so it is not a network-capable handle. */
+  assertCapProfile(transport?: CimdTransport, resolver?: DnsResolver): void {
+    this.#createFetcher(transport, resolver);
+  }
+
+  /** A true ECMAScript #private (NOT the TS `private` keyword, which is erased
+   *  at runtime and left the method callable from JS). Decision 5. Was public,
+   *  which left a second network-capable
+   *  entry point on the root-exported `bridge.cimd`: a consumer could call
+   *  `createFetcher().fetch(url)` even with the `cimd` block ABSENT, bypassing
+   *  `resolve()`'s enabled gate, the rate limiter, single-flight, the
+   *  concurrency and waiter caps, the cache and the audit — unbounded guarded
+   *  egress from a supposedly disabled service. The caps and `allowLoopback`
+   *  still always come from the validated config; a cap-domain `TypeError` is
+   *  reconciled to `AuthConfigError` so boot never leaks a raw TypeError. */
+  #createFetcher(transport?: CimdTransport, resolver?: DnsResolver): GuardedFetcher {
     try {
       return createGuardedFetcher({
         ...(transport === undefined ? {} : { transport }),
@@ -115,7 +128,7 @@ export class CimdResolver {
   }
 
   private fetcher(): GuardedFetcher {
-    this.defaultFetcher ??= this.createFetcher(this.seams.transport, this.seams.resolver);
+    this.defaultFetcher ??= this.#createFetcher(this.seams.transport, this.seams.resolver);
     return this.defaultFetcher;
   }
 
@@ -123,7 +136,7 @@ export class CimdResolver {
    *  the validated profile — only the transport/resolver differ. */
   private fetcherFor(seams?: { readonly transport?: CimdTransport; readonly resolver?: DnsResolver }): GuardedFetcher {
     if (seams?.transport === undefined && seams?.resolver === undefined) return this.fetcher();
-    return this.createFetcher(seams.transport, seams.resolver);
+    return this.#createFetcher(seams.transport, seams.resolver);
   }
 
   /** Pre-resolution `cimd:<ip>` rate-limit guard (decision 2 — OUTSIDE the
@@ -198,25 +211,13 @@ export class CimdResolver {
     if (hit !== undefined) return { registration: hit, fetched: false };
     const existing = this.inFlight.get(rawClientId);
     // A coalesced follower consumes no FETCH slot (rule 24) but IS bounded
-    // (decision 7): `maxInFlight` limits outbound fetches, not the inbound
-    // callers parked on one. Without this an unauthenticated caller pointing a
-    // flood at one slow attacker-hosted document parks unbounded requests for up
-    // to `fetchTimeoutMs`. The rejection uses the EXISTING `overloaded` reason,
-    // so it is byte-identical to every other resolution failure (decision 2).
+    // (decision 7 — rationale in waiters.ts). The rejection reuses the EXISTING
+    // `overloaded` reason, so it stays byte-identical to every other resolution
+    // failure (decision 2).
     if (existing !== undefined) {
-      const parked = this.waiters.get(rawClientId) ?? 0;
-      // A REJECTED caller never acquired a slot, so this path must not release
-      // one — freeing capacity it never took would admit the next follower.
-      if (parked >= this.maxWaitersPerFetch) throw new CimdError("overloaded");
-      this.waiters.set(rawClientId, parked + 1);
-      try {
-        return { registration: await existing, fetched: false };
-      } finally {
-        // Released on EVERY exit — success, error, timeout/cancellation.
-        const left = (this.waiters.get(rawClientId) ?? 1) - 1;
-        if (left <= 0) this.waiters.delete(rawClientId);
-        else this.waiters.set(rawClientId, left);
-      }
+      if (!this.waiters.tryAcquire(rawClientId, this.maxWaitersPerFetch)) throw new CimdError("overloaded");
+      try { return { registration: await existing, fetched: false }; }
+      finally { this.waiters.release(rawClientId); }
     }
     if (this.inFlight.size >= this.maxInFlight) throw new CimdError("overloaded");
     const pending = this.fetchAndCache(rawClientId, fetcher);
