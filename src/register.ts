@@ -20,7 +20,12 @@ export interface RegisterDeps {
 
 export interface RegisterInput {
   redirectUris?: string[];
-  applicationType?: ApplicationType;
+  /** RAW client metadata — deliberately `unknown`, not `ApplicationType`. A
+   *  present-but-non-string value must be REJECTED (`invalid_client_metadata`),
+   *  never coerced to the `"web"` default: silently best-effort-parsing a
+   *  malformed value is exactly the fail-open pattern the house rules forbid.
+   *  Only ABSENT (`undefined`) takes the default. */
+  applicationType?: unknown;
   /** RFC 7591 client-metadata fields that signal a MACHINE client (§17.2). Open
    *  registration rejects `token_endpoint_auth_method` other than `"none"` and
    *  any `grant_types` containing `client_credentials` so the open endpoint can
@@ -57,8 +62,9 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
     const redirectUris = arrayOfStrings(input.redirectUris);
     if (redirectUris.length === 0) throw new OAuthError("invalid_request", "redirect_uris is required");
     for (const uri of redirectUris) assertAllowedRedirectUri(uri, config.redirectAllowlist);
-    const applicationType: ApplicationType = input.applicationType ?? "web";
-    if (applicationType !== "native" && applicationType !== "web") {
+    // ABSENT ⇒ the "web" default; PRESENT-but-anything-else ⇒ reject (no coercion).
+    const rawApplicationType = input.applicationType === undefined ? "web" : input.applicationType;
+    if (rawApplicationType !== "native" && rawApplicationType !== "web") {
       // application_type is client metadata (RFC 7591 §3.1); an invalid value —
       // including "machine", which is a §17.2 machine-shape signal — is
       // invalid_client_metadata, grouped with the machine-shape rejections above.
@@ -67,6 +73,7 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
         "application_type must be 'native' or 'web'; machine clients are provisioned out-of-band (§17.2)",
       );
     }
+    const applicationType: ApplicationType = rawApplicationType;
     const clientId = `mcpdc_${cryptoRandom()}`;
     const issuedAt = Math.floor(clock.nowMs() / 1000);
     if (config.dcr.mode === "stored") {

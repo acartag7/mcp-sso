@@ -163,7 +163,11 @@ SDK. The full provider × client matrix lives in
 
 ## Roadmap (v0.3)
 
-GitHub identity preset · device authorization flow (RFC 8628) · CIMD.
+GitHub identity preset · device authorization flow (RFC 8628).
+
+CIMD (Client ID Metadata Documents) is implemented on `main` behind the S6a/S6b
+work and ships in v0.3; it is not yet live-verified against a real CIMD-first
+client.
 
 ## License
 

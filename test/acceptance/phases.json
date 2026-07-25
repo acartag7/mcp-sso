@@ -1,5 +1,5 @@
 {
   "s6a-cimd-primitives": true,
-  "s6b-cimd-flow": false,
-  "s6b-waiter-cap": false
+  "s6b-cimd-flow": true,
+  "s6b-waiter-cap": true
 }

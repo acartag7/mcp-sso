@@ -10,6 +10,7 @@ import { AuthConfigError } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildErrorRedirect } from "../challenge.ts";
 import { headerString, type NormRequest, type NormResponse } from "./http.ts";
+import { parseCimdRegistrationClaim, type CimdRegistration } from "../cimd/registration.ts";
 
 /** The client OAuth params that round-trip through the signed flow cookie —
  *  exactly the §9.3 authorize inputs (same set pairing-flow.ts hidden-fields). */
@@ -128,6 +129,9 @@ export interface FlowClaims {
   codeVerifier: string;
   params: Record<string, string>;
   exp: number;
+  /** The validated CIMD registration carried forward under this token's HS256
+   *  signature (§17.1.6 decision 1c). Absent for a non-CIMD flow. */
+  cimd?: CimdRegistration;
 }
 
 function flowSecret(consentSigningSecret: string): Uint8Array {
@@ -138,11 +142,21 @@ export async function signFlowToken(args: {
   secret: string; issuer: string; clock: { nowMs(): number };
   jti: string; state: string; nonce: string; codeVerifier: string;
   params: Record<string, string>; ttlSeconds: number;
+  /** EXACTLY a `CimdRegistration` — never a raw `CimdDocument` (decision 1c:
+   *  signing the document would carry attacker-controlled members). */
+  cimd?: CimdRegistration;
 }): Promise<string> {
   const now = Math.floor(args.clock.nowMs() / 1000);
   return await new SignJWT({
     jti: args.jti, state: args.state, nonce: args.nonce,
     code_verifier: args.codeVerifier, params: args.params,
+    ...(args.cimd === undefined ? {} : {
+      cimd: {
+        client_id: args.cimd.client_id,
+        client_name: args.cimd.client_name,
+        redirect_uris: [...args.cimd.redirect_uris],
+      },
+    }),
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(args.issuer)
@@ -176,6 +190,13 @@ export async function verifyFlowToken(token: string, secret: string, issuer: str
     // is structurally malformed ⇒ throw ⇒ row 3 flow_cookie_invalid. Never coerce
     // to 0 (that would silently skip the row-4 expiry check).
     exp: requiredPositiveNumber(payload.exp, "exp"),
+    // §17.1.6 decision 1d(i): strict shape parse. A PRESENT-but-malformed claim
+    // THROWS here ⇒ row 3 (invalid_request / flow_cookie_invalid), consistent
+    // with the other cookie-integrity failures. Unknown members are ignored
+    // (named projection, never Object.assign).
+    ...(Object.hasOwn(payload, "cimd")
+      ? { cimd: parseCimdRegistrationClaim(payload.cimd, params.client_id) }
+      : {}),
   };
 }
 

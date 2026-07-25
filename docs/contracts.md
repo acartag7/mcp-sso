@@ -1161,7 +1161,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ⏳ boundary v0.1, **contract locked §17.1**, impl pending (S6, next minor) | §6.6, §17.1 |
+| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — S6a primitives + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`). **Not yet live-verified** against a real CIMD-first client (CIMD-LIVE pending), and any 2026-07-28 spec-final conformance claim is gated on the `docs/verification.md` spec-release re-verification | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | ✅ v0.2 shipped (S3a provisioning/rotation + S3b grant: Basic+post auth, `MachineTokenResponse`, metadata-gated advertisement) | §17.2 |
@@ -1509,8 +1509,11 @@ S6a bake-off cannot diverge and review cannot discover. **This subsection is
 contract text; the enforcement lands with the S6 code, not with this docs
 change:** each S6a-scope rule is to be covered by a negative test in the frozen
 S6a acceptance suite, and the flow rules (H) are to be implemented and tested in
-S6b. Until those PRs land there is no CIMD implementation or test yet — §16 still
-tracks CIMD as pending.
+S6b. **Status: those PRs have landed** — the S6a primitives, both frozen
+acceptance suites, and the S6b flow integration are implemented, and §16 now
+tracks CIMD as implemented. What remains is live verification (CIMD-LIVE) and,
+for any conformance claim against the 2026-07-28 final spec text, the
+`docs/verification.md` spec-release re-verification.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048

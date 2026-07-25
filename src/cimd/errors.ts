@@ -12,11 +12,13 @@ export type CimdReason =
   | "redirect_refused" // §17.1.2 a redirect was followed / not proven absent
   | "status_not_200" // §17.1.2 response status !== 200
   | "content_type" // §17.1.2 Content-Type not application/json|+json, or duplicated
-  | "encoding" // §17.1.5 r16 any present Content-Encoding (identity-only; absent-only)
+  | "encoding" // §17.1.5 r16 any present Content-Encoding (absent-only is accepted)
   | "size_exceeded" // §17.1.2 wire bytes > maxDocumentBytes
   | "timeout" // §17.1.2 fetchTimeoutMs deadline hit
   | "fetch_failed" // otherwise-unclassified transport/body failure (fail-closed)
-  | "document_invalid"; // §17.1.3 document validation failed
+  | "document_invalid" // §17.1.3 document validation failed
+  | "overloaded"; // §17.1.5 rule 24 / §17.1.6 decision 6: a DISTINCT-client fetch
+                  // arrived while `maxInFlight` distinct fetches are in flight
 
 export class CimdError extends Error {
   readonly reason: CimdReason;
