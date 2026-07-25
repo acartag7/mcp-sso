@@ -45,6 +45,11 @@ export interface BridgeDeps {
   cimdResolver?: DnsResolver;
 }
 
+// `referrer-policy: no-referrer` is here for the URL, not the body: both HTML
+// surfaces are served at `/oauth/authorize?...`, whose query carries `state`,
+// `client_id`, and `redirect_uri`. Without it those ride a `Referer` header to
+// any origin the page navigates to.
+//
 // `frame-ancestors 'none'` is load-bearing, not hygiene: threat-model row 17
 // makes the user's judgment at this page the LAST line of defence against CIMD
 // client impersonation (lookalike domain / loopback-only redirect). A framed,
