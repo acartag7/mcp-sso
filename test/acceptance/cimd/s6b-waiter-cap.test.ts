@@ -30,6 +30,8 @@ if (phases["s6b-waiter-cap"] !== true) {
   const { createBridgeConfig, AuthConfigError } = (await import(CFG)) as any;
   const BRIDGE = "../../../src/adapters/bridge.ts";
   const { Bridge } = (await import(BRIDGE)) as any;
+  const FLOW = "../../../src/adapters/upstream-flow.ts";
+  const { createUpstreamRedirectFlow } = (await import(FLOW)) as any;
   const STORE = "../../../src/store/memory.ts";
   const { MemoryStore } = (await import(STORE)) as any;
   const CRYPTO = "../../../src/crypto.ts";
@@ -88,8 +90,27 @@ if (phases["s6b-waiter-cap"] !== true) {
     const d = new Promise((_, rej) => { tm = setTimeout(() => rej(new Error(`test deadline ${ms}ms exceeded — waiter cap not enforced (request parked instead of rejecting)`)), ms); });
     return Promise.race([p, d]).finally(() => clearTimeout(tm));
   };
-  const settle = async (turns = 50) => { for (let i = 0; i < turns; i++) await new Promise<void>((r) => setImmediate(r)); };
+  const settle = async (turns = 60) => { for (let i = 0; i < turns; i++) await new Promise<void>((r) => setImmediate(r)); };
   const overloadedEvents = (a: MemoryAudit) => a.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "failure" && e.reason === "overloaded");
+  const successEvents = (a: MemoryAudit) => a.events.filter((e: any) => e.event === "oauth.cimd.fetch" && e.status === "success");
+  // An ORDINARY CIMD failure (blocked address) — the byte-for-byte baseline every
+  // other failure must equal, so a cap-specific header cannot become an oracle.
+  async function canonicalFailure() {
+    const t = { async connectAndGet() { throw new Error("unreachable"); } };
+    const s = setup({ t });
+    return await s.bridge.handleAuthorize(request(), { subject: "u" }) as any;
+  }
+  function setupFlow(opts: { c?: any; t?: any } = {}) {
+    const c = opts.c ?? config();
+    const clock = new Clock();
+    const store = new MemoryStore();
+    const audit = new MemoryAudit();
+    const t = opts.t ?? heldTransport();
+    const bridge = new Bridge({ config: c, store, clock, audit, cimdTransport: t, cimdResolver: resolver() });
+    const identity = { redirectUri: "https://auth.test/oauth/callback", buildAuthorizationUrl({ state }: any) { return `https://idp.test/a?state=${state}`; }, async exchangeAndVerify() { return { ok: true, identity: { subject: "up@test" } }; } };
+    const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit, cimdTransport: t, cimdResolver: resolver() });
+    return { flow, bridge, audit, t };
+  }
 
   // ---- the cap itself ----
 
@@ -104,8 +125,11 @@ if (phases["s6b-waiter-cap"] !== true) {
     await settle();
     // Waiter 3 is over the cap: it must REJECT NOW, not park until the fetch settles.
     const over = await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" })) as any;
-    assert.equal(over.status, 401, "over-cap follower rejects");
-    assert.deepEqual(over.body, GENERIC, "…as the decision-2 generic — byte-identical to every other CIMD failure");
+    const canon = await canonicalFailure();
+    assert.equal(over.status, canon.status, "same STATUS as an ordinary CIMD failure");
+    assert.deepEqual(over.body, canon.body, "same BODY");
+    assert.deepEqual(over.headers, canon.headers, "same HEADERS — a cap-specific header would be a decision-2 oracle");
+    assert.deepEqual(over.body, GENERIC, "…and that shared shape is the decision-2 generic");
     assert.equal(t.calls, 1, "rejecting a follower starts NO new fetch");
     t.releaseAll();
     assert.equal((await withDeadline(leader)).status, 200, "the LEADER is never rejected by the cap");
@@ -122,11 +146,14 @@ if (phases["s6b-waiter-cap"] !== true) {
     const inCap = s.bridge.handleAuthorize(request(), { subject: "u" });
     await settle();
     const before = overloadedEvents(s.audit).length;
+    const okBefore = successEvents(s.audit).length;
     await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" }));
     const after = overloadedEvents(s.audit);
     assert.equal(after.length, before + 1, "exactly one new overloaded failure event");
     assert.equal(after[after.length - 1].clientId, ID, "audited against the presented client_id");
-    // No SUCCESS event for a rejected request — a success-then-reject trail misreports.
+    // ASSERTED, not merely asserted-in-a-comment: a guard that emitted success
+    // before returning the overloaded failure would misreport the outcome.
+    assert.equal(successEvents(s.audit).length, okBefore, "the rejected follower emits NO success event");
     t.releaseAll();
     await withDeadline(leader); await withDeadline(inCap);
   });
@@ -152,20 +179,38 @@ if (phases["s6b-waiter-cap"] !== true) {
     assert.equal((await withDeadline(b1)).status, 200);
   });
 
-  test("waiter slots are RELEASED when the fetch settles: a later burst on the same id is served again", async () => {
-    const t = heldTransport();
-    const s = setup({ c: config({ maxWaitersPerFetch: 1, cacheTtlCapSeconds: 60 }), t });
+  test("waiter slots are RELEASED when the fetch settles — proven by a REFETCH, not by a cache hit", async () => {
+    // NON-cacheable response: a cache hit would mask an implementation that
+    // checks the cache before its single-flight registry and therefore leaves
+    // the settled entry (and its stale waiter count) allocated forever.
+    let calls = 0; const releases: Array<() => void> = [];
+    const t = {
+      async connectAndGet(req: any) {
+        calls++;
+        const id = `https://${req.hostHeader}${req.requestTarget}`;
+        return new Promise<any>((resolve) => {
+          releases.push(() => resolve({ status: 200, redirected: false, finalUrl: id, headersDistinct: { "content-type": ["application/json"], "cache-control": ["no-store"] }, encodedBody: one(enc(bodyFor(id))) }));
+        });
+      },
+      get calls() { return calls; },
+    };
+    const s = setup({ c: config({ maxWaitersPerFetch: 1 }), t });
     const leader = s.bridge.handleAuthorize(request(), { subject: "u" });
     await settle();
     const inCap = s.bridge.handleAuthorize(request(), { subject: "u" });
     await settle();
     assert.equal((await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" })) as any).status, 401, "at cap");
-    t.releaseAll();
-    await withDeadline(leader); await withDeadline(inCap);
-    // The entry settled; a fresh request must NOT inherit a stale waiter count.
-    // (It is served from cache here — the point is that it is not rejected.)
-    const later = await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" })) as any;
-    assert.equal(later.status, 200, "waiter accounting was released on settle, not leaked");
+    for (const r of releases) r();
+    assert.equal((await withDeadline(leader)).status, 200);
+    assert.equal((await withDeadline(inCap)).status, 200);
+    assert.equal(calls, 1, "one fetch served the leader and the in-cap follower");
+    // A later request must start a NEW fetch (nothing cached) AND be admitted —
+    // proving the settled entry was removed rather than left saturated.
+    const later = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(calls, 2, "the settled entry was REMOVED — a fresh fetch started");
+    for (const r of releases) r();
+    assert.equal((await withDeadline(later)).status, 200, "and the request was admitted, not rejected by a stale waiter count");
   });
 
   test("a FAILING fetch also releases waiter slots (no leak on the error path)", async () => {
@@ -207,18 +252,49 @@ if (phases["s6b-waiter-cap"] !== true) {
     });
   }
 
-  test("maxWaitersPerFetch is absent-by-default and the default admits a burst far above any single-waiter reading", async () => {
+  test("the ABSENT-option default is exactly 256: follower 256 is admitted, follower 257 rejects", async () => {
     const t = heldTransport();
-    const s = setup({ t }); // no maxWaitersPerFetch ⇒ default 256
+    const s = setup({ t }); // no maxWaitersPerFetch ⇒ contract default 256
     const leader = s.bridge.handleAuthorize(request(), { subject: "u" });
     await settle();
-    // 32 concurrent followers is far below the default; NONE may be rejected.
-    const followers = Array.from({ length: 32 }, () => s.bridge.handleAuthorize(request(), { subject: "u" }));
-    await settle();
-    assert.equal(overloadedEvents(s.audit).length, 0, "the DEFAULT cap must not reject an ordinary burst (it is a ceiling, not a throttle)");
+    assert.equal(t.calls, 1, "leader owns the single in-flight fetch");
+    // 256 FOLLOWERS — the last one admitted. Any default below 256 rejects here.
+    const followers = Array.from({ length: 256 }, () => s.bridge.handleAuthorize(request(), { subject: "u" }));
+    await settle(200);
+    assert.equal(overloadedEvents(s.audit).length, 0, "256 followers are within the default — none rejected");
+    // Follower 257 is over the cap. Any default ABOVE 256 admits it and fails here.
+    const over = await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" })) as any;
+    assert.equal(over.status, 401, "follower 257 rejects — the default is not larger than 256");
+    assert.deepEqual(over.body, GENERIC);
+    assert.equal(overloadedEvents(s.audit).length, 1, "exactly one overloaded event");
     t.releaseAll();
     assert.equal((await withDeadline(leader)).status, 200);
-    for (const f of followers) assert.equal((await withDeadline(f)).status, 200);
-    assert.equal(t.calls, 1, "all 33 callers coalesced onto ONE fetch");
+    for (const f of followers) assert.equal((await withDeadline(f)).status, 200, "every in-cap follower still succeeds");
+    assert.equal(t.calls, 1, "all 257 admitted callers coalesced onto ONE fetch");
+  });
+
+  // ---- the OTHER resolution boundary (§17.1.6 decision 1a/1b) ----
+
+  test("upstream-redirect authorize enforces the SAME cap: an over-cap follower rejects DIRECTLY, with no IdP hop", async () => {
+    const t = heldTransport();
+    const f = setupFlow({ c: config({ maxWaitersPerFetch: 1 }), t });
+    const leader = f.flow.handleAuthorize(request());
+    await settle();
+    assert.equal(t.calls, 1, "leader started the fetch at the pre-identity boundary");
+    const inCap = f.flow.handleAuthorize(request());
+    await settle();
+    const over = await withDeadline(f.flow.handleAuthorize(request())) as any;
+    // Decision 1b: resolution completes BEFORE any Set-Cookie / IdP 302, so an
+    // over-cap rejection is a DIRECT error — never a redirect to the IdP and
+    // never a flow cookie. An impl that caps only `prepare` fails here.
+    assert.equal(over.status, 401, "direct 401, not a 302");
+    assert.deepEqual(over.body, GENERIC, "the decision-2 generic");
+    assert.equal(over.headers?.["set-cookie"], undefined, "no flow cookie is minted for a rejected resolution");
+    assert.equal(over.headers?.location, undefined, "NO IdP hop — the user is never redirected on a rejected resolution");
+    assert.ok(overloadedEvents(f.audit).length >= 1, "audited overloaded at the upstream boundary too");
+    assert.equal(t.calls, 1, "the rejection started no new fetch");
+    t.releaseAll();
+    assert.equal((await withDeadline(leader) as any).status, 302, "the leader still reaches the IdP");
+    assert.equal((await withDeadline(inCap) as any).status, 302, "and so does the in-cap follower");
   });
 }
