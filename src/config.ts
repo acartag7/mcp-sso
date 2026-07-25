@@ -112,7 +112,11 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const rawDefaultScopes = input.defaultScopes;
   const rawAllowedOrigins = input.allowedOrigins;
   const rawDcr = input.dcr;
+  // Read mode AND store exactly ONCE. Both are validated below and handed to
+  // `snapshotDcr`; re-reading either at snapshot time would let an accessor-
+  // backed block publish a value boot never approved (the read-once rule).
   const dcrMode = rawDcr.mode;
+  const dcrStore = dcrMode === "stored" ? (rawDcr as { store?: ClientStore }).store : undefined;
   const rawDev = input.dev;
   // Read ONCE. This boolean is what validateUrl() below checks, so publishing a
   // frozen snapshot of it (rather than the caller's live `dev` object) closes
@@ -159,14 +163,14 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   if (dcrMode !== "stateless" && dcrMode !== "stored") {
     throw new AuthConfigError("dcr.mode must be 'stateless' or 'stored'");
   }
-  if (dcrMode === "stored" && !rawDcr.store) {
+  if (dcrMode === "stored" && !dcrStore) {
     throw new AuthConfigError("dcr.mode 'stored' requires a ClientStore");
   }
   // Publish a frozen one-level copy, never the caller's block: `dcr.mode` and
   // `dcr.store` are read PER REQUEST (authorize/register/token/upstream-flow),
   // so a shared reference would let a post-boot swap redirect client lookups and
   // `save()` to another store, or change which registration path runs (#100).
-  const dcr = snapshotDcr(rawDcr);
+  const dcr = snapshotDcr(dcrMode, dcrStore);
   if (rawClientCredentials !== undefined) {
     if (typeof rawClientCredentials !== "object" || rawClientCredentials === null
       || typeof clientCredentialsEnabled !== "boolean") {
@@ -182,7 +186,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   // so flipping it post-boot would switch on a deliberately disabled grant.
   const clientCredentials = rawClientCredentials === undefined
     ? undefined
-    : snapshotClientCredentials(rawClientCredentials);
+    : snapshotClientCredentials(clientCredentialsEnabled as boolean);
   if (cimd !== undefined) {
     // Snapshot-then-validate returns the frozen object it checked, so an
     // accessor-backed cap cannot pass validation and publish a different value.

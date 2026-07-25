@@ -611,6 +611,39 @@ test("config publication: nested blocks are frozen snapshots, not the caller's o
   assert.equal(config.dcr.mode === "stored" ? config.dcr.store : null, clientStore);
 });
 
+test("config publication TOCTOU: an accessor-backed dcr/clientCredentials cannot publish a value boot never validated", () => {
+  const base = baseInput();
+  // The snapshot must be built from the values validation ALREADY read, never by
+  // re-reading the caller's block. A getter returning one value at validation and
+  // another at snapshot time would otherwise publish what boot never approved —
+  // the same validate-then-copy TOCTOU the snapshot exists to close.
+  const approved = new InMemoryClientStore();
+  const attacker = new InMemoryClientStore();
+  let storeReads = 0;
+  const dcr = {
+    mode: "stored" as const,
+    get store(): ClientStore { storeReads++; return storeReads <= 1 ? approved : attacker; },
+  };
+  const config = createBridgeConfig({ ...base, dcr });
+  assert.equal(
+    config.dcr.mode === "stored" ? config.dcr.store : null, approved,
+    "must publish the store validation saw, not a later getter result",
+  );
+
+  // Same rule for the grant flag: a getter reading false at validation and true
+  // at snapshot time would pass the disabled-grant boot checks while publishing
+  // the grant as ENABLED — AS metadata and /oauth/token would then expose a
+  // grant boot validated as off.
+  let enabledReads = 0;
+  const clientCredentials = {
+    get enabled(): boolean { enabledReads++; return enabledReads <= 1 ? false : true; },
+  };
+  const cfg2 = createBridgeConfig({
+    ...base, dcr: { mode: "stored", store: approved }, clientCredentials,
+  });
+  assert.equal(cfg2.clientCredentials?.enabled, false, "must publish the boolean validation approved");
+});
+
 test("config publication: array fields are validated as string[] and frozen (§5)", () => {
   const base = baseInput();
 

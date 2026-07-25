@@ -56,28 +56,41 @@ export function stringArrayProblem(
   return { value: Object.freeze(entries as string[]) };
 }
 
-/** Frozen one-level copy of the `dcr` block.
+/** Frozen one-level copy of the `dcr` block, built from the ALREADY-READ values.
+ *
+ *  Takes `mode`/`store` as arguments rather than re-reading them off the caller's
+ *  block: an accessor- or Proxy-backed `dcr` can return the approved store during
+ *  validation and a different one when the snapshot reads it again, so
+ *  re-reading here would publish a store boot never approved — the same
+ *  validate-then-copy TOCTOU this module exists to close. The caller reads each
+ *  field once, validates THAT value, and hands it in.
  *
  *  `store` is deliberately carried by reference: it is a live port object with
  *  methods, so it cannot be frozen or cloned. The snapshot closes
  *  swap-the-store and flip-the-mode — an attacker holding the caller's `dcr`
  *  object can no longer redirect `find`/`save` to another store, or change
  *  which registration path runs — without touching the port itself. */
-export function snapshotDcr(dcr: DcrMode): DcrMode {
-  if (dcr.mode === "stored") {
+export function snapshotDcr(mode: DcrMode["mode"], store: ClientStore | undefined): DcrMode {
+  if (mode === "stored") {
     // Named projection, never a spread: an unknown member on the caller's block
     // must not ride along onto the published object.
-    return Object.freeze({ mode: "stored" as const, store: dcr.store as ClientStore });
+    return Object.freeze({ mode: "stored" as const, store: store as ClientStore });
   }
   return Object.freeze({ mode: "stateless" as const });
 }
 
-/** Frozen one-level copy of the `clientCredentials` block. Prevents flipping
- *  `enabled` on a deployment that booted with the grant off — which would both
- *  enable the machine-client grant and change what AS metadata advertises,
- *  bypassing the boot rule that enabling requires stored DCR (§17.2). */
-export function snapshotClientCredentials(
-  cc: ClientCredentialsOptions,
-): ClientCredentialsOptions {
-  return Object.freeze({ enabled: cc.enabled === true });
+/** Frozen one-level copy of the `clientCredentials` block, built from the
+ *  ALREADY-VALIDATED boolean.
+ *
+ *  Takes `enabled` as an argument for the same read-once reason as above: a
+ *  getter returning `false` at validation and `true` here would pass the
+ *  disabled-grant boot checks while publishing the grant as ENABLED, so AS
+ *  metadata and `/oauth/token` would expose a grant boot validated as off.
+ *
+ *  Prevents flipping `enabled` on a deployment that booted with the grant off —
+ *  which would both enable the machine-client grant and change what AS metadata
+ *  advertises, bypassing the boot rule that enabling requires stored DCR
+ *  (§17.2). */
+export function snapshotClientCredentials(enabled: boolean): ClientCredentialsOptions {
+  return Object.freeze({ enabled: enabled === true });
 }
