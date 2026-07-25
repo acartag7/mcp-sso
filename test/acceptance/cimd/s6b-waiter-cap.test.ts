@@ -282,12 +282,14 @@ if (phases["s6b-waiter-cap"] !== true) {
     const t = { async connectAndGet() { calls++; return new Promise<any>(() => { /* never settles */ }); }, get calls() { return calls; } };
     const s = setup({ c: config({ maxWaitersPerFetch: 1, fetchTimeoutMs: 1000 }), t });
     const leader = s.bridge.handleAuthorize(request(), { subject: "u" });
-    await settle();
-    // Park an in-cap FOLLOWER before the deadline fires. Without it the timed-out
-    // round has zero waiters, so an impl that drops the promise while leaking
-    // separately-tracked waiter counts has nothing to leak and passes vacuously.
+    // Park the FOLLOWER with the SHORTEST possible gap: the leader's real 1s
+    // deadline is already running, so spending 60 turns first would let a
+    // descheduled CI worker time the leader out and make `parked` a new leader.
+    // Without a parked follower the timed-out round has zero waiters and an impl
+    // that leaks separately-tracked counts passes vacuously.
+    await new Promise<void>((r) => setImmediate(r));
     const parked = s.bridge.handleAuthorize(request(), { subject: "u" });
-    await settle();
+    await settle(10);
     assert.equal(overloadedEvents(s.audit).length, 0, "the follower parked within the cap");
     const first = await withDeadline(leader, 5000) as any;
     assert.equal(first.status, 401, "the deadline fired and mapped to the generic");
@@ -334,6 +336,45 @@ if (phases["s6b-waiter-cap"] !== true) {
     assert.equal((await withDeadline(upFollower) as any).status, 302, "the upstream follower reached the IdP on the SAME fetch");
   });
 
+  test("an INVALID-DOCUMENT round releases waiter slots too (transport succeeds, validation fails)", async () => {
+    // The other cleanup rows reject at the TRANSPORT. A resolver can release
+    // accounting on a transport rejection while leaking it when the fetch
+    // succeeds and the DOCUMENT is rejected — a distinct exit path.
+    let calls = 0; const releases: Array<() => void> = [];
+    const t = {
+      async connectAndGet(req: any) {
+        calls++;
+        const id = `https://${req.hostHeader}${req.requestTarget}`;
+        return new Promise<any>((resolve) => {
+          // 200 with a client_id that does NOT match the presented one ⇒ document_invalid.
+          releases.push(() => resolve({ status: 200, redirected: false, finalUrl: id, headersDistinct: { "content-type": ["application/json"], "cache-control": ["max-age=3600"] }, encodedBody: one(enc(JSON.stringify({ client_id: "https://other.example/mismatch", client_name: "X", redirect_uris: [REDIRECT] }))) }));
+        });
+      },
+      get calls() { return calls; },
+    };
+    const s = setup({ c: config({ maxWaitersPerFetch: 1 }), t });
+    const leader = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    const parked = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(overloadedEvents(s.audit).length, 0, "the follower parked within the cap");
+    for (const r of releases) r();
+    assert.equal((await withDeadline(leader) as any).status, 401, "invalid document ⇒ the generic");
+    assert.equal((await withDeadline(parked) as any).status, 401, "the follower shares that outcome");
+    // Invalid results are never cached (rule 24), so a retry refetches — and its
+    // follower is admissible only if the invalid round's count was released.
+    const overBefore = overloadedEvents(s.audit).length;
+    const retry = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(calls, 2, "invalid documents are not cached — a fresh fetch started");
+    const retryFollower = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(overloadedEvents(s.audit).length, overBefore, "the retry's follower is admitted — the invalid round released its slot");
+    for (const r of releases) r();
+    assert.equal((await withDeadline(retry) as any).status, 401);
+    assert.equal((await withDeadline(retryFollower) as any).status, 401);
+  });
+
   // ---- boot validation (rule 21 domain, same fail-closed treatment as the other caps) ----
 
   for (const bad of [0, -1, 4097, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "256", null, true]) {
@@ -350,7 +391,10 @@ if (phases["s6b-waiter-cap"] !== true) {
 
   test("the ABSENT-option default is exactly 256: follower 256 is admitted, follower 257 rejects", async () => {
     const t = heldTransport();
-    const s = setup({ t }); // no maxWaitersPerFetch ⇒ contract default 256
+    // fetchTimeoutMs at the allowed maximum: the held fetch must NOT hit its own
+    // deadline while 256 followers queue on a slow CI worker (that would turn the
+    // 257th request into a fresh leader and produce a false red).
+    const s = setup({ c: config({ fetchTimeoutMs: 30000 }), t }); // no maxWaitersPerFetch ⇒ contract default 256
     const leader = s.bridge.handleAuthorize(request(), { subject: "u" });
     await settle();
     assert.equal(t.calls, 1, "leader owns the single in-flight fetch");
@@ -403,5 +447,39 @@ if (phases["s6b-waiter-cap"] !== true) {
     t.releaseAll();
     assert.equal((await withDeadline(leader) as any).status, 302, "the leader still reaches the IdP");
     assert.equal((await withDeadline(inCap) as any).status, 302, "and so does the in-cap follower");
+    // …and the upstream path must RELEASE its waiter accounting on settle. A
+    // boundary-local impl that enforces the cap but never cleans up upstream
+    // would leave later same-id upstream traffic falsely overloaded.
+    const after = overloadedEvents(f.audit).length;
+    const l2 = f.flow.handleAuthorize(request());
+    await settle();
+    const f2 = f.flow.handleAuthorize(request());
+    await settle();
+    assert.equal(overloadedEvents(f.audit).length, after, "a later upstream follower is admitted — the upstream waiter slot was released");
+    t.releaseAll();
+    assert.equal((await withDeadline(l2) as any).status, 302);
+    assert.equal((await withDeadline(f2) as any).status, 302);
+  });
+
+  test("cross-mode sharing is SYMMETRIC: an upstream leader is joined by a direct follower on the same entry", async () => {
+    // The other cross-mode row always makes DIRECT the leader. An asymmetric impl
+    // where upstream can discover the Bridge's entry but creates a PRIVATE entry
+    // when upstream wins the race would pass that row while allowing two fetches
+    // and two waiter budgets whenever the upstream request arrives first.
+    const t = heldTransport();
+    const f = setupFlow({ c: config({ maxWaitersPerFetch: 1 }), t });
+    const upLeader = f.flow.handleAuthorize(request()); // leader via UPSTREAM this time
+    await settle();
+    assert.equal(t.calls, 1, "the upstream request started the only fetch");
+    const directFollower = f.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(t.calls, 1, "the DIRECT request coalesced onto the upstream leader's fetch");
+    assert.equal(overloadedEvents(f.audit).length, 0, "…within the shared budget");
+    const over = await withDeadline(f.bridge.handleAuthorize(request(), { subject: "u" })) as any;
+    assert.equal(over.status, 401, "the shared budget is exhausted regardless of which boundary led");
+    assert.equal(t.calls, 1, "still ONE fetch across both boundaries");
+    t.releaseAll();
+    assert.equal((await withDeadline(upLeader) as any).status, 302);
+    assert.equal((await withDeadline(directFollower) as any).status, 200);
   });
 }
