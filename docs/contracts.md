@@ -814,8 +814,18 @@ matcher later compares.
 
 **Rejection is at the boundary the entry enters:** boot (`createBridgeConfig`)
 for `redirectAllowlist`, registration for stored DCR, document validation for
-CIMD. No consumer re-derives the grammar, and a malformed entry never reaches a
-matcher.
+CIMD. No consumer re-derives the grammar.
+
+**Stored state is re-validated at READ, not only at write** (the entry-point
+guard's stored-state sibling). A `ClientStore` can return records written before
+this grammar existed, or populated out-of-band by a deployer — the registration
+guard never saw them. Verified on `40d9f58`: a stored native record holding
+`http://@127.0.0.1/cb` (empty userinfo, which §10.0 forbids) is **accepted** at
+authorize by `assertRedirectAllowedForClient`. So §10.2 MUST apply §10.0 to each
+registered URI it reads, and a record carrying a non-conforming entry is refused
+`invalid_redirect_uri` rather than matched. The check is per-entry at match time,
+not a migration: a store is not required to be rewritten, and a legacy record
+simply stops authorizing until re-registered.
 
 **Why reject rather than normalize.** A non-canonical entry could be rewritten
 to its canonical form instead of refused. It is refused because config should
@@ -1606,7 +1616,10 @@ These close ambiguities and fail-open gaps found by the cross-family S6a spec
 critique and confirmed by an adversarial amendment-verify pass (critics/verifiers:
 GPT-5.6 Sol, Grok 4.5, GLM 5.2), each empirically re-verified on the project's
 Node 24 runtime. They **TIGHTEN** the bullets above; where a rule here and a
-bullet above differ, this subsection wins. Every rule is fail-closed. No new
+bullet above differ, this subsection wins — **except for the §10.0
+redirect-entry grammar, which governs every consumer including CIMD** (rule 20
+is amended accordingly; a subsection-wins precedence over the shared grammar is
+what let the CIMD matcher and §10.1 diverge in the first place). Every rule is fail-closed. No new
 subsystem is introduced — these pin behavior the primitives already imply so the
 S6a bake-off cannot diverge and review cannot discover. **This subsection is
 contract text; the enforcement lands with the S6 code, not with this docs
@@ -1772,6 +1785,17 @@ for any conformance claim against the 2026-07-28 final spec text, the
     document keys, so the public-only per-key scan is the only obligation. JSON
     depth is bounded by the body cap; no separate depth limit.
 20. **CIMD redirect hygiene uses a NEW pure validator, not the §10 exports.**
+    *(AMENDED by §10.0 — read that first. The grammar there governs WHICH entries
+    are valid, for CIMD exactly as for §10.1/§10.2, superseding this rule's
+    looser shape rules wherever they differ: an https entry carrying a query or
+    in non-canonical form is REJECTED under §10.0 even though the raw-shape rule
+    below would admit it. What survives unchanged is the mechanical part — that
+    CIMD needs its OWN pure per-URI predicate rather than reusing the §10
+    exports, because those strip a fragment where §17.1.3 requires rejecting it
+    and are not pure shape predicates. `assertCimdRedirectUri` therefore stays,
+    and becomes the CIMD-side enforcement OF §10.0 rather than a second grammar.
+    The §17.1.5 "this subsection wins" precedence does NOT extend to the entry
+    grammar.)*
     Neither `assertAllowedRedirectUri` (allowlist membership; sets `url.hash=""`,
     src/redirect.ts:35) nor `assertRedirectAllowedForClient` (needs a stored
     client; `url.hash=""`, src/redirect.ts:83) is a pure per-URI shape predicate,
