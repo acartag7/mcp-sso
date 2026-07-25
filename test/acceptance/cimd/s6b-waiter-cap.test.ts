@@ -64,13 +64,17 @@ if (phases["s6b-waiter-cap"] !== true) {
   const response = (id: string) => ({ status: 200, redirected: false, finalUrl: id, headersDistinct: { "content-type": ["application/json"], "cache-control": ["max-age=3600"] }, encodedBody: one(enc(bodyFor(id))) });
 
   // A transport that never settles until released — every caller for that id parks.
-  function heldTransport() {
+  function heldTransport(cacheable = true) {
     let calls = 0; const releases: Array<() => void> = [];
     return {
       async connectAndGet(req: any) {
         calls++;
         const id = `https://${req.hostHeader}${req.requestTarget}`;
-        return new Promise<any>((resolve) => { releases.push(() => resolve(response(id))); });
+        // `no-store` when non-cacheable: a cleanup row must force a REFETCH, or a
+        // cache hit serves the retry and an entry left saturated goes unnoticed.
+        return new Promise<any>((resolve) => { releases.push(() => resolve(
+          cacheable ? response(id)
+            : { status: 200, redirected: false, finalUrl: id, headersDistinct: { "content-type": ["application/json"], "cache-control": ["no-store"] }, encodedBody: one(enc(bodyFor(id))) })); });
       },
       get calls() { return calls; },
       releaseAll() { for (const r of releases) r(); },
@@ -416,7 +420,7 @@ if (phases["s6b-waiter-cap"] !== true) {
   // ---- the OTHER resolution boundary (§17.1.6 decision 1a/1b) ----
 
   test("upstream-redirect authorize enforces the SAME cap: an over-cap follower rejects DIRECTLY, with no IdP hop", async () => {
-    const t = heldTransport();
+    const t = heldTransport(false); // no-store ⇒ the cleanup check below must REFETCH
     const f = setupFlow({ c: config({ maxWaitersPerFetch: 1 }), t });
     const leader = f.flow.handleAuthorize(request());
     await settle();
@@ -453,8 +457,10 @@ if (phases["s6b-waiter-cap"] !== true) {
     const after = overloadedEvents(f.audit).length;
     const l2 = f.flow.handleAuthorize(request());
     await settle();
+    assert.equal(t.calls, 2, "nothing was cached (no-store) — the retry started a SECOND fetch, so the entry was removed");
     const f2 = f.flow.handleAuthorize(request());
     await settle();
+    assert.equal(t.calls, 2, "…and the follower coalesced onto it");
     assert.equal(overloadedEvents(f.audit).length, after, "a later upstream follower is admitted — the upstream waiter slot was released");
     t.releaseAll();
     assert.equal((await withDeadline(l2) as any).status, 302);
