@@ -6,7 +6,7 @@
 // (decision 1, used at authorize + callback + prepare's re-check), and the
 // strict parse of the signed `cimd` flow-cookie claim.
 
-import type { CimdDocument } from "./document.ts";
+import { assertCimdRedirectUri, type CimdDocument } from "./document.ts";
 
 export interface CimdRegistration {
   readonly client_id: string;
@@ -90,6 +90,15 @@ function loopbackAnyPortMatch(entry: string, presented: string): boolean {
   let registered: URL;
   let candidate: URL;
   try {
+    // Canonicalize BOTH sides through the document validator before the
+    // any-port comparison. `new URL` alone compares protocol/host/path/search,
+    // so a presented URI carrying userinfo or a fragment
+    // (`http://x@127.0.0.1:7000/cb`, `.../cb#f`) matches a clean registered
+    // entry. Rule 20 assumes "fragment already rejected at validation", but
+    // rule 23 replaces §10's check for CIMD clients, so nothing else validates
+    // the PRESENTED uri on this path.
+    assertCimdRedirectUri(entry);
+    assertCimdRedirectUri(presented);
     registered = new URL(entry);
     candidate = new URL(presented);
   } catch {
