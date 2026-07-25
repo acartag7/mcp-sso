@@ -603,8 +603,17 @@ and optional `application_type` (`"native"` | `"web"`, default `"web"`).
   policies cannot apply.
 - **Stored mode (opt-in):** at **registration time** each `redirect_uri` is
   validated through the **global allowlist (§10.1: built-ins + config)** and then
-  recorded verbatim on the `ClientRegistration` (with `applicationType`, default
-  `"web"`). At **authorize/token time** the `client_id` MUST exist in the store and
+  recorded on the `ClientRegistration` (with `applicationType`, default
+  `"web"`). ⚠️ **AMENDED by §10.0 (implementation pending):** the entry is
+  recorded in its **canonical form** — the value `assertAllowedRedirectUri`
+  returns — NOT verbatim. This supersedes the previous "recorded verbatim"
+  wording, which is observably different for the one permitted non-canonical
+  spelling: an omitted root slash (`https://a.test`) is persisted as
+  `https://a.test/`. Verbatim persistence is what made a client able to register
+  a URI it could never authorize with (§10.0 obligation 2), because §10.2
+  compares by exact equality against a normalized presented URI. The DCR
+  RESPONSE echoes the same canonical values that were stored, so a client is
+  never told it registered a spelling the server did not keep. At **authorize/token time** the `client_id` MUST exist in the store and
   the presented `redirect_uri` MUST match that client's **per-type policy (§10.2)**
   — native ⇒ RFC 8252 loopback any-port, web ⇒ https exact. This is the RC-aligned
   path: native and web clients get the right redirect handling by type, instead of
@@ -800,7 +809,7 @@ the response. Wiring rules:
 >    `https://a.test/./cb`); a non-string entry; a non-array `redirectAllowlist`.
 > 6. **Positive tests** that the grammar does not over-reject: all four built-in
 >    defaults, `https://a.test` (omitted root slash), `https://a.test/`,
->    `http://[::1]:9`, `https://xn--e1afmkfd.test` (punycode), and
+>    `http://[::1]:9`, `https://xn--80a.test` (punycode — the ASCII form of the Cyrillic host above), and
 >    `https://a.test/cb%2F..%2Fadmin` (canonical, inert) all pass; and an empty
 >    array remains valid. Plus a **round-trip** test: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
@@ -851,7 +860,7 @@ matcher and recorded so an implementer does not "helpfully" relax either:
 
 - A **Unicode homograph** entry (`https://а.test`, Cyrillic `а`) is REJECTED —
   it canonicalizes to `https://xn--80a.test/`, so it is non-canonical as
-  written. Its punycode spelling (`https://xn--e1afmkfd.test`) IS accepted:
+  written. Its punycode spelling (`https://xn--80a.test`) IS accepted:
   that is the entry's true identity, and the deployer wrote what they get.
 - An entry containing **percent-encoded path characters**
   (`https://a.test/cb%2F..%2Fadmin`) is ACCEPTED and is inert: canonical already,
