@@ -129,6 +129,15 @@ if (phases["s6b-waiter-cap"] !== true) {
     await settle();
     // Waiter 3 is over the cap: it must REJECT NOW, not park until the fetch settles.
     const over = await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" })) as any;
+    // A SECOND over-cap follower must reject too. A rejected caller never
+    // acquired a slot, so a cleanup that decrements on the rejection path frees
+    // capacity it never took: the first request still 401s, but the next one is
+    // admitted while the original fetch and its in-cap followers are still
+    // parked — the bound silently stops holding under repeated pressure.
+    const over2 = await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" })) as any;
+    assert.equal(over2.status, 401, "the entry is STILL saturated — rejection frees no capacity");
+    assert.deepEqual(over2.body, GENERIC);
+    assert.equal(t.calls, 1, "and neither rejection started a fetch");
     const canon = await canonicalFailure();
     // Compare the WHOLE NormResponse. `redirect` is consumed by every adapter
     // INDEPENDENTLY of `headers` (fastify.ts:45, express.ts:40, hono.ts:69), so a
