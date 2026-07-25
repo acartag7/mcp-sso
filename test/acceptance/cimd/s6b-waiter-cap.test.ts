@@ -258,8 +258,15 @@ if (phases["s6b-waiter-cap"] !== true) {
     const retry = s.bridge.handleAuthorize(request(), { subject: "u" });
     await settle();
     assert.equal(calls, 2, "a NEW fetch was attempted — the entry was not left permanently saturated");
+    // …and a FOLLOWER on that retry must be admitted: an impl that clears the
+    // failed promise but keeps the per-key waiter count would reject here.
+    const overBefore = overloadedEvents(s.audit).length;
+    const retryFollower = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(overloadedEvents(s.audit).length, overBefore, "the retry's follower is admitted — the failed round's waiter count was released");
     for (const r of releases) r();
     const after = await withDeadline(retry) as any;
+    assert.equal((await withDeadline(retryFollower) as any).status, 401, "the follower shares the retry's failure");
     assert.equal(after.status, 401, "still fails (upstream down) — but as a resolution failure");
     assert.deepEqual(after.body, GENERIC);
   });
@@ -286,6 +293,33 @@ if (phases["s6b-waiter-cap"] !== true) {
     assert.equal(overloadedEvents(s.audit).length, okBefore, "and its follower is admitted — no waiter count survived the timeout");
     assert.equal((await withDeadline(retry, 5000) as any).status, 401, "the retry times out too (transport still dead) — as a resolution failure");
     assert.equal((await withDeadline(follower, 5000) as any).status, 401);
+  });
+
+  test("direct and upstream share ONE in-flight entry and ONE waiter budget for the same client_id (decision 4)", async () => {
+    // The existing cross-mode rows are SEQUENTIAL (cache hit on the second call).
+    // Concurrently, an impl can share the settled-success cache while keeping
+    // separate in-flight registries and waiter counters: two leaders and two full
+    // follower sets, blowing past maxInFlight × (maxWaitersPerFetch + 1).
+    const t = heldTransport();
+    const f = setupFlow({ c: config({ maxWaitersPerFetch: 1 }), t });
+    const direct = f.bridge.handleAuthorize(request(), { subject: "u" }); // leader, direct mode
+    await settle();
+    assert.equal(t.calls, 1, "one fetch started");
+    const upFollower = f.flow.handleAuthorize(request()); // follower via the OTHER boundary
+    await settle();
+    assert.equal(t.calls, 1, "the upstream request COALESCED onto the direct leader's fetch — one shared in-flight entry");
+    assert.equal(overloadedEvents(f.audit).length, 0, "the first cross-mode follower is within the shared budget");
+    // The budget is SHARED: with maxWaitersPerFetch 1 that upstream follower
+    // consumed the only slot, so the next follower — from EITHER boundary — must
+    // reject. Separate per-boundary counters would admit it.
+    const over = await withDeadline(f.bridge.handleAuthorize(request(), { subject: "u" })) as any;
+    assert.equal(over.status, 401, "the shared waiter budget is exhausted — separate counters would admit this");
+    assert.deepEqual(over.body, GENERIC);
+    assert.equal(overloadedEvents(f.audit).length, 1, "exactly one overload");
+    assert.equal(t.calls, 1, "and still only ONE fetch across both boundaries");
+    t.releaseAll();
+    assert.equal((await withDeadline(direct)).status, 200, "the direct leader resolved");
+    assert.equal((await withDeadline(upFollower) as any).status, 302, "the upstream follower reached the IdP on the SAME fetch");
   });
 
   // ---- boot validation (rule 21 domain, same fail-closed treatment as the other caps) ----
@@ -334,6 +368,8 @@ if (phases["s6b-waiter-cap"] !== true) {
     const inCap = f.flow.handleAuthorize(request());
     await settle();
     const okBefore = successEvents(f.audit).length;
+    const overBefore = overloadedEvents(f.audit).length;
+    assert.equal(overBefore, 0, "no overload was audited for the leader or the in-cap follower");
     const over = await withDeadline(f.flow.handleAuthorize(request())) as any;
     // Same guard as the direct boundary: an impl that emits success and THEN the
     // overloaded failure for one operation misreports the outcome.
@@ -351,7 +387,7 @@ if (phases["s6b-waiter-cap"] !== true) {
     assert.deepEqual(over.body, GENERIC, "…and that shared shape is the decision-2 generic");
     assert.equal(over.headers?.["set-cookie"], undefined, "no flow cookie is minted for a rejected resolution");
     assert.equal(over.headers?.location, undefined, "NO IdP hop — the user is never redirected on a rejected resolution");
-    assert.ok(overloadedEvents(f.audit).length >= 1, "audited overloaded at the upstream boundary too");
+    assert.equal(overloadedEvents(f.audit).length, overBefore + 1, "exactly ONE new overloaded event — for the REJECTED request, not the admitted follower");
     assert.equal(t.calls, 1, "the rejection started no new fetch");
     t.releaseAll();
     assert.equal((await withDeadline(leader) as any).status, 302, "the leader still reaches the IdP");
