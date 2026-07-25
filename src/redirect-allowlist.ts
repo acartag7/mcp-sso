@@ -75,5 +75,22 @@ function entryProblem(entry: unknown): string | undefined {
   if (entry.includes("#")) {
     return `redirectAllowlist entry ${shown} must not contain a fragment (the fragment is stripped before matching, so it has no effect)`;
   }
+  // The matcher compares a PATH-BEARING entry against the incoming URI by exact
+  // string equality (`entry === normalized`), where `normalized` is `url.href` —
+  // already canonicalized by WHATWG. A non-canonical entry (`HTTPS://…`,
+  // `…:443/cb`, surrounding whitespace, a `/a/../cb` dot segment) therefore
+  // matches NOTHING, and the deployer's configured callback fails at
+  // authorization rather than at boot — the same silent-config failure this
+  // module exists to end. Rejected, not silently rewritten: the entry should say
+  // what it means, and the message shows the canonical form to paste back.
+  //
+  // Only path-bearing entries are affected. An origin-only entry has its own
+  // matcher branch (compared as `scheme://host`, and for loopback via the raw
+  // string), so `https://a.test` is canonical for our purposes even though
+  // `new URL` would render it `https://a.test/`.
+  const isOriginOnly = (url.pathname === "" || url.pathname === "/") && !url.search;
+  if (!isOriginOnly && entry !== url.href) {
+    return `redirectAllowlist entry ${shown} is not in canonical form and would match nothing (the matcher compares against the normalized URI). Use "${url.href}".`;
+  }
   return undefined;
 }

@@ -59,9 +59,16 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
         "grant_types containing client_credentials is not accepted via open registration (§17.2)",
       );
     }
-    const redirectUris = arrayOfStrings(input.redirectUris);
-    if (redirectUris.length === 0) throw new OAuthError("invalid_request", "redirect_uris is required");
-    for (const uri of redirectUris) assertAllowedRedirectUri(uri, config.redirectAllowlist);
+    const rawRedirectUris = arrayOfStrings(input.redirectUris);
+    if (rawRedirectUris.length === 0) throw new OAuthError("invalid_request", "redirect_uris is required");
+    // STORE the normalized form the validator returns, never the raw input. The
+    // §10.2 web policy compares a presented redirect_uri against the registered
+    // ones by exact string equality, against an already-normalized `url.href`.
+    // Storing raw meant a client registering `https://c.test:443/cb` (accepted —
+    // it passes the allowlist) could afterwards authorize with NOTHING: neither
+    // its own registered string nor the normalized one ever matched, and the
+    // breakage surfaced at authorize rather than at registration.
+    const redirectUris = rawRedirectUris.map((uri) => assertAllowedRedirectUri(uri, config.redirectAllowlist));
     // ABSENT ⇒ the "web" default; PRESENT-but-anything-else ⇒ reject (no coercion).
     const rawApplicationType = input.applicationType === undefined ? "web" : input.applicationType;
     if (rawApplicationType !== "native" && rawApplicationType !== "web") {

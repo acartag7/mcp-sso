@@ -9,7 +9,7 @@ import {
   type BridgeConfig, AuthConfigError, createBridgeConfig, originOf, KNOWN_CONFIG_KEYS,
 } from "../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../src/errors.ts";
-import { assertAllowedRedirectUri } from "../src/redirect.ts";
+import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "../src/redirect.ts";
 import { pkceChallenge, sha256Hex, signAccessToken, verifyAccessToken } from "../src/crypto.ts";
 import { requireScope } from "../src/scopes.ts";
 import { buildUnauthorizedChallenge } from "../src/challenge.ts";
@@ -520,6 +520,32 @@ test("config fail-closed: every redirectAllowlist entry validated at boot (§5/�
   assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: undefined as unknown as string[] }), AuthConfigError);
   assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: [123 as unknown as string] }), AuthConfigError);
 
+  // A path-bearing entry the matcher compares by exact string equality must be
+  // CANONICAL, or it matches nothing and the deployer's configured callback
+  // fails at authorization instead of at boot — the same silent-config failure
+  // this issue exists to end. Each of these was accepted at boot and matched
+  // nothing before the check.
+  for (const nonCanonical of [
+    "HTTPS://client.test/callback",
+    "https://client.test:443/callback",
+    "  https://client.test/callback  ",
+    "https://client.test/a/../callback",
+  ]) {
+    assert.throws(
+      () => createBridgeConfig({ ...base, redirectAllowlist: [nonCanonical] }),
+      AuthConfigError,
+      `expected a non-canonical entry to be rejected: ${nonCanonical}`,
+    );
+  }
+  // The message shows the canonical form to paste back.
+  assert.match(message({ redirectAllowlist: ["https://client.test:443/callback"] }), /https:\/\/client\.test\/callback/);
+
+  // Origin-only entries have their own matcher branch (compared as
+  // scheme://host, not by string equality), so they are NOT required to carry
+  // the trailing slash `new URL` would render — and they still match.
+  const originOnly = createBridgeConfig({ ...base, redirectAllowlist: ["https://a.test"] });
+  assert.equal(assertAllowedRedirectUri("https://a.test/deep/cb", originOnly.redirectAllowlist), "https://a.test/deep/cb");
+
   // Empty stays VALID — the built-in §10 defaults are the common case — and the
   // defaults must still apply.
   const empty = createBridgeConfig({ ...base, redirectAllowlist: [] });
@@ -716,6 +742,32 @@ test("registerClient (stateless) mints an RFC 7591 client", async () => {
   assert.match(reg.client_id, /^mcpdc_/);
   assert.equal(reg.token_endpoint_auth_method, "none");
   assert.deepEqual(reg.redirect_uris, [REDIRECT]);
+  await ctx.store.close();
+});
+
+test("registerClient stores the NORMALIZED redirect_uri, so a stored web client can authorize with it", async () => {
+  // Sibling of the canonical-allowlist rule: §10.2 compares a presented
+  // redirect_uri against the REGISTERED ones by exact string equality, against
+  // an already-normalized href. Storing the raw input meant a client registering
+  // a non-canonical (but allowlist-passing) URI could afterwards authorize with
+  // NOTHING — not even the exact string it registered — and the breakage
+  // surfaced at authorize rather than at registration.
+  const ctx = setup({ dcr: { mode: "stored", store: new InMemoryClientStore() } });
+  const stored = ctx.config.dcr.mode === "stored" ? ctx.config.dcr.store : null;
+  assert.ok(stored, "stored-mode config must carry a ClientStore");
+
+  const reg = await registerClient(
+    { config: ctx.config, clock: ctx.clock, audit: ctx.audit },
+    { redirectUris: ["https://client.test:443/callback"], applicationType: "web" },
+  );
+  const record = await stored.find(reg.client_id);
+  assert.ok(record);
+  assert.deepEqual(record.redirectUris, ["https://client.test/callback"], "must persist the normalized form");
+
+  // The client can now actually use it — both the canonical form and the
+  // equivalent it registered resolve to the same normalized URI.
+  assert.equal(assertRedirectAllowedForClient("https://client.test/callback", record), "https://client.test/callback");
+  assert.equal(assertRedirectAllowedForClient("https://client.test:443/callback", record), "https://client.test/callback");
   await ctx.store.close();
 });
 
