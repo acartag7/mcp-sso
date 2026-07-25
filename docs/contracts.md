@@ -1820,9 +1820,15 @@ for any conformance claim against the 2026-07-28 final spec text, the
     per the identity-port lesson): argument MUST be a primitive non-empty string,
     no coercion; reject raw `\`, C0/DEL, CR/LF, malformed percent triplets, any
     userinfo (INCLUDING empty `@`), any fragment (INCLUDING a trailing `#`), and
-    any `*` in the host; accept EITHER `https:` (validated for shape only here;
-    EXACT raw-string match at authorize, port included, no normalization) OR
-    `http:` with host exactly `localhost`, `127.0.0.1`, or `[::1]`. Only the
+    any `*` in the host; accept EITHER `https:` OR `http:` with host exactly
+    `localhost`, `127.0.0.1`, or `[::1]` — **in each case only if the entry is
+    also §10.0-valid** (canonical spelling, no query; this REPLACES the earlier
+    "validated for shape only here" wording, which admitted queries and
+    non-canonical forms). Matching at authorize is EXACT raw-string comparison,
+    port included, with no normalization at match time — which is sound
+    precisely because §10.0 already forced the stored entry into canonical form;
+    raw-equality against a non-canonical entry is what made the two matchers
+    disagree. Only the
     `http:` case is loopback. The authorize-time (S6b) loopback any-port match
     reuses the existing runtime semantics of src/redirect.ts:95-103 — scheme,
     hostname, pathname, and search equal; port ignored; fragment already rejected
@@ -1918,8 +1924,9 @@ the user has already authenticated. Fix: resolve once at authorize, carry forwar
 *Shared redirect matcher (used by 1a, 1d, and prepare).* CIMD redirect membership is
 a **single NEW pure matcher** (not the §10 export functions, which strip fragments and
 consult a stored client): an https registration entry matches by **exact raw-string**
-`presented === registered` (rule 20 / the raw-string identity rule — no normalization,
-port included); a loopback `http` entry matches RFC 8252 **any-port** using the compare
+`presented === registered` (rule 20 / the raw-string identity rule — no normalization
+AT MATCH TIME, port included; sound because §10.0 already required the registered entry
+to be canonical); a loopback `http` entry matches RFC 8252 **any-port** using the compare
 semantics of `src/redirect.ts:95-103` (scheme, host, path, and search equal; port
 ignored; fragment already rejected). It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and
