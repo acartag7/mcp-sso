@@ -231,11 +231,17 @@ if (phases["s6b-waiter-cap"] !== true) {
     for (const r of releases) r();
     assert.equal((await withDeadline(leader) as any).status, 401, "the failed fetch maps to the generic");
     assert.equal((await withDeadline(inCap) as any).status, 401);
-    // Slots must be free again even though the fetch REJECTED.
-    const after = await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" })) as any;
+    // Slots must be free again even though the fetch REJECTED. Start the retry,
+    // WAIT for its own transport call, release THAT promise, and only then await
+    // the response — the release loop above already ran, so awaiting first would
+    // hang on a promise nothing can settle (a correct impl would still time out).
+    const retry = s.bridge.handleAuthorize(request(), { subject: "u" });
+    await settle();
+    assert.equal(calls, 2, "a NEW fetch was attempted — the entry was not left permanently saturated");
+    for (const r of releases) r();
+    const after = await withDeadline(retry) as any;
     assert.equal(after.status, 401, "still fails (upstream down) — but as a resolution failure");
     assert.deepEqual(after.body, GENERIC);
-    assert.ok(calls >= 2, "a new fetch was attempted — the entry was not left permanently saturated");
   });
 
   // ---- boot validation (rule 21 domain, same fail-closed treatment as the other caps) ----
@@ -287,8 +293,14 @@ if (phases["s6b-waiter-cap"] !== true) {
     // Decision 1b: resolution completes BEFORE any Set-Cookie / IdP 302, so an
     // over-cap rejection is a DIRECT error — never a redirect to the IdP and
     // never a flow cookie. An impl that caps only `prepare` fails here.
+    // Byte-identical to an ORDINARY upstream CIMD failure — headers included, so
+    // an upstream-only mapper cannot add e.g. `retry-after` and expose the cap.
+    const canonUp = await (setupFlow({ t: { async connectAndGet() { throw new Error("unreachable"); } } })).flow.handleAuthorize(request()) as any;
+    assert.equal(over.status, canonUp.status, "same STATUS as an ordinary upstream CIMD failure");
+    assert.deepEqual(over.body, canonUp.body, "same BODY");
+    assert.deepEqual(over.headers, canonUp.headers, "same HEADERS — no cap-specific header may leak the decision-7 condition");
     assert.equal(over.status, 401, "direct 401, not a 302");
-    assert.deepEqual(over.body, GENERIC, "the decision-2 generic");
+    assert.deepEqual(over.body, GENERIC, "…and that shared shape is the decision-2 generic");
     assert.equal(over.headers?.["set-cookie"], undefined, "no flow cookie is minted for a rejected resolution");
     assert.equal(over.headers?.location, undefined, "NO IdP hop — the user is never redirected on a rejected resolution");
     assert.ok(overloadedEvents(f.audit).length >= 1, "audited overloaded at the upstream boundary too");
