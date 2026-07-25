@@ -576,6 +576,71 @@ test("config fail-closed: the published redirectAllowlist is a frozen snapshot, 
   );
 });
 
+test("config publication: nested blocks are frozen snapshots, not the caller's objects (§5)", () => {
+  const base = baseInput();
+  // `Object.freeze` is SHALLOW. Publishing the caller's own nested blocks would
+  // leave every validated security setting mutable after boot — and these are
+  // read PER REQUEST, not captured at boot. Issue #100.
+  const clientStore = new InMemoryClientStore();
+  const evilStore = new InMemoryClientStore();
+  const dcr: BridgeConfig["dcr"] = { mode: "stored", store: clientStore };
+  const clientCredentials = { enabled: false };
+  const config = createBridgeConfig({ ...base, dcr, clientCredentials });
+
+  assert.notEqual(config.dcr, dcr, "dcr must not be published by reference");
+  assert.equal(Object.isFrozen(config.dcr), true);
+  assert.notEqual(config.clientCredentials, clientCredentials, "clientCredentials must not be published by reference");
+  assert.equal(Object.isFrozen(config.clientCredentials), true);
+
+  // Swapping the store post-boot would redirect client lookups and save() to an
+  // attacker-chosen store — an authorization-decision input.
+  (dcr as { store: ClientStore }).store = evilStore;
+  assert.equal(config.dcr.mode === "stored" ? config.dcr.store : null, clientStore, "dcr.store must still be the boot-approved store");
+
+  // Flipping the mode would change which registration path runs.
+  (dcr as { mode: string }).mode = "stateless";
+  assert.equal(config.dcr.mode, "stored");
+
+  // Flipping `enabled` would switch on a deliberately disabled grant with no
+  // restart, and change what AS metadata advertises.
+  clientCredentials.enabled = true;
+  assert.equal(config.clientCredentials?.enabled, false);
+
+  // `store` is deliberately carried BY REFERENCE — it is a live port object with
+  // methods. The snapshot closes swap-the-store, not the port itself.
+  assert.equal(config.dcr.mode === "stored" ? config.dcr.store : null, clientStore);
+});
+
+test("config publication: array fields are validated as string[] and frozen (§5)", () => {
+  const base = baseInput();
+
+  // A bare string is NOT a one-element list. `allowedOrigins` is consumed with
+  // `.includes()`, which on a string is SUBSTRING matching — so a string
+  // "https://auth.test" would admit the Origin "auth.test" (and "ttps://auth.tes"),
+  // widening the consent-approve CSRF gate from a harmless-looking config typo.
+  assert.throws(() => createBridgeConfig({ ...base, allowedOrigins: "https://auth.test" as unknown as string[] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, scopeCatalog: "mcp:read" as unknown as string[] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, defaultScopes: "mcp:read" as unknown as string[] }), AuthConfigError);
+  // Non-string entries fail closed too.
+  assert.throws(() => createBridgeConfig({ ...base, allowedOrigins: [123 as unknown as string] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, scopeCatalog: [{} as unknown as string] }), AuthConfigError);
+  // `allowedOrigins: undefined` previously published `[]` silently.
+  assert.throws(() => createBridgeConfig({ ...base, allowedOrigins: undefined as unknown as string[] }), AuthConfigError);
+
+  // Each published array is a frozen snapshot: a post-boot push to the caller's
+  // array must not widen what requests read.
+  const scopeCatalog = ["mcp:read", "mcp:write"];
+  const allowedOrigins = ["https://auth.test"];
+  const config = createBridgeConfig({ ...base, scopeCatalog, defaultScopes: ["mcp:read"], allowedOrigins });
+  assert.equal(Object.isFrozen(config.scopeCatalog), true);
+  assert.equal(Object.isFrozen(config.allowedOrigins), true);
+
+  scopeCatalog.push("mcp:admin");
+  allowedOrigins.push("https://evil.test");
+  assert.deepEqual(config.scopeCatalog, ["mcp:read", "mcp:write"], "a post-boot push must not widen the scope catalog");
+  assert.deepEqual(config.allowedOrigins, ["https://auth.test"], "a post-boot push must not widen the Origin gate");
+});
+
 test("config fail-closed: unknown top-level keys rejected with the key named", () => {
   const base = baseInput();
 

@@ -281,6 +281,31 @@ interface BridgeConfig {
   that mysteriously failed — while `"*"` survived in manifests as apparently-live
   config whose inertness rested on one `return false` rather than on rejection.
 
+- `scopeCatalog`, `defaultScopes`, `allowedOrigins`, and `redirectAllowlist` are
+  arrays **of strings** — a non-array, or any non-string entry, is an
+  `AuthConfigError` at boot. (A bare string is not an acceptable one-element
+  list: `allowedOrigins` is consumed with `.includes()`, which on a string is
+  **substring** matching, so `"https://a.test"` would admit the Origin
+  `a.test` — a widened CSRF gate from what reads like a harmless config typo.)
+
+**Publication (what boot approves is what requests read).** `createBridgeConfig`
+returns a frozen object whose **nested blocks and arrays are frozen snapshots**,
+never the caller's own objects. `Object.freeze` is shallow, so returning the
+caller's `dcr`/`dev`/`clientCredentials`/`cimd` block — or its arrays — would
+leave every validated security setting mutable after boot, and these are read
+**per request**, not captured at boot (`authorize.ts`, `register.ts`,
+`token.ts`, `metadata.ts`, `adapters/upstream-flow.ts`). Swapping `dcr.store`
+post-boot would redirect client lookups and `save()` to an attacker-chosen
+store; flipping `clientCredentials.enabled` would switch on a deliberately
+disabled grant with no restart; pushing to `scopeCatalog` would widen what a
+token may carry. Each block is copied one level deep from an explicit key
+allowlist — `dcr.store` stays a live port reference by design (it is an object
+with methods), so the snapshot closes swap-the-store and flip-the-mode without
+touching the port itself. **Threat model, stated honestly:** this requires
+in-process code holding the original config reference; it is not remotely
+triggerable. It is a fail-closed/defense-in-depth property — a validated
+security setting stays validated — not a live exploit.
+
 A config object is constructed via `createBridgeConfig(input)` (validates +
 freezes). The frozen object is the only thing passed to use-cases.
 
