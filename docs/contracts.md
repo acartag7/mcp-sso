@@ -265,6 +265,21 @@ interface BridgeConfig {
   the deployer MUST declare scopes explicitly.
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
+- `redirectAllowlist` is an array (an empty one is **valid** — the built-in §10
+  defaults already cover the common case), and **every entry** is validated at
+  boot against the same rules §10.1 enforces at request time. Rejected, each
+  naming the offending entry: a non-string entry; `"*"`; any entry containing
+  `*` (an unanchored prefix such as `https://foo.*` or `https://foo.com/cb*`);
+  an entry that does not parse as an absolute URL; an entry whose scheme is not
+  `https:` or `http:` (a `javascript:`/`data:` entry is never a legitimate
+  redirect target); and an entry carrying userinfo or a fragment — mirroring
+  what `assertAllowedRedirectUri` already refuses for the *incoming*
+  `redirect_uri`. **Rationale:** the decision and the enforcement must act on
+  the same rules. Before this rule the matcher silently discarded a `"*"`
+  entry (`redirect.ts`, `if (entry === "*") return false`), so a deployer who
+  configured allow-all got no boot error and no request error — only redirects
+  that mysteriously failed — while `"*"` survived in manifests as apparently-live
+  config whose inertness rested on one `return false` rather than on rejection.
 
 A config object is constructed via `createBridgeConfig(input)` (validates +
 freezes). The frozen object is the only thing passed to use-cases.
@@ -767,6 +782,12 @@ An entry matches if it is the exact redirect_uri, the exact ORIGIN
 widens to any port only if it is an origin-only entry with no explicit port/path;
 a port-scoped or path-specific loopback entry is NOT widened. Returns the
 normalized URI.
+
+Config entries reaching this matcher have already been validated at boot (§5):
+`"*"`, `*`-bearing prefixes, unparseable entries, non-`http(s)` schemes, and
+userinfo/fragment-bearing entries cannot be present, because `createBridgeConfig`
+refuses them. The matcher keeps its own `"*"` rejection as defense-in-depth —
+it is also called with entries from paths the config validator does not own.
 
 ### 10.2 Per-client policy (stored-DCR) — RC item (b)
 At authorize/token in stored mode, the client's registered `applicationType`

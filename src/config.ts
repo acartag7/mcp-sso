@@ -6,6 +6,7 @@
 import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
+import { redirectAllowlistProblem } from "./redirect-allowlist.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
 
@@ -102,7 +103,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const consentSigningSecret = input.consentSigningSecret;
   const signingPrivateJwk = input.signingPrivateJwk;
   const signingKeyId = input.signingKeyId;
-  const redirectAllowlist = input.redirectAllowlist;
+  const rawRedirectAllowlist = input.redirectAllowlist;
   const scopeCatalog = input.scopeCatalog;
   const defaultScopes = input.defaultScopes;
   const allowedOrigins = input.allowedOrigins;
@@ -140,6 +141,13 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   validateTtl(refreshTokenTtlSeconds, "refreshTokenTtlSeconds");
   validateTtl(consentTokenTtlSeconds, "consentTokenTtlSeconds");
   validateTtl(authorizationCodeTtlSeconds, "authorizationCodeTtlSeconds");
+  // §5/§10.1: every allowlist entry is validated here, on the same rules the
+  // request-time matcher enforces. Snapshot-then-validate returns the frozen
+  // copy it checked, so a later mutation of the caller's array cannot swap in an
+  // entry boot never approved (issue #104).
+  const checkedAllowlist = redirectAllowlistProblem(rawRedirectAllowlist);
+  if ("problem" in checkedAllowlist) throw new AuthConfigError(checkedAllowlist.problem);
+  const redirectAllowlist = checkedAllowlist.value as string[];
   if (dcrMode !== "stateless" && dcrMode !== "stored") {
     throw new AuthConfigError("dcr.mode must be 'stateless' or 'stored'");
   }

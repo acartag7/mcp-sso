@@ -9,6 +9,7 @@ import {
   type BridgeConfig, AuthConfigError, createBridgeConfig, originOf, KNOWN_CONFIG_KEYS,
 } from "../src/config.ts";
 import { OAuthError, oauthErrorBody } from "../src/errors.ts";
+import { assertAllowedRedirectUri } from "../src/redirect.ts";
 import { pkceChallenge, sha256Hex, signAccessToken, verifyAccessToken } from "../src/crypto.ts";
 import { requireScope } from "../src/scopes.ts";
 import { buildUnauthorizedChallenge } from "../src/challenge.ts";
@@ -481,6 +482,72 @@ test("config fail-closed: https-only, secret length, key shape, catalog, default
   const dev = createBridgeConfig({ ...base, issuer: "http://localhost", resource: "http://localhost/mcp", dev: { allowInsecureLocalhost: true } });
   assert.equal(originOf(dev.resource), "http://localhost");
   assert.throws(() => createBridgeConfig({ ...base, issuer: "http://api.test", dev: { allowInsecureLocalhost: true } }), AuthConfigError); // non-loopback
+});
+
+test("config fail-closed: every redirectAllowlist entry validated at boot (§5/§10.1)", () => {
+  const base = baseInput();
+  const message = (input: Partial<BridgeConfig>): string => {
+    try { createBridgeConfig({ ...base, ...input } as BridgeConfig); } catch (e) { return (e as Error).message; }
+    return "";
+  };
+
+  // "*" is refused at boot rather than silently discarded by the matcher. This is
+  // the issue-#104 case found in the wild: a production manifest carried
+  // OAUTH_REDIRECT_ALLOWLIST="*" and nothing at boot or at request time said so.
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: ["*"] }), AuthConfigError);
+
+  // Unanchored prefixes — refused for the same reason "*" is.
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: ["https://foo.*"] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: ["https://foo.test/cb*"] }), AuthConfigError);
+
+  // The message must NAME the offending entry, so a deployer with several
+  // origins configured does not have to bisect to find the bad one.
+  const named = message({ redirectAllowlist: ["https://ok.test", "https://bad.*"] });
+  assert.match(named, /https:\/\/bad\.\*/);
+  assert.equal(/ok\.test/.test(named), false, "the message must name only the offending entry");
+
+  // Unparseable, wrong-scheme, userinfo, fragment.
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: ["not a url"] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: ["javascript:alert(1)"] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: ["data:text/html,x"] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: ["https://u:p@ok.test"] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: ["https://ok.test/cb#frag"] }), AuthConfigError);
+
+  // Wrong TYPE fails closed at boot. Before this rule a non-array reached the
+  // matcher and threw a raw TypeError ("allowlist is not iterable") at REQUEST
+  // time — a 500 on a live authorize instead of a boot failure.
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: "https://ok.test" as unknown as string[] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: undefined as unknown as string[] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, redirectAllowlist: [123 as unknown as string] }), AuthConfigError);
+
+  // Empty stays VALID — the built-in §10 defaults are the common case — and the
+  // defaults must still apply.
+  const empty = createBridgeConfig({ ...base, redirectAllowlist: [] });
+  assert.deepEqual(empty.redirectAllowlist, []);
+  assert.equal(assertAllowedRedirectUri("https://claude.ai/cb", empty.redirectAllowlist), "https://claude.ai/cb");
+
+  // Legitimate entries still pass, and still match at request time.
+  const ok = createBridgeConfig({ ...base, redirectAllowlist: ["https://ok.test/cb", "http://localhost"] });
+  assert.equal(assertAllowedRedirectUri("https://ok.test/cb", ok.redirectAllowlist), "https://ok.test/cb");
+  assert.equal(assertAllowedRedirectUri("http://localhost:57312/cb", ok.redirectAllowlist), "http://localhost:57312/cb");
+});
+
+test("config fail-closed: the published redirectAllowlist is a frozen snapshot, not the caller's array", () => {
+  const base = baseInput();
+  // The boot check is only load-bearing if the array it validated is the array
+  // read at request time. Publishing the caller's live array by reference would
+  // let a validated allowlist grow an unvalidated entry after boot.
+  const caller = ["https://ok.test/cb"];
+  const config = createBridgeConfig({ ...base, redirectAllowlist: caller });
+  assert.notEqual(config.redirectAllowlist, caller, "must not publish the caller's array by reference");
+  assert.equal(Object.isFrozen(config.redirectAllowlist), true);
+
+  caller.push("https://evil.test/cb");
+  assert.deepEqual(config.redirectAllowlist, ["https://ok.test/cb"], "a post-boot push must not reach the config");
+  assert.throws(
+    () => assertAllowedRedirectUri("https://evil.test/cb", config.redirectAllowlist),
+    (e: unknown) => e instanceof OAuthError && e.code === "invalid_redirect_uri",
+  );
 });
 
 test("config fail-closed: unknown top-level keys rejected with the key named", () => {
