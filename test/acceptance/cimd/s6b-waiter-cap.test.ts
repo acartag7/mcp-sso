@@ -397,8 +397,15 @@ if (phases["s6b-waiter-cap"] !== true) {
   }
 
   for (const good of [1, 256, 4096]) {
-    test(`cimd.maxWaitersPerFetch ${good} boots (domain bound [1, 4096])`, () => {
-      assert.ok(config({ maxWaitersPerFetch: good }), `${good} must be accepted`);
+    test(`cimd.maxWaitersPerFetch ${good} survives boot UNCHANGED and constructs a Bridge (domain [1, 4096])`, () => {
+      // `assert.ok(config(...))` would only prove a truthy object came back: an
+      // impl that CLAMPS 4096 down to 256, or that accepts the value in config
+      // but rejects it while constructing the resolver, would pass. Assert the
+      // published value and drive the full boot path both caps are read from.
+      const c = config({ maxWaitersPerFetch: good });
+      assert.equal(c.cimd?.maxWaitersPerFetch, good, `${good} must be published UNCHANGED — never clamped`);
+      const bridge = new Bridge({ config: c, store: new MemoryStore(), clock: new Clock(), audit: new MemoryAudit(), cimdTransport: heldTransport(), cimdResolver: resolver() });
+      assert.ok(bridge.cimd, `${good} must construct the CIMD machinery, not just validate`);
     });
   }
 
