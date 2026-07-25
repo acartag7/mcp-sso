@@ -14,6 +14,6 @@
     "cimd/s6b-metadata.test.ts": "cd7160121f054aa15b98bf974b51e1ebad58cb9a16bd99b941fa1c6a1e2779ef",
     "cimd/s6b-redirect.test.ts": "1fba1cbaf3699b3a524d235121a57d1f71fdf2f99027435e489c9fc0c2a353ba",
     "cimd/s6b-scope.test.ts": "1911bce87fc76e10658e2895b0c28d62590a5b7332fc7ff45f8d010604ee06ca",
-    "cimd/s6b-waiter-cap.test.ts": "d39eb360d261e279fd12f1a64436b8f130c9b7aef78017702b456e8e423ae0f9"
+    "cimd/s6b-waiter-cap.test.ts": "2bf5679c71a1e46f4e05a56dc4db378929570d68f5f9affad973c0fa3bf97a77"
   }
 }

@@ -126,9 +126,12 @@ if (phases["s6b-waiter-cap"] !== true) {
     // Waiter 3 is over the cap: it must REJECT NOW, not park until the fetch settles.
     const over = await withDeadline(s.bridge.handleAuthorize(request(), { subject: "u" })) as any;
     const canon = await canonicalFailure();
-    assert.equal(over.status, canon.status, "same STATUS as an ordinary CIMD failure");
-    assert.deepEqual(over.body, canon.body, "same BODY");
-    assert.deepEqual(over.headers, canon.headers, "same HEADERS — a cap-specific header would be a decision-2 oracle");
+    // Compare the WHOLE NormResponse. `redirect` is consumed by every adapter
+    // INDEPENDENTLY of `headers` (fastify.ts:45, express.ts:40, hono.ts:69), so a
+    // cap-specific `redirect` would reach the wire as a Location while a
+    // status+headers+body comparison stayed green.
+    assert.deepEqual(over, canon, "byte-identical NormResponse — status, headers, body AND redirect");
+    assert.equal(over.redirect, undefined, "no redirect field on a resolution failure");
     assert.deepEqual(over.body, GENERIC, "…and that shared shape is the decision-2 generic");
     assert.equal(t.calls, 1, "rejecting a follower starts NO new fetch");
     t.releaseAll();
@@ -380,9 +383,8 @@ if (phases["s6b-waiter-cap"] !== true) {
     // Byte-identical to an ORDINARY upstream CIMD failure — headers included, so
     // an upstream-only mapper cannot add e.g. `retry-after` and expose the cap.
     const canonUp = await (setupFlow({ t: { async connectAndGet() { throw new Error("unreachable"); } } })).flow.handleAuthorize(request()) as any;
-    assert.equal(over.status, canonUp.status, "same STATUS as an ordinary upstream CIMD failure");
-    assert.deepEqual(over.body, canonUp.body, "same BODY");
-    assert.deepEqual(over.headers, canonUp.headers, "same HEADERS — no cap-specific header may leak the decision-7 condition");
+    assert.deepEqual(over, canonUp, "byte-identical NormResponse at the upstream boundary too — including the adapter-consumed `redirect` field");
+    assert.equal(over.redirect, undefined, "no redirect field — adapters turn it into a Location independently of headers");
     assert.equal(over.status, 401, "direct 401, not a 302");
     assert.deepEqual(over.body, GENERIC, "…and that shared shape is the decision-2 generic");
     assert.equal(over.headers?.["set-cookie"], undefined, "no flow cookie is minted for a rejected resolution");
