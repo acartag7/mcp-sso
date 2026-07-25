@@ -812,6 +812,19 @@ whose text names one host and whose effect names another, which is precisely
 what "reject, don't normalize" exists to prevent. The same applies to
 `HTTPS://EXAMPLE.com` and any other spelling WHATWG folds.
 
+Two consequences of requiring canonical spelling, verified against the shipped
+matcher and recorded so an implementer does not "helpfully" relax either:
+
+- A **Unicode homograph** entry (`https://а.test`, Cyrillic `а`) is REJECTED —
+  it canonicalizes to `https://xn--80a.test/`, so it is non-canonical as
+  written. Its punycode spelling (`https://xn--e1afmkfd.test`) IS accepted:
+  that is the entry's true identity, and the deployer wrote what they get.
+- An entry containing **percent-encoded path characters**
+  (`https://a.test/cb%2F..%2Fadmin`) is ACCEPTED and is inert: canonical already,
+  and it matches only its own literal self (verified — it matches neither
+  `/admin` nor `/cb/../admin`). §10.0 governs entry SYNTAX, not path semantics;
+  it grants nothing beyond the exact URI written.
+
 In both forms: `scheme` is `https` or `http` (an allowlist — `javascript:`,
 `data:`, `file:` and every other scheme are rejected, never enumerated as
 exceptions); the raw entry contains no `*`, no whitespace (leading, trailing, or
