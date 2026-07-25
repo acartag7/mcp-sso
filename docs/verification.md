@@ -344,11 +344,14 @@ text until every row below is checked off.
   identifiers to the RAW presented `client_id` string (never a WHATWG
   re-serialization) and records the `-02` section renumbering for the next
   re-pin. NOTE: this is a
-  CONTRACT-conformance check only; the CIMD implementation itself is not yet
-  built (`docs/contracts.md` §16 marks CIMD contract-locked, implementation
-  pending — the S6 sessions). No conformance-with-final-spec claim about
-  CIMD RUNTIME behavior may be checked off until that implementation ships
-  and its SSRF acceptance suite is green.
+  CONTRACT-conformance check only. The CIMD implementation HAS now shipped
+  (S6a primitives + S6b flow integration; `docs/contracts.md` §16 marks CIMD
+  implemented, both frozen acceptance suites active and green). That satisfies
+  the old "until the implementation ships" precondition — but it does NOT by
+  itself license a conformance claim: no conformance-with-final-spec claim about
+  CIMD RUNTIME behavior may be checked off until THIS re-verification is
+  completed against the 2026-07-28 final text, and CIMD-LIVE remains outstanding
+  for any "verified against a real client" claim.
 - [ ] **(c) RFC 9207 `iss` + `application_type`.** Confirm the final spec's
   normative level for the RFC 9207 `iss` parameter (the draft has it as
   SHOULD, with a signposted future MUST) and confirm `/oauth/register`
