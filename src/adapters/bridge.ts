@@ -45,10 +45,22 @@ export interface BridgeDeps {
   cimdResolver?: DnsResolver;
 }
 
+// `frame-ancestors 'none'` is load-bearing, not hygiene: threat-model row 17
+// makes the user's judgment at this page the LAST line of defence against CIMD
+// client impersonation (lookalike domain / loopback-only redirect). A framed,
+// overlaid Approve button removes that judgment entirely — one click issues a
+// code — and CIMD means the attacker needs no registration to get here.
+// `frame-ancestors` does NOT fall back to `default-src` under CSP3, so
+// `default-src 'none'` alone does not frame-block; `x-frame-options` is the
+// belt-and-braces for pre-CSP3 agents. `form-action 'self'` keeps the consent
+// POST on this origin even if markup is ever injected.
 const CONSENT_HEADERS = {
   "content-type": "text/html; charset=utf-8",
   "x-content-type-options": "nosniff",
-  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
 };
 
 export class Bridge {

@@ -17,11 +17,18 @@ import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
 import { formField, queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
 
-// Mirrors bridge.ts CONSENT_HEADERS (text/html + CSP + nosniff) for the pairing page.
+// Mirrors bridge.ts CONSENT_HEADERS exactly — keep the two in lockstep. Same
+// frame-blocking rationale (see the comment there): this page carries a
+// one-time pairing code and an Approve control, so framing it is the same
+// clickjacking surface. `referrer-policy` additionally keeps the code out of a
+// Referer header on any navigation away.
 const PAIRING_HEADERS: Record<string, string> = {
   "content-type": "text/html; charset=utf-8",
   "x-content-type-options": "nosniff",
-  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
 };
 
 // OAuth authorize params that round-trip through the pairing form's hidden fields.
