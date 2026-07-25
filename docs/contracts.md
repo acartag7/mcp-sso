@@ -769,10 +769,34 @@ the response. Wiring rules:
 
 > **Status: contract-only — IMPLEMENTATION PENDING.** This section defines the
 > target; `main` does not yet enforce it, and the differential table below is
-> current shipped behavior, not history. Enforcement lands in the follow-up
-> implementation PR (boot validator + both matchers + one negative test per
-> rejected shape). Do **not** read this section as a conformance claim until
-> that lands and §16's row says so.
+> current shipped behavior, not history. Do **not** read this section as a
+> conformance claim until enforcement lands and §16's row says so.
+>
+> **The implementation PR owes exactly this, and it is enumerable rather than
+> "one negative test per rejected shape" left to judgment:**
+>
+> 1. A boot validator applying §10.0 to every `redirectAllowlist` entry.
+> 2. §10.2 applying §10.0 to every registered URI **it reads** (stored-state
+>    sibling, below) — not only at registration.
+> 3. `assertCimdRedirectUri` enforcing §10.0 rather than its own shape rules
+>    (§17.1.5 rule 20, as amended there).
+> 4. **One rejection test per row of this closed list**, each asserting the
+>    error names the offending entry: `*`; any `*`-bearing entry; a non-`http(s)`
+>    scheme (`javascript:`, `data:`); userinfo (`https://u:p@a.test`) AND empty
+>    userinfo (`https://@a.test`); a query delimiter (`https://a.test?`); a
+>    fragment; whitespace (leading/trailing/interior); a control character; a
+>    backslash; a malformed percent-escape; a non-canonical origin
+>    (`HTTPS://A.TEST`, `https://%65xample.com`, `https://a.test:443`); a
+>    non-canonical exact-URI (`https://a.test:443/cb`, `https://a.test/x/../cb`,
+>    `https://a.test/./cb`); a non-string entry; a non-array `redirectAllowlist`.
+> 5. **Positive tests** that the grammar does not over-reject: all four built-in
+>    defaults, `https://a.test` (omitted root slash), `https://a.test/`,
+>    `http://[::1]:9`, `https://xn--e1afmkfd.test` (punycode), and
+>    `https://a.test/cb%2F..%2Fadmin` (canonical, inert) all pass; and an empty
+>    array remains valid.
+> 6. A **differential test**: for each row of the table below, all three
+>    consumers now agree. That is the property this section exists to create, and
+>    without it the differential can silently return.
 
 Everything below — the §10.1 global allowlist, the §10.2 per-client policy, and
 the §17.1 CIMD document/matcher — decides against **this single grammar**. It is
