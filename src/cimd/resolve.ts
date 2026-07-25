@@ -170,6 +170,11 @@ export class CimdResolver {
   }
 
   async resolve(input: CimdResolveInput): Promise<CimdResolution> {
+    // Opt-in enforced at the SERVICE, not only at the HTTP handlers. `bridge.cimd`
+    // is publicly reachable, so without this a consumer could drive DNS/network
+    // activity on a deployment that never enabled CIMD. Before the rate guard and
+    // before any fetch — a rejection must cause no side effect.
+    if (!this.enabled) throw cimdGenericError();
     await this.rateGuard(input.ip);
     try {
       // The fetcher is ALWAYS built here from this resolver's validated caps

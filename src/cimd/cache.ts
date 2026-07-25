@@ -11,6 +11,9 @@ import type { CimdCacheView } from "./transport.ts";
 const MIN_CACHEABLE_MAX_AGE = 60;
 const DEFAULT_MAX_ENTRIES = 256;
 const UNSIGNED_DECIMAL = /^[0-9]+$/;
+/** RFC 9110 token — the only shape a Cache-Control directive name may take.
+ *  Anchored, bounded character class, no backtracking (ReDoS-safe). */
+const DIRECTIVE_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
 
 interface CacheEntry {
   readonly registration: CimdRegistration;
@@ -85,6 +88,12 @@ function parseMaxAge(values: readonly string[] | undefined): number | null {
     if (directive === "") continue;
     const eq = directive.indexOf("=");
     const name = (eq < 0 ? directive : directive.slice(0, eq)).trim().toLowerCase();
+    // Rule 25: a MALFORMED Cache-Control ⇒ no cache entry. An unknown but
+    // well-formed directive (`foo=bar`) is ignored per RFC 9111; a name that is
+    // not a valid RFC 9110 token — including the empty name in `=oops` — is
+    // malformed and makes the whole header non-cacheable. Skipping it instead
+    // would cache on a header we could not fully parse.
+    if (!DIRECTIVE_NAME.test(name)) return null;
     if (name === "no-store" || name === "no-cache") return null;
     if (name !== "max-age") continue;
     occurrences += 1;
