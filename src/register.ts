@@ -116,8 +116,8 @@ function optionalStringArray(value: unknown, field: string): string[] | undefine
   if (!Array.isArray(value)) throw metadataError(`${field} must be an array`);
   // Same read-once discipline as redirect_uris: one length, one read per index.
   const length = value.length;
-  if (!Number.isInteger(length) || length < 0 || length > 16) {
-    throw metadataError(`${field} must contain 0..16 entries`);
+  if (!Number.isInteger(length) || length < 0) {
+    throw metadataError(`${field} must have a non-negative integer length`);
   }
   const snapshot = Array.from({ length }, (_, index) => value[index]);
   for (const entry of snapshot) {
