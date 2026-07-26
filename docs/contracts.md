@@ -862,7 +862,21 @@ the response. Wiring rules:
 >    string or the registration is rejected `invalid_client_metadata`** (the
 >    §9.2 error for malformed metadata), with `[7]` and `[null]` as witnesses.
 >    Preserving a malformed member for inspection and then not inspecting it
->    is strictly worse than filtering it. Today
+>    is strictly worse than filtering it.
+>    **The CONTAINER is checked before its members**, on both fields: a
+>    present-but-non-array `grant_types` or `redirect_uris` is rejected
+>    `invalid_client_metadata`, never coerced. `stringArray`'s
+>    `Array.isArray(value) ? … : []` collapses every non-array to the EMPTY
+>    array (verified: a string, a number, `null`, and a plain object all yield
+>    `[]`), which is the sharpest form of this defect for `grant_types`:
+>    `grant_types: "client_credentials"` — a request explicitly ASKING for the
+>    machine grant — registers as though it had asked for nothing, so the
+>    §17.2 machine-shape rejection is bypassed by malforming the container
+>    rather than the member. Witnesses: `grant_types: "client_credentials"`,
+>    `grant_types: 7`, and `redirect_uris: "https://a.test/cb"` (the
+>    same shape as the `allowedOrigins` substring-gate defect — a bare string where an array is
+>    expected) all rejected. Absent remains valid for `grant_types` (it is
+>    optional); `redirect_uris` absent is already `invalid_request` per §9.2. Today
 >    `registerClient` calls `assertAllowedRedirectUri` and DISCARDS its
 >    normalized return, storing the raw value, so `https://a.test:443/cb`
 >    registers successfully and produces a record the
