@@ -963,7 +963,12 @@ the response. Wiring rules:
 >    authorization-code leg stores a code record carrying a forbidden
 >    `redirectUri` directly in the store and asserts the token endpoint
 >    refuses `invalid_grant` even when the presented value matches those
->    bytes and PKCE verifies —
+>    bytes and PKCE verifies; the cache leg PRIMES the CIMD success cache with
+>    a registration holding a forbidden entry (admitted under the old
+>    grammar), then drives a second authorize for the same `client_id` so the
+>    resolution takes the HIT path with no fetch — the cached entry must be
+>    re-validated and refused, or the tenth consumer is untested and a
+>    poisoned cache entry survives its whole TTL —
 >    wiring the shared predicate into the entry boundaries while any
 >    read-time consumer forgets its check must FAIL this test, or a legacy
 >    record, a directly-supplied array, an in-flight cookie (CIMD or opaque),
@@ -1000,8 +1005,8 @@ target at all.
 | `HTTPS://a.test/cb` | reject | reject | **accept** | **accept** |
 | `https://a.test:443/cb` | reject | reject | **accept** | **accept** |
 | `https://a.test/x/../cb` | reject | reject | **accept** | **accept** |
-| `https://а.test` (Cyrillic `а`) | reject | **accept** (as `xn--80a.test`) | **accept** | **accept** |
-| `https://%65xample.com` | reject | **accept** (as `example.com`) | **accept** | **accept** |
+| `https://а.test` (Cyrillic `а`) | **accept** (as `xn--80a.test/`) | **accept** (as `xn--80a.test`) | **accept** | **accept** |
+| `https://%65xample.com` | **accept** (as `example.com/`) | **accept** (as `example.com`) | **accept** | **accept** |
 | `http://remote.test/cb` | **accept** | reject | **accept** | reject |
 
 **The `javascript:` and `data:` rows are the sharpest reading of this table:**
@@ -1038,9 +1043,21 @@ registered `https://app.test/` presenting `https://app.test/cb` is REFUSED
 it; a `native` client registered `http://127.0.0.1/` presenting
 `http://127.0.0.1:54321/cb` is likewise refused (`src/redirect.ts:102`
 compares `pathname`). A client or document that wants a callback path MUST
-register exact-URI form — and obligation 2's write guard rejects an
-origin-form DCR/CIMD entry rather than producing another
-register-but-never-authorize record. A deployer who wants
+register exact-URI form.
+
+**A canonical root callback is VALID and is not rejected.** Registering
+`https://a.test/` is a legitimate choice — it authorizes exactly
+`https://a.test/`, the origin root, and nothing else — so obligation 2 and
+obligation 4 both ACCEPT it, and obligation 4's round-trip witness
+(`https://a.test/` validates, projects verbatim, and matches a presented
+`https://a.test/`) stands unchanged. What obligation 2 rejects is only the
+**omitted-slash spelling** (`https://a.test`), and for the reason stated in
+"Canonical spelling" — the twin it would create under raw equality, not
+anything about origin form. There is no register-but-never-authorize record
+here: a client registering the canonical root gets exactly the grant its
+entry describes. The narrowing above is a statement about GRANT WIDTH — an
+origin-form entry means origin-wide in §10.1 and root-only in §10.2/CIMD —
+not a rejection rule. A deployer who wants
 `https://a.test/` to match ONLY the root path cannot express that in origin
 form and must accept that the root-slash spelling is origin-wide — stated
 here because the two readings differ in grant width, which is exactly the
@@ -1235,11 +1252,13 @@ upgrade — the §10.2 "read at authorize/token" does NOT cover this, because
 the code path never re-reads the client registration; and (10) the **CIMD
 validated-success cache** (`registrationFor`, `src/cimd/resolve.ts:209-211`),
 which re-validates each cached `redirect_uris` entry on the HIT path — it is
-neither signed nor persisted (an in-process LRU), and it holds the LONGEST
-window of any carrier here: a document admitted under the old grammar is
+neither signed nor persisted (an in-process LRU), and it holds the longest
+CONTRACT-CAPPED window: a document admitted under the old grammar is
 re-served with NO re-validation for up to `cacheTtlCapSeconds` (3600 s
-default, up to 86400 s), outlasting every cookie, token, and code in this
-list.
+default, up to 86400 s), outlasting the flow cookie and — at default
+TTLs — every token and code. (A stored `ClientRegistration` is unbounded, and
+the consent/code TTLs have no configured maximum, so this is the longest
+capped window, not the longest window absolutely.)
 
 **Why the list ends at ten, and how to re-derive it.** Consumers (3), (6),
 (7), (8), (9), and (10) are the places a redirect_uri **outlives the check
@@ -1254,12 +1273,17 @@ or persisted": that earlier phrasing MISSED consumer (10), which is neither —
 it is an in-memory LRU. The test is: **can this value be read back after the
 check that admitted it, without passing that check again?** Anything with an
 independent lifetime qualifies — a store row, a signed claim, a cache entry,
-a memoized projection. When adding a carrier, state its window, because the
-windows differ by orders of magnitude and the LONGEST one bounds how long a
-rolling upgrade stays exploitable: `authorizationCodeTtlSeconds` (~300 s) ≈
-`consentTokenTtlSeconds` (~300 s) < `flowTtlSeconds` (600 s, ≤ 3600) <
-`cacheTtlCapSeconds` (**3600 s default, ≤ 86400**) < a stored
-`ClientRegistration` (unbounded until re-registered). (5) exists
+a memoized projection. When adding a carrier, state its window, because the LONGEST window in a given
+deployment bounds how long a rolling upgrade stays exploitable — and which
+carrier is longest is **deployment-dependent, not fixed**: a stored
+`ClientRegistration` is unbounded (it persists until re-registered), and
+`consentTokenTtlSeconds` / `authorizationCodeTtlSeconds` are validated only as
+POSITIVE INTEGERS with no maximum (`validateTtl`, `src/config.ts:139-142`), so
+either can be configured above the CIMD cache's 86400 s cap. Only two windows
+have contract-imposed ceilings: `flowTtlSeconds` (600 s default, ≤ 3600) and
+`cacheTtlCapSeconds` (3600 s default, ≤ 86400). Typical defaults order them
+code ≈ consent (~300 s) < flow (600 s) < cache (3600 s) < stored record
+(unbounded), but an implementation must not rely on that ordering. (5) exists
 because the matcher is a
 root export (`src/index.ts`): it is reachable with an entries array that
 never passed boot — a consumer calling the helper directly, or (pre-#106) a
