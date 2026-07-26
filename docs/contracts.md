@@ -940,6 +940,16 @@ the response. Wiring rules:
 >    (allowlist NON-MEMBERSHIP), and each one is ACCEPTED the moment the entry
 >    is actually placed:
 >
+>    - **(a0) EVERY row states its setup — rejections included.** The
+>      per-consumer setup rule under obligation 7 covers positives only, which
+>      left the rejection rows setup-free and therefore membership-gated.
+>      Concretely: the DCR omitted-slash row (`https://a.test`) needs
+>      `redirectAllowlist: ["https://a.test/"]` or it fails for
+>      non-membership; the non-canonical PRESENTED rows need a registration of
+>      `https://a.test/cb` (stored: plant the client; stateless: allowlist the
+>      origin) or they fail the same way; the presented-fragment row needs its
+>      origin reachable — or use a built-in host (`https://claude.ai/cb#frag`)
+>      when zero config is the point.
 >    - **(a) Defeat membership first.** For a matcher/export or stored-read
 >      leg, the forbidden string MUST be placed as the allowlist/registered
 >      entry under test (or the leg must be pinned to boot / the CIMD document
@@ -963,7 +973,12 @@ the response. Wiring rules:
 >      `[]`). A unit test against the core alone stays green while the real
 >      §17.2 bypass remains open.
 >
->    The rows, each asserting the error names the offending entry: `*`; any `*`-bearing entry — in the host
+>    The rows. Each asserts the error names the offending ENTRY, **except the
+>    field-level rows** — a non-array `redirectAllowlist`, a 17-entry DCR
+>    array, and the four wrong-typed metadata fields have no single offending
+>    entry to name, so those assert the FIELD name and the rule instead
+>    (per (b) above; the blanket wording was not literally satisfiable):
+>    `*`; any `*`-bearing entry — in the host
 >    (`https://*.a.test/cb`) OR the path (`https://a.test/cb*`,
 >    `https://a.test/*`; a host-star is WHATWG-canonical — verified — so the
 >    test proves the `*` rule fires on its own, not via canonicality); a non-`http(s)`
@@ -1329,7 +1344,13 @@ accept what the form definitions reject:
   (the dot is preserved, not folded — verified), but §17.1.5 rule 7 rejects a
   trailing-dot host for the CIMD client_id, and the same host string being a
   valid redirect entry and an invalid client_id is exactly the
-  parser-differential class this section exists to kill. One rule, both fields.
+  parser-differential class this section exists to kill — **for the same
+  BYTES**. That qualifier is load-bearing: the two fields legitimately differ
+  on Unicode-vs-punycode (§10.0 rejects `https://а.test` as non-canonical and
+  accepts `https://xn--80a.test`, while §17.1.5's client_id rules treat the
+  IDNA forms on their own terms), and that is a difference of INPUT
+  normalization, not of host validity. The rule this row states is narrower:
+  one host STRING must not be valid in one field and invalid in the other.
 
 Percent-hex case is NOT folded: WHATWG preserves `%2f` and `%2F` alike (both
 are their own `href`, verified), so both spellings are canonical and they are
