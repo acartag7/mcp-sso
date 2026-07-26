@@ -201,7 +201,8 @@ interface BridgeConfig {
 
   // --- redirect policy (stateless-DCR backstop; see §10) ---
   // Every entry MUST satisfy the §10.0 redirect-entry grammar (canonical origin
-  // or exact-URI form). ⚠️ NOT YET ENFORCED — see the §5 boot-validation bullet.
+  // or exact-URI form). Enforced at boot by createBridgeConfig (§5): the array
+  // is snapshotted once, validated, frozen, and published as the same copy.
   // An EMPTY array is valid — the built-in defaults cover the common case.
   redirectAllowlist: string[];    // ADDS to the built-in MCP-client defaults
 
