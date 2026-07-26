@@ -834,7 +834,26 @@ the response. Wiring rules:
 >    (`["https://ok.test/cb", 7]` registers as if the `7` were never sent), so
 >    the non-string rejection this obligation owes can never observe the value
 >    it must reject — the adapter hands the raw array through and the §10.0
->    check rejects a non-string member, never filters it. Today
+>    check rejects a non-string member, never filters it.
+>    **Removing that filtering does NOT remove the read-once requirement, and
+>    the two must land together:** today's `arrayOfStrings`
+>    (`src/register.ts:98-100`) uses `.filter()`, which incidentally produces
+>    a NEW array, so read-once holds by accident. Drop the filter without
+>    replacing it and a getter- or Proxy-backed `redirectUris` passed straight
+>    to `registerClient` can serve benign entries to the validator and
+>    different, unvalidated entries to `ClientStore.save` and to the echoed
+>    response. So `registerClient` **snapshots the array ONCE
+>    (`[...value]` after the `Array.isArray` check), validates THAT copy, and
+>    persists and echoes the SAME copy** — obligation 1's read-once rule
+>    applied to the DCR boundary, with an accessor-backed regression test
+>    (an array whose indices return a valid entry on first read and a
+>    forbidden one afterwards must be REJECTED or must persist only what was
+>    validated — never a mix). Sibling axis, checked: the adapter's own
+>    `stringArray` (`src/adapters/bridge-internals.ts`) has the SAME
+>    incidental-snapshot property and serves `grant_types` as well as
+>    `redirect_uris` — and the §17.2 machine-shape rejection (§9.2) depends on
+>    seeing unfiltered `grant_types` members for exactly the same reason.
+>    Neither filter may be removed without its snapshot. Today
 >    `registerClient` calls `assertAllowedRedirectUri` and DISCARDS its
 >    normalized return, storing the raw value, so `https://a.test:443/cb`
 >    registers successfully and produces a record the
