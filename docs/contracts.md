@@ -593,6 +593,12 @@ adapter (Phase 3) exposes them over HTTP.
 ### 9.2 DCR — `registerClient` (RFC 7591) *(fix #4; RC item (b))*
 `POST /oauth/register` with form fields `redirect_uris` (required, each validated)
 and optional `application_type` (`"native"` | `"web"`, default `"web"`).
+`redirect_uris` is client-supplied untrusted input and carries the same hard
+caps §10.0 states: **1..16 entries** (the same bound §17.1.5 rule 19 puts on a
+CIMD document's array, same rationale — it bounds the authorize-time
+exact-match scan) and **≤ 2048 UTF-8 bytes per entry, checked on the raw
+string before parsing** (⚠️ implementation-pending with §10.0 — enumerated in
+its obligation list).
 - **Stateless mode (default):** any well-formed registration with allowlisted
   redirect URIs succeeds; the server mints an ephemeral `client_id`
   (`mcpdc_<random>`), returns `{ client_id, client_id_issued_at, redirect_uris,
@@ -799,14 +805,26 @@ the response. Wiring rules:
 > 4. `assertCimdRedirectUri` enforcing §10.0 rather than its own shape rules
 >    (§17.1.5 rule 20, as amended there).
 > 5. **One rejection test per row of this closed list**, each asserting the
->    error names the offending entry: `*`; any `*`-bearing entry; a non-`http(s)`
+>    error names the offending entry: `*`; any `*`-bearing entry — in the host
+>    OR the path (`https://a.test/cb*`, `https://a.test/*`); a non-`http(s)`
 >    scheme (`javascript:`, `data:`); userinfo (`https://u:p@a.test`) AND empty
->    userinfo (`https://@a.test`); a query delimiter (`https://a.test?`); a
->    fragment; whitespace (leading/trailing/interior); a control character; a
+>    userinfo (`https://@a.test`) AND **canonical** userinfo
+>    (`https://u:p@a.test/` — its own `href`, so the test proves userinfo is
+>    rejected by its own rule, not as a canonicality side effect); a query
+>    delimiter — non-canonical (`https://a.test?`) AND canonical
+>    (`https://a.test/?`, `https://a.test/cb?`); a fragment — including the
+>    canonical trailing forms (`https://a.test/#`, `https://a.test/cb#`); a
+>    percent-encoded C0 control (`https://a.test/cb%0A`, `%0D`, `%00` — each
+>    canonical, each rejected); a trailing-dot host (`https://a.test.` AND its
+>    canonical spelling `https://a.test./`);
+>    whitespace (leading/trailing/interior); a literal control character; a
 >    backslash; a malformed percent-escape; a non-canonical origin
->    (`HTTPS://A.TEST`, `https://%65xample.com`, `https://a.test:443`); a
+>    (`HTTPS://A.TEST`, `https://%65xample.com`, `https://a.test:443`, the
+>    default-port fold `http://localhost:80`, an IPv4 variant spelling
+>    `https://2130706433` / `https://0x7f.0.0.1`); a
 >    non-canonical exact-URI (`https://a.test:443/cb`, `https://a.test/x/../cb`,
->    `https://a.test/./cb`); a non-string entry; a non-array `redirectAllowlist`.
+>    `https://a.test/./cb`); an entry longer than 2048 UTF-8 bytes; a
+>    non-string entry; a non-array `redirectAllowlist`.
 > 6. **Positive tests** that the grammar does not over-reject: all four built-in
 >    defaults, `https://a.test` (omitted root slash), `https://a.test/`,
 >    `http://[::1]:9`, `https://xn--80a.test` (punycode — the ASCII form of the Cyrillic host above), and
@@ -853,7 +871,17 @@ form, `https://%65xample.com` is accepted, parses to `https://example.com`, and
 is then granted **origin-wide** access to `example.com` under §10.1 — an entry
 whose text names one host and whose effect names another, which is precisely
 what "reject, don't normalize" exists to prevent. The same applies to
-`HTTPS://EXAMPLE.com` and any other spelling WHATWG folds.
+`HTTPS://EXAMPLE.com` and any other spelling WHATWG folds — including two
+folds a deployer may not expect: WHATWG **strips the scheme's default port**
+(`:80` on `http`, `:443` on `https`), so `http://localhost:80` is
+non-canonical and rejected — write `http://localhost`; only a non-default port
+survives (`http://localhost:8080`). And WHATWG **resolves alternative IPv4
+spellings** — a dword/integer host (`https://2130706433`), hex labels
+(`https://0x7f.0.0.1`), and octal labels all fold to `https://127.0.0.1/`
+(verified, Node 24), so every one of them is non-canonical and rejected; the
+canonical rule is what catches them, and the rejection list below names them so
+an implementation checking parsed fields cannot miss the class §17.1.5 rule 6
+enumerates for the CIMD client_id.
 
 Two consequences of requiring canonical spelling, verified against the shipped
 matcher and recorded so an implementer does not "helpfully" relax either:
@@ -874,6 +902,51 @@ exceptions); the raw entry contains no `*`, no whitespace (leading, trailing, or
 interior), no control characters, no backslash, and no `%` that does not begin a
 valid percent-triplet.
 
+Four more raw rules close the class of entries that are WHATWG-canonical yet
+carry syntax the forms above forbid — each is a shape where `entry ===
+new URL(entry).href` holds and a canonicality-only validator would therefore
+accept what the form definitions reject:
+
+- **No raw `?` or `#` code point anywhere in the entry**, independent of what
+  the parser reports. `https://a.test/?`, `https://a.test/cb?`,
+  `https://a.test/#`, and `https://a.test/cb#` are all their own `href`
+  (verified, Node 24) and all parse to an EMPTY `search`/`hash` — so a
+  parsed-field check classifies `https://a.test/?` as origin form and grants it
+  **origin-wide** match under §10.1. An empty query is still a query. This is
+  the same rule §17.1.5 rule 2 applies to the CIMD client_id, for the same
+  reason.
+- **No `@` anywhere before the path** — userinfo is rejected by an independent
+  check, never as a side effect of canonicality: `https://u:p@a.test/` (with
+  the trailing slash) IS canonical, so a validator relying on `entry !== href`
+  to catch userinfo accepts it.
+- **No percent-triplet whose decoded byte is a C0 control or DEL**
+  (`%00`–`%1F`, `%7F`, any hex case): `https://a.test/cb%0A` is canonical
+  (verified) and survives the literal-control-character rule above. Same
+  decision as §17.1.5 rule 2's %-encoded CR/LF rejection — one verdict for the
+  same bytes in both fields.
+- **No trailing dot on the host**: `https://a.test./` is canonical under WHATWG
+  (the dot is preserved, not folded — verified), but §17.1.5 rule 7 rejects a
+  trailing-dot host for the CIMD client_id, and the same host string being a
+  valid redirect entry and an invalid client_id is exactly the
+  parser-differential class this section exists to kill. One rule, both fields.
+
+Percent-hex case is NOT folded: WHATWG preserves `%2f` and `%2F` alike (both
+are their own `href`, verified), so both spellings are canonical and they are
+**distinct entries** under the exact-string match — an entry written `%2f`
+matches only a presented URI carrying `%2f`. This is deliberate: re-serializing
+to force one case would be normalization, and the rule is reject-or-accept,
+never rewrite.
+
+**Hard cap.** Every entry is length-checked on the RAW string BEFORE parsing:
+an entry longer than **2048 UTF-8 bytes** is rejected — the same bound §17.1.5
+rule 1 places on the CIMD client_id, applied for the same reason (hard caps on
+every untrusted input, before the parser sees it). DCR `redirect_uris` arrays
+are additionally capped at **1..16 entries** (§9.2 — same bound and rationale
+as §17.1.5 rule 19: it limits the authorize-time exact-match scan).
+`redirectAllowlist` has no entry-count cap, and that is a decision rather than
+an omission: it is deployer-written boot configuration, validated once at boot,
+and its size is not attacker-influenced.
+
 **Every rule is checked on the RAW string before, or in addition to, any parsed
 field.** WHATWG normalization erases the very syntax the decision depends on —
 `new URL` drops empty userinfo (`https://@a.test` yields `username === ""`),
@@ -882,9 +955,15 @@ port, and resolves `..` segments. A validator reading only parsed fields is
 therefore checking a different string than the one the deployer wrote and the
 matcher later compares.
 
-**Rejection is at the boundary the entry enters:** boot (`createBridgeConfig`)
-for `redirectAllowlist`, registration for stored DCR, document validation for
-CIMD. No consumer re-derives the grammar.
+**The grammar has exactly FOUR consumers, and this list is closed:**
+(1) boot (`createBridgeConfig`) for `redirectAllowlist`; (2) the stored-DCR
+registration write (§9.2); (3) the stored-state READ at authorize/token
+(§10.2 — the paragraph below); (4) CIMD document validation
+(`assertCimdRedirectUri`, §17.1.5 rule 20). Every consumer applies the ONE
+shared predicate — none re-derives the grammar from its own parsing. (1), (2),
+and (4) reject at the boundary the entry enters; (3) is deliberately a
+read-time re-check of entries that entered before the grammar existed or
+out-of-band, not a second grammar — the next paragraph is why it exists.
 
 **Stored state is re-validated at READ, not only at write** (the entry-point
 guard's stored-state sibling). A `ClientStore` can return records written before
@@ -912,8 +991,13 @@ correct configuration (the built-in defaults below cover the common case). Only
 
 Two policies, by DCR mode. Both consume entries already valid per §10.0, and
 share the core rule: **no allow-all (`"*"`), no unanchored prefix, userinfo
-rejected, hash stripped.** Shared built-in defaults for MCP clients (these ADD
-to any config allowlist; a config cannot remove them):
+rejected.** On fragments the split is: **entries never contain one** (§10.0
+rejects a fragment, including a bare trailing `#`); a **presented**
+`redirect_uri` arriving at match time has its fragment **stripped** before
+comparison (`url.hash = ""` in both matchers) — "hash stripped" describes the
+presented-URI side only, never license for a fragment-bearing entry. Shared
+built-in defaults for MCP clients (these ADD to any config allowlist; a config
+cannot remove them):
 
 ```
 https://claude.ai        // Claude (web) custom connectors
@@ -921,6 +1005,18 @@ https://chatgpt.com      // ChatGPT custom connectors
 http://localhost         // native MCP clients — any port (RFC 8252 §7.3)
 http://127.0.0.1         // numeric loopback variant
 ```
+
+Two properties of this default set worth stating rather than leaving to
+inference: **`http://[::1]` is deliberately NOT a default** — the §10.1 matcher
+recognizes all three loopback hosts (`localhost`/`127.0.0.1`/`[::1]`) as
+loopback, but an IPv6-literal callback only matches if the deployer adds
+`http://[::1]` to `redirectAllowlist` explicitly (an IPv6-only loopback client
+is rare enough that the default set stays minimal; the matcher capability is
+already there). And the defaults are themselves §10.0-governed entries: they
+are compile-time constants today, so the implementation owes a **unit test
+asserting every `DEFAULT_ALLOWED_REDIRECT_ORIGINS` entry is §10.0-valid** —
+the guard against a future edit adding a non-canonical or non-grammar default
+that no boot validator would ever see.
 
 ### 10.1 Global allowlist (stateless-DCR mode) — `assertAllowedRedirectUri`
 An entry matches if it is the exact redirect_uri, the exact ORIGIN
@@ -953,10 +1049,17 @@ cosmetic:
 
 ### 10.2 Per-client policy (stored-DCR) — RC item (b)
 At authorize/token in stored mode, the client's registered `applicationType`
-selects the rule:
-- **`native`** → RFC 8252: loopback (`localhost`/`127.0.0.1`/`[::1]`) on **any**
-  port accepted; the presented `redirect_uri` must match a registered loopback
-  origin. (Lets CLI/desktop clients use ephemeral ports.)
+selects the rule (every registered URI it reads is first re-validated against
+§10.0 — the stored-state read guard, obligation 3 there, ⚠️
+implementation-pending with the rest of §10.0):
+- **`native`** → RFC 8252: the registered entry must be a §10.0-valid loopback
+  URI (`localhost`/`127.0.0.1`/`[::1]`); the presented `redirect_uri` matches it
+  on **scheme + hostname + pathname + search, with the port ignored** — never
+  host-only. "Origin" appears nowhere in this rule on purpose: the match tuple
+  includes the path and query, exactly as §17.1.5 rule 20 and the shipped
+  matcher (`src/redirect.ts:95-103`) define it, so a client registered for
+  `http://127.0.0.1/cb` does not match a presented `http://127.0.0.1/other`.
+  Only the port is elastic (lets CLI/desktop clients use ephemeral ports).
 - **`web`** → `https` only, and the presented `redirect_uri` must **exactly** equal
   a registered URI (no port widening, no origin wildcard).
 
@@ -1331,7 +1434,8 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | `insufficient_scope` 403 step-up | ✅ v0.1 | §8.3 |
 | RFC 8414 AS metadata | ✅ v0.1 | §9.1 |
 | RFC 7591 DCR (stateless) | ✅ v0.1 | §9.2 |
-| Stored-client DCR + `application_type` *(fix #4, RC b)* | ✅ v0.1 | §9.2, §10.2 |
+| Stored-client DCR + `application_type` *(fix #4, RC b)* | ✅ v0.1 — but the §10.0 read-guard §10.2 now depends on is 🔴 pending (row below) | §9.2, §10.2 |
+| Redirect-entry grammar §10.0 (ONE definition, every consumer: boot · DCR write · stored read · CIMD) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) | §10.0, §10.1, §10.2, §17.1.5 rule 20 |
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
 | RFC 9207 `iss` + `authorization_response_iss_parameter_supported` *(RC a)* | ✅ v0.1 | §9.1, §9.3 |
@@ -1698,7 +1802,10 @@ change:** each S6a-scope rule is to be covered by a negative test in the frozen
 S6a acceptance suite, and the flow rules (H) are to be implemented and tested in
 S6b. **Status: those PRs have landed** — the S6a primitives, both frozen
 acceptance suites, and the S6b flow integration are implemented, and §16 now
-tracks CIMD as implemented. What remains is live verification (CIMD-LIVE) and,
+tracks CIMD as implemented. **Exception: the §10.0 amendment to rule 20 is
+implementation-pending** (the rule's own ⚠️ marker below) — the landed S6
+enforcement is rule 20's original shape list, not the §10.0 canonicality half.
+What remains beyond that is live verification (CIMD-LIVE) and,
 for any conformance claim against the 2026-07-28 final spec text, the
 `docs/verification.md` spec-release re-verification.
 
@@ -1877,13 +1984,22 @@ for any conformance claim against the 2026-07-28 final spec text, the
     per the identity-port lesson): argument MUST be a primitive non-empty string,
     no coercion; reject raw `\`, C0/DEL, CR/LF, malformed percent triplets, any
     userinfo (INCLUDING empty `@`), any fragment (INCLUDING a trailing `#`), and
-    any `*` in the host; accept EITHER `https:` OR `http:` with host exactly
+    any `*` anywhere in the raw entry — host, path, or elsewhere (`https://a.test/cb*`
+    is rejected here exactly as §10.0 rejects it; the earlier "in the host"
+    scoping was narrower than the grammar and is superseded); accept EITHER
+    `https:` OR `http:` with host exactly
     `localhost`, `127.0.0.1`, or `[::1]` — **in each case only if the entry is
     also §10.0-valid** (canonical spelling, no query; this REPLACES the earlier
     "validated for shape only here" wording, which admitted queries and
-    non-canonical forms). Matching at authorize is EXACT raw-string comparison,
+    non-canonical forms). ⚠️ The §10.0-validity half of that sentence is
+    **implementation-pending with the rest of §10.0**: at this commit
+    `assertCimdRedirectUri` enforces only the shape rules of this rule's own
+    list, so a canonically-spelled query-free entry passes but a non-canonical
+    one is NOT yet rejected — the differential table in §10.0 shows current
+    shipped behavior. Matching at authorize is EXACT raw-string comparison,
     port included, with no normalization at match time — which is sound
-    precisely because §10.0 already forced the stored entry into canonical form;
+    precisely because §10.0, once enforced, forces the stored entry into
+    canonical form;
     raw-equality against a non-canonical entry is what made the two matchers
     disagree. Only the
     `http:` case is loopback. The authorize-time (S6b) loopback any-port match
