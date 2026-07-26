@@ -17,11 +17,25 @@ import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
 import { formField, queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
 
-// Mirrors bridge.ts CONSENT_HEADERS (text/html + CSP + nosniff) for the pairing page.
+// Mirrors bridge.ts CONSENT_HEADERS exactly — keep the two in lockstep.
+//
+// The threat here is NOT the consent-page one. This page's only control is
+// `Continue`, and the pairing code is TYPED IN by the operator (it is printed to
+// stderr, never rendered), so there is no Approve button to overlay and no
+// code in the markup to leak: a typed form value cannot reach a Referer header
+// either. Framing it buys an attacker a UI-redress surface on a form whose
+// submission still requires the operator to possess a code they can only read
+// from the server console — the value is defense-in-depth, not a specific
+// bypass. The headers are identical to the consent page deliberately: this is a
+// hand-copied mirror, and a mirror that drifts is how one of the two surfaces
+// silently loses a control.
 const PAIRING_HEADERS: Record<string, string> = {
   "content-type": "text/html; charset=utf-8",
   "x-content-type-options": "nosniff",
-  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
 };
 
 // OAuth authorize params that round-trip through the pairing form's hidden fields.
