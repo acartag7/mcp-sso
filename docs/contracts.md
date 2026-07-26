@@ -1624,7 +1624,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Entra group→scope ceiling (Gate 2) | ✅ v0.2 shipped (S2a core `allowedScopes` engine + S2b Entra group→scope producer) | §17.4 |
 | Console-pairing identity | ✅ v0.2 shipped (S1b) — `createConsolePairingIdentity`, 12-char base-20 code, lazy/single-use/TTL/attempt-cap, `oauth.pairing.attempt` | §17.5 |
 | `GenericOidcIdentity` + Google preset + GitHub port | ✅ v0.2 shipped (S4a) — GenericOidcIdentity + Google preset as `RedirectIdentityPort`s (discovery + manual endpoints, multi-audience reject, at_hash, iat required); GitHub port still 🔒 locked (separate dedicated port) | §17.6 |
-| Upstream redirect-leg orchestrator (`RedirectIdentityPort` + flow cookie) | ✅ v0.2 shipped — `createUpstreamRedirectFlow` + `createEntraRedirectIdentity`, signed flow cookie (HS256 consent secret, aud `mcp-sso/upstream-flow`, single-use `upf_` jti), 13-row callback failure table, `oauth.upstream.callback` audit | §17.11 |
+| Upstream redirect-leg orchestrator (`RedirectIdentityPort` + flow cookie) | ✅ v0.2 shipped — `createUpstreamRedirectFlow` + `createEntraRedirectIdentity`, signed flow cookie (HS256 consent secret, per-flow aud `mcp-sso/upstream-flow` + `callbackPath`, single-use `upf_` jti), 13-row callback failure table, `oauth.upstream.callback` audit | §17.11 |
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
 
@@ -3453,17 +3453,26 @@ cookie, single-used through the existing consent-JTI registry:
 **Flow JWT (the cookie value):** header `{alg:"HS256", typ:"JWT"}`; claims
 `iss`=issuer, `aud`=**`"mcp-sso/upstream-flow" + callbackPath`** (see
 "flow-instance binding" below), `jti` (`upf_…`, single-use),
-*(suite-faithfulness rule, added 2026-07-26: the exact `aud` VALUE is a §17.11
-implementation binding — this amendment itself changes it from the
-deployment-wide constant to the per-flow form — so a FROZEN acceptance test
-must not import or hardcode it; it observes the audience once through the
-public seam — mint a cookie via `handleAuthorize`, decode, reuse — and pins
-only the behavior §17.11 owns: cookies the flow itself minted verify, foreign
-or tampered cookies fail row 3. This rule exists because the original
-`s6b-redirect.test.ts` imported `FLOW_AUDIENCE` from
-`src/adapters/upstream-flow-internals.ts`, which made a contract-legitimate
-audience change require editing a frozen suite — a frozen suite pins the
-contract, never an implementation constant.)*
+*(suite-faithfulness rule, added 2026-07-26, scope clarified same day: a
+FROZEN acceptance test must never import or hardcode an **implementation
+constant** — a value the contract does not specify, which can therefore
+change without a contract amendment. It MAY (and, where the contract pins an
+exact value, MUST) assert what the CONTRACT specifies. Two consequences,
+one per suite: `s6b-redirect.test.ts` predates the per-flow binding and pins
+only behavior §17.11 owned then, so it observes the audience once through
+the public seam — mint a cookie via `handleAuthorize`, decode, reuse — and
+survives audience amendments unchanged. `flow-instance-binding.test.ts` is
+the frozen suite FOR the per-flow amendment: §17.11 contracts
+`aud === "mcp-sso/upstream-flow" + callbackPath` exactly, so that suite
+derives the expected audience from the contracted formula and asserts it —
+behavior-only assertions there would pass an implementation that keeps the
+deployment-wide audience and adds a side claim, violating the locked
+contract. Deriving from the contract's own text is pinning the contract;
+importing `FLOW_AUDIENCE` from
+`src/adapters/upstream-flow-internals.ts` — what the original
+`s6b-redirect.test.ts` did, forcing a frozen edit for a contract-legitimate
+change — is pinning the implementation, and the `check:seams` CI gate now
+rejects it.)*
 `iat`, `exp`=`iat`+`flowTtlSeconds`, `state` (upstream state, 32B base64url),
 `nonce` (32B base64url), `code_verifier` (the **upstream** PKCE verifier, RFC
 7636 43-char base64url), and `params` — the round-tripped client OAuth params,

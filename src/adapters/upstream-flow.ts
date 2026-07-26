@@ -123,7 +123,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       const state = randomToken(), nonce = randomToken(), codeVerifier = randomToken();
       const jti = `upf_${randomToken()}`;
       const flowJwt = await signFlowToken({
-        secret, issuer, clock, jti, state, nonce, codeVerifier, params, ttlSeconds: flowTtlSeconds,
+        secret, issuer, clock, callbackPath, jti, state, nonce, codeVerifier, params, ttlSeconds: flowTtlSeconds,
         ...(resolved.registration === undefined ? {} : { cimd: resolved.registration }),
       });
       if (flowCookieOversized(cookieProfile, flowJwt, flowTtlSeconds)) {
@@ -155,7 +155,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       if (findDuplicatedKeys(req.query, CALLBACK_DUP_KEYS_EXPORT).length > 0) { await emit("failure", "duplicate_params"); return clear(directErrorResponse("invalid_request", "duplicate request parameters")); } // row 1
       if (!cookiePresent) { await emit("failure", "flow_cookie_missing"); return directErrorResponse("invalid_request", "flow cookie missing"); } // row 2 (nothing to clear)
       let claims: FlowClaims;
-      try { claims = await verifyFlowToken(cookieValue as string, secret, issuer); } catch { await emit("failure", "flow_cookie_invalid"); return clear(directErrorResponse("invalid_request", "flow cookie invalid")); } // row 3
+      try { claims = await verifyFlowToken(cookieValue as string, secret, issuer, callbackPath); } catch { await emit("failure", "flow_cookie_invalid"); return clear(directErrorResponse("invalid_request", "flow cookie invalid")); } // row 3
       clientId = claims.params.client_id;
       if (claims.exp > 0 && claims.exp * 1000 <= clock.nowMs()) { await emit("failure", "flow_expired", clientId); return clear(directErrorResponse("invalid_request", "flow expired")); } // row 4
       const clientRedirectUri = claims.params.redirect_uri; const clientState = claims.params.state; // verified context (authorize §10-validated + signed)

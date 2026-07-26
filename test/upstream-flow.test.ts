@@ -117,7 +117,7 @@ async function initiate(c: BridgeConfig, flow: ReturnType<typeof makeFlow>["flow
   const sc = res.headers["set-cookie"] ?? "";
   const eq = sc.indexOf("="), semi = sc.indexOf(";");
   const cookieValue = sc.slice(eq + 1, semi);
-  const claims = await verifyFlowToken(cookieValue, c.consentSigningSecret, c.issuer);
+  const claims = await verifyFlowToken(cookieValue, c.consentSigningSecret, c.issuer, flow.callbackPath);
   return { res, claims, cookieValue };
 }
 
@@ -365,7 +365,7 @@ test("callback row 4 (direct mint): an expired-but-validly-signed flow => flow_e
   const c = config(); const clock = new FakeClock(NOW_MS); const id = fakeIdentity(c);
   const { flow, audit } = makeFlow(c, id, { clock });
   // Mint a cookie whose exp is already in the past.
-  const expiredJwt = await signFlowToken({ secret: c.consentSigningSecret, issuer: c.issuer, clock: { nowMs: () => NOW_MS - 10_000 }, jti: "upf_" + "e".repeat(40), state: "S", nonce: "N", codeVerifier: "V".repeat(43), params: authorizeQuery(), ttlSeconds: 1 });
+  const expiredJwt = await signFlowToken({ secret: c.consentSigningSecret, issuer: c.issuer, callbackPath: flow.callbackPath, clock: { nowMs: () => NOW_MS - 10_000 }, jti: "upf_" + "e".repeat(40), state: "S", nonce: "N", codeVerifier: "V".repeat(43), params: authorizeQuery(), ttlSeconds: 1 });
   const res = await flow.handleCallback(callbackReq(c, expiredJwt, { state: "S", code: "y" }));
   assert.equal(res.status, 400);
   assert.equal(audit.callback()[0]?.reason, "flow_expired");
