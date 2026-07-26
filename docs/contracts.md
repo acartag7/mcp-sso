@@ -931,7 +931,7 @@ the response. Wiring rules:
 >    `https://a.test/cb%2F..%2Fadmin` (canonical, inert) all pass; and an empty
 >    array remains valid. Plus a **round-trip** test: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
-> 8. A **differential test** exercising **all SEVEN consumers of the closed
+> 8. A **differential test** exercising **all NINE consumers of the closed
 >    list** — boot config, the DCR registration write in BOTH modes (the
 >    stateless leg asserts rejection AND that nothing forbidden is echoed;
 >    the stored leg asserts rejection before persistence), the §10.2
@@ -950,14 +950,21 @@ the response. Wiring rules:
 >    leg mints a VALIDLY SIGNED consent token carrying the forbidden redirect
 >    (modeling a token issued before the upgrade) and asserts `approve`
 >    refuses it on BOTH the Deny and the Approve path, with a DIRECT error
->    rather than a redirect to the suspect value —
+>    rather than a redirect to the suspect value; the opaque-cookie leg
+>    forges a signed cookie whose `params.redirect_uri` is forbidden and NO
+>    `cimd` claim is present (so the CIMD gate returns early) and asserts
+>    every callback error path refuses rather than redirecting to it; the
+>    authorization-code leg stores a code record carrying a forbidden
+>    `redirectUri` directly in the store and asserts the token endpoint
+>    refuses `invalid_grant` even when the presented value matches those
+>    bytes and PKCE verifies —
 >    wiring the shared predicate into the entry boundaries while any
 >    read-time consumer forgets its check must FAIL this test, or a legacy
->    record, a directly-supplied array, an in-flight cookie, or a live consent
->    token carrying a
+>    record, a directly-supplied array, an in-flight cookie (CIMD or opaque),
+>    a live consent token, or an unexpired authorization code carrying a
 >    forbidden entry can still authorize. (The measured table has three
 >    columns because the read guards did not exist on `40d9f58`; the
->    test covers seven.) That agreement is the property this section exists to
+>    test covers nine.) That agreement is the property this section exists to
 >    create, and without it the differential can silently return.
 
 Everything below — the §10.1 global allowlist, the §10.2 per-client policy, and
@@ -1122,7 +1129,7 @@ port, and resolves `..` segments. A validator reading only parsed fields is
 therefore checking a different string than the one the deployer wrote and the
 matcher later compares.
 
-**The grammar has exactly SEVEN consumers, and this list is closed:**
+**The grammar has exactly NINE consumers, and this list is closed:**
 (1) boot (`createBridgeConfig`) for `redirectAllowlist`; (2) the DCR
 registration write in BOTH modes (§9.2 — entries must arrive already
 canonical; stored persists them unchanged, stateless persists nothing and
@@ -1146,7 +1153,30 @@ under the OLD grammar carries a redirect the new grammar rejects, and a valid
 signature is not a grammar check — the token proves *we issued this*, never
 *this entry is still valid*. A non-conforming carried redirect is refused
 `invalid_redirect_uri` as a DIRECT error (never a redirect to the value under
-suspicion — §9.3's untrusted-destination channel rule). (5) exists
+suspicion — §9.3's untrusted-destination channel rule); (8) the **opaque
+flow-cookie redirect at callback** (`claims.params.redirect_uri`,
+`src/adapters/upstream-flow.ts:161-177`), which every callback error path
+redirects to BEFORE `bridge.handleAuthorize` re-runs §10 — an opaque
+pre-upgrade cookie carries no `cimd` claim, so consumer (6)'s gate returns
+early (`assertCallbackCimdPolicy`, `src/adapters/upstream-flow-cimd.ts:79`)
+and never inspects it; (9) the **authorization-code record at token
+exchange** (`consumeValidCode`, `src/token.ts:208-218`), which today compares
+the presented `redirect_uri` to `record.redirectUri` and checks PKCE but
+applies no grammar, so a code minted under the old grammar keeps minting
+access and refresh tokens for `authorizationCodeTtlSeconds` after the
+upgrade — the §10.2 "read at authorize/token" does NOT cover this, because
+the code path never re-reads the client registration.
+
+**Why the list ends at nine.** Consumers (3), (6), (7), (8), and (9) are the
+complete set of places a redirect_uri **outlives the check that admitted
+it** — the stored client record, the CIMD registration in the flow cookie,
+the opaque params in the same cookie, the consent token, and the
+authorization-code record. Each is a signed or stored carrier with its own
+TTL, and a signature or a store hit proves *we issued this*, never *this is
+still valid*; each therefore re-validates on READ. That is the enumeration —
+every carrier, not every call site — and it is the property to re-derive if a
+future amendment adds a new carrier: **a new signed claim or stored column
+holding a redirect_uri is a new consumer, and must be added here.** (5) exists
 because the matcher is a
 root export (`src/index.ts`): it is reachable with an entries array that
 never passed boot — a consumer calling the helper directly, or (pre-#106) a
@@ -1691,7 +1721,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | RFC 8414 AS metadata | ✅ v0.1 | §9.1 |
 | RFC 7591 DCR (stateless) | ✅ v0.1 | §9.2 |
 | Stored-client DCR + `application_type` *(fix #4, RC b)* | ✅ v0.1 — but the §10.0 read-guard §10.2 now depends on is 🔴 pending (row below) | §9.2, §10.2 |
-| Redirect-entry grammar §10.0 (ONE definition, all SEVEN consumers: boot · DCR write in both modes · stored read · CIMD doc · exported matcher `assertAllowedRedirectUri` · flow-cookie CIMD consumption · consent-token redirect at approve) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) — this row turns green only when the §10.0 differential test passes across all seven | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
+| Redirect-entry grammar §10.0 (ONE definition, all NINE consumers: boot · DCR write in both modes · stored read · CIMD doc · exported matcher `assertAllowedRedirectUri` · flow-cookie CIMD registration · flow-cookie opaque params · consent-token redirect at approve · authorization-code record at token exchange) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) — this row turns green only when the §10.0 differential test passes across all nine | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
 | RFC 9207 `iss` + `authorization_response_iss_parameter_supported` *(RC a)* | ✅ v0.1 | §9.1, §9.3 |

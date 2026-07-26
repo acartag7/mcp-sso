@@ -204,11 +204,20 @@ matcher, and the CIMD document validator gave different verdicts on `*`,
 hosts, `:443`, and dot segments.
 
 For stored DCR (row 9) it adds two guards that must land together: registration
-persists the **canonical** form (today it discards the normalized value and
-stores raw, so a client can register `https://a.test:443/cb` and then never
-authorize — §10.2 compares by exact equality), and §10.2 re-validates each
+**REJECTS** a non-canonical `redirect_uri` and stores accepted input
+byte-for-byte (today it discards the normalized value and stores raw, so a
+client can register `https://a.test:443/cb` and then never authorize — §10.2
+compares by raw equality; canonicalizing on the client's behalf would instead
+store and echo bytes the client never sent, so its own spelling would then be
+refused), and §10.2 re-validates each
 registered URI **at read**, covering records written before the grammar existed
-or populated out-of-band.
+or populated out-of-band. The read guard generalizes: **every carrier that
+outlives the check that admitted it re-validates on read** — the stored client
+record, the CIMD registration and the opaque params in the flow cookie, the
+consent token, and the authorization-code record (contracts §10.0's nine-consumer
+list). A signature or a store hit proves *we issued this*, never *this is still
+valid*, so a rolling upgrade cannot be a window in which pre-upgrade state
+authorizes what the new grammar forbids.
 
 ### Row 12 — header-mode nonce residual
 
