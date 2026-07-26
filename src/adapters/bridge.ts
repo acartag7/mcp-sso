@@ -9,17 +9,20 @@ import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { StorePort } from "../ports/store.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
-import type { ApplicationType } from "../ports/client-store.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
 import { OAuthAuthorizationUseCase, type PreparedConsent } from "../authorize.ts";
 import { OAuthTokenUseCase, type UserTokenResponse, type MachineTokenResponse } from "../token.ts";
 import { registerClient } from "../register.ts";
 import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "../metadata.ts";
 import { OAuthError } from "../errors.ts";
-import { assertAllowedScopesCeiling } from "../scopes.ts";
 import { isBasicAttempt } from "../client-auth.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
 import { renderConsentPage } from "./consent-page.ts";
+import { asOAuth, consentCookie, parseApproved, resolveIdentityWithAudit, stringArray } from "./bridge-internals.ts";
+export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
+import { CimdResolver } from "../cimd/resolve.ts";
+import type { CimdRegistration } from "../cimd/registration.ts";
+import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import {
   formField, formObject, headerString, oauthErrorResponse, queryString,
   type NormRequest, type NormResponse,
@@ -32,12 +35,37 @@ export interface BridgeDeps {
   audit: AuditPort;
   /** Optional register/token rate limiter (fix #7); defaults to no-op. */
   rateLimit?: RateLimitPort;
+  /** BELOW-GUARD CIMD test seams (§17.1.5 rule 14 / §17.1.6 decision 1e). They
+   *  inject the low-level connect-to-validated-IP transport / DNS resolver; the
+   *  guard pipeline — URL admission, blocklists, DNS validation, redirect
+   *  refusal, caps — always runs AROUND them and cannot be skipped, and they
+   *  can never widen `allowLoopback` or the caps. Never a whole `GuardedFetcher`,
+   *  never a `BridgeConfig` field. */
+  cimdTransport?: CimdTransport;
+  cimdResolver?: DnsResolver;
 }
 
+// `referrer-policy: no-referrer` is here for the URL, not the body: both HTML
+// surfaces are served at `/oauth/authorize?...`, whose query carries `state`,
+// `client_id`, and `redirect_uri`. Without it those ride a `Referer` header to
+// any origin the page navigates to.
+//
+// `frame-ancestors 'none'` is load-bearing, not hygiene: threat-model row 17
+// makes the user's judgment at this page the LAST line of defence against CIMD
+// client impersonation (lookalike domain / loopback-only redirect). A framed,
+// overlaid Approve button removes that judgment entirely — one click issues a
+// code — and CIMD means the attacker needs no registration to get here.
+// `frame-ancestors` does NOT fall back to `default-src` under CSP3, so
+// `default-src 'none'` alone does not frame-block; `x-frame-options` is the
+// belt-and-braces for pre-CSP3 agents. `form-action 'self'` keeps the consent
+// POST on this origin even if markup is ever injected.
 const CONSENT_HEADERS = {
   "content-type": "text/html; charset=utf-8",
   "x-content-type-options": "nosniff",
-  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
 };
 
 export class Bridge {
@@ -47,14 +75,22 @@ export class Bridge {
   private readonly auth: OAuthAuthorizationUseCase;
   private readonly token: OAuthTokenUseCase;
   private readonly rateLimit: RateLimitPort;
+  /** The ONE shared CIMD resolution service for this Bridge instance — its
+   *  success cache, single-flight registry, and in-flight cap serve BOTH
+   *  direct-mode prepare AND the upstream-redirect authorize (§17.1.6
+   *  decision 4). Constructed eagerly so a bad `cimd` cap surfaces as an
+   *  `AuthConfigError` at BOOT, never at the first request. */
+  readonly cimd: CimdResolver;
 
   constructor(deps: BridgeDeps) {
     this.config = deps.config;
     this.clock = deps.clock;
     this.audit = deps.audit;
-    this.auth = new OAuthAuthorizationUseCase(deps);
-    this.token = new OAuthTokenUseCase(deps);
     this.rateLimit = deps.rateLimit ?? noopRateLimit;
+    this.cimd = new CimdResolver(deps);
+    if (this.cimd.enabled) this.cimd.assertCapProfile(deps.cimdTransport, deps.cimdResolver); // boot-validate the cap profile
+    this.auth = new OAuthAuthorizationUseCase({ ...deps, cimd: this.cimd });
+    this.token = new OAuthTokenUseCase(deps);
   }
 
   async handleAuthorizationServerMetadata(): Promise<NormResponse> {
@@ -72,7 +108,10 @@ export class Bridge {
       await this.guard(req, "register");
       const body = formObject(req.body);
       const redirectUris = stringArray(body.redirect_uris);
-      const applicationType = formField(body, "application_type") as ApplicationType | undefined;
+      // RAW, uncoerced: `formField` would drop a present non-string value to
+      // `undefined`, silently taking the "web" default. registerClient rejects
+      // any present non-`native`/`web` value (fail-closed, no best-effort parse).
+      const applicationType = Object.hasOwn(body, "application_type") ? body.application_type : undefined;
       // §17.2 machine-shape signals — parsed only so registerClient can REJECT them.
       const tokenEndpointAuthMethod = formField(body, "token_endpoint_auth_method");
       const grantTypes = stringArray(body.grant_types);
@@ -90,7 +129,10 @@ export class Bridge {
    *  by the adapter via its IdentityPort — or by Bridge.resolveIdentity, which
    *  also emits the identity.verify audit event (§17.4 item 4). The bare-string
    *  form is removed (§17.4 item 3): the ceiling must travel the whole path. */
-  async handleAuthorize(req: NormRequest, identity: { subject: string; allowedScopes?: string[] }): Promise<NormResponse> {
+  async handleAuthorize(
+    req: NormRequest,
+    identity: { subject: string; allowedScopes?: string[]; registration?: CimdRegistration },
+  ): Promise<NormResponse> {
     try {
       const prepared: PreparedConsent = await this.auth.prepare({
         clientId: queryString(req.query, "client_id"),
@@ -103,6 +145,11 @@ export class Bridge {
         state: queryString(req.query, "state"),
         subject: identity.subject,
         allowedScopes: identity.allowedScopes,
+        // §17.1.6 decision 1c: orchestrator-resolved trusted state. Adapters
+        // NEVER bind this to a request field — it comes from the verified,
+        // row-5a-gated flow cookie only.
+        registration: identity.registration,
+        ip: req.ip,
       });
       return { status: 200, headers: { ...CONSENT_HEADERS }, body: renderConsentPage(this.config, prepared) };
     } catch (error) {
@@ -123,30 +170,7 @@ export class Bridge {
    *  empty array is a valid "entitled to nothing" ceiling (prepare's empty
    *  intersection denies). undefined ⇒ no ceiling (v0.1 behavior). */
   async resolveIdentity(identity: IdentityPort, input: unknown, ip?: string): Promise<{ subject: string; allowedScopes?: string[] }> {
-    let result: IdentityResult;
-    try {
-      result = await identity.verify(input);
-    } catch (error) {
-      await this.emitIdentityVerify("failure", error instanceof OAuthError ? error.code : "internal_error", undefined, ip);
-      throw error;
-    }
-    if (!result.ok) {
-      await this.emitIdentityVerify("failure", result.reason, undefined, ip);
-      throw new OAuthError("access_denied", `Identity rejected: ${result.reason}`, 401);
-    }
-    const subject = result.identity.subject;
-    // Fail CLOSED on a present-but-malformed ceiling (§17.4) via the shared
-    // validator (also used at the prepare core boundary). Emits a specific
-    // identity.verify reason before re-throwing.
-    let allowedScopes: string[] | undefined;
-    try {
-      allowedScopes = assertAllowedScopesCeiling(result.identity.allowedScopes);
-    } catch (error) {
-      await this.emitIdentityVerify("failure", "malformed_allowed_scopes", undefined, ip);
-      throw error;
-    }
-    await this.emitIdentityVerify("success", undefined, subject, ip);
-    return { subject, allowedScopes };
+    return resolveIdentityWithAudit(identity, input, ip, (status, reason, subject, at) => this.emitIdentityVerify(status, reason, subject, at));
   }
 
   private async emitIdentityVerify(status: AuthAuditStatus, reason: string | undefined, subject: string | undefined, ip: string | undefined): Promise<void> {
@@ -222,28 +246,4 @@ export class Bridge {
     }
     if (!allowed) throw new OAuthError("temporarily_unavailable", "Rate limit exceeded; retry later", 429);
   }
-}
-
-export function asOAuth(error: unknown): OAuthError {
-  return error instanceof OAuthError ? error : new OAuthError("internal_error", "OAuth request failed", 500);
-}
-
-export function asDirectOAuth(error: unknown): OAuthError {
-  const mapped = asOAuth(error);
-  return new OAuthError(mapped.code, mapped.message, mapped.status);
-}
-
-function parseApproved(raw: unknown): boolean {
-  return raw === true || raw === "true"; // fail-closed (§9.3): absent/malformed never auto-approves
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && v.length > 0) : [];
-}
-
-function consentCookie(req: NormRequest): string | undefined {
-  const raw = headerString(req.headers, "cookie");
-  if (!raw) return undefined;
-  const found = raw.split(";").map((p) => p.trim()).find((p) => p.startsWith("mcp_idp_consent="));
-  return found ? decodeURIComponent(found.slice("mcp_idp_consent=".length)) : undefined;
 }

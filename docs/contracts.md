@@ -228,6 +228,7 @@ interface BridgeConfig {
     fetchTimeoutMs?: number;      // integer [1000, 30000], default 5000
     cacheTtlCapSeconds?: number;  // integer [60, 86400], default 3600
     maxInFlight?: number;         // integer [1, 64], default 8 (global in-flight cap)
+    maxWaitersPerFetch?: number;  // integer [1, 4096], default 256 (followers parked on ONE fetch; §17.1.6 dec 7)
   };
 
   // --- TTLs (seconds); each MUST be a positive integer ---
@@ -1160,7 +1161,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ⏳ boundary v0.1, **contract locked §17.1**, impl pending (S6, next minor) | §6.6, §17.1 |
+| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — S6a primitives + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`). **Not yet live-verified** against a real CIMD-first client (CIMD-LIVE pending), and any 2026-07-28 spec-final conformance claim is gated on the `docs/verification.md` spec-release re-verification | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | ✅ v0.2 shipped (S3a provisioning/rotation + S3b grant: Basic+post auth, `MachineTokenResponse`, metadata-gated advertisement) | §17.2 |
@@ -1246,6 +1247,8 @@ cimd?: {
   fetchTimeoutMs?: number;      // default 5000 — one wall-clock deadline, DNS→body
   cacheTtlCapSeconds?: number;  // default 3600; effectiveTtl=min(max-age,cap)−Age−elapsed (§17.1.6 dec 4)
   maxInFlight?: number;         // integer [1, 64], default 8 (global in-flight cap; §17.1.5 rule 21)
+  maxWaitersPerFetch?: number;  // integer [1, 4096], default 256 — callers parked on ONE in-flight fetch
+                                // (§17.1.6 decision 7). Total waiters ≤ maxInFlight × maxWaitersPerFetch.
 }
 ```
 
@@ -1506,8 +1509,11 @@ S6a bake-off cannot diverge and review cannot discover. **This subsection is
 contract text; the enforcement lands with the S6 code, not with this docs
 change:** each S6a-scope rule is to be covered by a negative test in the frozen
 S6a acceptance suite, and the flow rules (H) are to be implemented and tested in
-S6b. Until those PRs land there is no CIMD implementation or test yet — §16 still
-tracks CIMD as pending.
+S6b. **Status: those PRs have landed** — the S6a primitives, both frozen
+acceptance suites, and the S6b flow integration are implemented, and §16 now
+tracks CIMD as implemented. What remains is live verification (CIMD-LIVE) and,
+for any conformance claim against the 2026-07-28 final spec text, the
+`docs/verification.md` spec-release re-verification.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -1690,7 +1696,8 @@ tracks CIMD as pending.
     unbounded value defeats the very controls threat rows 13/25 describe):
     `maxDocumentBytes` ∈ [1024, 65536] (default 5120); `fetchTimeoutMs` ∈
     [1000, 30000] (default 5000); `cacheTtlCapSeconds` ∈ [60, 86400] (default
-    3600); `maxInFlight` ∈ [1, 64] (default 8).
+    3600); `maxInFlight` ∈ [1, 64] (default 8); `maxWaitersPerFetch` ∈ [1, 4096]
+    (default 256 — §17.1.6 decision 7).
 
 **H. Flow-integration items (enforced + tested in S6b; recorded here for the suite).**
 22. **"URL-shaped" is mechanical.** A `client_id` matching raw scheme syntax
@@ -1710,6 +1717,17 @@ tracks CIMD as pending.
     = the decision-2 generic `invalid_client`), never queues unboundedly. A key's entry is removed
     on settle (success, error, or timeout/cancellation). Error/invalid results
     are never cached.
+    **Followers are bounded too (§17.1.6 decision 7).** `maxInFlight` bounds
+    concurrent OUTBOUND fetches; it does not bound how many inbound callers may
+    park on ONE of them. A new `maxWaitersPerFetch` cap bounds that second
+    quantity: when an in-flight entry already has `maxWaitersPerFetch` waiters, a
+    further follower for that same client_id rejects `overloaded` (the SAME
+    `CimdReason`, the same decision-2 generic — no new client-visible surface, no
+    new oracle). Total concurrent waiting resolutions are therefore bounded above
+    by `maxInFlight × (maxWaitersPerFetch + 1)` (the `+1` per entry is the
+    initiating resolution; the cap counts FOLLOWERS only). This does NOT reverse the
+    no-slot rule above: a follower still consumes no FETCH slot, so one popular
+    client_id can never starve distinct client_ids out of `maxInFlight`.
 25. Cache freshness (RFC 9111, in-memory per instance, keyed by raw client_id):
     `no-store` or `no-cache` ⇒ do not cache; absent, malformed, duplicate, or
     conflicting `Cache-Control`/`max-age`, and a negative/non-integer/overflow
@@ -2049,6 +2067,55 @@ with an unknown reason.
 upstream-redirect row): (1) approve-then-swap CLOSED (validate-once + carry-forward);
 (2) unauthenticated outbound-fetch-at-authorize RESIDUAL; (3) `consentSigningSecret`
 value elevation RESIDUAL; (4) resolution-timing side channel RESIDUAL.
+
+#### Decision 7 — bound the WAITERS on a single in-flight fetch (2026-07-25)
+
+*Amends rule 24. Contract text; enforcement lands with its own frozen row + code.*
+
+**The gap.** `maxInFlight` bounds concurrent outbound fetches. Single-flight
+then collapses N concurrent requests for one raw `client_id` into ONE fetch —
+correct, and rule 24 deliberately exempts followers from consuming a fetch slot
+so a popular client cannot starve distinct client_ids. But the follower
+REQUESTS still exist: each holds a socket, a promise chain, and a closure for up
+to `fetchTimeoutMs` (≤ 30 s). Nothing bounded that count. Measured on the S6b
+implementation: **10 000 concurrent same-id resolutions ⇒ 1 fetch, 0 settled,
+~15.4 MB retained**, driven by an UNAUTHENTICATED caller (CIMD resolution runs
+at upstream-authorize step 3a, before any IdP redirect). The only existing
+defence is the `cimd:<ip>` limiter, which is OPTIONAL and FAIL-OPEN
+(`noopRateLimit` returns `true`), so a default deployment has no bound at all.
+This is the CWE-770 shape (allocation of resources without limits) on an
+anonymous path.
+
+**The rule.** A new `cimd.maxWaitersPerFetch` cap bounds callers parked on one
+in-flight entry:
+
+1. Domain `[1, 4096]`, default **256**, validated with the other caps (rule 21 —
+   non-integer / out-of-domain / `NaN` ⇒ `AuthConfigError` at boot).
+2. When an in-flight entry already has `maxWaitersPerFetch` waiters, a further
+   follower for that SAME client_id rejects `CimdError("overloaded")` — the
+   existing reason (decision 6), the existing decision-2 generic
+   `invalid_client`. **No new client-visible surface and no new oracle:** an
+   over-cap follower is byte-identical to every other resolution failure.
+3. Audited `oauth.cimd.fetch` failure, reason `overloaded`, like any other.
+4. Rule 24's no-slot rule is UNCHANGED: a follower still consumes no FETCH slot.
+   Decision 7 bounds a different quantity. Both properties hold together.
+5. Total concurrent waiting resolutions are bounded above by
+   **`maxInFlight × (maxWaitersPerFetch + 1)`** — the `+1` is the INITIATING
+   resolution, which also waits on its own fetch. Default
+   `8 × (256 + 1) = 2056`, ≈ 3 MB at the measured ~1.5 KB/waiter. The cap counts
+   FOLLOWERS only; the leader is never rejected by it. This composed number is
+   the statement a deployer can hand to a security review, so it is stated
+   exactly rather than rounded.
+
+**Why 256 and not lower.** The cap must not break a legitimate thundering herd —
+e.g. a workforce opening an MCP client at the start of a shift, all naming the
+same `client_id` against a cold cache. 256 same-id waiters is far above that
+pattern while still bounding the surface. It is a CEILING, not a throttle:
+per-tenant shaping remains the deployer's `RateLimitPort`.
+
+**Threat-model delta.** Residual (2) above narrows: the unauthenticated
+outbound-fetch surface remains, but its memory/connection amplification is now
+bounded rather than open-ended.
 
 ### 17.2 `client_credentials` grant (MCP extension `io.modelcontextprotocol/oauth-client-credentials`)
 
@@ -2891,6 +2958,17 @@ cookie, single-used through the existing consent-JTI registry:
 
 **Flow JWT (the cookie value):** header `{alg:"HS256", typ:"JWT"}`; claims
 `iss`=issuer, `aud`=**`"mcp-sso/upstream-flow"`**, `jti` (`upf_…`, single-use),
+*(suite-faithfulness rule, added 2026-07-26: the exact `aud` VALUE is a §17.11
+implementation binding that may be tightened by contract amendment — issue
+#103 proposes binding it per flow — so a FROZEN acceptance test must not
+import or hardcode the constant; it observes the audience once through the
+public seam — mint a cookie via `handleAuthorize`, decode, reuse — and pins
+only the behavior §17.11 owns: cookies the flow itself minted verify, foreign
+or tampered cookies fail row 3. This rule exists because the original
+`s6b-redirect.test.ts` imported `FLOW_AUDIENCE` from
+`src/adapters/upstream-flow-internals.ts`, which made a contract-legitimate
+audience change require editing a frozen suite — a frozen suite pins the
+contract, never an implementation constant.)*
 `iat`, `exp`=`iat`+`flowTtlSeconds`, `state` (upstream state, 32B base64url),
 `nonce` (32B base64url), `code_verifier` (the **upstream** PKCE verifier, RFC
 7636 43-char base64url), and `params` — the round-tripped client OAuth params,

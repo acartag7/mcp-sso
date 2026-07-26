@@ -64,6 +64,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm check:lines
+      - run: pnpm check:seams
       # B3: hard-fail if the integration env did not reach the test process.
       - name: assert integration env present
         run: |

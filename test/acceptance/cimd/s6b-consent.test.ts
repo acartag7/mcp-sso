@@ -1,0 +1,178 @@
+// FROZEN acceptance suite — S6b CIMD consent page (docs/contracts.md §17.1.6
+// decision 1c + decision 3 + §17.1.4 consent obligations; threat-model row 17).
+// The consent page displays the client_id host + the redirect host and renders
+// `client_name` as HTML-escaped, unverified text; SHOULD warn when EVERY
+// registered redirect is loopback; only `cimd_verified` is copied into the consent
+// JWT (never other CIMD fields); a present non-true `cimd_verified` INVALIDATES the
+// token (decision 3, fail-closed). Black-box: drive a real CIMD direct authorize
+// and inspect the rendered HTML + the minted consent token. FAITHFULNESS: the XSS
+// invariant is "raw markup absent" (not a specific entity encoding); the
+// loopback-warn is a SHOULD asserted softly (a warning indicator present, wording
+// not pinned) with no "must not warn" negative; page titles/copy are never frozen.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { generateKeyPairSync } from "node:crypto";
+
+const phases = JSON.parse(readFileSync(new URL("../phases.json", import.meta.url), "utf8"));
+
+if (phases["s6b-cimd-flow"] !== true) {
+  test("s6b-cimd-flow inactive — activate via test/acceptance/phases.json", { skip: true }, () => {});
+} else {
+  const CFG = "../../../src/config.ts";
+  const { createBridgeConfig } = (await import(CFG)) as any;
+  const BRIDGE = "../../../src/adapters/bridge.ts";
+  const { Bridge } = (await import(BRIDGE)) as any;
+  const STORE = "../../../src/store/memory.ts";
+  const { MemoryStore } = (await import(STORE)) as any;
+  const CRYPTO = "../../../src/crypto.ts";
+  const { pkceChallenge } = (await import(CRYPTO)) as any;
+  const jose = (await import("jose")) as any;
+
+  const NOW = Date.parse("2026-07-03T12:00:00.000Z");
+  const CIMD_ID = "https://cdn.example.com/client";
+  const HTTPS_REDIRECT = "https://app.example.com/cb";
+  const LOOPBACK_REDIRECT = "http://127.0.0.1:5000/cb";
+  const VERIFIER = "correct-horse-battery-staple-0123456789abcdef0123";
+  const PUBLIC = { address: "93.184.216.34", family: 4 };
+  const CONSENT_AUDIENCE = "mcp-sso/consent"; // matches crypto.ts CONSENT_AUDIENCE (used only to forge a fail-closed token)
+  const CONSENT_TYP = "mcp-sso-consent";
+  const enc = (s: string) => new TextEncoder().encode(s);
+  async function* one(u8: Uint8Array) { yield u8; }
+  const doc = (over: any = {}) => ({ client_id: CIMD_ID, client_name: "Example App", redirect_uris: [HTTPS_REDIRECT], ...over });
+  const okResult = (d: any) => ({ status: 200, redirected: false, finalUrl: CIMD_ID, headersDistinct: { "content-type": ["application/json"] }, encodedBody: one(enc(JSON.stringify(d))) });
+  const transport = (d: any) => ({ connectAndGet() { return Promise.resolve(okResult(d)); } });
+  const resolver = () => ({ resolve() { return Promise.resolve([PUBLIC]); }, cancel() {} });
+
+  class FakeClock { ms: number; constructor(ms: number) { this.ms = ms; } nowMs() { return this.ms; } }
+  class MemoryAudit { async writeAuthEvent() {} }
+  function jwk(): any { const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" }); return { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" }; }
+  function cfg(): any {
+    return createBridgeConfig({
+      issuer: "https://auth.test", resource: "https://api.test/mcp",
+      consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: jwk(), signingKeyId: "k",
+      redirectAllowlist: ["https://client.test/cb"], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
+      allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" }, cimd: { enabled: true },
+      accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    });
+  }
+  function bridgeFor(config: any, d: any) {
+    return new Bridge({ config, store: new MemoryStore(), clock: new FakeClock(NOW), audit: new MemoryAudit(), cimdTransport: transport(d), cimdResolver: resolver() });
+  }
+  async function render(config: any, d: any, redirectUri: string): Promise<string> {
+    const b = bridgeFor(config, d);
+    const req = { query: { response_type: "code", client_id: CIMD_ID, redirect_uri: redirectUri, code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256", scope: "mcp:read" }, body: undefined, headers: {}, ip: "1.2.3.4" };
+    const res = await b.handleAuthorize(req, { subject: "agent@test" });
+    assert.equal(res.status, 200, "CIMD consent rendered");
+    return String(res.body);
+  }
+  const consentOf = (html: string) => { const m = /name="consent_token" value="([^"]+)"/.exec(html); assert.ok(m?.[1], "consent token"); return m[1]!; };
+
+  // The upstream-redirect branch reaches the consent renderer through flow.handleCallback with
+  // a CARRIED registration — a different path from the direct fetch. If it forgets the
+  // display-only CIMD fields, Hosted-Claude/Entra consent pages would omit the unverified
+  // client_name / host display while every direct-mode row above still passes.
+  async function renderViaUpstream(config: any, d: any, redirectUri: string): Promise<string> {
+    const FLOW_MOD = "../../../src/adapters/upstream-flow.ts";
+    const { createUpstreamRedirectFlow } = (await import(FLOW_MOD)) as any;
+    const store = new MemoryStore();
+    const clock = new FakeClock(NOW);
+    const audit = new MemoryAudit();
+    const b = new Bridge({ config, store, clock, audit, cimdTransport: transport(d), cimdResolver: resolver() });
+    const identity = { redirectUri: "https://auth.test/oauth/callback", buildAuthorizationUrl({ state }: any) { return `https://idp.test/a?state=${state}`; }, async exchangeAndVerify() { return { ok: true, identity: { subject: "agent@test" } }; } };
+    const flow = createUpstreamRedirectFlow({ bridge: b, identity, store, clock, audit, cimdTransport: transport(d), cimdResolver: resolver() });
+    const auth = await flow.handleAuthorize({ query: { response_type: "code", client_id: CIMD_ID, redirect_uri: redirectUri, code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256", scope: "mcp:read", state: "s-up" }, body: undefined, headers: {}, ip: "1.2.3.4" });
+    assert.equal(auth.status, 302, "upstream authorize resolved + hopped to the IdP");
+    const setCookie = auth.headers["set-cookie"] as string;
+    const jwt = setCookie.slice(setCookie.indexOf("=") + 1, setCookie.indexOf(";"));
+    const state = jose.decodeJwt(jwt).state as string;
+    const cb = await flow.handleCallback({ query: { code: "C", state }, body: undefined, headers: { cookie: `__Host-mcp-sso-upstream=${jwt}` }, ip: "1.2.3.4" });
+    assert.equal(cb.status, 200, "callback rendered consent from the carried registration");
+    return String(cb.body);
+  }
+
+  test("carried-registration consent (upstream callback) renders the SAME display obligations: escaped unverified client_name + both hosts", async () => {
+    const evil = `<script>alert("x")</script>`;
+    const html = await renderViaUpstream(cfg(), doc({ client_name: evil }), HTTPS_REDIRECT);
+    assert.equal(html.includes(evil), false, "raw client_name markup never injected on the carried path");
+    assert.equal(html.includes("<script>"), false, "no raw <script> tag from client_name");
+    assert.match(html, /unverif|untrust|not[ -]?verif/i, "client_name labeled unverified on the carried path too");
+    assert.ok(html.includes(new URL(CIMD_ID).host), "client_id host shown (MUST)");
+    assert.ok(html.includes(new URL(HTTPS_REDIRECT).host), "redirect host shown (MUST)");
+  });
+
+  test("client_name is HTML-escaped (raw markup absent, threat row 17 XSS) and shown as unverified", async () => {
+    const evil = `<script>alert("x")</script>`;
+    const html = await render(cfg(), doc({ client_name: evil }), HTTPS_REDIRECT);
+    assert.equal(html.includes(evil), false, "raw client_name markup never injected");
+    assert.equal(html.includes("<script>"), false, "no raw <script> tag from client_name");
+    assert.match(html, /unverif|untrust|not[ -]?verif/i, "client_name labeled as unverified/untrusted (exact wording not pinned)");
+    // Positive: a benign name is actually RENDERED — a renderer that DROPPED client_name
+    // entirely would satisfy the negative-only checks above.
+    const shown = await render(cfg(), doc({ client_name: "Acme-Sentinel-Widgets" }), HTTPS_REDIRECT);
+    assert.ok(shown.includes("Acme-Sentinel-Widgets"), "the client_name is positively rendered, not dropped");
+  });
+
+  test("shows the client_id host and the redirect host", async () => {
+    const html = await render(cfg(), doc(), HTTPS_REDIRECT);
+    const cimdHost = new URL(CIMD_ID).host; // derived, not a hostname string-literal (avoids a false URL-substring-sanitization flag)
+    const redirectHost = new URL(HTTPS_REDIRECT).host;
+    assert.ok(html.includes(cimdHost), "client_id host shown");
+    assert.ok(html.includes(redirectHost), "redirect host shown");
+  });
+
+  // Loopback SHOULD-warn (§17.1.4) is intentionally NOT frozen: the contract pins no
+  // warning marker, so a host-substring match ("localhost") is a false oracle (it matches
+  // the rendered redirect host, not a warning), and any pinned copy would be brittle.
+
+  test("only cimd_verified is copied into the consent JWT (no other CIMD document fields)", async () => {
+    const html = await render(cfg(), doc({ logo_uri: "https://cdn.example.com/logo.png" }), HTTPS_REDIRECT);
+    const payload = jose.decodeJwt(consentOf(html));
+    assert.equal(payload.cimd_verified, true, "provenance bit set for a genuinely-validated CIMD flow");
+    for (const leaked of ["cimd", "client_name", "redirect_uris", "logo_uri", "raw", "jwks"]) {
+      assert.equal(Object.hasOwn(payload, leaked), false, `consent JWT must not carry CIMD field ${leaked}`);
+    }
+  });
+
+  // Decision 3: the SOLE true path is strict `=== true`; ANY other present value invalidates
+  // the token (a `!!cimd_verified` or `== true` impl would wrongly accept 1 / "true"). signConsentToken
+  // never emits these, so forge the exact consent wire shape verifyConsentToken accepts.
+  for (const bad of [false, "true", 1, 0, null, "false"] as any[]) {
+    test(`a present non-true cimd_verified (${JSON.stringify(bad)}) invalidates the consent token (strict === true, fail-closed)`, async () => {
+      const config = cfg();
+      const b = bridgeFor(config, doc());
+      const now = Math.floor(NOW / 1000);
+      const token = await new jose.SignJWT({
+        typ: CONSENT_TYP, jti: "j".repeat(24), client_id: CIMD_ID, redirect_uri: HTTPS_REDIRECT,
+        resource: config.resource, scope: "mcp:read", code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+        cimd_verified: bad,
+      }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setIssuer(config.issuer).setAudience(CONSENT_AUDIENCE)
+        .setSubject("agent@test").setIssuedAt(now).setExpirationTime(now + 300).sign(enc(config.consentSigningSecret));
+      const res = await b.handleApprove({ query: {}, body: { consent_token: token, approved: "true" }, headers: { origin: "https://auth.test" }, ip: "1.2.3.4" });
+      assert.equal(res.status, 400);
+      assert.equal((res.body as any).error, "invalid_consent");
+    });
+  }
+
+  // ISOLATION: the rows above all use a CIMD (lowercase-https) client_id, so the approve-time
+  // SCHEME gate would reject them anyway — they don't prove the claim-validity rule itself.
+  // With an OPAQUE client_id the scheme gate is satisfied, so ONLY the strict `=== true`
+  // check can reject: an impl that ignores a non-true cimd_verified would wrongly APPROVE.
+  for (const bad of [false, "true", 1] as any[]) {
+    test(`an OPAQUE client_id carrying a non-true cimd_verified (${JSON.stringify(bad)}) still invalidates the token (isolates claim validity from the scheme gate)`, async () => {
+      const config = cfg();
+      const b = bridgeFor(config, doc());
+      const now = Math.floor(NOW / 1000);
+      const token = await new jose.SignJWT({
+        typ: CONSENT_TYP, jti: "k".repeat(24), client_id: "opaque-consent-client", redirect_uri: HTTPS_REDIRECT,
+        resource: config.resource, scope: "mcp:read", code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+        cimd_verified: bad,
+      }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setIssuer(config.issuer).setAudience(CONSENT_AUDIENCE)
+        .setSubject("agent@test").setIssuedAt(now).setExpirationTime(now + 300).sign(enc(config.consentSigningSecret));
+      const res = await b.handleApprove({ query: {}, body: { consent_token: token, approved: "true" }, headers: { origin: "https://auth.test" }, ip: "1.2.3.4" });
+      assert.notEqual(res.status, 302, "must NOT be approved (no code issued)");
+      assert.equal(res.status, 400);
+      assert.equal((res.body as any).error, "invalid_consent");
+    });
+  }
+}
