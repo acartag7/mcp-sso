@@ -3424,11 +3424,12 @@ cookie, single-used through the existing consent-JTI registry:
   (consistent with `handleApprove`) — never fail-open.
 
 **Flow JWT (the cookie value):** header `{alg:"HS256", typ:"JWT"}`; claims
-`iss`=issuer, `aud`=**`"mcp-sso/upstream-flow"`**, `jti` (`upf_…`, single-use),
+`iss`=issuer, `aud`=**`"mcp-sso/upstream-flow" + callbackPath`** (see
+"flow-instance binding" below), `jti` (`upf_…`, single-use),
 *(suite-faithfulness rule, added 2026-07-26: the exact `aud` VALUE is a §17.11
-implementation binding that may be tightened by contract amendment — issue
-#103 proposes binding it per flow — so a FROZEN acceptance test must not
-import or hardcode the constant; it observes the audience once through the
+implementation binding — this amendment itself changes it from the
+deployment-wide constant to the per-flow form — so a FROZEN acceptance test
+must not import or hardcode it; it observes the audience once through the
 public seam — mint a cookie via `handleAuthorize`, decode, reuse — and pins
 only the behavior §17.11 owns: cookies the flow itself minted verify, foreign
 or tampered cookies fail row 3. This rule exists because the original
@@ -3447,6 +3448,37 @@ optional **`cimd`** claim carrying exactly a `CimdRegistration`
 authorize, absent for opaque clients, covered by the same HS256 signature and
 strict-parsed at callback row 3 (1d). Verified with
 `algorithms: ["HS256"]`, pinned `iss`+`aud`, clock from `ClockPort`.
+
+**Flow-instance binding (amended — the `aud` is per-flow, not deployment-wide).**
+The audience is `"mcp-sso/upstream-flow" + callbackPath` (e.g.
+`mcp-sso/upstream-flow/oauth/callback`), so each flow accepts only cookies it
+minted. `callbackPath` is the binding value because it is already required to be
+unique per mounted flow and is boot-validated (`assertCallbackPath`) into a
+canonical, non-forgeable literal; no new config knob is introduced. A cookie
+whose `aud` does not match the callback's own value fails `jwtVerify` and is
+reported as the existing **row 3** `flow_cookie_invalid` — no new failure row,
+no new error code.
+
+*Why:* the audience was previously the deployment-wide constant
+`"mcp-sso/upstream-flow"`, carrying no callback path, provider id, or per-flow
+identity, so **every flow built from one signing secret accepted every other
+flow's cookies**. A deployment mounting two flows under one issuer (two IdPs)
+could therefore have a cookie minted for the intended IdP redeemed through a
+different configured one — an authentication-provider **confused deputy**.
+Reproduced before the fix: flow B's callback returned 302 while calling IdP B's
+`exchangeAndVerify` with flow **A's** PKCE verifier and nonce, and accepting A's
+carried CIMD registration. The initiating request is unauthenticated (CIMD
+resolution runs at authorize step 3a, before any IdP redirect), so a remote
+caller can start flow A and reuse its state/challenge against IdP B. The shipped
+adapters mount a single flow — hence MEDIUM, not HIGH — but the exported factory
+does not prevent the multi-flow topology and nothing documented it as
+unsupported. Binding is preferred over forbidding the topology: two IdPs under
+one issuer is a shape a deployer may legitimately want.
+
+*Compatibility:* this changes the flow-token claim shape. Flow cookies are
+short-lived (`flowTtlSeconds`, default 600 s) and only ever in flight during a
+login, so an in-flight cookie minted before an upgrade fails row 3 and the user
+retries — no persistent state is invalidated.
 **Signing key: `consentSigningSecret`** (decided): one deployment secret that
 already crosses replicas; cross-type replay is impossible because both
 verifiers pin distinct `aud` values (`mcp-sso/consent` vs
