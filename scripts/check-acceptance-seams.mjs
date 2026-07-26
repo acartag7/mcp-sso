@@ -25,7 +25,7 @@ function walk(dir) {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) {
       walk(p);
-    } else if (p.endsWith(".ts")) {
+    } else if (/\.(?:[cm]?ts|[cm]?js)$/.test(p)) {
       const lines = readFileSync(p, "utf8").split("\n");
       lines.forEach((line, i) => {
         if (INTERNALS_IMPORT.test(line)) {
