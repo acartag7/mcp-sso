@@ -7,6 +7,9 @@ import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
 import { redirectAllowlistProblem } from "./redirect-allowlist.ts";
+import {
+  checkedStringArray, isEcP256PrivateJwk, snapshotClientCredentials, snapshotDcr, snapshotJwk,
+} from "./config-snapshot.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
 
@@ -95,30 +98,32 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   // `ownKeys` trap could inject an unknown key via that spread. Pinning every
   // field to one read and building the output from named locals closes both
   // (contracts §5; the promise on KNOWN_CONFIG_KEYS above is then actually true).
-  // Nested object fields (dcr/dev/clientCredentials) are read from these refs but
-  // not deep-snapshotted — the depth-1 freeze residual is pre-existing; the
-  // demonstrated top-level vector (issuer getter + ownKeys proxy) is closed here.
+  // Nested blocks and arrays are then published as frozen one-level SNAPSHOTS
+  // (below): `Object.freeze` is shallow, and these are read per request, so
+  // publishing the caller's own objects would leave every validated security
+  // setting mutable after boot (issue #100).
   const issuer = input.issuer;
   const resource = input.resource;
   const consentSigningSecret = input.consentSigningSecret;
-  const signingPrivateJwk = input.signingPrivateJwk;
+  const rawSigningPrivateJwk = input.signingPrivateJwk;
   const signingKeyId = input.signingKeyId;
   const rawRedirectAllowlist = input.redirectAllowlist;
-  const scopeCatalog = input.scopeCatalog;
-  const defaultScopes = input.defaultScopes;
-  const allowedOrigins = input.allowedOrigins;
-  const dcr = input.dcr;
-  const dcrMode = dcr.mode;
+  const rawScopeCatalog = input.scopeCatalog;
+  const rawDefaultScopes = input.defaultScopes;
+  const rawAllowedOrigins = input.allowedOrigins;
+  const rawDcr = input.dcr;
+  // Read-once rule for every nested value below: these locals are what the
+  // validation checks AND what the snapshots publish. Re-reading any of them at
+  // snapshot time would let an accessor-backed block return the approved value
+  // during validation and a different one afterwards — publishing what boot
+  // never approved.
+  const dcrMode = rawDcr.mode;
+  const dcrStore = dcrMode === "stored" ? (rawDcr as { store?: ClientStore }).store : undefined;
   const rawDev = input.dev;
-  // Read ONCE. This boolean is what validateUrl() below checks, so publishing a
-  // frozen snapshot of it (rather than the caller's live `dev` object) closes
-  // the validation→construction window: a consumer reading config.dev later
-  // cannot observe a value boot never validated. See issue #100 for the
-  // remaining sibling blocks (dcr / clientCredentials) on main.
   const allowInsecureLocalhost = rawDev?.allowInsecureLocalhost === true;
   const dev = rawDev === undefined ? undefined : Object.freeze({ allowInsecureLocalhost });
-  const clientCredentials = input.clientCredentials;
-  const clientCredentialsEnabled = clientCredentials?.enabled;
+  const rawClientCredentials = input.clientCredentials;
+  const clientCredentialsEnabled = rawClientCredentials?.enabled;
   let cimd = input.cimd;
   const accessTokenTtlSeconds = input.accessTokenTtlSeconds;
   const refreshTokenTtlSeconds = input.refreshTokenTtlSeconds;
@@ -130,13 +135,24 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   if (consentSigningSecret.trim().length < 32) {
     throw new AuthConfigError("consentSigningSecret must be at least 32 characters");
   }
-  validateSigningKey(signingPrivateJwk);
-  if (!Array.isArray(scopeCatalog) || scopeCatalog.length === 0) {
+  // Snapshot BEFORE validating, then publish that copy (rationale in
+  // config-snapshot.ts: read per use by signKey()/publicJwk(), and WeakMap-keyed
+  // in crypto-keys.ts, so a shared reference is a live swap window).
+  const signingPrivateJwk = snapshotJwk(rawSigningPrivateJwk, (m) => new AuthConfigError(m));
+  if (!isEcP256PrivateJwk(signingPrivateJwk)) {
+    throw new AuthConfigError("signingPrivateJwk must be an EC P-256 key with d, x, y");
+  }
+  // Snapshot-then-validate, then publish the snapshot: the array that was
+  // checked is the array requests read (§5 "Publication"; issue #100).
+  const scopeCatalog = checkedStringArray("scopeCatalog", rawScopeCatalog, (m) => new AuthConfigError(m));
+  if (scopeCatalog.length === 0) {
     throw new AuthConfigError("scopeCatalog must be a non-empty array");
   }
+  const defaultScopes = checkedStringArray("defaultScopes", rawDefaultScopes, (m) => new AuthConfigError(m));
   if (!defaultScopes.every((s) => scopeCatalog.includes(s))) {
     throw new AuthConfigError("defaultScopes must be a subset of scopeCatalog");
   }
+  const allowedOrigins = checkedStringArray("allowedOrigins", rawAllowedOrigins, (m) => new AuthConfigError(m));
   validateTtl(accessTokenTtlSeconds, "accessTokenTtlSeconds");
   validateTtl(refreshTokenTtlSeconds, "refreshTokenTtlSeconds");
   validateTtl(consentTokenTtlSeconds, "consentTokenTtlSeconds");
@@ -151,11 +167,16 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   if (dcrMode !== "stateless" && dcrMode !== "stored") {
     throw new AuthConfigError("dcr.mode must be 'stateless' or 'stored'");
   }
-  if (dcrMode === "stored" && !dcr.store) {
+  if (dcrMode === "stored" && !dcrStore) {
     throw new AuthConfigError("dcr.mode 'stored' requires a ClientStore");
   }
-  if (clientCredentials !== undefined) {
-    if (typeof clientCredentials !== "object" || clientCredentials === null
+  // Publish a frozen one-level copy, never the caller's block: `dcr.mode` and
+  // `dcr.store` are read PER REQUEST (authorize/register/token/upstream-flow),
+  // so a shared reference would let a post-boot swap redirect client lookups and
+  // `save()` to another store, or change which registration path runs (#100).
+  const dcr = snapshotDcr(dcrMode, dcrStore);
+  if (rawClientCredentials !== undefined) {
+    if (typeof rawClientCredentials !== "object" || rawClientCredentials === null
       || typeof clientCredentialsEnabled !== "boolean") {
       throw new AuthConfigError("clientCredentials must be { enabled: boolean }");
     }
@@ -165,6 +186,11 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
       throw new AuthConfigError("clientCredentials.enabled requires dcr.mode 'stored' (machine clients are provisioned into the ClientStore — §17.2)");
     }
   }
+  // Same rule: `enabled` is read per request at /oauth/token and in AS metadata,
+  // so flipping it post-boot would switch on a deliberately disabled grant.
+  const clientCredentials = rawClientCredentials === undefined
+    ? undefined
+    : snapshotClientCredentials(clientCredentialsEnabled as boolean);
   if (cimd !== undefined) {
     // Snapshot-then-validate returns the frozen object it checked, so an
     // accessor-backed cap cannot pass validation and publish a different value.
@@ -202,12 +228,6 @@ function validateUrl(allowInsecureLocalhost: boolean, label: string, value: stri
     // loopback: http or https both permitted
   } else if (url.protocol !== "https:") {
     throw new AuthConfigError(`${label} must be https:// (use dev.allowInsecureLocalhost for local http)`);
-  }
-}
-
-function validateSigningKey(jwk: JWK): void {
-  if (jwk.kty !== "EC" || jwk.crv !== "P-256" || !jwk.d || !jwk.x || !jwk.y) {
-    throw new AuthConfigError("signingPrivateJwk must be an EC P-256 key with d, x, y");
   }
 }
 

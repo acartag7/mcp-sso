@@ -576,6 +576,163 @@ test("config fail-closed: the published redirectAllowlist is a frozen snapshot, 
   );
 });
 
+test("config publication: nested blocks are frozen snapshots, not the caller's objects (§5)", () => {
+  const base = baseInput();
+  // `Object.freeze` is SHALLOW. Publishing the caller's own nested blocks would
+  // leave every validated security setting mutable after boot — and these are
+  // read PER REQUEST, not captured at boot. Issue #100.
+  const clientStore = new InMemoryClientStore();
+  const evilStore = new InMemoryClientStore();
+  const dcr: BridgeConfig["dcr"] = { mode: "stored", store: clientStore };
+  const clientCredentials = { enabled: false };
+  const config = createBridgeConfig({ ...base, dcr, clientCredentials });
+
+  assert.notEqual(config.dcr, dcr, "dcr must not be published by reference");
+  assert.equal(Object.isFrozen(config.dcr), true);
+  assert.notEqual(config.clientCredentials, clientCredentials, "clientCredentials must not be published by reference");
+  assert.equal(Object.isFrozen(config.clientCredentials), true);
+
+  // Swapping the store post-boot would redirect client lookups and save() to an
+  // attacker-chosen store — an authorization-decision input.
+  (dcr as { store: ClientStore }).store = evilStore;
+  assert.equal(config.dcr.mode === "stored" ? config.dcr.store : null, clientStore, "dcr.store must still be the boot-approved store");
+
+  // Flipping the mode would change which registration path runs.
+  (dcr as { mode: string }).mode = "stateless";
+  assert.equal(config.dcr.mode, "stored");
+
+  // Flipping `enabled` would switch on a deliberately disabled grant with no
+  // restart, and change what AS metadata advertises.
+  clientCredentials.enabled = true;
+  assert.equal(config.clientCredentials?.enabled, false);
+
+  // `store` is deliberately carried BY REFERENCE — it is a live port object with
+  // methods. The snapshot closes swap-the-store, not the port itself.
+  assert.equal(config.dcr.mode === "stored" ? config.dcr.store : null, clientStore);
+});
+
+test("config publication TOCTOU: an accessor-backed dcr/clientCredentials cannot publish a value boot never validated", () => {
+  const base = baseInput();
+  // The snapshot must be built from the values validation ALREADY read, never by
+  // re-reading the caller's block. A getter returning one value at validation and
+  // another at snapshot time would otherwise publish what boot never approved —
+  // the same validate-then-copy TOCTOU the snapshot exists to close.
+  const approved = new InMemoryClientStore();
+  const attacker = new InMemoryClientStore();
+  let storeReads = 0;
+  const dcr = {
+    mode: "stored" as const,
+    get store(): ClientStore { storeReads++; return storeReads <= 1 ? approved : attacker; },
+  };
+  const config = createBridgeConfig({ ...base, dcr });
+  assert.equal(
+    config.dcr.mode === "stored" ? config.dcr.store : null, approved,
+    "must publish the store validation saw, not a later getter result",
+  );
+
+  // Same rule for the grant flag: a getter reading false at validation and true
+  // at snapshot time would pass the disabled-grant boot checks while publishing
+  // the grant as ENABLED — AS metadata and /oauth/token would then expose a
+  // grant boot validated as off.
+  let enabledReads = 0;
+  const clientCredentials = {
+    get enabled(): boolean { enabledReads++; return enabledReads <= 1 ? false : true; },
+  };
+  const cfg2 = createBridgeConfig({
+    ...base, dcr: { mode: "stored", store: approved }, clientCredentials,
+  });
+  assert.equal(cfg2.clientCredentials?.enabled, false, "must publish the boolean validation approved");
+});
+
+test("config publication: the signing JWK is a frozen snapshot (§5) — the most sensitive nested value", () => {
+  const base = baseInput();
+  // signingPrivateJwk was published BY REFERENCE while signKey()/publicJwk()
+  // read it per use and crypto-keys.ts memoizes the imported key in a WeakMap
+  // keyed by this object (its header called that a "stable (frozen)"
+  // reference). A mutation before first import swapped the signing material; a
+  // mutation after it desynchronized the cached signer from the published JWKS.
+  const caller = { ...(base.signingPrivateJwk as Record<string, unknown>) } as typeof base.signingPrivateJwk;
+  const config = createBridgeConfig({ ...base, signingPrivateJwk: caller });
+  assert.notEqual(config.signingPrivateJwk, caller, "must not publish the caller's JWK by reference");
+  assert.equal(Object.isFrozen(config.signingPrivateJwk), true);
+
+  const originalKid = config.signingPrivateJwk.kid;
+  (caller as Record<string, unknown>).kid = "SWAPPED";
+  (caller as Record<string, unknown>).d = "TAMPERED";
+  assert.equal(config.signingPrivateJwk.kid, originalKid, "a post-boot mutation must not reach the config");
+  assert.notEqual(config.signingPrivateJwk.d, "TAMPERED");
+
+  // Unknown members are dropped, not published (fail-closed, like KNOWN_CONFIG_KEYS).
+  const withExtra = createBridgeConfig({
+    ...base,
+    signingPrivateJwk: { ...(base.signingPrivateJwk as Record<string, unknown>), backdoor: "x" } as typeof base.signingPrivateJwk,
+  });
+  assert.equal((withExtra.signingPrivateJwk as Record<string, unknown>).backdoor, undefined);
+
+  // Array-valued members (key_ops) are CLONED and deep-frozen, never shared:
+  // a shared array is the same by-reference hole one level down — mutating the
+  // caller's array post-boot must not reach the published JWK.
+  const callerOps = ["sign"];
+  const withOps = createBridgeConfig({
+    ...base,
+    signingPrivateJwk: { ...(base.signingPrivateJwk as Record<string, unknown>), key_ops: callerOps } as typeof base.signingPrivateJwk,
+  });
+  const publishedOps = (withOps.signingPrivateJwk as Record<string, unknown>).key_ops as string[];
+  assert.notEqual(publishedOps, callerOps, "key_ops must not be shared with the caller's array");
+  assert.equal(Object.isFrozen(publishedOps), true, "nested members must be frozen too, not just the top level");
+  callerOps.push("verify");
+  assert.deepEqual(publishedOps, ["sign"], "a post-boot push into the caller's key_ops must not reach the config");
+
+  // A wrong-typed member is an AuthConfigError naming the member — never a
+  // crash from the copying machinery (a function in key_ops would make a blind
+  // structuredClone throw DOMException; the boundary rule is reject, not crash).
+  for (const [member, bad] of [
+    ["key_ops", [() => {}]],
+    ["key_ops", "sign"],
+    ["kid", 7],
+    ["ext", "true"],
+  ] as const) {
+    assert.throws(
+      () => createBridgeConfig({
+        ...base,
+        signingPrivateJwk: { ...(base.signingPrivateJwk as Record<string, unknown>), [member]: bad } as typeof base.signingPrivateJwk,
+      }),
+      (e: unknown) => e instanceof AuthConfigError && String((e as Error).message).includes(`signingPrivateJwk.${member}`),
+      `wrong-typed ${member} must be an AuthConfigError naming the member`,
+    );
+  }
+});
+
+test("config publication: array fields are validated as string[] and frozen (§5)", () => {
+  const base = baseInput();
+
+  // A bare string is NOT a one-element list. `allowedOrigins` is consumed with
+  // `.includes()`, which on a string is SUBSTRING matching — so a string
+  // "https://auth.test" would admit the Origin "auth.test" (and "ttps://auth.tes"),
+  // widening the consent-approve CSRF gate from a harmless-looking config typo.
+  assert.throws(() => createBridgeConfig({ ...base, allowedOrigins: "https://auth.test" as unknown as string[] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, scopeCatalog: "mcp:read" as unknown as string[] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, defaultScopes: "mcp:read" as unknown as string[] }), AuthConfigError);
+  // Non-string entries fail closed too.
+  assert.throws(() => createBridgeConfig({ ...base, allowedOrigins: [123 as unknown as string] }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, scopeCatalog: [{} as unknown as string] }), AuthConfigError);
+  // `allowedOrigins: undefined` previously published `[]` silently.
+  assert.throws(() => createBridgeConfig({ ...base, allowedOrigins: undefined as unknown as string[] }), AuthConfigError);
+
+  // Each published array is a frozen snapshot: a post-boot push to the caller's
+  // array must not widen what requests read.
+  const scopeCatalog = ["mcp:read", "mcp:write"];
+  const allowedOrigins = ["https://auth.test"];
+  const config = createBridgeConfig({ ...base, scopeCatalog, defaultScopes: ["mcp:read"], allowedOrigins });
+  assert.equal(Object.isFrozen(config.scopeCatalog), true);
+  assert.equal(Object.isFrozen(config.allowedOrigins), true);
+
+  scopeCatalog.push("mcp:admin");
+  allowedOrigins.push("https://evil.test");
+  assert.deepEqual(config.scopeCatalog, ["mcp:read", "mcp:write"], "a post-boot push must not widen the scope catalog");
+  assert.deepEqual(config.allowedOrigins, ["https://auth.test"], "a post-boot push must not widen the Origin gate");
+});
+
 test("config fail-closed: unknown top-level keys rejected with the key named", () => {
   const base = baseInput();
 

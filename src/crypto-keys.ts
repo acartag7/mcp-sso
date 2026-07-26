@@ -1,6 +1,10 @@
 // Memoized key material for `crypto.ts` (fix #6): the ES256 sign/verify key
 // imports and the HS256 consent secret encoding, each cached by the stable
-// (frozen) config / JWK reference so the source is not re-imported per request.
+// config / JWK reference so the source is not re-imported per request. That
+// reference IS stable and frozen — `createBridgeConfig` publishes a frozen
+// snapshot of the JWK (§5 "Publication"), which is what makes this WeakMap key
+// sound; before that it was the caller's live object and this comment's
+// "(frozen)" was aspirational.
 // Split out of `crypto.ts` to keep that file under the 250-line limit (§6).
 
 import { importJWK } from "jose";
