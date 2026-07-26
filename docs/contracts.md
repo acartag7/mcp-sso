@@ -952,8 +952,17 @@ the response. Wiring rules:
 >    - *Stored DCR, `native`*: `http://[::1]:9/`, `http://127.0.0.1/cb`,
 >      `http://localhost/cb` — loopback, canonical. NOT a non-loopback https
 >      entry (§10.2 native policy) and not an empty array.
->    - *Stateless DCR*: the `web` set (the global allowlist governs; §9.2
->      persists nothing but echoes the accepted entry unchanged).
+>    - *Stateless DCR*: the **§10.1 global-allowlist set — NOT the `web` set**.
+>      Stateless mode persists no `applicationType`, so §9.2's
+>      loopback-for-everyone policy applies and the per-type partition above
+>      does not exist here. Positives therefore include BOTH
+>      `https://a.test/` and the canonical loopback paths
+>      `http://localhost/cb`, `http://localhost:54321/cb` (any port),
+>      `http://127.0.0.1:8080/cb` — each accepted from the built-in defaults
+>      with an EMPTY config allowlist (verified on HEAD). Borrowing the
+>      https-only `web` set here would let an implementation reject the
+>      primary native-client loopback path while passing this obligation.
+>      §9.2 persists nothing but echoes the accepted entry unchanged.
 >    - *CIMD document*: `https://a.test/` plus a loopback `http://[::1]:9/`
 >      — rule 20's scheme/host rule, canonical spelling, 1..16 entries.
 >    Plus a **round-trip** test per applicable consumer: a URI accepted at
