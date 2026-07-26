@@ -804,7 +804,18 @@ the response. Wiring rules:
 >    (it persists nothing, but the same endpoint must not accept and echo an
 >    entry the grammar forbids: one grammar, every consumer includes the
 >    stateless sibling); stored mode additionally persists the
->    canonical form. The raw `redirect_uris` field crosses this boundary as
+>    canonical form. The write side also enforces the **1..16 array
+>    cardinality cap** (§9.2 — `registerClient` has no maximum today, so a
+>    17-entry registration currently succeeds and widens the authorize-time
+>    scan past the promised bound) and the **stored client's §10.2 per-type
+>    policy**: a `web` registration (the default when `application_type` is
+>    omitted) rejects any non-`https` entry, and a `native` registration
+>    rejects any non-loopback entry — at WRITE time, not first at authorize.
+>    Without that, `http://localhost/cb` registers as `web` (passes the
+>    allowlist and §10.0) and then §10.2 refuses it forever, and a
+>    non-loopback https entry registers as `native` with the same outcome:
+>    the exact register-but-never-authorize defect this obligation exists to
+>    close, reachable through type policy instead of canonicality. The raw `redirect_uris` field crosses this boundary as
 >    `unknown[]`, never pre-narrowed: today `Bridge.handleRegister` runs the
 >    array through `stringArray`, which silently DROPS non-string members
 >    (`["https://ok.test/cb", 7]` registers as if the `7` were never sent), so
@@ -821,7 +832,17 @@ the response. Wiring rules:
 >    sibling, below) — not only at registration. Covers records written before
 >    this grammar existed or populated out-of-band.
 > 4. `assertCimdRedirectUri` enforcing §10.0 rather than its own shape rules
->    (§17.1.5 rule 20, as amended there).
+>    (§17.1.5 rule 20, as amended there) — AND `projectCimdRegistration`
+>    retaining the validator's **canonical form**, not the document's raw
+>    spelling. The §17.1.6 matcher compares `presented === registered` with no
+>    normalization, so a document carrying the accepted omitted-slash form
+>    (`https://a.test`) that is projected raw can never match the canonical
+>    `https://a.test/` a client presents — the same
+>    register-but-never-authorize defect as obligation 2's DISCARDED
+>    normalized return, on the CIMD side. The canonical-fold rule under
+>    "Canonical spelling" (persist/compare the full `href`) binds this
+>    projection exactly as it binds stored DCR, and the CIMD round-trip test
+>    covers the omitted-slash form.
 > 5. `assertAllowedRedirectUri` applying §10.0 to every allowlist entry **it
 >    reads** before matching (consumer (5) — the export-path sibling of 3;
 >    rationale in the consumer list below). A non-conforming entry is refused
@@ -855,27 +876,36 @@ the response. Wiring rules:
 >    named rejection); an unparseable entry (`https://`, no host — `new URL`
 >    throws, and the thrown case must map to the same named rejection, never
 >    propagate); `http://a.test/cb` (http on a non-loopback host); a
->    non-string entry; a non-array `redirectAllowlist`.
+>    non-string entry; a non-array `redirectAllowlist`; a **17-entry DCR
+>    `redirect_uris` array** (the §9.2 cardinality cap gets its own boundary
+>    witness — per-entry tests cannot catch an oversized array); a `web`
+>    registration carrying `http://localhost/cb` AND a `native` registration
+>    carrying a non-loopback https entry (the obligation-2 per-type write
+>    guard, one witness per type).
 > 7. **Positive tests** that the grammar does not over-reject: all four built-in
 >    defaults, `https://a.test` (omitted root slash), `https://a.test/`,
 >    `http://[::1]:9`, `https://xn--80a.test` (punycode — the ASCII form of the Cyrillic host above), and
 >    `https://a.test/cb%2F..%2Fadmin` (canonical, inert) all pass; and an empty
 >    array remains valid. Plus a **round-trip** test: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
-> 8. A **differential test** exercising **all FIVE consumers of the closed
+> 8. A **differential test** exercising **all SIX consumers of the closed
 >    list** — boot config, DCR registration write, the §10.2 stored-state READ,
->    CIMD document validation, and the exported §10.1 matcher called DIRECTLY
->    with an entries array that never passed boot: for each row of the table
+>    CIMD document validation, the exported §10.1 matcher called DIRECTLY
+>    with an entries array that never passed boot, and the flow-cookie CIMD
+>    consumption at callback: for each row of the table
 >    below, every consumer agrees. The stored-read leg is exercised with
 >    **pre-existing/out-of-band state** (a record placed directly in the
->    `ClientStore`, never through `registerClient`), and the direct-call leg
->    passes the forbidden entry straight to `assertAllowedRedirectUri` —
->    wiring the shared predicate into the entry boundaries while either
+>    `ClientStore`, never through `registerClient`); the direct-call leg
+>    passes the forbidden entry straight to `assertAllowedRedirectUri`; the
+>    flow-cookie leg forges a validly-signed cookie whose carried
+>    `CimdRegistration` holds the forbidden entry (modeling a pre-upgrade
+>    in-flight cookie) and asserts the callback refuses it —
+>    wiring the shared predicate into the entry boundaries while any
 >    read-time consumer forgets its check must FAIL this test, or a legacy
->    record (or a directly-supplied array) carrying a
+>    record, a directly-supplied array, or an in-flight cookie carrying a
 >    forbidden entry can still authorize. (The measured table has three
 >    columns because the read guards did not exist on `40d9f58`; the
->    test covers five.) That agreement is the property this section exists to
+>    test covers six.) That agreement is the property this section exists to
 >    create, and without it the differential can silently return.
 
 Everything below — the §10.1 global allowlist, the §10.2 per-client policy, and
@@ -1025,13 +1055,17 @@ port, and resolves `..` segments. A validator reading only parsed fields is
 therefore checking a different string than the one the deployer wrote and the
 matcher later compares.
 
-**The grammar has exactly FIVE consumers, and this list is closed:**
+**The grammar has exactly SIX consumers, and this list is closed:**
 (1) boot (`createBridgeConfig`) for `redirectAllowlist`; (2) the stored-DCR
 registration write (§9.2); (3) the stored-state READ at authorize/token
 (§10.2 — the paragraph below); (4) CIMD document validation
 (`assertCimdRedirectUri`, §17.1.5 rule 20); (5) the **exported §10.1 matcher
 itself** (`assertAllowedRedirectUri`), which applies the predicate to each
-allowlist entry it READS before matching. (5) exists because the matcher is a
+allowlist entry it READS before matching; (6) the **flow-cookie CIMD
+consumption at callback** (`parseCimdRegistrationClaim` + the §17.1.6
+redirect match), which re-validates each carried `redirect_uris` entry —
+the second stored-state sibling, detailed two paragraphs below. (5) exists
+because the matcher is a
 root export (`src/index.ts`): it is reachable with an entries array that
 never passed boot — a consumer calling the helper directly, or (pre-#106) a
 caller mutating the array after boot — so without its own read-side check the
@@ -1039,11 +1073,17 @@ one-grammar invariant holds only for arrays `createBridgeConfig` produced. A
 non-conforming entry encountered at match time is refused
 `invalid_redirect_uri` (fail closed and loud, the same rule as the §10.2 read
 guard) — never silently skipped, which is the `"*"` defect this section
-started from, and never matched. Every consumer applies the ONE
+started from, and never matched. (6) exists because
+`parseCimdRegistrationClaim` checks only types and cardinality, and the
+§17.1.6 matcher returns true on `entry === presented` BEFORE any shape
+check — so during a rolling upgrade, a still-valid cookie minted under the
+old grammar carries a query-bearing or non-canonical entry that exact-matches
+its way through the callback; updating document validation (4) alone does not
+close that window. Every consumer applies the ONE
 shared predicate — none re-derives the grammar from its own parsing. (1), (2),
-and (4) reject at the boundary the entry enters; (3) and (5) are deliberately
-read-time re-checks of entries that entered before the grammar existed,
-out-of-band, or through the public export — not a second grammar.
+and (4) reject at the boundary the entry enters; (3), (5), and (6) are
+deliberately read-time re-checks of entries that entered before the grammar
+existed, out-of-band, or through the public export — not a second grammar.
 
 **Stored state is re-validated at READ, not only at write** (the entry-point
 guard's stored-state sibling). A `ClientStore` can return records written before
@@ -1065,8 +1105,12 @@ When `handleCallback` consumes the carried registration, each of its
 `redirect_uris` entries is re-checked against §10.0; a non-conforming entry
 fails the row-5a matrix (direct 400, `flow_cookie_invalid` audit), so a
 pre-upgrade in-flight cookie cannot grandfather an entry past the grammar.
-The same "not a migration" stance applies: the flow simply fails and the
-client re-authorizes.
+This is consumer (6) of the closed list — it is load-bearing, not
+belt-and-braces: `parseCimdRegistrationClaim` validates types and cardinality
+only, and the §17.1.6 matcher's `entry === presented` fast path runs BEFORE
+any shape check, so without this re-check an old cookie's exact-matching
+forbidden entry sails through. The same "not a migration" stance applies: the
+flow simply fails and the client re-authorizes.
 
 **Why reject rather than normalize.** A non-canonical entry could be rewritten
 to its canonical form instead of refused. It is refused because config should
@@ -1532,7 +1576,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | RFC 8414 AS metadata | ✅ v0.1 | §9.1 |
 | RFC 7591 DCR (stateless) | ✅ v0.1 | §9.2 |
 | Stored-client DCR + `application_type` *(fix #4, RC b)* | ✅ v0.1 — but the §10.0 read-guard §10.2 now depends on is 🔴 pending (row below) | §9.2, §10.2 |
-| Redirect-entry grammar §10.0 (ONE definition, every consumer: boot · DCR write · stored read · CIMD) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) | §10.0, §10.1, §10.2, §17.1.5 rule 20 |
+| Redirect-entry grammar §10.0 (ONE definition, all SIX consumers: boot · DCR write · stored read · CIMD doc · exported matcher `assertAllowedRedirectUri` · flow-cookie CIMD consumption) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) — this row turns green only when the §10.0 differential test passes across all six | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
 | RFC 9207 `iss` + `authorization_response_iss_parameter_supported` *(RC a)* | ✅ v0.1 | §9.1, §9.3 |
