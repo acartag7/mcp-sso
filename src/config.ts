@@ -138,7 +138,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   // Snapshot BEFORE validating, then publish that copy (rationale in
   // config-snapshot.ts: read per use by signKey()/publicJwk(), and WeakMap-keyed
   // in crypto-keys.ts, so a shared reference is a live swap window).
-  const signingPrivateJwk = snapshotJwk(rawSigningPrivateJwk);
+  const signingPrivateJwk = snapshotJwk(rawSigningPrivateJwk, (m) => new AuthConfigError(m));
   if (!isEcP256PrivateJwk(signingPrivateJwk)) {
     throw new AuthConfigError("signingPrivateJwk must be an EC P-256 key with d, x, y");
   }

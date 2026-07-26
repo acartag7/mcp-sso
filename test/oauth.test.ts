@@ -682,6 +682,25 @@ test("config publication: the signing JWK is a frozen snapshot (§5) — the mos
   assert.equal(Object.isFrozen(publishedOps), true, "nested members must be frozen too, not just the top level");
   callerOps.push("verify");
   assert.deepEqual(publishedOps, ["sign"], "a post-boot push into the caller's key_ops must not reach the config");
+
+  // A wrong-typed member is an AuthConfigError naming the member — never a
+  // crash from the copying machinery (a function in key_ops would make a blind
+  // structuredClone throw DOMException; the boundary rule is reject, not crash).
+  for (const [member, bad] of [
+    ["key_ops", [() => {}]],
+    ["key_ops", "sign"],
+    ["kid", 7],
+    ["ext", "true"],
+  ] as const) {
+    assert.throws(
+      () => createBridgeConfig({
+        ...base,
+        signingPrivateJwk: { ...(base.signingPrivateJwk as Record<string, unknown>), [member]: bad } as typeof base.signingPrivateJwk,
+      }),
+      (e: unknown) => e instanceof AuthConfigError && String((e as Error).message).includes(`signingPrivateJwk.${member}`),
+      `wrong-typed ${member} must be an AuthConfigError naming the member`,
+    );
+  }
 });
 
 test("config publication: array fields are validated as string[] and frozen (§5)", () => {

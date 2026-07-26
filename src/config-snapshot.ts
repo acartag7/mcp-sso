@@ -110,37 +110,47 @@ export function snapshotClientCredentials(enabled: boolean): ClientCredentialsOp
  *  data record, so unknown members must not ride onto the published object.
  *  `undefined` members are omitted so the shape matches what was validated.
  *
- *  Members are DEEP-cloned and the result DEEP-frozen, not copied one level:
- *  a JWK legally carries array-valued members (`key_ops` today; `x5c` if the
- *  allowlist ever grows), and a top-level copy would share those arrays with
- *  the caller — the same by-reference hole this module closes, one level down.
- *  Cloning structurally kills the class for every current and future member. */
-export function snapshotJwk(jwk: JWK): JWK {
+ *  Members are TYPE-CHECKED and rebuilt, never cloned blind and never copied
+ *  one level: a JWK legally carries array-valued members (`key_ops` today;
+ *  `x5c` if the allowlist ever grows), and a top-level copy would share those
+ *  arrays with the caller — the same by-reference hole this module closes, one
+ *  level down. Each member is validated against its RFC 7517/7518 type
+ *  (string, boolean, or string[]) and a fresh frozen value is built from the
+ *  checked primitives; a wrong-typed member — including shapes a blind
+ *  `structuredClone` would THROW `DOMException` on, like a function inside
+ *  `key_ops` — is an `AuthConfigError` naming the member, per the boundary
+ *  rule (a wrong type is a rejection, never a crash). `makeError` is injected
+ *  for the same no-import-cycle reason as `checkedStringArray`. */
+export function snapshotJwk(jwk: JWK, makeError: (message: string) => Error): JWK {
   const out: Record<string, unknown> = {};
-  for (const key of JWK_KEYS) {
+  for (const key of JWK_STRING_KEYS) {
     const value = (jwk as Record<string, unknown>)[key];
-    if (value !== undefined) out[key] = structuredClone(value);
+    if (value === undefined) continue;
+    if (typeof value !== "string") throw makeError(`signingPrivateJwk.${key} must be a string`);
+    out[key] = value;
   }
-  return deepFreeze(out) as JWK;
+  const ext = (jwk as Record<string, unknown>).ext;
+  if (ext !== undefined) {
+    if (typeof ext !== "boolean") throw makeError("signingPrivateJwk.ext must be a boolean");
+    out.ext = ext;
+  }
+  const keyOps = (jwk as Record<string, unknown>).key_ops;
+  if (keyOps !== undefined) {
+    const checked = stringArrayProblem("signingPrivateJwk.key_ops", keyOps);
+    if ("problem" in checked) throw makeError(checked.problem);
+    out.key_ops = checked.value; // fresh frozen copy, never the caller's array
+  }
+  return Object.freeze(out) as JWK;
 }
 
-/** Freeze `value` and every plain object/array reachable from it. JWK members
- *  are JSON data (strings, booleans, arrays of strings), so plain recursion
- *  over own enumerable values covers the whole shape. */
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object") {
-    for (const inner of Object.values(value)) deepFreeze(inner);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-/** Every JWK member this library reads or republishes: the EC key parameters
- *  (RFC 7518 §6.2) plus the JOSE header-ish metadata `publicJwk`/`keyId` use.
- *  A member outside this set is DROPPED, never published — the same fail-closed
- *  direction as `KNOWN_CONFIG_KEYS`. */
-const JWK_KEYS: readonly string[] = [
-  "kty", "crv", "x", "y", "d", "alg", "kid", "use", "key_ops", "ext",
+/** The string-valued JWK members this library reads or republishes: the EC key
+ *  parameters (RFC 7518 §6.2) plus the JOSE header-ish metadata
+ *  `publicJwk`/`keyId` use. `key_ops` (string[]) and `ext` (boolean) are
+ *  handled by their own typed branches above. A member outside the union of
+ *  the three is DROPPED, never published — the same fail-closed direction as
+ *  `KNOWN_CONFIG_KEYS`. */
+const JWK_STRING_KEYS: readonly string[] = [
+  "kty", "crv", "x", "y", "d", "alg", "kid", "use",
 ];
 
 /** Shape predicate for the signing key: EC P-256 with the private scalar and
