@@ -1126,9 +1126,17 @@ accepted for `https://a.test/`; nothing else is).
 **The exemption is scoped to `redirectAllowlist` — the deployer-written
 config — and to nothing else.** It is safe exactly there because a §10.1
 origin-form entry matches **origin-wide**, never by raw equality against a
-presented URI, so the two spellings cannot disagree about a match; boot folds
-the accepted entry to its canonical `href` for storage, and a rejection names
-the canonical form to paste back. On every OTHER surface the omitted-slash
+presented URI, so the two spellings cannot disagree about a match. **Boot does
+NOT rewrite the entry**: the array published is byte-identical to the array
+validated (obligation 1's read-once/publication rule — a separately normalized
+copy would be an array boot never validated, which is the
+validate-vs-publish class this repo has hit six times). The accepted
+omitted-slash spelling is therefore stored and matched AS WRITTEN, and it
+works because the §10.1 origin branch derives the origin from the parsed entry
+rather than comparing its bytes — `https://a.test` and `https://a.test/` both
+yield origin `https://a.test`, so the fold happens at COMPARISON time inside
+the matcher, never at storage time. A rejection still names the canonical form
+to paste back. On every OTHER surface the omitted-slash
 form is **REJECTED**, not accepted-then-folded:
 
 - **DCR `redirect_uris`** (obligation 2) — because §10.2 compares registered
