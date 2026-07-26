@@ -140,7 +140,13 @@ if (phases["flow-instance-binding"] !== true) {
     const res = await flow.handleAuthorize(req(query()));
     assert.equal(res.status, 302, "authorize must 302 to the IdP");
     const cookie = cookieOf(res);
-    // §17.11: the audience is the contracted per-flow value, not a side claim.
+    // §17.11 CONTRACTS this exact value (aud === "mcp-sso/upstream-flow" +
+    // callbackPath) — asserting it here pins the contract, not an
+    // implementation constant (the suite-faithfulness rule's carve-out: the
+    // expected value is derived from the contracted formula, imported from
+    // nowhere). Behavior-only assertions would pass an implementation that
+    // keeps the deployment-wide audience and adds a side binding claim,
+    // violating the locked contract while satisfying every cross-flow row.
     assert.equal(
       payloadOf(cookie).aud, `mcp-sso/upstream-flow${callbackPath}`,
       "flow token aud must be the prefix + this flow's callbackPath",
