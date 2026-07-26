@@ -853,7 +853,16 @@ the response. Wiring rules:
 >    incidental-snapshot property and serves `grant_types` as well as
 >    `redirect_uris` — and the §17.2 machine-shape rejection (§9.2) depends on
 >    seeing unfiltered `grant_types` members for exactly the same reason.
->    Neither filter may be removed without its snapshot. Today
+>    Neither filter may be removed without its snapshot. **And preserving the
+>    members is only half of it:** `registerClient`'s only `grant_types` check
+>    today is `input.grantTypes?.includes("client_credentials")`
+>    (`src/register.ts:56`), so once the filter stops dropping non-strings,
+>    `grant_types: [7]` simply passes through and the registration SUCCEEDS.
+>    So this obligation also owes: **every `grant_types` member is a primitive
+>    string or the registration is rejected `invalid_client_metadata`** (the
+>    §9.2 error for malformed metadata), with `[7]` and `[null]` as witnesses.
+>    Preserving a malformed member for inspection and then not inspecting it
+>    is strictly worse than filtering it. Today
 >    `registerClient` calls `assertAllowedRedirectUri` and DISCARDS its
 >    normalized return, storing the raw value, so `https://a.test:443/cb`
 >    registers successfully and produces a record the
@@ -1142,8 +1151,15 @@ raw entry MUST equal `new URL(entry).href`, with exactly one exemption — an
 origin-form entry MAY omit the root slash WHATWG appends (`https://a.test` is
 accepted for `https://a.test/`; nothing else is).
 
-**The exemption is scoped to `redirectAllowlist` — the deployer-written
-config — and to nothing else.** It is safe exactly there because a §10.1
+**The exemption is scoped to the §10.1 allowlist — deployer config AND the
+built-in defaults — and to nothing else.** The built-ins are themselves
+omitted-slash entries (`https://claude.ai`, `https://chatgpt.com`,
+`http://localhost`, `http://127.0.0.1` — all four verified non-canonical: each
+gains a root slash under `new URL(entry).href`), so the exemption must cover
+them or obligation 1's "every built-in default is §10.0-valid" unit test
+cannot pass. They are left in that spelling deliberately: it is the form
+deployers read in the docs and copy into config, and §10.1 matches them
+origin-wide either way (see below).** It is safe exactly there because a §10.1
 origin-form entry matches **origin-wide**, never by raw equality against a
 presented URI, so the two spellings cannot disagree about a match. **Boot does
 NOT rewrite the entry**: the array published is byte-identical to the array
