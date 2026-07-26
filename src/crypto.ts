@@ -182,7 +182,7 @@ function consentClaims(payload: JWTPayload): ConsentRequestClaims {
     : undefined;
   return {
     clientId: requiredString(payload.client_id, "client_id"),
-    redirectUri: requiredString(payload.redirect_uri, "redirect_uri"),
+    redirectUri: primitiveString(payload.redirect_uri, "redirect_uri"),
     resource: requiredString(payload.resource, "resource"),
     scopes,
     codeChallenge: requiredString(payload.code_challenge, "code_challenge"),
@@ -213,6 +213,11 @@ function accessClaims(payload: JWTPayload): VerifiedAccessToken {
 
 function requiredString(value: unknown, label: string): string {
   if (typeof value === "string" && value) return value;
+  throw new Error(`missing ${label}`);
+}
+
+function primitiveString(value: unknown, label: string): string {
+  if (typeof value === "string") return value;
   throw new Error(`missing ${label}`);
 }
 

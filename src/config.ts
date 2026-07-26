@@ -6,6 +6,7 @@
 import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
+import { parseRedirectEntry, RedirectEntryError } from "./redirect-entry.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
 
@@ -94,15 +95,16 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   // `ownKeys` trap could inject an unknown key via that spread. Pinning every
   // field to one read and building the output from named locals closes both
   // (contracts §5; the promise on KNOWN_CONFIG_KEYS above is then actually true).
-  // Nested object fields (dcr/dev/clientCredentials) are read from these refs but
-  // not deep-snapshotted — the depth-1 freeze residual is pre-existing; the
-  // demonstrated top-level vector (issuer getter + ownKeys proxy) is closed here.
+  // Nested object fields (dcr/clientCredentials) and the three non-redirect
+  // arrays remain the issue-#100 residual. redirectAllowlist is snapshotted here
+  // because §10.0 owns its validate-and-publish boundary.
   const issuer = input.issuer;
   const resource = input.resource;
   const consentSigningSecret = input.consentSigningSecret;
   const signingPrivateJwk = input.signingPrivateJwk;
   const signingKeyId = input.signingKeyId;
-  const redirectAllowlist = input.redirectAllowlist;
+  const rawRedirectAllowlist = input.redirectAllowlist;
+  const redirectAllowlist = snapshotRedirectAllowlist(rawRedirectAllowlist);
   const scopeCatalog = input.scopeCatalog;
   const defaultScopes = input.defaultScopes;
   const allowedOrigins = input.allowedOrigins;
@@ -178,6 +180,27 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
     clientCredentials, cimd, accessTokenTtlSeconds, refreshTokenTtlSeconds,
     consentTokenTtlSeconds, authorizationCodeTtlSeconds,
   });
+}
+
+function snapshotRedirectAllowlist(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new AuthConfigError("redirectAllowlist must be an array");
+  // Capture length ONCE and read each selected index once. Boot allowlist has no
+  // entry-count cap (deployer-written), but still rejects a non-integer length so
+  // a Proxy cannot force an unbounded scan via shifting length.
+  const length = value.length;
+  if (!Number.isInteger(length) || length < 0) {
+    throw new AuthConfigError("redirectAllowlist must be an array with a non-negative integer length");
+  }
+  const snapshot = Array.from({ length }, (_, index) => value[index]);
+  for (const entry of snapshot) {
+    try {
+      parseRedirectEntry(entry, { allowOmittedRootSlash: true });
+    } catch (error) {
+      const message = error instanceof RedirectEntryError ? error.message : "redirect entry is invalid";
+      throw new AuthConfigError(`redirectAllowlist ${message}`);
+    }
+  }
+  return Object.freeze(snapshot) as string[];
 }
 
 function validateUrl(allowInsecureLocalhost: boolean, label: string, value: string): void {

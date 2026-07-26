@@ -18,7 +18,7 @@ import { OAuthError } from "../errors.ts";
 import { isBasicAttempt } from "../client-auth.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
 import { renderConsentPage } from "./consent-page.ts";
-import { asOAuth, consentCookie, parseApproved, resolveIdentityWithAudit, stringArray } from "./bridge-internals.ts";
+import { asOAuth, consentCookie, parseApproved, resolveIdentityWithAudit } from "./bridge-internals.ts";
 export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
@@ -107,14 +107,13 @@ export class Bridge {
     try {
       await this.guard(req, "register");
       const body = formObject(req.body);
-      const redirectUris = stringArray(body.redirect_uris);
-      // RAW, uncoerced: `formField` would drop a present non-string value to
-      // `undefined`, silently taking the "web" default. registerClient rejects
-      // any present non-`native`/`web` value (fail-closed, no best-effort parse).
+      // All DCR metadata crosses as raw unknown values. registerClient owns the
+      // container → member → grammar checks and snapshots arrays before use.
+      const redirectUris = Object.hasOwn(body, "redirect_uris") ? body.redirect_uris : undefined;
       const applicationType = Object.hasOwn(body, "application_type") ? body.application_type : undefined;
-      // §17.2 machine-shape signals — parsed only so registerClient can REJECT them.
-      const tokenEndpointAuthMethod = formField(body, "token_endpoint_auth_method");
-      const grantTypes = stringArray(body.grant_types);
+      const tokenEndpointAuthMethod = Object.hasOwn(body, "token_endpoint_auth_method")
+        ? body.token_endpoint_auth_method : undefined;
+      const grantTypes = Object.hasOwn(body, "grant_types") ? body.grant_types : undefined;
       const registered = await registerClient(
         { config: this.config, clock: this.clock, audit: this.audit },
         { redirectUris, applicationType, tokenEndpointAuthMethod, grantTypes },

@@ -22,6 +22,7 @@ import { assertAllowedScopesCeiling, normalizeScopes } from "./scopes.ts";
 import { buildErrorRedirect } from "./challenge.ts";
 import type { CimdResolver } from "./cimd/resolve.ts";
 import type { CimdRegistration } from "./cimd/registration.ts";
+import { assertOAuthRedirectEntry } from "./redirect.ts";
 import {
   accumulationAllowed, assertApproveCimdGate, assertApproveOrigin, cimdDisplay, dedupe, hostOf,
   redirectWithCode, requiredStr, resolveAuthorizeClient,
@@ -195,7 +196,7 @@ export class OAuthAuthorizationUseCase {
       // branch (which would 302 to the token's redirectUri), before any jti
       // consume or code storage. A legacy URL-shaped token cannot be redeemed.
       assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
-
+      assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
       if (input.approved !== true) {
         const redirectTo = buildErrorRedirect(consent.redirectUri, "access_denied", consent.state);

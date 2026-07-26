@@ -7,6 +7,7 @@
 // strict parse of the signed `cimd` flow-cookie claim.
 
 import { assertCimdRedirectUri, type CimdDocument } from "./document.ts";
+import { isLoopbackRedirect, parseRedirectEntry } from "../redirect-entry.ts";
 
 export interface CimdRegistration {
   readonly client_id: string;
@@ -34,10 +35,12 @@ export function isCimdClientId(clientId: unknown): boolean {
 
 /** Explicit named-field projection at the fetch boundary (decision 1c). */
 export function projectCimdRegistration(document: CimdDocument): CimdRegistration {
+  const redirectUris = [...document.redirect_uris];
+  for (const uri of redirectUris) assertCimdRedirectUri(uri);
   return Object.freeze({
     client_id: document.client_id,
     client_name: document.client_name,
-    redirect_uris: Object.freeze([...document.redirect_uris]),
+    redirect_uris: Object.freeze(redirectUris),
   });
 }
 
@@ -77,38 +80,19 @@ export function parseCimdRegistrationClaim(value: unknown, expectedClientId: unk
  *  equal; port ignored). Called at authorize, at the callback row-5a gate, and
  *  at prepare's defensive re-check — never array `includes`. */
 export function cimdRedirectMatches(presented: unknown, registered: readonly string[]): boolean {
-  if (typeof presented !== "string" || presented.length === 0 || !Array.isArray(registered)) return false;
-  for (const entry of registered) {
-    if (typeof entry !== "string") continue;
-    if (entry === presented) return true;
-    if (loopbackAnyPortMatch(entry, presented)) return true;
-  }
-  return false;
-}
-
-function loopbackAnyPortMatch(entry: string, presented: string): boolean {
-  let registered: URL;
-  let candidate: URL;
+  if (!Array.isArray(registered)) return false;
   try {
-    // Canonicalize BOTH sides through the document validator before the
-    // any-port comparison. `new URL` alone compares protocol/host/path/search,
-    // so a presented URI carrying userinfo or a fragment
-    // (`http://x@127.0.0.1:7000/cb`, `.../cb#f`) matches a clean registered
-    // entry. Rule 20 assumes "fragment already rejected at validation", but
-    // rule 23 replaces §10's check for CIMD clients, so nothing else validates
-    // the PRESENTED uri on this path.
-    assertCimdRedirectUri(entry);
-    assertCimdRedirectUri(presented);
-    registered = new URL(entry);
-    candidate = new URL(presented);
+    const candidate = parseRedirectEntry(presented);
+    const entries = registered.map((entry) => parseRedirectEntry(entry));
+    return entries.some((entry) => entry.raw === candidate.raw || (
+      entry.url.protocol === "http:" && isLoopbackRedirect(entry)
+      && candidate.url.protocol === entry.url.protocol
+      && candidate.url.hostname === entry.url.hostname
+      && candidate.url.pathname === entry.url.pathname
+    ));
   } catch {
     return false;
   }
-  if (registered.protocol !== "http:" || !LOOPBACK_HOSTS.has(registered.hostname)) return false;
-  return candidate.protocol === registered.protocol
-    && candidate.hostname === registered.hostname
-    && candidate.pathname === registered.pathname
-    && candidate.search === registered.search;
 }
 
 /** §17.1.4 consent obligation: SHOULD warn when EVERY registered redirect is

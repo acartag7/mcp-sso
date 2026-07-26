@@ -11,9 +11,8 @@
 > unreleased).** Threats 17–25 cover the
 > [§17](./contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
 > contracts — most shipped in v0.2; CIMD (§17.1) is implemented on `main`
-> (S6a/S6b, frozen suites active; not yet released to npm or live-verified —
-> and the §10.0 half of rule 20 is implementation-pending with the
-> redirect-entry grammar, see the rows 5/9 note); device flow (§17.3) and the
+> (S6a/S6b, frozen suites active; not yet released to npm or live-verified,
+> including the §10.0 redirect-entry grammar; see the rows 5/9 note); device flow (§17.3) and the
 > GitHub identity port (§17.6) remain contract-locked, implementation pending.
 > Threats 29–33 cover the shipped [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
 > upstream redirect-leg orchestrator, including the per-flow audience binding
@@ -23,7 +22,7 @@
 > [§4.1](./contracts.md#41-dynamic-key-and-parsed-record-composition-boundary).
 > Threat 35 covers the CIMD × upstream-redirect flow
 > ([§17.1.6](./contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)),
-> implemented on `main` with the same rule-20 exception.
+> implemented on `main`, including rule 20's shared entry grammar.
 
 ## Assets
 
@@ -158,11 +157,11 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 2 | Steal/replay a refresh token | Spoofing / Elevation | Rotation marks consumed; replay ⇒ family revoked; RFC 6749 §6 client binding; rotation backfill blocks poisoning | None beyond the race window (reuse revokes immediately) |
 | 3 | Forge a token (key compromise / `none`-alg) | Spoofing | ES256/HS256 alg pin; key separation; key-strength boot checks | A compromised signing key = total break; mitigated by supply-chain + ops hygiene |
 | 4 | CSRF an `approve` to mint a code | Tampering | Core `origin` check (fail-closed); single-use consent JTI (primary replay defense). The consent surface sets **no cookie**; the optional `mcp_idp_consent` cookie is a deployer seam whose attributes the deployer owns. The §17.11 flow cookie is separate and never touches the consent surface (rows 29–33) | None meaningful |
-| 5 | Open-redirect / `redirect_uri` abuse | Spoofing / Elevation | **Mode-appropriate validation** ([§10](./contracts.md#10-redirect-uri-policy) anchored allowlist for opaque ids; the CIMD document exact/loopback-any-port match for CIMD ids — [§17.1.6](./contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23) decision 1); error redirects target only the validated `redirect_uri`. Entry grammar: [row 5/9 note](#rows-59--the-redirect-entry-grammar-pending) | None (a redirect can only go to a validated URI — §10 or the CIMD document match) |
+| 5 | Open-redirect / `redirect_uri` abuse | Spoofing / Elevation | **Mode-appropriate validation** ([§10](./contracts.md#10-redirect-uri-policy) anchored allowlist for opaque ids; the CIMD document exact/loopback-any-port match for CIMD ids — [§17.1.6](./contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23) decision 1); error redirects target only the validated `redirect_uri`. Entry grammar: [row 5/9 note](#rows-59--the-redirect-entry-grammar) | None (a redirect can only go to a validated URI — §10 or the CIMD document match) |
 | 6 | Token substitution across resources | Elevation | Audience fail-closed ([§7.2](./contracts.md#72-access-token-es256-audience-bound-fail-closed)) | None |
 | 7 | PRM/metadata substitution (client-side) | Spoofing | https-only (TLS); RFC 9728 §3.3 client validates `resource` matches; bridge emits `resource`=config | MITM on non-TLS — excluded by https-only (loopback dev aside) |
 | 8 | DCR flooding / audit spam | DoS | Stateless registrations are cheap; audit is metadata-only; `RateLimitPort` hook exists (fix #7) | The hook defaults to no-op — `/oauth/register` + `/oauth/token` can be hammered unless a deployer injects a real limiter or fronts the bridge with a rate-limiting proxy |
-| 9 | Stored-mode client spoofing (claim another's redirect) | Spoofing / Elevation | Registration validates each `redirect_uri` via the global allowlist ([§10.1](./contracts.md#101-global-allowlist-stateless-dcr-mode--assertallowedredirecturi)); `application_type` per-type policy blocks a web client widening via native. Entry grammar: [row 5/9 note](#rows-59--the-redirect-entry-grammar-pending) | None (only already-trusted URIs registerable) |
+| 9 | Stored-mode client spoofing (claim another's redirect) | Spoofing / Elevation | Registration validates each `redirect_uri` via the global allowlist ([§10.1](./contracts.md#101-global-allowlist-stateless-dcr-mode--assertallowedredirecturi)); `application_type` per-type policy blocks a web client widening via native. Entry grammar: [row 5/9 note](#rows-59--the-redirect-entry-grammar) | None (only already-trusted URIs registerable) |
 | 10 | Scope escalation | Elevation | `normalizeScopes` vs catalog (unknown ⇒ reject); server-authoritative prior-scopes (derived, not client-claimed); consent shows the delta; `requireScope` at the RS | None |
 | 11 | Consent replay | Tampering | Single-use consent JTI; atomic `consumeConsentJti` | None |
 | 12 | Identity spoofing | Spoofing | `IdentityPort` verifies the upstream credential; no/failed identity ⇒ 401 fail-closed; no passthrough | Depends on the concrete port validating iss/aud/tid. Header mode (`identityHeader`) carries a nonce residual — [see below](#row-12--header-mode-nonce-residual). The §17.11 redirect orchestrator does not (it mints its own nonce, row 31) |
@@ -192,9 +191,8 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 36 | Clickjacking of the consent / pairing page (framed + overlaid Approve) | Spoofing / Elevation | Both HTML responses send `frame-ancestors 'none'` **and** `x-frame-options: DENY` (CSP3 does NOT fall back to `default-src` for `frame-ancestors`, so `default-src 'none'` alone does not frame-block), plus `form-action 'self'` and `referrer-policy: no-referrer`. Applies to `CONSENT_HEADERS` (`adapters/bridge.ts`) and its mirror `PAIRING_HEADERS` (`adapters/pairing-flow.ts`); all three adapters relay response headers verbatim. **The two pages carry different risk and the headers are not claimed to do the same work on both:** the CONSENT page is the real target (it holds the Approve control this row is about); the PAIRING page's only control is `Continue` and its code is TYPED IN by the operator (printed to stderr, never in the markup), so framing it yields UI redress on a form that still requires a code readable only from the server console — defense-in-depth plus mirror-drift prevention, not a specific bypass | Row 17 makes the user's judgment at this page the last line of defence, and CIMD needs no registration to reach it — so framing would nullify that mitigation with a single click. `SameSite` does not help (the consent token is a hidden form field, and the POST originates from the mcp-sso document, so `assertApproveOrigin` passes). A deployer fronting the bridge with a proxy that STRIPS or rewrites these headers reopens it — outside the library's control, same class as row 12 |
 | 37 | (v0.2) Cross-flow upstream-callback substitution in a multi-IdP deployment (a cookie minted by one `createUpstreamRedirectFlow` redeemed at another's callback) | Spoofing / Elevation | **Shipped** (`signFlowToken`/`verifyFlowToken` take a required `callbackPath`; frozen suite `flow-instance-binding` active). The flow JWT's `aud` is bound to the flow instance — `"mcp-sso/upstream-flow" + callbackPath` (§17.11 "flow-instance binding"). `callbackPath` is already unique per mounted flow and boot-validated by `assertCallbackPath` into a canonical literal. A non-matching cookie fails `jwtVerify` at **row 3** (`flow_cookie_invalid`) — before jti consumption and before any token exchange — so the wrong IdP is never contacted | Before the binding, every flow built from one signing secret accepted every other flow's cookies: the user picks one IdP and a different one authenticates them (an authentication-provider **confused deputy**), and because CIMD resolution runs pre-identity the initiating request is unauthenticated. MEDIUM not HIGH — the shipped adapters mount a single flow, which is unaffected — but the exported factory permits the multi-flow topology. Residual: a leaked `consentSigningSecret` still forges any flow token (row 33's trust assumption); binding narrows scope, it does not replace the secret's role |
 
-### Rows 5/9 — the redirect-entry grammar (pending)
+### Rows 5/9 — the redirect-entry grammar
 
-⚠️ **Contract-only; not enforced in code yet.**
 [§10.0](./contracts.md#100-the-redirect-entry-grammar-one-definition-every-consumer)
 defines one closed entry grammar for every consumer, checked on the raw string.
 
@@ -203,13 +201,9 @@ matcher, and the CIMD document validator gave different verdicts on `*`,
 `javascript:`, empty userinfo, a bare `?`, case-folded and percent-encoded
 hosts, `:443`, and dot segments.
 
-For stored DCR (row 9) it adds two guards that must land together: registration
+For stored DCR (row 9) the two guards land together: registration
 **REJECTS** a non-canonical `redirect_uri` and stores accepted input
-byte-for-byte (today it discards the normalized value and stores raw, so a
-client can register `https://a.test:443/cb` and then never authorize — §10.2
-compares by raw equality; canonicalizing on the client's behalf would instead
-store and echo bytes the client never sent, so its own spelling would then be
-refused), and §10.2 re-validates each
+byte-for-byte, while §10.2 re-validates each
 registered URI **at read**, covering records written before the grammar existed
 or populated out-of-band. The read guard generalizes: **every carrier that
 outlives the check that admitted it re-validates on read** — the stored client
