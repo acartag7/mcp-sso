@@ -201,6 +201,16 @@ if (phases["flow-instance-binding"] !== true) {
     assert.equal(idB.exchangeCalls(), 0);
     assert.equal(res.status, 400);
     assert.ok(audit.callbackReasons().includes("flow_cookie_invalid"));
+
+    // Same jti-ordering proof as the A→B direction: a direction-sensitive
+    // implementation could consume B's jti before rejecting here. B must still
+    // redeem its own cookie afterwards.
+    const redeemed = await flowB.handleCallback(req(
+      { state: b.state, code: "code-from-idp-B" },
+      { cookie: `__Host-mcp-sso-upstream=${b.cookie}` },
+    ));
+    assert.equal(idB.exchangeCalls(), 1, "flow B must still redeem its own cookie after A rejected it");
+    assert.equal(redeemed.status, 200, "A's rejection must not have consumed B's jti");
     await store.close();
   });
 
