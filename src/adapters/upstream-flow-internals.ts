@@ -5,12 +5,16 @@
 // the clock is passed in (no ambient time). Everything is framework-free.
 
 import { timingSafeEqual } from "node:crypto";
-import { SignJWT, jwtVerify } from "jose";
 import { AuthConfigError } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildErrorRedirect } from "../challenge.ts";
 import { headerString, type NormRequest, type NormResponse } from "./http.ts";
-import { parseCimdRegistrationClaim, type CimdRegistration } from "../cimd/registration.ts";
+
+// The flow JWT moved to its own module (250-line limit); re-exported here so
+// every existing importer of these names keeps working unchanged.
+export {
+  FLOW_AUDIENCE, flowAudience, signFlowToken, verifyFlowToken, type FlowClaims,
+} from "./upstream-flow-jwt.ts";
 
 /** The client OAuth params that round-trip through the signed flow cookie —
  *  exactly the §9.3 authorize inputs (same set pairing-flow.ts hidden-fields). */
@@ -21,11 +25,6 @@ export const OAUTH_PARAM_KEYS = [
 
 /** Callback query params checked for RFC 6749 §3.1 duplicates (failure row 1). */
 const CALLBACK_DUP_KEYS = ["state", "code", "error", "error_description"] as const;
-
-/** Pinned audience for the flow JWT — distinct from `mcp-sso/consent` so a flow
- *  token can never be replayed as a consent token (and vice-versa), even though
- *  both are HS256-signed with the same consent secret (§17.11). */
-export const FLOW_AUDIENCE = "mcp-sso/upstream-flow";
 
 /** A browser rejects a cookie whose value exceeds ~4096 bytes; the flow cookie
  *  value is the signed JWT (it carries the round-tripped client params, so an
@@ -118,96 +117,6 @@ export function assertCallbackPath(path: string, issuerOrigin: string, resourceP
   if (RESERVED_CALLBACK_ROUTES.includes(path) || path === resourcePath || path.startsWith("/.well-known/")) {
     throw new AuthConfigError(`callbackPath must not be a reserved route: ${path}`);
   }
-}
-
-// --- flow JWT (HS256, consent secret, pinned aud) ---
-
-export interface FlowClaims {
-  jti: string;
-  state: string;
-  nonce: string;
-  codeVerifier: string;
-  params: Record<string, string>;
-  exp: number;
-  /** The validated CIMD registration carried forward under this token's HS256
-   *  signature (§17.1.6 decision 1c). Absent for a non-CIMD flow. */
-  cimd?: CimdRegistration;
-}
-
-function flowSecret(consentSigningSecret: string): Uint8Array {
-  return new TextEncoder().encode(consentSigningSecret);
-}
-
-export async function signFlowToken(args: {
-  secret: string; issuer: string; clock: { nowMs(): number };
-  jti: string; state: string; nonce: string; codeVerifier: string;
-  params: Record<string, string>; ttlSeconds: number;
-  /** EXACTLY a `CimdRegistration` — never a raw `CimdDocument` (decision 1c:
-   *  signing the document would carry attacker-controlled members). */
-  cimd?: CimdRegistration;
-}): Promise<string> {
-  const now = Math.floor(args.clock.nowMs() / 1000);
-  return await new SignJWT({
-    jti: args.jti, state: args.state, nonce: args.nonce,
-    code_verifier: args.codeVerifier, params: args.params,
-    ...(args.cimd === undefined ? {} : {
-      cimd: {
-        client_id: args.cimd.client_id,
-        client_name: args.cimd.client_name,
-        redirect_uris: [...args.cimd.redirect_uris],
-      },
-    }),
-  })
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-    .setIssuer(args.issuer)
-    .setAudience(FLOW_AUDIENCE)
-    .setIssuedAt(now)
-    .setExpirationTime(now + args.ttlSeconds)
-    .sign(flowSecret(args.secret));
-}
-
-/** Verify signature + iss + aud. Expiry is NOT checked here (currentDate=epoch
- *  disables jose's exp rejection) so the caller can distinguish row 3 (this
- *  throw ⇒ flow_cookie_invalid) from row 4 (manual exp ⇒ flow_expired). A
- *  structurally-malformed payload on a validly-signed token also throws ⇒ row 3. */
-export async function verifyFlowToken(token: string, secret: string, issuer: string): Promise<FlowClaims> {
-  const { payload } = await jwtVerify(token, flowSecret(secret), {
-    algorithms: ["HS256"], issuer, audience: FLOW_AUDIENCE, currentDate: new Date(0),
-  });
-  const rawParams = payload.params;
-  if (typeof rawParams !== "object" || rawParams === null || Array.isArray(rawParams)) {
-    throw new Error("flow params missing");
-  }
-  const params: Record<string, string> = {};
-  for (const [k, v] of Object.entries(rawParams)) if (typeof v === "string") params[k] = v;
-  return {
-    jti: requiredString(payload.jti, "jti"),
-    state: requiredString(payload.state, "state"),
-    nonce: requiredString(payload.nonce, "nonce"),
-    codeVerifier: requiredString(payload.code_verifier, "code_verifier"),
-    params,
-    // exp is always set by signFlowToken; a signed token missing it (or non-numeric)
-    // is structurally malformed ⇒ throw ⇒ row 3 flow_cookie_invalid. Never coerce
-    // to 0 (that would silently skip the row-4 expiry check).
-    exp: requiredPositiveNumber(payload.exp, "exp"),
-    // §17.1.6 decision 1d(i): strict shape parse. A PRESENT-but-malformed claim
-    // THROWS here ⇒ row 3 (invalid_request / flow_cookie_invalid), consistent
-    // with the other cookie-integrity failures. Unknown members are ignored
-    // (named projection, never Object.assign).
-    ...(Object.hasOwn(payload, "cimd")
-      ? { cimd: parseCimdRegistrationClaim(payload.cimd, params.client_id) }
-      : {}),
-  };
-}
-
-function requiredPositiveNumber(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new Error(`flow token missing ${label}`);
-  return value;
-}
-
-function requiredString(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value) throw new Error(`flow token missing ${label}`);
-  return value;
 }
 
 /** Timing-safe string compare; length mismatch fails (returns false). */

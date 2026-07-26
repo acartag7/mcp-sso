@@ -2,5 +2,5 @@
   "s6a-cimd-primitives": true,
   "s6b-cimd-flow": true,
   "s6b-waiter-cap": true,
-  "flow-instance-binding": false
+  "flow-instance-binding": true
 }

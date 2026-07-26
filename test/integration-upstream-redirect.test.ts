@@ -117,7 +117,10 @@ test("integration — Entra-redirect branch: buildExample full flow (stubbed JWK
       assert.match(sc, /^mcp-sso-upstream=[^;]+; Path=\/; HttpOnly; SameSite=Lax; Max-Age=600$/, "loopback cookie profile (no Secure/__Host-)");
       const cookieJwt = sc.slice("mcp-sso-upstream=".length, sc.indexOf(";"));
       const claims = decodeJwt(cookieJwt);
-      assert.equal(claims.aud, "mcp-sso/upstream-flow", "distinct pinned audience");
+      // §17.11 flow-instance binding: the audience is per-flow (prefix +
+    // callbackPath), not the deployment-wide prefix, so a sibling flow's cookie
+    // cannot be redeemed here.
+    assert.equal(claims.aud, "mcp-sso/upstream-flow/oauth/callback", "per-flow pinned audience");
       assert.ok((claims.jti as string).startsWith("upf_"));
       capturedNonce = claims.nonce as string; // the token-endpoint stub will bind the id_token to this
 
