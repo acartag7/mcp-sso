@@ -13,4 +13,5 @@ coverage/
 
 # Session artifacts (agent tooling — not project files)
 .codex/
+.entire/
 .live-evidence/
