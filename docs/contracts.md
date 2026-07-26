@@ -622,7 +622,7 @@ its obligation list).
   original spelling). One accepted spelling in, the same bytes stored, the
   same bytes echoed, and the same bytes matched at authorize — which is what
   makes raw equality sound end to end. The DCR RESPONSE therefore echoes
-  exactly what was registered. At **authorize/token time** the `client_id` MUST exist in the store and
+  exactly what was registered. At **authorize time** the `client_id` MUST exist in the store and
   the presented `redirect_uri` MUST match that client's **per-type policy (§10.2)**
   — native ⇒ RFC 8252 loopback any-port, web ⇒ https exact. This is the RC-aligned
   path: native and web clients get the right redirect handling by type, instead of
@@ -1167,7 +1167,13 @@ root-slash spelling (`https://a.test`, `https://a.test/`) are BOTH origin form
 — the root slash alone is never an exact-URI path, so no entry satisfies both
 definitions. The first character after the authority decides: nothing or a
 lone `/` ⇒ origin form; `/` followed by
-anything ⇒ exact-URI form.
+at least one NON-EMPTY segment ⇒ exact-URI form. A path that is only slashes
+(`https://a.test//`) is neither: it is canonical under WHATWG (verified —
+`pathname === "//"`) but has no non-empty segment, so it satisfies neither
+form and is **REJECTED**. Stating it explicitly because the two readings
+disagree — the definition requires a non-root segment while "`/` followed by
+anything" would admit it — and an empty-segment path is exactly the shape
+that makes two matchers differ.
 
 **Origin form is origin-wide ONLY in §10.1.** The same entry means something
 narrower everywhere else, and the difference is security-relevant, so it is
@@ -1371,8 +1377,9 @@ registration write in BOTH modes (§9.2 — entries must arrive already
 canonical; stored persists them unchanged, stateless persists nothing and
 echoes them unchanged, per obligation 2: the
 same endpoint must not accept or echo what the grammar forbids); (3) the
-stored-state READ at authorize/token
-(§10.2 — the paragraph below); (4) CIMD document validation
+stored-state READ at AUTHORIZE (§10.2 — the paragraph below; token
+exchange never re-reads the registration on the authorization-code path,
+which is precisely why consumer (9) exists); (4) CIMD document validation
 (`assertCimdRedirectUri`, §17.1.5 rule 20); (5) the **exported §10.1 matcher
 itself** (`assertAllowedRedirectUri`), which applies the predicate to each
 allowlist entry it READS before matching; (6) the **flow-cookie CIMD
@@ -1400,7 +1407,7 @@ exchange** (`consumeValidCode`, `src/token.ts:208-218`), which today compares
 the presented `redirect_uri` to `record.redirectUri` and checks PKCE but
 applies no grammar, so a code minted under the old grammar keeps minting
 access and refresh tokens for `authorizationCodeTtlSeconds` after the
-upgrade — the §10.2 "read at authorize/token" does NOT cover this, because
+upgrade — §10.2's registration read does NOT cover this, because
 the code path never re-reads the client registration.
 
 **Why the list ends at nine, and how to re-derive it.** Consumers (3), (6),
@@ -1587,14 +1594,25 @@ cosmetic:
   canonical.
 
 ### 10.2 Per-client policy (stored-DCR) — RC item (b)
-At authorize/token in stored mode, the client's registered `applicationType`
+At **authorize** in stored mode (the authorization-code token path never
+re-reads the registration — verified: `src/token.ts`'s only `clientStore.find`
+is on the `client_credentials` machine-client path, `token.ts:169`), the
+client's registered `applicationType`
 selects the rule (every registered URI it reads is first re-validated against
 §10.0 — the stored-state read guard, obligation 3 there, ⚠️
 implementation-pending with the rest of §10.0):
 - **`native`** → RFC 8252: the registered entry must be a §10.0-valid loopback
   URI (`localhost`/`127.0.0.1`/`[::1]`); the presented `redirect_uri` matches it
   on **scheme + hostname + pathname + search, with the port ignored** — never
-  host-only. "Origin" appears nowhere in this rule on purpose: the match tuple
+  host-only. **The port-ignoring rule is scoped, and the three statements of
+  it elsewhere must agree with this one:** §10.1 widens only a PORTLESS
+  LOOPBACK ORIGIN entry (any port on that origin); stored-`native` and the
+  §17.1.6 CIMD loopback-`http` case compare scheme+host+path+search with the
+  port ignored; and every `https` comparison stays exact raw equality WITH
+  the port included (§17.1.5 rule 20's "port included" applies to that case,
+  not to loopback `http`). A reader who takes any one of those sentences as
+  the general rule derives a different matcher — which is why they are
+  enumerated together here. "Origin" appears nowhere in this rule on purpose: the match tuple
   includes the path and query, exactly as §17.1.5 rule 20 and the shipped
   matcher (`src/redirect.ts:95-103`) define it, so a client registered for
   `http://127.0.0.1/cb` does not match a presented `http://127.0.0.1/other`.
