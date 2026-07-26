@@ -876,7 +876,27 @@ the response. Wiring rules:
 >    `grant_types: 7`, and `redirect_uris: "https://a.test/cb"` (the
 >    same shape as the `allowedOrigins` substring-gate defect — a bare string where an array is
 >    expected) all rejected. Absent remains valid for `grant_types` (it is
->    optional); `redirect_uris` absent is already `invalid_request` per §9.2. Today
+>    optional); `redirect_uris` absent is already `invalid_request` per §9.2.
+>    **This coercion defect is a CLASS with FOUR members, not two.**
+>    `Bridge.handleRegister` also reads `token_endpoint_auth_method` and
+>    `application_type` through `formField` (`src/adapters/bridge.ts:114,116`;
+>    `src/adapters/http.ts`), whose
+>    `typeof value === "string" && value ? value : undefined` collapses a
+>    number, `null`, an object, AND the empty string to `undefined`. For
+>    `token_endpoint_auth_method` that is a live §17.2 bypass:
+>    `registerClient`'s gate is
+>    `input.tokenEndpointAuthMethod !== undefined && !== "none"`
+>    (`src/register.ts:50`), so probed — `"client_secret_basic"` is correctly
+>    rejected while `7`, `""`, `null`, and `{}` all coerce to `undefined` and
+>    REGISTER, letting a client request a secret-bearing registration and slip
+>    the machine-shape gate by malforming the TYPE rather than the value.
+>    `application_type` coerces identically (verified). So the rule
+>    generalizes: **a present DCR metadata field of the wrong type is
+>    `invalid_client_metadata`, never coerced to `undefined`/`[]`/absent** —
+>    for all four of `redirect_uris`, `grant_types`,
+>    `token_endpoint_auth_method`, and `application_type`, each with `7`,
+>    `""`, `null`, `{}` witnesses, each exercised through the Bridge per (c)
+>    above. Today
 >    `registerClient` calls `assertAllowedRedirectUri` and DISCARDS its
 >    normalized return, storing the raw value, so `https://a.test:443/cb`
 >    registers successfully and produces a record the
@@ -913,8 +933,37 @@ the response. Wiring rules:
 >    reads** before matching (consumer (5) — the export-path sibling of 3;
 >    rationale in the consumer list below). A non-conforming entry is refused
 >    `invalid_redirect_uri`, never skipped and never matched.
-> 6. **One rejection test per row of this closed list**, each asserting the
->    error names the offending entry: `*`; any `*`-bearing entry — in the host
+> 6. **One rejection test per row of this closed list.** Two requirements on
+>    HOW each row is tested, because without them the whole list is
+>    tautological — measured on HEAD, every entry-grammar witness below
+>    currently "passes" by rejecting with `redirect_uri is not allowed`
+>    (allowlist NON-MEMBERSHIP), and each one is ACCEPTED the moment the entry
+>    is actually placed:
+>
+>    - **(a) Defeat membership first.** For a matcher/export or stored-read
+>      leg, the forbidden string MUST be placed as the allowlist/registered
+>      entry under test (or the leg must be pinned to boot / the CIMD document
+>      validator, where the entry IS the input). A witness that is merely
+>      absent from the allowlist proves nothing about the grammar: probed —
+>      `javascript:alert(1)`, `http://a.test/cb`, and
+>      `https://client.test/cb#frag` all reject with "not allowed" when
+>      unplaced, and all three ACCEPT when placed.
+>    - **(b) Assert the REASON, not just the throw.** Each test asserts the
+>      error identifies the grammar rule and names the offending entry —
+>      never merely that an `OAuthError` was raised. (Rows whose subject is
+>      not a single entry — a non-array `redirectAllowlist`, a 17-entry DCR
+>      array — assert the field name and the rule instead; "names the
+>      offending entry" is not literally satisfiable there.)
+>    - **(c) Pin the PRODUCTION path for adapter-boundary rows.** The
+>      container/member rows must be exercised through `Bridge.handleRegister`
+>      with a raw JSON body, not against `registerClient` alone: probed,
+>      `grant_types: "client_credentials"` is REJECTED by `registerClient`
+>      directly (`String.prototype.includes` matches the substring) but
+>      ACCEPTED with 201 through the Bridge (`stringArray` collapses it to
+>      `[]`). A unit test against the core alone stays green while the real
+>      §17.2 bypass remains open.
+>
+>    The rows, each asserting the error names the offending entry: `*`; any `*`-bearing entry — in the host
 >    (`https://*.a.test/cb`) OR the path (`https://a.test/cb*`,
 >    `https://a.test/*`; a host-star is WHATWG-canonical — verified — so the
 >    test proves the `*` rule fires on its own, not via canonicality); a non-`http(s)`
