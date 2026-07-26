@@ -78,7 +78,8 @@
     "typecheck": "tsc --noEmit",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "prepublishOnly": "pnpm run build",
-    "check:lines": "node scripts/check-line-length.mjs"
+    "check:lines": "node scripts/check-line-length.mjs",
+    "check:seams": "node scripts/check-acceptance-seams.mjs"
   },
   "dependencies": {
     "jose": "6.2.3"
