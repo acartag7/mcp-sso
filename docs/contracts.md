@@ -902,7 +902,17 @@ the response. Wiring rules:
 >    DCR modes (the reject-don't-strip rule under "The two matching
 >    policies" — today both matchers strip and match); a CIMD document entry
 >    in omitted-slash form (`https://a.test` — rejected `document_invalid`
->    per obligation 4's CIMD tightening).
+>    per obligation 4's CIMD tightening); and **non-canonical PRESENTED
+>    `redirect_uri`s against a canonical registration** — one witness per fold
+>    WHATWG performs, since each currently collapses into a false match:
+>    scheme case (`HTTPS://a.test/cb`), host case (`https://A.TEST/cb`),
+>    default port (`https://a.test:443/cb`), dot segments
+>    (`https://a.test/x/../cb`), and all of them at once
+>    (`HTTPS://A.TEST:443/x/../cb`, verified to normalize to exactly
+>    `https://a.test/cb` on Node 24). Each must be REFUSED against a
+>    registration of `https://a.test/cb`, in both DCR modes — these are the
+>    request-bytes-never-registered cases, and the `web` leg is where the
+>    §10.2 exact-match policy lives.
 > 7. **Positive tests** that the grammar does not over-reject: all four built-in
 >    defaults, `https://a.test` (omitted root slash), `https://a.test/`,
 >    `http://[::1]:9`, `https://xn--80a.test` (punycode — the ASCII form of the Cyrillic host above), and
@@ -1216,11 +1226,32 @@ cosmetic:
   `https://@ok.test` parse to an empty `search`/`username`, so a parsed-field
   check classifies them origin-only and grants that origin-wide match — while
   the text reads as something narrower.
-- **Exact-URI entries match by string equality** against the normalized
-  presented URI, which is why the grammar requires canonical form: a
-  non-canonical entry (`HTTPS://…`, `…:443/cb`, a `/x/../cb` dot segment,
-  surrounding whitespace) matches **nothing**, so the deployer's configured
-  callback fails at authorization instead of at boot.
+- **Exact-URI entries match by RAW string equality** — the presented
+  `redirect_uri` is compared byte-for-byte against the entry, with **no
+  normalization of either side**. This is why the grammar requires canonical
+  form: a non-canonical entry (`HTTPS://…`, `…:443/cb`, a `/x/../cb` dot
+  segment, surrounding whitespace) matches **nothing**, so the deployer's
+  configured callback fails at boot instead of at authorization.
+
+  ⚠️ **Implementation-pending, and the presented side is the half that is
+  wrong today.** Both matchers currently normalize the request before
+  comparing (`url.hash = ""; const normalized = url.href` —
+  `src/redirect.ts:83-86`), so a client presenting
+  `HTTPS://A.TEST:443/x/../cb` collapses to `https://a.test/cb` and matches a
+  registration of that URI (verified on Node 24: case, default port, and dot
+  segments all fold). That accepts **request bytes that were never
+  registered**, which is the same reject-don't-normalize rule this section
+  applies to entries, applied to only one side — and RFC 6749 §3.1.2.3
+  requires *simple string comparison* for exactly this reason.
+
+  So the presented `redirect_uri` MUST ITSELF BE §10.0-VALID: canonical
+  spelling, no fragment (rejected, per "The two matching policies" above),
+  no userinfo, http only on loopback. A non-canonical presented value is
+  refused `invalid_redirect_uri` — never folded into a match. The **native
+  loopback exception is unchanged and remains the only one**: RFC 8252 §7.3
+  ports vary by design, so that branch compares scheme + hostname + pathname
+  + search with the port ignored, on two values that are each already
+  canonical.
 
 ### 10.2 Per-client policy (stored-DCR) — RC item (b)
 At authorize/token in stored mode, the client's registered `applicationType`
@@ -1235,8 +1266,13 @@ implementation-pending with the rest of §10.0):
   matcher (`src/redirect.ts:95-103`) define it, so a client registered for
   `http://127.0.0.1/cb` does not match a presented `http://127.0.0.1/other`.
   Only the port is elastic (lets CLI/desktop clients use ephemeral ports).
-- **`web`** → `https` only, and the presented `redirect_uri` must **exactly** equal
-  a registered URI (no port widening, no origin wildcard).
+- **`web`** → `https` only, and the presented `redirect_uri` must equal a
+  registered URI by **RAW string comparison** — no port widening, no origin
+  wildcard, and **no normalization of the presented value** (RFC 6749
+  §3.1.2.3 simple string comparison; see the §10.1 consequence above, where
+  today's normalize-then-compare is recorded as the pending half). A
+  presented value that is not itself §10.0-valid is refused before any
+  comparison.
 
 This replaces the source's blanket loopback-for-everyone default in stored mode.
 
