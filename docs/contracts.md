@@ -931,16 +931,32 @@ the response. Wiring rules:
 >    registration of `https://a.test/cb`, in both DCR modes — these are the
 >    request-bytes-never-registered cases, and the `web` leg is where the
 >    §10.2 exact-match policy lives.
-> 7. **Positive tests** that the grammar does not over-reject — **scoped per
->    consumer, because the omitted-slash exemption is `redirectAllowlist`-only
->    and this list would otherwise contradict obligations 2 and 4:**
->    *In `redirectAllowlist` (boot)*: all four built-in defaults, plus the
->    omitted-slash forms `https://a.test`, `https://xn--80a.test` (punycode —
->    the ASCII form of the Cyrillic host above), and `http://[::1]:9`.
->    *In EVERY consumer, including DCR and CIMD*: their canonical spellings
->    `https://a.test/`, `https://xn--80a.test/`, `http://[::1]:9/`, and
->    `https://a.test/cb%2F..%2Fadmin` (canonical, inert) all pass; and an empty
->    array remains valid. Plus a **round-trip** test: a URI accepted at
+> 7. **Positive tests** that the grammar does not over-reject. **Each case is
+>    listed under the consumer it applies to** — this list must never say
+>    "every consumer", because the consumers have DIFFERENT admissible sets:
+>    the omitted-slash exemption is `redirectAllowlist`-only (obligations 2
+>    and 4 reject it), emptiness is `redirectAllowlist`-only (DCR and CIMD
+>    require 1..16 entries per §9.2 / §17.1.5 rule 19), and stored DCR
+>    additionally partitions by `applicationType`. A positive case asserted
+>    against the wrong consumer is a test that CANNOT pass without weakening a
+>    rule.
+>    - *`redirectAllowlist` (boot)*: all four built-in defaults; the
+>      omitted-slash forms `https://a.test`, `https://xn--80a.test` (punycode
+>      — the ASCII form of the Cyrillic host above), `http://[::1]:9`; their
+>      canonical spellings; `https://a.test/cb%2F..%2Fadmin` (canonical,
+>      inert); **and an EMPTY array** (the built-in defaults cover the common
+>      case — §10.0's "empty is valid" rule lives here and only here).
+>    - *Stored DCR, `web`*: `https://a.test/` and
+>      `https://a.test/cb%2F..%2Fadmin` — https, canonical, 1..16 entries.
+>      NOT `http://[::1]:9/` (web is https-only) and not an empty array.
+>    - *Stored DCR, `native`*: `http://[::1]:9/`, `http://127.0.0.1/cb`,
+>      `http://localhost/cb` — loopback, canonical. NOT a non-loopback https
+>      entry (§10.2 native policy) and not an empty array.
+>    - *Stateless DCR*: the `web` set (the global allowlist governs; §9.2
+>      persists nothing but echoes the accepted entry unchanged).
+>    - *CIMD document*: `https://a.test/` plus a loopback `http://[::1]:9/`
+>      — rule 20's scheme/host rule, canonical spelling, 1..16 entries.
+>    Plus a **round-trip** test per applicable consumer: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
 > 8. A **differential test** exercising **all NINE consumers of the closed
 >    list** — boot config, the DCR registration write in BOTH modes (the
@@ -1339,9 +1355,12 @@ whose text no longer describes the deployed policy, and the same rewrite applied
 to an entry the deployer *intended* differently is an undetectable widening. The
 error names the offending entry and shows its canonical form to paste back.
 
-**Empty is valid, entries are not optional.** An empty `redirectAllowlist` is
-correct configuration (the built-in defaults below cover the common case). Only
-*entries* can be invalid, never emptiness.
+**Empty is valid — for `redirectAllowlist` ONLY.** An empty `redirectAllowlist`
+is correct configuration (the built-in defaults below cover the common case);
+only *entries* can be invalid, never emptiness. This does NOT generalize: DCR
+`redirect_uris` and a CIMD document's array both require **1..16 entries**
+(§9.2 / §17.1.5 rule 19), so emptiness there is a rejection. The obligation-7
+positive list is partitioned per consumer for exactly this reason.
 
 ### The two matching policies
 
