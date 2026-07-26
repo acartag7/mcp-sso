@@ -803,9 +803,14 @@ the response. Wiring rules:
 >    `redirectAllowlist`: `createBridgeConfig` still does
 >    `const redirectAllowlist = input.redirectAllowlist` and publishes that
 >    same reference (`src/config.ts:105,177`), so the caller's array remains
->    live behind a shallow `Object.freeze` — the #100/#106 snapshot work
->    covered the nested blocks, `scopeCatalog`, `defaultScopes`, and
->    `allowedOrigins`, but NOT this array. Consumer (5) covers the
+>    live behind a shallow `Object.freeze`. **And it is not the only one:**
+>    verified on `main`, `scopeCatalog`, `defaultScopes` and `allowedOrigins`
+>    are read identically (`src/config.ts:106-108`) and published in the same
+>    frozen literal (`:177`) — NO top-level array is snapshotted today. The
+>    #106 snapshot work (nested blocks + signing JWK) landed on #105's branch,
+>    which is now DRAFT, so none of it is on `main`. This obligation owns
+>    `redirectAllowlist`; the other three are the same class, tracked by issue
+>    #100, and are deliberately NOT silently fixed here. Consumer (5) covers the
 >    direct-call path that bypasses boot entirely; this obligation covers the
 >    array boot itself owns.
 > 2. **Registration-time enforcement (the write side), in BOTH DCR modes:**
@@ -896,7 +901,13 @@ the response. Wiring rules:
 >    for all four of `redirect_uris`, `grant_types`,
 >    `token_endpoint_auth_method`, and `application_type`, each with `7`,
 >    `""`, `null`, `{}` witnesses, each exercised through the Bridge per (c)
->    above. Today
+>    above. **One more incidental the removed `.filter()` was providing:** it
+>    dropped EMPTY-STRING members too, so after the prescribed change
+>    `grant_types: [""]` is a primitive string that passes the member check and
+>    still reaches a gate that only asks `.includes("client_credentials")`.
+>    Members must therefore be **non-empty** primitive strings, with `[""]` a
+>    witness alongside `[7]` and `[null]`. (`redirect_uris: [""]` is already
+>    covered — the empty string is an obligation-6 rejection row.) Today
 >    `registerClient` calls `assertAllowedRedirectUri` and DISCARDS its
 >    normalized return, storing the raw value, so `https://a.test:443/cb`
 >    registers successfully and produces a record the
@@ -949,7 +960,13 @@ the response. Wiring rules:
 >      `https://a.test/cb` (stored: plant the client; stateless: allowlist the
 >      origin) or they fail the same way; the presented-fragment row needs its
 >      origin reachable — or use a built-in host (`https://claude.ai/cb#frag`)
->      when zero config is the point.
+>      when zero config is the point. Spelled out for that row, the one most
+>      likely to be written setup-free: *stored `web`* registers
+>      `https://client.test/cb` and presents it with `#frag`; *stored `native`*
+>      registers `http://127.0.0.1/cb` and presents that with `#frag`;
+>      *stateless* puts `https://client.test/` on the allowlist. Each must FAIL
+>      today (both matchers set `url.hash = ""` then match ⇒ ACCEPT) and pass
+>      only once the fragment is rejected.
 >    - **(a) Defeat membership first.** For a matcher/export or stored-read
 >      leg, the forbidden string MUST be placed as the allowlist/registered
 >      entry under test (or the leg must be pinned to boot / the CIMD document
@@ -1090,7 +1107,13 @@ the response. Wiring rules:
 >    Plus a **round-trip** test per applicable consumer: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
 > 8. A **differential test** exercising **all NINE consumers of the closed
->    list** — boot config, the DCR registration write in BOTH modes (the
+>    list — nine legs, numbered to match the consumer list below, because an
+>    earlier prose version of this sentence named seven and a skim-implementer
+>    could build a seven-leg suite: (1) boot · (2) DCR write, both modes ·
+>    (3) §10.2 stored read · (4) CIMD document · (5) exported matcher ·
+>    (6) flow-cookie CIMD registration · (7) consent token at approve ·
+>    (8) opaque flow-cookie params · (9) authorization-code record.** In
+>    detail — boot config, the DCR registration write in BOTH modes (the
 >    stateless leg asserts rejection AND that nothing forbidden is echoed;
 >    the stored leg asserts rejection before persistence), the §10.2
 >    stored-state READ,
@@ -1419,8 +1442,12 @@ signature is not a grammar check — the token proves *we issued this*, never
 `invalid_redirect_uri` as a DIRECT error (never a redirect to the value under
 suspicion — §9.3's untrusted-destination channel rule); (8) the **opaque
 flow-cookie redirect at callback** (`claims.params.redirect_uri`,
-`src/adapters/upstream-flow.ts:161-177`), which every callback error path
-redirects to BEFORE `bridge.handleAuthorize` re-runs §10 — an opaque
+read at `src/adapters/upstream-flow.ts:161`), which every callback error path
+redirects to BEFORE `bridge.handleAuthorize` re-runs §10 — and there are FIVE
+such sites, not two: rows 7/8 (IdP error) at `:176-177` and rows 10/11
+(exchange-failed / identity_rejected) at `:182-185`. **The guard is placed
+ONCE at extraction**, immediately after the value is read at `:161`, never
+per-site, or the three later sites are missed — an opaque
 pre-upgrade cookie carries no `cimd` claim, so consumer (6)'s gate returns
 early (`assertCallbackCimdPolicy`, `src/adapters/upstream-flow-cimd.ts:79`)
 and never inspects it; (9) the **authorization-code record at token
