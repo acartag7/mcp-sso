@@ -273,3 +273,54 @@ test("FAIL-OPEN (§17.7): a throwing/rejecting AuditPort never breaks pairing", 
   // The throwing sink's rejection reason never escaped into a result reason.
   if (!bad.ok) assert.equal(bad.reason.includes("LEAKED"), false);
 });
+
+test("pairing page is frame-blocked — the CONSENT_HEADERS mirror must not drift (threat row 36)", async () => {
+  // Sibling of the consent-page assertion in bridge.test.ts. PAIRING_HEADERS is
+  // a hand-copied mirror of CONSENT_HEADERS, and a hand-copied constant is
+  // exactly what drifts: this page carries a one-time pairing code AND an
+  // Approve control, so framing it is the same clickjacking surface.
+  const { Bridge } = await import("../src/adapters/bridge.ts");
+  const { handlePairingAuthorize } = await import("../src/adapters/pairing-flow.ts");
+  const { createBridgeConfig } = await import("../src/config.ts");
+  const { MemoryStore } = await import("../src/store/memory.ts");
+  const { generateKeyPairSync } = await import("node:crypto");
+
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const config = createBridgeConfig({
+    issuer: "https://auth.test", resource: "https://api.test/mcp",
+    consentSigningSecret: "test-consent-secret-with-enough-entropy-0123456789",
+    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as never,
+    signingKeyId: "k",
+    redirectAllowlist: ["https://client.test/callback"],
+    scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
+    allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 3600,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  const store = new MemoryStore();
+  const bridge = new Bridge({
+    config, store,
+    clock: { nowMs: () => Date.parse("2026-07-25T12:00:00.000Z") },
+    audit: { async writeAuthEvent() { /* noop */ } },
+  });
+  const { identity } = newIdentity();
+
+  const res = await handlePairingAuthorize({ bridge, pairing: identity }, "GET", {
+    query: {
+      response_type: "code", client_id: "c1", redirect_uri: "https://client.test/callback",
+      code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      code_challenge_method: "S256", scope: "mcp:read", state: "s",
+    },
+    body: undefined, headers: {}, ip: "203.0.113.9",
+  });
+
+  assert.equal(res.status, 200);
+  assert.match(String(res.headers["content-type"] ?? ""), /text\/html/);
+  const csp = String(res.headers["content-security-policy"] ?? "");
+  assert.match(csp, /frame-ancestors 'none'/, "the pairing page must be frame-blocked");
+  assert.match(csp, /form-action 'self'/);
+  assert.equal(res.headers["x-frame-options"], "DENY");
+  assert.match(csp, /default-src 'none'/);
+  assert.equal(res.headers["x-content-type-options"], "nosniff");
+  await store.close();
+});

@@ -10,7 +10,12 @@
 // `prepare`'s defensive re-check ⇒ DIRECT invalid_client (never a 302).
 // FAITHFULNESS: forged cookies model exactly what verifyFlowToken/handleCallback
 // see; the consent-page HTML wording is never frozen (only status + that the gate
-// was passed/blocked + audit reason). FLOW_AUDIENCE is imported, not hardcoded.
+// was passed/blocked + audit reason). The flow-JWT audience is NOT imported from
+// src internals — a frozen suite pins the contract, not an implementation
+// constant. It is read once off a cookie the flow itself mints through the
+// public seam (handleAuthorize), so forged cookies carry whatever audience the
+// flow under test accepts, across contract-legitimate audience changes
+// (§17.11: deployment-wide constant then; per-flow prefix+callbackPath now).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -31,8 +36,6 @@ if (phases["s6b-cimd-flow"] !== true) {
   const { MemoryStore } = (await import(STORE)) as any;
   const CRYPTO = "../../../src/crypto.ts";
   const { pkceChallenge } = (await import(CRYPTO)) as any;
-  const INTERNALS = "../../../src/adapters/upstream-flow-internals.ts";
-  const { FLOW_AUDIENCE } = (await import(INTERNALS)) as any;
   const jose = (await import("jose")) as any;
 
   const NOW = Date.parse("2026-07-03T12:00:00.000Z");
@@ -113,13 +116,27 @@ if (phases["s6b-cimd-flow"] !== true) {
   // consume), so the forged jti must match the real shape: `upf_` + 32 random bytes base64url
   // (upstream-flow.ts randomToken).
   const realJti = () => `upf_${randomBytes(32).toString("base64url")}`;
+  // The audience a real flow mints, observed ONCE through the PUBLIC seam: run
+  // handleAuthorize on a throwaway flow, decode the Set-Cookie JWT, read `aud`.
+  // The suite thereby pins "forged cookies must carry the audience the flow
+  // itself uses" — the contract property — without importing the constant from
+  // src internals, so a contract-legitimate audience change (§17.11 per-flow
+  // binding) needs no edit here. All makeFlow() flows share the default
+  // callbackPath, so one observation serves every forge() below.
+  const OBSERVED_AUD: string = await (async () => {
+    const { flow } = makeFlow({});
+    const auth = await flow.handleAuthorize(req(authQ()));
+    const jwt = cookieJwtOf(auth.headers["set-cookie"] as string);
+    const aud = jose.decodeJwt(jwt).aud;
+    return Array.isArray(aud) ? aud[0] : aud;
+  })();
   // Mint a validly-signed flow cookie (same structure as signFlowToken) with an
   // optional top-level `cimd` claim — models exactly what verifyFlowToken sees.
   async function forge(config: any, o: any) {
     const now = Math.floor(NOW / 1000);
     const payload: any = { jti: o.jti ?? realJti(), state: o.state, nonce: o.nonce ?? "n", code_verifier: o.codeVerifier ?? "cv-0123456789012345678901234567890123456789012", params: o.params };
     if (o.cimd !== undefined) payload.cimd = o.cimd;
-    return await new jose.SignJWT(payload).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setIssuer(config.issuer).setAudience(FLOW_AUDIENCE).setIssuedAt(now).setExpirationTime(now + 600).sign(enc(config.consentSigningSecret));
+    return await new jose.SignJWT(payload).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setIssuer(config.issuer).setAudience(OBSERVED_AUD).setIssuedAt(now).setExpirationTime(now + 600).sign(enc(config.consentSigningSecret));
   }
 
   // ---- 1d carry-forward: resolve ONCE at authorize; callback does NOT re-fetch ----

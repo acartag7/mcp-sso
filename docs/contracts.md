@@ -2959,6 +2959,17 @@ cookie, single-used through the existing consent-JTI registry:
 **Flow JWT (the cookie value):** header `{alg:"HS256", typ:"JWT"}`; claims
 `iss`=issuer, `aud`=**`"mcp-sso/upstream-flow" + callbackPath`** (see
 "flow-instance binding" below), `jti` (`upf_…`, single-use),
+*(suite-faithfulness rule, added 2026-07-26: the exact `aud` VALUE is a §17.11
+implementation binding — this amendment itself changes it from the
+deployment-wide constant to the per-flow form — so a FROZEN acceptance test
+must not import or hardcode it; it observes the audience once through the
+public seam — mint a cookie via `handleAuthorize`, decode, reuse — and pins
+only the behavior §17.11 owns: cookies the flow itself minted verify, foreign
+or tampered cookies fail row 3. This rule exists because the original
+`s6b-redirect.test.ts` imported `FLOW_AUDIENCE` from
+`src/adapters/upstream-flow-internals.ts`, which made a contract-legitimate
+audience change require editing a frozen suite — a frozen suite pins the
+contract, never an implementation constant.)*
 `iat`, `exp`=`iat`+`flowTtlSeconds`, `state` (upstream state, 32B base64url),
 `nonce` (32B base64url), `code_verifier` (the **upstream** PKCE verifier, RFC
 7636 43-char base64url), and `params` — the round-tripped client OAuth params,
