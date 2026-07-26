@@ -795,9 +795,16 @@ the response. Wiring rules:
 >    caller's array, validates THAT copy, and publishes the same frozen copy
 >    it validated (never the caller's array), so a post-boot mutation or
 >    accessor-backed entry cannot put an unvalidated value where request-time
->    reads look (the validate-vs-publish class; the array half shipped with
->    the #100/#106 config-snapshot work, and consumer (5) covers the
->    direct-call path that bypasses boot entirely).
+>    reads look (the validate-vs-publish class). ⚠️ This is
+>    **implementation-pending like the rest of §10.0**, and specifically for
+>    `redirectAllowlist`: `createBridgeConfig` still does
+>    `const redirectAllowlist = input.redirectAllowlist` and publishes that
+>    same reference (`src/config.ts:105,177`), so the caller's array remains
+>    live behind a shallow `Object.freeze` — the #100/#106 snapshot work
+>    covered the nested blocks, `scopeCatalog`, `defaultScopes`, and
+>    `allowedOrigins`, but NOT this array. Consumer (5) covers the
+>    direct-call path that bypasses boot entirely; this obligation covers the
+>    array boot itself owns.
 > 2. **Registration-time enforcement (the write side), in BOTH DCR modes:**
 >    `registerClient` applies §10.0 to each `redirect_uris` entry BEFORE any
 >    other effect — stateless mode validates and ECHOES the canonical form
