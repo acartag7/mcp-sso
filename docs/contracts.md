@@ -899,7 +899,13 @@ the response. Wiring rules:
 >    witnesses — an empty string is not a parse error to swallow, it is a
 >    named rejection); an unparseable entry (`https://`, no host — `new URL`
 >    throws, and the thrown case must map to the same named rejection, never
->    propagate); `http://a.test/cb` (http on a non-loopback host); a
+>    propagate) AND a **degenerate authority that PARSES**
+>    (`https:///cb` — three slashes; WHATWG reads `cb` as the HOST and yields
+>    `https://cb/`, verified, so this is not caught by the throw path and
+>    needs its own witness); an entry with interior tab/CR/LF
+>    (`https://a.test/c<TAB>b` — stripped by the parser, so only the raw
+>    check sees it); a non-canonical IPv6 spelling
+>    (`http://[0:0:0:0:0:0:0:1]/cb`, which folds to `http://[::1]/cb`); `http://a.test/cb` (http on a non-loopback host); a
 >    non-string entry; a non-array `redirectAllowlist`; a **17-entry DCR
 >    `redirect_uris` array** (the §9.2 cardinality cap gets its own boundary
 >    witness — per-entry tests cannot catch an oversized array); a `web`
@@ -1018,8 +1024,23 @@ a stored `ClientRegistration.redirectUris`, or a CIMD document's
 root-slash spelling (`https://a.test`, `https://a.test/`) are BOTH origin form
 — the root slash alone is never an exact-URI path, so no entry satisfies both
 definitions. The first character after the authority decides: nothing or a
-lone `/` ⇒ origin form (matches origin-wide under §10.1); `/` followed by
-anything ⇒ exact-URI form (matches by equality). A deployer who wants
+lone `/` ⇒ origin form; `/` followed by
+anything ⇒ exact-URI form.
+
+**Origin form is origin-wide ONLY in §10.1.** The same entry means something
+narrower everywhere else, and the difference is security-relevant, so it is
+stated rather than left to inference: under **§10.2** (both `web` and
+`native`) and under the **§17.1.6 CIMD matcher**, a registered entry matches
+by the per-type rule — path included — so an origin-form registration
+authorizes only the origin ROOT path. Measured on HEAD: a `web` client
+registered `https://app.test/` presenting `https://app.test/cb` is REFUSED
+(`src/redirect.ts:86`), while the same entry in `redirectAllowlist` ALLOWS
+it; a `native` client registered `http://127.0.0.1/` presenting
+`http://127.0.0.1:54321/cb` is likewise refused (`src/redirect.ts:102`
+compares `pathname`). A client or document that wants a callback path MUST
+register exact-URI form — and obligation 2's write guard rejects an
+origin-form DCR/CIMD entry rather than producing another
+register-but-never-authorize record. A deployer who wants
 `https://a.test/` to match ONLY the root path cannot express that in origin
 form and must accept that the root-slash spelling is origin-wide — stated
 here because the two readings differ in grant width, which is exactly the
@@ -1100,7 +1121,12 @@ In both forms: `scheme` is `https` or `http` (an allowlist — `javascript:`,
 `data:`, `file:` and every other scheme are rejected, never enumerated as
 exceptions); the raw entry contains no `*`, no whitespace (leading, trailing, or
 interior), no control characters, no backslash, and no `%` that does not begin a
-valid percent-triplet.
+valid percent-triplet. The whitespace rule is checked on the RAW string for a
+reason WHATWG makes concrete: it **strips** interior tab, CR, and LF outright
+(`https://a.test/c\tb` parses to `https://a.test/cb` — verified), so a
+parsed-field check cannot see them at all, and a canonicality check alone
+would reject them only incidentally. Leading/trailing whitespace is likewise
+trimmed before parsing.
 
 Four more raw rules close the class of entries that are WHATWG-canonical yet
 carry syntax the forms above forbid — each is a shape where `entry ===
@@ -1136,6 +1162,21 @@ are their own `href`, verified), so both spellings are canonical and they are
 matches only a presented URI carrying `%2f`. This is deliberate: re-serializing
 to force one case would be normalization, and the rule is reject-or-accept,
 never rewrite.
+
+**Duplicates and IPv6 spelling.** A `redirect_uris` array or
+`redirectAllowlist` containing the SAME canonical entry twice is **valid** —
+duplicates are inert under both origin-wide and raw-equality matching, and
+rejecting them would fail a config that means exactly what it says. They do
+count against the §9.2 cardinality cap (the cap bounds the scan, and a
+duplicate costs a scan step like any other entry). An **IPv6 host** must be
+in WHATWG canonical compressed form: `http://[::1]/cb` is canonical, while
+`http://[0:0:0:0:0:0:0:1]/cb` folds to it and is therefore rejected
+(verified) — the general canonicality rule already covers this, and it is
+named here because IPv6 has more non-canonical spellings than any other host
+form. **Custom/private-use schemes** (reverse-DNS native-app schemes like
+`com.example.app:/cb`) are rejected by the closed `https`/`http` scheme list,
+not by name — there is no per-scheme blocklist to keep current, and adding
+support would be a contract amendment, never an implementation choice.
 
 **Hard cap.** Every entry is length-checked on the RAW string BEFORE parsing:
 an entry longer than **2048 UTF-8 bytes** is rejected — the same bound §17.1.5
