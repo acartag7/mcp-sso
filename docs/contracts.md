@@ -931,7 +931,7 @@ the response. Wiring rules:
 >    `https://a.test/cb%2F..%2Fadmin` (canonical, inert) all pass; and an empty
 >    array remains valid. Plus a **round-trip** test: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
-> 8. A **differential test** exercising **all NINE consumers of the closed
+> 8. A **differential test** exercising **all TEN consumers of the closed
 >    list** — boot config, the DCR registration write in BOTH modes (the
 >    stateless leg asserts rejection AND that nothing forbidden is echoed;
 >    the stored leg asserts rejection before persistence), the §10.2
@@ -964,7 +964,7 @@ the response. Wiring rules:
 >    a live consent token, or an unexpired authorization code carrying a
 >    forbidden entry can still authorize. (The measured table has three
 >    columns because the read guards did not exist on `40d9f58`; the
->    test covers nine.) That agreement is the property this section exists to
+>    test covers ten.) That agreement is the property this section exists to
 >    create, and without it the differential can silently return.
 
 Everything below — the §10.1 global allowlist, the §10.2 per-client policy, and
@@ -974,17 +974,36 @@ each inferred their own notion of a "valid entry" and disagreed on nearly every
 non-obvious input, which is a **parser differential**, not a set of unrelated
 bugs. Measured on `40d9f58`:
 
-| entry | §10.1 allowlist | CIMD matcher | CIMD doc validator |
-| --- | --- | --- | --- |
-| `*` | reject | **accept** | reject |
-| `https://a.test/cb*` | reject | **accept** | **accept** |
-| `javascript:alert(1)` | reject | **accept** | reject |
-| `https://u:p@a.test` | **accept** | **accept** | reject |
-| `https://@a.test` | **accept** | **accept** | reject |
-| `https://a.test?` | **accept** | **accept** | **accept** |
-| `HTTPS://a.test/cb` | reject | **accept** | **accept** |
-| `https://a.test:443/cb` | reject | **accept** | **accept** |
-| `https://a.test/x/../cb` | reject | **accept** | **accept** |
+**Measurement protocol** (stated because the verdict depends on it — an
+earlier version of this table gave one column with no protocol and was wrong
+in two cells): each entry is placed in `redirectAllowlist` and probed twice —
+**self** = present the entry string itself as the `redirect_uri`; **widens** =
+present `https://a.test/OTHER`, a DIFFERENT path on the same origin. "Widens"
+is the origin-wide grant; "self" is whether the entry is a live redirect
+target at all.
+
+| entry | §10.1 self | §10.1 widens | CIMD matcher | CIMD doc validator |
+| --- | --- | --- | --- | --- |
+| `*` | reject | reject | **accept** | reject |
+| `https://a.test/cb*` | **accept** | reject | **accept** | **accept** |
+| `javascript:alert(1)` | **accept** | reject | **accept** | reject |
+| `data:text/html,<script>1</script>` | **accept** | reject | **accept** | reject |
+| `https://u:p@a.test` | reject | **accept** | **accept** | reject |
+| `https://@a.test` | **accept** | **accept** | **accept** | reject |
+| `https://a.test?` | **accept** | **accept** | **accept** | **accept** |
+| `HTTPS://a.test/cb` | reject | reject | **accept** | **accept** |
+| `https://a.test:443/cb` | reject | reject | **accept** | **accept** |
+| `https://a.test/x/../cb` | reject | reject | **accept** | **accept** |
+| `https://а.test` (Cyrillic `а`) | reject | **accept** (as `xn--80a.test`) | **accept** | **accept** |
+| `https://%65xample.com` | reject | **accept** (as `example.com`) | **accept** | **accept** |
+| `http://remote.test/cb` | **accept** | reject | **accept** | reject |
+
+**The `javascript:` and `data:` rows are the sharpest reading of this table:**
+§10.1 has **no scheme check whatsoever** — `src/redirect.ts:41` returns true on
+`entry === normalized` before any other rule — so those entries are live
+redirect targets today whenever a client presents them verbatim. The earlier
+"reject" cells made §10.1 look safer than it is, which is backwards for a
+section arguing §10.1 needs a read-side predicate (consumer (5)).
 
 **Definition.** A redirect entry — whether it comes from `redirectAllowlist`,
 a stored `ClientRegistration.redirectUris`, or a CIMD document's
@@ -1057,13 +1076,20 @@ canonical rule is what catches them, and the rejection list below names them so
 an implementation checking parsed fields cannot miss the class §17.1.5 rule 6
 enumerates for the CIMD client_id.
 
-Two consequences of requiring canonical spelling, verified against the shipped
-matcher and recorded so an implementer does not "helpfully" relax either:
+Two consequences of requiring canonical spelling, recorded so an implementer
+does not "helpfully" relax either. **The first states TARGET behavior (§10.0,
+implementation pending); only the second is verified against the shipped
+matcher** — the distinction matters because the shipped matcher today does the
+OPPOSITE of the first:
 
-- A **Unicode homograph** entry (`https://а.test`, Cyrillic `а`) is REJECTED —
-  it canonicalizes to `https://xn--80a.test/`, so it is non-canonical as
-  written. Its punycode spelling (`https://xn--80a.test`) IS accepted:
-  that is the entry's true identity, and the deployer wrote what they get.
+- A **Unicode homograph** entry (`https://а.test`, Cyrillic `а`) is REJECTED
+  under §10.0 — it canonicalizes to `https://xn--80a.test/`, so it is
+  non-canonical as written. Its punycode spelling (`https://xn--80a.test`) IS
+  accepted: that is the entry's true identity, and the deployer wrote what
+  they get. ⚠️ **Today the shipped matcher ACCEPTS the homograph entry and
+  grants it `xn--80a.test` origin-wide** (measured: presenting
+  `https://xn--80a.test/evil` against that entry returns ALLOW) — which is
+  precisely why this rule exists, and it is in the table above.
 - An entry containing **percent-encoded path characters**
   (`https://a.test/cb%2F..%2Fadmin`) is ACCEPTED and is inert: canonical already,
   and it matches only its own literal self (verified — it matches neither
@@ -1129,7 +1155,7 @@ port, and resolves `..` segments. A validator reading only parsed fields is
 therefore checking a different string than the one the deployer wrote and the
 matcher later compares.
 
-**The grammar has exactly NINE consumers, and this list is closed:**
+**The grammar has exactly TEN consumers, and this list is closed:**
 (1) boot (`createBridgeConfig`) for `redirectAllowlist`; (2) the DCR
 registration write in BOTH modes (§9.2 — entries must arrive already
 canonical; stored persists them unchanged, stateless persists nothing and
@@ -1165,18 +1191,34 @@ the presented `redirect_uri` to `record.redirectUri` and checks PKCE but
 applies no grammar, so a code minted under the old grammar keeps minting
 access and refresh tokens for `authorizationCodeTtlSeconds` after the
 upgrade — the §10.2 "read at authorize/token" does NOT cover this, because
-the code path never re-reads the client registration.
+the code path never re-reads the client registration; and (10) the **CIMD
+validated-success cache** (`registrationFor`, `src/cimd/resolve.ts:209-211`),
+which re-validates each cached `redirect_uris` entry on the HIT path — it is
+neither signed nor persisted (an in-process LRU), and it holds the LONGEST
+window of any carrier here: a document admitted under the old grammar is
+re-served with NO re-validation for up to `cacheTtlCapSeconds` (3600 s
+default, up to 86400 s), outlasting every cookie, token, and code in this
+list.
 
-**Why the list ends at nine.** Consumers (3), (6), (7), (8), and (9) are the
-complete set of places a redirect_uri **outlives the check that admitted
-it** — the stored client record, the CIMD registration in the flow cookie,
-the opaque params in the same cookie, the consent token, and the
-authorization-code record. Each is a signed or stored carrier with its own
-TTL, and a signature or a store hit proves *we issued this*, never *this is
-still valid*; each therefore re-validates on READ. That is the enumeration —
-every carrier, not every call site — and it is the property to re-derive if a
-future amendment adds a new carrier: **a new signed claim or stored column
-holding a redirect_uri is a new consumer, and must be added here.** (5) exists
+**Why the list ends at ten, and how to re-derive it.** Consumers (3), (6),
+(7), (8), (9), and (10) are the places a redirect_uri **outlives the check
+that admitted it**: the stored client record, the CIMD registration in the
+flow cookie, the opaque params in the same cookie, the consent token, the
+authorization-code record, and the in-process CIMD success cache. A
+signature, a store hit, or a cache hit proves *we issued/accepted this*,
+never *this is still valid* — so each re-validates on READ.
+
+The membership test is mechanical, and it is deliberately NOT "is it signed
+or persisted": that earlier phrasing MISSED consumer (10), which is neither —
+it is an in-memory LRU. The test is: **can this value be read back after the
+check that admitted it, without passing that check again?** Anything with an
+independent lifetime qualifies — a store row, a signed claim, a cache entry,
+a memoized projection. When adding a carrier, state its window, because the
+windows differ by orders of magnitude and the LONGEST one bounds how long a
+rolling upgrade stays exploitable: `authorizationCodeTtlSeconds` (~300 s) ≈
+`consentTokenTtlSeconds` (~300 s) < `flowTtlSeconds` (600 s, ≤ 3600) <
+`cacheTtlCapSeconds` (**3600 s default, ≤ 86400**) < a stored
+`ClientRegistration` (unbounded until re-registered). (5) exists
 because the matcher is a
 root export (`src/index.ts`): it is reachable with an entries array that
 never passed boot — a consumer calling the helper directly, or (pre-#106) a
@@ -1721,7 +1763,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | RFC 8414 AS metadata | ✅ v0.1 | §9.1 |
 | RFC 7591 DCR (stateless) | ✅ v0.1 | §9.2 |
 | Stored-client DCR + `application_type` *(fix #4, RC b)* | ✅ v0.1 — but the §10.0 read-guard §10.2 now depends on is 🔴 pending (row below) | §9.2, §10.2 |
-| Redirect-entry grammar §10.0 (ONE definition, all NINE consumers: boot · DCR write in both modes · stored read · CIMD doc · exported matcher `assertAllowedRedirectUri` · flow-cookie CIMD registration · flow-cookie opaque params · consent-token redirect at approve · authorization-code record at token exchange) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) — this row turns green only when the §10.0 differential test passes across all nine | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
+| Redirect-entry grammar §10.0 (ONE definition, all TEN consumers: boot · DCR write in both modes · stored read · CIMD doc · exported matcher `assertAllowedRedirectUri` · flow-cookie CIMD registration · flow-cookie opaque params · consent-token redirect at approve · authorization-code record at token exchange · CIMD success cache) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) — this row turns green only when the §10.0 differential test passes across all ten | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
 | RFC 9207 `iss` + `authorization_response_iss_parameter_supported` *(RC a)* | ✅ v0.1 | §9.1, §9.3 |
