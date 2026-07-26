@@ -200,6 +200,9 @@ interface BridgeConfig {
   signingKeyId?: string;          // optional; else derived from the JWK kid
 
   // --- redirect policy (stateless-DCR backstop; see §10) ---
+  // Every entry MUST satisfy the §10.0 redirect-entry grammar (canonical origin
+  // or exact-URI form). ⚠️ NOT YET ENFORCED — see the §5 boot-validation bullet.
+  // An EMPTY array is valid — the built-in defaults cover the common case.
   redirectAllowlist: string[];    // ADDS to the built-in MCP-client defaults
 
   // --- scope contract (see §11); REQUIRED, fail-closed ---
@@ -265,6 +268,19 @@ interface BridgeConfig {
   the deployer MUST declare scopes explicitly.
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
+- `redirectAllowlist` is an array, and **every entry satisfies the §10.0
+  redirect-entry grammar**. ⚠️ **IMPLEMENTATION PENDING at this commit** — today
+  `createBridgeConfig` copies `redirectAllowlist` through without so much as an
+  `Array.isArray` check, so a deployer reading this bullet alone would wrongly
+  believe `https://ok.test?` is already rejected. The rule below describes the
+  target; enforcement lands with the §10.0 implementation PR — origin form or canonical exact-URI form, `https`/
+  `http` only, no wildcard, userinfo, query, fragment, whitespace, control
+  character, backslash, or malformed percent-escape. Each rule is checked on the
+  RAW entry as well as any parsed field (§10.0 explains why: WHATWG
+  normalization erases the syntax the decision depends on). An empty array is
+  valid. The error **names the offending entry** and, for a non-canonical one,
+  shows its canonical form — a deployer with several origins configured must not
+  have to bisect.
 
 A config object is constructed via `createBridgeConfig(input)` (validates +
 freezes). The frozen object is the only thing passed to use-cases.
@@ -577,6 +593,12 @@ adapter (Phase 3) exposes them over HTTP.
 ### 9.2 DCR — `registerClient` (RFC 7591) *(fix #4; RC item (b))*
 `POST /oauth/register` with form fields `redirect_uris` (required, each validated)
 and optional `application_type` (`"native"` | `"web"`, default `"web"`).
+`redirect_uris` is client-supplied untrusted input and carries the same hard
+caps §10.0 states: **1..16 entries** (the same bound §17.1.5 rule 19 puts on a
+CIMD document's array, same rationale — it bounds the authorize-time
+exact-match scan) and **≤ 2048 UTF-8 bytes per entry, checked on the raw
+string before parsing** (⚠️ implementation-pending with §10.0 — enumerated in
+its obligation list).
 - **Stateless mode (default):** any well-formed registration with allowlisted
   redirect URIs succeeds; the server mints an ephemeral `client_id`
   (`mcpdc_<random>`), returns `{ client_id, client_id_issued_at, redirect_uris,
@@ -587,8 +609,20 @@ and optional `application_type` (`"native"` | `"web"`, default `"web"`).
   policies cannot apply.
 - **Stored mode (opt-in):** at **registration time** each `redirect_uri` is
   validated through the **global allowlist (§10.1: built-ins + config)** and then
-  recorded verbatim on the `ClientRegistration` (with `applicationType`, default
-  `"web"`). At **authorize/token time** the `client_id` MUST exist in the store and
+  recorded on the `ClientRegistration` (with `applicationType`, default
+  `"web"`). ⚠️ **AMENDED by §10.0 (implementation pending):** each entry MUST be
+  §10.0-valid **in fully canonical form** — the omitted-root-slash exemption is
+  `redirectAllowlist`-only and does NOT extend to DCR, so `https://a.test` is
+  REJECTED `invalid_redirect_uri` at registration rather than accepted and
+  folded to `https://a.test/`. Reject-don't-fold rather than the earlier
+  "recorded verbatim" (which let a client register a URI it could never
+  authorize with) and rather than accept-then-canonicalize (which creates a
+  twin: the server stores and echoes a spelling different from the one the
+  client sent, and §10.2's RAW comparison then refuses the client's own
+  original spelling). One accepted spelling in, the same bytes stored, the
+  same bytes echoed, and the same bytes matched at authorize — which is what
+  makes raw equality sound end to end. The DCR RESPONSE therefore echoes
+  exactly what was registered. At **authorize time** the `client_id` MUST exist in the store and
   the presented `redirect_uri` MUST match that client's **per-type policy (§10.2)**
   — native ⇒ RFC 8252 loopback any-port, web ⇒ https exact. This is the RC-aligned
   path: native and web clients get the right redirect handling by type, instead of
@@ -749,9 +783,789 @@ the response. Wiring rules:
   with the 15-day check.
 ## 10. Redirect-URI policy
 
-Two policies, by DCR mode. Both share the core rule: **no allow-all (`"*"`), no
-unanchored prefix, userinfo rejected, hash stripped.** Shared built-in defaults
-for MCP clients (these ADD to any config allowlist; a config cannot remove them):
+### 10.0 The redirect-entry grammar (ONE definition, every consumer)
+
+> **Status: contract-only — IMPLEMENTATION PENDING.** This section defines the
+> target; `main` does not yet enforce it, and the differential table below is
+> current shipped behavior, not history. Do **not** read this section as a
+> conformance claim until enforcement lands and §16's row says so.
+>
+> **The implementation PR owes exactly this, and it is enumerable rather than
+> "one negative test per rejected shape" left to judgment:**
+>
+> 1. A boot validator applying §10.0 to every `redirectAllowlist` entry —
+>    under the §5 read-once/publication rule: the validator snapshots the
+>    caller's array, validates THAT copy, and publishes the same frozen copy
+>    it validated (never the caller's array), so a post-boot mutation or
+>    accessor-backed entry cannot put an unvalidated value where request-time
+>    reads look (the validate-vs-publish class). ⚠️ This is
+>    **implementation-pending like the rest of §10.0**, and specifically for
+>    `redirectAllowlist`: `createBridgeConfig` still does
+>    `const redirectAllowlist = input.redirectAllowlist` and publishes that
+>    same reference (`src/config.ts:105,177`), so the caller's array remains
+>    live behind a shallow `Object.freeze`. **And it is not the only one:**
+>    verified on `main`, `scopeCatalog`, `defaultScopes` and `allowedOrigins`
+>    are read identically (`src/config.ts:106-108`) and published in the same
+>    frozen literal (`:177`) — NO top-level array is snapshotted today. The
+>    #106 snapshot work (nested blocks + signing JWK) landed on #105's branch,
+>    which is now DRAFT, so none of it is on `main`. This obligation owns
+>    `redirectAllowlist`; the other three are the same class, tracked by issue
+>    #100, and are deliberately NOT silently fixed here. Consumer (5) covers the
+>    direct-call path that bypasses boot entirely; this obligation covers the
+>    array boot itself owns.
+> 2. **Registration-time enforcement (the write side), in BOTH DCR modes:**
+>    `registerClient` applies §10.0 to each `redirect_uris` entry BEFORE any
+>    other effect, REJECTING any entry that is not already fully canonical —
+>    the omitted-root-slash exemption is `redirectAllowlist`-only and does not
+>    extend here, so nothing is folded on the client's behalf. Stateless mode
+>    validates and echoes the entry unchanged (it persists nothing, but the
+>    same endpoint must not accept and echo an entry the grammar forbids: one
+>    grammar, every consumer includes the stateless sibling); stored mode
+>    additionally persists it unchanged. Registered === echoed === presented,
+>    byte for byte, which is what makes §10.2's raw comparison sound. The write side also enforces the **1..16 array
+>    cardinality cap** (§9.2 — `registerClient` has no maximum today, so a
+>    17-entry registration currently succeeds and widens the authorize-time
+>    scan past the promised bound) and the **stored client's §10.2 per-type
+>    policy**: a `web` registration (the default when `application_type` is
+>    omitted) rejects any non-`https` entry, and a `native` registration
+>    rejects any non-loopback entry — at WRITE time, not first at authorize.
+>    Without that, `http://localhost/cb` registers as `web` (passes the
+>    allowlist and §10.0) and then §10.2 refuses it forever, and a
+>    non-loopback https entry registers as `native` with the same outcome:
+>    the exact register-but-never-authorize defect this obligation exists to
+>    close, reachable through type policy instead of canonicality. The raw `redirect_uris` field crosses this boundary as
+>    `unknown[]`, never pre-narrowed: today `Bridge.handleRegister` runs the
+>    array through `stringArray`, which silently DROPS non-string members
+>    (`["https://ok.test/cb", 7]` registers as if the `7` were never sent), so
+>    the non-string rejection this obligation owes can never observe the value
+>    it must reject — the adapter hands the raw array through and the §10.0
+>    check rejects a non-string member, never filters it.
+>    **Removing that filtering does NOT remove the read-once requirement, and
+>    the two must land together:** today's `arrayOfStrings`
+>    (`src/register.ts:98-100`) uses `.filter()`, which incidentally produces
+>    a NEW array, so read-once holds by accident. Drop the filter without
+>    replacing it and a getter- or Proxy-backed `redirectUris` passed straight
+>    to `registerClient` can serve benign entries to the validator and
+>    different, unvalidated entries to `ClientStore.save` and to the echoed
+>    response. So `registerClient` **snapshots the array ONCE
+>    (`[...value]` after the `Array.isArray` check), validates THAT copy, and
+>    persists and echoes the SAME copy** — obligation 1's read-once rule
+>    applied to the DCR boundary, with an accessor-backed regression test
+>    (an array whose indices return a valid entry on first read and a
+>    forbidden one afterwards must be REJECTED or must persist only what was
+>    validated — never a mix). Sibling axis, checked: the adapter's own
+>    `stringArray` (`src/adapters/bridge-internals.ts`) has the SAME
+>    incidental-snapshot property and serves `grant_types` as well as
+>    `redirect_uris` — and the §17.2 machine-shape rejection (§9.2) depends on
+>    seeing unfiltered `grant_types` members for exactly the same reason.
+>    Neither filter may be removed without its snapshot. **And preserving the
+>    members is only half of it:** `registerClient`'s only `grant_types` check
+>    today is `input.grantTypes?.includes("client_credentials")`
+>    (`src/register.ts:56`), so once the filter stops dropping non-strings,
+>    `grant_types: [7]` simply passes through and the registration SUCCEEDS.
+>    So this obligation also owes: **every `grant_types` member is a primitive
+>    string or the registration is rejected `invalid_client_metadata`** (the
+>    §9.2 error for malformed metadata), with `[7]` and `[null]` as witnesses.
+>    Preserving a malformed member for inspection and then not inspecting it
+>    is strictly worse than filtering it.
+>    **The CONTAINER is checked before its members**, on both fields: a
+>    present-but-non-array `grant_types` or `redirect_uris` is rejected
+>    `invalid_client_metadata`, never coerced. `stringArray`'s
+>    `Array.isArray(value) ? … : []` collapses every non-array to the EMPTY
+>    array (verified: a string, a number, `null`, and a plain object all yield
+>    `[]`), which is the sharpest form of this defect for `grant_types`:
+>    `grant_types: "client_credentials"` — a request explicitly ASKING for the
+>    machine grant — registers as though it had asked for nothing, so the
+>    §17.2 machine-shape rejection is bypassed by malforming the container
+>    rather than the member. Witnesses: `grant_types: "client_credentials"`,
+>    `grant_types: 7`, and `redirect_uris: "https://a.test/cb"` (the
+>    same shape as the `allowedOrigins` substring-gate defect — a bare string where an array is
+>    expected) all rejected. Absent remains valid for `grant_types` (it is
+>    optional); `redirect_uris` absent is already `invalid_request` per §9.2.
+>    **This coercion defect is a CLASS with FOUR members, not two.**
+>    `Bridge.handleRegister` also reads `token_endpoint_auth_method` and
+>    `application_type` through `formField` (`src/adapters/bridge.ts:114,116`;
+>    `src/adapters/http.ts`), whose
+>    `typeof value === "string" && value ? value : undefined` collapses a
+>    number, `null`, an object, AND the empty string to `undefined`. For
+>    `token_endpoint_auth_method` that is a live §17.2 bypass:
+>    `registerClient`'s gate is
+>    `input.tokenEndpointAuthMethod !== undefined && !== "none"`
+>    (`src/register.ts:50`), so probed — `"client_secret_basic"` is correctly
+>    rejected while `7`, `""`, `null`, and `{}` all coerce to `undefined` and
+>    REGISTER, letting a client request a secret-bearing registration and slip
+>    the machine-shape gate by malforming the TYPE rather than the value.
+>    `application_type` coerces identically (verified). So the rule
+>    generalizes: **a present DCR metadata field of the wrong type is
+>    `invalid_client_metadata`, never coerced to `undefined`/`[]`/absent** —
+>    for all four of `redirect_uris`, `grant_types`,
+>    `token_endpoint_auth_method`, and `application_type`, each with `7`,
+>    `""`, `null`, `{}` witnesses, each exercised through the Bridge per (c)
+>    above. **One more incidental the removed `.filter()` was providing:** it
+>    dropped EMPTY-STRING members too, so after the prescribed change
+>    `grant_types: [""]` is a primitive string that passes the member check and
+>    still reaches a gate that only asks `.includes("client_credentials")`.
+>    Members must therefore be **non-empty** primitive strings, with `[""]` a
+>    witness alongside `[7]` and `[null]`. (`redirect_uris: [""]` is already
+>    covered — the empty string is an obligation-6 rejection row.) Today
+>    `registerClient` calls `assertAllowedRedirectUri` and DISCARDS its
+>    normalized return, storing the raw value, so `https://a.test:443/cb`
+>    registers successfully and produces a record the
+>    read guard (3) then rejects — a client that can register but can never
+>    authorize. The fix is to REJECT the non-canonical entry at registration,
+>    not to store the normalized return: storing a value the client did not
+>    send trades this defect for the twin described in §9.2. Write and read
+>    guards must land together or the pair is worse than neither.
+> 3. §10.2 applying §10.0 to every registered URI **it reads** (stored-state
+>    sibling, below) — not only at registration. Covers records written before
+>    this grammar existed or populated out-of-band.
+> 4. `assertCimdRedirectUri` enforcing §10.0 rather than its own shape rules
+>    (§17.1.5 rule 20, as amended there) — AND `projectCimdRegistration`
+>    with one CIMD-specific note: **the omitted-root-slash exemption is
+>    `redirectAllowlist`-only** (see "Canonical spelling" above), so it does
+>    not apply here either — a CIMD `redirect_uris` entry must be
+>    the full canonical `href` (`https://a.test/`, never `https://a.test`),
+>    and the non-canonical spelling is rejected `document_invalid`. CIMD is
+>    the sharpest case for that scoping: config gets a boot error naming the
+>    canonical form and DCR gets a rejection at registration, but CIMD has NO
+>    response channel at all, so EITHER projection choice for the
+>    accepted-then-folded spelling breaks someone silently (project raw: the
+>    §17.1.6 exact matcher can never match the canonical form a conforming
+>    client presents; project canonical: a client presenting the exact string
+>    published in its own document fails). Rejecting the non-canonical
+>    spelling at document-validation time is the only choice that keeps
+>    stored === published === presented as the same bytes — raw-equality
+>    matching stays sound and the author learns at validation, not via a
+>    silent authorize failure. The CIMD round-trip test covers both sides:
+>    a document entry `https://a.test` is rejected `document_invalid`;
+>    `https://a.test/` validates, projects verbatim, and matches a presented
+>    `https://a.test/`.
+> 5. `assertAllowedRedirectUri` applying §10.0 to every allowlist entry **it
+>    reads** before matching (consumer (5) — the export-path sibling of 3;
+>    rationale in the consumer list below). A non-conforming entry is refused
+>    `invalid_redirect_uri`, never skipped and never matched.
+> 6. **One rejection test per row of this closed list.** Two requirements on
+>    HOW each row is tested, because without them the whole list is
+>    tautological — measured on HEAD, every entry-grammar witness below
+>    currently "passes" by rejecting with `redirect_uri is not allowed`
+>    (allowlist NON-MEMBERSHIP), and each one is ACCEPTED the moment the entry
+>    is actually placed:
+>
+>    - **(a0) EVERY row states its setup — rejections included.** The
+>      per-consumer setup rule under obligation 7 covers positives only, which
+>      left the rejection rows setup-free and therefore membership-gated.
+>      Concretely: the DCR omitted-slash row (`https://a.test`) needs
+>      `redirectAllowlist: ["https://a.test/"]` or it fails for
+>      non-membership; the non-canonical PRESENTED rows need a registration of
+>      `https://a.test/cb` (stored: plant the client; stateless: allowlist the
+>      origin) or they fail the same way; the presented-fragment row needs its
+>      origin reachable — or use a built-in host (`https://claude.ai/cb#frag`)
+>      when zero config is the point. Spelled out for that row, the one most
+>      likely to be written setup-free: *stored `web`* registers
+>      `https://client.test/cb` and presents it with `#frag`; *stored `native`*
+>      registers `http://127.0.0.1/cb` and presents that with `#frag`;
+>      *stateless* puts `https://client.test/` on the allowlist. Each must FAIL
+>      today (both matchers set `url.hash = ""` then match ⇒ ACCEPT) and pass
+>      only once the fragment is rejected.
+>    - **(a) Defeat membership first.** For a matcher/export or stored-read
+>      leg, the forbidden string MUST be placed as the allowlist/registered
+>      entry under test (or the leg must be pinned to boot / the CIMD document
+>      validator, where the entry IS the input). A witness that is merely
+>      absent from the allowlist proves nothing about the grammar: probed —
+>      `javascript:alert(1)`, `http://a.test/cb`, and
+>      `https://client.test/cb#frag` all reject with "not allowed" when
+>      unplaced, and all three ACCEPT when placed.
+>    - **(b) Assert the REASON, not just the throw.** Each test asserts the
+>      error identifies the grammar rule and names the offending entry —
+>      never merely that an `OAuthError` was raised. (Rows whose subject is
+>      not a single entry — a non-array `redirectAllowlist`, a 17-entry DCR
+>      array — assert the field name and the rule instead; "names the
+>      offending entry" is not literally satisfiable there.)
+>    - **(c) Pin the PRODUCTION path for adapter-boundary rows.** The
+>      container/member rows must be exercised through `Bridge.handleRegister`
+>      with a raw JSON body, not against `registerClient` alone: probed,
+>      `grant_types: "client_credentials"` is REJECTED by `registerClient`
+>      directly (`String.prototype.includes` matches the substring) but
+>      ACCEPTED with 201 through the Bridge (`stringArray` collapses it to
+>      `[]`). A unit test against the core alone stays green while the real
+>      §17.2 bypass remains open.
+>
+>    The rows. Each asserts the error names the offending ENTRY, **except the
+>    field-level rows** — a non-array `redirectAllowlist`, a 17-entry DCR
+>    array, and the four wrong-typed metadata fields have no single offending
+>    entry to name, so those assert the FIELD name and the rule instead
+>    (per (b) above; the blanket wording was not literally satisfiable):
+>    `*`; any `*`-bearing entry — in the host
+>    (`https://*.a.test/cb`) OR the path (`https://a.test/cb*`,
+>    `https://a.test/*`; a host-star is WHATWG-canonical — verified — so the
+>    test proves the `*` rule fires on its own, not via canonicality); a non-`http(s)`
+>    scheme (`javascript:`, `data:`); userinfo (`https://u:p@a.test`) AND empty
+>    userinfo (`https://@a.test`) AND **canonical** userinfo
+>    (`https://u:p@a.test/` — its own `href`, so the test proves userinfo is
+>    rejected by its own rule, not as a canonicality side effect); a query
+>    delimiter — non-canonical (`https://a.test?`) AND canonical
+>    (`https://a.test/?`, `https://a.test/cb?`); a fragment — including the
+>    canonical trailing forms (`https://a.test/#`, `https://a.test/cb#`); a
+>    percent-encoded C0 control or DEL (`https://a.test/cb%0A`, `%0D`, `%00`,
+>    AND `%7F` — DEL is in the rule, so it gets its own witness; each
+>    canonical, each rejected); a trailing-dot host (`https://a.test.` AND its
+>    canonical spelling `https://a.test./`);
+>    whitespace (leading/trailing/interior); a literal control character; a
+>    backslash; a malformed percent-escape; a non-canonical origin
+>    (`HTTPS://A.TEST`, `https://%65xample.com`, `https://a.test:443`, the
+>    default-port fold `http://localhost:80`, and ALL THREE IPv4 variant
+>    spellings the grammar text names — dword `https://2130706433`, hex
+>    `https://0x7f.0.0.1`, octal `https://0177.0.0.1`); a
+>    non-canonical exact-URI (`https://a.test:443/cb`, `https://a.test/x/../cb`,
+>    `https://a.test/./cb`); an entry longer than 2048 UTF-8 bytes; the empty
+>    string `""` AND a whitespace-only entry (degenerate emptiness gets its own
+>    witnesses — an empty string is not a parse error to swallow, it is a
+>    named rejection); an unparseable entry (`https://`, no host — `new URL`
+>    throws, and the thrown case must map to the same named rejection, never
+>    propagate) AND a **degenerate authority that PARSES**
+>    (`https:///cb` — three slashes; WHATWG reads `cb` as the HOST and yields
+>    `https://cb/`, verified, so this is not caught by the throw path and
+>    needs its own witness); an entry with interior tab/CR/LF
+>    (`https://a.test/c<TAB>b` — stripped by the parser, so only the raw
+>    check sees it); a non-canonical IPv6 spelling
+>    (`http://[0:0:0:0:0:0:0:1]/cb`, which folds to `http://[::1]/cb`); `http://a.test/cb` (http on a non-loopback host); a
+>    non-string entry; a non-array `redirectAllowlist`; a **17-entry DCR
+>    `redirect_uris` array** (the §9.2 cardinality cap gets its own boundary
+>    witness — per-entry tests cannot catch an oversized array); a `web`
+>    registration carrying `http://localhost/cb` AND a `native` registration
+>    carrying a non-loopback https entry (the obligation-2 per-type write
+>    guard, one witness per type); a PRESENTED `redirect_uri` carrying a
+>    fragment (`https://client.test/cb#frag`) rejected at authorize in both
+>    DCR modes (the reject-don't-strip rule under "The two matching
+>    policies" — today both matchers strip and match); a CIMD document entry
+>    in omitted-slash form (`https://a.test` — rejected `document_invalid`
+>    per obligation 4's CIMD tightening) AND a **DCR registration** in the
+>    same form (rejected `invalid_redirect_uri`, per the exemption's
+>    config-only scope — accepting it would create the twin that breaks the
+>    registration-to-authorization round-trip under raw equality); and
+>    **non-canonical PRESENTED
+>    `redirect_uri`s against a canonical registration** — one witness per fold
+>    WHATWG performs, since each currently collapses into a false match:
+>    scheme case (`HTTPS://a.test/cb`), host case (`https://A.TEST/cb`),
+>    default port (`https://a.test:443/cb`), dot segments
+>    (`https://a.test/x/../cb`), and all of them at once
+>    (`HTTPS://A.TEST:443/x/../cb`, verified to normalize to exactly
+>    `https://a.test/cb` on Node 24). Each must be REFUSED against a
+>    registration of `https://a.test/cb`, in both DCR modes — these are the
+>    request-bytes-never-registered cases, and the `web` leg is where the
+>    §10.2 exact-match policy lives.
+> 7. **Positive tests** that the grammar does not over-reject. **Each case is
+>    listed under the consumer it applies to** — this list must never say
+>    "every consumer", because the consumers have DIFFERENT admissible sets:
+>    the omitted-slash exemption is `redirectAllowlist`-only (obligations 2
+>    and 4 reject it), emptiness is `redirectAllowlist`-only (DCR and CIMD
+>    require 1..16 entries per §9.2 / §17.1.5 rule 19), and stored DCR
+>    additionally partitions by `applicationType`. A positive case asserted
+>    against the wrong consumer is a test that CANNOT pass without weakening a
+>    rule. **Every case states its SETUP**, because the built-in defaults are
+>    exactly `https://claude.ai`, `https://chatgpt.com`, `http://localhost`,
+>    `http://127.0.0.1` — `a.test` is NOT among them, and stored DCR validates
+>    registrations through the same global allowlist (§9.2), so any `a.test`
+>    positive requires `redirectAllowlist: ["https://a.test/", …]` in config.
+>    A positive case whose setup is unstated is not reproducible, and an
+>    implementer will read the failure as a rule to weaken.
+>    - *`redirectAllowlist` (boot)* — the entries ARE the setup: all four built-in defaults; the
+>      omitted-slash forms `https://a.test`, `https://xn--80a.test` (punycode
+>      — the ASCII form of the Cyrillic host above), `http://[::1]:9`; their
+>      canonical spellings; `https://a.test/cb%2F..%2Fadmin` (canonical,
+>      inert); **and an EMPTY array** (the built-in defaults cover the common
+>      case — §10.0's "empty is valid" rule lives here and only here).
+>    - *Stored DCR, `web`* (setup: `a.test` configured): `https://a.test/` and
+>      `https://a.test/cb%2F..%2Fadmin` — https, canonical, 1..16 entries.
+>      NOT `http://[::1]:9/` (web is https-only) and not an empty array.
+>      `https://claude.ai/cb` also passes with an empty config allowlist.
+>    - *Stored DCR, `native`* (setup: empty config allowlist suffices —
+>      `localhost` and `127.0.0.1` are built-in; `[::1]` is NOT, so
+>      `http://[::1]:9/` needs it configured): `http://127.0.0.1/cb`,
+>      `http://localhost/cb`, and `http://[::1]:9/` — loopback, canonical.
+>      NOT a non-loopback https entry (§10.2 native policy) and not an empty
+>      array.
+>    - *Stateless DCR*: the **§10.1 global-allowlist set — NOT the `web` set**.
+>      Stateless mode persists no `applicationType`, so §9.2's
+>      loopback-for-everyone policy applies and the per-type partition above
+>      does not exist here. Positives split by SETUP, because the built-in
+>      defaults are `claude.ai`, `chatgpt.com`, `localhost`, `127.0.0.1` and
+>      nothing else — `a.test` is not among them:
+>      *with an EMPTY config allowlist*, `https://claude.ai/cb` plus the
+>      canonical loopback paths `http://localhost/cb`,
+>      `http://localhost:54321/cb` (any port), `http://127.0.0.1:8080/cb` all
+>      pass; *with `redirectAllowlist: ["https://a.test/"]`*, `https://a.test/`
+>      passes too. Both verified on HEAD — and `https://a.test/` is REJECTED
+>      under the empty-list setup, which is why the two are not one bullet. Borrowing the
+>      https-only `web` set here would let an implementation reject the
+>      primary native-client loopback path while passing this obligation.
+>      §9.2 persists nothing but echoes the accepted entry unchanged.
+>    - *CIMD document* (no config allowlist involved — rule 20's own
+>      scheme/host rule governs, so no setup is needed):
+>      `https://a.test/` plus a loopback `http://[::1]:9/` — canonical
+>      spelling, 1..16 entries.
+>    Plus a **round-trip** test per applicable consumer: a URI accepted at
+>    registration is still accepted at authorize (obligations 2 and 3 agree).
+> 8. A **differential test** exercising **all NINE consumers of the closed
+>    list — nine legs, numbered to match the consumer list below, because an
+>    earlier prose version of this sentence named seven and a skim-implementer
+>    could build a seven-leg suite: (1) boot · (2) DCR write, both modes ·
+>    (3) §10.2 stored read · (4) CIMD document · (5) exported matcher ·
+>    (6) flow-cookie CIMD registration · (7) consent token at approve ·
+>    (8) opaque flow-cookie params · (9) authorization-code record.** In
+>    detail — boot config, the DCR registration write in BOTH modes (the
+>    stateless leg asserts rejection AND that nothing forbidden is echoed;
+>    the stored leg asserts rejection before persistence), the §10.2
+>    stored-state READ,
+>    CIMD document validation, the exported §10.1 matcher called DIRECTLY
+>    with an entries array that never passed boot, the flow-cookie CIMD
+>    consumption at callback, and the consent-token redirect at
+>    `approve`: for each row of the table
+>    below, every consumer agrees. The stored-read leg is exercised with
+>    **pre-existing/out-of-band state** (a record placed directly in the
+>    `ClientStore`, never through `registerClient`); the direct-call leg
+>    passes the forbidden entry straight to `assertAllowedRedirectUri`; the
+>    flow-cookie leg forges a validly-signed cookie whose carried
+>    `CimdRegistration` holds the forbidden entry (modeling a pre-upgrade
+>    in-flight cookie) and asserts the callback refuses it; the consent-token
+>    leg mints a VALIDLY SIGNED consent token carrying the forbidden redirect
+>    (modeling a token issued before the upgrade) and asserts `approve`
+>    refuses it on BOTH the Deny and the Approve path, with a DIRECT error
+>    rather than a redirect to the suspect value; the opaque-cookie leg
+>    forges a signed cookie whose `params.redirect_uri` is forbidden and NO
+>    `cimd` claim is present (so the CIMD gate returns early) and asserts
+>    every callback error path refuses rather than redirecting to it; the
+>    authorization-code leg stores a code record carrying a forbidden
+>    `redirectUri` directly in the store and asserts the token endpoint
+>    refuses `invalid_grant` even when the presented value matches those
+>    bytes and PKCE verifies —
+>    wiring the shared predicate into the entry boundaries while any
+>    read-time consumer forgets its check must FAIL this test, or a legacy
+>    record, a directly-supplied array, an in-flight cookie (CIMD or opaque),
+>    a live consent token, or an unexpired authorization code carrying a
+>    forbidden entry can still authorize. (The measured table has three
+>    columns because the read guards did not exist on `40d9f58`; the
+>    test covers nine.) That agreement is the property this section exists to
+>    create, and without it the differential can silently return.
+
+Everything below — the §10.1 global allowlist, the §10.2 per-client policy, and
+the §17.1 CIMD document/matcher — decides against **this single grammar**. It is
+stated first because the alternative has been demonstrated: three call sites
+each inferred their own notion of a "valid entry" and disagreed on nearly every
+non-obvious input, which is a **parser differential**, not a set of unrelated
+bugs. Measured on `40d9f58`:
+
+**Measurement protocol** (stated because the verdict depends on it — an
+earlier version of this table gave one column with no protocol and was wrong
+in two cells): each entry is placed in `redirectAllowlist` and probed twice —
+**self** = present the entry string itself as the `redirect_uri`; **widens** =
+present a DIFFERENT path on **that row's own canonical origin** (e.g.
+`https://a.test/OTHER` for the `a.test` rows, but
+`https://xn--80a.test/OTHER` for the Cyrillic row and
+`https://example.com/OTHER` for the percent-encoded row — the probe follows
+the origin the entry CANONICALIZES to, which is the whole point of those two
+rows). "Widens"
+is the origin-wide grant; "self" is whether the entry is a live redirect
+target at all.
+
+| entry | §10.1 self | §10.1 widens | CIMD matcher | CIMD doc validator |
+| --- | --- | --- | --- | --- |
+| `*` | reject | reject | **accept** | reject |
+| `https://a.test/cb*` | **accept** | reject | **accept** | **accept** |
+| `javascript:alert(1)` | **accept** | reject | **accept** | reject |
+| `data:text/html,<script>1</script>` | **accept** | reject | **accept** | reject |
+| `https://u:p@a.test` | reject | **accept** | **accept** | reject |
+| `https://@a.test` | **accept** | **accept** | **accept** | reject |
+| `https://a.test?` | **accept** | **accept** | **accept** | **accept** |
+| `HTTPS://a.test/cb` | reject | reject | **accept** | **accept** |
+| `https://a.test:443/cb` | reject | reject | **accept** | **accept** |
+| `https://a.test/x/../cb` | reject | reject | **accept** | **accept** |
+| `https://а.test` (Cyrillic `а`) | **accept** (as `xn--80a.test/`) | **accept** (as `xn--80a.test`) | **accept** | **accept** |
+| `https://%65xample.com` | **accept** (as `example.com/`) | **accept** (as `example.com`) | **accept** | **accept** |
+| `http://remote.test/cb` | **accept** | reject | **accept** | reject |
+
+**The `javascript:` and `data:` rows are the sharpest reading of this table:**
+§10.1 has **no scheme check whatsoever** — `src/redirect.ts:41` returns true on
+`entry === normalized` before any other rule — so those entries are live
+redirect targets today whenever a client presents them verbatim. The earlier
+"reject" cells made §10.1 look safer than it is, which is backwards for a
+section arguing §10.1 needs a read-side predicate (consumer (5)).
+
+**Definition.** A redirect entry — whether it comes from `redirectAllowlist`,
+a stored `ClientRegistration.redirectUris`, or a CIMD document's
+`redirect_uris` — is EXACTLY one of two forms, and nothing else:
+
+- **Origin form** — `scheme "://" host [ ":" port ]`, with **nothing after the
+  authority**: no path (or the single `/`), no query, no fragment, no userinfo.
+- **Exact-URI form** — origin form followed by a path of **at least one
+  non-root segment**: no query, no fragment, no userinfo.
+
+**Classification is total and unambiguous:** the bare authority and the
+root-slash spelling (`https://a.test`, `https://a.test/`) are BOTH origin form
+— the root slash alone is never an exact-URI path, so no entry satisfies both
+definitions. The first character after the authority decides: nothing or a
+lone `/` ⇒ origin form; `/` followed by
+at least one NON-EMPTY segment ⇒ exact-URI form. A path that is only slashes
+(`https://a.test//`) is neither: it is canonical under WHATWG (verified —
+`pathname === "//"`) but has no non-empty segment, so it satisfies neither
+form and is **REJECTED**. Stating it explicitly because the two readings
+disagree — the definition requires a non-root segment while "`/` followed by
+anything" would admit it — and an empty-segment path is exactly the shape
+that makes two matchers differ.
+
+**Origin form is origin-wide ONLY in §10.1.** The same entry means something
+narrower everywhere else, and the difference is security-relevant, so it is
+stated rather than left to inference: under **§10.2** (both `web` and
+`native`) and under the **§17.1.6 CIMD matcher**, a registered entry matches
+by the per-type rule — path included — so an origin-form registration
+authorizes only the origin ROOT path. Measured on HEAD: a `web` client
+registered `https://app.test/` presenting `https://app.test/cb` is REFUSED
+(`src/redirect.ts:86`), while the same entry in `redirectAllowlist` ALLOWS
+it; a `native` client registered `http://127.0.0.1/` presenting
+`http://127.0.0.1:54321/cb` is likewise refused (`src/redirect.ts:102`
+compares `pathname`). A client or document that wants a callback path MUST
+register exact-URI form.
+
+**A canonical root callback is VALID and is not rejected.** Registering
+`https://a.test/` is a legitimate choice — it authorizes exactly
+`https://a.test/`, the origin root, and nothing else — so obligation 2 and
+obligation 4 both ACCEPT it, and obligation 4's round-trip witness
+(`https://a.test/` validates, projects verbatim, and matches a presented
+`https://a.test/`) stands unchanged. What obligation 2 rejects is only the
+**omitted-slash spelling** (`https://a.test`), and for the reason stated in
+"Canonical spelling" — the twin it would create under raw equality, not
+anything about origin form. There is no register-but-never-authorize record
+here: a client registering the canonical root gets exactly the grant its
+entry describes. The narrowing above is a statement about GRANT WIDTH — an
+origin-form entry means origin-wide in §10.1 and root-only in §10.2/CIMD —
+not a rejection rule. A deployer who wants
+`https://a.test/` to match ONLY the root path cannot express that in origin
+form and must accept that the root-slash spelling is origin-wide — stated
+here because the two readings differ in grant width, which is exactly the
+ambiguity class this grammar exists to remove.
+
+**`http` is loopback-only, in the grammar itself:** the `http` scheme is
+valid ONLY with host exactly `localhost`, `127.0.0.1`, or `[::1]`;
+`http://prod.example.com/cb` is rejected at the entry boundary, not left for
+per-consumer policy. This lifts the rule §10.2 (`web` ⇒ https) and §17.1.5
+rule 20 (http ⇒ loopback) already apply into the shared grammar, so
+stateless-mode §10.1 — which previously had no HTTPS floor of its own —
+cannot be configured to send an authorization code over cleartext to a
+non-loopback host.
+
+**Canonical spelling is required in BOTH forms**, not just exact-URI form: the
+raw entry MUST equal `new URL(entry).href`, with exactly one exemption — an
+origin-form entry MAY omit the root slash WHATWG appends (`https://a.test` is
+accepted for `https://a.test/`; nothing else is).
+
+**The exemption is scoped to the §10.1 allowlist — deployer config AND the
+built-in defaults — and to nothing else.** The built-ins are themselves
+omitted-slash entries (`https://claude.ai`, `https://chatgpt.com`,
+`http://localhost`, `http://127.0.0.1` — all four verified non-canonical: each
+gains a root slash under `new URL(entry).href`), so the exemption must cover
+them or obligation 1's "every built-in default is §10.0-valid" unit test
+cannot pass. They are left in that spelling deliberately: it is the form
+deployers read in the docs and copy into config, and §10.1 matches them
+origin-wide either way (see below).** It is safe exactly there because a §10.1
+origin-form entry matches **origin-wide**, never by raw equality against a
+presented URI, so the two spellings cannot disagree about a match. **Boot does
+NOT rewrite the entry**: the array published is byte-identical to the array
+validated (obligation 1's read-once/publication rule — a separately normalized
+copy would be an array boot never validated, which is the
+validate-vs-publish class this repo has hit six times). The accepted
+omitted-slash spelling is therefore stored and matched AS WRITTEN, and it
+works because the §10.1 origin branch derives the origin from the parsed entry
+rather than comparing its bytes — `https://a.test` and `https://a.test/` both
+yield origin `https://a.test`, so the fold happens at COMPARISON time inside
+the matcher, never at storage time. A rejection still names the canonical form
+to paste back. On every OTHER surface the omitted-slash
+form is **REJECTED**, not accepted-then-folded:
+
+- **DCR `redirect_uris`** (obligation 2) — because §10.2 compares registered
+  URIs by RAW equality. Accept-then-fold creates a twin: the client registers
+  `https://a.test`, the server persists and echoes `https://a.test/`, and a
+  client that re-presents its own original spelling fails a comparison that
+  forbids normalizing the presented side. Rejecting at registration surfaces
+  the fix once, at the moment the client can act on it, instead of as an
+  authorize-time failure with no stated cause.
+- **CIMD documents** (obligation 4) — same reason, and worse: CIMD has no
+  registration response at all, so a fold is invisible to the client.
+
+That leaves ONE spelling in play wherever raw equality decides, on both the
+stored and presented sides, which is what makes the reject-don't-normalize
+rule internally consistent. Without this rule on origin
+form, `https://%65xample.com` is accepted, parses to `https://example.com`, and
+is then granted **origin-wide** access to `example.com` under §10.1 — an entry
+whose text names one host and whose effect names another, which is precisely
+what "reject, don't normalize" exists to prevent. The same applies to
+`HTTPS://EXAMPLE.com` and any other spelling WHATWG folds — including two
+folds a deployer may not expect: WHATWG **strips the scheme's default port**
+(`:80` on `http`, `:443` on `https`), so `http://localhost:80` is
+non-canonical and rejected — write `http://localhost`; only a non-default port
+survives (`http://localhost:8080`). And WHATWG **resolves alternative IPv4
+spellings** — a dword/integer host (`https://2130706433`), hex labels
+(`https://0x7f.0.0.1`), and octal labels all fold to `https://127.0.0.1/`
+(verified, Node 24), so every one of them is non-canonical and rejected; the
+canonical rule is what catches them, and the rejection list below names them so
+an implementation checking parsed fields cannot miss the class §17.1.5 rule 6
+enumerates for the CIMD client_id.
+
+Two consequences of requiring canonical spelling, recorded so an implementer
+does not "helpfully" relax either. **The first states TARGET behavior (§10.0,
+implementation pending); only the second is verified against the shipped
+matcher** — the distinction matters because the shipped matcher today does the
+OPPOSITE of the first:
+
+- A **Unicode homograph** entry (`https://а.test`, Cyrillic `а`) is REJECTED
+  under §10.0 — it canonicalizes to `https://xn--80a.test/`, so it is
+  non-canonical as written. Its punycode spelling (`https://xn--80a.test`) IS
+  accepted: that is the entry's true identity, and the deployer wrote what
+  they get. ⚠️ **Today the shipped matcher ACCEPTS the homograph entry and
+  grants it `xn--80a.test` origin-wide** (measured: presenting
+  `https://xn--80a.test/evil` against that entry returns ALLOW) — which is
+  precisely why this rule exists, and it is in the table above.
+- An entry containing **percent-encoded path characters**
+  (`https://a.test/cb%2F..%2Fadmin`) is ACCEPTED and is inert: canonical already,
+  and it matches only its own literal self (verified — it matches neither
+  `/admin` nor `/cb/../admin`). §10.0 governs entry SYNTAX, not path semantics;
+  it grants nothing beyond the exact URI written.
+
+In both forms: `scheme` is `https` or `http` (an allowlist — `javascript:`,
+`data:`, `file:` and every other scheme are rejected, never enumerated as
+exceptions); the raw entry contains no `*`, no whitespace (leading, trailing, or
+interior), no control characters, no backslash, and no `%` that does not begin a
+valid percent-triplet. The whitespace rule is checked on the RAW string for a
+reason WHATWG makes concrete: it **strips** interior tab, CR, and LF outright
+(`https://a.test/c\tb` parses to `https://a.test/cb` — verified), so a
+parsed-field check cannot see them at all, and a canonicality check alone
+would reject them only incidentally. Leading/trailing whitespace is likewise
+trimmed before parsing.
+
+Four more raw rules close the class of entries that are WHATWG-canonical yet
+carry syntax the forms above forbid — each is a shape where `entry ===
+new URL(entry).href` holds and a canonicality-only validator would therefore
+accept what the form definitions reject:
+
+- **No raw `?` or `#` code point anywhere in the entry**, independent of what
+  the parser reports. `https://a.test/?`, `https://a.test/cb?`,
+  `https://a.test/#`, and `https://a.test/cb#` are all their own `href`
+  (verified, Node 24) and all parse to an EMPTY `search`/`hash` — so a
+  parsed-field check classifies `https://a.test/?` as origin form and grants it
+  **origin-wide** match under §10.1. An empty query is still a query. This is
+  the same rule §17.1.5 rule 2 applies to the CIMD client_id, for the same
+  reason.
+- **No `@` anywhere before the path** — userinfo is rejected by an independent
+  check, never as a side effect of canonicality: `https://u:p@a.test/` (with
+  the trailing slash) IS canonical, so a validator relying on `entry !== href`
+  to catch userinfo accepts it.
+- **No percent-triplet whose decoded byte is a C0 control or DEL**
+  (`%00`–`%1F`, `%7F`, any hex case): `https://a.test/cb%0A` is canonical
+  (verified) and survives the literal-control-character rule above. Same
+  decision as §17.1.5 rule 2's %-encoded CR/LF rejection — one verdict for the
+  same bytes in both fields.
+- **No trailing dot on the host**: `https://a.test./` is canonical under WHATWG
+  (the dot is preserved, not folded — verified), but §17.1.5 rule 7 rejects a
+  trailing-dot host for the CIMD client_id, and the same host string being a
+  valid redirect entry and an invalid client_id is exactly the
+  parser-differential class this section exists to kill — **for the same
+  BYTES**. That qualifier is load-bearing: the two fields legitimately differ
+  on Unicode-vs-punycode (§10.0 rejects `https://а.test` as non-canonical and
+  accepts `https://xn--80a.test`, while §17.1.5's client_id rules treat the
+  IDNA forms on their own terms), and that is a difference of INPUT
+  normalization, not of host validity. The rule this row states is narrower:
+  one host STRING must not be valid in one field and invalid in the other.
+
+Percent-hex case is NOT folded: WHATWG preserves `%2f` and `%2F` alike (both
+are their own `href`, verified), so both spellings are canonical and they are
+**distinct entries** under the exact-string match — an entry written `%2f`
+matches only a presented URI carrying `%2f`. This is deliberate: re-serializing
+to force one case would be normalization, and the rule is reject-or-accept,
+never rewrite.
+
+**Duplicates and IPv6 spelling.** A `redirect_uris` array or
+`redirectAllowlist` containing the SAME canonical entry twice is **valid** —
+duplicates are inert under both origin-wide and raw-equality matching, and
+rejecting them would fail a config that means exactly what it says. They do
+count against the §9.2 cardinality cap (the cap bounds the scan, and a
+duplicate costs a scan step like any other entry). An **IPv6 host** must be
+in WHATWG canonical compressed form: `http://[::1]/cb` is canonical, while
+`http://[0:0:0:0:0:0:0:1]/cb` folds to it and is therefore rejected
+(verified) — the general canonicality rule already covers this, and it is
+named here because IPv6 has more non-canonical spellings than any other host
+form. **Custom/private-use schemes** (reverse-DNS native-app schemes like
+`com.example.app:/cb`) are rejected by the closed `https`/`http` scheme list,
+not by name — there is no per-scheme blocklist to keep current, and adding
+support would be a contract amendment, never an implementation choice.
+
+**Hard cap.** Every entry is length-checked on the RAW string BEFORE parsing:
+an entry longer than **2048 UTF-8 bytes** is rejected — the same bound §17.1.5
+rule 1 places on the CIMD client_id, applied for the same reason (hard caps on
+every untrusted input, before the parser sees it). DCR `redirect_uris` arrays
+are additionally capped at **1..16 entries** (§9.2 — same bound and rationale
+as §17.1.5 rule 19: it limits the authorize-time exact-match scan).
+`redirectAllowlist` has no entry-count cap, and that is a decision rather than
+an omission: it is deployer-written boot configuration, validated once at boot,
+and its size is not attacker-influenced.
+
+**Every rule is checked on the RAW string before, or in addition to, any parsed
+field.** WHATWG normalization erases the very syntax the decision depends on —
+`new URL` drops empty userinfo (`https://@a.test` yields `username === ""`),
+maps a bare `?` to `search === ""`, lowercases the scheme, strips the default
+port, and resolves `..` segments. A validator reading only parsed fields is
+therefore checking a different string than the one the deployer wrote and the
+matcher later compares.
+
+**The grammar has exactly NINE consumers, and this list is closed:**
+(1) boot (`createBridgeConfig`) for `redirectAllowlist`; (2) the DCR
+registration write in BOTH modes (§9.2 — entries must arrive already
+canonical; stored persists them unchanged, stateless persists nothing and
+echoes them unchanged, per obligation 2: the
+same endpoint must not accept or echo what the grammar forbids); (3) the
+stored-state READ at AUTHORIZE (§10.2 — the paragraph below; token
+exchange never re-reads the registration on the authorization-code path,
+which is precisely why consumer (9) exists); (4) CIMD document validation
+(`assertCimdRedirectUri`, §17.1.5 rule 20); (5) the **exported §10.1 matcher
+itself** (`assertAllowedRedirectUri`), which applies the predicate to each
+allowlist entry it READS before matching; (6) the **flow-cookie CIMD
+consumption at callback** (`parseCimdRegistrationClaim` + the §17.1.6
+redirect match), which re-validates each carried `redirect_uris` entry —
+the second stored-state sibling, detailed two paragraphs below; (7) the
+**consent-token redirect at `approve`** (`OAuthAuthorizationUseCase.approve`,
+`src/authorize.ts:193-234`), which re-validates `consent.redirectUri` after
+verifying the token's signature and BEFORE using it — for the Deny redirect,
+for the stored authorization code, and for the success redirect alike. (7) is
+the third stored-state sibling and closes the same rolling-upgrade window as
+(6): within `consentTokenTtlSeconds`, a consent token signed by `prepare()`
+under the OLD grammar carries a redirect the new grammar rejects, and a valid
+signature is not a grammar check — the token proves *we issued this*, never
+*this entry is still valid*. A non-conforming carried redirect is refused
+`invalid_redirect_uri` as a DIRECT error (never a redirect to the value under
+suspicion — §9.3's untrusted-destination channel rule); (8) the **opaque
+flow-cookie redirect at callback** (`claims.params.redirect_uri`,
+read at `src/adapters/upstream-flow.ts:161`), which every callback error path
+redirects to BEFORE `bridge.handleAuthorize` re-runs §10 — and there are FIVE
+such sites, not two: rows 7/8 (IdP error) at `:176-177` and rows 10/11
+(exchange-failed / identity_rejected) at `:182-185`. **The guard is placed
+ONCE at extraction**, immediately after the value is read at `:161`, never
+per-site, or the three later sites are missed — an opaque
+pre-upgrade cookie carries no `cimd` claim, so consumer (6)'s gate returns
+early (`assertCallbackCimdPolicy`, `src/adapters/upstream-flow-cimd.ts:79`)
+and never inspects it; (9) the **authorization-code record at token
+exchange** (`consumeValidCode`, `src/token.ts:208-218`), which today compares
+the presented `redirect_uri` to `record.redirectUri` and checks PKCE but
+applies no grammar, so a code minted under the old grammar keeps minting
+access and refresh tokens for `authorizationCodeTtlSeconds` after the
+upgrade — §10.2's registration read does NOT cover this, because
+the code path never re-reads the client registration.
+
+**Why the list ends at nine, and how to re-derive it.** Consumers (3), (6),
+(7), (8), and (9) are the places a redirect_uri **outlives the check that
+admitted it**: the stored client record, the CIMD registration in the flow
+cookie, the opaque params in the same cookie, the consent token, and the
+authorization-code record. A signature or a store hit proves *we issued
+this*, never *this is still valid* — so each re-validates on READ.
+
+The membership test is mechanical: **can this value be read back after the
+check that admitted it, by a process running the NEW grammar, without passing
+that check again?** Both halves matter. "Readable later" alone is too wide —
+the CIMD validated-success cache (`src/cimd/resolve.ts:90`,
+`this.cache = new CimdSuccessCache()`) satisfies it and is deliberately NOT a
+consumer: the cache is a private in-process LRU per resolver, so a process
+running the new grammar starts EMPTY, and any process still holding a legacy
+entry is by definition still running the old grammar. No upgrade state can
+cross it, and a re-check on the hit path would guard nothing. Persistence or
+signing is what lets a carrier outlive the CODE that admitted it; in-process
+memoization does not.
+
+When adding a carrier, state its window, because the LONGEST window in a given
+deployment bounds how long a rolling upgrade stays exploitable — and which
+carrier is longest is **deployment-dependent, not fixed**: a stored
+`ClientRegistration` is unbounded (it persists until re-registered), while
+`consentTokenTtlSeconds` / `authorizationCodeTtlSeconds` are validated only as
+POSITIVE INTEGERS with no maximum (`validateTtl`, `src/config.ts:139-142`).
+Only `flowTtlSeconds` carries a contract-imposed ceiling (600 s default,
+≤ 3600). Typical defaults order them code ≈ consent (~300 s) < flow (600 s) <
+stored record (unbounded), but an implementation must not rely on that
+ordering. (5) exists
+because the matcher is a
+root export (`src/index.ts`): it is reachable with an entries array that
+never passed boot — a consumer calling the helper directly, or (pre-#106) a
+caller mutating the array after boot — so without its own read-side check the
+one-grammar invariant holds only for arrays `createBridgeConfig` produced. A
+non-conforming entry encountered at match time is refused
+`invalid_redirect_uri` (fail closed and loud, the same rule as the §10.2 read
+guard) — never silently skipped, which is the `"*"` defect this section
+started from, and never matched. (6) exists because
+`parseCimdRegistrationClaim` checks only types and cardinality, and the
+§17.1.6 matcher returns true on `entry === presented` BEFORE any shape
+check — so during a rolling upgrade, a still-valid cookie minted under the
+old grammar carries a query-bearing or non-canonical entry that exact-matches
+its way through the callback; updating document validation (4) alone does not
+close that window. Every consumer applies the ONE
+shared predicate — none re-derives the grammar from its own parsing. (1), (2),
+and (4) reject at the boundary the entry enters; (3), (5), and (6) are
+deliberately read-time re-checks of entries that entered before the grammar
+existed, out-of-band, or through the public export — not a second grammar.
+
+**Stored state is re-validated at READ, not only at write** (the entry-point
+guard's stored-state sibling). A `ClientStore` can return records written before
+this grammar existed, or populated out-of-band by a deployer — the registration
+guard never saw them. Verified on `40d9f58`: a stored native record holding
+`http://@127.0.0.1/cb` (empty userinfo, which §10.0 forbids) is **accepted** at
+authorize by `assertRedirectAllowedForClient`. So §10.2 MUST apply §10.0 to each
+registered URI it reads, and a record carrying a non-conforming entry is refused
+`invalid_redirect_uri` rather than matched. The check is per-entry at match time,
+not a migration: a store is not required to be rewritten, and a legacy record
+simply stops authorizing until re-registered.
+
+The same read-time rule covers the OTHER carrier of registered redirect URIs:
+the **CIMD registration carried in the signed flow cookie** (§17.1.6 decision
+1c). A cookie minted before this grammar was enforced carries a
+`CimdRegistration` whose `redirect_uris` the §10.0-era validator never saw —
+within `flowTtlSeconds` of an upgrade, exactly like a legacy store record.
+When `handleCallback` consumes the carried registration, each of its
+`redirect_uris` entries is re-checked against §10.0; a non-conforming entry
+fails the row-5a matrix (direct 400, `flow_cookie_invalid` audit), so a
+pre-upgrade in-flight cookie cannot grandfather an entry past the grammar.
+This is consumer (6) of the closed list — it is load-bearing, not
+belt-and-braces: `parseCimdRegistrationClaim` validates types and cardinality
+only, and the §17.1.6 matcher's `entry === presented` fast path runs BEFORE
+any shape check, so without this re-check an old cookie's exact-matching
+forbidden entry sails through. The same "not a migration" stance applies: the
+flow simply fails and the client re-authorizes.
+
+**Why reject rather than normalize.** A non-canonical entry could be rewritten
+to its canonical form instead of refused. It is refused because config should
+mean what it says: silently rewriting `https://a.test:443/cb` leaves a manifest
+whose text no longer describes the deployed policy, and the same rewrite applied
+to an entry the deployer *intended* differently is an undetectable widening. The
+error names the offending entry and shows its canonical form to paste back.
+
+**Empty is valid — for `redirectAllowlist` ONLY.** An empty `redirectAllowlist`
+is correct configuration (the built-in defaults below cover the common case);
+only *entries* can be invalid, never emptiness. This does NOT generalize: DCR
+`redirect_uris` and a CIMD document's array both require **1..16 entries**
+(§9.2 / §17.1.5 rule 19), so emptiness there is a rejection. The obligation-7
+positive list is partitioned per consumer for exactly this reason.
+
+### The two matching policies
+
+Two policies, by DCR mode. Both consume entries already valid per §10.0, and
+share the core rule: **no allow-all (`"*"`), no unanchored prefix, userinfo
+rejected.** On fragments there is no split left: **entries never contain one**
+(§10.0 rejects a fragment, including a bare trailing `#`), and a **presented**
+`redirect_uri` carrying a raw `#` is **REJECTED** `invalid_redirect_uri` — not
+stripped (⚠️ implementation-pending with §10.0: both matchers currently
+`url.hash = ""` and compare, silently accepting a malformed request as if it
+were the registered exact URI; RFC 6749 §3.1.2 forbids a fragment in the
+redirection endpoint URI, and CIMD's §17.1.3 already rejects rather than
+strips — one verdict for the same shape on every path). This supersedes the
+earlier "hash stripped" wording; a stripped-then-matched fragment is exactly
+the accept-what-was-never-registered behavior the exact-match rule exists to
+prevent. The §10.0 obligation list owes a rejection test for a presented
+`https://client.test/cb#frag` in both DCR modes. Shared
+built-in defaults for MCP clients (these ADD to any config allowlist; a config
+cannot remove them):
 
 ```
 https://claude.ai        // Claude (web) custom connectors
@@ -759,6 +1573,18 @@ https://chatgpt.com      // ChatGPT custom connectors
 http://localhost         // native MCP clients — any port (RFC 8252 §7.3)
 http://127.0.0.1         // numeric loopback variant
 ```
+
+Two properties of this default set worth stating rather than leaving to
+inference: **`http://[::1]` is deliberately NOT a default** — the §10.1 matcher
+recognizes all three loopback hosts (`localhost`/`127.0.0.1`/`[::1]`) as
+loopback, but an IPv6-literal callback only matches if the deployer adds
+`http://[::1]` to `redirectAllowlist` explicitly (an IPv6-only loopback client
+is rare enough that the default set stays minimal; the matcher capability is
+already there). And the defaults are themselves §10.0-governed entries: they
+are compile-time constants today, so the implementation owes a **unit test
+asserting every `DEFAULT_ALLOWED_REDIRECT_ORIGINS` entry is §10.0-valid** —
+the guard against a future edit adding a non-canonical or non-grammar default
+that no boot validator would ever see.
 
 ### 10.1 Global allowlist (stateless-DCR mode) — `assertAllowedRedirectUri`
 An entry matches if it is the exact redirect_uri, the exact ORIGIN
@@ -768,14 +1594,84 @@ widens to any port only if it is an origin-only entry with no explicit port/path
 a port-scoped or path-specific loopback entry is NOT widened. Returns the
 normalized URI.
 
+Once §10.0 is enforced (⚠️ **implementation pending** — see the §5 bullet),
+this matcher is consumer (5) of the closed list: it applies the shared §10.0
+predicate to each entry it reads BEFORE matching, refusing a non-conforming
+entry `invalid_redirect_uri` rather than skipping or matching it. That is not
+redundant with boot validation — the matcher is a root export
+(`src/index.ts`) reachable with an entries array `createBridgeConfig` never
+saw, and today its only self-defense is the `"*"` check, so a directly
+supplied `https://@evil.test` is classified origin form and granted
+origin-wide match. The current `"*"` rejection stays as defense-in-depth
+inside the predicate era too.
+
+Two consequences that make §10.0's raw-syntax rules load-bearing rather than
+cosmetic:
+
+- **Origin-form entries match origin-wide** (any path on that origin). That is
+  the form's purpose, and it is exactly why the grammar forbids a query
+  delimiter or empty userinfo inside it: `https://ok.test?` and
+  `https://@ok.test` parse to an empty `search`/`username`, so a parsed-field
+  check classifies them origin-only and grants that origin-wide match — while
+  the text reads as something narrower.
+- **Exact-URI entries match by RAW string equality** — the presented
+  `redirect_uri` is compared byte-for-byte against the entry, with **no
+  normalization of either side**. This is why the grammar requires canonical
+  form: a non-canonical entry (`HTTPS://…`, `…:443/cb`, a `/x/../cb` dot
+  segment, surrounding whitespace) matches **nothing**, so the deployer's
+  configured callback fails at boot instead of at authorization.
+
+  ⚠️ **Implementation-pending, and the presented side is the half that is
+  wrong today.** Both matchers currently normalize the request before
+  comparing (`url.hash = ""; const normalized = url.href` —
+  `src/redirect.ts:83-86`), so a client presenting
+  `HTTPS://A.TEST:443/x/../cb` collapses to `https://a.test/cb` and matches a
+  registration of that URI (verified on Node 24: case, default port, and dot
+  segments all fold). That accepts **request bytes that were never
+  registered**, which is the same reject-don't-normalize rule this section
+  applies to entries, applied to only one side — and RFC 6749 §3.1.2.3
+  requires *simple string comparison* for exactly this reason.
+
+  So the presented `redirect_uri` MUST ITSELF BE §10.0-VALID: canonical
+  spelling, no fragment (rejected, per "The two matching policies" above),
+  no userinfo, http only on loopback. A non-canonical presented value is
+  refused `invalid_redirect_uri` — never folded into a match. The **native
+  loopback exception is unchanged and remains the only one**: RFC 8252 §7.3
+  ports vary by design, so that branch compares scheme + hostname + pathname
+  + search with the port ignored, on two values that are each already
+  canonical.
+
 ### 10.2 Per-client policy (stored-DCR) — RC item (b)
-At authorize/token in stored mode, the client's registered `applicationType`
-selects the rule:
-- **`native`** → RFC 8252: loopback (`localhost`/`127.0.0.1`/`[::1]`) on **any**
-  port accepted; the presented `redirect_uri` must match a registered loopback
-  origin. (Lets CLI/desktop clients use ephemeral ports.)
-- **`web`** → `https` only, and the presented `redirect_uri` must **exactly** equal
-  a registered URI (no port widening, no origin wildcard).
+At **authorize** in stored mode (the authorization-code token path never
+re-reads the registration — verified: `src/token.ts`'s only `clientStore.find`
+is on the `client_credentials` machine-client path, `token.ts:169`), the
+client's registered `applicationType`
+selects the rule (every registered URI it reads is first re-validated against
+§10.0 — the stored-state read guard, obligation 3 there, ⚠️
+implementation-pending with the rest of §10.0):
+- **`native`** → RFC 8252: the registered entry must be a §10.0-valid loopback
+  URI (`localhost`/`127.0.0.1`/`[::1]`); the presented `redirect_uri` matches it
+  on **scheme + hostname + pathname + search, with the port ignored** — never
+  host-only. **The port-ignoring rule is scoped, and the three statements of
+  it elsewhere must agree with this one:** §10.1 widens only a PORTLESS
+  LOOPBACK ORIGIN entry (any port on that origin); stored-`native` and the
+  §17.1.6 CIMD loopback-`http` case compare scheme+host+path+search with the
+  port ignored; and every `https` comparison stays exact raw equality WITH
+  the port included (§17.1.5 rule 20's "port included" applies to that case,
+  not to loopback `http`). A reader who takes any one of those sentences as
+  the general rule derives a different matcher — which is why they are
+  enumerated together here. "Origin" appears nowhere in this rule on purpose: the match tuple
+  includes the path and query, exactly as §17.1.5 rule 20 and the shipped
+  matcher (`src/redirect.ts:95-103`) define it, so a client registered for
+  `http://127.0.0.1/cb` does not match a presented `http://127.0.0.1/other`.
+  Only the port is elastic (lets CLI/desktop clients use ephemeral ports).
+- **`web`** → `https` only, and the presented `redirect_uri` must equal a
+  registered URI by **RAW string comparison** — no port widening, no origin
+  wildcard, and **no normalization of the presented value** (RFC 6749
+  §3.1.2.3 simple string comparison; see the §10.1 consequence above, where
+  today's normalize-then-compare is recorded as the pending half). A
+  presented value that is not itself §10.0-valid is refused before any
+  comparison.
 
 This replaces the source's blanket loopback-for-everyone default in stored mode.
 
@@ -1148,7 +2044,8 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | `insufficient_scope` 403 step-up | ✅ v0.1 | §8.3 |
 | RFC 8414 AS metadata | ✅ v0.1 | §9.1 |
 | RFC 7591 DCR (stateless) | ✅ v0.1 | §9.2 |
-| Stored-client DCR + `application_type` *(fix #4, RC b)* | ✅ v0.1 | §9.2, §10.2 |
+| Stored-client DCR + `application_type` *(fix #4, RC b)* | ✅ v0.1 — but the §10.0 read-guard §10.2 now depends on is 🔴 pending (row below) | §9.2, §10.2 |
+| Redirect-entry grammar §10.0 (ONE definition, all NINE consumers: boot · DCR write in both modes · stored read · CIMD doc · exported matcher `assertAllowedRedirectUri` · flow-cookie CIMD registration · flow-cookie opaque params · consent-token redirect at approve · authorization-code record at token exchange) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) — this row turns green only when the §10.0 differential test passes across all nine | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
 | RFC 9207 `iss` + `authorization_response_iss_parameter_supported` *(RC a)* | ✅ v0.1 | §9.1, §9.3 |
@@ -1161,7 +2058,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — S6a primitives + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`). **Not yet live-verified** against a real CIMD-first client (CIMD-LIVE pending), and any 2026-07-28 spec-final conformance claim is gated on the `docs/verification.md` spec-release re-verification | §6.6, §17.1 |
+| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — S6a primitives + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`) — **except the §10.0 half of rule 20 (redirect-entry canonicality), which is 🔴 pending with the §10.0 row above**. **Not yet live-verified** against a real CIMD-first client (CIMD-LIVE pending), and any 2026-07-28 spec-final conformance claim is gated on the `docs/verification.md` spec-release re-verification | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | ✅ v0.2 shipped (S3a provisioning/rotation + S3b grant: Basic+post auth, `MachineTokenResponse`, metadata-gated advertisement) | §17.2 |
@@ -1444,10 +2341,11 @@ decision. Everything else in the pipeline still runs under the flag.
   would be accepted with the key material silently ignored. `jwks_uri` is a
   URL and is never fetched (17.1.4 / the no-second-fetch posture), so it
   cannot carry key material into the AS.
-- `redirect_uris` entries: https (exact-match at authorize, per draft §4.5 /
-  RFC 9700) or loopback http (RFC 8252 any-port at match time — consistent
-  with §10.2 native policy). Same hygiene as §10: no wildcards, no fragments,
-  no userinfo. If present: `response_types` must include `"code"`;
+- `redirect_uris` entries: **§10.0-valid** (that grammar governs — not a
+  restatement, and not a per-site re-derivation: the CIMD matcher previously
+  accepted `*`, `javascript:`, and non-canonical entries that §10.1 refused).
+  https entries exact-match at authorize (draft §4.5 / RFC 9700); loopback http
+  matches RFC 8252 any-port (consistent with §10.2 native policy). If present: `response_types` must include `"code"`;
   `grant_types` ⊆ `{authorization_code, refresh_token}`; else reject.
 - Unknown members ignored (the RFC 7591 registry allows extras). `logo_uri`
   is NOT fetched and NOT displayed in v0.2 (the draft requires
@@ -1503,7 +2401,10 @@ These close ambiguities and fail-open gaps found by the cross-family S6a spec
 critique and confirmed by an adversarial amendment-verify pass (critics/verifiers:
 GPT-5.6 Sol, Grok 4.5, GLM 5.2), each empirically re-verified on the project's
 Node 24 runtime. They **TIGHTEN** the bullets above; where a rule here and a
-bullet above differ, this subsection wins. Every rule is fail-closed. No new
+bullet above differ, this subsection wins — **except for the §10.0
+redirect-entry grammar, which governs every consumer including CIMD** (rule 20
+is amended accordingly; a subsection-wins precedence over the shared grammar is
+what let the CIMD matcher and §10.1 diverge in the first place). Every rule is fail-closed. No new
 subsystem is introduced — these pin behavior the primitives already imply so the
 S6a bake-off cannot diverge and review cannot discover. **This subsection is
 contract text; the enforcement lands with the S6 code, not with this docs
@@ -1511,7 +2412,10 @@ change:** each S6a-scope rule is to be covered by a negative test in the frozen
 S6a acceptance suite, and the flow rules (H) are to be implemented and tested in
 S6b. **Status: those PRs have landed** — the S6a primitives, both frozen
 acceptance suites, and the S6b flow integration are implemented, and §16 now
-tracks CIMD as implemented. What remains is live verification (CIMD-LIVE) and,
+tracks CIMD as implemented. **Exception: the §10.0 amendment to rule 20 is
+implementation-pending** (the rule's own ⚠️ marker below) — the landed S6
+enforcement is rule 20's original shape list, not the §10.0 canonicality half.
+What remains beyond that is live verification (CIMD-LIVE) and,
 for any conformance claim against the 2026-07-28 final spec text, the
 `docs/verification.md` spec-release re-verification.
 
@@ -1669,6 +2573,17 @@ for any conformance claim against the 2026-07-28 final spec text, the
     document keys, so the public-only per-key scan is the only obligation. JSON
     depth is bounded by the body cap; no separate depth limit.
 20. **CIMD redirect hygiene uses a NEW pure validator, not the §10 exports.**
+    *(AMENDED by §10.0 — read that first. The grammar there governs WHICH entries
+    are valid, for CIMD exactly as for §10.1/§10.2, superseding this rule's
+    looser shape rules wherever they differ: an https entry carrying a query or
+    in non-canonical form is REJECTED under §10.0 even though the raw-shape rule
+    below would admit it. What survives unchanged is the mechanical part — that
+    CIMD needs its OWN pure per-URI predicate rather than reusing the §10
+    exports, because those strip a fragment where §17.1.3 requires rejecting it
+    and are not pure shape predicates. `assertCimdRedirectUri` therefore stays,
+    and becomes the CIMD-side enforcement OF §10.0 rather than a second grammar.
+    The §17.1.5 "this subsection wins" precedence does NOT extend to the entry
+    grammar.)*
     Neither `assertAllowedRedirectUri` (allowlist membership; sets `url.hash=""`,
     src/redirect.ts:35) nor `assertRedirectAllowedForClient` (needs a stored
     client; `url.hash=""`, src/redirect.ts:83) is a pure per-URI shape predicate,
@@ -1679,9 +2594,29 @@ for any conformance claim against the 2026-07-28 final spec text, the
     per the identity-port lesson): argument MUST be a primitive non-empty string,
     no coercion; reject raw `\`, C0/DEL, CR/LF, malformed percent triplets, any
     userinfo (INCLUDING empty `@`), any fragment (INCLUDING a trailing `#`), and
-    any `*` in the host; accept EITHER `https:` (validated for shape only here;
-    EXACT raw-string match at authorize, port included, no normalization) OR
-    `http:` with host exactly `localhost`, `127.0.0.1`, or `[::1]`. Only the
+    any `*` anywhere in the raw entry — host, path, or elsewhere (`https://a.test/cb*`
+    is rejected here exactly as §10.0 rejects it; the earlier "in the host"
+    scoping was narrower than the grammar and is superseded); accept `https:`
+    with ANY host, or `http:` ONLY with host exactly
+    `localhost`, `127.0.0.1`, or `[::1]` (the loopback restriction binds the
+    `http:` case alone — the earlier "EITHER https: OR http: with host
+    exactly…" phrasing read as if https also required loopback, contradicting
+    the "Only the `http:` case is loopback" sentence below; this spelling and
+    that sentence now say the same thing, and it is the same rule §10.0 now
+    states grammar-wide) — **in each case only if the entry is
+    also §10.0-valid** (canonical spelling, no query; this REPLACES the earlier
+    "validated for shape only here" wording, which admitted queries and
+    non-canonical forms). ⚠️ The §10.0-validity half of that sentence is
+    **implementation-pending with the rest of §10.0**: at this commit
+    `assertCimdRedirectUri` enforces only the shape rules of this rule's own
+    list, so a canonically-spelled query-free entry passes but a non-canonical
+    one is NOT yet rejected — the differential table in §10.0 shows current
+    shipped behavior. Matching at authorize is EXACT raw-string comparison,
+    port included, with no normalization at match time — which is sound
+    precisely because §10.0, once enforced, forces the stored entry into
+    canonical form;
+    raw-equality against a non-canonical entry is what made the two matchers
+    disagree. Only the
     `http:` case is loopback. The authorize-time (S6b) loopback any-port match
     reuses the existing runtime semantics of src/redirect.ts:95-103 — scheme,
     hostname, pathname, and search equal; port ignored; fragment already rejected
@@ -1777,8 +2712,9 @@ the user has already authenticated. Fix: resolve once at authorize, carry forwar
 *Shared redirect matcher (used by 1a, 1d, and prepare).* CIMD redirect membership is
 a **single NEW pure matcher** (not the §10 export functions, which strip fragments and
 consult a stored client): an https registration entry matches by **exact raw-string**
-`presented === registered` (rule 20 / the raw-string identity rule — no normalization,
-port included); a loopback `http` entry matches RFC 8252 **any-port** using the compare
+`presented === registered` (rule 20 / the raw-string identity rule — no normalization
+AT MATCH TIME, port included; sound because §10.0 already required the registered entry
+to be canonical); a loopback `http` entry matches RFC 8252 **any-port** using the compare
 semantics of `src/redirect.ts:95-103` (scheme, host, path, and search equal; port
 ignored; fragment already rejected). It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and
