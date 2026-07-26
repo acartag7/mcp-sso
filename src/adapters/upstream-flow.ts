@@ -18,6 +18,7 @@ import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
 import { AuthConfigError, originOf, pathAfterOrigin } from "../config.ts";
 import { OAuthError } from "../errors.ts";
+import { assertOAuthRedirectEntry } from "../redirect.ts";
 import { pkceChallenge } from "../crypto.ts";
 import { queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { redactForStderr } from "../audit/util.ts";
@@ -158,8 +159,12 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       try { claims = await verifyFlowToken(cookieValue as string, secret, issuer, callbackPath); } catch { await emit("failure", "flow_cookie_invalid"); return clear(directErrorResponse("invalid_request", "flow cookie invalid")); } // row 3
       clientId = claims.params.client_id;
       if (claims.exp > 0 && claims.exp * 1000 <= clock.nowMs()) { await emit("failure", "flow_expired", clientId); return clear(directErrorResponse("invalid_request", "flow expired")); } // row 4
-      const clientRedirectUri = claims.params.redirect_uri; const clientState = claims.params.state; // verified context (authorize §10-validated + signed)
+      const clientRedirectUri = claims.params.redirect_uri; const clientState = claims.params.state;
       if (!clientRedirectUri) { await emit("failure", "flow_cookie_invalid"); return clear(directErrorResponse("invalid_request", "flow cookie invalid")); }
+      try { assertOAuthRedirectEntry(clientRedirectUri); } catch {
+        await emit("failure", "flow_cookie_invalid", clientId);
+        return clear(directErrorResponse("invalid_request", "flow cookie invalid"));
+      }
       const queryState = queryString(req.query, "state");
       if (!queryState || !timingSafeStringEqual(queryState, claims.state)) { await emit("failure", "state_mismatch", clientId); return clear(directErrorResponse("invalid_request", "state mismatch")); } // row 5
       // Row 5a (§17.1.6 decision 1d(ii)): the CIMD claim/mode/redirect matrix,

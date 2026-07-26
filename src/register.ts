@@ -10,7 +10,7 @@ import type { AuditPort } from "./ports/audit.ts";
 import type { ApplicationType } from "./ports/client-store.ts";
 import type { BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
-import { assertAllowedRedirectUri } from "./redirect.ts";
+import { assertAllowedRedirectUri, assertRegistrationRedirectPolicy } from "./redirect.ts";
 
 export interface RegisterDeps {
   config: BridgeConfig;
@@ -19,7 +19,7 @@ export interface RegisterDeps {
 }
 
 export interface RegisterInput {
-  redirectUris?: string[];
+  redirectUris?: unknown;
   /** RAW client metadata — deliberately `unknown`, not `ApplicationType`. A
    *  present-but-non-string value must be REJECTED (`invalid_client_metadata`),
    *  never coerced to the `"web"` default: silently best-effort-parsing a
@@ -31,8 +31,8 @@ export interface RegisterInput {
    *  any `grant_types` containing `client_credentials` so the open endpoint can
    *  NEVER mint a secret-bearing client. Passed through here only to be
    *  validated and rejected — they are never persisted. */
-  tokenEndpointAuthMethod?: string;
-  grantTypes?: string[];
+  tokenEndpointAuthMethod?: unknown;
+  grantTypes?: unknown;
 }
 
 export interface RegisteredClient {
@@ -47,21 +47,19 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
   try {
     // §17.2: reject machine-shaped registrations FIRST. Open DCR must never mint
     // a secret-bearing (machine) client — only out-of-band provisioning can.
-    if (input.tokenEndpointAuthMethod !== undefined && input.tokenEndpointAuthMethod !== "none") {
-      throw new OAuthError(
-        "invalid_client_metadata",
-        "token_endpoint_auth_method other than 'none' is not accepted via open registration (§17.2)",
-      );
+    if (input.tokenEndpointAuthMethod !== undefined) {
+      if (typeof input.tokenEndpointAuthMethod !== "string" || input.tokenEndpointAuthMethod.length === 0) {
+        throw metadataError("token_endpoint_auth_method must be a non-empty string when present");
+      }
+      if (input.tokenEndpointAuthMethod !== "none") {
+        throw metadataError("token_endpoint_auth_method other than 'none' is not accepted via open registration (§17.2)");
+      }
     }
-    if (input.grantTypes?.includes("client_credentials")) {
-      throw new OAuthError(
-        "invalid_client_metadata",
-        "grant_types containing client_credentials is not accepted via open registration (§17.2)",
-      );
+    const grantTypes = optionalStringArray(input.grantTypes, "grant_types");
+    if (grantTypes?.includes("client_credentials")) {
+      throw metadataError("grant_types containing client_credentials is not accepted via open registration (§17.2)");
     }
-    const redirectUris = arrayOfStrings(input.redirectUris);
-    if (redirectUris.length === 0) throw new OAuthError("invalid_request", "redirect_uris is required");
-    for (const uri of redirectUris) assertAllowedRedirectUri(uri, config.redirectAllowlist);
+    const redirectEntries = requiredRedirectArray(input.redirectUris);
     // ABSENT ⇒ the "web" default; PRESENT-but-anything-else ⇒ reject (no coercion).
     const rawApplicationType = input.applicationType === undefined ? "web" : input.applicationType;
     if (rawApplicationType !== "native" && rawApplicationType !== "web") {
@@ -74,6 +72,11 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
       );
     }
     const applicationType: ApplicationType = rawApplicationType;
+    const redirectUris = redirectEntries.map((entry) => {
+      const uri = assertAllowedRedirectUri(entry, config.redirectAllowlist);
+      if (config.dcr.mode === "stored") assertRegistrationRedirectPolicy(uri, applicationType);
+      return uri;
+    });
     const clientId = `mcpdc_${cryptoRandom()}`;
     const issuedAt = Math.floor(clock.nowMs() / 1000);
     if (config.dcr.mode === "stored") {
@@ -95,8 +98,38 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
   }
 }
 
-function arrayOfStrings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+function requiredRedirectArray(value: unknown): unknown[] {
+  if (value === undefined) throw new OAuthError("invalid_request", "redirect_uris is required");
+  if (!Array.isArray(value)) throw metadataError("redirect_uris must be an array");
+  // Capture length ONCE, require an integer in the closed domain, then read each
+  // selected index once. A Proxy that changes length across reads cannot enlarge
+  // the scan past the cap, and NaN/1.5 cannot collapse a present array to empty.
+  const length = value.length;
+  if (!Number.isInteger(length) || length < 1 || length > 16) {
+    throw metadataError("redirect_uris must contain 1..16 entries");
+  }
+  return Array.from({ length }, (_, index) => value[index]);
+}
+
+function optionalStringArray(value: unknown, field: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw metadataError(`${field} must be an array`);
+  // Same read-once discipline as redirect_uris: one length, one read per index.
+  const length = value.length;
+  if (!Number.isInteger(length) || length < 0 || length > 16) {
+    throw metadataError(`${field} must contain 0..16 entries`);
+  }
+  const snapshot = Array.from({ length }, (_, index) => value[index]);
+  for (const entry of snapshot) {
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw metadataError(`${field} entries must be non-empty primitive strings`);
+    }
+  }
+  return snapshot as string[];
+}
+
+function metadataError(message: string): OAuthError {
+  return new OAuthError("invalid_client_metadata", message);
 }
 
 function cryptoRandom(): string {

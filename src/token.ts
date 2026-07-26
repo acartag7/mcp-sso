@@ -4,7 +4,7 @@ import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { AuthCodeRecord, RefreshTokenRecord, StorePort } from "./ports/store.ts";
 import type { BridgeConfig } from "./config.ts";
-import { OAuthError } from "./errors.ts";
+import { OAuthError } from "./errors.ts"; import { assertOAuthRedirectEntry } from "./redirect.ts";
 import { expiresAtIso, generateRefreshToken, parseRefreshFamilyId, sha256Hex, signAccessToken, verifyPkceS256 } from "./crypto.ts";
 import { isScopeToken, resolveClientCredentialsScope, scopeString, storedScopes } from "./scopes.ts";
 import { verifyMachineClientSecret } from "./machine-client.ts";
@@ -206,10 +206,10 @@ export class OAuthTokenUseCase {
   }
 
   private async consumeValidCode(input: AuthorizationCodeGrantInput): Promise<AuthCodeRecord> {
-    const code = requiredStr(input.code, "code");
-    const record = await this.store.consumeAuthCode(sha256Hex(code), new Date(this.clock.nowMs()).toISOString());
-    if (!record) throw new OAuthError("invalid_grant", "Authorization code is invalid");
-    if (input.clientId !== record.clientId || input.redirectUri !== record.redirectUri) {
+    const code = requiredStr(input.code, "code"), record = await this.store.consumeAuthCode(sha256Hex(code), new Date(this.clock.nowMs()).toISOString());
+    if (!record) throw new OAuthError("invalid_grant", "Authorization code is invalid"); const redirectUri = record.redirectUri;
+    try { assertOAuthRedirectEntry(redirectUri); } catch { throw new OAuthError("invalid_grant", "Authorization code is invalid"); }
+    if (input.clientId !== record.clientId || input.redirectUri !== redirectUri) {
       throw new OAuthError("invalid_grant", "Authorization code is invalid");
     }
     if (!verifyPkceS256(requiredStr(input.codeVerifier, "code_verifier"), record.codeChallenge)) {
