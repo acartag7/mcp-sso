@@ -61,7 +61,9 @@ if (phases["flow-instance-binding"] !== true) {
   class MemoryAudit {
     events: any[] = [];
     async writeAuthEvent(e: any) { this.events.push(e); }
-    callbackReasons() { return this.events.filter((e) => e.event === "oauth.upstream.callback").map((e) => e.reason); }
+    // FAILURE events only: a suite that keys on reason alone passes an
+    // implementation auditing the rejection with status "success".
+    callbackReasons() { return this.events.filter((e) => e.event === "oauth.upstream.callback" && e.status === "failure").map((e) => e.reason); }
   }
   function jwk(): any {
     const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -164,6 +166,7 @@ if (phases["flow-instance-binding"] !== true) {
     // Contracted channel: the existing row 3 — a direct 4xx, never a redirect.
     assert.equal(res.status, 400, "cross-flow cookie is the existing row-3 direct 4xx");
     assert.equal(res.headers.location, undefined, "row 3 is direct — never a redirect");
+    assert.equal((res as any).redirect, undefined, "the adapters key redirects on NormResponse.redirect — it must be unset too");
     assert.ok(audit.callbackReasons().includes("flow_cookie_invalid"), "must audit the contracted row-3 reason");
     // §17.11: EVERY callback response with a readable cookie clears it — this
     // new rejection path included, or an invalid cross-flow cookie lingers in
@@ -265,6 +268,8 @@ if (phases["flow-instance-binding"] !== true) {
     assert.equal(crossFlow.status, garbage.status, "status must not distinguish a cross-flow cookie");
     assert.equal(crossFlow.headers.location, undefined);
     assert.equal(garbage.headers.location, undefined);
+    assert.equal((crossFlow as any).redirect, undefined, "no NormResponse.redirect on the cross-flow rejection");
+    assert.equal((garbage as any).redirect, undefined, "no NormResponse.redirect on the garbage rejection");
     // The BODY is the oracle that a status-only check misses: an implementation
     // can return a distinguishable `error`/`error_description` for an audience
     // mismatch while garbage gets the generic row-3 body, and still audit
