@@ -833,16 +833,25 @@ the response. Wiring rules:
 >    this grammar existed or populated out-of-band.
 > 4. `assertCimdRedirectUri` enforcing §10.0 rather than its own shape rules
 >    (§17.1.5 rule 20, as amended there) — AND `projectCimdRegistration`
->    retaining the validator's **canonical form**, not the document's raw
->    spelling. The §17.1.6 matcher compares `presented === registered` with no
->    normalization, so a document carrying the accepted omitted-slash form
->    (`https://a.test`) that is projected raw can never match the canonical
->    `https://a.test/` a client presents — the same
->    register-but-never-authorize defect as obligation 2's DISCARDED
->    normalized return, on the CIMD side. The canonical-fold rule under
->    "Canonical spelling" (persist/compare the full `href`) binds this
->    projection exactly as it binds stored DCR, and the CIMD round-trip test
->    covers the omitted-slash form.
+>    with one CIMD-specific tightening: **the omitted-root-slash exemption
+>    does NOT apply to CIMD documents** — a CIMD `redirect_uris` entry must be
+>    the full canonical `href` (`https://a.test/`, never `https://a.test`),
+>    and the non-canonical spelling is rejected `document_invalid`. Rationale:
+>    the exemption exists for surfaces with a feedback channel — boot names
+>    the offending entry in the error, DCR echoes the canonical form in the
+>    registration response — but CIMD has NO response channel to tell the
+>    client its entry was folded, so EITHER projection choice for the
+>    accepted-then-folded spelling breaks someone silently (project raw: the
+>    §17.1.6 exact matcher can never match the canonical form a conforming
+>    client presents; project canonical: a client presenting the exact string
+>    published in its own document fails). Rejecting the non-canonical
+>    spelling at document-validation time is the only choice that keeps
+>    stored === published === presented as the same bytes — raw-equality
+>    matching stays sound and the author learns at validation, not via a
+>    silent authorize failure. The CIMD round-trip test covers both sides:
+>    a document entry `https://a.test` is rejected `document_invalid`;
+>    `https://a.test/` validates, projects verbatim, and matches a presented
+>    `https://a.test/`.
 > 5. `assertAllowedRedirectUri` applying §10.0 to every allowlist entry **it
 >    reads** before matching (consumer (5) — the export-path sibling of 3;
 >    rationale in the consumer list below). A non-conforming entry is refused
@@ -881,7 +890,12 @@ the response. Wiring rules:
 >    witness — per-entry tests cannot catch an oversized array); a `web`
 >    registration carrying `http://localhost/cb` AND a `native` registration
 >    carrying a non-loopback https entry (the obligation-2 per-type write
->    guard, one witness per type).
+>    guard, one witness per type); a PRESENTED `redirect_uri` carrying a
+>    fragment (`https://client.test/cb#frag`) rejected at authorize in both
+>    DCR modes (the reject-don't-strip rule under "The two matching
+>    policies" — today both matchers strip and match); a CIMD document entry
+>    in omitted-slash form (`https://a.test` — rejected `document_invalid`
+>    per obligation 4's CIMD tightening).
 > 7. **Positive tests** that the grammar does not over-reject: all four built-in
 >    defaults, `https://a.test` (omitted root slash), `https://a.test/`,
 >    `http://[::1]:9`, `https://xn--80a.test` (punycode — the ASCII form of the Cyrillic host above), and
@@ -889,7 +903,10 @@ the response. Wiring rules:
 >    array remains valid. Plus a **round-trip** test: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
 > 8. A **differential test** exercising **all SIX consumers of the closed
->    list** — boot config, DCR registration write, the §10.2 stored-state READ,
+>    list** — boot config, the DCR registration write in BOTH modes (the
+>    stateless leg asserts rejection AND that nothing forbidden is echoed;
+>    the stored leg asserts rejection before persistence), the §10.2
+>    stored-state READ,
 >    CIMD document validation, the exported §10.1 matcher called DIRECTLY
 >    with an entries array that never passed boot, and the flow-cookie CIMD
 >    consumption at callback: for each row of the table
@@ -1056,8 +1073,11 @@ therefore checking a different string than the one the deployer wrote and the
 matcher later compares.
 
 **The grammar has exactly SIX consumers, and this list is closed:**
-(1) boot (`createBridgeConfig`) for `redirectAllowlist`; (2) the stored-DCR
-registration write (§9.2); (3) the stored-state READ at authorize/token
+(1) boot (`createBridgeConfig`) for `redirectAllowlist`; (2) the DCR
+registration write in BOTH modes (§9.2 — stored persists the canonical form;
+stateless persists nothing but validates and echoes it, per obligation 2: the
+same endpoint must not accept or echo what the grammar forbids); (3) the
+stored-state READ at authorize/token
 (§10.2 — the paragraph below); (4) CIMD document validation
 (`assertCimdRedirectUri`, §17.1.5 rule 20); (5) the **exported §10.1 matcher
 itself** (`assertAllowedRedirectUri`), which applies the predicate to each
@@ -1127,11 +1147,18 @@ correct configuration (the built-in defaults below cover the common case). Only
 
 Two policies, by DCR mode. Both consume entries already valid per §10.0, and
 share the core rule: **no allow-all (`"*"`), no unanchored prefix, userinfo
-rejected.** On fragments the split is: **entries never contain one** (§10.0
-rejects a fragment, including a bare trailing `#`); a **presented**
-`redirect_uri` arriving at match time has its fragment **stripped** before
-comparison (`url.hash = ""` in both matchers) — "hash stripped" describes the
-presented-URI side only, never license for a fragment-bearing entry. Shared
+rejected.** On fragments there is no split left: **entries never contain one**
+(§10.0 rejects a fragment, including a bare trailing `#`), and a **presented**
+`redirect_uri` carrying a raw `#` is **REJECTED** `invalid_redirect_uri` — not
+stripped (⚠️ implementation-pending with §10.0: both matchers currently
+`url.hash = ""` and compare, silently accepting a malformed request as if it
+were the registered exact URI; RFC 6749 §3.1.2 forbids a fragment in the
+redirection endpoint URI, and CIMD's §17.1.3 already rejects rather than
+strips — one verdict for the same shape on every path). This supersedes the
+earlier "hash stripped" wording; a stripped-then-matched fragment is exactly
+the accept-what-was-never-registered behavior the exact-match rule exists to
+prevent. The §10.0 obligation list owes a rejection test for a presented
+`https://client.test/cb#frag` in both DCR modes. Shared
 built-in defaults for MCP clients (these ADD to any config allowlist; a config
 cannot remove them):
 
@@ -1576,7 +1603,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | RFC 8414 AS metadata | ✅ v0.1 | §9.1 |
 | RFC 7591 DCR (stateless) | ✅ v0.1 | §9.2 |
 | Stored-client DCR + `application_type` *(fix #4, RC b)* | ✅ v0.1 — but the §10.0 read-guard §10.2 now depends on is 🔴 pending (row below) | §9.2, §10.2 |
-| Redirect-entry grammar §10.0 (ONE definition, all SIX consumers: boot · DCR write · stored read · CIMD doc · exported matcher `assertAllowedRedirectUri` · flow-cookie CIMD consumption) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) — this row turns green only when the §10.0 differential test passes across all six | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
+| Redirect-entry grammar §10.0 (ONE definition, all SIX consumers: boot · DCR write in both modes · stored read · CIMD doc · exported matcher `assertAllowedRedirectUri` · flow-cookie CIMD consumption) | 🔴 contract-only, implementation pending (#104 / PR #105 successor) — this row turns green only when the §10.0 differential test passes across all six | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
 | RFC 9207 `iss` + `authorization_response_iss_parameter_supported` *(RC a)* | ✅ v0.1 | §9.1, §9.3 |
