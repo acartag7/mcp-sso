@@ -791,9 +791,20 @@ the response. Wiring rules:
 > "one negative test per rejected shape" left to judgment:**
 >
 > 1. A boot validator applying §10.0 to every `redirectAllowlist` entry.
-> 2. **Registration-time enforcement (the write side):** stored DCR applies
->    §10.0 to each `redirect_uris` entry BEFORE persisting, and persists the
->    canonical form. Today `registerClient` calls `assertAllowedRedirectUri` but
+> 2. **Registration-time enforcement (the write side), in BOTH DCR modes:**
+>    `registerClient` applies §10.0 to each `redirect_uris` entry BEFORE any
+>    other effect — stateless mode validates and ECHOES the canonical form
+>    (it persists nothing, but the same endpoint must not accept and echo an
+>    entry the grammar forbids: one grammar, every consumer includes the
+>    stateless sibling); stored mode additionally persists the
+>    canonical form. The raw `redirect_uris` field crosses this boundary as
+>    `unknown[]`, never pre-narrowed: today `Bridge.handleRegister` runs the
+>    array through `stringArray`, which silently DROPS non-string members
+>    (`["https://ok.test/cb", 7]` registers as if the `7` were never sent), so
+>    the non-string rejection this obligation owes can never observe the value
+>    it must reject — the adapter hands the raw array through and the §10.0
+>    check rejects a non-string member, never filters it. Today
+>    `registerClient` also calls `assertAllowedRedirectUri` but
 >    DISCARDS its normalized return and stores the raw value, so
 >    `https://a.test:443/cb` registers successfully and produces a record the
 >    read guard (3) then rejects — a client that can register but can never
@@ -806,7 +817,9 @@ the response. Wiring rules:
 >    (§17.1.5 rule 20, as amended there).
 > 5. **One rejection test per row of this closed list**, each asserting the
 >    error names the offending entry: `*`; any `*`-bearing entry — in the host
->    OR the path (`https://a.test/cb*`, `https://a.test/*`); a non-`http(s)`
+>    (`https://*.a.test/cb`) OR the path (`https://a.test/cb*`,
+>    `https://a.test/*`; a host-star is WHATWG-canonical — verified — so the
+>    test proves the `*` rule fires on its own, not via canonicality); a non-`http(s)`
 >    scheme (`javascript:`, `data:`); userinfo (`https://u:p@a.test`) AND empty
 >    userinfo (`https://@a.test`) AND **canonical** userinfo
 >    (`https://u:p@a.test/` — its own `href`, so the test proves userinfo is
@@ -814,14 +827,16 @@ the response. Wiring rules:
 >    delimiter — non-canonical (`https://a.test?`) AND canonical
 >    (`https://a.test/?`, `https://a.test/cb?`); a fragment — including the
 >    canonical trailing forms (`https://a.test/#`, `https://a.test/cb#`); a
->    percent-encoded C0 control (`https://a.test/cb%0A`, `%0D`, `%00` — each
+>    percent-encoded C0 control or DEL (`https://a.test/cb%0A`, `%0D`, `%00`,
+>    AND `%7F` — DEL is in the rule, so it gets its own witness; each
 >    canonical, each rejected); a trailing-dot host (`https://a.test.` AND its
 >    canonical spelling `https://a.test./`);
 >    whitespace (leading/trailing/interior); a literal control character; a
 >    backslash; a malformed percent-escape; a non-canonical origin
 >    (`HTTPS://A.TEST`, `https://%65xample.com`, `https://a.test:443`, the
->    default-port fold `http://localhost:80`, an IPv4 variant spelling
->    `https://2130706433` / `https://0x7f.0.0.1`); a
+>    default-port fold `http://localhost:80`, and ALL THREE IPv4 variant
+>    spellings the grammar text names — dword `https://2130706433`, hex
+>    `https://0x7f.0.0.1`, octal `https://0177.0.0.1`); a
 >    non-canonical exact-URI (`https://a.test:443/cb`, `https://a.test/x/../cb`,
 >    `https://a.test/./cb`); an entry longer than 2048 UTF-8 bytes; a
 >    non-string entry; a non-array `redirectAllowlist`.
@@ -831,9 +846,18 @@ the response. Wiring rules:
 >    `https://a.test/cb%2F..%2Fadmin` (canonical, inert) all pass; and an empty
 >    array remains valid. Plus a **round-trip** test: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
-> 7. A **differential test**: for each row of the table below, all three
->    consumers now agree. That is the property this section exists to create, and
->    without it the differential can silently return.
+> 7. A **differential test** exercising **all FOUR consumers of the closed
+>    list** — boot config, DCR registration write, the §10.2 stored-state READ,
+>    and CIMD document validation: for each row of the table below, every
+>    consumer agrees. The stored-read leg is exercised with
+>    **pre-existing/out-of-band state** (a record placed directly in the
+>    `ClientStore`, never through `registerClient`) — wiring the shared
+>    predicate into the three entry boundaries while §10.2 forgets the
+>    read-time check must FAIL this test, or a legacy record carrying a
+>    forbidden entry can still authorize. (The measured table has three
+>    columns because the stored-read guard did not exist on `40d9f58`; the
+>    test covers four.) That agreement is the property this section exists to
+>    create, and without it the differential can silently return.
 
 Everything below — the §10.1 global allowlist, the §10.2 per-client policy, and
 the §17.1 CIMD document/matcher — decides against **this single grammar**. It is
@@ -1448,7 +1472,7 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — S6a primitives + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`). **Not yet live-verified** against a real CIMD-first client (CIMD-LIVE pending), and any 2026-07-28 spec-final conformance claim is gated on the `docs/verification.md` spec-release re-verification | §6.6, §17.1 |
+| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — S6a primitives + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`) — **except the §10.0 half of rule 20 (redirect-entry canonicality), which is 🔴 pending with the §10.0 row above**. **Not yet live-verified** against a real CIMD-first client (CIMD-LIVE pending), and any 2026-07-28 spec-final conformance claim is gated on the `docs/verification.md` spec-release re-verification | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | ✅ v0.2 shipped (S3a provisioning/rotation + S3b grant: Basic+post auth, `MachineTokenResponse`, metadata-gated advertisement) | §17.2 |
