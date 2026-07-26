@@ -668,6 +668,20 @@ test("config publication: the signing JWK is a frozen snapshot (§5) — the mos
     signingPrivateJwk: { ...(base.signingPrivateJwk as Record<string, unknown>), backdoor: "x" } as typeof base.signingPrivateJwk,
   });
   assert.equal((withExtra.signingPrivateJwk as Record<string, unknown>).backdoor, undefined);
+
+  // Array-valued members (key_ops) are CLONED and deep-frozen, never shared:
+  // a shared array is the same by-reference hole one level down — mutating the
+  // caller's array post-boot must not reach the published JWK.
+  const callerOps = ["sign"];
+  const withOps = createBridgeConfig({
+    ...base,
+    signingPrivateJwk: { ...(base.signingPrivateJwk as Record<string, unknown>), key_ops: callerOps } as typeof base.signingPrivateJwk,
+  });
+  const publishedOps = (withOps.signingPrivateJwk as Record<string, unknown>).key_ops as string[];
+  assert.notEqual(publishedOps, callerOps, "key_ops must not be shared with the caller's array");
+  assert.equal(Object.isFrozen(publishedOps), true, "nested members must be frozen too, not just the top level");
+  callerOps.push("verify");
+  assert.deepEqual(publishedOps, ["sign"], "a post-boot push into the caller's key_ops must not reach the config");
 });
 
 test("config publication: array fields are validated as string[] and frozen (§5)", () => {

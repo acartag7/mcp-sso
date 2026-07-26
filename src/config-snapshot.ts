@@ -108,14 +108,31 @@ export function snapshotClientCredentials(enabled: boolean): ClientCredentialsOp
  *
  *  Copied via an explicit key allowlist rather than a spread: a JWK is a plain
  *  data record, so unknown members must not ride onto the published object.
- *  `undefined` members are omitted so the shape matches what was validated. */
+ *  `undefined` members are omitted so the shape matches what was validated.
+ *
+ *  Members are DEEP-cloned and the result DEEP-frozen, not copied one level:
+ *  a JWK legally carries array-valued members (`key_ops` today; `x5c` if the
+ *  allowlist ever grows), and a top-level copy would share those arrays with
+ *  the caller — the same by-reference hole this module closes, one level down.
+ *  Cloning structurally kills the class for every current and future member. */
 export function snapshotJwk(jwk: JWK): JWK {
   const out: Record<string, unknown> = {};
   for (const key of JWK_KEYS) {
     const value = (jwk as Record<string, unknown>)[key];
-    if (value !== undefined) out[key] = value;
+    if (value !== undefined) out[key] = structuredClone(value);
   }
-  return Object.freeze(out) as JWK;
+  return deepFreeze(out) as JWK;
+}
+
+/** Freeze `value` and every plain object/array reachable from it. JWK members
+ *  are JSON data (strings, booleans, arrays of strings), so plain recursion
+ *  over own enumerable values covers the whole shape. */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const inner of Object.values(value)) deepFreeze(inner);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 /** Every JWK member this library reads or republishes: the EC key parameters
