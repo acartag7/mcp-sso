@@ -99,7 +99,12 @@ if (phases["flow-instance-binding"] !== true) {
 
   /** Two flows over ONE Bridge — same issuer, same signing secret, same store.
    *  This is the topology the exported factory permits and the contract now
-   *  binds against. */
+   *  binds against. The two callback paths are deliberately PREFIX-RELATED
+   *  (`/cb-a` vs `/cb-a/child`): a verifier that compares audiences with
+   *  `startsWith`/substring instead of equality accepts flow A's cookie at
+   *  flow B (both audiences begin `mcp-sso/upstream-flow/cb-a`), so every
+   *  cross-flow row here also pins exact-match comparison. Unrelated paths
+   *  would let that wrong implementation pass. */
   function twoFlows() {
     const cfg = config();
     const clock = new FakeClock(NOW);
@@ -107,9 +112,9 @@ if (phases["flow-instance-binding"] !== true) {
     const store = new MemoryStore();
     const bridge = new Bridge({ config: cfg, store, clock, audit });
     const idA = fakeIdentity("A", "/cb-a");
-    const idB = fakeIdentity("B", "/cb-b");
+    const idB = fakeIdentity("B", "/cb-a/child");
     const flowA = createUpstreamRedirectFlow({ bridge, identity: idA.port, store, clock, audit, callbackPath: "/cb-a" });
-    const flowB = createUpstreamRedirectFlow({ bridge, identity: idB.port, store, clock, audit, callbackPath: "/cb-b" });
+    const flowB = createUpstreamRedirectFlow({ bridge, identity: idB.port, store, clock, audit, callbackPath: "/cb-a/child" });
     return { cfg, store, audit, flowA, flowB, idA, idB };
   }
 
@@ -182,7 +187,7 @@ if (phases["flow-instance-binding"] !== true) {
     // An implementation binding only one flow, or comparing with a substring or
     // prefix rule, would pass the first test and fail here.
     const { flowA, flowB, idA, idB, audit, store } = twoFlows();
-    const b = await begin(flowB, "/cb-b");
+    const b = await begin(flowB, "/cb-a/child");
 
     const res = await flowA.handleCallback(req(
       { state: b.state, code: "code-from-idp-A" },
@@ -211,7 +216,7 @@ if (phases["flow-instance-binding"] !== true) {
     // it does not redirect.
     assert.equal(resA.status, 200, "a valid same-flow callback reaches the consent page");
 
-    const b = await begin(flowB, "/cb-b");
+    const b = await begin(flowB, "/cb-a/child");
     const resB = await flowB.handleCallback(req(
       { state: b.state, code: "code-from-idp-B" },
       { cookie: `__Host-mcp-sso-upstream=${b.cookie}` },
