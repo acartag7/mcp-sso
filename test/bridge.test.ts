@@ -170,3 +170,43 @@ test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Red
   const res = await ctx.bridge.handleRegister(req({ body: { redirect_uris: [REDIRECT] } }));
   assert.equal(res.status, 201); // not 429 — the bridge guard() caught the throw and allowed
 });
+
+test("bridge: the consent page is frame-blocked (threat row 36 — clickjacking would bypass row 17's user judgment)", async () => {
+  const ctx = setup();
+  const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
+  const page = await ctx.bridge.handleAuthorize(
+    req({ query: { response_type: "code", client_id: "c", redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "frame" } }),
+    { subject: SUBJECT },
+  );
+  assert.equal(page.status, 200);
+  assert.match(String(page.body), /Approve/, "this is the page that carries the Approve control");
+
+  const csp = page.headers["content-security-policy"] ?? "";
+  // `frame-ancestors` does NOT fall back to `default-src` under CSP3, so
+  // `default-src 'none'` alone does NOT frame-block. Assert the directive
+  // itself — asserting only that a CSP exists is what let this ship.
+  assert.match(csp, /frame-ancestors 'none'/, "CSP must frame-block the consent page");
+  assert.match(csp, /form-action 'self'/, "the consent POST must be pinned to this origin");
+  // Belt-and-braces for agents predating CSP3 frame-ancestors support.
+  assert.equal(page.headers["x-frame-options"], "DENY");
+  // Pre-existing guarantees must survive the header change.
+  assert.match(csp, /default-src 'none'/);
+  assert.equal(page.headers["x-content-type-options"], "nosniff");
+});
+
+test("bridge: the deny/error HTML paths carry the same frame-blocking headers (no unprotected HTML sibling)", async () => {
+  const ctx = setup();
+  // Any 200 HTML response from the bridge is a potential framing target, not
+  // just the happy path — a sibling that renders HTML without these headers
+  // would reopen the same click.
+  const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
+  const page = await ctx.bridge.handleAuthorize(
+    req({ query: { response_type: "code", client_id: "c", redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", state: "deny2" } }),
+    { subject: SUBJECT },
+  );
+  const contentType = String(page.headers["content-type"] ?? "");
+  if (contentType.includes("text/html")) {
+    assert.match(String(page.headers["content-security-policy"] ?? ""), /frame-ancestors 'none'/);
+    assert.equal(page.headers["x-frame-options"], "DENY");
+  }
+});
