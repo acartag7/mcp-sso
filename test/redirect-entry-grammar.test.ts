@@ -301,6 +301,20 @@ test("boot and stored-read reject non-string and sparse entries (not just DCR)",
     clientId: "legacy", redirectUris: [7 as unknown as string, "https://a.test/cb"], applicationType: "web", issuedAtEpoch: 1,
   }), (error: unknown) => error instanceof OAuthError && error.code === "invalid_redirect_uri"
     && /primitive string/.test((error as OAuthError).message));
+  // Stored-state sibling of the DCR 1..16 write cap: a legacy 17-entry record is
+  // refused before the authorize-time scan materializes it.
+  let storedIndexReads = 0;
+  const oversizedStored = new Proxy(Array(17).fill("https://a.test/cb"), {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) storedIndexReads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  assert.throws(() => assertRedirectAllowedForClient("https://a.test/cb", {
+    clientId: "legacy", redirectUris: oversizedStored as string[], applicationType: "web", issuedAtEpoch: 1,
+  }), (error: unknown) => error instanceof OAuthError && error.code === "invalid_redirect_uri"
+    && /1\.\.16/.test((error as OAuthError).message));
+  assert.equal(storedIndexReads, 0, "stored-read cap rejects before traversing members");
 });
 
 test("oversized entry rejection is bounded (does not re-amplify the raw input)", async () => {

@@ -38,11 +38,19 @@ export function assertRedirectAllowedForClient(redirectUri: string, client: Clie
     throw new OAuthError("invalid_client", "Machine clients cannot use the authorization-code flow", 401);
   }
   const presented = oauthEntry(redirectUri);
+  // Stored-state sibling of the DCR 1..16 write cap: a legacy/out-of-band record
+  // can still hold more entries than the write path now admits. Cap BEFORE the
+  // scan so an authorize cannot be forced into unbounded parse/allocation work.
+  // Capture length once (same Proxy discipline as the write path).
+  const length = client.redirectUris.length;
+  if (!Number.isInteger(length) || length < 1 || length > 16) {
+    throw new OAuthError("invalid_redirect_uri", "stored redirect_uris must contain 1..16 entries");
+  }
   // Materialize every stored slot once (Array.from visits holes as undefined,
   // which oauthEntry rejects). Array.prototype.map skips sparse holes and would
   // authorize a valid sibling entry while never re-validating the hole.
   const registered = Array.from(
-    { length: client.redirectUris.length },
+    { length },
     (_, index) => oauthEntry(client.redirectUris[index]),
   );
   if (client.applicationType === "web") {
