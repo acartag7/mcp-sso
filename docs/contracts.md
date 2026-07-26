@@ -939,32 +939,48 @@ the response. Wiring rules:
 >    require 1..16 entries per §9.2 / §17.1.5 rule 19), and stored DCR
 >    additionally partitions by `applicationType`. A positive case asserted
 >    against the wrong consumer is a test that CANNOT pass without weakening a
->    rule.
->    - *`redirectAllowlist` (boot)*: all four built-in defaults; the
+>    rule. **Every case states its SETUP**, because the built-in defaults are
+>    exactly `https://claude.ai`, `https://chatgpt.com`, `http://localhost`,
+>    `http://127.0.0.1` — `a.test` is NOT among them, and stored DCR validates
+>    registrations through the same global allowlist (§9.2), so any `a.test`
+>    positive requires `redirectAllowlist: ["https://a.test/", …]` in config.
+>    A positive case whose setup is unstated is not reproducible, and an
+>    implementer will read the failure as a rule to weaken.
+>    - *`redirectAllowlist` (boot)* — the entries ARE the setup: all four built-in defaults; the
 >      omitted-slash forms `https://a.test`, `https://xn--80a.test` (punycode
 >      — the ASCII form of the Cyrillic host above), `http://[::1]:9`; their
 >      canonical spellings; `https://a.test/cb%2F..%2Fadmin` (canonical,
 >      inert); **and an EMPTY array** (the built-in defaults cover the common
 >      case — §10.0's "empty is valid" rule lives here and only here).
->    - *Stored DCR, `web`*: `https://a.test/` and
+>    - *Stored DCR, `web`* (setup: `a.test` configured): `https://a.test/` and
 >      `https://a.test/cb%2F..%2Fadmin` — https, canonical, 1..16 entries.
 >      NOT `http://[::1]:9/` (web is https-only) and not an empty array.
->    - *Stored DCR, `native`*: `http://[::1]:9/`, `http://127.0.0.1/cb`,
->      `http://localhost/cb` — loopback, canonical. NOT a non-loopback https
->      entry (§10.2 native policy) and not an empty array.
+>      `https://claude.ai/cb` also passes with an empty config allowlist.
+>    - *Stored DCR, `native`* (setup: empty config allowlist suffices —
+>      `localhost` and `127.0.0.1` are built-in; `[::1]` is NOT, so
+>      `http://[::1]:9/` needs it configured): `http://127.0.0.1/cb`,
+>      `http://localhost/cb`, and `http://[::1]:9/` — loopback, canonical.
+>      NOT a non-loopback https entry (§10.2 native policy) and not an empty
+>      array.
 >    - *Stateless DCR*: the **§10.1 global-allowlist set — NOT the `web` set**.
 >      Stateless mode persists no `applicationType`, so §9.2's
 >      loopback-for-everyone policy applies and the per-type partition above
->      does not exist here. Positives therefore include BOTH
->      `https://a.test/` and the canonical loopback paths
->      `http://localhost/cb`, `http://localhost:54321/cb` (any port),
->      `http://127.0.0.1:8080/cb` — each accepted from the built-in defaults
->      with an EMPTY config allowlist (verified on HEAD). Borrowing the
+>      does not exist here. Positives split by SETUP, because the built-in
+>      defaults are `claude.ai`, `chatgpt.com`, `localhost`, `127.0.0.1` and
+>      nothing else — `a.test` is not among them:
+>      *with an EMPTY config allowlist*, `https://claude.ai/cb` plus the
+>      canonical loopback paths `http://localhost/cb`,
+>      `http://localhost:54321/cb` (any port), `http://127.0.0.1:8080/cb` all
+>      pass; *with `redirectAllowlist: ["https://a.test/"]`*, `https://a.test/`
+>      passes too. Both verified on HEAD — and `https://a.test/` is REJECTED
+>      under the empty-list setup, which is why the two are not one bullet. Borrowing the
 >      https-only `web` set here would let an implementation reject the
 >      primary native-client loopback path while passing this obligation.
 >      §9.2 persists nothing but echoes the accepted entry unchanged.
->    - *CIMD document*: `https://a.test/` plus a loopback `http://[::1]:9/`
->      — rule 20's scheme/host rule, canonical spelling, 1..16 entries.
+>    - *CIMD document* (no config allowlist involved — rule 20's own
+>      scheme/host rule governs, so no setup is needed):
+>      `https://a.test/` plus a loopback `http://[::1]:9/` — canonical
+>      spelling, 1..16 entries.
 >    Plus a **round-trip** test per applicable consumer: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
 > 8. A **differential test** exercising **all NINE consumers of the closed
