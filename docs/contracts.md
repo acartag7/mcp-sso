@@ -815,7 +815,11 @@ the response. Wiring rules:
 >    this grammar existed or populated out-of-band.
 > 4. `assertCimdRedirectUri` enforcing §10.0 rather than its own shape rules
 >    (§17.1.5 rule 20, as amended there).
-> 5. **One rejection test per row of this closed list**, each asserting the
+> 5. `assertAllowedRedirectUri` applying §10.0 to every allowlist entry **it
+>    reads** before matching (consumer (5) — the export-path sibling of 3;
+>    rationale in the consumer list below). A non-conforming entry is refused
+>    `invalid_redirect_uri`, never skipped and never matched.
+> 6. **One rejection test per row of this closed list**, each asserting the
 >    error names the offending entry: `*`; any `*`-bearing entry — in the host
 >    (`https://*.a.test/cb`) OR the path (`https://a.test/cb*`,
 >    `https://a.test/*`; a host-star is WHATWG-canonical — verified — so the
@@ -840,23 +844,26 @@ the response. Wiring rules:
 >    non-canonical exact-URI (`https://a.test:443/cb`, `https://a.test/x/../cb`,
 >    `https://a.test/./cb`); an entry longer than 2048 UTF-8 bytes; a
 >    non-string entry; a non-array `redirectAllowlist`.
-> 6. **Positive tests** that the grammar does not over-reject: all four built-in
+> 7. **Positive tests** that the grammar does not over-reject: all four built-in
 >    defaults, `https://a.test` (omitted root slash), `https://a.test/`,
 >    `http://[::1]:9`, `https://xn--80a.test` (punycode — the ASCII form of the Cyrillic host above), and
 >    `https://a.test/cb%2F..%2Fadmin` (canonical, inert) all pass; and an empty
 >    array remains valid. Plus a **round-trip** test: a URI accepted at
 >    registration is still accepted at authorize (obligations 2 and 3 agree).
-> 7. A **differential test** exercising **all FOUR consumers of the closed
+> 8. A **differential test** exercising **all FIVE consumers of the closed
 >    list** — boot config, DCR registration write, the §10.2 stored-state READ,
->    and CIMD document validation: for each row of the table below, every
->    consumer agrees. The stored-read leg is exercised with
+>    CIMD document validation, and the exported §10.1 matcher called DIRECTLY
+>    with an entries array that never passed boot: for each row of the table
+>    below, every consumer agrees. The stored-read leg is exercised with
 >    **pre-existing/out-of-band state** (a record placed directly in the
->    `ClientStore`, never through `registerClient`) — wiring the shared
->    predicate into the three entry boundaries while §10.2 forgets the
->    read-time check must FAIL this test, or a legacy record carrying a
+>    `ClientStore`, never through `registerClient`), and the direct-call leg
+>    passes the forbidden entry straight to `assertAllowedRedirectUri` —
+>    wiring the shared predicate into the entry boundaries while either
+>    read-time consumer forgets its check must FAIL this test, or a legacy
+>    record (or a directly-supplied array) carrying a
 >    forbidden entry can still authorize. (The measured table has three
->    columns because the stored-read guard did not exist on `40d9f58`; the
->    test covers four.) That agreement is the property this section exists to
+>    columns because the read guards did not exist on `40d9f58`; the
+>    test covers five.) That agreement is the property this section exists to
 >    create, and without it the differential can silently return.
 
 Everything below — the §10.1 global allowlist, the §10.2 per-client policy, and
@@ -979,15 +986,25 @@ port, and resolves `..` segments. A validator reading only parsed fields is
 therefore checking a different string than the one the deployer wrote and the
 matcher later compares.
 
-**The grammar has exactly FOUR consumers, and this list is closed:**
+**The grammar has exactly FIVE consumers, and this list is closed:**
 (1) boot (`createBridgeConfig`) for `redirectAllowlist`; (2) the stored-DCR
 registration write (§9.2); (3) the stored-state READ at authorize/token
 (§10.2 — the paragraph below); (4) CIMD document validation
-(`assertCimdRedirectUri`, §17.1.5 rule 20). Every consumer applies the ONE
+(`assertCimdRedirectUri`, §17.1.5 rule 20); (5) the **exported §10.1 matcher
+itself** (`assertAllowedRedirectUri`), which applies the predicate to each
+allowlist entry it READS before matching. (5) exists because the matcher is a
+root export (`src/index.ts`): it is reachable with an entries array that
+never passed boot — a consumer calling the helper directly, or (pre-#106) a
+caller mutating the array after boot — so without its own read-side check the
+one-grammar invariant holds only for arrays `createBridgeConfig` produced. A
+non-conforming entry encountered at match time is refused
+`invalid_redirect_uri` (fail closed and loud, the same rule as the §10.2 read
+guard) — never silently skipped, which is the `"*"` defect this section
+started from, and never matched. Every consumer applies the ONE
 shared predicate — none re-derives the grammar from its own parsing. (1), (2),
-and (4) reject at the boundary the entry enters; (3) is deliberately a
-read-time re-check of entries that entered before the grammar existed or
-out-of-band, not a second grammar — the next paragraph is why it exists.
+and (4) reject at the boundary the entry enters; (3) and (5) are deliberately
+read-time re-checks of entries that entered before the grammar existed,
+out-of-band, or through the public export — not a second grammar.
 
 **Stored state is re-validated at READ, not only at write** (the entry-point
 guard's stored-state sibling). A `ClientStore` can return records written before
@@ -1050,11 +1067,16 @@ widens to any port only if it is an origin-only entry with no explicit port/path
 a port-scoped or path-specific loopback entry is NOT widened. Returns the
 normalized URI.
 
-Once §10.0 is enforced (⚠️ **implementation pending** — see the §5 bullet), the
-entries reaching this matcher are §10.0-valid, so its inputs are origin form or
-canonical exact-URI form only. It keeps its own `"*"` rejection as
-defense-in-depth regardless, because it is also reachable with entries the
-config validator does not own.
+Once §10.0 is enforced (⚠️ **implementation pending** — see the §5 bullet),
+this matcher is consumer (5) of the closed list: it applies the shared §10.0
+predicate to each entry it reads BEFORE matching, refusing a non-conforming
+entry `invalid_redirect_uri` rather than skipping or matching it. That is not
+redundant with boot validation — the matcher is a root export
+(`src/index.ts`) reachable with an entries array `createBridgeConfig` never
+saw, and today its only self-defense is the `"*"` check, so a directly
+supplied `https://@evil.test` is classified origin form and granted
+origin-wide match. The current `"*"` rejection stays as defense-in-depth
+inside the predicate era too.
 
 Two consequences that make §10.0's raw-syntax rules load-bearing rather than
 cosmetic:
