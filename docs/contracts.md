@@ -790,7 +790,14 @@ the response. Wiring rules:
 > **The implementation PR owes exactly this, and it is enumerable rather than
 > "one negative test per rejected shape" left to judgment:**
 >
-> 1. A boot validator applying §10.0 to every `redirectAllowlist` entry.
+> 1. A boot validator applying §10.0 to every `redirectAllowlist` entry —
+>    under the §5 read-once/publication rule: the validator snapshots the
+>    caller's array, validates THAT copy, and publishes the same frozen copy
+>    it validated (never the caller's array), so a post-boot mutation or
+>    accessor-backed entry cannot put an unvalidated value where request-time
+>    reads look (the validate-vs-publish class; the array half shipped with
+>    the #100/#106 config-snapshot work, and consumer (5) covers the
+>    direct-call path that bypasses boot entirely).
 > 2. **Registration-time enforcement (the write side), in BOTH DCR modes:**
 >    `registerClient` applies §10.0 to each `redirect_uris` entry BEFORE any
 >    other effect — stateless mode validates and ECHOES the canonical form
@@ -842,7 +849,12 @@ the response. Wiring rules:
 >    spellings the grammar text names — dword `https://2130706433`, hex
 >    `https://0x7f.0.0.1`, octal `https://0177.0.0.1`); a
 >    non-canonical exact-URI (`https://a.test:443/cb`, `https://a.test/x/../cb`,
->    `https://a.test/./cb`); an entry longer than 2048 UTF-8 bytes; a
+>    `https://a.test/./cb`); an entry longer than 2048 UTF-8 bytes; the empty
+>    string `""` AND a whitespace-only entry (degenerate emptiness gets its own
+>    witnesses — an empty string is not a parse error to swallow, it is a
+>    named rejection); an unparseable entry (`https://`, no host — `new URL`
+>    throws, and the thrown case must map to the same named rejection, never
+>    propagate); `http://a.test/cb` (http on a non-loopback host); a
 >    non-string entry; a non-array `redirectAllowlist`.
 > 7. **Positive tests** that the grammar does not over-reject: all four built-in
 >    defaults, `https://a.test` (omitted root slash), `https://a.test/`,
@@ -891,13 +903,40 @@ a stored `ClientRegistration.redirectUris`, or a CIMD document's
 
 - **Origin form** — `scheme "://" host [ ":" port ]`, with **nothing after the
   authority**: no path (or the single `/`), no query, no fragment, no userinfo.
-- **Exact-URI form** — origin form followed by a path: no query, no fragment,
-  no userinfo.
+- **Exact-URI form** — origin form followed by a path of **at least one
+  non-root segment**: no query, no fragment, no userinfo.
+
+**Classification is total and unambiguous:** the bare authority and the
+root-slash spelling (`https://a.test`, `https://a.test/`) are BOTH origin form
+— the root slash alone is never an exact-URI path, so no entry satisfies both
+definitions. The first character after the authority decides: nothing or a
+lone `/` ⇒ origin form (matches origin-wide under §10.1); `/` followed by
+anything ⇒ exact-URI form (matches by equality). A deployer who wants
+`https://a.test/` to match ONLY the root path cannot express that in origin
+form and must accept that the root-slash spelling is origin-wide — stated
+here because the two readings differ in grant width, which is exactly the
+ambiguity class this grammar exists to remove.
+
+**`http` is loopback-only, in the grammar itself:** the `http` scheme is
+valid ONLY with host exactly `localhost`, `127.0.0.1`, or `[::1]`;
+`http://prod.example.com/cb` is rejected at the entry boundary, not left for
+per-consumer policy. This lifts the rule §10.2 (`web` ⇒ https) and §17.1.5
+rule 20 (http ⇒ loopback) already apply into the shared grammar, so
+stateless-mode §10.1 — which previously had no HTTPS floor of its own —
+cannot be configured to send an authorization code over cleartext to a
+non-loopback host.
 
 **Canonical spelling is required in BOTH forms**, not just exact-URI form: the
 raw entry MUST equal `new URL(entry).href`, with exactly one exemption — an
 origin-form entry MAY omit the root slash WHATWG appends (`https://a.test` is
-accepted for `https://a.test/`; nothing else is). Without this rule on origin
+accepted for `https://a.test/`; nothing else is). The exemption is an
+ACCEPTANCE rule only, never a storage or comparison rule: every consumer that
+persists or compares an accepted entry uses the full canonical `href`
+(`https://a.test/`), so the two accepted spellings collapse to ONE stored
+byte-form and raw-equality matching downstream stays sound — without this
+fold, `https://a.test` and `https://a.test/` would be §10.0-valid twins that
+raw-string comparison treats as different entries, quietly re-opening the
+exact matcher disagreement this grammar closes. Without this rule on origin
 form, `https://%65xample.com` is accepted, parses to `https://example.com`, and
 is then granted **origin-wide** access to `example.com` under §10.1 — an entry
 whose text names one host and whose effect names another, which is precisely
@@ -1016,6 +1055,18 @@ registered URI it reads, and a record carrying a non-conforming entry is refused
 `invalid_redirect_uri` rather than matched. The check is per-entry at match time,
 not a migration: a store is not required to be rewritten, and a legacy record
 simply stops authorizing until re-registered.
+
+The same read-time rule covers the OTHER carrier of registered redirect URIs:
+the **CIMD registration carried in the signed flow cookie** (§17.1.6 decision
+1c). A cookie minted before this grammar was enforced carries a
+`CimdRegistration` whose `redirect_uris` the §10.0-era validator never saw —
+within `flowTtlSeconds` of an upgrade, exactly like a legacy store record.
+When `handleCallback` consumes the carried registration, each of its
+`redirect_uris` entries is re-checked against §10.0; a non-conforming entry
+fails the row-5a matrix (direct 400, `flow_cookie_invalid` audit), so a
+pre-upgrade in-flight cookie cannot grandfather an entry past the grammar.
+The same "not a migration" stance applies: the flow simply fails and the
+client re-authorizes.
 
 **Why reject rather than normalize.** A non-canonical entry could be rewritten
 to its canonical form instead of refused. It is refused because config should
@@ -2032,9 +2083,14 @@ for any conformance claim against the 2026-07-28 final spec text, the
     userinfo (INCLUDING empty `@`), any fragment (INCLUDING a trailing `#`), and
     any `*` anywhere in the raw entry — host, path, or elsewhere (`https://a.test/cb*`
     is rejected here exactly as §10.0 rejects it; the earlier "in the host"
-    scoping was narrower than the grammar and is superseded); accept EITHER
-    `https:` OR `http:` with host exactly
-    `localhost`, `127.0.0.1`, or `[::1]` — **in each case only if the entry is
+    scoping was narrower than the grammar and is superseded); accept `https:`
+    with ANY host, or `http:` ONLY with host exactly
+    `localhost`, `127.0.0.1`, or `[::1]` (the loopback restriction binds the
+    `http:` case alone — the earlier "EITHER https: OR http: with host
+    exactly…" phrasing read as if https also required loopback, contradicting
+    the "Only the `http:` case is loopback" sentence below; this spelling and
+    that sentence now say the same thing, and it is the same rule §10.0 now
+    states grammar-wide) — **in each case only if the entry is
     also §10.0-valid** (canonical spelling, no query; this REPLACES the earlier
     "validated for shape only here" wording, which admitted queries and
     non-canonical forms). ⚠️ The §10.0-validity half of that sentence is

@@ -7,17 +7,21 @@
 > Update this file before any change to auth, tokens, redirect policy, the
 > store, identity, egress, or the publish pipeline.
 >
-> Status: **v0.2 shipped (through v0.2.3).** Threats 17–25 cover the
+> Status: **v0.2 shipped (through v0.2.3; CIMD implemented on `main`,
+> unreleased).** Threats 17–25 cover the
 > [§17](./contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
-> contracts — most shipped in v0.2; CIMD (§17.1), device flow (§17.3), and the
+> contracts — most shipped in v0.2; CIMD (§17.1) is implemented on `main`
+> (S6a/S6b, frozen suites active; not yet released to npm or live-verified —
+> and the §10.0 half of rule 20 is implementation-pending with the
+> redirect-entry grammar, see the rows 5/9 note); device flow (§17.3) and the
 > GitHub identity port (§17.6) remain contract-locked, implementation pending.
 > Threats 29–33 cover the shipped [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
 > upstream redirect-leg orchestrator. Threat 34 records the contract-only,
 > implementation-pending dynamic-key boundary in
 > [§4.1](./contracts.md#41-dynamic-key-and-parsed-record-composition-boundary).
-> Threat 35 records the contract-only CIMD × upstream-redirect flow
+> Threat 35 covers the CIMD × upstream-redirect flow
 > ([§17.1.6](./contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)),
-> implementation-pending in the S6b PRs.
+> implemented on `main` with the same rule-20 exception.
 
 ## Assets
 
