@@ -63,6 +63,9 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   } else if (!skipAuthorize) {
     if (!identity) throw new Error("createOAuthRouter: identity is required unless skipAuthorize or upstream is set");
     const id = identity;
+    // Bridge.resolveIdentity applies the custom RateLimitPort before IdentityPort;
+    // CodeQL models only named Express limiter packages, not this library port.
+    // codeql[js/missing-rate-limiting]
     router.get("/oauth/authorize", wrap(async (req, res) => {
       const request = toNorm(req);
       const identityResolved = await bridge.resolveIdentity(id, headerString(request.headers, identityHeader), request.ip);

@@ -176,9 +176,13 @@ locked in **§17.1**.
 interface RateLimitPort { check(key: string): Promise<boolean>; }
 const noopRateLimit: RateLimitPort = { async check(): Promise<boolean> { return true; } };
 ```
-Optional DoS defense for the unauthenticated `/oauth/register` + `/oauth/token`
-endpoints (threat-model #8). The adapter calls `check("register:<ip>")` /
-`check("token:<ip>")` before the use-case; `false` ⇒ **429 Too Many Requests**.
+Optional DoS defense for unauthenticated registration, token exchange, and
+direct header-based identity verification (threat-model #8). `Bridge` calls
+`check("register:<ip>")` / `check("token:<ip>")` before those use-cases and
+`Bridge.resolveIdentity` calls `check("authorize:<ip>")` before
+`IdentityPort.verify`; `false` ⇒ **429 Too Many Requests** with no identity-port
+call or `identity.verify` audit. Upstream redirect, console pairing, and CIMD
+keep their separate `upstream:<ip>`, `pairing:<ip>`, and `cimd:<ip>` budgets.
 The default `noopRateLimit` allows everything (rate-limiting is advisory, not a
 hard gate). A thrown error is treated as **fail-open** (allow) — a rate-limiter
 outage must not lock out all auth; this is defense-in-depth, not a security boundary.

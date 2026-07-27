@@ -11,7 +11,9 @@ import { Bridge } from "../../src/adapters/bridge.ts";
 import { createBridgeConfig } from "../../src/config.ts";
 import { pkceChallenge } from "../../src/crypto.ts";
 import { OAuthError, withRedirect } from "../../src/errors.ts";
+import type { AuditPort, AuthAuditEvent } from "../../src/ports/audit.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
+import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
 import { runAdapterHeaderFlow } from "./adapter-header-flow.ts";
 
@@ -22,9 +24,12 @@ const STUB_TOKEN = "stub-good";
 const IDENTITY_HEADER = "cf-access-jwt-assertion";
 
 class FakeClock { private ms: number; constructor(ms: number) { this.ms = ms; } nowMs(): number { return this.ms; } }
-class MemoryAudit { async writeAuthEvent(): Promise<void> {} }
+class MemoryAudit implements AuditPort {
+  readonly events: AuthAuditEvent[] = [];
+  async writeAuthEvent(event: AuthAuditEvent): Promise<void> { this.events.push(event); }
+}
 
-function makeBridge(): Bridge {
+function makeBridge(rateLimit?: RateLimitPort, audit: AuditPort = new MemoryAudit()): Bridge {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const signingPrivateJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK;
   const config = createBridgeConfig({
@@ -34,7 +39,10 @@ function makeBridge(): Bridge {
     allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" },
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
-  return new Bridge({ config, store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit: new MemoryAudit() });
+  return new Bridge({
+    config, store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit,
+    ...(rateLimit === undefined ? {} : { rateLimit }),
+  });
 }
 
 const stubIdentity: IdentityPort = {
@@ -87,6 +95,29 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       const token = await client.postForm("/oauth/token", { grant_type: "authorization_code", code: code as string, redirect_uri: REDIRECT, client_id: clientId, code_verifier: verifier });
       assert.equal(token.status, 200);
       assert.match(JSON.parse(token.body).access_token, /^[^.]+\.[^.]+\.[^.]+$/);
+    } finally {
+      await client.close?.();
+    }
+  });
+
+  test(`${name} adapter: authorize limiter denies before identity verification`, async () => {
+    const keys: string[] = [];
+    const audit = new MemoryAudit();
+    const bridge = makeBridge({ async check(key) { keys.push(key); return false; } }, audit);
+    let verifyCalls = 0;
+    const identity: IdentityPort = { async verify() {
+      verifyCalls += 1;
+      return { ok: false, reason: "must_not_run" };
+    } };
+    const client = await mount(bridge, identity);
+    try {
+      const response = await client.get("/oauth/authorize");
+      assert.equal(response.status, 429);
+      assert.equal(response.headers.location, undefined);
+      assert.equal(JSON.parse(response.body).error, "temporarily_unavailable");
+      assert.equal(verifyCalls, 0, "limiter denial precedes IdentityPort.verify");
+      assert.deepEqual(keys, [name === "hono" ? "authorize:unknown" : "authorize:127.0.0.1"]);
+      assert.equal(audit.events.some((event) => event.event === "identity.verify"), false);
     } finally {
       await client.close?.();
     }
