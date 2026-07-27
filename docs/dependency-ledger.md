@@ -91,6 +91,10 @@ pinned to a SHA whose tag is ≥15 days old at pin time):
 - `actions/setup-node` — Node 24. The persistent self-hosted runner keeps pnpm's
   content-addressed store locally; Actions cache export is intentionally disabled.
 - `pnpm/action-setup` — pnpm via corepack (matches `packageManager`).
+- `actions/upload-artifact` / `actions/download-artifact` — transfer the single
+  packed tarball from the read-only build job into the dry-run or isolated OIDC
+  publish job. Download rejects an artifact-archive digest mismatch; the
+  workflow additionally verifies the tarball's own SHA-256 file.
 - `acartag7/engineering-os/process-guard` — the Engineering OS artifact-chain
   guard (freeze-hash / mixed-diff / stage-artifact) in `.github/workflows/ci.yml`.
   Pinned to `c697b412abf034be7a22a53f567ec10eecc776e0` (published 2026-07-19).
@@ -151,6 +155,16 @@ upstream registries.
       "sha": "4eaacf0543bb3f2c246792bd56e8cdeffafb205a",
       "tag": "v2.4.3",
       "published": "2025-09-30T20:40:48Z"
+    },
+    "actions/upload-artifact": {
+      "sha": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "tag": "v7.0.1",
+      "published": "2026-04-10T17:31:14Z"
+    },
+    "actions/download-artifact": {
+      "sha": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      "tag": "v8.0.1",
+      "published": "2026-03-11T15:44:25Z"
     },
     "acartag7/engineering-os": {
       "sha": "c697b412abf034be7a22a53f567ec10eecc776e0",
@@ -213,6 +227,10 @@ either enforcing job fails, no success status is published.
    commit on GitHub Actions; no local `npm publish`.
 4. Update this file whenever a pin changes — version, publish date, and the 15-day
    check must always reflect reality.
+5. Before a real tag, query the `publish` GitHub Environment and verify required
+   reviewer approval, admin bypass disabled, and a custom `v*.*.*` tag-only
+   deployment policy. The workflow's tag event/version check is the first gate;
+   the environment policy is the independently configured second gate.
 
 **Documented exception (2026-07-04):** `mcp-sso@0.0.0` was published with a local
 `npm publish --no-provenance` to bootstrap the package name on the registry —

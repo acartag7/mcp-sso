@@ -275,6 +275,18 @@ Run after the source-tree gates, before tagging.
 | T2.5 | Optional peer behavior | Importing core does not require fastify/express/hono/mysql/redis unless that adapter is imported. |
 | T2.6 | Dependency ledger | Every new dependency or optional peer has version, publish date, and age recorded. |
 
+### Release-authority gate
+
+Before tagging, verify the `publish` GitHub Environment through the repository
+API: the owner is a required reviewer, admin bypass is disabled, and the only
+custom deployment branch policy is a tag pattern `v*.*.*`. A
+`workflow_dispatch` run must execute the artifact dry-run and must not enter the
+OIDC publish or GitHub Release jobs. For the real release, the tag must equal
+`v${package.version}`; the build job produces one tarball and SHA-256 file, the
+OIDC job publishes that exact digest-verified tarball without checkout,
+dependency installation, or repository scripts, and the no-OIDC release job
+runs only after publication succeeds.
+
 ## Tier 3 — manual live verification
 
 Tier 3 proves provider/client compatibility. It must never be the only proof for
