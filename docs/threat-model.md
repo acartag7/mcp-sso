@@ -263,9 +263,13 @@ nonce residual above.
   lookup latency implemented by a custom `ClientStore`.
 - **Stored-row binding.** `parseMachineClientRegistration` checks the complete
   persisted machine shape and requires the embedded `clientId` to equal the
-  requested lookup key. Verification, rotation, and the grant's second read
-  reject a malformed or differently keyed row before accepting a secret,
-  saving a record, or signing a token.
+  requested lookup key. Its clock-relative active-secret cap permits expired
+  history for rotation cleanup but rejects more than two active slots.
+  Verification, rotation, and the grant's second read reject a malformed,
+  over-active, or differently keyed row before accepting a secret, saving a
+  record, or signing a token. Provisioning and rotation also reject TTL/grace
+  values whose derived expiry is not a safe integer before secret generation,
+  saving, or a success audit.
 - **Scope caps.** Scopes are capped by per-client `allowedScopes`, fixed ⊆
   catalog at provisioning. The grant validates the resolved scope against BOTH
   the ceiling AND the live `scopeCatalog`: `invalid_scope` on any over-ceiling

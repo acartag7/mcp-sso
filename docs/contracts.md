@@ -364,19 +364,23 @@ shape of runtime data returned by a custom or persisted store.
 
 `ClientStore.find` is also a runtime boundary: a persisted or migrated row is
 not trusted merely because the port has a TypeScript return type.
-`parseMachineClientRegistration(value, expectedClientId)` accepts a stored
-machine row only when its embedded `clientId` is the requested `mcc_` key,
+`parseMachineClientRegistration(value, expectedClientId, nowEpoch)` accepts a
+stored machine row only when its embedded `clientId` is the requested `mcc_` key,
 `redirectUris` is empty, `applicationType` is `"machine"`, `issuedAtEpoch` is a
 non-negative safe integer, optional `name` is non-empty, `allowedScopes` is a
-non-empty array of scope tokens, and `secrets` is the one-or-two-slot §17.2
-shape (lowercase SHA-256 hashes, non-negative safe-integer timestamps, at most
-one slot without an expiry). It returns a fresh snapshot containing only those
-known fields. Secret verification, rotation, and both reads in the
-`client_credentials` grant use that parser; a malformed or key-mismatched row
-fails closed before a secret is accepted, a record is saved, or a token is
-minted. The parser deliberately does not re-check the stored ceiling against
-the current catalog: catalog narrowing is enforced when resolving the grant
-(§17.2), so a still-valid subset remains usable.
+non-empty array of scope tokens, and `secrets` is the §17.2 shape: lowercase
+SHA-256 hashes, non-negative safe-integer timestamps, at most one slot without
+an expiry, and at most two active slots (`expiresAtEpoch` absent or
+`expiresAtEpoch > nowEpoch`). Structurally valid expired history is accepted;
+rotation drops it rather than making an otherwise valid migrated row
+unreadable. The parser returns a fresh snapshot containing only those known
+fields. Secret verification, rotation, and both reads in the
+`client_credentials` grant use that parser with the current clock epoch; a
+malformed, over-active, or key-mismatched row fails closed before a secret is
+accepted, a record is saved, or a token is minted. The parser deliberately does
+not re-check the stored ceiling against the current catalog: catalog narrowing
+is enforced when resolving the grant (§17.2), so a still-valid subset remains
+usable.
 
 ### 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's
@@ -3055,14 +3059,16 @@ in this flow."* Decisions:
     provisioning, so a later catalog narrowing cannot silently widen a machine
     client. `secretTtlSeconds?` (positive integer), when given, sets the
     provisioned secret's `expiresAtEpoch = now + ttl` (a bounded-lifetime
-    first secret); omitted ⇒ the secret is live until rotated.
+    first secret); omitted ⇒ the secret is live until rotated. A TTL whose
+    derived expiry is not a non-negative safe integer is `invalid_request`
+    before client-id/secret generation, `ClientStore.save`, or a success audit.
   - `rotateMachineClientSecret(deps, clientId, { graceSeconds = 86400 })` →
     `{ clientSecret }` (see Rotation below).
   - `verifyMachineClientSecret(deps, clientId, presentedSecret)` → `boolean`:
     the timing-safe comparison primitive the token endpoint (§9.4
     client_credentials grant, S3b) composes into client authentication. Finds
     and parses the machine client through
-    `parseMachineClientRegistration(value, clientId)`, SHA-256s the presented
+    `parseMachineClientRegistration(value, clientId, nowEpoch)`, SHA-256s the presented
     secret, and constant-time compares it against each **unexpired** stored hash
     (expired entries skipped). Non-machine, unknown, malformed, or
     lookup-key-mismatched records ⇒ `false` (the grant maps the boolean to
@@ -3139,7 +3145,9 @@ in this flow."* Decisions:
   86400 })` — adds the new secret (live, no `expiresAtEpoch`), expires the
   currently-live secret at `now + grace` (the two-active-secrets overlap
   pattern, per Okta/Entra practice; RFC 7592 is Experimental and
-  hard-cutover, not used). The record's `secrets` array is then **exactly**
+  hard-cutover, not used). A grace value whose derived expiry is not a
+  non-negative safe integer is `invalid_request` before secret generation,
+  `ClientStore.save`, or a success audit. The record's `secrets` array is then **exactly**
   the permitted active set: the new live secret plus at most one grace secret
   (the latest-expiring); any older/expired (`expiresAtEpoch ≤ now`) entry is
   dropped so the array never exceeds two unexpired hashes. So a rotation from
