@@ -14,7 +14,8 @@ threat rows they close are 13 and 17-25 in [`docs/threat-model.md`](threat-model
 
 Baseline (v0.1): `test/e2e-mcp-sdk.test.ts` drives register → authorize → token →
 protected `/mcp` with the official MCP SDK client → refresh → replay/family
-revocation → revoke. The store-conformance suite covers memory and sqlite.
+revocation → revoke. The shared store-conformance suite covers memory, sqlite,
+and mysql.
 Everything below extends that baseline; nothing replaces it.
 
 ## Rules
@@ -38,22 +39,17 @@ never replace CI security tests.
 
 ## Harness helpers
 
-Shared helpers, not one-off tests per feature file.
+The current shared helpers are:
 
 | Helper | Purpose |
 |---|---|
-| `test/lib/oauth-flow.ts` | Drive register/authorize/approve/token/refresh/revoke against an adapter client. |
-| `test/lib/mcp-sdk-flow.ts` | Call protected `/mcp` with the official MCP SDK client and a bridge token. |
-| `test/lib/adapter-matrix.ts` | Run the same assertions against Fastify, Express, and Hono. |
-| `test/lib/store-conformance.ts` | Single source for StorePort invariants; extend for device-code records. |
-| `test/lib/fake-clock.ts` | Deterministic expiry and TTL checks. |
-| `test/lib/audit-capture.ts` | Capture audit events; assert no secrets appear. |
-| `test/lib/provider-stubs.ts` | Loopback OIDC/GitHub-style token/userinfo stubs where contracts allow local endpoints. |
-| `test/lib/cimd-network.ts` | Fake resolver plus guarded low-level transport for SSRF, rebinding, redirect, cap, and timeout cases. |
-| `test/lib/package-smoke.ts` | Shared logic for the packed npm artifact smoke test. |
+| `test/lib/adapter-flow.ts` | Shared authorize/token flow assertions for Fastify, Express, and Hono. |
+| `test/lib/adapter-header-flow.ts` | Shared raw-header and duplicate-header assertions across adapters. |
+| `test/lib/store-conformance.ts` | Single source for StorePort invariants across memory, sqlite, and mysql. |
 
-The existing `test/lib/adapter-flow.ts` can be extended or replaced by the first
-three helpers.
+Other integration and release checks live in their named `test/*.test.ts` or
+`scripts/*.mjs` entrypoints; this document does not promise helper files that do
+not exist.
 
 ## Tier 1 — CI tests
 
@@ -268,7 +264,7 @@ Run after the source-tree gates, before tagging.
 
 | # | Scenario | Assert |
 |---|---|---|
-| T2.1 | Source-tree gates | `pnpm run typecheck`, `pnpm run check:lines`, `pnpm test`, `pnpm run build` all green from a clean tree. |
+| T2.1 | Source-tree gates | `pnpm run typecheck`, `pnpm run check:lines`, `pnpm run check:seams`, `pnpm test`, `pnpm run build` all green from a clean tree. |
 | T2.2 | `npm pack --dry-run` | Tarball contains `dist`, README, LICENSE, and intended docs only. |
 | T2.3 | Install packed artifact in a temp project | Public exports import successfully without source files. |
 | T2.4 | Minimal metadata smoke from the installed package | Config + metadata endpoint works from the installed package. |
@@ -299,7 +295,7 @@ a security property.
 | Google identity | Real Google OAuth app | Stable subject observed; allowed/rejected allowlist cases; hosted-domain behavior if configured. |
 | GitHub identity | Real GitHub OAuth app | Numeric id subject, verified primary email behavior, allowlist reject. |
 | Device flow | Real terminal + browser | Request code, approve/deny, poll success/failure, protected `/mcp`. |
-| CIMD | Owner-controlled HTTPS metadata URL | Valid-doc happy path plus proof the public deployment uses the guarded fetcher. |
+| CIMD | Owner-controlled HTTPS metadata URL | Historical happy paths completed with Cloudflare Access, Entra ID, and Google on 2026-07-26/27. The clean-main rerun has exercised the guarded-fetcher deny legs; provider happy paths remain pending. |
 | MCP clients | curl, official MCP SDK, Claude Code, claude.ai, ChatGPT where available | Date, client version if known, exact caveat if any row is partial. |
 
 README conformance rows can be upgraded only after the relevant Tier-3 evidence
@@ -366,8 +362,9 @@ text until every row below is checked off.
   the old "until the implementation ships" precondition — but it does NOT by
   itself license a conformance claim: no conformance-with-final-spec claim about
   CIMD RUNTIME behavior may be checked off until THIS re-verification is
-  completed against the 2026-07-28 final text, and CIMD-LIVE remains outstanding
-  for any "verified against a real client" claim.
+  completed against the 2026-07-28 final text. CIMD-LIVE is complete as
+  historical evidence from the patched `ee8994a`-based checkout; the clean-main
+  provider rerun remains a separate pre-tag gate.
 - [ ] **(c) RFC 9207 `iss` + `application_type`.** Confirm the final spec's
   normative level for the RFC 9207 `iss` parameter (the draft has it as
   SHOULD, with a signposted future MUST) and confirm `/oauth/register`
@@ -384,11 +381,12 @@ Per build session:
 
 1. Add or update the Tier-1 rows for that session.
 2. Keep the baseline official MCP SDK flow green.
-3. Run `pnpm run typecheck`, `pnpm run check:lines`, `pnpm test`, `pnpm run build`.
+3. Run `pnpm run typecheck`, `pnpm run check:lines`, `pnpm run check:seams`,
+   `pnpm test`, `pnpm run build`.
 4. Push and confirm GitHub CI green.
 5. Update roadmap memory with the commit SHA and any Tier-3 live status.
 
-For the v0.2 release:
+For the v0.3 release:
 
 1. All Tier-1 rows for shipped features pass in CI.
 2. Tier 2 packed-artifact gate passes.
@@ -400,6 +398,20 @@ For the v0.2 release:
 
 ## Status
 
-This file is the intended harness design. The v0.1 baseline exists today; most
-v0.2 rows are not yet implemented. Each implementation session turns its rows
-into executable tests before the feature is called done.
+The v0.3 feature rows already implemented on `main` are backed by the current
+automated suite; rows for unshipped GitHub identity and device flow remain
+future plans, not release claims. Historical live evidence from 2026-07-26/27
+used a patched, uncommitted checkout based on `ee8994a` and completed CIMD happy
+paths across three providers plus refresh replay/family revocation. On
+2026-07-28, an autonomous clean-main rerun at `e71a2bb` completed three
+metadata/tokenless-challenge probes and DCR registrations, Cloudflare Access
+path gating, public-CIMD resolution to authorization redirects on the Entra-
+and Google-configured gateways, and the CIMD literal-IP, DNS-rebinding,
+DNS-failure, non-200, content-type, size, and timeout deny legs.
+Browser-completed provider happy paths and refresh replay remain pending.
+
+The final-spec checklist above and the packed/published artifact smoke are also
+pending. Historical Codex CLI success remains recorded, but installed Codex CLI
+0.144.1 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
+compatibility awaits upstream resolution and retest. npm remains at 0.2.3 until
+the v0.3 release workflow completes.

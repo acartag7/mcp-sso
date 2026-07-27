@@ -211,14 +211,24 @@ mcp-sso is live-verified against real MCP clients — Claude Code, Codex CLI,
 claude.ai, ChatGPT, and the official MCP SDK on a real Cloudflare Access tenant;
 Entra ID (redirect flow) with Claude Code and Claude Desktop in a real
 enterprise deployment; and Google sign-in with Claude Code and the official MCP
-SDK. The full provider × client matrix lives in
+SDK. CIMD completed live provider flows with Cloudflare Access, Entra ID, and
+Google on 2026-07-26/27. Those CIMD runs used a patched checkout based on
+`ee8994a`; the clean-main pre-release rerun is tracked separately in the
+[verification matrix](docs/live-verification.md).
+
+Historical Codex CLI success remains valid, but the installed Codex CLI 0.144.1
+showed an RFC 9207 `iss` callback regression on 2026-07-28. Current-version
+compatibility remains pending an upstream resolution and retest. The full
+provider × client matrix lives in
 [`docs/live-verification.md`](docs/live-verification.md).
 
 ## Roadmap (v0.3)
 
-CIMD (Client ID Metadata Documents) is implemented on `main` behind the S6a/S6b
-work and ships in v0.3; it is not yet live-verified against a real CIMD-first
-client.
+CIMD (Client ID Metadata Documents) is implemented, suite-covered, and
+historically live-verified against three identity providers. Before v0.3 ships,
+the remaining release gates are the clean-main provider happy-path and refresh
+replay rerun, the final-spec recheck, and the packed/published artifact smoke.
+The current npm release remains 0.2.3.
 
 ## License
 
