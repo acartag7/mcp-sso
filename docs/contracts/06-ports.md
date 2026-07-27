@@ -10,6 +10,35 @@ interface ClockPort { nowMs(): number; }
 Core use-cases never call ambient wall-clock APIs; tests and audit provenance need
 deterministic time. Reference: `SystemClock` (wraps `Date.now()`).
 
+**0.3.0 amendment.**
+`finiteClockSnapshot(clock, futureOffsetMs?)` MUST read the underlying port
+exactly once and require a safe-integer millisecond value in the repository's
+canonical four-digit UTC range (`0000-01-01T00:00:00.000Z` through
+`9999-12-31T23:59:59.999Z`). When a non-negative safe-integer future offset is
+supplied, the snapshot plus that offset MUST remain in the same range.
+`fixedClockSnapshot(nowMs)` MUST expose that already-validated value through the
+existing `ClockPort` interface without reading the underlying port.
+
+The access/consent JWT operation owners named here MUST fail closed on an
+invalid snapshot before token processing or audit timestamp formatting.
+`verifyAccessToken` and `RequestAuthorizer.authorize` map it to the existing
+`invalid_token` 401; `verifyConsentToken` and
+`OAuthAuthorizationUseCase.approve` map it to the existing `invalid_consent`
+400. Clock validation is the first step in both operation owners; on `approve`,
+an invalid clock therefore takes precedence over the Origin check. The two
+operation owners MUST pass the fixed snapshot through verification
+and their remaining expiry/store/audit work so a stateful custom clock cannot
+give the decision and its audit event different times. When the initial
+snapshot is invalid, no timestamped audit event is emitted: neither ambient
+time nor a fabricated timestamp is an honest `occurredAt`.
+`OAuthAuthorizationUseCase.approve` supplies the larger of the consent-JTI and
+authorization-code TTL offsets, so both derived store timestamps are proven
+canonical before consent-token processing.
+
+This amendment is deliberately limited to the proven access/consent JWT class.
+Console-pairing expiry remains the separate §17.5/B2-F6 slice; unrelated clock
+consumers are not refactored here.
+
 ## 6.2 `AuditPort`
 ```ts
 interface AuditPort { writeAuthEvent(event: AuthAuditEvent): Promise<void>; }

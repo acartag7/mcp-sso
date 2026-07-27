@@ -19,6 +19,9 @@ absent/false; any present non-`true` value fails verification), `jti` (random,
 single-use), `iat`, `exp`. Verified with `algorithms: ["HS256"]`, pinned iss+aud, clock from
 `ClockPort`. **Single-use:** the `jti` is consumed atomically on approve (§12
 `consumeConsentJti`); a replay is rejected with `invalid_grant`.
+Under the 0.3.0 §6.1 amendment, `verifyConsentToken` takes one
+canonical snapshot before `jwtVerify`; snapshot failure remains
+the existing `invalid_consent` error.
 
 ## 7.2 Access token (ES256, audience-bound, fail-closed)
 ```ts
@@ -29,6 +32,9 @@ JWT: header `{alg:"ES256", kid, typ:"JWT"}`, payload `client_id`, `scope`,
 Verified with `algorithms: ["ES256"]`, pinned iss + **aud=resource**
 (fail-closed: a token whose `aud` ≠ resource is `invalid_token`, never accepted),
 clock from `ClockPort`.
+Under the 0.3.0 §6.1 amendment, `verifyAccessToken` takes one
+canonical snapshot before `jwtVerify`; snapshot failure remains
+the existing `invalid_token` 401.
 
 **Fix #6 — cached verification key:** the public JWK is imported to an ES256 key
 **once** (memoized on the config) rather than per request, as the source does.

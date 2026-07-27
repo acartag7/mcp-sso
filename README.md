@@ -127,6 +127,10 @@ full pattern, topology, and Kubernetes notes in
 
 - **Fail-closed everywhere** — ambiguous config, a missing identity, an unknown
   audience, or a replayed token is a hard failure, never a degraded default.
+- **Finite JWT operation clocks** — access/consent verification rejects
+  non-integer or non-canonical custom `ClockPort` values and preserves the
+  existing typed OAuth failure through the production request and
+  approval paths ([threat-model row 39](docs/threat-model.md)).
 - **Optional request budgets** — `RateLimitPort` runs before registration,
   token exchange, and direct header-based identity verification
   (`Bridge.resolveIdentity`); its default is intentionally no-op, so production
