@@ -119,12 +119,12 @@ if (phases["s6a-cimd-primitives"] !== true) {
     invalid(base({ response_types: [] }));
   });
 
-  test("grant_types must be a subset of {authorization_code, refresh_token} if present", () => {
+  test("grant_types must include authorization_code; extra declarations are accepted if present", () => {
     assert.ok(validate(base({ grant_types: ["authorization_code"] })));
     assert.ok(validate(base({ grant_types: ["authorization_code", "refresh_token"] })));
     invalid(base({ grant_types: ["client_credentials"] }));
     invalid(base({ grant_types: ["implicit"] }));
-    invalid(base({ grant_types: ["authorization_code", "client_credentials"] })); // valid first, invalid later
+    assert.ok(validate(base({ grant_types: ["authorization_code", "urn:ietf:params:oauth:grant-type:jwt-bearer"] })));
   });
 
   test("neither response_types nor grant_types present is valid; unknown members ignored", () => {

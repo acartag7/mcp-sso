@@ -269,8 +269,10 @@ decision. Everything else in the pipeline still runs under the flag.
   restatement, and not a per-site re-derivation: the CIMD matcher previously
   accepted `*`, `javascript:`, and non-canonical entries that §10.1 refused).
   https entries exact-match at authorize (draft §4.5 / RFC 9700); loopback http
-  matches RFC 8252 any-port (consistent with §10.2 native policy). If present: `response_types` must include `"code"`;
-  `grant_types` ⊆ `{authorization_code, refresh_token}`; else reject.
+  matches RFC 8252 any-port (consistent with §10.2 native policy). If present:
+  `response_types` must include `"code"`; `grant_types` must be an array of
+  non-empty strings that includes `"authorization_code"`. Additional grant
+  declarations are accepted but do not enable any server grant handler.
 - Unknown members ignored (the RFC 7591 registry allows extras). `logo_uri`
   is NOT fetched and NOT displayed in v0.2 (the draft requires
   prefetch-and-cache IF displayed; we sidestep the second fetch surface).
