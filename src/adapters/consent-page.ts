@@ -5,9 +5,10 @@
 // CSP hardens the page; all interpolated values are HTML-escaped.
 //
 // For a CIMD client (§17.1.4 / §17.1.6 decision 1c) the page additionally MUST
-// show the client_id host and the redirect host, and renders `client_name` as
-// HTML-escaped UNVERIFIED text (threat-model row 17 XSS + impersonation); it
-// SHOULD warn when every registered redirect is loopback.
+// show the client_id host and the redirect host as the primary identity anchors,
+// then renders `client_name` as HTML-escaped SELF-REPORTED / UNVERIFIED text
+// (threat-model row 17 XSS + impersonation). It SHOULD warn when every
+// registered redirect is loopback.
 
 import type { BridgeConfig } from "../config.ts";
 import type { PreparedConsent } from "../authorize.ts";
@@ -21,9 +22,12 @@ function cimdBlock(prepared: PreparedConsent): string {
     ? `<p class="warn">Every registered redirect for this client is a local (loopback) address. Any program on this machine could be impersonating it.</p>`
     : "";
   return `<div class="client">
-<p>Client name (<strong>unverified</strong>, supplied by the client): <strong>${esc(cimd.clientName)}</strong></p>
-<p>Client identifier host: <code>${esc(cimd.clientIdHost)}</code></p>
-<p>Redirect host: <code>${esc(cimd.redirectHost)}</code></p>
+<p class="client-label">Client ID host</p>
+<p class="client-host"><code>${esc(cimd.clientIdHost)}</code></p>
+<p class="client-label">Redirect destination host</p>
+<p class="client-host"><code>${esc(cimd.redirectHost)}</code></p>
+<p class="client-name">Self-reported name: <strong>${esc(cimd.clientName)}</strong> <span class="trust-note">(unverified)</span></p>
+<p class="client-help">Check the two hosts above before approving.</p>
 ${loopbackWarning}</div>`;
 }
 
@@ -35,7 +39,7 @@ export function renderConsentPage(_config: BridgeConfig, prepared: PreparedConse
   }).join("");
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize</title>
-<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:60px auto;padding:0 20px;color:#1a1a1a}h1{font-size:1.3rem}.scope{background:#f4f4f4;padding:8px 12px;border-radius:6px;font-family:monospace;font-size:.85rem;margin:4px 0}.tag{font-family:system-ui;font-size:.75rem;color:#666}.tag.new{color:#2563eb;font-weight:600}.client{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:8px 12px;font-size:.85rem}.client p{margin:4px 0}.warn{color:#b45309;font-weight:600}form{margin-top:24px;display:flex;gap:12px}.approve{margin-left:auto}button{padding:10px 24px;font-size:1rem;border:none;border-radius:6px;cursor:pointer}.approve{background:#2563eb;color:#fff}.deny{background:#e5e7eb;color:#1a1a1a}</style>
+<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:60px auto;padding:0 20px;color:#1a1a1a}h1{font-size:1.3rem}.scope{background:#f4f4f4;padding:8px 12px;border-radius:6px;font-family:monospace;font-size:.85rem;margin:4px 0}.tag{font-family:system-ui;font-size:.75rem;color:#666}.tag.new{color:#2563eb;font-weight:600}.client{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px}.client p{margin:4px 0}.client-label{color:#555;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.03em}.client p.client-host{font-size:1rem;font-weight:700;margin-bottom:10px}.client-name,.client-help{font-size:.85rem}.trust-note{color:#666}.client-help{color:#444}.warn{color:#b45309;font-size:.85rem;font-weight:600}form{margin-top:24px;display:flex;gap:12px}.approve{margin-left:auto}button{padding:10px 24px;font-size:1rem;border:none;border-radius:6px;cursor:pointer}.approve{background:#2563eb;color:#fff}.deny{background:#e5e7eb;color:#1a1a1a}</style>
 </head><body>
 <h1>Authorize access</h1>
 <p>An application requests access to <strong>${esc(prepared.resource)}</strong>.</p>

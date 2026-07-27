@@ -297,10 +297,12 @@ decision. Everything else in the pipeline still runs under the flag.
   document (**SSRF oracle prevention**). The specific reason goes to audit
   only (`oauth.cimd.fetch`, failure, reason code).
 - The presented `redirect_uri` must exact-match a document entry (loopback
-  any-port exception). Consent page MUST display the client_id host and the
-  redirect host, SHOULD warn when every registered redirect is loopback (the
-  MCP localhost-impersonation consideration); `client_name` renders as
-  unverified display text.
+  any-port exception). The consent page MUST present the client_id host and
+  redirect host before the cosmetic name as the primary identity anchors, and
+  SHOULD warn when every registered redirect is loopback (the MCP localhost-
+  impersonation consideration). `client_name` renders second as explicitly
+  self-reported, unverified display text; the copy directs the user to judge
+  the hosts rather than implying that name verification failed.
 - **Scope accumulation does NOT apply to CIMD clients in v0.2** (§17.1.6 decision 3):
   a CIMD authorization stands alone (`priorScopes = []`) in both DCR modes.
   Accumulation stays a stored-DCR opaque-client feature — deferred for CIMD because
