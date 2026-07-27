@@ -40,7 +40,7 @@ export function parseBasicAuth(headerValue: string | undefined): { clientId: str
  * was attempted (contracts §17.2: "WWW-Authenticate: Basic when Basic was
  * attempted"); a `client_secret_post` failure does not earn it. */
 export function isBasicAttempt(headerValue: string | undefined): boolean {
-  return typeof headerValue === "string" && /^basic\s+\S/i.test(headerValue.trim());
+  return typeof headerValue === "string" && /^basic(?:[ \t]|$)/i.test(headerValue.trim());
 }
 
 /** Reverse of RFC 6749 Appendix B (`application/x-www-form-urlencoded`): `+` →

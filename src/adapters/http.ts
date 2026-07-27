@@ -24,15 +24,28 @@ export interface NormResponse {
   redirect?: string;
 }
 
-export function headerString(headers: NormRequest["headers"], name: string): string | undefined {
+export interface HeaderRead {
+  value?: string;
+  ambiguous: boolean;
+}
+
+/** Snapshot one case-insensitive normalized header without selecting a duplicate. */
+export function readHeader(headers: NormRequest["headers"], name: string): HeaderRead {
   const lower = name.toLowerCase();
-  for (const [key, value] of Object.entries(headers)) {
+  let value: string | undefined;
+  let found = false;
+  for (const [key, raw] of Object.entries(headers)) {
     if (key.toLowerCase() === lower) {
-      if (Array.isArray(value)) return value[0];
-      return typeof value === "string" ? value : undefined;
+      if (found || Array.isArray(raw)) return { ambiguous: true };
+      found = true;
+      if (typeof raw === "string") value = raw;
     }
   }
-  return undefined;
+  return { value, ambiguous: false };
+}
+
+export function headerString(headers: NormRequest["headers"], name: string): string | undefined {
+  return readHeader(headers, name).value;
 }
 
 export function queryString(query: NormRequest["query"], name: string): string | undefined {

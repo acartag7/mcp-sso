@@ -694,8 +694,12 @@ client-controlled request input; when present, `prepare` uses it and does not fe
    an adapter concern, Phase 3; the core supplies both sets).
 
 **`approve({ consentToken, approved?, origin? })`** → `{ redirectTo, code?, state? }`:
-- **CSRF/`origin`** must be the issuer origin or in `allowedOrigins` — else
-  `invalid_origin` 403 **direct** (a foreign origin is never redirected anywhere).
+- **CSRF/`origin`** must be exactly one primitive string equal to the issuer
+  origin or a member of `allowedOrigins` — else `invalid_origin` 403 **direct**
+  (a foreign origin is never redirected anywhere). `Bridge.handleApprove`
+  reads the normalized `NormRequest.headers` through `headerString`; an
+  array-valued header or more than one case-insensitive `Origin` key becomes
+  absent and fails closed rather than selecting one value.
 - **Approve-time scheme gate FIRST (§17.1.6 decision 3):** immediately after
   `verifyConsentToken` and BEFORE the Deny branch below — a lowercase-`https://`
   client_id is approvable only when `cimd_verified === true` AND `cimd` enabled;
@@ -771,6 +775,9 @@ the response. Wiring rules:
   `redirect_uri?error=…`; otherwise direct — status `error.status`, body
   `oauthErrorBody(error)` (§9.5). On the protected `/mcp` surface, 401/403 set the
   `WWW-Authenticate` challenge from `buildUnauthorizedChallenge` (§8.2/§8.3).
+  `Bridge.handleToken` performs normalized header/body extraction inside this
+  error boundary, so a throwing accessor maps to the fixed `internal_error`
+  response rather than escaping into framework-specific handling.
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src
@@ -3060,7 +3067,17 @@ in this flow."* Decisions:
   `client_secret_post` (OAuth 2.1 §2.4.1 MUST — the two specs flipped the
   mandatory method; the MCP extension names `client_secret_basic`). A request
   presenting BOTH a `Basic` header and a body `client_secret` uses two auth
-  methods and is rejected (`invalid_client`, RFC 6749 §2.3). Advertise
+  methods and is rejected (`invalid_client`, RFC 6749 §2.3).
+  `Bridge.handleToken` reads normalized headers through `readHeader`; an
+  array-valued header or more than one case-insensitive `Authorization` key is
+  `invalid_client` before body authentication is considered, so ambiguity never
+  degrades to an absent header and `client_secret_post`. If any ambiguous value
+  names the case-insensitive Basic scheme — including a bare malformed `Basic`,
+  but not a `BasicX` prefix — `Bridge.handleToken` still returns the Basic
+  challenge. For `client_credentials`, it attempts the
+  `oauth.token.client_credentials` failure audit before rejecting, without
+  reading the client store; a synchronous or rejected audit write cannot replace
+  that `invalid_client` response. Advertise
   `token_endpoint_auth_methods_supported:
   ["none","client_secret_basic","client_secret_post"]` and
   `grant_types_supported` += `client_credentials` (RFC 8414's default omits

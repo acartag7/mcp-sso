@@ -118,11 +118,23 @@ test("bridge: post-validation scope error is a 302 to redirect_uri?error=invalid
   assert.equal(u.searchParams.get("state"), "s");
 });
 
-test("bridge: cross-origin approve is a direct 403 (no redirect)", async () => {
+test("bridge: missing, foreign, or ambiguous normalized approve Origin is a direct 403", async () => {
   const ctx = setup();
-  const res = await ctx.bridge.handleApprove(req({ body: { consent_token: "x", approved: "true" }, headers: { origin: "https://evil.test" } }));
-  assert.equal(res.status, 403);
-  assert.equal(res.redirect, undefined);
+  for (const headers of [
+    {},
+    { origin: "null" },
+    { origin: "https://evil.test" },
+    { origin: ["https://auth.test"] },
+    { origin: ["https://auth.test", "https://evil.test"] },
+    { origin: ["https://evil.test", "https://auth.test"] },
+    { Origin: "https://auth.test", origin: "https://evil.test" },
+    { origin: "https://evil.test", Origin: "https://auth.test" },
+  ]) {
+    const res = await ctx.bridge.handleApprove(req({ body: { consent_token: "x", approved: "true" }, headers }));
+    assert.equal(res.status, 403);
+    assert.equal((res.body as { error: string }).error, "invalid_origin");
+    assert.equal(res.redirect, undefined);
+  }
 });
 
 test("bridge: Deny redirects access_denied (fix #5)", async () => {
