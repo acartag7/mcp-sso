@@ -16,7 +16,10 @@
 pnpm's `minimumReleaseAge` is measured in **minutes**. `pnpm-workspace.yaml` sets
 `minimumReleaseAge: 21600`, and **21600 minutes = exactly 15 days**. So the
 install-time floor and this ledger's manual curation rule are the **same standard**,
-enforced at two layers:
+enforced at two layers. The dependency-policy gate requires the workspace value
+to equal this ledger's machine-readable `minimumAgeDays * 1440`; it also treats
+`package.json#packageManager` as the single pnpm version source and rejects a
+workflow-level `pnpm/action-setup` version override.
 
 - **install-time** — pnpm refuses any version younger than 15 days (applies to
   transitive deps too); and
@@ -94,6 +97,12 @@ pinned to a SHA whose tag is ≥15 days old at pin time):
   **First-party — documented exception to the 15-day floor (see below).**
 - npm publish step runs `npm publish --provenance` under the GitHub Actions OIDC
   token (**no `NPM_TOKEN` with publish rights, no local publishes**).
+
+The 15-day Action quarantine uses the upstream release's `published_at`.
+Immutable workflow SHAs stop a later tag move from changing executed code, and
+the live tag-to-SHA check rejects that move until a deliberate pin+ledger change
+is reviewed here. Git commit timestamps are not treated as a second quarantine
+clock because their creator controls them.
 
 The following block is the machine-readable source used by `check:deps`. The
 human tables above explain purpose and trade-offs; the check binds the exact
