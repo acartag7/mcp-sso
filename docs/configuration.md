@@ -74,6 +74,7 @@ See [`identity/cloudflare-access.md`](identity/cloudflare-access.md).
 | `ENTRA_REDIRECT_URI` | required | Must equal `OAUTH_ISSUER` origin + the callback path. |
 | `ENTRA_ALLOWED_TENANT_IDS` | optional | Comma-separated multi-tenant allowlist; empty ⇒ single-tenant. |
 | `ENTRA_SUBJECT_ALLOWLIST` | optional | Comma-separated defense-in-depth `oid` allowlist. |
+| `ENTRA_GROUP_AUTHORIZATION_JSON` | optional | Complete JSON `{ "mapping": { "<group-guid>": ["mcp:read"] }, "baseScopes": [] }`; invalid config fails before state creation. |
 
 See [`identity/entra.md`](identity/entra.md).
 

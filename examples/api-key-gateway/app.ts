@@ -44,7 +44,8 @@ import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 // AND package consumers apply the SAME bar (contracts §15 DX).
 import {
   configFromEnv, defaultListenHost, createOidcUpstreamFromEnv,
-  assertUpstreamConfigBeforeState, oidcProviderConfigured, productionIdentityConfigured,
+  assertUpstreamConfigBeforeState, entraGroupAuthorizationFromEnv,
+  oidcProviderConfigured, productionIdentityConfigured,
   type OidcIdentityFactories,
 } from "../fastify-sqlite/app.ts";
 import { ensureStateDir } from "../../src/state-dir.ts";
@@ -311,6 +312,7 @@ export async function buildGatewayExample(
       redirectUri,
       allowedTenantIds: listEnv(env, "ENTRA_ALLOWED_TENANT_IDS", ""),
       subjectAllowlist: listEnv(env, "ENTRA_SUBJECT_ALLOWLIST", ""),
+      groupAuthorization: entraGroupAuthorizationFromEnv(env),
     }, { scopeCatalog: config.scopeCatalog });
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
     await ensureStateDir(dir);

@@ -18,7 +18,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { pkceChallenge } from "../src/crypto.ts";
 import { AuthConfigError, createBridgeConfig } from "../src/config.ts";
-import { buildApp, buildExample, configFromEnv, createOidcUpstreamFromEnv, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
+import {
+  buildApp,
+  buildExample,
+  configFromEnv,
+  createOidcUpstreamFromEnv,
+  defaultListenHost,
+  entraGroupAuthorizationFromEnv,
+} from "../examples/fastify-sqlite/app.ts";
 import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
@@ -148,6 +155,23 @@ test("integration — listen host: pairing binds loopback; Cloudflare binds 0.0.
   assert.equal(defaultListenHost({ OIDC_ISSUER: "" }), "0.0.0.0", "blank OIDC selector remains production mode (boot later rejects it)");
 });
 
+test("integration — Entra group authorization env preserves the complete object and absence", () => {
+  const value = {
+    mapping: {
+      "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee": ["mcp:write"],
+    },
+    baseScopes: ["mcp:read"],
+  };
+
+  assert.deepEqual(
+    entraGroupAuthorizationFromEnv({
+      ENTRA_GROUP_AUTHORIZATION_JSON: JSON.stringify(value),
+    }),
+    value,
+  );
+  assert.equal(entraGroupAuthorizationFromEnv({}), undefined);
+});
+
 test("integration — Google branch boot-fails on a missing confidential-client secret before creating state", async () => {
   const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-google-secret-"));
   const dir = join(base, "state");
@@ -202,6 +226,44 @@ test("integration — blank production identity env fails closed before state cr
       name: "blank Entra selector",
       provider: { ENTRA_TENANT_ID: "", ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/entra/callback" },
       pattern: /Missing env: ENTRA_TENANT_ID/,
+    },
+    {
+      name: "blank Entra group authorization JSON",
+      provider: {
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        ENTRA_GROUP_AUTHORIZATION_JSON: "",
+      },
+      pattern: /ENTRA_GROUP_AUTHORIZATION_JSON must be a non-empty JSON object/,
+    },
+    {
+      name: "malformed Entra group authorization JSON",
+      provider: {
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        ENTRA_GROUP_AUTHORIZATION_JSON: "{",
+      },
+      pattern: /ENTRA_GROUP_AUTHORIZATION_JSON must be valid JSON/,
+    },
+    {
+      name: "non-GUID Entra group authorization mapping",
+      provider: {
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        ENTRA_GROUP_AUTHORIZATION_JSON: JSON.stringify({ mapping: { Administrators: ["mcp:read"] } }),
+      },
+      pattern: /mapping key "Administrators" is not a GUID/,
+    },
+    {
+      name: "out-of-catalog Entra group authorization scope",
+      provider: {
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        ENTRA_GROUP_AUTHORIZATION_JSON: JSON.stringify({
+          mapping: { "00000000-0000-0000-0000-000000000002": ["mcp:admin"] },
+        }),
+      },
+      pattern: /mapped scope "mcp:admin".*is not in scopeCatalog/,
     },
     {
       name: "blank Cloudflare selector",

@@ -1289,6 +1289,15 @@ groupAuthorization?: {
 }
 ```
 
+- **Shipped-example env surface (shipped).**
+  `ENTRA_GROUP_AUTHORIZATION_JSON`, when present, is parsed as the complete
+  `groupAuthorization` object above and passed unchanged to
+  `createEntraRedirectIdentity` by both shipped example composition roots.
+  Absence preserves the existing no-ceiling behavior. A present blank value,
+  invalid JSON, or any value that fails `assertGroupAuthorizationMapping`
+  rejects example boot before state-directory creation; it never degrades to
+  an absent ceiling. The JSON form is the only env grammar: it avoids a second
+  delimiter parser for the GUID-to-scope mapping.
 - Boot validation (shipped S2b, `assertGroupAuthorizationMapping`): every
   `mapping` key must be GUID-shaped (display names rejected — fail-closed
   against the documented spoofing vector; case-insensitive, duplicate keys
