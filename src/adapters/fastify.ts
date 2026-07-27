@@ -8,7 +8,7 @@ import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
-import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface FastifyAdapterOptions {
   bridge: Bridge;
@@ -37,7 +37,7 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
   const toNorm = (req: FastifyRequest): NormRequest => ({
     query: req.query as NormRequest["query"],
     body: req.body,
-    headers: req.headers as NormRequest["headers"],
+    headers: headersFromDistinct(req.raw.headersDistinct, req.headers as NormRequest["headers"]),
     ip: req.ip,
   });
   const send = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
@@ -68,13 +68,14 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
       // on an OAuthError and hiding non-OAuth details (verification.md HF.3).
       // bridge.resolveIdentity also emits the identity.verify audit event.
       let identityResolved: { subject: string; allowedScopes?: string[] };
+      const request = toNorm(req);
       try {
-        identityResolved = await bridge.resolveIdentity(id, headerString(req.headers, identityHeader), req.ip);
+        identityResolved = await bridge.resolveIdentity(id, headerString(request.headers, identityHeader), request.ip);
       } catch (error) {
         await send(reply, oauthErrorResponse(asDirectOAuth(error)));
         return;
       }
-      await send(reply, await bridge.handleAuthorize(toNorm(req), identityResolved));
+      await send(reply, await bridge.handleAuthorize(request, identityResolved));
     });
   }
   app.post("/oauth/authorize/approve", async (req, reply) => send(reply, await bridge.handleApprove(toNorm(req))));

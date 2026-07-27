@@ -2,6 +2,7 @@ import { request } from "node:http";
 import express from "express";
 import { createOAuthRouter } from "../src/adapters/express.ts";
 import { runAdapterFlow, type AdapterClient, type AdapterResp } from "./lib/adapter-flow.ts";
+import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 runAdapterFlow("express", async (bridge, identity) => {
   const app = express();
@@ -32,6 +33,8 @@ runAdapterFlow("express", async (bridge, identity) => {
     async get(path, headers) { return call("GET", path, headers ?? {}); },
     async postForm(path, body, headers) { return call("POST", path, { "content-type": "application/x-www-form-urlencoded", ...headers }, new URLSearchParams(body).toString()); },
     async postJson(path, body, headers) { return call("POST", path, { "content-type": "application/json", ...headers }, JSON.stringify(body)); },
+    requestOccurrences: (method, path, headers, body) =>
+      rawOccurrenceCall(port, method, path, headers, body),
     async close() { await new Promise<void>((resolve) => server.close(() => resolve())); },
   };
   return client;

@@ -1,10 +1,14 @@
 import Fastify from "fastify";
 import { registerOAuthRoutes } from "../src/adapters/fastify.ts";
 import { runAdapterFlow, type AdapterClient, type AdapterResp } from "./lib/adapter-flow.ts";
+import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 runAdapterFlow("fastify", async (bridge, identity) => {
   const app = Fastify();
   await registerOAuthRoutes(app, { bridge, identity });
+  await app.listen({ host: "127.0.0.1", port: 0 });
+  const address = app.server.address();
+  if (!address || typeof address === "string") throw new Error("Fastify did not bind a TCP port");
   const resp = (r: { statusCode: number; headers: Record<string, unknown>; body: string }): AdapterResp =>
     ({ status: r.statusCode, headers: r.headers as Record<string, string>, body: r.body });
   const client: AdapterClient = {
@@ -15,6 +19,8 @@ runAdapterFlow("fastify", async (bridge, identity) => {
     async postJson(path, body, headers) {
       return resp(await app.inject({ method: "POST", url: path, headers: { "content-type": "application/json", ...headers }, payload: JSON.stringify(body) }));
     },
+    requestOccurrences: (method, path, headers, body) =>
+      rawOccurrenceCall(address.port, method, path, headers, body),
     async close() { await app.close(); },
   };
   return client;

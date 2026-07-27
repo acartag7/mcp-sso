@@ -8,7 +8,7 @@ import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
-import { oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface HonoAdapterOptions {
   bridge: Bridge;
@@ -97,12 +97,13 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       // on an OAuthError and hiding non-OAuth details (verification.md HF.3).
       // bridge.resolveIdentity also emits the identity.verify audit event.
       let identityResolved: { subject: string; allowedScopes?: string[] };
+      const req = await toNorm(c);
       try {
-        identityResolved = await bridge.resolveIdentity(id, c.req.header(identityHeader), clientIp?.(c));
+        identityResolved = await bridge.resolveIdentity(id, headerString(req.headers, identityHeader), req.ip);
       } catch (error) {
         return send(c, oauthErrorResponse(asDirectOAuth(error)));
       }
-      return send(c, await bridge.handleAuthorize(await toNorm(c), identityResolved));
+      return send(c, await bridge.handleAuthorize(req, identityResolved));
     });
   }
   app.post("/oauth/authorize/approve", async (c) => send(c, await bridge.handleApprove(await toNorm(c))));

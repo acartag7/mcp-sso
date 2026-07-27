@@ -8,7 +8,7 @@ import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
-import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface ExpressAdapterOptions {
   bridge: Bridge;
@@ -32,7 +32,7 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   const toNorm = (req: Request): NormRequest => ({
     query: req.query as NormRequest["query"],
     body: req.body,
-    headers: req.headers as NormRequest["headers"],
+    headers: headersFromDistinct(req.headersDistinct, req.headers as NormRequest["headers"]),
     ip: req.ip,
   });
   const send = (res: Response, r: NormResponse): void => {
@@ -64,8 +64,9 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
     if (!identity) throw new Error("createOAuthRouter: identity is required unless skipAuthorize or upstream is set");
     const id = identity;
     router.get("/oauth/authorize", wrap(async (req, res) => {
-      const identityResolved = await bridge.resolveIdentity(id, headerString(req.headers, identityHeader), req.ip);
-      send(res, await bridge.handleAuthorize(toNorm(req), identityResolved));
+      const request = toNorm(req);
+      const identityResolved = await bridge.resolveIdentity(id, headerString(request.headers, identityHeader), request.ip);
+      send(res, await bridge.handleAuthorize(request, identityResolved));
     }));
   }
   router.post("/oauth/authorize/approve", wrap(async (req, res) => send(res, await bridge.handleApprove(toNorm(req)))));
