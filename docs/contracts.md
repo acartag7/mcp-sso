@@ -775,6 +775,9 @@ the response. Wiring rules:
   `redirect_uri?error=…`; otherwise direct — status `error.status`, body
   `oauthErrorBody(error)` (§9.5). On the protected `/mcp` surface, 401/403 set the
   `WWW-Authenticate` challenge from `buildUnauthorizedChallenge` (§8.2/§8.3).
+  `Bridge.handleToken` performs normalized header/body extraction inside this
+  error boundary, so a throwing accessor maps to the fixed `internal_error`
+  response rather than escaping into framework-specific handling.
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src
@@ -3069,9 +3072,12 @@ in this flow."* Decisions:
   array-valued header or more than one case-insensitive `Authorization` key is
   `invalid_client` before body authentication is considered, so ambiguity never
   degrades to an absent header and `client_secret_post`. If any ambiguous value
-  uses the Basic scheme, `Bridge.handleToken` still returns the Basic challenge.
-  For `client_credentials`, it emits the `oauth.token.client_credentials`
-  failure audit before rejecting, without reading the client store. Advertise
+  names the case-insensitive Basic scheme — including a bare malformed `Basic`,
+  but not a `BasicX` prefix — `Bridge.handleToken` still returns the Basic
+  challenge. For `client_credentials`, it attempts the
+  `oauth.token.client_credentials` failure audit before rejecting, without
+  reading the client store; a synchronous or rejected audit write cannot replace
+  that `invalid_client` response. Advertise
   `token_endpoint_auth_methods_supported:
   ["none","client_secret_basic","client_secret_post"]` and
   `grant_types_supported` += `client_credentials` (RFC 8414's default omits
