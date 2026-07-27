@@ -116,8 +116,10 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
   detection (§12.2 invariant 3). `INSERT IGNORE` substitutes for SQLite
   `ON CONFLICT DO NOTHING` on consent JTIs (the `ON DUPLICATE KEY UPDATE
   expires_at = expires_at` form reports `affectedRows=1` even on a no-op replay
-  under MySQL 8.4, so it cannot distinguish first-use); the family-revoke upsert
-  uses the MySQL 8.0.20+ row-alias `VALUES(...) AS new ON DUPLICATE KEY UPDATE`.
+  under MySQL 8.4, so it cannot distinguish first-use); family upserts use
+  `ON DUPLICATE KEY UPDATE` without a row alias. The incoming revoke timestamp
+  is repeated as a bound parameter rather than interpolated into SQL, while
+  `COALESCE` preserves the first revocation timestamp.
   Transactions run at **`READ COMMITTED`** (`SET TRANSACTION ISOLATION LEVEL
   READ COMMITTED` — the next-transaction form, before `BEGIN`): under InnoDB's
   default `REPEATABLE READ`, range scans (`sweepExpired`'s family DELETE, the
