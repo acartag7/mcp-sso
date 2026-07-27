@@ -9,7 +9,6 @@ export interface CimdDocument {
 }
 
 const PRIVATE_JWK_MEMBERS = new Set(["d", "p", "q", "dp", "dq", "qi", "oth", "k"]);
-const GRANT_TYPES = new Set(["authorization_code", "refresh_token"]);
 
 export function validateCimdDocument(rawBody: string, rawClientId: string): CimdDocument {
   if (typeof rawBody !== "string" || typeof rawClientId !== "string") throw invalid();
@@ -70,7 +69,9 @@ function assertResponseTypes(value: unknown): void {
 }
 
 function assertGrantTypes(value: unknown): void {
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && GRANT_TYPES.has(entry))) {
+  if (!Array.isArray(value)
+    || !value.every((entry) => typeof entry === "string" && entry.length > 0)
+    || !value.includes("authorization_code")) {
     throw invalid();
   }
 }
