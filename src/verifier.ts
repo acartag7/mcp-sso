@@ -2,7 +2,7 @@
 // bearer token, verifies it (audience fail-closed), enforces scope step-up, and
 // audits. NO bypass path: there is intentionally no local/unauthenticated flavor.
 
-import type { ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { BridgeConfig } from "./config.ts";
 import type { AuthorizedSubject } from "./scopes.ts";
@@ -35,12 +35,16 @@ export class RequestAuthorizer {
   }
 
   async authorize(input: RequestAuthInput): Promise<RequestAuthResult> {
+    let operationClock: ClockPort;
+    try { operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock)); }
+    catch { throw new OAuthError("invalid_token", "Bearer token is invalid", 401); }
+    const occurredAt = new Date(operationClock.nowMs()).toISOString();
     try {
       const token = bearerToken(input.authorization);
-      const verified = await verifyAccessToken(token, this.config, this.clock);
+      const verified = await verifyAccessToken(token, this.config, operationClock);
       if (input.requiredScope) requireScope(verified, input.requiredScope);
       await this.audit.writeAuthEvent({
-        occurredAt: new Date(this.clock.nowMs()).toISOString(),
+        occurredAt,
         event: "auth.request", status: "success",
         clientId: verified.clientId, subject: verified.subject, scopes: verified.scopes,
         reason: input.requiredScope,
@@ -48,7 +52,7 @@ export class RequestAuthorizer {
       return verified;
     } catch (error) {
       await this.audit.writeAuthEvent({
-        occurredAt: new Date(this.clock.nowMs()).toISOString(),
+        occurredAt,
         event: "auth.request", status: "failure",
         reason: error instanceof OAuthError ? error.code : "invalid_token",
       });
