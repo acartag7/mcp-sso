@@ -77,6 +77,9 @@ export async function provisionMachineClient(
       throw new OAuthError("invalid_request", "secretTtlSeconds must be a positive integer (seconds)");
     }
     const now = epochSeconds(deps.clock);
+    const ttlSeconds = input.secretTtlSeconds === undefined
+      ? undefined
+      : validateExpiryOffset(now, input.secretTtlSeconds, "secretTtlSeconds");
     const clientId = mintMachineClientId();
     const clientSecret = mintClientSecret();
     const record: MachineClientRegistration = {
@@ -91,7 +94,7 @@ export async function provisionMachineClient(
       secrets: [{
         hash: sha256Hex(clientSecret),
         createdAtEpoch: now,
-        expiresAtEpoch: input.secretTtlSeconds !== undefined ? now + input.secretTtlSeconds : undefined,
+        expiresAtEpoch: ttlSeconds !== undefined ? now + ttlSeconds : undefined,
       }],
     };
     await deps.store.save(record);
@@ -125,11 +128,12 @@ export async function rotateMachineClientSecret(
     if (!isPositiveInteger(graceSeconds)) {
       throw new OAuthError("invalid_request", "graceSeconds must be a positive integer (seconds)");
     }
-    const client = parseMachineClientRegistration(await deps.store.find(clientId), clientId);
-    if (!client) throw new OAuthError("invalid_client", "Machine client record is invalid", 401);
     const now = epochSeconds(deps.clock);
+    const checkedGraceSeconds = validateExpiryOffset(now, graceSeconds, "graceSeconds");
+    const client = parseMachineClientRegistration(await deps.store.find(clientId), clientId, now);
+    if (!client) throw new OAuthError("invalid_client", "Machine client record is invalid", 401);
     const clientSecret = mintClientSecret();
-    const secrets = rotateSecrets(client.secrets, now, graceSeconds, sha256Hex(clientSecret));
+    const secrets = rotateSecrets(client.secrets, now, checkedGraceSeconds, sha256Hex(clientSecret));
     await deps.store.save({ ...client, secrets });
     await deps.audit.writeAuthEvent({
       occurredAt: new Date(deps.clock.nowMs()).toISOString(),
@@ -161,8 +165,8 @@ export async function verifyMachineClientSecret(
 ): Promise<boolean> {
   if (typeof presentedSecret !== "string" || presentedSecret.length === 0) return false;
   const presented = sha256Hex(presentedSecret);
-  const client = parseMachineClientRegistration(await deps.store.find(clientId), clientId);
   const now = epochSeconds(deps.clock);
+  const client = parseMachineClientRegistration(await deps.store.find(clientId), clientId, now);
   const active = client?.secrets
     .filter((secret) => secret.expiresAtEpoch === undefined || secret.expiresAtEpoch > now)
     .map((secret) => secret.hash) ?? [];
@@ -226,6 +230,14 @@ function timingSafeHexEqual(a: string, b: string): boolean {
 
 function isPositiveInteger(value: number): boolean {
   return Number.isInteger(value) && value > 0;
+}
+
+function validateExpiryOffset(now: number, seconds: number, field: string): number {
+  const expiry = now + seconds;
+  if (!Number.isSafeInteger(expiry) || expiry < 0) {
+    throw new OAuthError("invalid_request", `${field} produces an invalid expiry`);
+  }
+  return seconds;
 }
 
 function epochSeconds(clock: ClockPort): number {

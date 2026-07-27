@@ -166,6 +166,29 @@ test("expired secret ⇒ 401 invalid_client (+ Basic challenge when Basic attemp
   assert.match(res.headers["www-authenticate"] ?? "", /^Basic /);
 });
 
+test("expired secret history does not invalidate a live machine credential", async () => {
+  const ctx = setup(true);
+  const clientId = "mcc_history";
+  const clientSecret = "mcs_" + "H".repeat(43);
+  const nowEpoch = Math.floor(NOW_MS / 1000);
+  await ctx.clientStore.save({
+    clientId, redirectUris: [], applicationType: "machine", issuedAtEpoch: nowEpoch,
+    allowedScopes: ["mcp:read"],
+    secrets: [
+      { hash: "a".repeat(64), createdAtEpoch: 1, expiresAtEpoch: nowEpoch - 2 },
+      { hash: "b".repeat(64), createdAtEpoch: 2, expiresAtEpoch: nowEpoch - 1 },
+      { hash: sha256Hex(clientSecret), createdAtEpoch: nowEpoch },
+    ],
+  });
+
+  const res = await ctx.bridge.handleToken(req({
+    headers: { authorization: basicHeader(clientId, clientSecret) },
+    body: grantBody({}),
+  }));
+  assert.equal(res.status, 200);
+  assert.equal((res.body as { scope: string }).scope, "mcp:read");
+});
+
 test("unknown client / missing creds ⇒ 401 invalid_client (no Basic challenge when Basic not attempted)", async () => {
   const ctx = setup(true);
   // unknown client via post
@@ -365,6 +388,14 @@ test("client_credentials re-parses and key-binds the post-authentication store r
   for (const [label, change] of [
     ["malformed", (valid: ClientRegistration) => ({ ...valid, redirectUris: ["https://wrong.test/cb"] })],
     ["mis-keyed", (valid: ClientRegistration) => ({ ...valid, clientId: "mcc_embedded_other" })],
+    ["over-active", (valid: ClientRegistration) => valid.applicationType === "machine" ? ({
+      ...valid,
+      secrets: [
+        ...valid.secrets,
+        { hash: "a".repeat(64), createdAtEpoch: 1, expiresAtEpoch: Math.floor(NOW_MS / 1000) + 600 },
+        { hash: "b".repeat(64), createdAtEpoch: 2, expiresAtEpoch: Math.floor(NOW_MS / 1000) + 600 },
+      ],
+    }) : valid],
   ] as const) {
     const ctx = setup(true);
     const credentials = await provision(ctx, ["mcp:read"]);

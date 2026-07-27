@@ -167,7 +167,8 @@ export class OAuthTokenUseCase {
       if (!clientId || !clientSecret || !clientStore) throw new OAuthError("invalid_client", "Client authentication is required", 401);
       const ok = await verifyMachineClientSecret({ store: clientStore, catalog: this.config.scopeCatalog, clock: this.clock, audit: this.audit }, clientId, clientSecret);
       if (!ok) throw new OAuthError("invalid_client", "Client authentication failed", 401);
-      const client = parseMachineClientRegistration(await clientStore.find(clientId), clientId);
+      const nowEpoch = Math.floor(this.clock.nowMs() / 1000);
+      const client = parseMachineClientRegistration(await clientStore.find(clientId), clientId, nowEpoch);
       if (!client) throw new OAuthError("invalid_client", "Client authentication failed", 401);
       const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, this.config.scopeCatalog);
       if (input.resource !== undefined && input.resource !== this.config.resource) throw new OAuthError("invalid_target", "resource does not match the configured resource");

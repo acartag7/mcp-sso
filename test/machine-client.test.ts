@@ -149,6 +149,21 @@ test("provision: rejects a bad secretTtlSeconds and a non-string name", async ()
   });
 });
 
+test("provision: rejects a TTL whose derived expiry is unsafe before save or success audit", async () => {
+  const h = harness();
+  await assert.rejects(
+    () => provisionMachineClient(h.deps, {
+      allowedScopes: ["mcp:read"],
+      secretTtlSeconds: Number.MAX_SAFE_INTEGER,
+    }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_request",
+  );
+  assert.equal(h.store.saveCalls, 0);
+  assert.equal(h.audit.events.some((event) =>
+    event.event === "oauth.client.provision" && event.status === "success"), false);
+  assert.equal(h.audit.events.at(-1)?.reason, "invalid_request");
+});
+
 // ---------- rotation ----------
 
 test("rotation: from a single secret yields exactly [old-grace, new-live]", async () => {
@@ -228,6 +243,22 @@ test("rotation: rejects a bad graceSeconds", async () => {
       return true;
     });
   }
+});
+
+test("rotation: rejects a grace whose derived expiry is unsafe before save or success audit", async () => {
+  const h = harness();
+  const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  const savesBefore = h.store.saveCalls;
+  await assert.rejects(
+    () => rotateMachineClientSecret(h.deps, provisioned.clientId, {
+      graceSeconds: Number.MAX_SAFE_INTEGER,
+    }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_request",
+  );
+  assert.equal(h.store.saveCalls, savesBefore);
+  assert.equal(h.audit.events.some((event) =>
+    event.event === "oauth.client.rotate_secret" && event.status === "success"), false);
+  assert.equal(h.audit.events.at(-1)?.reason, "invalid_request");
 });
 
 // ---------- rotateSecrets (pure model) ----------
@@ -346,15 +377,61 @@ test("stored machine grammar: malformed or mis-keyed rows fail verification and 
   }
 });
 
+test("stored machine grammar: expired history remains readable and rotation compacts it", async () => {
+  const h = harness();
+  const clientId = "mcc_history";
+  const liveSecret = "mcs_" + "H".repeat(43);
+  const nowEpoch = Math.floor(NOW_MS / 1000);
+  h.store.setAt(clientId, {
+    ...storedMachineRecord(clientId, liveSecret),
+    secrets: [
+      { hash: "a".repeat(64), createdAtEpoch: 1, expiresAtEpoch: nowEpoch - 2 },
+      { hash: "b".repeat(64), createdAtEpoch: 2, expiresAtEpoch: nowEpoch - 1 },
+      { hash: sha256Hex(liveSecret), createdAtEpoch: nowEpoch },
+    ],
+  });
+
+  assert.equal(await verifyMachineClientSecret(h.deps, clientId, liveSecret), true);
+  const rotated = await rotateMachineClientSecret(h.deps, clientId, { graceSeconds: 600 });
+  const saved = await machineRecord(h.store, clientId);
+  assert.equal(saved.secrets.length, 2);
+  assert.deepEqual(saved.secrets.map((secret) => secret.hash), [
+    sha256Hex(liveSecret),
+    sha256Hex(rotated.clientSecret),
+  ]);
+});
+
+test("stored machine grammar: an all-expired row can rotate to one new live secret", async () => {
+  const h = harness();
+  const clientId = "mcc_expired_history";
+  const nowEpoch = Math.floor(NOW_MS / 1000);
+  h.store.setAt(clientId, {
+    ...storedMachineRecord(clientId, "mcs_" + "E".repeat(43)),
+    secrets: [
+      { hash: "a".repeat(64), createdAtEpoch: 1, expiresAtEpoch: nowEpoch - 2 },
+      { hash: "b".repeat(64), createdAtEpoch: 2, expiresAtEpoch: nowEpoch - 1 },
+      { hash: "c".repeat(64), createdAtEpoch: 3, expiresAtEpoch: nowEpoch },
+    ],
+  });
+
+  const rotated = await rotateMachineClientSecret(h.deps, clientId);
+  const saved = await machineRecord(h.store, clientId);
+  assert.deepEqual(saved.secrets, [{
+    hash: sha256Hex(rotated.clientSecret),
+    createdAtEpoch: nowEpoch,
+  }]);
+});
+
 test("stored machine parser returns fresh known-field arrays and secret slots", () => {
   const clientId = "mcc_snapshot";
-  assert.equal(parseMachineClientRegistration(undefined, clientId), null);
+  const nowEpoch = Math.floor(NOW_MS / 1000);
+  assert.equal(parseMachineClientRegistration(undefined, clientId, nowEpoch), null);
   const expected = storedMachineRecord(clientId, "mcs_" + "S".repeat(43));
   const input = {
     ...expected, operatorNote: "drop",
     secrets: [{ ...expected.secrets[0]!, operatorNote: "drop" }],
   };
-  const parsed = parseMachineClientRegistration(input, clientId)!;
+  const parsed = parseMachineClientRegistration(input, clientId, nowEpoch)!;
   assert.notEqual(parsed, input);
   assert.notEqual(parsed.redirectUris, input.redirectUris);
   assert.notEqual(parsed.allowedScopes, input.allowedScopes);
