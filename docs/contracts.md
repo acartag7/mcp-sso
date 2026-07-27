@@ -694,8 +694,12 @@ client-controlled request input; when present, `prepare` uses it and does not fe
    an adapter concern, Phase 3; the core supplies both sets).
 
 **`approve({ consentToken, approved?, origin? })`** → `{ redirectTo, code?, state? }`:
-- **CSRF/`origin`** must be the issuer origin or in `allowedOrigins` — else
-  `invalid_origin` 403 **direct** (a foreign origin is never redirected anywhere).
+- **CSRF/`origin`** must be exactly one primitive string equal to the issuer
+  origin or a member of `allowedOrigins` — else `invalid_origin` 403 **direct**
+  (a foreign origin is never redirected anywhere). `Bridge.handleApprove`
+  reads the normalized `NormRequest.headers` through `headerString`; an
+  array-valued header or more than one case-insensitive `Origin` key becomes
+  absent and fails closed rather than selecting one value.
 - **Approve-time scheme gate FIRST (§17.1.6 decision 3):** immediately after
   `verifyConsentToken` and BEFORE the Deny branch below — a lowercase-`https://`
   client_id is approvable only when `cimd_verified === true` AND `cimd` enabled;
@@ -3060,7 +3064,11 @@ in this flow."* Decisions:
   `client_secret_post` (OAuth 2.1 §2.4.1 MUST — the two specs flipped the
   mandatory method; the MCP extension names `client_secret_basic`). A request
   presenting BOTH a `Basic` header and a body `client_secret` uses two auth
-  methods and is rejected (`invalid_client`, RFC 6749 §2.3). Advertise
+  methods and is rejected (`invalid_client`, RFC 6749 §2.3).
+  `Bridge.handleToken` reads normalized headers through `readHeader`; an
+  array-valued header or more than one case-insensitive `Authorization` key is
+  `invalid_client` before body authentication is considered, so ambiguity never
+  degrades to an absent header and `client_secret_post`. Advertise
   `token_endpoint_auth_methods_supported:
   ["none","client_secret_basic","client_secret_post"]` and
   `grant_types_supported` += `client_credentials` (RFC 8414's default omits
