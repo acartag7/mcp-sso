@@ -10,7 +10,7 @@
 [![node](https://img.shields.io/node/v/mcp-sso)](package.json)
 [![runtime deps](https://img.shields.io/badge/runtime%20deps-1%20(jose)-blue)](docs/dependency-ledger.md)
 
-[Quickstart](#quickstart) · [Machine-to-machine](#machine-to-machine-client_credentials) · [API-key gateway](#api-key-gateway-sso-in-front-of-a-token-only-backend) · [Security](#security) · [Alternatives](#alternatives) · [Status](#status) · [Threat model](docs/threat-model.md) · [Live verification](docs/live-verification.md)
+[Quickstart](#quickstart) · [Client registration](docs/client-registration.md) · [Configuration](docs/configuration.md) · [Machine-to-machine](#machine-to-machine-client_credentials) · [API-key gateway](#api-key-gateway-sso-in-front-of-a-token-only-backend) · [Security](#security) · [Alternatives](#alternatives) · [Status](#status) · [Threat model](docs/threat-model.md) · [Live verification](docs/live-verification.md)
 
 ## The problem
 
@@ -18,25 +18,24 @@ Remote MCP servers need auth. The default is a static API key pasted into every
 client config — no expiry, no per-user identity, no revocation short of rotating
 the one shared secret. It's what leaks in a `git add .` or a support screenshot.
 
-The MCP spec's answer is OAuth 2.1. But here's the catch: the clean self-onboarding —
-paste a URL and the client connects — depends on **Dynamic Client Registration
-(DCR)**: the client registers itself at the identity provider automatically, no
-manual setup. The identity providers you actually have at work — **Entra ID,
-Cloudflare Access, and most enterprise SSO — don't expose a DCR endpoint your
-client can call.** So the paste-a-URL experience should just work… and against
-enterprise IdPs, it doesn't. You're left hand-rolling OAuth glue per deployment,
-or settling for manual registration that breaks the self-onboarding.
+The MCP spec's answer is OAuth 2.1. The remaining gap is that an MCP client must
+identify itself to an authorization server. Newer clients can use **Client ID
+Metadata Documents (CIMD)**; other clients use **Dynamic Client Registration
+(DCR)**. Enterprise identity providers such as Entra ID and Cloudflare Access
+are identity sources, not MCP authorization servers, so they do not provide
+this complete MCP-facing flow.
 
-**mcp-sso is the bridge.** It speaks DCR, PKCE, and consent to the MCP client;
-your IdP stays the identity source of truth; it mints its **own** audience-bound
-tokens (each valid only for your server). Upstream IdP tokens never pass through.
+**mcp-sso is the bridge.** It accepts CIMD client identities and DCR clients,
+then speaks PKCE and consent to the MCP client while your IdP stays the identity
+source of truth. It mints its **own** audience-bound tokens (each valid only for
+your server). Upstream IdP tokens never pass through.
 
 ```mermaid
 sequenceDiagram
     participant C as MCP client
     participant B as mcp-sso bridge
     participant I as Your IdP (Entra / CF Access / OIDC)
-    C->>B: register (DCR) + authorize (PKCE)
+    C->>B: CIMD client_id or DCR registration; authorize (PKCE)
     B->>I: user signs in at the IdP
     I-->>B: verified identity (id_token / signed assertion)
     B-->>C: consent screen, then a bridge-minted token (audience-bound)
@@ -46,26 +45,49 @@ sequenceDiagram
 
 ## Quickstart
 
-The fastest start needs no IdP and no keys to generate:
+The fastest installed start needs Node 24+, no IdP, and no keys to generate:
 
 ```bash
-node examples/fastify-sqlite/index.ts
-# → prints a one-time code to the console (console-pairing identity).
-claude mcp add --transport http my-bridge http://localhost:3000/mcp
-# → a browser opens to the consent page; approve; the tool is callable.
+npx mcp-sso init my-mcp-server
+cd my-mcp-server
+npm install
+npm start
+# In another terminal:
+claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp
+# → the server prints a one-time code; paste it into the browser, then approve.
 ```
 
-For a real identity provider (Cloudflare Access or Entra), set the env vars and
-point the client at a public `https` URL — see
-[`examples/fastify-sqlite/`](examples/fastify-sqlite) and
-[`docs/live-verification.md`](docs/live-verification.md) for the exact setup
-(including the named Cloudflare tunnel the public URL needs).
+The generated server enables CIMD and retains stateless DCR compatibility; the
+client chooses which registration method it uses. That default is on `main` and
+ships in 0.3; until then `npx` installs 0.2.3, whose quickstart still uses DCR.
+The generated project is the zero-setup console-pairing path. To run the
+repository's real-identity-provider example instead, start from an
+**mcp-sso repository checkout** (not the generated `my-mcp-server` directory),
+copy [`docs/.env.example`](docs/.env.example) to `.env`, configure one of
+Cloudflare Access, Entra ID, Google, or generic OIDC, and explicitly load it
+when starting the env-driven
+[`examples/fastify-sqlite/`](examples/fastify-sqlite) composition root:
+
+```bash
+# From the mcp-sso repository root:
+corepack pnpm install --frozen-lockfile
+cp docs/.env.example .env
+# Edit .env, then:
+node --env-file=.env examples/fastify-sqlite/index.ts
+```
+
+The examples do not load `.env` implicitly. See the
+[configuration reference](docs/configuration.md), [identity-provider
+guides](docs/identity/README.md), and [client-registration
+guide](docs/client-registration.md).
 
 ## What it works with
 
 - **Identity providers:** Cloudflare Access, Microsoft Entra ID (redirect flow +
   group→scope authorization), Google + generic OIDC sign-in, zero-setup console
-  pairing. *(GitHub preset — v0.3.)*
+  pairing.
+- **Client registration:** CIMD recommended; stateless or stored DCR retained
+  for clients that use it.
 - **Frameworks:** fastify, express, hono — thin adapters; all logic is in the
   framework-free core.
 - **Stores:** `node:sqlite` (recommended, zero-ops), `mysql2`, in-memory — one
@@ -168,16 +190,19 @@ full pattern, topology, and Kubernetes notes in
 
 ## Alternatives
 
-Does your identity provider already speak DCR/OAuth 2.1? Then you don't need a
-bridge — use [`mcp-auth`](https://github.com/mcp-auth/js) ([compatibility list](https://mcp-auth.dev/provider-list)).
-If it doesn't (Entra ID, Cloudflare Access, most enterprise SSO), that's exactly
-what mcp-sso is for.
+Does your identity provider already expose an MCP-compatible OAuth 2.1
+authorization surface, including a registration method your clients support?
+Then you don't need a bridge — use
+[`mcp-auth`](https://github.com/mcp-auth/js) ([compatibility
+list](https://mcp-auth.dev/provider-list)). If your IdP is only the upstream
+identity source (Entra ID, Cloudflare Access, most enterprise SSO), that is what
+mcp-sso bridges.
 
 | Project | Choose it if… |
 | --- | --- |
-| **mcp-sso** (this repo) | Your IdP doesn't speak DCR — Entra ID, Cloudflare Access, most enterprise SSO. |
-| [`mcp-auth`](https://github.com/mcp-auth/js) | Your IdP **already** speaks DCR/OAuth 2.1; you just need resource-server wiring. |
-| [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | You need **device flow** today (mcp-sso has `client_credentials`; device flow is v0.3). |
+| **mcp-sso** (this repo) | Your IdP is not an MCP authorization server — Entra ID, Cloudflare Access, most enterprise SSO. |
+| [`mcp-auth`](https://github.com/mcp-auth/js) | Your IdP already exposes compatible OAuth 2.1 client registration; you just need resource-server wiring. |
+| [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | You need **device flow** today (mcp-sso has `client_credentials`, not device flow). |
 | [`workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) | Your MCP server **is** a Cloudflare Worker. |
 
 ## Status
@@ -190,8 +215,6 @@ SDK. The full provider × client matrix lives in
 [`docs/live-verification.md`](docs/live-verification.md).
 
 ## Roadmap (v0.3)
-
-GitHub identity preset · device authorization flow (RFC 8628).
 
 CIMD (Client ID Metadata Documents) is implemented on `main` behind the S6a/S6b
 work and ships in v0.3; it is not yet live-verified against a real CIMD-first

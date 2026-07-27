@@ -18,7 +18,7 @@
 ## The shape
 
 ```
-coding agent ──OAuth (DCR + PKCE)──▶ gateway (mcp-sso) ──▶ upstream IdP (login)
+coding agent ──OAuth (CIMD or DCR + PKCE)──▶ gateway ──▶ upstream IdP (login)
      │                                    │
      └── /mcp + bridge-minted token ──▶ RequestAuthorizer
                                           │  valid ⇒ forward with the
@@ -26,8 +26,11 @@ coding agent ──OAuth (DCR + PKCE)──▶ gateway (mcp-sso) ──▶ upstr
                                     internal MCP server / API
 ```
 
-- The agent adds the **gateway's** URL. RFC 9728 metadata tells it where to
-  register (DCR) and authorize; the browser leg goes through your IdP.
+- The agent adds the **gateway's** URL. RFC 9728 Protected Resource Metadata
+  locates the authorization server; its Authorization Server Metadata
+  advertises CIMD support and the DCR registration endpoint. The client chooses
+  one registration path before authorizing. The browser leg goes through your
+  IdP.
 - The bridge mints its own audience-bound tokens (§7.2). **IdP tokens never pass
   through to the client** — token passthrough is forbidden by the MCP spec and by
   this library's design.
@@ -44,6 +47,19 @@ coding agent ──OAuth (DCR + PKCE)──▶ gateway (mcp-sso) ──▶ upstr
 > separation. Use it for local/single-operator dev only; for real multi-user
 > access use an IdP-backed port.
 
+## Client registration at the gateway
+
+The examples on `main` enable CIMD and retain stateless DCR. This default first
+ships in 0.3. Recommend CIMD to clients that support it; DCR remains the
+compatibility path. The bridge does not negotiate or automatically fall back:
+an HTTPS-shaped `client_id` selects CIMD, while a client that uses DCR first
+obtains an opaque id from `/oauth/register`. Neither path changes the upstream
+identity provider.
+
+See [client-registration.md](client-registration.md) for the document shape and
+custom composition-root config. No CIMD environment variable or shared
+`ClientStore` is required.
+
 ## The login leg: how the user actually signs in
 
 The shipped `/oauth/authorize` is **header-driven**: it reads one header
@@ -56,17 +72,17 @@ sign-in**. Two supported ways to supply that leg:
 1. **Assertion-injecting proxy (header model, zero code).** Front the gateway
    with Cloudflare Access (or any reverse proxy that injects a verified id_token
    into `identityHeader`). The shipped authorize does the rest.
-2. **The shipped redirect orchestrator (§17.11).** For an OIDC-redirect IdP
-   (Entra today; generic OIDC / Google / GitHub are v0.3), build
-   `createEntraRedirectIdentity` → pass it to `createUpstreamRedirectFlow` → hand
-   the result to the adapter's `upstream` option
+2. **The shipped redirect orchestrator (§17.11).** For Entra ID, Google, or a
+   generic OIDC provider, build its shipped redirect identity → pass it to
+   `createUpstreamRedirectFlow` → hand the result to the adapter's `upstream` option
    (`registerOAuthRoutes(app, { bridge, upstream })`). It owns the whole dance
    turnkey: per-flow `state`/`nonce`/upstream PKCE, a signed same-browser flow
    cookie carrying the original MCP authorize params, callback validation +
    `exchangeCodeForToken` + `verify` (with the `nonce` bound to the login), then
    `handleAuthorize` with the identity's `allowedScopes` ceiling, consent, and the
-   `identity.verify` + `oauth.upstream.callback` audit events. Both examples wire
-   it when `ENTRA_TENANT_ID` is set — copy that; do not hand-roll the redirect.
+   `identity.verify` + `oauth.upstream.callback` audit events. `buildExample`
+   and `buildGatewayExample` wire it from the matching `ENTRA_*`, `GOOGLE_*`, or
+   `OIDC_*` environment block — copy that; do not hand-roll the redirect.
 
 > **If you hand-roll anyway, do NOT finish by re-injecting the id_token into the
 > header path.** `resolveIdentity` calls `verify(idToken)` with **no**
@@ -222,6 +238,11 @@ Each gateway is a small Deployment + Service + Ingress + Secret.
   registers on pod A is rejected `invalid_client` on pod B. Back the `ClientStore`
   with the same shared DB (a deployer-supplied adapter today), or use
   `dcr.mode: "stateless"` (no per-client state, multi-replica-safe as shipped).
+- **CIMD needs no client-registration store.** The client hosts its metadata
+  document and the bridge validates it at authorization time. The current
+  `BridgeConfig` still requires either stateless or stored DCR and advertises
+  `/oauth/register`; a disabled-DCR/CIMD-only mode is not supported. Use
+  stateless DCR as the compatibility path when no registration store is wanted.
 - **Probes**: `GET /.well-known/oauth-authorization-server` — unauthenticated,
   cheap, and config validation is fail-closed at boot, so a misconfigured pod
   never becomes Ready.
