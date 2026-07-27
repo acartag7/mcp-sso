@@ -47,6 +47,7 @@ test("GitHub Release authority is separate and has no OIDC permission", () => {
   const release = job("release");
   assert.match(release, /needs: publish/);
   assert.match(release, /permissions:\n      contents: write/);
+  assert.match(release, /GH_REPO: \$\{\{ github\.repository \}\}/);
   assert.match(release, /gh release create "\$TAG"/);
   assert.doesNotMatch(release, /id-token|npm publish|actions\/checkout/);
 });
