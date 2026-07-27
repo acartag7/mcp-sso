@@ -131,6 +131,10 @@ full pattern, topology, and Kubernetes notes in
   token exchange, and direct header-based identity verification
   (`Bridge.resolveIdentity`); its default is intentionally no-op, so production
   deployments wire the Redis adapter or a trusted rate-limiting proxy.
+- **Reference `/mcp` Origin gates reject ambiguity** — the runnable examples use
+  `headersFromDistinct` plus `readHeader`, and the generated server checks
+  `request.raw.headersDistinct.origin` inline, before parsing or bearer
+  authorization. Custom `/mcp` mounts own the same DNS-rebinding check.
 - **`jose` is the only runtime dependency**; every pin is ≥15 days old before we
   accept it; npm publishes run only through GitHub Actions with Sigstore
   provenance, never from a local machine.
