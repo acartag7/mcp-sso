@@ -47,6 +47,7 @@ import { loadOrCreateQuickstartSecrets } from "../../src/quickstart.ts";
 import { ensureStateDir } from "../../src/state-dir.ts";
 import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
 import { createEntraRedirectIdentity } from "../../src/identity/entra-redirect.ts";
+import type { GroupAuthorization } from "../../src/identity/entra-groups.ts";
 import { createGoogleRedirectIdentity, type GoogleConfig } from "../../src/identity/google.ts";
 import { createGenericOidcRedirectIdentity, type GenericOidcConfig } from "../../src/identity/generic-oidc.ts";
 import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identity.ts";
@@ -236,6 +237,24 @@ function mustEnv(env: Record<string, string | undefined>, k: string): string {
   return v;
 }
 
+/** Parse the shipped examples' complete Entra group-authorization object.
+ *  Semantic validation stays in createEntraRedirectIdentity, where the parsed
+ *  object and the bridge scope catalog meet. */
+export function entraGroupAuthorizationFromEnv(
+  env: Record<string, string | undefined>,
+): GroupAuthorization | undefined {
+  const raw = env.ENTRA_GROUP_AUTHORIZATION_JSON;
+  if (raw === undefined) return undefined;
+  if (raw.trim() === "") {
+    throw new AuthConfigError("ENTRA_GROUP_AUTHORIZATION_JSON must be a non-empty JSON object");
+  }
+  try {
+    return JSON.parse(raw) as GroupAuthorization;
+  } catch {
+    throw new AuthConfigError("ENTRA_GROUP_AUTHORIZATION_JSON must be valid JSON");
+  }
+}
+
 function booleanEnv(env: Record<string, string | undefined>, k: string): boolean | undefined {
   const value = env[k];
   if (value === undefined || value === "") return undefined;
@@ -353,6 +372,7 @@ export async function buildExample(
       redirectUri,
       allowedTenantIds: listEnv(env, "ENTRA_ALLOWED_TENANT_IDS", ""),
       subjectAllowlist: listEnv(env, "ENTRA_SUBJECT_ALLOWLIST", ""),
+      groupAuthorization: entraGroupAuthorizationFromEnv(env),
     }, { scopeCatalog: config.scopeCatalog });
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
     await ensureStateDir(dir);

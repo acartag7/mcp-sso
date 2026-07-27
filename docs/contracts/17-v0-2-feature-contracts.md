@@ -1289,7 +1289,7 @@ groupAuthorization?: {
 }
 ```
 
-- **Shipped-example env surface (implementation pending in this PR).**
+- **Shipped-example env surface (shipped).**
   `ENTRA_GROUP_AUTHORIZATION_JSON`, when present, is parsed as the complete
   `groupAuthorization` object above and passed unchanged to
   `createEntraRedirectIdentity` by both shipped example composition roots.

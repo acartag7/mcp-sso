@@ -204,6 +204,44 @@ test("integration — blank production identity env fails closed before state cr
       pattern: /Missing env: ENTRA_TENANT_ID/,
     },
     {
+      name: "blank Entra group authorization JSON",
+      provider: {
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        ENTRA_GROUP_AUTHORIZATION_JSON: "",
+      },
+      pattern: /ENTRA_GROUP_AUTHORIZATION_JSON must be a non-empty JSON object/,
+    },
+    {
+      name: "malformed Entra group authorization JSON",
+      provider: {
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        ENTRA_GROUP_AUTHORIZATION_JSON: "{",
+      },
+      pattern: /ENTRA_GROUP_AUTHORIZATION_JSON must be valid JSON/,
+    },
+    {
+      name: "non-GUID Entra group authorization mapping",
+      provider: {
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        ENTRA_GROUP_AUTHORIZATION_JSON: JSON.stringify({ mapping: { Administrators: ["mcp:read"] } }),
+      },
+      pattern: /mapping key "Administrators" is not a GUID/,
+    },
+    {
+      name: "out-of-catalog Entra group authorization scope",
+      provider: {
+        ENTRA_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        ENTRA_CLIENT_ID: "entra-client", ENTRA_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        ENTRA_GROUP_AUTHORIZATION_JSON: JSON.stringify({
+          mapping: { "00000000-0000-0000-0000-000000000002": ["mcp:admin"] },
+        }),
+      },
+      pattern: /mapped scope "mcp:admin".*is not in scopeCatalog/,
+    },
+    {
       name: "blank Cloudflare selector",
       provider: { CF_ACCESS_AUDIENCE: "", CF_ACCESS_CERTS_URL: "https://cf.test/certs", CF_ACCESS_ISSUER: "https://cf.test" },
       pattern: /Missing env: CF_ACCESS_AUDIENCE/,

@@ -59,8 +59,9 @@ const ISSUER = "http://localhost:3000";
 const TENANT = "11111111-2222-3333-4444-555555555555";
 const CLIENT_ID = "entra-test-client-id";
 const OID = "entra-user-oid-123";
+const READERS_GROUP = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
-test("integration — Entra-redirect branch: buildExample full flow (stubbed JWKS + synthetic RS256 id_token) → token → /mcp; replayed callback rejected with no second exchange; no secrets on disk", async () => {
+test("integration — Entra-redirect branch: env group ceiling narrows a full flow; replayed callback rejected with no second exchange; no secrets on disk", async () => {
   const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-upstream-"));
   const dir = join(base, "state");
   // RSA keypair: public half served as the Entra JWKS, private half signs the id_token.
@@ -79,7 +80,7 @@ test("integration — Entra-redirect branch: buildExample full flow (stubbed JWK
     if (url === entraTokenEndpoint(TENANT)) {
       tokenEndpointHits++;
       const now = Math.floor(Date.now() / 1000);
-      signedIdToken = await new SignJWT({ oid: OID, tid: TENANT, nonce: capturedNonce })
+      signedIdToken = await new SignJWT({ oid: OID, tid: TENANT, nonce: capturedNonce, groups: [READERS_GROUP] })
         .setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "entra-test-key" })
         .setIssuer(entraIssuer(TENANT)).setAudience(CLIENT_ID).setIssuedAt(now).setExpirationTime(now + 3600).sign(privateKey);
       return new Response(JSON.stringify({ id_token: signedIdToken, access_token: "UPSTREAM_ACCESS_SECRET", refresh_token: "UPSTREAM_REFRESH_SECRET" }), { status: 200, headers: { "content-type": "application/json" } });
@@ -92,6 +93,10 @@ test("integration — Entra-redirect branch: buildExample full flow (stubbed JWK
       ENTRA_TENANT_ID: TENANT,
       ENTRA_CLIENT_ID: CLIENT_ID,
       ENTRA_REDIRECT_URI: `${ISSUER}/oauth/callback`,
+      ENTRA_GROUP_AUTHORIZATION_JSON: JSON.stringify({
+        mapping: { [READERS_GROUP]: ["mcp:read"] },
+        baseScopes: [],
+      }),
       OAUTH_ISSUER: ISSUER,
       OAUTH_RESOURCE: `${ISSUER}/mcp`,
       OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
@@ -107,7 +112,7 @@ test("integration — Entra-redirect branch: buildExample full flow (stubbed JWK
       assert.equal(reg.statusCode, 201);
       const clientId = json<{ client_id: string }>(reg).client_id;
       const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
-      const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: FLOW_REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "client-st" });
+      const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: FLOW_REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read mcp:write", state: "client-st" });
 
       // authorize → 302 to Entra + Set-Cookie (loopback variant: mcp-sso-upstream, no Secure/__Host-)
       const auth = await app.inject({ method: "GET", url: `/oauth/authorize?${q}` });
@@ -142,6 +147,7 @@ test("integration — Entra-redirect branch: buildExample full flow (stubbed JWK
       const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: FLOW_REDIRECT, client_id: clientId, code_verifier: verifier }).toString() });
       assert.equal(tokenResp.statusCode, 200);
       const { access_token: accessToken } = json<{ access_token: string }>(tokenResp);
+      assert.equal(decodeJwt(accessToken).scope, "mcp:read", "verified Entra groups narrow the requested scope set");
 
       // protected /mcp via the official SDK client — the Entra oid reached /mcp
       await callProtectedMcp(app, config.resource, accessToken, "ping", `pong: ${OID}`);
