@@ -7,11 +7,11 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and the contract set
 > disagree, the contract set wins until one of them is deliberately changed.
 >
-> Status: **v0.2.0 shipped (interim)** (`mcp-sso@0.2.0` on npm) + **v0.2
-> feature contracts locked 2026-07-04 (§17, pre-implementation; §17.11 added
-> 2026-07-06 — CIMD §17.1, device flow §17.3, and the GitHub port §17.6 are
-> contract-locked, not yet implemented)**. Spec conformance target: **MCP
-> Authorization 2025-11-25** (the stable spec clients implement); the next
+> Status: **v0.2.3 shipped** (`mcp-sso@0.2.3` on npm) + **unreleased v0.3
+> hardening on `main`**. The §17 feature contracts are locked; CIMD §17.1,
+> generic OIDC, and the Google preset are implemented, while device flow §17.3
+> and the dedicated GitHub port in §17.6 remain contract-only. Spec conformance
+> target: **MCP Authorization 2025-11-25** (the stable spec clients implement); the next
 > spec version is **final on 2026-07-28** (its RC was locked 2026-05-21) —
 > the RC's backward-compatible hardening items (e.g. RFC 9207 `iss`) are
 > built in now. Before any release claims conformance with the 2026-07-28
