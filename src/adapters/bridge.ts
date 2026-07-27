@@ -32,7 +32,7 @@ export interface BridgeDeps {
   store: StorePort;
   clock: ClockPort;
   audit: AuditPort;
-  /** Optional register/token rate limiter (fix #7); defaults to no-op. */
+  /** Optional register/token/direct-identity rate limiter (fix #7); defaults to no-op. */
   rateLimit?: RateLimitPort;
   /** BELOW-GUARD CIMD test seams (§17.1.5 rule 14 / §17.1.6 decision 1e). They
    *  inject the low-level connect-to-validated-IP transport / DNS resolver; the
@@ -104,7 +104,7 @@ export class Bridge {
 
   async handleRegister(req: NormRequest): Promise<NormResponse> {
     try {
-      await this.guard(req, "register");
+      await this.guard("register", req.ip);
       const body = formObject(req.body);
       // All DCR metadata crosses as raw unknown values. registerClient owns the
       // container → member → grammar checks and snapshots arrays before use.
@@ -168,9 +168,9 @@ export class Bridge {
    *  empty array is a valid "entitled to nothing" ceiling (prepare's empty
    *  intersection denies). undefined ⇒ no ceiling (v0.1 behavior). */
   async resolveIdentity(identity: IdentityPort, input: unknown, ip?: string): Promise<{ subject: string; allowedScopes?: string[] }> {
+    await this.guard("authorize", ip);
     return resolveIdentityWithAudit(identity, input, ip, (status, reason, subject, at) => this.emitIdentityVerify(status, reason, subject, at));
   }
-
   private async emitIdentityVerify(status: AuthAuditStatus, reason: string | undefined, subject: string | undefined, ip: string | undefined): Promise<void> {
     await this.audit.writeAuthEvent({ occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "identity.verify", status, subject, reason, ip });
   }
@@ -197,7 +197,7 @@ export class Bridge {
       basicAttempted = hasBasicAuthorization(req.headers);
       const body = formObject(req.body);
       const grantType = formField(body, "grant_type");
-      await this.guard(req, "token");
+      await this.guard("token", req.ip);
       await assertUnambiguousAuthorization(ambiguous, grantType, formField(body, "client_id"), this.audit, this.clock);
       let response: UserTokenResponse | MachineTokenResponse;
       if (grantType === "refresh_token") {
@@ -237,10 +237,10 @@ export class Bridge {
     }
   }
 
-  private async guard(req: NormRequest, prefix: string): Promise<void> {
+  private async guard(prefix: string, ip: string | undefined): Promise<void> {
     let allowed = true;
     try {
-      allowed = await this.rateLimit.check(`${prefix}:${req.ip ?? "unknown"}`);
+      allowed = await this.rateLimit.check(`${prefix}:${ip ?? "unknown"}`);
     } catch {
       allowed = true; // fail-open: a rate-limiter outage must not lock out auth
     }

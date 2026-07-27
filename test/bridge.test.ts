@@ -29,9 +29,10 @@ function config(): BridgeConfig {
   });
 }
 
-interface Ctx { bridge: Bridge; }
+interface Ctx { bridge: Bridge; audit: MemoryAudit; }
 function setup(rateLimit?: RateLimitPort): Ctx {
-  return { bridge: new Bridge({ config: config(), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit: new MemoryAudit(), rateLimit }) };
+  const audit = new MemoryAudit();
+  return { bridge: new Bridge({ config: config(), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit, rateLimit }), audit };
 }
 function req(partial: Partial<NormRequest> & { query?: NormRequest["query"]; body?: unknown }): NormRequest {
   return { query: partial.query ?? {}, body: partial.body, headers: partial.headers ?? {}, ip: partial.ip ?? "1.2.3.4" };
@@ -181,6 +182,38 @@ test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Red
   const ctx = setup(boom);
   const res = await ctx.bridge.handleRegister(req({ body: { redirect_uris: [REDIRECT] } }));
   assert.equal(res.status, 201); // not 429 — the bridge guard() caught the throw and allowed
+});
+
+test("bridge: authorize rate-limit denial precedes identity verification and audit", async () => {
+  const keys: string[] = [];
+  const ctx = setup({ async check(key) { keys.push(key); return false; } });
+  let verifyCalls = 0;
+  await assert.rejects(
+    ctx.bridge.resolveIdentity({ async verify() {
+      verifyCalls += 1;
+      return { ok: true, identity: { subject: SUBJECT } };
+    } }, "presented-credential", "1.2.3.4"),
+    (error: unknown) => {
+      const oauth = error as { code?: unknown; status?: unknown };
+      return oauth.code === "temporarily_unavailable" && oauth.status === 429;
+    },
+  );
+  assert.deepEqual(keys, ["authorize:1.2.3.4"]);
+  assert.equal(verifyCalls, 0);
+  assert.equal(ctx.audit.events.some((event) => event.event === "identity.verify"), false);
+});
+
+test("bridge: authorize rate-limit failure stays fail-open", async () => {
+  const keys: string[] = [];
+  const ctx = setup({ async check(key) { keys.push(key); throw new Error("limiter unavailable"); } });
+  let verifyCalls = 0;
+  const resolved = await ctx.bridge.resolveIdentity({ async verify() {
+    verifyCalls += 1;
+    return { ok: true, identity: { subject: SUBJECT } };
+  } }, "presented-credential", "1.2.3.4");
+  assert.deepEqual(keys, ["authorize:1.2.3.4"]);
+  assert.equal(verifyCalls, 1);
+  assert.equal(resolved.subject, SUBJECT);
 });
 
 test("bridge: the consent page is frame-blocked (threat row 36 — clickjacking would bypass row 17's user judgment)", async () => {

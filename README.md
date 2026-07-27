@@ -127,6 +127,10 @@ full pattern, topology, and Kubernetes notes in
 
 - **Fail-closed everywhere** — ambiguous config, a missing identity, an unknown
   audience, or a replayed token is a hard failure, never a degraded default.
+- **Optional request budgets** — `RateLimitPort` runs before registration,
+  token exchange, and direct header-based identity verification
+  (`Bridge.resolveIdentity`); its default is intentionally no-op, so production
+  deployments wire the Redis adapter or a trusted rate-limiting proxy.
 - **`jose` is the only runtime dependency**; every pin is ≥15 days old before we
   accept it; npm publishes run only through GitHub Actions with Sigstore
   provenance, never from a local machine.
