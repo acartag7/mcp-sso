@@ -7,8 +7,7 @@ name: CodeQL
 
 on:
   push:
-    # Bootstrap exception for this migration branch; see ci.yml.
-    branches: [main, ci/macmini-runners]
+    branches: [main]
   schedule:
     # Weekly — off the :00 mark.
     - cron: "37 8 * * 1"

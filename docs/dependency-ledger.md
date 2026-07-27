@@ -115,9 +115,8 @@ CodeQL uses a separate `[self-hosted, macOS, ARM64, mcp-sso-codeql]` runner on
 the same Mac mini because the CodeQL CLI does not support Linux/ARM64; that job
 only checks out source, provisions Node through the pinned setup action, and
 runs CodeQL in `build-mode: none`, with no dependency install or repository
-build command. Main and the named migration bootstrap branch run automatically;
-other feature refs run only through a maintainer-triggered `workflow_dispatch`
-after their workflow diff is reviewed.
+build command. Main runs automatically; feature refs run only through a
+maintainer-triggered `workflow_dispatch` after their workflow diff is reviewed.
 The workflows do not subscribe to `pull_request` or arbitrary branch pushes, so
 fork- and automation-controlled workflow changes cannot reach either runner
 before review. Release publishing remains on GitHub-hosted `ubuntu-latest` to

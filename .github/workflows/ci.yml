@@ -2,9 +2,7 @@ name: CI
 
 on:
   push:
-    # Bootstrap exception for this migration branch. Feature branches use a
-    # maintainer-triggered workflow_dispatch after their workflow diff is reviewed.
-    branches: [main, ci/macmini-runners]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
