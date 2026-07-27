@@ -25,6 +25,7 @@ import {
   rotateSecrets, DEFAULT_ROTATION_GRACE_SECONDS,
   type MachineClientDeps,
 } from "../src/machine-client.ts";
+import { parseMachineClientRegistration } from "../src/machine-client-record.ts";
 
 const NOW_MS = Date.parse("2026-07-06T12:00:00.000Z");
 const CATALOG = ["mcp:read", "mcp:write", "mcp:admin"];
@@ -43,8 +44,10 @@ class MemoryAudit implements AuditPort {
 
 class InMemoryClientStore implements ClientStore {
   readonly clients = new Map<string, ClientRegistration>();
-  async save(c: ClientRegistration): Promise<void> { this.clients.set(c.clientId, c); }
+  saveCalls = 0;
+  async save(c: ClientRegistration): Promise<void> { this.saveCalls += 1; this.clients.set(c.clientId, c); }
   async find(clientId: string): Promise<ClientRegistration | null> { return this.clients.get(clientId) ?? null; }
+  setAt(clientId: string, record: unknown): void { this.clients.set(clientId, record as ClientRegistration); }
 }
 
 interface Harness { deps: MachineClientDeps; store: InMemoryClientStore; clock: FakeClock; audit: MemoryAudit; }
@@ -62,6 +65,15 @@ function harness(catalog: readonly string[] = CATALOG): Harness {
   const clock = new FakeClock(NOW_MS);
   const audit = new MemoryAudit();
   return { deps: { store, catalog, clock, audit }, store, clock, audit };
+}
+
+function storedMachineRecord(clientId: string, secret: string): MachineClientRegistration {
+  const epoch = Math.floor(NOW_MS / 1000);
+  return {
+    clientId, redirectUris: [], applicationType: "machine", issuedAtEpoch: epoch,
+    name: "build agent", allowedScopes: ["mcp:read"],
+    secrets: [{ hash: sha256Hex(secret), createdAtEpoch: epoch }],
+  };
 }
 
 function testJwk(): JWK {
@@ -135,6 +147,21 @@ test("provision: rejects a bad secretTtlSeconds and a non-string name", async ()
     assert.ok(e instanceof OAuthError && e.code === "invalid_request");
     return true;
   });
+});
+
+test("provision: rejects a TTL whose derived expiry is unsafe before save or success audit", async () => {
+  const h = harness();
+  await assert.rejects(
+    () => provisionMachineClient(h.deps, {
+      allowedScopes: ["mcp:read"],
+      secretTtlSeconds: Number.MAX_SAFE_INTEGER,
+    }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_request",
+  );
+  assert.equal(h.store.saveCalls, 0);
+  assert.equal(h.audit.events.some((event) =>
+    event.event === "oauth.client.provision" && event.status === "success"), false);
+  assert.equal(h.audit.events.at(-1)?.reason, "invalid_request");
 });
 
 // ---------- rotation ----------
@@ -218,6 +245,22 @@ test("rotation: rejects a bad graceSeconds", async () => {
   }
 });
 
+test("rotation: rejects a grace whose derived expiry is unsafe before save or success audit", async () => {
+  const h = harness();
+  const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  const savesBefore = h.store.saveCalls;
+  await assert.rejects(
+    () => rotateMachineClientSecret(h.deps, provisioned.clientId, {
+      graceSeconds: Number.MAX_SAFE_INTEGER,
+    }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_request",
+  );
+  assert.equal(h.store.saveCalls, savesBefore);
+  assert.equal(h.audit.events.some((event) =>
+    event.event === "oauth.client.rotate_secret" && event.status === "success"), false);
+  assert.equal(h.audit.events.at(-1)?.reason, "invalid_request");
+});
+
 // ---------- rotateSecrets (pure model) ----------
 
 test("rotateSecrets: [old→grace, new] from one; supersedes prior grace; evicts expired", () => {
@@ -282,22 +325,132 @@ test("verifyMachineClientSecret: rotation grace keeps the old secret valid until
   assert.equal(await verifyMachineClientSecret(h.deps, prov.clientId, rot.clientSecret), true);
 });
 
-test("verifyMachineClientSecret: malformed / poisoned records fail closed (false, never throw)", async () => {
-  const h = harness();
+test("stored machine grammar: malformed or mis-keyed rows fail verification and rotation before save", async () => {
   const presented = "mcs_" + "A".repeat(43);
-  // secrets not an array; secrets undefined; an entry missing hash; >2 active.
-  const malformed: ClientRegistration[] = [
-    { clientId: "m1", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1, allowedScopes: ["mcp:read"], secrets: undefined as unknown as never[] },
-    { clientId: "m2", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1, allowedScopes: ["mcp:read"], secrets: [{ hash: "x", createdAtEpoch: 1 }] as never as never[] },
-    { clientId: "m3", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1, allowedScopes: ["mcp:read"], secrets: [
-      { hash: "a".repeat(64), createdAtEpoch: 1 }, { hash: "b".repeat(64), createdAtEpoch: 1 }, { hash: "c".repeat(64), createdAtEpoch: 1 },
-    ] },
+  const base = storedMachineRecord("mcc_lookup", presented);
+  const malformed: Array<[string, unknown]> = [
+    ["record type", 42],
+    ["embedded clientId", { ...base, clientId: "mcc_other" }],
+    ["applicationType", { ...base, applicationType: "web" }],
+    ["redirectUris", { ...base, redirectUris: ["https://wrong.test/cb"] }],
+    ["redirectUris type", { ...base, redirectUris: "none" as unknown as string[] }],
+    ["issuedAtEpoch", { ...base, issuedAtEpoch: -1 }],
+    ["issuedAtEpoch range", { ...base, issuedAtEpoch: Number.MAX_SAFE_INTEGER + 1 }],
+    ["name", { ...base, name: "" }],
+    ["name type", { ...base, name: 42 as unknown as string }],
+    ["allowedScopes", { ...base, allowedScopes: "mcp:read" as unknown as string[] }],
+    ["secret hash", { ...base, secrets: [{ hash: "x", createdAtEpoch: base.issuedAtEpoch }] }],
+    ["secret hash case", { ...base, secrets: [{ hash: "A".repeat(64), createdAtEpoch: base.issuedAtEpoch }] }],
+    ["secret createdAtEpoch", { ...base, secrets: [{ hash: sha256Hex(presented), createdAtEpoch: -1 }] }],
+    ["secret createdAtEpoch type", { ...base, secrets: [{
+      hash: sha256Hex(presented), createdAtEpoch: "1" as unknown as number,
+    }] }],
+    ["secret expiresAtEpoch", { ...base, secrets: [{
+      hash: sha256Hex(presented), createdAtEpoch: 1, expiresAtEpoch: base.issuedAtEpoch + 1000.5,
+    }] }],
+    ["secrets empty", { ...base, secrets: [] }],
+    ["secret count", { ...base, secrets: [
+      { hash: sha256Hex(presented), createdAtEpoch: 1, expiresAtEpoch: base.issuedAtEpoch + 1000 },
+      { hash: "b".repeat(64), createdAtEpoch: 1, expiresAtEpoch: base.issuedAtEpoch + 1000 },
+      { hash: "c".repeat(64), createdAtEpoch: 1, expiresAtEpoch: base.issuedAtEpoch + 1000 },
+    ] }],
+    ["multiple unbounded secrets", { ...base, secrets: [
+      { hash: sha256Hex(presented), createdAtEpoch: 1 },
+      { hash: "b".repeat(64), createdAtEpoch: 1 },
+    ] }],
   ];
-  for (const m of malformed) {
-    await h.store.save(m);
-    // Must resolve to false, never reject (no raw TypeError on undefined/non-string).
-    assert.equal(await verifyMachineClientSecret(h.deps, m.clientId, presented), false, `${m.clientId} must fail closed`);
+  for (const [label, record] of malformed) {
+    const h = harness();
+    h.store.setAt("mcc_lookup", record);
+    assert.equal(await verifyMachineClientSecret(h.deps, "mcc_lookup", presented), false, `${label}: verification`);
+    await assert.rejects(
+      rotateMachineClientSecret(h.deps, "mcc_lookup"),
+      (error: unknown) => error instanceof OAuthError && error.code === "invalid_client" && error.status === 401,
+      `${label}: rotation`,
+    );
+    assert.equal(h.store.saveCalls, 0, `${label}: no save`);
+    assert.equal(h.audit.events.some((event) => event.event === "oauth.client.rotate_secret" && event.status === "success"), false);
+    assert.deepEqual(h.audit.events.at(-1), {
+      occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.client.rotate_secret",
+      status: "failure", clientId: "mcc_lookup", reason: "invalid_client",
+    });
   }
+});
+
+test("stored machine grammar: expired history remains readable and rotation compacts it", async () => {
+  const h = harness();
+  const clientId = "mcc_history";
+  const liveSecret = "mcs_" + "H".repeat(43);
+  const nowEpoch = Math.floor(NOW_MS / 1000);
+  h.store.setAt(clientId, {
+    ...storedMachineRecord(clientId, liveSecret),
+    secrets: [
+      { hash: "a".repeat(64), createdAtEpoch: 1, expiresAtEpoch: nowEpoch - 2 },
+      { hash: "b".repeat(64), createdAtEpoch: 2, expiresAtEpoch: nowEpoch - 1 },
+      { hash: sha256Hex(liveSecret), createdAtEpoch: nowEpoch },
+    ],
+  });
+
+  assert.equal(await verifyMachineClientSecret(h.deps, clientId, liveSecret), true);
+  const rotated = await rotateMachineClientSecret(h.deps, clientId, { graceSeconds: 600 });
+  const saved = await machineRecord(h.store, clientId);
+  assert.equal(saved.secrets.length, 2);
+  assert.deepEqual(saved.secrets.map((secret) => secret.hash), [
+    sha256Hex(liveSecret),
+    sha256Hex(rotated.clientSecret),
+  ]);
+});
+
+test("stored machine grammar: an all-expired row can rotate to one new live secret", async () => {
+  const h = harness();
+  const clientId = "mcc_expired_history";
+  const nowEpoch = Math.floor(NOW_MS / 1000);
+  h.store.setAt(clientId, {
+    ...storedMachineRecord(clientId, "mcs_" + "E".repeat(43)),
+    secrets: [
+      { hash: "a".repeat(64), createdAtEpoch: 1, expiresAtEpoch: nowEpoch - 2 },
+      { hash: "b".repeat(64), createdAtEpoch: 2, expiresAtEpoch: nowEpoch - 1 },
+      { hash: "c".repeat(64), createdAtEpoch: 3, expiresAtEpoch: nowEpoch },
+    ],
+  });
+
+  const rotated = await rotateMachineClientSecret(h.deps, clientId);
+  const saved = await machineRecord(h.store, clientId);
+  assert.deepEqual(saved.secrets, [{
+    hash: sha256Hex(rotated.clientSecret),
+    createdAtEpoch: nowEpoch,
+  }]);
+});
+
+test("stored machine parser returns fresh known-field arrays and secret slots", () => {
+  const clientId = "mcc_snapshot";
+  const nowEpoch = Math.floor(NOW_MS / 1000);
+  assert.equal(parseMachineClientRegistration(undefined, clientId, nowEpoch), null);
+  const expected = storedMachineRecord(clientId, "mcs_" + "S".repeat(43));
+  const input = {
+    ...expected, operatorNote: "drop",
+    secrets: [{ ...expected.secrets[0]!, operatorNote: "drop" }],
+  };
+  const parsed = parseMachineClientRegistration(input, clientId, nowEpoch)!;
+  assert.notEqual(parsed, input);
+  assert.notEqual(parsed.redirectUris, input.redirectUris);
+  assert.notEqual(parsed.allowedScopes, input.allowedScopes);
+  assert.notEqual(parsed.secrets, input.secrets);
+  assert.notEqual(parsed.secrets[0], input.secrets[0]);
+  assert.deepEqual(parsed, expected);
+});
+
+test("rotation saves the parser's named projection, not unknown stored fields", async () => {
+  const h = harness();
+  const clientId = "mcc_projected";
+  const record = { ...storedMachineRecord(clientId, "mcs_" + "A".repeat(43)), operatorNote: "do not republish" };
+  h.store.setAt(clientId, record);
+  await rotateMachineClientSecret(h.deps, clientId);
+  const saved = h.store.clients.get(clientId) as MachineClientRegistration;
+  assert.equal("operatorNote" in (saved as unknown as Record<string, unknown>), false);
+  assert.notEqual(saved.redirectUris, record.redirectUris);
+  assert.notEqual(saved.allowedScopes, record.allowedScopes);
+  assert.deepEqual(saved.allowedScopes, record.allowedScopes);
 });
 
 test("verifyMachineClientSecret: a 64-char NON-ASCII hash (byte-length mismatch) fails closed, no throw", async () => {
@@ -305,10 +458,10 @@ test("verifyMachineClientSecret: a 64-char NON-ASCII hash (byte-length mismatch)
   // must NOT make timingSafeEqual throw ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH.
   const h = harness();
   await h.store.save({
-    clientId: "m4", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1,
+    clientId: "mcc_m4", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1,
     allowedScopes: ["mcp:read"], secrets: [{ hash: "é".repeat(64), createdAtEpoch: 1 }],
   });
-  assert.equal(await verifyMachineClientSecret(h.deps, "m4", "mcs_" + "A".repeat(43)), false);
+  assert.equal(await verifyMachineClientSecret(h.deps, "mcc_m4", "mcs_" + "A".repeat(43)), false);
 });
 
 // ---------- audit (no secret / no hash leak) ----------

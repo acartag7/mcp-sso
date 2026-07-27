@@ -84,7 +84,10 @@ it; you run `provisionMachineClient` against the same `ClientStore` the bridge
 uses. `ClientStore` is a two-method port (`save`/`find`) **you implement against
 your own database** — the shipped `/store/sqlite` and `/store/mysql` adapters are
 `StorePort`-only (codes, refresh tokens, consent JTIs), not `ClientStore`. The
-secret is returned once and stored only as a SHA-256 hash.
+secret is returned once and stored only as a SHA-256 hash. A custom
+`ClientStore.find(clientId)` must return the row whose embedded `clientId`
+matches that lookup key; `parseMachineClientRegistration` rejects mismatched or
+malformed machine rows before verification, rotation, or token issuance.
 
 ```ts
 import { provisionMachineClient, noopAudit } from "mcp-sso";

@@ -44,12 +44,15 @@ class MemoryAudit implements AuditPort {
 
 class InMemoryClientStore implements ClientStore {
   readonly clients = new Map<string, ClientRegistration>();
+  readonly queuedFinds: ClientRegistration[] = [];
   findCalls = 0;
   async save(c: ClientRegistration): Promise<void> { this.clients.set(c.clientId, c); }
   async find(clientId: string): Promise<ClientRegistration | null> {
     this.findCalls += 1;
+    if (this.queuedFinds.length > 0) return this.queuedFinds.shift()!;
     return this.clients.get(clientId) ?? null;
   }
+  queueFinds(...records: ClientRegistration[]): void { this.queuedFinds.push(...records); }
 }
 
 function jwk(): JWK {
@@ -161,6 +164,29 @@ test("expired secret ⇒ 401 invalid_client (+ Basic challenge when Basic attemp
   assert.equal(res.status, 401);
   assert.equal((res.body as { error: string }).error, "invalid_client");
   assert.match(res.headers["www-authenticate"] ?? "", /^Basic /);
+});
+
+test("expired secret history does not invalidate a live machine credential", async () => {
+  const ctx = setup(true);
+  const clientId = "mcc_history";
+  const clientSecret = "mcs_" + "H".repeat(43);
+  const nowEpoch = Math.floor(NOW_MS / 1000);
+  await ctx.clientStore.save({
+    clientId, redirectUris: [], applicationType: "machine", issuedAtEpoch: nowEpoch,
+    allowedScopes: ["mcp:read"],
+    secrets: [
+      { hash: "a".repeat(64), createdAtEpoch: 1, expiresAtEpoch: nowEpoch - 2 },
+      { hash: "b".repeat(64), createdAtEpoch: 2, expiresAtEpoch: nowEpoch - 1 },
+      { hash: sha256Hex(clientSecret), createdAtEpoch: nowEpoch },
+    ],
+  });
+
+  const res = await ctx.bridge.handleToken(req({
+    headers: { authorization: basicHeader(clientId, clientSecret) },
+    body: grantBody({}),
+  }));
+  assert.equal(res.status, 200);
+  assert.equal((res.body as { scope: string }).scope, "mcp:read");
 });
 
 test("unknown client / missing creds ⇒ 401 invalid_client (no Basic challenge when Basic not attempted)", async () => {
@@ -338,10 +364,9 @@ test("non-mcc machine clientId (Codex P2 #3): a machine record whose id lacks th
 });
 
 test("poisoned allowedScopes ceiling (Codex P2 #2): malformed/empty/missing ⇒ invalid_client 401, never 500 or empty-scope", async () => {
-  // verifyMachineClientSecret validates secret slots but NOT allowedScopes, so a
-  // custom/migrated store returning a valid-secret record with a broken ceiling
-  // must fail closed at the grant (invalid_client) — not throw a raw TypeError
-  // (mapped to 500) or mint a token with an empty scope string.
+  // The stored-row parser validates allowedScopes during client authentication,
+  // so a custom/migrated store returning a valid-secret record with a broken
+  // ceiling fails closed before scope resolution or token signing.
   const ctx = setup(true);
   const secret = "mcs_" + "P".repeat(43);
   const hash = sha256Hex(secret);
@@ -356,6 +381,33 @@ test("poisoned allowedScopes ceiling (Codex P2 #2): malformed/empty/missing ⇒ 
     assert.equal(res.status, 401, `expected 401 (not 500/empty) for allowedScopes=${JSON.stringify(bad)}`);
     assert.equal((res.body as { error: string }).error, "invalid_client", `expected invalid_client for allowedScopes=${JSON.stringify(bad)}`);
     assert.equal("scope" in (res.body as object), false, "no token minted");
+  }
+});
+
+test("client_credentials re-parses and key-binds the post-authentication store read", async () => {
+  for (const [label, change] of [
+    ["malformed", (valid: ClientRegistration) => ({ ...valid, redirectUris: ["https://wrong.test/cb"] })],
+    ["mis-keyed", (valid: ClientRegistration) => ({ ...valid, clientId: "mcc_embedded_other" })],
+    ["over-active", (valid: ClientRegistration) => valid.applicationType === "machine" ? ({
+      ...valid,
+      secrets: [
+        ...valid.secrets,
+        { hash: "a".repeat(64), createdAtEpoch: 1, expiresAtEpoch: Math.floor(NOW_MS / 1000) + 600 },
+        { hash: "b".repeat(64), createdAtEpoch: 2, expiresAtEpoch: Math.floor(NOW_MS / 1000) + 600 },
+      ],
+    }) : valid],
+  ] as const) {
+    const ctx = setup(true);
+    const credentials = await provision(ctx, ["mcp:read"]);
+    const valid = ctx.clientStore.clients.get(credentials.clientId)!;
+    ctx.clientStore.queueFinds(valid, change(valid));
+    const res = await ctx.bridge.handleToken(req({
+      headers: { authorization: basicHeader(credentials.clientId, credentials.clientSecret) },
+      body: grantBody({}),
+    }));
+    assert.equal(res.status, 401, label);
+    assert.equal((res.body as { error: string }).error, "invalid_client", label);
+    assert.equal("access_token" in (res.body as object), false, label);
   }
 });
 
