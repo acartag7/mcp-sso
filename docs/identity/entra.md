@@ -63,15 +63,27 @@ For **group-based authorization** (optional, see below), additionally:
 | `ENTRA_REDIRECT_URI` | `redirectUri` | **required** | Pathname becomes the mounted callback; the full URI must equal `originOf(OAUTH_ISSUER) + callbackPath`. |
 | `ENTRA_ALLOWED_TENANT_IDS` | `allowedTenantIds` | optional | Comma-separated. Empty ⇒ single-tenant (only `tenantId`). |
 | `ENTRA_SUBJECT_ALLOWLIST` | `subjectAllowlist` | optional | Comma-separated. Empty ⇒ delegated to Entra policy. |
+| `ENTRA_GROUP_AUTHORIZATION_JSON` | `groupAuthorization` | optional | Complete JSON object with `mapping` and optional `baseScopes`; see below. |
 
 Bridge signing material (`OAUTH_ISSUER`, `OAUTH_RESOURCE`,
 `OAUTH_CONSENT_SIGNING_SECRET`, `OAUTH_SIGNING_PRIVATE_JWK`, optional
 `OAUTH_SIGNING_KEY_ID`) is required and separate from the `ENTRA_*` identity env.
 
-**Group authorization is programmatic-only.** `groupAuthorization` has no env
-surface in the shipped example — pass it in code to the factory. When you supply
-`groupAuthorization`, its `mapping` is **required** (an object keyed by group
-GUID → scope); `baseScopes` is the optional nested field.
+The shipped examples accept the same group authorization object through one
+JSON env variable:
+
+```sh
+ENTRA_GROUP_AUTHORIZATION_JSON='{"mapping":{"00000000-0000-0000-0000-000000000001":["mcp:read"]},"baseScopes":[]}'
+```
+
+Use Entra group object IDs from your tenant in place of the placeholder GUID.
+When supplied, `mapping` is required and maps each group GUID to a non-empty
+scope array; `baseScopes` is optional. A blank value, malformed JSON, non-GUID
+key, invalid scope shape, or scope outside `OAUTH_SCOPE_CATALOG` rejects both
+example entry points before their state directory is created. The example
+parser only performs JSON parsing; `assertGroupAuthorizationMapping`, called by
+`createEntraRedirectIdentity`, enforces the mapping and catalog contract.
+Library consumers may continue passing `groupAuthorization` directly in code.
 
 ## Who is allowed
 
