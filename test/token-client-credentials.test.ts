@@ -22,6 +22,7 @@ import { authorizationServerMetadata } from "../src/metadata.ts";
 import { OAuthError } from "../src/errors.ts";
 import { parseBasicAuth } from "../src/client-auth.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { OAuthTokenUseCase } from "../src/token.ts";
 import {
   provisionMachineClient, rotateMachineClientSecret, type MachineClientDeps,
 } from "../src/machine-client.ts";
@@ -40,6 +41,10 @@ class FakeClock implements ClockPort {
 class MemoryAudit implements AuditPort {
   readonly events: AuthAuditEvent[] = [];
   async writeAuthEvent(e: AuthAuditEvent): Promise<void> { this.events.push(e); }
+}
+
+class ThrowingAudit implements AuditPort {
+  async writeAuthEvent(): Promise<void> { throw new Error("audit unavailable"); }
 }
 
 class InMemoryClientStore implements ClientStore {
@@ -135,6 +140,24 @@ test("client_credentials via client_secret_post: identical shape to Basic", asyn
   assert.deepEqual(Object.keys(res.body as Record<string, unknown>).sort(), ["access_token", "expires_in", "scope", "token_type"]);
   const verified = await verifyAccessToken((res.body as { access_token: string }).access_token, ctx.config, ctx.clock);
   assert.equal(verified.subject, c.clientId);
+});
+
+test("a throwing custom audit port cannot replace client_credentials outcomes", async () => {
+  const ctx = setup(true);
+  const c = await provision(ctx);
+  const token = new OAuthTokenUseCase({
+    config: ctx.config, store: new MemoryStore(), clock: ctx.clock, audit: new ThrowingAudit(),
+  });
+  const result = await token.exchangeClientCredentials({
+    grantType: "client_credentials", clientId: c.clientId, clientSecret: c.clientSecret,
+  });
+  assert.equal(result.token_type, "Bearer");
+  await assert.rejects(
+    token.exchangeClientCredentials({
+      grantType: "client_credentials", clientId: c.clientId, clientSecret: "wrong",
+    }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_client",
+  );
 });
 
 // ---------- failure: client auth ----------

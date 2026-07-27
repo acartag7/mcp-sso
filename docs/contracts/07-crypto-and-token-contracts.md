@@ -52,10 +52,21 @@ rotate without a lookup). Stored only as `sha256(token)`.
 - **Rotation:** `rotateRefreshToken(tokenHash, next, now)` marks the current
   token consumed, inserts the next, and returns the **consumed** record. Replay of
   an already-consumed token revokes the whole family.
+- **Authorization-code preparation before write:**
+  `OAuthTokenUseCase.exchangeAuthorizationCode` parses the code record's stored
+  scopes and constructs the signed token response before `saveRefreshToken`.
+  Rotation deliberately remains atomic and authoritative before refresh-response
+  preparation so a replayed consumed predecessor always revokes its family.
 - **Client binding (RFC 6749 §6):** the refresh grant MUST present a `client_id`
   matching the stored record; a mismatch revokes the family (theft signal).
 - **Revocation:** `revoke` looks up the family by hash (rejecting unknown tokens
   harmlessly) and revokes the family.
+
+Residual: a malformed refresh row can still rotate before scope/signing
+preparation fails. Reference paths cannot create such a row; it requires store
+corruption, migration drift, or a nonconforming custom store. Moving preparation
+earlier without exposing atomic consumed/revoked state skips replay-family
+revocation, so a complete fix requires a separate StorePort contract amendment.
 
 ## 7.5 PKCE S256 (timing-safe)
 `verifyPkceS256(verifier, challenge)` rejects malformed inputs outright (verifier
