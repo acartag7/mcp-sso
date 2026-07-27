@@ -90,6 +90,19 @@ async function packagePins(root) {
   return pins;
 }
 
+async function workspaceMinimumAgeMinutes(root) {
+  const source = await readFile(resolve(root, "pnpm-workspace.yaml"), "utf8");
+  const entries = source
+    .split(/\r?\n/)
+    .filter((line) => /^\s*minimumReleaseAge\s*:/.test(line));
+  if (entries.length !== 1) {
+    throw new Error("pnpm-workspace.yaml must contain exactly one minimumReleaseAge");
+  }
+  const match = /^\s*minimumReleaseAge:\s*(\d+)\s*(?:#.*)?$/.exec(entries[0]);
+  if (!match) throw new Error("pnpm-workspace.yaml minimumReleaseAge must be an integer");
+  return Number(match[1]);
+}
+
 async function workflowPins(root) {
   const dir = resolve(root, ".github/workflows");
   const files = (await readdir(dir)).filter((name) => /\.ya?ml$/.test(name)).sort();
@@ -104,6 +117,17 @@ async function workflowPins(root) {
       if (match[1].startsWith("./")) return;
       const parts = match[1].split("/");
       if (parts.length < 2) throw new Error(`${file}:${index + 1}: action repository is malformed`);
+      if (match[1] === "pnpm/action-setup") {
+        const stepIndent = line.search(/\S/);
+        for (let next = index + 1; next < lines.length; next++) {
+          const candidate = lines[next];
+          if (/^\s*(?:#.*)?$/.test(candidate)) continue;
+          if (candidate.search(/\S/) <= stepIndent) break;
+          if (/^\s*version\s*:/.test(candidate) || /^\s*with:\s*\{[^}]*\bversion\s*:/.test(candidate)) {
+            throw new Error(`${file}:${next + 1}: pnpm/action-setup must read packageManager without a version override`);
+          }
+        }
+      }
       uses.push({ file, line: index + 1, repo: parts.slice(0, 2).join("/"), ref: match[2], comment: match[3] ?? "" });
     });
   }
@@ -119,6 +143,11 @@ export async function verifyLocalDependencyPolicy(root = process.cwd(), now = ne
   const policy = await loadDependencyPolicy(root);
   assertRecordShape(policy);
   const errors = [];
+  const workspaceAge = await workspaceMinimumAgeMinutes(root);
+  const expectedWorkspaceAge = policy.minimumAgeDays * 1440;
+  if (workspaceAge !== expectedWorkspaceAge) {
+    errors.push(`pnpm-workspace.yaml minimumReleaseAge ${workspaceAge} != ledger ${expectedWorkspaceAge}`);
+  }
   const pins = await packagePins(root);
   const packageNames = new Set([...Object.keys(pins), ...Object.keys(policy.packages)]);
   for (const name of [...packageNames].sort()) {

@@ -23,6 +23,7 @@ async function fixture() {
   await cp(join(ROOT, "docs"), join(root, "docs"), { recursive: true });
   await cp(join(ROOT, ".github"), join(root, ".github"), { recursive: true });
   await cp(join(ROOT, "package.json"), join(root, "package.json"));
+  await cp(join(ROOT, "pnpm-workspace.yaml"), join(root, "pnpm-workspace.yaml"));
   return root;
 }
 
@@ -91,6 +92,30 @@ test("third-party action quarantine rejects a ledger date younger than 15 days",
     '"tag": "v7.0.0",\n      "published": "2026-07-20T13:53:05Z"',
   );
   await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /actions\/checkout: 2026-07-20T13:53:05Z is younger than 15 days/);
+});
+
+test("workspace and workflow pnpm settings cannot bypass the recorded pins", async (t) => {
+  await t.test("workspace age floor", async () => {
+    const root = await fixture();
+    await replace(join(root, "pnpm-workspace.yaml"), "minimumReleaseAge: 21600", "minimumReleaseAge: 0");
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /pnpm-workspace\.yaml minimumReleaseAge 0 != ledger 21600/,
+    );
+  });
+
+  await t.test("workflow version override", async () => {
+    const root = await fixture();
+    await replace(
+      join(root, ".github/workflows/ci.yml"),
+      "pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (2026-06-15)",
+      "pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (2026-06-15)\n        with:\n          version: 11.0.0",
+    );
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /pnpm\/action-setup must read packageManager without a version override/,
+    );
+  });
 });
 
 test("only the documented first-party repository can claim the age exception", async () => {
