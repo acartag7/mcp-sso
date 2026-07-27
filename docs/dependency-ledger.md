@@ -122,6 +122,14 @@ fork- and automation-controlled workflow changes cannot reach either runner
 before review. Release publishing remains on GitHub-hosted `ubuntu-latest` to
 preserve the OIDC trusted-publishing and provenance boundary.
 
+GitHub does not attach `workflow_dispatch` job checks to a pull request's
+required-check rollup. For a dispatched CI run, the workflow MUST publish the
+two required commit-status contexts only after both the verify and
+`process-guard` jobs succeed. That attestation runs on the CodeQL-only Mac
+runner, performs no checkout, and alone receives `statuses: write`; the Linux
+job that executes repository code retains read-only contents permission. If
+either enforcing job fails, no success status is published.
+
 ## Verification & change protocol
 
 1. **Before any install/bump:** `npm view <pkg> time --json` (or the registry API)
