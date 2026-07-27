@@ -17,8 +17,8 @@ import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
 import { formField, queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
 
-// Shares the consent page's frame/form protections. Referrer policy differs:
-// pairing has no same-origin approval POST whose Origin must be retained.
+// Pairing keeps its page-specific `form-action`: Continue terminates on this
+// origin. It shares consent's frame protections; its referrer policy differs.
 //
 // The threat here is NOT the consent-page one. This page's only control is
 // `Continue`, and the pairing code is TYPED IN by the operator (it is printed to
@@ -27,8 +27,8 @@ import { renderPairingPage } from "./pairing-page.ts";
 // either. Framing it buys an attacker a UI-redress surface on a form whose
 // submission still requires the operator to possess a code they can only read
 // from the server console — the value is defense-in-depth, not a specific
-// bypass. Keep framing, form-action, nosniff, and legacy XFO in lockstep with
-// consent; the referrer policy is intentionally page-specific.
+// bypass. Keep framing, form-action, nosniff, and legacy XFO on pairing;
+// consent intentionally omits form-action to permit its client redirect.
 const PAIRING_HEADERS: Record<string, string> = {
   "content-type": "text/html; charset=utf-8",
   "x-content-type-options": "nosniff",

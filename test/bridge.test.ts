@@ -13,6 +13,7 @@ import { MemoryStore } from "../src/store/memory.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
 const REDIRECT = "https://client.test/callback";
+const LOOPBACK_REDIRECT = "http://127.0.0.1:49152/callback";
 const SUBJECT = "agent@test";
 
 class FakeClock implements ClockPort { private ms: number; constructor(ms: number) { this.ms = ms; } nowMs(): number { return this.ms; } advance(ms: number): void { this.ms += ms; } }
@@ -150,6 +151,36 @@ test("bridge: Deny redirects access_denied (fix #5)", async () => {
   assert.equal(u.searchParams.get("state"), "deny");
 });
 
+test("bridge: consent CSP permits both loopback callback redirects", async () => {
+  for (const approved of ["true", "false"]) {
+    const ctx = setup();
+    const verifier = "v-12345678901234567890123456789012345678";
+    const page = await ctx.bridge.handleAuthorize(req({ query: {
+      response_type: "code", client_id: "c", redirect_uri: LOOPBACK_REDIRECT,
+      code_challenge: pkceChallenge(verifier), code_challenge_method: "S256",
+      state: approved,
+    } }), { subject: SUBJECT });
+    assert.equal(page.status, 200);
+    assert.match(String(page.body), /<form method="POST" action="\/oauth\/authorize\/approve">/);
+    assert.doesNotMatch(String(page.headers["content-security-policy"] ?? ""), /(?:^|;)\s*form-action\b/);
+
+    const res = await ctx.bridge.handleApprove(req({
+      body: { consent_token: extractConsentToken(String(page.body)), approved },
+      headers: { origin: "https://auth.test" },
+    }));
+    assert.equal(res.status, 302);
+    const callback = new URL(String(res.headers.location));
+    assert.equal(callback.origin + callback.pathname, LOOPBACK_REDIRECT);
+    if (approved === "true") {
+      assert.ok(callback.searchParams.get("code"), "Approve returns a code to the loopback callback");
+      assert.equal(callback.searchParams.get("error"), null);
+    } else {
+      assert.equal(callback.searchParams.get("error"), "access_denied");
+      assert.equal(callback.searchParams.get("code"), null, "Deny returns no code");
+    }
+  }
+});
+
 test("bridge: approve WITHOUT an approved field is a Deny, never an auto-approve (§9.3 fail-closed)", async () => {
   const ctx = setup();
   const verifier = "v-12345678901234567890123456789012345678";
@@ -231,7 +262,6 @@ test("bridge: the consent page is frame-blocked (threat row 36 — clickjacking 
   // `default-src 'none'` alone does NOT frame-block. Assert the directive
   // itself — asserting only that a CSP exists is what let this ship.
   assert.match(csp, /frame-ancestors 'none'/, "CSP must frame-block the consent page");
-  assert.match(csp, /form-action 'self'/, "the consent POST must be pinned to this origin");
   assert.equal(page.headers["referrer-policy"], "same-origin",
     "the approval POST must retain its same-origin Origin without leaking a cross-origin Referer");
   // Belt-and-braces for agents predating CSP3 frame-ancestors support.
