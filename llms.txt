@@ -11,7 +11,7 @@
 ## Overview
 
 - [README](README.md): What the library is, what ships today, quickstart, the API-key-gateway shape, machine-to-machine (`client_credentials`), alternatives table, and roadmap.
-- [docs/contracts.md](docs/contracts.md): The full contract surface — ports, schemas, error shapes, and the §16 spec-conformance matrix (RFC 9728/8414/7591/7009/8707/9207, PKCE, redirect policy). Read before changing any port/schema/error.
+- [docs/contracts.md](docs/contracts.md): Status and index for the numbered contract files — ports, schemas, error shapes, redirect policy, and the [§16 spec-conformance matrix](docs/contracts/16-spec-conformance-matrix.md). Read before changing any port/schema/error.
 - [docs/threat-model.md](docs/threat-model.md): STRIDE threat table, the refresh-token replay-detection control, accepted boundaries, and implementation gates. The security-product source of truth.
 
 ## Guides

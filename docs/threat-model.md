@@ -9,19 +9,19 @@
 >
 > Status: **v0.2 shipped (through v0.2.3; CIMD implemented on `main`,
 > unreleased).** Threats 17–25 cover the
-> [§17](./contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
+> [§17](./contracts/17-v0-2-feature-contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
 > contracts — most shipped in v0.2; CIMD (§17.1) is implemented on `main`
 > (S6a/S6b, frozen suites active; not yet released to npm or live-verified,
 > including the §10.0 redirect-entry grammar; see the rows 5/9 note); device flow (§17.3) and the
 > GitHub identity port (§17.6) remain contract-locked, implementation pending.
-> Threats 29–33 cover the shipped [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
+> Threats 29–33 cover the shipped [§17.11](./contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
 > upstream redirect-leg orchestrator, including the per-flow audience binding
 > in rows 33 and 37 (shipped with the §17.11 flow-instance amendment; frozen
 > suite `flow-instance-binding` active). Threat 34 records the contract-only,
 > implementation-pending dynamic-key boundary in
-> [§4.1](./contracts.md#41-dynamic-key-and-parsed-record-composition-boundary).
+> [§4.1](./contracts/04-design-principles.md#41-dynamic-key-and-parsed-record-composition-boundary).
 > Threat 35 covers the CIMD × upstream-redirect flow
-> ([§17.1.6](./contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)),
+> ([§17.1.6](./contracts/17-v0-2-feature-contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)),
 > implemented on `main`, including rule 20's shared entry grammar.
 
 ## Assets
@@ -58,9 +58,9 @@
   `SqliteStore` is a local file (no network); the pooled `MysqlStore`
   (`/store/mysql`, v0.1.2) extends the boundary to the DB network. TLS, DB
   credentials, and DB access control are the deployer's/host's responsibility,
-  validated by the [store-conformance suite](./contracts.md#12-store-conformance-contract).
+  validated by the [store-conformance suite](./contracts/12-store-conformance-contract.md#12-store-conformance-contract).
   The library's control on that path is
-  [§12.3 transaction hygiene](./contracts.md#123-reference-adapters):
+  [§12.3 transaction hygiene](./contracts/12-store-conformance-contract.md#123-reference-adapters):
   - A `beginTransaction` failure cannot leak a pooled connection (begun-guard +
     `release` in `finally` on every path), so a begin/commit/rollback error
     cannot exhaust the pool into an auth outage.
@@ -70,22 +70,22 @@
   CIMD (Client ID Metadata Documents) fetches client-supplied URLs —
   attacker-controlled input driving a server-side fetch.
   - That path MUST go through the SSRF-guarded `FetcherPort` under the full
-    [§17.1](./contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract)
+    [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract)
     control set. The fetched document is registration data: validated, escaped,
     never executed.
   - URLs inside tokens or documents are data, never instructions. Entra's
     `_claim_sources` endpoint is never dereferenced
-    ([§17.4](./contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling)).
+    ([§17.4](./contracts/17-v0-2-feature-contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling)).
 - **The server console is a trust boundary** (v0.2 console pairing,
-  [§17.5](./contracts.md#175-console-pairing-identity-zero-idp-setup)): whoever
+  [§17.5](./contracts/17-v0-2-feature-contracts.md#175-console-pairing-identity-zero-idp-setup)): whoever
   reads the process stderr is treated as the operator. Log aggregation
   pipelines extend this boundary. The deployment envelope is single-operator
   hosts with operator-private console output — a documented non-goal boundary,
   not a hardening gap to fix.
 - **Deployer configuration is trusted.** The OIDC discovery issuer
-  ([§17.6](./contracts.md#176-genericoidcidentity--google-preset--dedicated-github-port))
+  ([§17.6](./contracts/17-v0-2-feature-contracts.md#176-genericoidcidentity--google-preset--dedicated-github-port))
   and the webhook audit URL
-  ([§17.7](./contracts.md#177-audit-reference-sinks--event-coverage)) are
+  ([§17.7](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage)) are
   deliberately NOT behind the SSRF guard: they are static, reviewed config
   (enterprise IdPs/SIEMs legitimately live on private networks). Only
   client-supplied URLs get the §17.1 treatment.
@@ -94,57 +94,57 @@
 
 The why behind [contracts §5–§14](./contracts.md). Each control is a guarantee.
 
-- **Fail-closed everywhere** ([§5](./contracts.md#5-configuration-contract),
-  [§9.3](./contracts.md#93-authorize--consent)): ambiguous config, a
+- **Fail-closed everywhere** ([§5](./contracts/05-configuration-contract.md#5-configuration-contract),
+  [§9.3](./contracts/09-as-lite-bridge-contract.md#93-authorize--consent)): ambiguous config, a
   missing/rejected identity, an unknown audience, or a replayed token is a hard
   failure — never a degraded default, never a placeholder subject. There is
   intentionally no unauthenticated/local-bypass flavor.
-- **Algorithm pinning + key separation** ([§7](./contracts.md#7-crypto--token-contracts)):
+- **Algorithm pinning + key separation** ([§7](./contracts/07-crypto-and-token-contracts.md#7-crypto--token-contracts)):
   consent HS256, access ES256. Verifiers pin the algorithm set, so a `none`-alg
   or key-confusion token is rejected. The consent secret never validates an
   access token and vice-versa.
-- **Audience fail-closed** ([§7.2](./contracts.md#72-access-token-es256-audience-bound-fail-closed),
+- **Audience fail-closed** ([§7.2](./contracts/07-crypto-and-token-contracts.md#72-access-token-es256-audience-bound-fail-closed),
   RFC 8707): a token's `aud` MUST equal the configured `resource`; a token
   minted for resource A never validates for B.
-- **Hashed, single-use credentials** ([§7.3](./contracts.md#73-authorization-code-hashed-single-use),
-  [§7.4](./contracts.md#74-refresh-token-family-rotation-replay-detection),
-  [§12](./contracts.md#12-store-conformance-contract)): auth codes and refresh
+- **Hashed, single-use credentials** ([§7.3](./contracts/07-crypto-and-token-contracts.md#73-authorization-code-hashed-single-use),
+  [§7.4](./contracts/07-crypto-and-token-contracts.md#74-refresh-token-family-rotation-replay-detection),
+  [§12](./contracts/12-store-conformance-contract.md#12-store-conformance-contract)): auth codes and refresh
   tokens are stored only as SHA-256 digests; codes and consent JTIs are
   single-use.
-- **Refresh rotation + family replay detection** ([§7.4](./contracts.md#74-refresh-token-family-rotation-replay-detection),
-  [§12.2](./contracts.md#122-invariants-the-suite-asserts)): rotation marks the
+- **Refresh rotation + family replay detection** ([§7.4](./contracts/07-crypto-and-token-contracts.md#74-refresh-token-family-rotation-replay-detection),
+  [§12.2](./contracts/12-store-conformance-contract.md#122-invariants-the-suite-asserts)): rotation marks the
   current token consumed; reuse of a consumed token revokes the entire family.
   RFC 6749 §6 client binding revokes the family on a `client_id` mismatch.
-- **Rotation backfill** ([§12.2](./contracts.md#122-invariants-the-suite-asserts),
+- **Rotation backfill** ([§12.2](./contracts/12-store-conformance-contract.md#122-invariants-the-suite-asserts),
   fix #3): the next token's `subject`/`clientId`/`scopes` are
   authoritative-copied from the consumed row, not from the (untrusted,
   wire-supplied) request. A stolen refresh token cannot poison the successor.
   Defense-in-depth at the store layer.
-- **PKCE S256, timing-safe** ([§7.5](./contracts.md#75-pkce-s256-timing-safe)):
+- **PKCE S256, timing-safe** ([§7.5](./contracts/07-crypto-and-token-contracts.md#75-pkce-s256-timing-safe)):
   malformed verifiers rejected outright; constant-time compare.
-- **Redirect-URI policy** ([§10](./contracts.md#10-redirect-uri-policy)):
+- **Redirect-URI policy** ([§10](./contracts/10-redirect-uri-policy.md#10-redirect-uri-policy)):
   anchored allowlist — no allow-all `*`, no unanchored prefix, userinfo
   rejected. RFC 8252 loopback any-port only for origin entries. Stored-DCR
   per-`application_type` policy: native ⇒ loopback, web ⇒ https exact.
-- **Error-redirect safety** ([§9.3](./contracts.md#93-authorize--consent),
+- **Error-redirect safety** ([§9.3](./contracts/09-as-lite-bridge-contract.md#93-authorize--consent),
   RFC 6749 §4.1.2.1): a redirect (success or error) is issued ONLY to a
   `redirect_uri` that already passed §10 validation. Pre-validation failures
   (bad `client_id`/`redirect_uri`, no identity) are direct 4xx — they NEVER
   redirect, because the destination is untrusted.
-- **CSRF on approve** ([§9.3](./contracts.md#93-authorize--consent)): the
+- **CSRF on approve** ([§9.3](./contracts/09-as-lite-bridge-contract.md#93-authorize--consent)): the
   `origin` check lives in the core use-case; a missing/foreign origin is
   rejected (direct 403). The single-use consent JTI is the primary replay
   defense.
-- **Metadata-only audit** ([§13](./contracts.md#13-audit-contract)): no token
+- **Metadata-only audit** ([§13](./contracts/13-audit-contract.md#13-audit-contract)): no token
   values, no `Authorization`/`Set-Cookie`, no request bodies; redirect URIs
   canonicalized to host. The test suite asserts serialized audit output contains
   no raw codes/refresh/access tokens.
-- **Supply chain** ([§15](./contracts.md#15-package--export-map)): `jose` is the
+- **Supply chain** ([§15](./contracts/15-package-and-export-map.md#15-package--export-map)): `jose` is the
   only runtime dep. Every pin is ≥15 days old and recorded in
   `docs/dependency-ledger.md`. CI actions are SHA-pinned. npm publish is
   `--provenance` from GitHub Actions OIDC only — **no local publishes**. No
   postinstall scripts, no bundler.
-- **Dev escape hatch is loopback-only** ([§5](./contracts.md#5-configuration-contract)):
+- **Dev escape hatch is loopback-only** ([§5](./contracts/05-configuration-contract.md#5-configuration-contract)):
   `dev.allowInsecureLocalhost` is rejected at boot unless both origins are
   loopback, and it warns loudly. It can never weaken a real (non-loopback)
   deployment.
@@ -157,43 +157,43 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 2 | Steal/replay a refresh token | Spoofing / Elevation | Rotation marks consumed; replay ⇒ family revoked; RFC 6749 §6 client binding; rotation backfill blocks poisoning | None beyond the race window (reuse revokes immediately) |
 | 3 | Forge a token (key compromise / `none`-alg) | Spoofing | ES256/HS256 alg pin; key separation; key-strength boot checks | A compromised signing key = total break; mitigated by supply-chain + ops hygiene |
 | 4 | CSRF an `approve` to mint a code | Tampering | Core `origin` check (fail-closed); `headerString` rejects array-valued/case-duplicated normalized `Origin`; single-use consent JTI (primary replay defense). The consent surface sets **no cookie**; the optional `mcp_idp_consent` cookie is a deployer seam whose attributes the deployer owns. The §17.11 flow cookie is separate and never touches the consent surface (rows 29–33) | Framework adapters can erase on-wire header multiplicity before normalization; preserving raw occurrences is a pre-0.3.0 release blocker |
-| 5 | Open-redirect / `redirect_uri` abuse | Spoofing / Elevation | **Mode-appropriate validation** ([§10](./contracts.md#10-redirect-uri-policy) anchored allowlist for opaque ids; the CIMD document exact/loopback-any-port match for CIMD ids — [§17.1.6](./contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23) decision 1); error redirects target only the validated `redirect_uri`. Entry grammar: [row 5/9 note](#rows-59--the-redirect-entry-grammar) | None (a redirect can only go to a validated URI — §10 or the CIMD document match) |
-| 6 | Token substitution across resources | Elevation | Audience fail-closed ([§7.2](./contracts.md#72-access-token-es256-audience-bound-fail-closed)) | None |
+| 5 | Open-redirect / `redirect_uri` abuse | Spoofing / Elevation | **Mode-appropriate validation** ([§10](./contracts/10-redirect-uri-policy.md#10-redirect-uri-policy) anchored allowlist for opaque ids; the CIMD document exact/loopback-any-port match for CIMD ids — [§17.1.6](./contracts/17-v0-2-feature-contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23) decision 1); error redirects target only the validated `redirect_uri`. Entry grammar: [row 5/9 note](#rows-59--the-redirect-entry-grammar) | None (a redirect can only go to a validated URI — §10 or the CIMD document match) |
+| 6 | Token substitution across resources | Elevation | Audience fail-closed ([§7.2](./contracts/07-crypto-and-token-contracts.md#72-access-token-es256-audience-bound-fail-closed)) | None |
 | 7 | PRM/metadata substitution (client-side) | Spoofing | https-only (TLS); RFC 9728 §3.3 client validates `resource` matches; bridge emits `resource`=config | MITM on non-TLS — excluded by https-only (loopback dev aside) |
 | 8 | DCR flooding / audit spam | DoS | Stateless registrations are cheap; audit is metadata-only; `RateLimitPort` hook exists (fix #7) | The hook defaults to no-op — `/oauth/register` + `/oauth/token` can be hammered unless a deployer injects a real limiter or fronts the bridge with a rate-limiting proxy |
-| 9 | Stored-mode client spoofing (claim another's redirect) | Spoofing / Elevation | Registration validates each `redirect_uri` via the global allowlist ([§10.1](./contracts.md#101-global-allowlist-stateless-dcr-mode--assertallowedredirecturi)); `application_type` per-type policy blocks a web client widening via native. Entry grammar: [row 5/9 note](#rows-59--the-redirect-entry-grammar) | None (only already-trusted URIs registerable) |
+| 9 | Stored-mode client spoofing (claim another's redirect) | Spoofing / Elevation | Registration validates each `redirect_uri` via the global allowlist ([§10.1](./contracts/10-redirect-uri-policy.md#101-global-allowlist-stateless-dcr-mode--assertallowedredirecturi)); `application_type` per-type policy blocks a web client widening via native. Entry grammar: [row 5/9 note](#rows-59--the-redirect-entry-grammar) | None (only already-trusted URIs registerable) |
 | 10 | Scope escalation | Elevation | `normalizeScopes` vs catalog (unknown ⇒ reject); server-authoritative prior-scopes (derived, not client-claimed); consent shows the delta; `requireScope` at the RS | None |
 | 11 | Consent replay | Tampering | Single-use consent JTI; atomic `consumeConsentJti` | None |
 | 12 | Identity spoofing | Spoofing | `IdentityPort` verifies the upstream credential; no/failed identity ⇒ 401 fail-closed; no passthrough | Depends on the concrete port validating iss/aud/tid. Header mode (`identityHeader`) carries a nonce residual — [see below](#row-12--header-mode-nonce-residual). The §17.11 redirect orchestrator does not (it mints its own nonce, row 31) |
-| 13 | SSRF via CIMD (v0.2) | SSRF | Full [§17.1](./contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract) contract: URL admission (https-only, no userinfo/fragment/query/dot-segments/IP-literals/CRLF), complete IANA IPv4+IPv6 blocklists (binary compare; embedding prefixes blocked wholesale), all-records DNS validation + pinned connect (no re-resolve), redirects refused (draft -01 MUST NOT), 200-only, 5 KiB cap, 5 s deadline, single generic client-facing error | Timing side-channel could leak coarse network facts (fetch duration); accepted — response content/error shape leak nothing |
+| 13 | SSRF via CIMD (v0.2) | SSRF | Full [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract) contract: URL admission (https-only, no userinfo/fragment/query/dot-segments/IP-literals/CRLF), complete IANA IPv4+IPv6 blocklists (binary compare; embedding prefixes blocked wholesale), all-records DNS validation + pinned connect (no re-resolve), redirects refused (draft -01 MUST NOT), 200-only, 5 KiB cap, 5 s deadline, single generic client-facing error | Timing side-channel could leak coarse network facts (fetch duration); accepted — response content/error shape leak nothing |
 | 14 | Secrets in logs/audit | Info disclosure | Metadata-only audit; tests assert no raw secrets leak | None |
 | 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day pins; SHA-pinned CI; provenance publish; no postinstall/bundler | A zero-day in jose itself — minimized by single-dep + pin + age |
 | 16 | Dev flag used to weaken a real host | Misconfiguration | `allowInsecureLocalhost` rejected unless loopback + loud warning | Someone tunnels a loopback dev instance out — dev-only, documented |
 | 17 | (v0.2) CIMD client impersonation via lookalike/localhost redirect (the MCP-documented attack: legit metadata URL + attacker's loopback redirect) | Spoofing | Exact `client_id` echo-match; redirect exact-match against the doc; consent page MUST show `client_id` host + redirect host, warns on loopback-only redirects; `client_name` labeled unverified. **The page is frame-blocked (row 36)** — without that, the user judgment this row depends on can be bypassed by an overlay rather than deceived | Real and spec-acknowledged: user judgment on lookalike domains / loopback approval remains the last line — CIMD cannot fully close this by design |
 | 18 | (v0.2) Machine-client secret theft / misuse | Spoofing / Elevation | Out-of-band provisioning only; 256-bit secrets (`mcs_`+base64url(32)); SHA-256-only storage; shown once; stored rows parsed and key-bound by `parseMachineClientRegistration`; `verifyMachineClientSecret` uses two digest comparisons and fails closed; scopes capped by per-client `allowedScopes` ⊆ catalog; no refresh tokens; rotation with bounded grace (≤2 active secrets). [Enforcement detail below](#row-18--machine-client-secret-enforcement) | A stolen secret is valid until rotated — there is no theft *signal* (unlike refresh replay); bounded by rotation practice + audit of `oauth.token.client_credentials` |
-| 19 | (v0.2) Device-flow `user_code` brute force | Spoofing | 34.5-bit code + 600 s TTL + built-in in-process 5-attempts-per-IP cap + `RateLimitPort` hook ≈ RFC 8628 §5.1's 2⁻³² budget | In-process cap is per-instance; multi-instance deployments need the distributed limiter ([§17.10](./contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)) for the full budget |
+| 19 | (v0.2) Device-flow `user_code` brute force | Spoofing | 34.5-bit code + 600 s TTL + built-in in-process 5-attempts-per-IP cap + `RateLimitPort` hook ≈ RFC 8628 §5.1's 2⁻³² budget | In-process cap is per-instance; multi-instance deployments need the distributed limiter ([§17.10](./contracts/17-v0-2-feature-contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)) for the full budget |
 | 20 | (v0.2) Device-flow remote phishing (attacker delivers THEIR `user_code` to the victim) | Spoofing | Consent page echoes the `user_code` + "you are authorizing a device — confirm it is yours" (RFC 8628 §5.4 remote-phishing mitigation); short TTL limits emailed-code viability | Real-time phishing remains viable per the RFC itself; accepted with the UI mitigations, documented |
 | 21 | (v0.2) Pairing-code exposure (console scrollback, shipped logs) | Info disclosure / Spoofing | TTL 600 s, single-use, 5-attempt invalidation, session binding, ~52-bit code, in-process limiter | Shared log pipelines are OUTSIDE the deployment envelope (single-operator only) — a documented non-goal, not a mitigated risk |
 | 22 | (v0.2) Group-authorization bypass (spoofed/mutable group names, overage truncation, stale grants) | Elevation | GUID-only mapping keys; overage ⇒ fail-closed `entra_groups_overage`; `_claim_sources` URL never dereferenced; ceiling intersected at `prepare` AND `approve`. [Enforcement detail below](#row-22--group-authorization-enforcement) | Refresh tokens outlive group removal until family expiry/revocation (no identity at refresh) — bounded by `refreshTokenTtlSeconds`, documented. Guest/B2B group-claim behavior UNVERIFIED in Microsoft's docs — on the live-tenant checklist |
 | 23 | (v0.2) Quickstart secret-file theft | Info disclosure | `0700` dir + `0600` file + `O_EXCL` create; group/other-readable file is a BOOT FAILURE; `.gitignore` written into the dir | Any process running as the same OS user can read it — the OS user account is the boundary; production uses env/secret managers |
 | 24 | (v0.2) Audit-sink loss or injection | Repudiation / Tampering | JSONL sink: JSON encoding escapes newlines (no log injection); fan-out isolation (`combineAudit`); webhook https-only (raw prefix check), redirects not followed, at-most-once; all sinks fail-open (`writeAuthEvent` never rejects) | Audit writes are fail-open by design (evidence, not a gate): sink outage = lost events; webhook is at-most-once — hard-evidence deployments use file + shipper |
 | 25 | (v0.2) CIMD fetch abuse as DoS/amplification (attacker makes the AS fetch repeatedly) | DoS | Single-flight keyed by the raw presented `client_id` string, global in-flight cap, **bounded (LRU) validated-success cache** (§17.1.6 decision 4 — repeated same-id fetches collapse to one per freshness window **for cacheable responses only**, in direct AND upstream-redirect mode), `RateLimitPort` on authorize, 5 KiB/5 s caps; error responses not cached (spec MUST NOT) but rate-limited | Sequential abuse — across distinct valid ids, OR same-id when the attacker's endpoint serves a non-cacheable response (`no-store`/absent/`max-age`<60) — degrades to rate-limiter quality; same §8-class residual as DCR flooding; a mandatory origin-independent budget is a §18 option (row 35) |
-| 26 | (v0.2) FIFO/special-file boot/audit hang | DoS | `open(O_NOFOLLOW \| O_NONBLOCK)` + `fstat().isFile()` on quickstart reads (`secrets.json`, `.gitignore`) and the JSONL audit sink's append open — a FIFO at the path returns immediately instead of blocking until a writer appears; non-regular files are rejected. `openSqliteStore` opens `O_RDWR` (no block) and fails closed (`SQLITE_IOERR`) on a FIFO | None — the parity rule ([§17.8](./contracts.md#178-quickstart-secret-persistence-auto-keygen)) keeps every state-file open non-blocking |
+| 26 | (v0.2) FIFO/special-file boot/audit hang | DoS | `open(O_NOFOLLOW \| O_NONBLOCK)` + `fstat().isFile()` on quickstart reads (`secrets.json`, `.gitignore`) and the JSONL audit sink's append open — a FIFO at the path returns immediately instead of blocking until a writer appears; non-regular files are rejected. `openSqliteStore` opens `O_RDWR` (no block) and fails closed (`SQLITE_IOERR`) on a FIFO | None — the parity rule ([§17.8](./contracts/17-v0-2-feature-contracts.md#178-quickstart-secret-persistence-auto-keygen)) keeps every state-file open non-blocking |
 | 27 | (v0.2) Non-loopback pairing binding (envelope breach) | Spoofing / Elevation | `defaultListenHost` binds console pairing to `127.0.0.1` by default (the trust envelope is "whoever reads the process's stderr IS the operator"); Cloudflare/proxy binds `0.0.0.0`; `HOST` overrides + a loud stderr warning if pairing is bound off-loopback | An operator who sets `HOST=0.0.0.0` or tunnels the loopback listener publicly exposes the pairing surface + the attempt budget — bounded by maxAttempts/TTL, but the envelope is breached; documented, not mitigated |
-| 28 | (v0.2) State-dir trust-bar divergence across code paths | Elevation / Info disclosure | The [§17.8](./contracts.md#178-quickstart-secret-persistence-auto-keygen) parity rule: every state-dir path meets the full bar (`assertRealDir`, `ensureGitignore`, `0600`/`0700`, `O_NOFOLLOW`+`O_NONBLOCK` reads); a control fixed in one path is swept into every sibling. [Detail below](#row-28--state-dir-parity) | Recurrence is process-disciplined (the sweep rule), not mechanistically enforced — a future code path added without the sweep could diverge; caught by review + the dedicated integration round |
+| 28 | (v0.2) State-dir trust-bar divergence across code paths | Elevation / Info disclosure | The [§17.8](./contracts/17-v0-2-feature-contracts.md#178-quickstart-secret-persistence-auto-keygen) parity rule: every state-dir path meets the full bar (`assertRealDir`, `ensureGitignore`, `0600`/`0700`, `O_NOFOLLOW`+`O_NONBLOCK` reads); a control fixed in one path is swept into every sibling. [Detail below](#row-28--state-dir-parity) | Recurrence is process-disciplined (the sweep rule), not mechanistically enforced — a future code path added without the sweep could diverge; caught by review + the dedicated integration round |
 | 29 | (v0.2) Upstream login-CSRF / session fixation — an attacker delivers *their* callback URL (or initiates a flow) into a victim's browser so the victim consents on the attacker's upstream identity | Spoofing / Tampering | 256-bit upstream `state` bound to the initiating browser via the signed `HttpOnly`/`SameSite=Lax` flow cookie; timing-safe state compare; mismatch ⇒ direct 400 (never redirect); consent page delivered ONLY as the direct response to the cookie-bearing callback (the §17.11 same-browser binding) | None meaningful — the callback is inert in any browser that did not initiate the flow |
-| 30 | (v0.2) Callback replay (reused callback URL, stolen scrollback/history) | Spoofing / Tampering | Single-use flow `jti` (`upf_…`) consumed via the conformance-tested consent-JTI registry BEFORE any IdP-error handling or code exchange; the IdP's own code single-use is the second layer; cookie cleared on every callback completion | Per-process memory store detects replay per instance only — multi-replica deployments need the shared (mysql) store, same class as consent JTIs; bounded by the flow TTL (default 600 s, deployer-configurable ≤ 3600 s, [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)) |
+| 30 | (v0.2) Callback replay (reused callback URL, stolen scrollback/history) | Spoofing / Tampering | Single-use flow `jti` (`upf_…`) consumed via the conformance-tested consent-JTI registry BEFORE any IdP-error handling or code exchange; the IdP's own code single-use is the second layer; cookie cleared on every callback completion | Per-process memory store detects replay per instance only — multi-replica deployments need the shared (mysql) store, same class as consent JTIs; bounded by the flow TTL (default 600 s, deployer-configurable ≤ 3600 s, [§17.11](./contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)) |
 | 31 | (v0.2) Upstream authorization-code injection/substitution (a stolen or attacker-obtained code redeemed inside another flow) | Spoofing / Elevation | Mandatory upstream PKCE S256 — the verifier lives only in the victim flow's cookie, so a foreign code fails the exchange; OIDC `nonce` binds the id_token to the same flow; both values are orchestrator-generated CSPRNG 256-bit | Providers with no id_token (the future §17.6 GitHub port) lack the nonce layer — state + upstream PKCE remain; documented per-port, never silent |
-| 32 | (v0.2) Attacker-influenced IdP callback params abused for open redirect / error-echo injection | Spoofing / Info disclosure | Upstream `error`/`error_description` are mapped to a fixed enum with fixed description strings and NEVER echoed; redirects go only to the mode-appropriately validated `redirect_uri` (§10 or the CIMD document match, [§17.1.6](./contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)) inside the *signed* flow context; `state`/`code`/id_tokens never logged — audit carries enum reasons only | None (row 5's invariant extends: a redirect only ever targets a validated URI) |
-| 33 | (v0.2) Flow-cookie theft or tampering (the cookie carries the upstream PKCE verifier + round-tripped client params) | Tampering / Info disclosure | HS256 signature (consent secret, `aud`-pinned `mcp-sso/upstream-flow` — cannot be replayed as a consent token or vice-versa; the audience is PER FLOW — `+ callbackPath`, §17.11 — so a token cannot be replayed across flow instances either, see row 37); tampering ⇒ signature failure ⇒ direct 400; `HttpOnly` + `Secure`/`__Host-` on https; flow TTL default 600 s (a deployer may raise it to at most 3600 s, widening this window — [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)); single-use jti; upstream tokens never enter the cookie | A full browser/endpoint compromise exposes only the in-flight flow (bounded by TTL + single-use); the cookie is signed, not encrypted — the browser's owner can read their own flow params, which is by design |
-| 34 | Prototype-chain confusion at attacker-controlled dynamic-key or parsed-record composition sites | Tampering / Elevation | Contract locked in [§4.1](./contracts.md#41-dynamic-key-and-parsed-record-composition-boundary): dynamic lookups use `Map`, null-prototype records, or `Object.hasOwn`; dynamic writes cannot invoke inherited setters; parsed records are explicitly projected rather than spread wholesale. Initial gates are Entra group mapping, adapter-owned request normalization, and CIMD document projection. Acceptance and implementation are separate follow-up PRs | Host-level prototype pollution and hostile in-process ports/adapters are OUT OF SCOPE: code already executing in-process can replace the verifier. Fixed named-field reads are not claimed to withstand arbitrary intrinsic mutation |
-| 35 | (v0.2) CIMD client in **upstream-redirect** mode — document swap between authorize and callback (approve-then-swap), unauthenticated pre-identity outbound fetch, registration substitution | Tampering / SSRF / DoS | [§17.1.6](./contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23) decision 1: the CIMD document is resolved and validated at authorize through the shared success cache (1a — at most one guarded fetch on a miss, zero on a hit); its validated named projection is carried forward in the HS256-signed single-use flow cookie (1c) and consumed at callback with NO re-fetch (1d) — the consented registration is cryptographically the validated one (approve-then-swap CLOSED). The registration handed to `bridge.handleAuthorize` is orchestrator-resolved trusted state (same category as `subject`/`allowedScopes`), not a new deployer trust input; no capability/brand system. All CIMD resolution failures collapse to one generic `invalid_client` (decision 2, closing the SSRF content/reachability oracle) | Residuals (documented, not eliminated): CIMD resolution at authorize precedes identity, so an unauthenticated caller triggers guarded outbound fetches. The bound is **precise, not hand-waved**: the SSRF guard limits *reach* (admission + blocklist ⇒ only an external, public, attacker-chosen host — never internal); the validated-success cache (bounded, LRU) collapses repeated requests for the *same* `client_id` to at most one fetch per freshness window **for cacheable responses only** (a non-cacheable/`no-store`/`max-age`<60 response re-fetches each time); single-flight + `maxInFlight` bound only *concurrent* fetches, and — per **§17.1.6 decision 7** — `maxWaitersPerFetch` (default 256) bounds the callers that may *park on* one in-flight fetch, so total concurrent waiting resolutions are bounded above by `maxInFlight × (maxWaitersPerFetch + 1)` (default 2056 — the `+1` per entry is the initiating resolution). Without that second cap a single slow attacker-hosted document held an unbounded number of waiters (measured: 10 000 same-id requests ⇒ 1 fetch, ~15.4 MB retained) — CWE-770 on an unauthenticated path. **Sequential requests across many distinct valid `client_id`s remain bounded only by the optional `cimd:<ip>` `RateLimitPort`** — the same residual class as row 25 / DCR flooding (row 8). A *mandatory* built-in request budget independent of the optional limiter is a deliberate **§18 option, not built in v0.2** (it would change the optional-rate-limit architecture; the SSRF-reach bound + optional limiter are judged sufficient for v0.2). Other residuals: a leaked `consentSigningSecret` enables registration substitution (same secret/trust as row 33); redirect-mode effective document size is cookie-bound (a large-but-valid doc fails closed as `invalid_client`); resolution timing is a coarse side channel (row 13 class). Enforcement + acceptance SHIPPED in the S6b PRs (frozen suite `s6b-cimd-flow` active); not yet released to npm or live-verified |
+| 32 | (v0.2) Attacker-influenced IdP callback params abused for open redirect / error-echo injection | Spoofing / Info disclosure | Upstream `error`/`error_description` are mapped to a fixed enum with fixed description strings and NEVER echoed; redirects go only to the mode-appropriately validated `redirect_uri` (§10 or the CIMD document match, [§17.1.6](./contracts/17-v0-2-feature-contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)) inside the *signed* flow context; `state`/`code`/id_tokens never logged — audit carries enum reasons only | None (row 5's invariant extends: a redirect only ever targets a validated URI) |
+| 33 | (v0.2) Flow-cookie theft or tampering (the cookie carries the upstream PKCE verifier + round-tripped client params) | Tampering / Info disclosure | HS256 signature (consent secret, `aud`-pinned `mcp-sso/upstream-flow` — cannot be replayed as a consent token or vice-versa; the audience is PER FLOW — `+ callbackPath`, §17.11 — so a token cannot be replayed across flow instances either, see row 37); tampering ⇒ signature failure ⇒ direct 400; `HttpOnly` + `Secure`/`__Host-` on https; flow TTL default 600 s (a deployer may raise it to at most 3600 s, widening this window — [§17.11](./contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)); single-use jti; upstream tokens never enter the cookie | A full browser/endpoint compromise exposes only the in-flight flow (bounded by TTL + single-use); the cookie is signed, not encrypted — the browser's owner can read their own flow params, which is by design |
+| 34 | Prototype-chain confusion at attacker-controlled dynamic-key or parsed-record composition sites | Tampering / Elevation | Contract locked in [§4.1](./contracts/04-design-principles.md#41-dynamic-key-and-parsed-record-composition-boundary): dynamic lookups use `Map`, null-prototype records, or `Object.hasOwn`; dynamic writes cannot invoke inherited setters; parsed records are explicitly projected rather than spread wholesale. Initial gates are Entra group mapping, adapter-owned request normalization, and CIMD document projection. Acceptance and implementation are separate follow-up PRs | Host-level prototype pollution and hostile in-process ports/adapters are OUT OF SCOPE: code already executing in-process can replace the verifier. Fixed named-field reads are not claimed to withstand arbitrary intrinsic mutation |
+| 35 | (v0.2) CIMD client in **upstream-redirect** mode — document swap between authorize and callback (approve-then-swap), unauthenticated pre-identity outbound fetch, registration substitution | Tampering / SSRF / DoS | [§17.1.6](./contracts/17-v0-2-feature-contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23) decision 1: the CIMD document is resolved and validated at authorize through the shared success cache (1a — at most one guarded fetch on a miss, zero on a hit); its validated named projection is carried forward in the HS256-signed single-use flow cookie (1c) and consumed at callback with NO re-fetch (1d) — the consented registration is cryptographically the validated one (approve-then-swap CLOSED). The registration handed to `bridge.handleAuthorize` is orchestrator-resolved trusted state (same category as `subject`/`allowedScopes`), not a new deployer trust input; no capability/brand system. All CIMD resolution failures collapse to one generic `invalid_client` (decision 2, closing the SSRF content/reachability oracle) | Residuals (documented, not eliminated): CIMD resolution at authorize precedes identity, so an unauthenticated caller triggers guarded outbound fetches. The bound is **precise, not hand-waved**: the SSRF guard limits *reach* (admission + blocklist ⇒ only an external, public, attacker-chosen host — never internal); the validated-success cache (bounded, LRU) collapses repeated requests for the *same* `client_id` to at most one fetch per freshness window **for cacheable responses only** (a non-cacheable/`no-store`/`max-age`<60 response re-fetches each time); single-flight + `maxInFlight` bound only *concurrent* fetches, and — per **§17.1.6 decision 7** — `maxWaitersPerFetch` (default 256) bounds the callers that may *park on* one in-flight fetch, so total concurrent waiting resolutions are bounded above by `maxInFlight × (maxWaitersPerFetch + 1)` (default 2056 — the `+1` per entry is the initiating resolution). Without that second cap a single slow attacker-hosted document held an unbounded number of waiters (measured: 10 000 same-id requests ⇒ 1 fetch, ~15.4 MB retained) — CWE-770 on an unauthenticated path. **Sequential requests across many distinct valid `client_id`s remain bounded only by the optional `cimd:<ip>` `RateLimitPort`** — the same residual class as row 25 / DCR flooding (row 8). A *mandatory* built-in request budget independent of the optional limiter is a deliberate **§18 option, not built in v0.2** (it would change the optional-rate-limit architecture; the SSRF-reach bound + optional limiter are judged sufficient for v0.2). Other residuals: a leaked `consentSigningSecret` enables registration substitution (same secret/trust as row 33); redirect-mode effective document size is cookie-bound (a large-but-valid doc fails closed as `invalid_client`); resolution timing is a coarse side channel (row 13 class). Enforcement + acceptance SHIPPED in the S6b PRs (frozen suite `s6b-cimd-flow` active); not yet released to npm or live-verified |
 | 36 | Clickjacking of the consent / pairing page (framed + overlaid Approve) | Spoofing / Elevation | Both HTML responses send `frame-ancestors 'none'` **and** `x-frame-options: DENY` (CSP3 does NOT fall back to `default-src` for `frame-ancestors`, so `default-src 'none'` alone does not frame-block), plus `form-action 'self'` and `referrer-policy: no-referrer`. Applies to `CONSENT_HEADERS` (`adapters/bridge.ts`) and its mirror `PAIRING_HEADERS` (`adapters/pairing-flow.ts`); all three adapters relay response headers verbatim. **The two pages carry different risk and the headers are not claimed to do the same work on both:** the CONSENT page is the real target (it holds the Approve control this row is about); the PAIRING page's only control is `Continue` and its code is TYPED IN by the operator (printed to stderr, never in the markup), so framing it yields UI redress on a form that still requires a code readable only from the server console — defense-in-depth plus mirror-drift prevention, not a specific bypass | Row 17 makes the user's judgment at this page the last line of defence, and CIMD needs no registration to reach it — so framing would nullify that mitigation with a single click. `SameSite` does not help (the consent token is a hidden form field, and the POST originates from the mcp-sso document, so `assertApproveOrigin` passes). A deployer fronting the bridge with a proxy that STRIPS or rewrites these headers reopens it — outside the library's control, same class as row 12 |
 | 37 | (v0.2) Cross-flow upstream-callback substitution in a multi-IdP deployment (a cookie minted by one `createUpstreamRedirectFlow` redeemed at another's callback) | Spoofing / Elevation | **Shipped** (`signFlowToken`/`verifyFlowToken` take a required `callbackPath`; frozen suite `flow-instance-binding` active). The flow JWT's `aud` is bound to the flow instance — `"mcp-sso/upstream-flow" + callbackPath` (§17.11 "flow-instance binding"). `callbackPath` is already unique per mounted flow and boot-validated by `assertCallbackPath` into a canonical literal. A non-matching cookie fails `jwtVerify` at **row 3** (`flow_cookie_invalid`) — before jti consumption and before any token exchange — so the wrong IdP is never contacted | Before the binding, every flow built from one signing secret accepted every other flow's cookies: the user picks one IdP and a different one authenticates them (an authentication-provider **confused deputy**), and because CIMD resolution runs pre-identity the initiating request is unauthenticated. MEDIUM not HIGH — the shipped adapters mount a single flow, which is unaffected — but the exported factory permits the multi-flow topology. Residual: a leaked `consentSigningSecret` still forges any flow token (row 33's trust assumption); binding narrows scope, it does not replace the secret's role |
 
 ### Rows 5/9 — the redirect-entry grammar
 
-[§10.0](./contracts.md#100-the-redirect-entry-grammar-one-definition-every-consumer)
+[§10.0](./contracts/10-redirect-uri-policy.md#100-the-redirect-entry-grammar-one-definition-every-consumer)
 defines one closed entry grammar for every consumer, checked on the raw string.
 
 It closes a measured **parser differential**: the §10.1 allowlist, the CIMD
@@ -249,7 +249,7 @@ nonce residual above.
 ### Row 18 — machine-client secret enforcement
 
 - **Out-of-band provisioning only.** Open DCR can NEVER mint a secret-bearing
-  client. Per [§17.2](./contracts.md#172-client_credentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials):
+  client. Per [§17.2](./contracts/17-v0-2-feature-contracts.md#172-client_credentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials):
   a request with `token_endpoint_auth_method ≠ "none"` or a `grant_types`
   containing `client_credentials` is rejected with `invalid_client_metadata`.
   Machine clients are also rejected at `/oauth/authorize`.
@@ -284,13 +284,13 @@ nonce residual above.
   case-insensitive keys are rejected.
 - **Overage ⇒ fail-closed.** Overage yields `entra_groups_overage` (no
   truncation-driven privilege leak).
-- **`_claim_sources` URL never dereferenced** ([§17.4](./contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling)).
+- **`_claim_sources` URL never dereferenced** ([§17.4](./contracts/17-v0-2-feature-contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling)).
 - **Ceiling intersected twice** — at `prepare` AND `approve`. Prior grants
   cannot resurrect removed-group scopes.
 
 ### Row 28 — state-dir parity
 
-The [§17.8](./contracts.md#178-quickstart-secret-persistence-auto-keygen)
+The [§17.8](./contracts/17-v0-2-feature-contracts.md#178-quickstart-secret-persistence-auto-keygen)
 parity rule: every path that creates/reads the state dir — quickstart, the
 example CF branch `ensureStateDir`, the sqlite store, the audit sink — meets the
 full bar: `assertRealDir`, `ensureGitignore`, `0600`/`0700`, `O_NOFOLLOW` +
@@ -308,7 +308,7 @@ integration round.
   [contracts](./contracts.md)**.
 - No dependency install or bump without a `docs/dependency-ledger.md` recheck
   (version + publish date, ≥15 days — the 15-day gate).
-- The [store-conformance suite](./contracts.md#12-store-conformance-contract)
+- The [store-conformance suite](./contracts/12-store-conformance-contract.md#12-store-conformance-contract)
   MUST be green (memory + sqlite + mysql) before any correctness claim; any
   further downstream SQL adapter must pass the same suite.
 - The end-to-end verify gate — register → authorize (identity port) → token →
@@ -334,7 +334,7 @@ deployer acts on.
   allows everything.** Without a real limiter at the composition root, the
   unauthenticated DCR/token endpoints can be flooded (DoS, though audit is
   metadata-only). A reference distributed limiter ships at `/rate-limit/redis`
-  (v0.1.2, [§17.10](./contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)):
+  (v0.1.2, [§17.10](./contracts/17-v0-2-feature-contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)):
   a Redis/Valkey fixed-window counter closes the multi-instance gap (threat #19)
   where a per-process limiter is bypassed by spreading requests across
   instances. Deployers who don't wire a real `RateLimitPort` should front the
@@ -346,18 +346,18 @@ deployer acts on.
     (default 10) for peak token-refresh arrival rate × per-request latency, plus
     headroom for refresh bursts AND the periodic `sweepExpired`.
   - Saturation surfaces as a 500 (NOT fail-open — fail-open applies only to
-    `RateLimitPort` per [§6.7](./contracts.md#67-ratelimitport-fix-7)); wiring
+    `RateLimitPort` per [§6.7](./contracts/06-ports.md#67-ratelimitport-fix-7)); wiring
     the Redis `RateLimitPort` is the in-band DoS mitigation.
   - Performance posture: the hot path (the rate-limit check on `/oauth/register`
     + `/oauth/token`) uses Redis `EVALSHA`, so once the script is cached only its
     hash crosses the wire (the post-restart / `SCRIPT FLUSH` path re-sends the
     body once via `EVAL`). The MySQL adapter uses the text protocol and
     per-transaction `READ COMMITTED`
-    ([§12.3](./contracts.md#123-reference-adapters) for the two accepted
+    ([§12.3](./contracts/12-store-conformance-contract.md#123-reference-adapters) for the two accepted
     trade-offs).
 - **CIMD (v0.2) adds an outbound-fetch SSRF surface.** The `FetcherPort`
   boundary gates it; the v0.2 implementation must enforce the full
-  [§17.1](./contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract)
+  [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract)
   control set before it ships (row 13).
 - **Upstream-flow replay detection is store-scoped, and abandoned flows are
   invisible.** The flow cookie's single-use `jti` is consumed through the store:
@@ -367,15 +367,15 @@ deployer acts on.
   (the cookie simply expires) — accepted as the cost of the stateless-cookie
   decision. The `upstream:<ip>` rate-limit key bounds flow-initiation abuse, and
   every callback outcome is audited (`oauth.upstream.callback`). Bounded by the
-  flow TTL (default 600 s, ≤ 3600 s, [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)).
+  flow TTL (default 600 s, ≤ 3600 s, [§17.11](./contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)).
 - **Audit sinks are fail-open by design** (evidence, not a gate —
-  [§13](./contracts.md#13-audit-contract)): an auth flow never fails because
+  [§13](./contracts/13-audit-contract.md#13-audit-contract)): an auth flow never fails because
   evidence could not be written, so sink outage = lost events, and the webhook is
   at-most-once. Deployments that need guaranteed evidence MUST layer a reliable
   transport (e.g. file + shipper) under the file sink.
 - **In-process attempt limiters are per-instance.** The pairing and device-flow
   attempt caps hold per process; horizontally scaled deployments need the
-  [§17.10](./contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)
+  [§17.10](./contracts/17-v0-2-feature-contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)
   distributed limiter to keep the full brute-force budget.
 
 Further accepted-by-contract residuals — group-removal lag on refresh (row 22),

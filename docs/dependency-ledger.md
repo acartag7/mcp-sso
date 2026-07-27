@@ -2,7 +2,9 @@
 
 > Every external dependency pinned by this repo, with its version, publish date,
 > and the **15-day supply-chain check**. Re-verify before any install/bump and
-> before every publish. Companion to `docs/contracts.md` §15 and
+> before every publish. Companion to
+> [`docs/contracts/15-package-and-export-map.md`](contracts/15-package-and-export-map.md)
+> and
 > `docs/threat-model.md` ("Implementation gates").
 >
 > **Today:** 2026-07-06. **15-day cutoff:** a pin is acceptable only if published
@@ -29,7 +31,8 @@ weaken the rule to paper over a fresh-publish install problem.
 |---|---|---|---|---|---|
 | [`jose`](https://github.com/panva/jose) | `6.2.3` | 2026-04-27 | 68d | ✅ | **The only runtime dep.** JOSE/JWT/JWKS primitives (ES256/HS256 sign+verify, `importJWK`, `createRemoteJWKSet`). Pure JS, no native, no postinstall. |
 
-There is exactly one runtime dependency by design (`docs/contracts.md` §15). Every
+There is exactly one runtime dependency by design
+([§15](contracts/15-package-and-export-map.md)). Every
 other capability is a built-in (`node:crypto`, `node:sqlite`, `node:test`) or an
 optional peer that a consumer opts into.
 

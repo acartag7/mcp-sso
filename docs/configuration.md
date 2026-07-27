@@ -1,7 +1,8 @@
 # Configuration reference
 
 mcp-sso's **library** core is configured programmatically with
-`createBridgeConfig({ … })` (see [`contracts.md`](contracts.md) §5). The env vars
+`createBridgeConfig({ … })` (see
+[§5](contracts/05-configuration-contract.md)). The env vars
 below are how the **runnable examples** (`examples/fastify-sqlite`,
 `examples/api-key-gateway`) wire that config — copy this shape into your own
 composition root, or use it as-is with the examples.

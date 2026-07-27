@@ -107,7 +107,26 @@ jobs:
         with:
           base-ref: origin/main
           src-paths: src/
-          contract-paths: docs/contracts.md
+          contract-paths: >-
+            docs/contracts.md,
+            docs/contracts/01-purpose-and-scope.md,
+            docs/contracts/02-the-two-roles.md,
+            docs/contracts/03-normative-references.md,
+            docs/contracts/04-design-principles.md,
+            docs/contracts/05-configuration-contract.md,
+            docs/contracts/06-ports.md,
+            docs/contracts/07-crypto-and-token-contracts.md,
+            docs/contracts/08-resource-server-verifier-contract.md,
+            docs/contracts/09-as-lite-bridge-contract.md,
+            docs/contracts/10-redirect-uri-policy.md,
+            docs/contracts/11-scope-contract.md,
+            docs/contracts/12-store-conformance-contract.md,
+            docs/contracts/13-audit-contract.md,
+            docs/contracts/14-error-catalog.md,
+            docs/contracts/15-package-and-export-map.md,
+            docs/contracts/16-spec-conformance-matrix.md,
+            docs/contracts/17-v0-2-feature-contracts.md,
+            docs/contracts/18-contract-change-protocol.md
 
   # workflow_dispatch check runs are not included in a PR's required-check
   # rollup. Publish the exact required contexts only after both enforcing jobs
