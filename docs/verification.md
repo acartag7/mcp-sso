@@ -327,6 +327,9 @@ Minimum evidence per live row:
 4. Sanitized config shape — never secrets.
 5. Pass/fail for each scenario named in the Tier-3 row.
 6. Exact caveat if any step was skipped, simulated, or only partially verified.
+7. Protocol-accurate step names: a CIMD flow starts with an HTTPS `client_id`
+   at authorize and does not call `/oauth/register`; only a DCR flow includes
+   registration.
 
 ## Spec-release re-verification (due 2026-07-28)
 
