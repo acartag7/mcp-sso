@@ -360,7 +360,6 @@ test("verifier classifies the complete machine triad and rejects every partial/c
   const invalid: Array<{ label: string; claims: JWTPayload }> = [
     { label: "reserved subject with foreign client", claims: { sub: "mcc_impostor", client_id: "mcpdc_human1" } },
     { label: "reserved subject and client without gty", claims: { sub: "mcc_alice", client_id: "mcc_alice" } },
-    { label: "reserved client with interactive subject", claims: { sub: "alice", client_id: "mcc_service" } },
     { label: "machine gty on an interactive identity", claims: { sub: "alice", client_id: "client-1", gty: "client_credentials" } },
     { label: "conflicting reserved identities", claims: { sub: "mcc_one", client_id: "mcc_two", gty: "client_credentials" } },
     { label: "unknown gty", claims: { sub: "alice", client_id: "client-1", gty: "future_grant" } },
@@ -378,6 +377,18 @@ test("verifier classifies the complete machine triad and rejects every partial/c
   const machine = await signAccessToken({ subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], machine: true }, ctx.config, ctx.clock);
   assert.deepEqual(await verifyAccessToken(machine, ctx.config, ctx.clock), {
     subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], credentialKind: "machine",
+  });
+  await ctx.store.close();
+});
+
+test("a stateless mcc_ opaque client completes the authorization-code flow as interactive", async () => {
+  const ctx = setup();
+  const token = await exchangeCode(
+    ctx, "opaque-client-verifier-1234567890123456789012345", "mcp:read", "mcc_opaque_client",
+  );
+  assert.deepEqual(await verifyAccessToken(token.access_token, ctx.config, ctx.clock), {
+    subject: SUBJECT, clientId: "mcc_opaque_client",
+    scopes: ["mcp:read"], credentialKind: "interactive",
   });
   await ctx.store.close();
 });

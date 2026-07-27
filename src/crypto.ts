@@ -217,9 +217,8 @@ function accessClaims(payload: JWTPayload): VerifiedAccessToken {
 
 function credentialKindClaim(payload: JWTPayload, subject: string, clientId: string): CredentialKind {
   const machineSubject = subject.startsWith("mcc_");
-  const machineClient = clientId.startsWith("mcc_");
   const hasGrantType = Object.hasOwn(payload, "gty");
-  if (!machineSubject && !machineClient && !hasGrantType) return "interactive";
+  if (!machineSubject && !hasGrantType) return "interactive";
   if (machineSubject && clientId === subject && hasGrantType && payload.gty === "client_credentials") return "machine";
   throw new Error("partial or conflicting machine credential binding");
 }
