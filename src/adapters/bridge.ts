@@ -44,10 +44,10 @@ export interface BridgeDeps {
   cimdResolver?: DnsResolver;
 }
 
-// `referrer-policy: no-referrer` is here for the URL, not the body: both HTML
-// surfaces are served at `/oauth/authorize?...`, whose query carries `state`,
-// `client_id`, and `redirect_uri`. Without it those ride a `Referer` header to
-// any origin the page navigates to.
+// `referrer-policy: same-origin` preserves the scheme/host/port `Origin` on the
+// same-origin Approve POST, which the strict `assertApproveOrigin` gate needs.
+// `no-referrer` serialized that Origin as `null` in Chromium and broke browser
+// consent. Cross-origin Referer still omits the authorize URL's sensitive query.
 //
 // `frame-ancestors 'none'` is load-bearing, not hygiene: threat-model row 17
 // makes the user's judgment at this page the LAST line of defence against CIMD
@@ -64,7 +64,7 @@ const CONSENT_HEADERS = {
   "content-security-policy":
     "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'",
   "x-frame-options": "DENY",
-  "referrer-policy": "no-referrer",
+  "referrer-policy": "same-origin",
 };
 
 export class Bridge {
