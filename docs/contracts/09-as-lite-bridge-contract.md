@@ -138,7 +138,11 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   (a foreign origin is never redirected anywhere). `Bridge.handleApprove`
   reads the normalized `NormRequest.headers` through `headerString`; an
   array-valued header or more than one case-insensitive `Origin` key becomes
-  absent and fails closed rather than selecting one value.
+  absent and fails closed rather than selecting one value. Fastify and Express
+  build that normalized snapshot with `headersFromDistinct` from Node's
+  `headersDistinct`, preserving every on-wire occurrence. Fetch/Hono exposes
+  duplicates comma-coalesced; `readHeader` treats a comma in a non-`Cookie`
+  header as ambiguous before `Bridge.handleApprove` calls the core.
 - **Approve-time scheme gate FIRST (§17.1.6 decision 3):** immediately after
   `verifyConsentToken` and BEFORE the Deny branch below — a lowercase-`https://`
   client_id is approvable only when `cimd_verified === true` AND `cimd` enabled;
@@ -217,6 +221,13 @@ the response. Wiring rules:
   `Bridge.handleToken` performs normalized header/body extraction inside this
   error boundary, so a throwing accessor maps to the fixed `internal_error`
   response rather than escaping into framework-specific handling.
+- **Header occurrence snapshot:** Fastify/Express `toNorm` calls
+  `headersFromDistinct` with Node's `headersDistinct`; it never reconstructs a
+  security header from the first normalized value. Fetch/Hono retains the
+  platform's comma-coalesced scalar, which `readHeader` rejects for every
+  header except `Cookie`. Repeated `Cookie` fields remain one logical
+  semicolon-joined cookie-string. The same normalized snapshot supplies custom
+  `identityHeader`, approve `Origin`, and token `Authorization` reads.
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src

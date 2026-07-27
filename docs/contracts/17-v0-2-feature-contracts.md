@@ -1066,7 +1066,9 @@ in this flow."* Decisions:
   challenge. For `client_credentials`, it attempts the
   `oauth.token.client_credentials` failure audit before rejecting, without
   reading the client store; a synchronous or rejected audit write cannot replace
-  that `invalid_client` response. Advertise
+  that `invalid_client` response. Fastify/Express `headersFromDistinct`
+  preserves the raw occurrence count; Fetch/Hono `readHeader` rejects the
+  comma-coalesced form before `Bridge.handleToken` dispatches a grant. Advertise
   `token_endpoint_auth_methods_supported:
   ["none","client_secret_basic","client_secret_post"]` and
   `grant_types_supported` += `client_credentials` (RFC 8414's default omits
