@@ -149,8 +149,8 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
   no raw codes/refresh/access tokens.
 - **Supply chain** ([§15](./contracts/15-package-and-export-map.md#15-package--export-map)): `jose` is the
   only runtime dep. Every pin is ≥15 days old and recorded in
-  `docs/dependency-ledger.md`. CI actions are SHA-pinned. **PENDING in this
-  PR:** `check:deps` rejects drift between the ledger, direct package pins, and
+  `docs/dependency-ledger.md`. CI actions are SHA-pinned. `check:deps` rejects
+  drift between the ledger, direct package pins, and
   workflow Action pins, and verifies third-party Action tag/date evidence
   upstream. npm publish is `--provenance` from GitHub Actions OIDC only — **no
   local publishes**. No postinstall scripts, no bundler.

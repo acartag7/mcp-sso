@@ -7,8 +7,9 @@
 > and
 > `docs/threat-model.md` ("Implementation gates").
 >
-> **Today:** 2026-07-06. **15-day cutoff:** a pin is acceptable only if published
-> on or before **2026-06-21** (≥15 days old).
+> The enforcing check computes the cutoff from the current UTC date. At this
+> recheck (**2026-07-27**), a pin is acceptable only if published on or before
+> **2026-07-12** (≥15 days old).
 
 ## The 15-day rule and `minimumReleaseAge`
 
@@ -27,9 +28,9 @@ weaken the rule to paper over a fresh-publish install problem.
 
 ## Runtime dependencies (shipped to consumers)
 
-| Package | Version | Published | Age | 15-day check | Notes |
-|---|---|---|---|---|---|
-| [`jose`](https://github.com/panva/jose) | `6.2.3` | 2026-04-27 | 68d | ✅ | **The only runtime dep.** JOSE/JWT/JWKS primitives (ES256/HS256 sign+verify, `importJWK`, `createRemoteJWKSet`). Pure JS, no native, no postinstall. |
+| Package | Version | Published | 15-day check | Notes |
+|---|---|---|---|---|
+| [`jose`](https://github.com/panva/jose) | `6.2.3` | 2026-04-27 | ✅ | **The only runtime dep.** JOSE/JWT/JWKS primitives (ES256/HS256 sign+verify, `importJWK`, `createRemoteJWKSet`). Pure JS, no native, no postinstall. |
 
 There is exactly one runtime dependency by design
 ([§15](contracts/15-package-and-export-map.md)). Every
@@ -38,17 +39,17 @@ optional peer that a consumer opts into.
 
 ## Development dependencies (not shipped)
 
-| Package | Version | Published | Age | 15-day check | Purpose |
-|---|---|---|---|---|---|
-| [`typescript`](https://www.typescriptlang.org/) | `6.0.3` | 2026-04-16 | 79d | ✅ | Type-checking + the publish `tsc` build. (7.0.1-rc skipped — RC.) |
-| [`@types/node`](https://www.npmjs.com/package/@types/node) | `24.13.2` | 2026-06-10 | 24d | ✅ | Node 24 typings; matches the `engines.node >=24` target. |
-| [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | 96d | ✅ | The official MCP SDK — used in tests/the Phase 4 example (the end-to-end verify client) AND as a runtime dep of every server scaffolded by `npx mcp-sso init` (§15), pinned there at this same version. Not a runtime dep of the mcp-sso package itself (jose-only). |
-| [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | 81d | ✅ | Reference framework adapter — dev/test + optional peer. (Latest `5.9.0` is 5d — rejected.) |
-| [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | 215d | ✅ | Framework adapter — dev/test + optional peer. |
-| [`hono`](https://hono.dev/) | `4.12.26` | 2026-06-18 | 16d | ✅ | Framework adapter — dev/test + optional peer. (Latest `4.12.27` is 10d — rejected.) |
-| [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | 215d | ✅ | Express typings (dev only). |
-| [`mysql2`](https://github.com/sidorares/node-mysql2) | `3.22.5` | 2026-06-06 | 28d | ✅ | The `/store/mysql` `StorePort` adapter — dev/test + optional peer. Newest eligible version as of 2026-07-04 (cutoff 2026-06-19); it is also the latest stable. |
-| [`ioredis`](https://github.com/redis/ioredis) | `5.11.1` | 2026-06-04 | 30d | ✅ | The `/rate-limit/redis` `RateLimitPort` adapter — dev/test + optional peer. Newest eligible (cutoff 2026-06-19) AND the latest stable. (Official `redis@6.1.0` is 3d old — rejected; `redis@6.0.0` is eligible but a minor behind, so `ioredis` was chosen.) |
+| Package | Version | Published | 15-day check | Purpose |
+|---|---|---|---|---|
+| [`typescript`](https://www.typescriptlang.org/) | `6.0.3` | 2026-04-16 | ✅ | Type-checking + the publish `tsc` build. |
+| [`@types/node`](https://www.npmjs.com/package/@types/node) | `24.13.2` | 2026-06-10 | ✅ | Node 24 typings; matches the `engines.node >=24` target. |
+| [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | ✅ | The official MCP SDK — used in tests/the Phase 4 example (the end-to-end verify client) AND as a runtime dep of every server scaffolded by `npx mcp-sso init` (§15), pinned there at this same version. Not a runtime dep of the mcp-sso package itself (jose-only). |
+| [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | ✅ | Reference framework adapter — dev/test + optional peer. |
+| [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | ✅ | Framework adapter — dev/test + optional peer. |
+| [`hono`](https://hono.dev/) | `4.12.27` | 2026-06-23 | ✅ | Framework adapter — dev/test + optional peer. |
+| [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | ✅ | Express typings (dev only). |
+| [`mysql2`](https://github.com/sidorares/node-mysql2) | `3.22.5` | 2026-06-06 | ✅ | The `/store/mysql` `StorePort` adapter — dev/test + optional peer. |
+| [`ioredis`](https://github.com/redis/ioredis) | `5.11.1` | 2026-06-04 | ✅ | The `/rate-limit/redis` `RateLimitPort` adapter — dev/test + optional peer. |
 
 Dev tooling with **no added dependency**: the test runner is `node:test` (built
 in), assertions `node:assert/strict` (built in), the SQLite store uses `node:sqlite`
@@ -93,6 +94,64 @@ pinned to a SHA whose tag is ≥15 days old at pin time):
   **First-party — documented exception to the 15-day floor (see below).**
 - npm publish step runs `npm publish --provenance` under the GitHub Actions OIDC
   token (**no `NPM_TOKEN` with publish rights, no local publishes**).
+
+The following block is the machine-readable source used by `check:deps`. The
+human tables above explain purpose and trade-offs; the check binds the exact
+versions, SHAs, tags, and publication dates to the repository files and to the
+upstream registries.
+
+<!-- dependency-policy:start -->
+```json
+{
+  "minimumAgeDays": 15,
+  "packages": {
+    "@modelcontextprotocol/sdk": { "version": "1.29.0", "published": "2026-03-30T16:50:42.718Z" },
+    "@types/express": { "version": "5.0.6", "published": "2025-12-01T20:35:51.488Z" },
+    "@types/node": { "version": "24.13.2", "published": "2026-06-10T22:15:29.361Z" },
+    "express": { "version": "5.2.1", "published": "2025-12-01T20:49:43.268Z" },
+    "fastify": { "version": "5.8.5", "published": "2026-04-14T12:07:12.232Z" },
+    "hono": { "version": "4.12.27", "published": "2026-06-23T02:48:48.822Z" },
+    "ioredis": { "version": "5.11.1", "published": "2026-06-04T10:14:59.752Z" },
+    "jose": { "version": "6.2.3", "published": "2026-04-27T15:23:35.019Z" },
+    "mysql2": { "version": "3.22.5", "published": "2026-06-06T08:10:39.646Z" },
+    "pnpm": { "version": "10.34.4", "published": "2026-06-18T22:30:33.318Z" },
+    "typescript": { "version": "6.0.3", "published": "2026-04-16T23:38:27.905Z" }
+  },
+  "actions": {
+    "actions/checkout": {
+      "sha": "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+      "tag": "v7.0.0",
+      "published": "2026-06-18T13:53:05Z"
+    },
+    "actions/setup-node": {
+      "sha": "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+      "tag": "v6.4.0",
+      "published": "2026-04-20T02:57:28Z"
+    },
+    "pnpm/action-setup": {
+      "sha": "0ebf47130e4866e96fce0953f49152a61190b271",
+      "tag": "v6.0.9",
+      "published": "2026-06-15T12:06:03Z"
+    },
+    "github/codeql-action": {
+      "sha": "8aad20d150bbac5944a9f9d289da16a4b0d87c1e",
+      "tag": "v4.36.2",
+      "published": "2026-06-04T14:27:19Z"
+    },
+    "ossf/scorecard-action": {
+      "sha": "4eaacf0543bb3f2c246792bd56e8cdeffafb205a",
+      "tag": "v2.4.3",
+      "published": "2025-09-30T20:40:48Z"
+    },
+    "acartag7/engineering-os": {
+      "sha": "c697b412abf034be7a22a53f567ec10eecc776e0",
+      "published": "2026-07-19T02:55:07Z",
+      "firstPartyException": true
+    }
+  }
+}
+```
+<!-- dependency-policy:end -->
 
 ### CI integration containers (image tags)
 

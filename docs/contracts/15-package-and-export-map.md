@@ -143,8 +143,8 @@ are the same standard); CI actions are pinned by SHA; npm publish uses
 `--provenance` from GitHub Actions OIDC only (no local publishes). Every pin is
 recorded in `docs/dependency-ledger.md` with version + publish date.
 
-**Dependency-policy gate — PENDING in this PR:** the ledger contains one
-machine-readable record for every direct npm package and GitHub Action pin.
+**Dependency-policy gate:** the ledger contains one machine-readable record
+for every direct npm package and GitHub Action pin.
 `check:deps` compares those records with `package.json` and every workflow
 `uses:` entry: missing, extra, unpinned, or mismatched entries reject. Each
 third-party Action record binds its immutable commit SHA to the recorded
