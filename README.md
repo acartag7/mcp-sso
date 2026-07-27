@@ -107,9 +107,13 @@ curl -s https://auth.example.com/oauth/token -u "$CLIENT_ID:$CLIENT_SECRET" \
 
 Requires stored-DCR mode (`dcr: { mode: "stored", store }`) and
 `clientCredentials: { enabled: true }` in `createBridgeConfig`. **No refresh
-token** (the client already holds a durable credential). The `mcc_…` subject
-prefix and a `gty: "client_credentials"` marker jointly identify machine tokens
-— enforced at three points, detailed in
+token** (the client already holds a durable credential).
+`RequestAuthorizer.authorize()` returns
+`credentialKind: "machine" | "interactive"` after it verifies the token.
+Use that field for downstream policy; do not decode the JWT or infer from an
+`mcc_…` prefix. Machine classification requires the complete `mcc_` subject,
+`sub === client_id`, and `gty: "client_credentials"` binding — enforced at
+three points, detailed in
 [§17.2](docs/contracts/17-v0-2-feature-contracts.md#172-client_credentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials).
 Rotate with `rotateMachineClientSecret`.
 

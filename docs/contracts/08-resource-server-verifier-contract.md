@@ -5,6 +5,34 @@ The RS half. Framework-free; testable without any HTTP server.
 ## 8.1 `verifyAccessToken(token, config, clock?) → VerifiedAccessToken`
 As §7.2. Throws `OAuthError("invalid_token", …, 401)` on any failure.
 
+The verified result carries the credential kind established from the already
+verified claims:
+
+```ts
+type CredentialKind = "interactive" | "machine";
+interface VerifiedAccessToken {
+  subject: string;
+  clientId: string;
+  scopes: string[];
+  credentialKind: CredentialKind;
+}
+```
+
+`credentialKind` is `"machine"` only when all three machine bindings hold:
+`sub` starts with the reserved `mcc_` namespace, `client_id === sub`, and
+`gty === "client_credentials"`. Either machine marker — an `mcc_` `sub` or a
+present `gty` claim — enters this closed classification branch. A partial or
+conflicting binding, or a `gty` whose value is unknown, non-string, or
+otherwise not exactly `"client_credentials"`, is
+`invalid_token`; it MUST NOT fall back to `"interactive"`. A token with no
+machine signal is `"interactive"` (authorization-code and refresh tokens).
+An `mcc_` `client_id` alone is not a machine marker: opaque stateless client
+IDs are client-selected, and the credential kind is an identity property.
+
+The kind is a verifier result, not a downstream inference. Consumers MUST use
+this field rather than decoding the JWT or classifying a subject/client prefix
+themselves.
+
 ## 8.2 `buildUnauthorizedChallenge(config, opts?) → string`  *(fix #1)*
 Returns the exact `WWW-Authenticate` value for a 401. The source's bug was a bare
 `Bearer`; the fix emits the RFC 9728 `resource_metadata` URL plus the supported
@@ -28,12 +56,20 @@ step up and re-authorize for the missing scope.
 ```ts
 class RequestAuthorizer {
   constructor(deps: { config: BridgeConfig; clock: ClockPort; audit: AuditPort; });
-  authorize(input: { authorization?: string | string[]; requiredScope?: string; }): Promise<{ subject: string; clientId: string; scopes: string[]; }>;
+  authorize(input: { authorization?: string | string[]; requiredScope?: string; }): Promise<{
+    subject: string;
+    clientId: string;
+    scopes: string[];
+    credentialKind: "interactive" | "machine";
+  }>;
 }
 ```
 Extracts the bearer token, verifies it, enforces `requiredScope` if given, audits
 the outcome, and rethrows `OAuthError` on failure. The adapter maps the thrown
 `OAuthError` to a 401/403 with the challenge from §8.2/§8.3. **No bypass path.**
+`RequestAuthorizer.authorize` returns the `credentialKind` produced by
+`verifyAccessToken`; `VerifiedAccessToken`, `AuthorizedSubject`, and the
+`RequestAuthResult` alias all expose the same required field.
 Under the 0.3.0 §6.1 amendment, `RequestAuthorizer.authorize` takes
 one canonical clock snapshot before request processing and reuses it for
 `verifyAccessToken` and `auth.request.occurredAt`. An invalid initial snapshot

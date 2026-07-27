@@ -212,7 +212,12 @@ test("RequestAuthorizer reuses one snapshot on the success exit", async () => {
       authorization: `Bearer ${await validAccessToken()}`,
       requiredScope: "mcp:read",
     }),
-    { subject: "operator", clientId: "client-1", scopes: ["mcp:read"] },
+    {
+      subject: "operator",
+      clientId: "client-1",
+      scopes: ["mcp:read"],
+      credentialKind: "interactive",
+    },
   );
   assert.equal(clock.reads, 1);
   assert.deepEqual(audit.events, [{

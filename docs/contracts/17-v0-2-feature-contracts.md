@@ -1012,16 +1012,22 @@ in this flow."* Decisions:
     namespace, and the audit/refresh ledger reflects only real issuance —
     THIRD enforcement point: machine access tokens mint a
     `gty: "client_credentials"` marker claim, and `verifyAccessToken`
-    accepts an `mcc_` `sub` ONLY with `sub == client_id` (RFC 9068 §2.2)
-    AND that marker. The pair is required because stateless-DCR clients
-    choose their own `client_id`, so `sub == client_id` alone could be
+    classifies a verified token as `credentialKind: "machine"` ONLY with an
+    `mcc_` `sub`, `sub == client_id` (RFC 9068 §2.2), AND that marker. An
+    `mcc_` `sub` or any present `gty` enters the machine branch; a
+    partial/conflicting triad or a `gty` other than the exact string
+    `"client_credentials"` is `invalid_token`, never an interactive fallback.
+    An `mcc_` `client_id` alone is not a marker because opaque stateless client
+    IDs are client-selected. Tokens with no machine signal return
+    `credentialKind: "interactive"`. The full triad is required because
+    stateless-DCR clients choose their own `client_id`, so `sub == client_id` alone could be
     satisfied by a pre-guard human token; the marker cannot, since only the
     machine grant mints it and the grant first ships in the SAME release as
     the marker (no legitimate unmarked machine token can exist from any
     published version — and any from pre-release `main` expires within
-    `accessTokenTtlSeconds`). Residual: an RS that decodes these JWTs
-    WITHOUT mcp-sso's verifier must classify by the same pair, never the
-    `sub` prefix alone — stated in the README). The secret is
+    `accessTokenTtlSeconds`). `VerifiedAccessToken`, `AuthorizedSubject`, and
+    `RequestAuthResult` expose the verifier-produced kind; downstream code
+    MUST NOT decode the JWT or infer from a prefix. The secret is
     returned ONCE and never retrievable. `allowedScopes` MUST be a non-empty
     subset of `catalog` (each entry a single RFC 6749 scope token; unknown or
     malformed ⇒ `invalid_scope`) — the per-client ceiling is fixed at
