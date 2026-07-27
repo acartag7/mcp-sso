@@ -16,7 +16,8 @@
 //   3. Confirm the deny legs: wrong tenant (entra_bad_tid / entra_bad_iss), group overage
 //      >200 (entra_groups_overage — the `_claim_sources` URL is NEVER fetched), no-mapped-groups
 //      (entra_no_mapped_groups). groupAuthorization keys MUST be group object-ID GUIDs, never
-//      display names (spoof vector). Guest/B2B group behavior is unverified — check before relying on it.
+//      display names (spoof vector). One invited guest with mapped membership was live-verified
+//      on 2026-07-26/27; re-check tenant-specific guest claim emission before relying on it.
 
 import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWTPayload } from "jose";
 import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
