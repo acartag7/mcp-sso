@@ -227,8 +227,11 @@ decision. Everything else in the pipeline still runs under the flag.
 - **Concurrency/DoS:** single-flight keyed by the RAW presented `client_id`
   string (raw-string identity rule — concurrent authorizes for the same
   client_id coalesce into one fetch; distinct raw strings never coalesce,
-  even when they re-serialize identically); a global in-flight cap (default 8);
-  the authorize endpoint sits behind `RateLimitPort` (`cimd:<ip>`). Error
+  even when they re-serialize identically); a global in-flight cap (default 8).
+  Direct header-identity mode first applies the §6.7 outer
+  `authorize:<ip>` budget before identity verification, then the resolver's
+  `cimd:<ip>` budget before DNS/fetch. Upstream redirect mode retains its
+  existing `upstream:<ip>` then `cimd:<ip>` budgets. Error
   responses are NOT cached (draft MUST NOT) — the rate-limit layer, not a
   negative cache, bounds refetch abuse.
 

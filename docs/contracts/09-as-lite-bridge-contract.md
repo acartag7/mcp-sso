@@ -214,6 +214,12 @@ the response. Wiring rules:
   render the consent page; POST `/oauth/authorize/approve` → `approve`; POST
   `/oauth/token` → `exchangeAuthorizationCode`/`refresh` (behind `RateLimitPort`);
   POST `/oauth/revoke` → `revoke` (always 200).
+- **Direct-authorize ordering:** the header-identity GET `/oauth/authorize`
+  path calls `Bridge.resolveIdentity`, which checks
+  `RateLimitPort("authorize:<ip>")` before `IdentityPort.verify`, its audit, or
+  `prepare`. Limiter denial is a direct 429 with no redirect; limiter failure
+  remains fail-open (§6.7). Upstream redirect, console pairing, and CIMD retain
+  their independent budgets rather than receiving a second adapter-level check.
 - **Error → response:** an `OAuthError` with `.redirect` ⇒ **302** to the tagged
   `redirect_uri?error=…`; otherwise direct — status `error.status`, body
   `oauthErrorBody(error)` (§9.5). On the protected `/mcp` surface, 401/403 set the
