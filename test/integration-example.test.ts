@@ -18,7 +18,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { pkceChallenge } from "../src/crypto.ts";
 import { AuthConfigError, createBridgeConfig } from "../src/config.ts";
-import { buildApp, buildExample, configFromEnv, createOidcUpstreamFromEnv, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
+import {
+  buildApp,
+  buildExample,
+  configFromEnv,
+  createOidcUpstreamFromEnv,
+  defaultListenHost,
+  entraGroupAuthorizationFromEnv,
+} from "../examples/fastify-sqlite/app.ts";
 import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
@@ -146,6 +153,23 @@ test("integration — listen host: pairing binds loopback; Cloudflare binds 0.0.
   assert.equal(defaultListenHost({ OIDC_ISSUER: "https://issuer.test" }), "0.0.0.0", "generic OIDC redirect mode → all interfaces");
   assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "" }), "0.0.0.0", "blank Google selector remains production mode (boot later rejects it)");
   assert.equal(defaultListenHost({ OIDC_ISSUER: "" }), "0.0.0.0", "blank OIDC selector remains production mode (boot later rejects it)");
+});
+
+test("integration — Entra group authorization env preserves the complete object and absence", () => {
+  const value = {
+    mapping: {
+      "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee": ["mcp:write"],
+    },
+    baseScopes: ["mcp:read"],
+  };
+
+  assert.deepEqual(
+    entraGroupAuthorizationFromEnv({
+      ENTRA_GROUP_AUTHORIZATION_JSON: JSON.stringify(value),
+    }),
+    value,
+  );
+  assert.equal(entraGroupAuthorizationFromEnv({}), undefined);
 });
 
 test("integration — Google branch boot-fails on a missing confidential-client secret before creating state", async () => {
