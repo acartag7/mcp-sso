@@ -29,6 +29,33 @@ export interface HeaderRead {
   ambiguous: boolean;
 }
 
+/** Preserve Node's occurrence metadata; repeated Cookie fields form one string.
+ *  `normalized` supports framework injectors whose mock IncomingMessage omits
+ *  `headersDistinct`; its arrays/case-variant keys remain ambiguous. */
+export function headersFromDistinct(
+  distinct: Record<string, string[] | undefined> | undefined,
+  normalized?: NormRequest["headers"],
+): NormRequest["headers"] {
+  if (distinct === undefined) {
+    if (normalized === undefined) throw new TypeError("header occurrence metadata is unavailable");
+    const fallback: NormRequest["headers"] = Object.create(null) as NormRequest["headers"];
+    for (const [key, raw] of Object.entries(normalized)) {
+      fallback[key] = key.toLowerCase() === "cookie" && Array.isArray(raw)
+        ? raw.join("; ") : Array.isArray(raw) ? [...raw] : raw;
+    }
+    return fallback;
+  }
+  const headers: NormRequest["headers"] = Object.create(null) as NormRequest["headers"];
+  for (const [key, values] of Object.entries(distinct)) {
+    if (!values?.length) continue;
+    const lower = key.toLowerCase();
+    headers[lower] = lower === "cookie"
+      ? values.join("; ")
+      : values.length === 1 ? values[0] : [...values];
+  }
+  return headers;
+}
+
 /** Snapshot one case-insensitive normalized header without selecting a duplicate. */
 export function readHeader(headers: NormRequest["headers"], name: string): HeaderRead {
   const lower = name.toLowerCase();
@@ -38,7 +65,10 @@ export function readHeader(headers: NormRequest["headers"], name: string): Heade
     if (key.toLowerCase() === lower) {
       if (found || Array.isArray(raw)) return { ambiguous: true };
       found = true;
-      if (typeof raw === "string") value = raw;
+      if (typeof raw === "string") {
+        if (lower !== "cookie" && raw.includes(",")) return { ambiguous: true };
+        value = raw;
+      }
     }
   }
   return { value, ambiguous: false };

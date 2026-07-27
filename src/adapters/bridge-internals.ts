@@ -12,7 +12,9 @@ import { headerString, type NormRequest } from "./http.ts";
 
 export function hasBasicAuthorization(headers: NormRequest["headers"]): boolean {
   return Object.entries(headers).some(([key, raw]) =>
-    key.toLowerCase() === "authorization" && (Array.isArray(raw) ? raw : [raw]).some(isBasicAttempt));
+    key.toLowerCase() === "authorization" &&
+    (Array.isArray(raw) ? raw : [raw]).some((value) =>
+      typeof value === "string" && value.split(",").some((part) => isBasicAttempt(part.trim()))));
 }
 
 export async function assertUnambiguousAuthorization(

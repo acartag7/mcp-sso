@@ -13,6 +13,7 @@ import { pkceChallenge } from "../../src/crypto.ts";
 import { OAuthError, withRedirect } from "../../src/errors.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
+import { runAdapterHeaderFlow } from "./adapter-header-flow.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
 const REDIRECT = "https://client.test/callback";
@@ -47,6 +48,12 @@ export interface AdapterClient {
   get(path: string, headers?: Record<string, string>): Promise<AdapterResp>;
   postForm(path: string, body: Record<string, string>, headers?: Record<string, string>): Promise<AdapterResp>;
   postJson(path: string, body: unknown, headers?: Record<string, string>): Promise<AdapterResp>;
+  requestOccurrences(
+    method: "GET" | "POST",
+    path: string,
+    headers: ReadonlyArray<readonly [string, string]>,
+    body?: string,
+  ): Promise<AdapterResp>;
   close?(): Promise<void>;
 }
 
@@ -181,4 +188,6 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       await client.close?.();
     }
   });
+
+  runAdapterHeaderFlow(name, mount, makeBridge);
 }

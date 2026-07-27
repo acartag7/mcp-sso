@@ -27,6 +27,14 @@ runAdapterFlow("hono", async (bridge, identity) => {
       const r = await app.request(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
       return { status: r.status, headers: Object.fromEntries(r.headers), body: await r.text() } as AdapterResp;
     },
+    async requestOccurrences(method, path, occurrences, body) {
+      const headers = new Headers();
+      for (const [name, value] of occurrences) headers.append(name, value);
+      const init: RequestInit = { method, headers };
+      if (body !== undefined) init.body = body;
+      const r = await app.fetch(new Request(`http://localhost${path}`, init));
+      return { status: r.status, headers: Object.fromEntries(r.headers), body: await r.text() };
+    },
   };
   return client;
 });

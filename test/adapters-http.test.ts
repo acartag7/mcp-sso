@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { headerString, isMcpPath, readHeader } from "../src/adapters/http.ts";
+import { headerString, headersFromDistinct, isMcpPath, readHeader } from "../src/adapters/http.ts";
 
 test("headerString rejects normalized arrays and case-duplicate keys", () => {
   assert.equal(headerString({ Origin: "https://auth.test" }, "origin"), "https://auth.test");
@@ -15,6 +15,38 @@ test("headerString rejects normalized arrays and case-duplicate keys", () => {
   assert.equal(headerString({ Origin: "https://auth.test", origin: "https://evil.test" }, "origin"), undefined);
   assert.equal(headerString({ origin: "https://evil.test", Origin: "https://auth.test" }, "origin"), undefined);
   assert.deepEqual(readHeader({ Origin: ["https://auth.test"] }, "origin"), { ambiguous: true });
+});
+
+test("headersFromDistinct preserves multiplicity while joining repeated Cookie fields", () => {
+  const headers = headersFromDistinct({
+    authorization: ["Bearer attacker", "Basic credentials"],
+    origin: ["https://auth.test"],
+    cookie: ["a=1", "b=2"],
+  });
+  assert.deepEqual(headers.authorization, ["Bearer attacker", "Basic credentials"]);
+  assert.equal(headers.origin, "https://auth.test");
+  assert.equal(headers.cookie, "a=1; b=2");
+  assert.equal(headerString(headers, "authorization"), undefined);
+  assert.equal(headerString(headers, "cookie"), "a=1; b=2");
+});
+
+test("headersFromDistinct keeps injector fallback arrays and case variants ambiguous", () => {
+  const headers = headersFromDistinct(undefined, {
+    Authorization: "Bearer attacker",
+    authorization: "Basic credentials",
+    origin: ["https://auth.test"],
+    cookie: ["a=1", "b=2"],
+  });
+  assert.equal(headerString(headers, "authorization"), undefined);
+  assert.equal(headerString(headers, "origin"), undefined);
+  assert.equal(headerString(headers, "cookie"), "a=1; b=2");
+  assert.throws(() => headersFromDistinct(undefined), /occurrence metadata is unavailable/);
+});
+
+test("headerString rejects comma-coalesced non-Cookie security headers", () => {
+  assert.equal(headerString({ authorization: "Bearer attacker, Basic credentials" }, "authorization"), undefined);
+  assert.equal(headerString({ origin: "https://auth.test, https://evil.test" }, "origin"), undefined);
+  assert.equal(headerString({ cookie: "a=1,still-one-cookie-string" }, "cookie"), "a=1,still-one-cookie-string");
 });
 
 // isMcpPath centralizes the /mcp request-target check the examples' Origin gate
