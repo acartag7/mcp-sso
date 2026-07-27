@@ -85,6 +85,8 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.match(server, /occurrences\?\.length === 1/, "generated /mcp gate accepts exactly one occurrence");
     assert.match(server, /origin\.includes\(","\)/, "generated /mcp gate rejects comma-coalesced Origin");
     assert.doesNotMatch(server, /request\.headers\.origin/, "generated /mcp gate never selects a normalized Origin");
+    assert.match(server, /cimd:\s*\{\s*enabled:\s*true\s*\}/, "generated server enables CIMD");
+    assert.match(server, /dcr:\s*\{\s*mode:\s*"stateless"\s*\}/, "generated server retains DCR");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -224,6 +226,13 @@ test("bin init (spawn): full pairing round-trip — register → code → consen
       // discovery + register
       const prm = await fetchBounded(`${origin}/.well-known/oauth-protected-resource`);
       assert.equal(prm.status, 200, "PRM discovery served");
+      const metadata = await fetchBounded(`${origin}/.well-known/oauth-authorization-server`);
+      assert.equal(metadata.status, 200, "authorization-server metadata served");
+      assert.equal(
+        (await metadata.json() as { client_id_metadata_document_supported?: boolean }).client_id_metadata_document_supported,
+        true,
+        "generated server advertises CIMD",
+      );
       const reg = await fetchBounded(`${origin}/oauth/register`, {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ redirect_uris: [redirect] }),

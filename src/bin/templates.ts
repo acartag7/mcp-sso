@@ -99,6 +99,7 @@ async function main(): Promise<void> {
     defaultScopes: list(process.env.OAUTH_DEFAULT_SCOPES, "mcp:read"),
     allowedOrigins: list(process.env.OAUTH_ALLOWED_ORIGINS, ISSUER),
     dev: isHttpLoopback(ISSUER) ? { allowInsecureLocalhost: true } : undefined,
+    cimd: { enabled: true },
     dcr: { mode: "stateless" },
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
@@ -193,7 +194,6 @@ function packageJson(vars: TemplateVars): string {
 const GITIGNORE = `node_modules/
 .mcp-sso/
 `;
-
 // Harden the install: no dependency lifecycle/postinstall scripts run unless the operator
 // explicitly vets one (the project's supply-chain posture — install scripts are a primary
 // npm supply-chain vector). mcp-sso + fastify + the MCP SDK are pure JS (no scripts), so

@@ -354,6 +354,7 @@ export async function buildGatewayExample(
     scopeCatalog: listEnv(env, "OAUTH_SCOPE_CATALOG", "mcp:read,mcp:write"),
     defaultScopes: listEnv(env, "OAUTH_DEFAULT_SCOPES", "mcp:read"),
     allowedOrigins: listEnv(env, "OAUTH_ALLOWED_ORIGINS", issuer),
+    cimd: { enabled: true },
     dcr: { mode: "stateless" },
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
