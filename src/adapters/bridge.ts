@@ -24,7 +24,7 @@ import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import {
-  formField, formObject, headerString, oauthErrorResponse, queryString,
+  formField, formObject, headerString, oauthErrorResponse, queryString, readHeader,
   type NormRequest, type NormResponse,
 } from "./http.ts";
 
@@ -192,9 +192,10 @@ export class Bridge {
   }
 
   async handleToken(req: NormRequest): Promise<NormResponse> {
-    const authorization = headerString(req.headers, "authorization");
+    const { value: authorization, ambiguous } = readHeader(req.headers, "authorization");
     try {
       await this.guard(req, "token");
+      if (ambiguous) throw new OAuthError("invalid_client", "Authorization header must occur exactly once", 401);
       const body = formObject(req.body);
       const grantType = formField(body, "grant_type");
       let response: UserTokenResponse | MachineTokenResponse;

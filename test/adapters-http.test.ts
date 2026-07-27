@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isMcpPath } from "../src/adapters/http.ts";
+import { headerString, isMcpPath } from "../src/adapters/http.ts";
+
+test("headerString rejects normalized arrays and case-duplicate keys", () => {
+  assert.equal(headerString({ Origin: "https://auth.test" }, "origin"), "https://auth.test");
+  assert.equal(headerString({}, "origin"), undefined);
+  for (const origin of [
+    ["https://auth.test"],
+    ["https://auth.test", "https://evil.test"],
+    ["https://evil.test", "https://auth.test"],
+  ]) {
+    assert.equal(headerString({ Origin: origin }, "origin"), undefined);
+  }
+  assert.equal(headerString({ Origin: "https://auth.test", origin: "https://evil.test" }, "origin"), undefined);
+  assert.equal(headerString({ origin: "https://evil.test", Origin: "https://auth.test" }, "origin"), undefined);
+});
 
 // isMcpPath centralizes the /mcp request-target check the examples' Origin gate
 // (and the gateway's JSON body parser) share. The property that matters: it must

@@ -83,7 +83,7 @@ function setup(enabled: boolean): Ctx {
   };
 }
 
-function req(partial: Partial<NormRequest> & { body?: unknown; headers?: Record<string, string> }): NormRequest {
+function req(partial: Partial<NormRequest> & { body?: unknown; headers?: NormRequest["headers"] }): NormRequest {
   return { query: partial.query ?? {}, body: partial.body ?? {}, headers: partial.headers ?? {}, ip: partial.ip ?? "1.2.3.4" };
 }
 
@@ -191,6 +191,25 @@ test("both auth methods (Basic + body client_secret) ⇒ 401 invalid_client (RFC
   }));
   assert.equal(res.status, 401);
   assert.equal((res.body as { error: string }).error, "invalid_client");
+});
+
+test("ambiguous normalized Authorization never degrades to client_secret_post", async () => {
+  const ctx = setup(true);
+  const c = await provision(ctx);
+  for (const headers of [
+    { authorization: [basicHeader(c.clientId, c.clientSecret), "Bearer attacker"] },
+    { authorization: ["Bearer attacker", basicHeader(c.clientId, c.clientSecret)] },
+    { Authorization: basicHeader(c.clientId, c.clientSecret), authorization: "Bearer attacker" },
+    { Authorization: "Bearer attacker", authorization: basicHeader(c.clientId, c.clientSecret) },
+  ]) {
+    const res = await ctx.bridge.handleToken(req({
+      headers,
+      body: grantBody({ client_id: c.clientId, client_secret: c.clientSecret }),
+    }));
+    assert.equal(res.status, 401);
+    assert.equal((res.body as { error: string }).error, "invalid_client");
+    assert.equal((res.body as { access_token?: string }).access_token, undefined);
+  }
 });
 
 test("two-methods rejection keys on the Basic SCHEME: malformed Basic + body client_secret is still two methods", async () => {
