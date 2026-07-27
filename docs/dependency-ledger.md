@@ -90,19 +90,29 @@ pinned to a SHA whose tag is ≥15 days old at pin time):
 - npm publish step runs `npm publish --provenance` under the GitHub Actions OIDC
   token (**no `NPM_TOKEN` with publish rights, no local publishes**).
 
-### CI service containers (image tags)
+### CI integration containers (image tags)
 
 The `verify` job runs the `/store/mysql` and `/rate-limit/redis` integration tests
-against `mysql:8.4` and `redis:7-alpine` service containers (pinned by **tag**, not
-digest). This is a deliberate, narrower trust boundary than the SHA-pinned Actions
-above: a service image is a *test fixture*, not a build input that executes in the
-published artifact. A tag rebuild that changed `sql_mode` defaults, the default
-authentication plugin, or timezone handling would be caught loudly rather than
-silently — `migrateMysqlStore` **fail-closed asserts** `STRICT_TRANS_TABLES` in
-`sql_mode` and `utf8mb4_bin` table collation at boot, so image drift that matters for
-correctness turns the CI red, not green-with-wrong-results. (If a future change makes
-these assertions insufficient, promote both images to `@sha256:<digest>` pins recorded
-here with the same 15-day check.)
+against `mysql:8.4` and `redis:7-alpine` containers (pinned by **tag**, not
+digest). The macOS self-hosted runner starts them through its Docker engine with
+`--pull=always`, waits for both health checks, publishes random loopback ports,
+and removes them after the job. This is a deliberate, narrower trust boundary
+than the SHA-pinned Actions above: a service image is a *test fixture*, not a
+build input that executes in the published artifact. A tag rebuild that changed
+`sql_mode` defaults, the default authentication plugin, or timezone handling
+would be caught loudly rather than silently — `migrateMysqlStore` **fail-closed
+asserts** `STRICT_TRANS_TABLES` in `sql_mode` and `utf8mb4_bin` table collation
+at boot, so image drift that matters for correctness turns the CI red, not
+green-with-wrong-results. (If a future change makes these assertions
+insufficient, promote both images to `@sha256:<digest>` pins recorded here with
+the same 15-day check.)
+
+CI verification, `process-guard`, and CodeQL use the repo-scoped
+`[self-hosted, macOS, ARM64, mcp-sso]` runner on repo-owned branch pushes. The
+workflows deliberately do not subscribe to `pull_request`, so fork-controlled
+workflow changes cannot reach that runner. Release publishing remains on
+GitHub-hosted `ubuntu-latest` to preserve the OIDC trusted-publishing and
+provenance boundary.
 
 ## Verification & change protocol
 

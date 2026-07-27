@@ -11,7 +11,7 @@ permissions:
 jobs:
   verify:
     name: typecheck · lines · test · build
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, mcp-sso]
 
     env:
       # RUN_INTEGRATION scopes the in-file hard-fail gate to THIS job.
@@ -35,7 +35,7 @@ jobs:
       # trusted branch runs cannot collide.
       - name: start integration services
         run: |
-          docker run --detach --name "$MYSQL_CONTAINER" \
+          docker run --pull=always --detach --name "$MYSQL_CONTAINER" \
             --env MYSQL_ROOT_PASSWORD=rootpw \
             --env MYSQL_DATABASE=mcp_sso \
             --env MYSQL_USER=mcp \
@@ -46,7 +46,7 @@ jobs:
             --health-timeout=5s \
             --health-retries=18 \
             mysql:8.4
-          docker run --detach --name "$REDIS_CONTAINER" \
+          docker run --pull=always --detach --name "$REDIS_CONTAINER" \
             --publish 127.0.0.1::6379 \
             --health-cmd="redis-cli ping" \
             --health-interval=5s \
@@ -96,7 +96,7 @@ jobs:
   # external contribution is mirrored to a repo-owned branch only after review.
   process-guard:
     name: process-guard
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: [self-hosted, macOS, ARM64, mcp-sso]
     steps:
       # fetch-depth: 0 — the guard needs full history to compute the merge-base.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0 (2026-06-18)
