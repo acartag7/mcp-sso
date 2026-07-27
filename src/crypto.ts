@@ -8,7 +8,7 @@ import { SignJWT, importJWK, jwtVerify } from "jose";
 import type { JWK, JWTPayload } from "jose";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { BridgeConfig } from "./config.ts";
-import { scopeString } from "./scopes.ts";
+import { scopeString, type CredentialKind } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { consentSecret, signKey, verifyKey } from "./crypto-keys.ts";
 
@@ -49,6 +49,7 @@ export interface VerifiedAccessToken {
   subject: string;
   clientId: string;
   scopes: string[];
+  credentialKind: CredentialKind;
 }
 
 export function sha256Hex(value: string): string {
@@ -155,9 +156,7 @@ export async function verifyAccessToken(token: string, config: BridgeConfig, clo
       audience: config.resource,
       currentDate: new Date(nowMs),
     });
-    const claims = accessClaims(payload);
-    if (claims.subject.startsWith("mcc_") && !(claims.clientId === claims.subject && payload.gty === "client_credentials")) throw new Error("reserved-namespace sub without machine binding"); // machine tokens carry sub===client_id AND the gty marker (§17.2); anything else = pre-guard masquerade
-    return claims;
+    return accessClaims(payload);
   } catch {
     throw new OAuthError("invalid_token", "Bearer token is invalid", 401);
   }
@@ -206,11 +205,23 @@ function cimdVerifiedClaim(payload: JWTPayload): { cimdVerified?: true } {
 }
 
 function accessClaims(payload: JWTPayload): VerifiedAccessToken {
+  const subject = requiredString(payload.sub, "sub");
+  const clientId = requiredString(payload.client_id, "client_id");
   return {
-    subject: requiredString(payload.sub, "sub"),
-    clientId: requiredString(payload.client_id, "client_id"),
+    subject,
+    clientId,
     scopes: payload.scope === "" ? [] : typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [],
+    credentialKind: credentialKindClaim(payload, subject, clientId),
   };
+}
+
+function credentialKindClaim(payload: JWTPayload, subject: string, clientId: string): CredentialKind {
+  const machineSubject = subject.startsWith("mcc_");
+  const machineClient = clientId.startsWith("mcc_");
+  const hasGrantType = Object.hasOwn(payload, "gty");
+  if (!machineSubject && !machineClient && !hasGrantType) return "interactive";
+  if (machineSubject && clientId === subject && hasGrantType && payload.gty === "client_credentials") return "machine";
+  throw new Error("partial or conflicting machine credential binding");
 }
 
 function requiredString(value: unknown, label: string): string {

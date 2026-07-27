@@ -28,6 +28,10 @@ import {
   type RedirectIdentityPort,
   type NormRequest,
   type NormResponse,
+  type CredentialKind,
+  type VerifiedAccessToken,
+  type AuthorizedSubject,
+  type RequestAuthResult,
 } from "../src/index.ts";
 
 const pkgPath = fileURLToPath(new URL("../package.json", import.meta.url));
@@ -50,6 +54,11 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   void (null as unknown as RedirectIdentityPort); // type reachable
   void (null as unknown as NormRequest); // type reachable (the shapes handlePairingAuthorize/createUpstreamRedirectFlow take/return)
   void (null as unknown as NormResponse);
+  const credentialKind: CredentialKind = "machine";
+  const verified: VerifiedAccessToken = { subject: "mcc_service", clientId: "mcc_service", scopes: ["mcp:read"], credentialKind };
+  const authorized: AuthorizedSubject = verified;
+  const requestResult: RequestAuthResult = authorized;
+  assert.equal(requestResult.credentialKind, "machine", "credential kind is present on every root-exported public result type");
 });
 
 test("exports: the consumer-facing example helpers (§15 DX) behave as the contract claims", async () => {

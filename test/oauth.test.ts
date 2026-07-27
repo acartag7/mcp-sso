@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
-import type { JWK } from "jose";
+import { importJWK, SignJWT, type JWTPayload, type JWK } from "jose";
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
@@ -79,6 +79,18 @@ function makeConfig(opts: { redirectAllowlist?: string[]; scopeCatalog?: string[
   });
 }
 
+async function forgeAccessToken(ctx: Ctx, claims: JWTPayload): Promise<string> {
+  const now = Math.floor(ctx.clock.nowMs() / 1000);
+  const key = await importJWK(ctx.config.signingPrivateJwk, "ES256");
+  return await new SignJWT({ client_id: "client-1", scope: "mcp:read", ...claims })
+    .setProtectedHeader({ alg: "ES256", kid: ctx.config.signingKeyId, typ: "JWT" })
+    .setIssuer(ctx.config.issuer)
+    .setAudience(ctx.config.resource)
+    .setIssuedAt(now)
+    .setExpirationTime(now + ctx.config.accessTokenTtlSeconds)
+    .sign(key);
+}
+
 function setup(opts: {
   redirectAllowlist?: string[];
   scopeCatalog?: string[];
@@ -141,6 +153,7 @@ test("PKCE S256 authorize/approve/token mints an ES256 access token + hashed ref
   assert.equal(verified.subject, SUBJECT);
   assert.equal(verified.clientId, "client-1");
   assert.deepEqual(verified.scopes.sort(), ["mcp:read", "mcp:write"]);
+  assert.equal(verified.credentialKind, "interactive");
   // audit never contains raw secrets
   const auditJson = JSON.stringify(ctx.audit.events);
   for (const secret of [code, token.refresh_token, token.access_token]) assert.equal(auditJson.includes(secret), false, `audit leaked: ${secret}`);
@@ -219,6 +232,8 @@ test("refresh token rotates and replay revokes the family", async () => {
   const initial = await exchangeCode(ctx, "refresh-verifier-123456789012345678901234567890123");
   const rotated = await ctx.token.refresh({ grantType: "refresh_token", refreshToken: initial.refresh_token, clientId: "client-1" });
   assert.notEqual(rotated.refresh_token, initial.refresh_token);
+  assert.equal((await verifyAccessToken(initial.access_token, ctx.config, ctx.clock)).credentialKind, "interactive");
+  assert.equal((await verifyAccessToken(rotated.access_token, ctx.config, ctx.clock)).credentialKind, "interactive");
   // replay the original -> invalid_grant
   await assert.rejects(
     ctx.token.refresh({ grantType: "refresh_token", refreshToken: initial.refresh_token, clientId: "client-1" }),
@@ -338,18 +353,32 @@ test("prepare rejects a subject in the reserved mcc_ machine namespace (RFC 9700
   await ctx.store.close();
 });
 
-test("verifier accepts an mcc_ sub only with sub==client_id AND the gty marker — pre-upgrade tokens can't masquerade as machine", async () => {
+test("verifier classifies the complete machine triad and rejects every partial/conflicting marker", async () => {
   const ctx = setup();
   const isInvalidToken = (e: unknown): boolean => e instanceof OAuthError && e.code === "invalid_token" && e.status === 401;
-  // Pre-guard HUMAN token, mcc_ subject, foreign client_id: rejected.
-  const forged = await signAccessToken({ subject: "mcc_impostor", clientId: "mcpdc_human1", scopes: ["mcp:read"] }, ctx.config, ctx.clock);
-  await assert.rejects(verifyAccessToken(forged, ctx.config, ctx.clock), isInvalidToken);
-  // Stateless-DCR masquerade: the client CHOSE client_id === the mcc_ subject, but no gty marker: rejected.
-  const statelessForged = await signAccessToken({ subject: "mcc_alice", clientId: "mcc_alice", scopes: ["mcp:read"] }, ctx.config, ctx.clock);
-  await assert.rejects(verifyAccessToken(statelessForged, ctx.config, ctx.clock), isInvalidToken);
-  // A legitimate machine token (sub === client_id + the gty marker only the machine grant mints) verifies.
+
+  const invalid: Array<{ label: string; claims: JWTPayload }> = [
+    { label: "reserved subject with foreign client", claims: { sub: "mcc_impostor", client_id: "mcpdc_human1" } },
+    { label: "reserved subject and client without gty", claims: { sub: "mcc_alice", client_id: "mcc_alice" } },
+    { label: "reserved client with interactive subject", claims: { sub: "alice", client_id: "mcc_service" } },
+    { label: "machine gty on an interactive identity", claims: { sub: "alice", client_id: "client-1", gty: "client_credentials" } },
+    { label: "conflicting reserved identities", claims: { sub: "mcc_one", client_id: "mcc_two", gty: "client_credentials" } },
+    { label: "unknown gty", claims: { sub: "alice", client_id: "client-1", gty: "future_grant" } },
+    { label: "non-string gty", claims: { sub: "alice", client_id: "client-1", gty: 7 } },
+    { label: "null gty", claims: { sub: "alice", client_id: "client-1", gty: null } },
+  ];
+  for (const c of invalid) {
+    await assert.rejects(
+      verifyAccessToken(await forgeAccessToken(ctx, c.claims), ctx.config, ctx.clock),
+      isInvalidToken,
+      c.label,
+    );
+  }
+
   const machine = await signAccessToken({ subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], machine: true }, ctx.config, ctx.clock);
-  assert.equal((await verifyAccessToken(machine, ctx.config, ctx.clock)).subject, "mcc_svc1");
+  assert.deepEqual(await verifyAccessToken(machine, ctx.config, ctx.clock), {
+    subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], credentialKind: "machine",
+  });
   await ctx.store.close();
 });
 
@@ -605,9 +634,13 @@ function baseInput() {
 }
 
 test("requireScope step-up (403 insufficient_scope)", () => {
-  assert.doesNotThrow(() => requireScope({ subject: "s", clientId: "c", scopes: ["mcp:read"] }, "mcp:read"));
+  assert.doesNotThrow(() => requireScope({
+    subject: "s", clientId: "c", scopes: ["mcp:read"], credentialKind: "interactive",
+  }, "mcp:read"));
   assert.throws(
-    () => requireScope({ subject: "s", clientId: "c", scopes: ["mcp:read"] }, "mcp:write"),
+    () => requireScope({
+      subject: "s", clientId: "c", scopes: ["mcp:read"], credentialKind: "interactive",
+    }, "mcp:write"),
     (e: unknown) => e instanceof OAuthError && e.code === "insufficient_scope" && e.status === 403,
   );
 });

@@ -4,10 +4,13 @@
 
 import { OAuthError } from "./errors.ts";
 
+export type CredentialKind = "interactive" | "machine";
+
 export interface AuthorizedSubject {
   subject: string;
   clientId: string;
   scopes: string[];
+  credentialKind: CredentialKind;
 }
 
 /** Validate requested scopes against the configured catalog. Falls back to

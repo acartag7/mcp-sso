@@ -13,7 +13,8 @@ export {
 } from "./errors.ts";
 
 export {
-  type AuthorizedSubject, normalizeScopes, resolveClientCredentialsScope, scopeString, requireScope,
+  type AuthorizedSubject, type CredentialKind,
+  normalizeScopes, resolveClientCredentialsScope, scopeString, requireScope,
 } from "./scopes.ts";
 
 export {

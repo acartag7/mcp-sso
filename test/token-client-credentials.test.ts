@@ -124,6 +124,7 @@ test("client_credentials via client_secret_basic: 200 + MachineTokenResponse (no
   assert.equal(verified.subject, c.clientId, "sub = client_id (RFC 9068 §2.2)");
   assert.equal(verified.clientId, c.clientId, "client_id claim preserved");
   assert.deepEqual(verified.scopes.sort(), ["mcp:read", "mcp:write"]);
+  assert.equal(verified.credentialKind, "machine");
 });
 
 test("client_credentials via client_secret_post: identical shape to Basic", async () => {
@@ -466,6 +467,7 @@ test("protected /mcp access: RequestAuthorizer accepts the machine token; insuff
   const auth = await authorizer.authorize({ authorization: `Bearer ${accessToken}`, requiredScope: "mcp:read" });
   assert.equal(auth.subject, c.clientId);
   assert.deepEqual(auth.scopes.sort(), ["mcp:read", "mcp:write"]);
+  assert.equal(auth.credentialKind, "machine", "RequestAuthorizer returns the verifier-produced kind");
   // the machine client has no admin scope ⇒ step-up denies
   await assert.rejects(
     authorizer.authorize({ authorization: `Bearer ${accessToken}`, requiredScope: "mcp:admin" }),
