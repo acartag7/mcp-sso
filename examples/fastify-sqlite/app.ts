@@ -280,6 +280,21 @@ export function productionIdentityConfigured(env: Record<string, string | undefi
   return env.ENTRA_TENANT_ID !== undefined || env.CF_ACCESS_AUDIENCE !== undefined || oidcProviderConfigured(env);
 }
 
+const IDENTITY_PROVIDER_SELECTORS = [
+  "ENTRA_TENANT_ID", "CF_ACCESS_AUDIENCE", "GOOGLE_CLIENT_ID", "OIDC_ISSUER",
+] as const;
+
+/** Reject ambiguous example wiring before any stateful boot work. Presence is
+ *  intentional: a blank selector remains selected and therefore counts. */
+export function assertSingleIdentityProviderSelector(env: Record<string, string | undefined>): void {
+  const present = IDENTITY_PROVIDER_SELECTORS.filter((key) => env[key] !== undefined);
+  if (present.length > 1) {
+    throw new AuthConfigError(
+      `exactly one identity provider selector may be present; found: ${present.join(", ")}`,
+    );
+  }
+}
+
 /** Build either shipped §17.6 RedirectIdentityPort from env. Shared with the
  *  gateway example so provider config and branch precedence cannot drift. */
 export async function createOidcUpstreamFromEnv(
@@ -350,6 +365,7 @@ export async function buildExample(
   config: BridgeConfig;
   dir: string;
 }> {
+  assertSingleIdentityProviderSelector(env);
   const dir = env.MCP_SSO_DIR ?? "./.mcp-sso";
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
   const audit = new JsonlFileAudit(join(dir, "audit.jsonl"));

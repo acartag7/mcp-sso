@@ -7,7 +7,7 @@
 // tests cover exactly that wiring, both branches.
 
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -153,6 +153,77 @@ test("integration — listen host: pairing binds loopback; Cloudflare binds 0.0.
   assert.equal(defaultListenHost({ OIDC_ISSUER: "https://issuer.test" }), "0.0.0.0", "generic OIDC redirect mode → all interfaces");
   assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "" }), "0.0.0.0", "blank Google selector remains production mode (boot later rejects it)");
   assert.equal(defaultListenHost({ OIDC_ISSUER: "" }), "0.0.0.0", "blank OIDC selector remains production mode (boot later rejects it)");
+});
+
+test("integration — every provider-selector pair fails before state creation in both examples", async () => {
+  const consentSigningSecret = randomBytes(32).toString("base64url");
+  const googleClientSecret = randomBytes(24).toString("base64url");
+  const selectors = [
+    ["ENTRA_TENANT_ID", "00000000-0000-0000-0000-000000000001"],
+    ["CF_ACCESS_AUDIENCE", "cf-audience"],
+    ["GOOGLE_CLIENT_ID", "google-client"],
+    ["OIDC_ISSUER", ""], // blank-but-present still makes selection ambiguous
+  ] as const;
+  const pairs = selectors.flatMap((left, index) =>
+    selectors.slice(index + 1).map((right) => [left, right] as const)
+  );
+  assert.equal(pairs.length, 6, "four selectors have exactly six unordered pairs");
+
+  const redirectIdentity = {
+    redirectUri: "http://localhost:3000/oauth/callback",
+    buildAuthorizationUrl: () => "https://idp.test/authorize",
+    exchangeAndVerify: async () => ({ ok: false, kind: "exchange_failed", reason: "unused" } as const),
+  };
+  const identityFactories = {
+    google: async () => redirectIdentity,
+    genericOidc: async () => redirectIdentity,
+  };
+  const builders = [
+    { name: "fastify", run: (env: Record<string, string | undefined>) => buildExample(env, identityFactories) },
+    {
+      name: "gateway",
+      run: (env: Record<string, string | undefined>) => buildGatewayExample(env, {
+        backendUrl: "http://127.0.0.1:1/mcp",
+        getBackendCredential: () => { throw new Error("provider-selector guard did not run first"); },
+        identityFactories,
+      }),
+    },
+  ];
+
+  for (const builder of builders) {
+    for (const [left, right] of pairs) {
+      const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-${builder.name}-selector-pair-`));
+      const dir = join(base, "state");
+      const env = {
+        MCP_SSO_DIR: dir,
+        OAUTH_ISSUER: "http://localhost:3000",
+        OAUTH_RESOURCE: "http://localhost:3000/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: consentSigningSecret,
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+        ENTRA_CLIENT_ID: "entra-client",
+        ENTRA_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        CF_ACCESS_CERTS_URL: "https://cf.test/certs",
+        CF_ACCESS_ISSUER: "https://cf.test",
+        GOOGLE_CLIENT_SECRET: googleClientSecret,
+        GOOGLE_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        OIDC_CLIENT_ID: "oidc-client",
+        OIDC_REDIRECT_URI: "http://localhost:3000/oauth/callback",
+        [left[0]]: left[1],
+        [right[0]]: right[1],
+      };
+      try {
+        await assert.rejects(
+          builder.run(env),
+          /exactly one identity provider selector may be present/,
+          `${builder.name}: ${left[0]} + ${right[0]}`,
+        );
+        assert.equal(existsSync(dir), false, `${builder.name}: ${left[0]} + ${right[0]} leaves no state`);
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    }
+  }
 });
 
 test("integration — Entra group authorization env preserves the complete object and absence", () => {

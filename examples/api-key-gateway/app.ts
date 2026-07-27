@@ -45,7 +45,7 @@ import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 import {
   configFromEnv, defaultListenHost, createOidcUpstreamFromEnv,
   assertUpstreamConfigBeforeState, entraGroupAuthorizationFromEnv,
-  oidcProviderConfigured, productionIdentityConfigured,
+  assertSingleIdentityProviderSelector, oidcProviderConfigured, productionIdentityConfigured,
   type OidcIdentityFactories,
 } from "../fastify-sqlite/app.ts";
 import { ensureStateDir } from "../../src/state-dir.ts";
@@ -297,6 +297,7 @@ export async function buildGatewayExample(
   env: Record<string, string | undefined> = process.env,
   deps: { backendUrl: string; getBackendCredential: () => string; identityFactories?: OidcIdentityFactories },
 ): Promise<{ app: FastifyInstance; store: ReturnType<typeof openSqliteStore>; config: BridgeConfig; dir: string }> {
+  assertSingleIdentityProviderSelector(env);
   const dir = env.MCP_SSO_DIR ?? "./.mcp-sso";
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
   const audit = new JsonlFileAudit(join(dir, "audit.jsonl"));
