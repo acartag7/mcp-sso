@@ -7,7 +7,7 @@
 // resolution boundaries (decision 2): it happens inside `prepare`'s
 // pre-validation, and every failure maps to the anti-oracle generic there.
 
-import type { ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { StorePort } from "./ports/store.ts";
 import type { BridgeConfig } from "./config.ts";
@@ -186,37 +186,37 @@ export class OAuthAuthorizationUseCase {
       throw error;
     }
   }
-
   async approve(input: ApproveInput): Promise<ApproveResult> {
+    let operationClock: ClockPort;
+    const maxFutureMs = Math.max(this.config.consentTokenTtlSeconds, this.config.authorizationCodeTtlSeconds) * 1000;
+    try { operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock, maxFutureMs)); }
+    catch { throw new OAuthError("invalid_consent", "Consent token is invalid or expired"); }
     try {
       assertApproveOrigin(this.config, input.origin);
       const token = requiredStr(input.consentToken, "consent_token");
-      const consent = await verifyConsentToken(token, this.config, this.clock);
-      // §17.1.6 decision 3: the scheme/claim gate runs FIRST — before the Deny
-      // branch (which would 302 to the token's redirectUri), before any jti
-      // consume or code storage. A legacy URL-shaped token cannot be redeemed.
+      const consent = await verifyConsentToken(token, this.config, operationClock);
+      // Scheme/claim gate runs before Deny, jti consume, or storage (§17.1.6 decision 3).
       assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
       assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
       if (input.approved !== true) {
         const redirectTo = buildErrorRedirect(consent.redirectUri, "access_denied", consent.state);
-        await this.auditFailure(AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject);
+        await this.auditFailure(AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject, operationClock);
         return { redirectTo, state: consent.state };
       }
 
       // Single-use consent JTI; replay is an integrity failure (direct).
-      const consentExpiresAt = expiresAtIso(this.clock, this.config.consentTokenTtlSeconds);
+      const consentExpiresAt = expiresAtIso(operationClock, this.config.consentTokenTtlSeconds);
       if (!(await this.store.consumeConsentJti(consent.jti, consentExpiresAt))) {
         throw new OAuthError("invalid_grant", "Consent token has already been used");
       }
 
       // Scope accumulation: stored-DCR OPAQUE clients only (§17.1.6 decision 3).
       const priorScopes = accumulationAllowed(this.config, consent.clientId)
-        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(this.clock.nowMs()).toISOString())
+        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString())
         : [];
       const union = dedupe([...consent.scopes, ...priorScopes]);
-      // §17.4: re-intersect the union against the ceiling from the VERIFIED
-      // consent token — prior grants can't resurrect a removed-group scope.
+      // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
       const scopes = consent.allowedScopes ? union.filter((s) => consent.allowedScopes!.includes(s)) : union;
 
       const code = generateAuthorizationCode();
@@ -229,21 +229,21 @@ export class OAuthAuthorizationUseCase {
         scopes,
         codeChallenge: consent.codeChallenge,
         codeChallengeMethod: "S256",
-        expiresAt: expiresAtIso(this.clock, this.config.authorizationCodeTtlSeconds),
+        expiresAt: expiresAtIso(operationClock, this.config.authorizationCodeTtlSeconds),
       });
-      await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject });
+      await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject }, operationClock);
       return { code, redirectTo: redirectWithCode(consent.redirectUri, code, this.config.issuer, consent.state), state: consent.state };
     } catch (error) {
-      await this.auditFailure(AUDIT_APPROVE, error);
+      await this.auditFailure(AUDIT_APPROVE, error, undefined, undefined, undefined, operationClock);
       throw error;
     }
   }
 
-  private auditSuccess(event: AuthorizeAuditEvent, r: AuthorizeAuditSuccess): Promise<void> {
-    return writeAuthorizeSuccess(this.audit, this.clock, event, r);
+  private auditSuccess(event: AuthorizeAuditEvent, r: AuthorizeAuditSuccess, clock: ClockPort = this.clock): Promise<void> {
+    return writeAuthorizeSuccess(this.audit, clock, event, r);
   }
 
-  private auditFailure(event: AuthorizeAuditEvent, error: unknown, clientId?: string, redirectUri?: string, subject?: string): Promise<void> {
-    return writeAuthorizeFailure(this.audit, this.clock, event, error, clientId, redirectUri, subject);
+  private auditFailure(event: AuthorizeAuditEvent, error: unknown, clientId?: string, redirectUri?: string, subject?: string, clock: ClockPort = this.clock): Promise<void> {
+    return writeAuthorizeFailure(this.audit, clock, event, error, clientId, redirectUri, subject);
   }
 }

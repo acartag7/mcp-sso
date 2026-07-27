@@ -6,7 +6,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { SignJWT, importJWK, jwtVerify } from "jose";
 import type { JWK, JWTPayload } from "jose";
-import type { ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { BridgeConfig } from "./config.ts";
 import { scopeString } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
@@ -119,11 +119,12 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
 
 export async function verifyConsentToken(token: string, config: BridgeConfig, clock: ClockPort): Promise<ConsentRequestClaims & { jti: string }> {
   try {
+    const nowMs = finiteClockSnapshot(clock);
     const { payload } = await jwtVerify(token, consentSecret(config), {
       algorithms: ["HS256"],
       issuer: config.issuer,
       audience: CONSENT_AUDIENCE,
-      currentDate: new Date(clock.nowMs()),
+      currentDate: new Date(nowMs),
     });
     return { ...consentClaims(payload), jti: requiredString(payload.jti, "jti") };
   } catch {
@@ -146,12 +147,13 @@ export async function signAccessToken(claims: AccessTokenClaims, config: BridgeC
 
 export async function verifyAccessToken(token: string, config: BridgeConfig, clock: ClockPort): Promise<VerifiedAccessToken> {
   try {
+    const nowMs = finiteClockSnapshot(clock);
     const key = await verifyKey(config);
     const { payload } = await jwtVerify(token, key, {
       algorithms: ["ES256"],
       issuer: config.issuer,
       audience: config.resource,
-      currentDate: new Date(clock.nowMs()),
+      currentDate: new Date(nowMs),
     });
     const claims = accessClaims(payload);
     if (claims.subject.startsWith("mcc_") && !(claims.clientId === claims.subject && payload.gty === "client_credentials")) throw new Error("reserved-namespace sub without machine binding"); // machine tokens carry sub===client_id AND the gty marker (§17.2); anything else = pre-guard masquerade
