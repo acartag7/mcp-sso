@@ -170,13 +170,13 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day pins; SHA-pinned CI; provenance publish; no postinstall/bundler | A zero-day in jose itself — minimized by single-dep + pin + age |
 | 16 | Dev flag used to weaken a real host | Misconfiguration | `allowInsecureLocalhost` rejected unless loopback + loud warning | Someone tunnels a loopback dev instance out — dev-only, documented |
 | 17 | (v0.2) CIMD client impersonation via lookalike/localhost redirect (the MCP-documented attack: legit metadata URL + attacker's loopback redirect) | Spoofing | Exact `client_id` echo-match; redirect exact-match against the doc; consent page MUST show `client_id` host + redirect host, warns on loopback-only redirects; `client_name` labeled unverified. **The page is frame-blocked (row 36)** — without that, the user judgment this row depends on can be bypassed by an overlay rather than deceived | Real and spec-acknowledged: user judgment on lookalike domains / loopback approval remains the last line — CIMD cannot fully close this by design |
-| 18 | (v0.2) Machine-client secret theft / misuse | Spoofing / Elevation | Out-of-band provisioning only; 256-bit secrets (`mcs_`+base64url(32)); SHA-256-only storage; shown once; `verifyMachineClientSecret` uniform-work + fail-closed; scopes capped by per-client `allowedScopes` ⊆ catalog; no refresh tokens; rotation with bounded grace (≤2 active secrets). [Enforcement detail below](#row-18--machine-client-secret-enforcement) | A stolen secret is valid until rotated — there is no theft *signal* (unlike refresh replay); bounded by rotation practice + audit of `oauth.token.client_credentials` |
+| 18 | (v0.2 baseline; 0.3.0 lifecycle hardening pending) Machine-client secret theft / misuse | Spoofing / Elevation | Out-of-band lifecycle only; 256-bit secrets (`mcs_`+base64url(32)); SHA-256-only storage; shown once; `verifyMachineClientSecret` uniform-work + fail-closed; scopes capped by per-client `allowedScopes` ⊆ catalog; no refresh tokens; rotation with ≤2 stored secrets and a 24-hour default grace. Pending 0.3.0: disable clears hashes; versioned insert/CAS commits the row plus required durable audit atomically; the base `ClientStore.save` accepts only user registrations, so it is not a bypass write for machine records. [Enforcement detail below](#row-18--machine-client-secret-enforcement) | A stolen secret is valid until rotate/disable — there is no theft *signal* (unlike refresh replay). Already-issued access JWTs remain valid until `exp`; deployers bound this with a short access-token TTL |
 | 19 | (v0.2) Device-flow `user_code` brute force | Spoofing | 34.5-bit code + 600 s TTL + built-in in-process 5-attempts-per-IP cap + `RateLimitPort` hook ≈ RFC 8628 §5.1's 2⁻³² budget | In-process cap is per-instance; multi-instance deployments need the distributed limiter ([§17.10](./contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)) for the full budget |
 | 20 | (v0.2) Device-flow remote phishing (attacker delivers THEIR `user_code` to the victim) | Spoofing | Consent page echoes the `user_code` + "you are authorizing a device — confirm it is yours" (RFC 8628 §5.4 remote-phishing mitigation); short TTL limits emailed-code viability | Real-time phishing remains viable per the RFC itself; accepted with the UI mitigations, documented |
 | 21 | (v0.2) Pairing-code exposure (console scrollback, shipped logs) | Info disclosure / Spoofing | TTL 600 s, single-use, 5-attempt invalidation, session binding, ~52-bit code, in-process limiter | Shared log pipelines are OUTSIDE the deployment envelope (single-operator only) — a documented non-goal, not a mitigated risk |
 | 22 | (v0.2) Group-authorization bypass (spoofed/mutable group names, overage truncation, stale grants) | Elevation | GUID-only mapping keys; overage ⇒ fail-closed `entra_groups_overage`; `_claim_sources` URL never dereferenced; ceiling intersected at `prepare` AND `approve`. [Enforcement detail below](#row-22--group-authorization-enforcement) | Refresh tokens outlive group removal until family expiry/revocation (no identity at refresh) — bounded by `refreshTokenTtlSeconds`, documented. Guest/B2B group-claim behavior UNVERIFIED in Microsoft's docs — on the live-tenant checklist |
 | 23 | (v0.2) Quickstart secret-file theft | Info disclosure | `0700` dir + `0600` file + `O_EXCL` create; group/other-readable file is a BOOT FAILURE; `.gitignore` written into the dir | Any process running as the same OS user can read it — the OS user account is the boundary; production uses env/secret managers |
-| 24 | (v0.2) Audit-sink loss or injection | Repudiation / Tampering | JSONL sink: JSON encoding escapes newlines (no log injection); fan-out isolation (`combineAudit`); webhook https-only (raw prefix check), redirects not followed, at-most-once; all sinks fail-open (`writeAuthEvent` never rejects) | Audit writes are fail-open by design (evidence, not a gate): sink outage = lost events; webhook is at-most-once — hard-evidence deployments use file + shipper |
+| 24 | (v0.2; 0.3.0 machine-lifecycle amendment pending) Audit-sink loss or injection | Repudiation / Tampering | JSONL sink: JSON encoding escapes newlines (no log injection); fan-out isolation (`combineAudit`); webhook https-only (raw prefix check), redirects not followed, at-most-once; all ordinary `AuditPort` sinks fail-open. Pending 0.3.0, machine-client mutation evidence is the exception: its required success event commits through `MachineClientStore` in the same transaction as the row, then the ordinary sink receives only a best-effort copy | Ordinary flow audit can be lost during sink outage; webhook is at-most-once. In the pending 0.3.0 amendment, a conforming machine lifecycle backend cannot commit the credential row without its durable mutation event |
 | 25 | (v0.2) CIMD fetch abuse as DoS/amplification (attacker makes the AS fetch repeatedly) | DoS | Single-flight keyed by the raw presented `client_id` string, global in-flight cap, **bounded (LRU) validated-success cache** (§17.1.6 decision 4 — repeated same-id fetches collapse to one per freshness window **for cacheable responses only**, in direct AND upstream-redirect mode), `RateLimitPort` on authorize, 5 KiB/5 s caps; error responses not cached (spec MUST NOT) but rate-limited | Sequential abuse — across distinct valid ids, OR same-id when the attacker's endpoint serves a non-cacheable response (`no-store`/absent/`max-age`<60) — degrades to rate-limiter quality; same §8-class residual as DCR flooding; a mandatory origin-independent budget is a §18 option (row 35) |
 | 26 | (v0.2) FIFO/special-file boot/audit hang | DoS | `open(O_NOFOLLOW \| O_NONBLOCK)` + `fstat().isFile()` on quickstart reads (`secrets.json`, `.gitignore`) and the JSONL audit sink's append open — a FIFO at the path returns immediately instead of blocking until a writer appears; non-regular files are rejected. `openSqliteStore` opens `O_RDWR` (no block) and fails closed (`SQLITE_IOERR`) on a FIFO | None — the parity rule ([§17.8](./contracts.md#178-quickstart-secret-persistence-auto-keygen)) keeps every state-file open non-blocking |
 | 27 | (v0.2) Non-loopback pairing binding (envelope breach) | Spoofing / Elevation | `defaultListenHost` binds console pairing to `127.0.0.1` by default (the trust envelope is "whoever reads the process's stderr IS the operator"); Cloudflare/proxy binds `0.0.0.0`; `HOST` overrides + a loud stderr warning if pairing is bound off-loopback | An operator who sets `HOST=0.0.0.0` or tunnels the loopback listener publicly exposes the pairing surface + the attempt budget — bounded by maxAttempts/TTL, but the envelope is breached; documented, not mitigated |
@@ -248,6 +248,10 @@ nonce residual above.
 
 ### Row 18 — machine-client secret enforcement
 
+> **Release status.** The baseline secret/grant controls are shipped. The
+> atomic lifecycle, durable mutation audit, and disable controls below are the
+> pending 0.3.0 amendment.
+
 - **Out-of-band provisioning only.** Open DCR can NEVER mint a secret-bearing
   client. Per [§17.2](./contracts.md#172-client_credentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials):
   a request with `token_endpoint_auth_method ≠ "none"` or a `grant_types`
@@ -255,17 +259,29 @@ nonce residual above.
   Machine clients are also rejected at `/oauth/authorize`.
 - **256-bit secrets.** `mcs_` + base64url(32). Stored as SHA-256 only. Shown
   once.
+- **Atomic lifecycle.** Provision is insert-only. Rotate and disable are
+  versioned compare-and-swap updates. The client row and required durable
+  metadata-only audit event commit in one backend transaction. Rotations that
+  read the same version have one CAS winner; a loser returns no secret.
+  An active record whose version cannot be safely incremented is rejected
+  before a secret is minted or a CAS is attempted.
+  `ClientStore.save` accepts only user registrations; machine writes are
+  available only through the atomic `MachineClientStore` methods.
 - **Uniform-work + fail-closed verify.** `verifyMachineClientSecret` composes
   into token-endpoint client auth: wrong secret, unknown client, and poisoned
-  record all map to `invalid_client`. There is no client-existence or
-  active-count oracle.
+  or disabled record all map to `invalid_client`. There is no client-existence
+  or active-count oracle.
 - **Scope caps.** Scopes are capped by per-client `allowedScopes`, fixed ⊆
   catalog at provisioning. The grant validates the resolved scope against BOTH
   the ceiling AND the live `scopeCatalog`: `invalid_scope` on any over-ceiling
   or post-narrowing-drift entry. A scope removed from the catalog after
   provisioning is never minted (matching the user-grant `normalizeScopes`
   fail-closed gate).
-- **No refresh tokens.** Rotation has bounded grace (≤ 2 active secrets).
+- **No refresh tokens.** Rotation stores at most two secrets and defaults to a
+  24-hour overlap; a deployer-supplied grace is rejected if its computed expiry
+  is outside the non-negative safe-integer domain. Disable clears all hashes.
+  Existing bearer JWTs cannot be recalled and remain valid only until their
+  configured expiry.
 
 ### Row 22 — group-authorization enforcement
 
@@ -357,11 +373,13 @@ deployer acts on.
   decision. The `upstream:<ip>` rate-limit key bounds flow-initiation abuse, and
   every callback outcome is audited (`oauth.upstream.callback`). Bounded by the
   flow TTL (default 600 s, ≤ 3600 s, [§17.11](./contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)).
-- **Audit sinks are fail-open by design** (evidence, not a gate —
+- **Ordinary audit sinks are fail-open by design** (evidence, not a gate —
   [§13](./contracts.md#13-audit-contract)): an auth flow never fails because
-  evidence could not be written, so sink outage = lost events, and the webhook is
-  at-most-once. Deployments that need guaranteed evidence MUST layer a reliable
-  transport (e.g. file + shipper) under the file sink.
+  the fan-out copy could not be written, so sink outage = lost ordinary events,
+  and the webhook is at-most-once. Machine-client successful mutations are the
+  narrow exception: their required durable event is committed through
+  `MachineClientStore` in the same transaction as the client row; `AuditPort`
+  receives only a best-effort copy afterward.
 - **In-process attempt limiters are per-instance.** The pairing and device-flow
   attempt caps hold per process; horizontally scaled deployments need the
   [§17.10](./contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)

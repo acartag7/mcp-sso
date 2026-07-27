@@ -7,10 +7,10 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and this document
 > disagree, this document wins until one of them is deliberately changed.
 >
-> Status: **v0.2.0 shipped (interim)** (`mcp-sso@0.2.0` on npm) + **v0.2
-> feature contracts locked 2026-07-04 (§17, pre-implementation; §17.11 added
-> 2026-07-06 — CIMD §17.1, device flow §17.3, and the GitHub port §17.6 are
-> contract-locked, not yet implemented)**. Spec conformance target: **MCP
+> Status: **v0.2.3 shipped** (`mcp-sso@0.2.3` on npm); **v0.3 implementation
+> is pending release**. §17 contains a mix of shipped, implemented-on-main, and
+> contract-only surfaces; do not infer release status from a section's
+> presence. Spec conformance target: **MCP
 > Authorization 2025-11-25** (the stable spec clients implement); the next
 > spec version is **final on 2026-07-28** (its RC was locked 2026-05-21) —
 > the RC's backward-compatible hardening items (e.g. RFC 9207 `iss`) are
@@ -336,20 +336,49 @@ interface UserClientRegistration {
   applicationType: "native" | "web";   // RC item (b)
   issuedAtEpoch: number;
 }
-interface MachineClientRegistration {
+interface MachineClientBase {
   clientId: string;             // "mcc_<random>" — sub prefix marks machine tokens
   redirectUris: string[];       // always [] — machine clients have no redirect
   applicationType: "machine";
   issuedAtEpoch: number;
   name?: string;                // deployer-supplied display label (unverified)
   allowedScopes: string[];      // ⊆ scopeCatalog, validated at provisioning
-  secrets: ClientSecret[];      // ≤ 2 unexpired ("active"); see §17.2 rotation
+  version: number;              // positive integer; incremented by every mutation
 }
+type MachineClientRegistration =
+  | (MachineClientBase & {
+      status: "active";
+      secrets: [ClientSecret] | [ClientSecret, ClientSecret];
+    })
+  | (MachineClientBase & {
+      status: "disabled";
+      secrets: [];
+      disabledAtEpoch: number;
+    });
 type ClientRegistration = UserClientRegistration | MachineClientRegistration;
 
 interface ClientStore {
-  save(client: ClientRegistration): Promise<void>;
+  save(client: UserClientRegistration): Promise<void>;
   find(clientId: string): Promise<ClientRegistration | null>;
+}
+
+interface MachineClientMutationAudit {
+  occurredAt: string;
+  event: "oauth.client.provision" | "oauth.client.rotate_secret" | "oauth.client.disable";
+  clientId: string;
+  scopes: string[];
+}
+
+interface MachineClientStore extends ClientStore {
+  createMachineClient(
+    client: Extract<MachineClientRegistration, { status: "active" }>,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean>;  // false = id already exists; no write/audit committed
+  compareAndSwapMachineClient(
+    expectedVersion: number,
+    client: MachineClientRegistration,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean>;  // false = missing/version conflict; no write/audit committed
 }
 ```
 Required only when `dcr.mode === "stored"`. Reference: in-memory map (Phase 2);
@@ -357,10 +386,17 @@ a persisted adapter is deployment-specific. The `applicationType` discriminant
 selects the record shape and drives the per-client redirect policy (§10):
 `native`/`web` are user clients (§9.2 DCR, §10.2 redirect policy); `machine`
 records are provisioned out-of-band (§17.2) and carry `allowedScopes` +
-`secrets` instead of redirect URIs. A discriminated union (not optional fields)
-makes "a machine record MUST carry `allowedScopes` + `secrets`" a compile-time
-guarantee — there is no optional-field state where a machine record silently
-lacks its secret set.
+versioned lifecycle state instead of redirect URIs. Active records carry exactly
+one or two secret hashes. Disabled records carry no secret hashes and a required
+disable epoch. A discriminated union makes the disabled-but-still-authenticating
+state unrepresentable. `MachineClientStore` is required by the exported
+provision/rotate/disable use-cases. `ClientStore.save` accepts user registrations
+only; every machine-record write goes through `createMachineClient` or
+`compareAndSwapMachineClient`. Each mutation method MUST commit the client row
+and supplied required durable audit event in one backend transaction or commit
+neither; `false` is a conflict/no-write result. The ordinary `AuditPort` event
+emitted after that transaction is only a best-effort fan-out copy and is not the
+durable evidence gate.
 
 ### 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's
@@ -1791,7 +1827,7 @@ host. Events (the v0.1 set plus the v0.2 additions from §17.7): `oauth.register
 `oauth.token.refresh`, `oauth.revoke`, `auth.request`, `identity.verify`,
 `oauth.pairing.attempt`, `oauth.device.authorization`, `oauth.device.approve`,
 `oauth.token.device_code`, `oauth.token.client_credentials`, `oauth.client.provision`,
-`oauth.client.rotate_secret`, `oauth.cimd.fetch`, and (§17.11, lands with the
+`oauth.client.rotate_secret`, `oauth.client.disable`, `oauth.cimd.fetch`, and (§17.11, lands with the
 upstream-redirect implementation) `oauth.upstream.callback`. Each carries `occurredAt`,
 `event`, `status: "success"|"failure"`, and optional `clientId`, `subject`,
 `resource`, `scopes`, `redirectHost`, `reason`, `ip` (adapter-populated client IP;
@@ -2983,12 +3019,17 @@ bounded rather than open-ended.
 
 ### 17.2 `client_credentials` grant (MCP extension `io.modelcontextprotocol/oauth-client-credentials`)
 
-> **SHIPPED.** S3a (PR #16, `0589ed3`) shipped the machine-client records +
+> **SHIPPED BASELINE.** S3a (PR #16, `0589ed3`) shipped the machine-client records +
 > out-of-band provisioning/rotation primitives + the timing-safe `verify` and
 > the boot/config/DCR/redirect guards. S3b ships the `/oauth/token` grant itself:
 > `client_secret_basic` + `client_secret_post` client auth, the
 > `MachineTokenResponse` split, the `client_credentials`-aware RFC 8414 metadata,
 > and the `oauth.token.client_credentials` audit event.
+>
+> **UNRELEASED 0.3.0 AMENDMENT.** Versioned insert/CAS lifecycle writes,
+> transactional durable mutation audits, disable tombstones, and the
+> active/disabled record union below are implemented in this pending amendment
+> for 0.3.0 but are not present in npm 0.2.3.
 
 The extension (ext-auth repo, status Draft) requires OAuth 2.1-shaped client
 authentication and states outright: *"Dynamic Client Registration is not used
@@ -3001,12 +3042,11 @@ in this flow."* Decisions:
   (`invalid_client_metadata`). Otherwise anyone on the internet could mint
   themselves a secret. Config: `clientCredentials?: { enabled: boolean }`;
   boot `AuthConfigError` if enabled with `dcr.mode !== "stored"`.
-- **Provisioning API (library functions, not endpoints).** The provisioning
+- **Lifecycle API (library functions, not endpoints).** The lifecycle
   use-cases take a deps object — `{ store, catalog, clock, audit }` — so they
   can validate `allowedScopes` against `scopeCatalog` (item below), stamp
-  epochs, and emit audit without hidden globals (same deps-first shape as
-  `registerClient`). `catalog` is `config.scopeCatalog`; `store` is the stored
-  `ClientStore`.
+  epochs, and emit audit without hidden globals. `catalog` is
+  `config.scopeCatalog`; mutation `store` is `MachineClientStore`.
   - `provisionMachineClient(deps, { name?, allowedScopes, secretTtlSeconds? })`
     → `{ clientId, clientSecret }`. `clientId` = `mcc_<random>` — the prefix is
     enforced, giving a namespace disjoint from human subjects and from `mcpdc_`
@@ -3039,21 +3079,41 @@ in this flow."* Decisions:
     provisioning, so a later catalog narrowing cannot silently widen a machine
     client. `secretTtlSeconds?` (positive integer), when given, sets the
     provisioned secret's `expiresAtEpoch = now + ttl` (a bounded-lifetime
-    first secret); omitted ⇒ the secret is live until rotated.
+    first secret). The computed epoch MUST also be a non-negative safe integer;
+    overflow is `invalid_request` before the client id or secret is minted and
+    before any store mutation. Omitted TTL ⇒ the secret is live until rotated.
+    The inserted record starts `status:"active"`, `version:1`.
   - `rotateMachineClientSecret(deps, clientId, { graceSeconds = 86400 })` →
-    `{ clientSecret }` (see Rotation below).
+    `{ clientSecret, version }` (see Rotation below). `graceSeconds` is a
+    positive integer. Its computed `now + graceSeconds` expiry MUST also be a
+    non-negative safe integer; otherwise rotation is `invalid_request` before a
+    secret is minted or a store mutation is attempted. The incremented mutation
+    version MUST remain a positive safe integer; an active stored record whose
+    version cannot be incremented is `invalid_client` before a secret is minted
+    or a store mutation is attempted.
+  - `disableMachineClient(deps, clientId)` →
+    `{ clientId, disabledAtEpoch, version }`. The CAS transition sets
+    `status:"disabled"` and `secrets:[]`; it is an auditable tombstone, not a
+    delete. The same safe version-increment gate runs before its CAS. Repeated
+    disable and rotation of a disabled client are `invalid_client`.
   - `verifyMachineClientSecret(deps, clientId, presentedSecret)` → `boolean`:
     the timing-safe comparison primitive the token endpoint (§9.4
     client_credentials grant, S3b) composes into client authentication. Finds
-    the machine client, SHA-256s the presented secret, and constant-time
+    an active machine client, SHA-256s the presented secret, and constant-time
     compares it against each **unexpired** stored hash (expired entries
     skipped). Non-machine / unknown `clientId` ⇒ `false` (never throws — the
     grant maps the boolean to `invalid_client`).
 - **`ClientStore` extension:** `applicationType` gains `"machine"`; machine
   records carry `allowedScopes: string[]` (validated ⊆ `scopeCatalog` at
-  wiring) and `secrets: Array<{ hash, createdAtEpoch, expiresAtEpoch? }>`
-  (max 2 active); `redirectUris` MUST be `[]`; machine clients are rejected at
+  wiring), positive `version`, and the closed active/disabled lifecycle union
+  in §6.4. `redirectUris` MUST be `[]`; machine clients are rejected at
   `/oauth/authorize` and the device endpoints (`invalid_client`).
+  `ClientStore.save` remains the user-registration write and does not accept
+  machine records; machine writes exist only on `MachineClientStore`.
+  `MachineClientStore.createMachineClient` and
+  `compareAndSwapMachineClient` atomically persist the row plus required
+  durable audit. Provision is insert-only. Rotate/disable increment version and
+  fail on CAS conflict before a generated secret is returned.
 - **Secret contract:** `mcs_` + base64url(32 CSPRNG bytes) — 256-bit,
   clearing RFC 6749 §10.10 (≥2⁻¹²⁸ MUST) and RFC 6819 §5.1.4.2.2. Stored as
   **unsalted SHA-256 hex only**: RFC 6819 §5.1.4.1.3 conditions salting/work
@@ -3128,27 +3188,38 @@ in this flow."* Decisions:
   a single-secret record yields `[{old, expiresAt=now+grace}, {new}]`; a
   second rotation before the first grace elapses supersedes the prior grace
   secret (its overlap is cut) to hold the two-active cap. Unknown clientId or
-  a non-machine clientId ⇒ `invalid_client`. Verification accepts any
-  unexpired stored hash.
+  a non-machine/disabled clientId ⇒ `invalid_client`. An expiry outside the
+  non-negative safe-integer domain is `invalid_request` before mint/CAS. A
+  stored version that cannot be safely incremented is `invalid_client` before
+  mint/CAS.
+  Verification accepts any unexpired stored hash on an active record. Two
+  concurrent rotations read the same version; exactly one CAS can commit. A
+  loser returns no secret and gets a conflict error, so every successfully
+  returned secret remains in the committed record.
+- **Disable:** `disableMachineClient` CASes an active record to a versioned
+  tombstone with no accepted hashes after applying the same safe
+  version-increment gate. Later client authentication fails `invalid_client`.
+  Already-issued stateless access tokens are not recalled and remain valid only
+  until their original `exp`; deployments bound that window with
+  `accessTokenTtlSeconds` (Captatum uses 600 seconds).
 - **Audit:** `oauth.token.client_credentials`, `oauth.client.provision`,
-  `oauth.client.rotate_secret` — clientId/scopes metadata only; never a secret
-  or a secret hash.
+  `oauth.client.rotate_secret`, `oauth.client.disable` — clientId/scopes
+  metadata only; never a secret or a secret hash. Each successful client
+  mutation supplies its success event to `MachineClientStore`, which commits
+  it atomically with the row. The post-commit `AuditPort` copy is best-effort:
+  an EPIPE or sink exception cannot turn a committed credential into an
+  unreturned one. Failure audits are likewise best-effort and never replace the
+  original lifecycle error.
 - The MCP `initialize`-handshake extension advertisement
   (`capabilities.extensions`) is the host app's/example's concern, not the
   bridge's.
-- **Concurrency residual (deployment-discipline-enforced).** Provisioning and
-  rotation are non-atomic read-modify-write sequences over the deployer-supplied
-  `ClientStore` (`find` → compute → `save`); the port has no compare-and-swap
-  primitive. Two concurrent rotations on the same clientId race last-write-wins
-  and can silently discard one just-minted secret (an operational hazard, not a
-  security breach — the persisted state is always a valid ≤2-active set and no
-  secret is leaked). These are low-frequency out-of-band admin operations;
-  single-operator provisioning is safe. A multi-instance deployment using a
-  shared store MUST serialize rotations (or the port gains a CAS primitive —
-  deferred; it would affect ONLY provisioning/rotation, since `client_credentials`
-  issuance is stateless: the grant reads the record, signs a JWT with no
-  server-side token write, and returns no refresh token, so concurrent
-  multi-instance issuance is safe and raises no atomicity concern).
+- **Concurrency:** machine lifecycle writes require the
+  `MachineClientStore` insert/CAS primitives. A backend that cannot provide the
+  atomic row+audit transaction does not satisfy the port and cannot be used by
+  these lifecycle functions. The base `ClientStore.save` method accepts only a
+  `UserClientRegistration`, so there is no second non-CAS machine write in the
+  public port. `client_credentials` issuance remains a read-only client lookup
+  plus JWT signing and needs no token-side transaction.
 
 ### 17.3 Device authorization grant (RFC 8628)
 
@@ -3598,7 +3669,7 @@ gate replaces no-gate).
   `oauth.pairing.attempt`, `oauth.device.authorization`,
   `oauth.device.approve`, `oauth.token.device_code`,
   `oauth.token.client_credentials`, `oauth.client.provision`,
-  `oauth.client.rotate_secret`, `oauth.cimd.fetch`. `AuthAuditEvent` gains
+  `oauth.client.rotate_secret`, `oauth.client.disable`, `oauth.cimd.fetch`. `AuthAuditEvent` gains
   optional `ip?: string` (adapter-populated; personal data — noted in docs).
   The §13 metadata-only rule is unchanged and the no-secrets serialization
   test extends to every new event.
