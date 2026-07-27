@@ -15,6 +15,7 @@ import type { AuditPort } from "./ports/audit.ts";
 import { sha256Hex } from "./crypto.ts";
 import { isScopeToken } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
+import { parseMachineClientRegistration } from "./machine-client-record.ts";
 
 /** Default rotation grace (the two-active-secrets overlap window). 24 h. */
 export const DEFAULT_ROTATION_GRACE_SECONDS = 86_400;
@@ -25,10 +26,6 @@ const MAX_ACTIVE_SECRETS = 2;
 
 /** Never-matching 64-char digest that pads verify's loop to a fixed width. */
 const ZERO_HASH = "0".repeat(64);
-
-/** Stored-hash shape: 64 lowercase hex chars (sha256Hex output). Anything else is
- *  a corrupted record, excluded before compare so `timingSafeEqual` never throws. */
-const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 
 export interface MachineClientDeps {
   store: ClientStore;
@@ -128,10 +125,8 @@ export async function rotateMachineClientSecret(
     if (!isPositiveInteger(graceSeconds)) {
       throw new OAuthError("invalid_request", "graceSeconds must be a positive integer (seconds)");
     }
-    const client = await deps.store.find(clientId);
-    if (!client) throw new OAuthError("invalid_client", "Unknown clientId", 401);
-    if (client.applicationType !== "machine") throw new OAuthError("invalid_client", "clientId is not a machine client", 401);
-    if (!Array.isArray(client.secrets)) throw new OAuthError("invalid_client", "Machine client record is malformed (secrets is not an array)", 401);
+    const client = parseMachineClientRegistration(await deps.store.find(clientId), clientId);
+    if (!client) throw new OAuthError("invalid_client", "Machine client record is invalid", 401);
     const now = epochSeconds(deps.clock);
     const clientSecret = mintClientSecret();
     const secrets = rotateSecrets(client.secrets, now, graceSeconds, sha256Hex(clientSecret));
@@ -154,10 +149,11 @@ export async function rotateMachineClientSecret(
 }
 
 /** Timing-safe verification primitive the §9.4 client_credentials grant (S3b)
- *  composes into client authentication. Uniform-work + fail-closed: the secret
- *  is hashed BEFORE the lookup (no client-existence oracle); every path runs the
- *  same fixed two-comparison loop (no slot/active-count signal); a missing /
- *  non-machine / malformed / >2-active (poisoned) record ⇒ `false`, never thrown. */
+ *  composes into client authentication. Fixed-comparison + fail-closed: the
+ *  secret is hashed BEFORE the lookup; every non-empty-secret path runs the same
+ *  two-comparison loop (no slot/active-count signal from digest comparisons).
+ *  A missing / non-machine / malformed record ⇒ `false`; store I/O errors still
+ *  propagate, and custom-store lookup latency is outside this primitive. */
 export async function verifyMachineClientSecret(
   deps: MachineClientDeps,
   clientId: string,
@@ -165,20 +161,11 @@ export async function verifyMachineClientSecret(
 ): Promise<boolean> {
   if (typeof presentedSecret !== "string" || presentedSecret.length === 0) return false;
   const presented = sha256Hex(presentedSecret);
-  const client = await deps.store.find(clientId);
+  const client = parseMachineClientRegistration(await deps.store.find(clientId), clientId);
   const now = epochSeconds(deps.clock);
-  // Active = well-formed (64-hex) + unexpired, only for a real machine record;
-  // anything else, or > 2 active (poisoned, §17.2), ⇒ [] (fail closed).
-  let active: string[] = [];
-  if (client?.applicationType === "machine" && Array.isArray(client.secrets)) {
-    active = client.secrets
-      .filter((s): s is ClientSecret => s !== null && typeof s === "object"
-        && typeof s.hash === "string" && SHA256_HEX_RE.test(s.hash)
-        && (s.expiresAtEpoch === undefined || typeof s.expiresAtEpoch === "number"))
-      .filter((s) => s.expiresAtEpoch === undefined || s.expiresAtEpoch > now)
-      .map((s) => s.hash);
-    if (active.length > MAX_ACTIVE_SECRETS) active = [];
-  }
+  const active = client?.secrets
+    .filter((secret) => secret.expiresAtEpoch === undefined || secret.expiresAtEpoch > now)
+    .map((secret) => secret.hash) ?? [];
   let matched = false;
   for (let i = 0; i < MAX_ACTIVE_SECRETS; i++) {
     if (timingSafeHexEqual(presented, active[i] ?? ZERO_HASH)) matched = true;
