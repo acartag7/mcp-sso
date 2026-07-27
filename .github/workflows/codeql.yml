@@ -24,7 +24,11 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, mcp-sso-codeql]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0 (2026-06-18)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.4.0 (2026-04-20)
+        with:
+          node-version: "24"
       - uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2 (2026-06-04)
         with:
           languages: javascript-typescript
+          build-mode: none
       - uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2 (2026-06-04)
