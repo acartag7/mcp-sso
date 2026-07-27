@@ -20,12 +20,14 @@ interface VerifiedAccessToken {
 
 `credentialKind` is `"machine"` only when all three machine bindings hold:
 `sub` starts with the reserved `mcc_` namespace, `client_id === sub`, and
-`gty === "client_credentials"`. Any machine signal — an `mcc_` `sub`, an
-`mcc_` `client_id`, or a present `gty` claim — enters this closed classification
-branch. A partial or conflicting binding, or a `gty` whose value is unknown,
-non-string, or otherwise not exactly `"client_credentials"`, is
+`gty === "client_credentials"`. Either machine marker — an `mcc_` `sub` or a
+present `gty` claim — enters this closed classification branch. A partial or
+conflicting binding, or a `gty` whose value is unknown, non-string, or
+otherwise not exactly `"client_credentials"`, is
 `invalid_token`; it MUST NOT fall back to `"interactive"`. A token with no
 machine signal is `"interactive"` (authorization-code and refresh tokens).
+An `mcc_` `client_id` alone is not a machine marker: opaque stateless client
+IDs are client-selected, and the credential kind is an identity property.
 
 The kind is a verifier result, not a downstream inference. Consumers MUST use
 this field rather than decoding the JWT or classifying a subject/client prefix

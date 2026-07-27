@@ -1014,10 +1014,11 @@ in this flow."* Decisions:
     `gty: "client_credentials"` marker claim, and `verifyAccessToken`
     classifies a verified token as `credentialKind: "machine"` ONLY with an
     `mcc_` `sub`, `sub == client_id` (RFC 9068 §2.2), AND that marker. An
-    `mcc_` value in either `sub` or `client_id`, or any present `gty`, enters
-    the machine branch; a partial/conflicting triad or a `gty` other than the
-    exact string `"client_credentials"` is `invalid_token`, never an
-    interactive fallback. Tokens with no machine signal return
+    `mcc_` `sub` or any present `gty` enters the machine branch; a
+    partial/conflicting triad or a `gty` other than the exact string
+    `"client_credentials"` is `invalid_token`, never an interactive fallback.
+    An `mcc_` `client_id` alone is not a marker because opaque stateless client
+    IDs are client-selected. Tokens with no machine signal return
     `credentialKind: "interactive"`. The full triad is required because
     stateless-DCR clients choose their own `client_id`, so `sub == client_id` alone could be
     satisfied by a pre-guard human token; the marker cannot, since only the
