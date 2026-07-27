@@ -32,7 +32,10 @@ import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identit
 import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
-import { isMcpPath, type NormRequest, type NormResponse } from "../../src/adapters/http.ts";
+import {
+  headersFromDistinct, isMcpPath, readHeader as readSecurityHeader,
+  type NormRequest, type NormResponse,
+} from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 // Reuse the fastify-sqlite example's env-wiring helpers rather than duplicate them
 // (configFromEnv / defaultListenHost / createOidcUpstreamFromEnv / assertUpstreamConfigBeforeState
@@ -149,9 +152,13 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
     // URL, so a raw `!== "/mcp"` check would skip the Origin gate. Same normalization
     // as the backend's auth gate (sibling-sweep) + the JSON parser above.
     if (!isMcpPath(request.url)) return; // OAuth routes manage their own Origin
-    const rawOrigin = request.headers.origin;
-    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-    if (origin !== undefined && !opts.config.allowedOrigins.includes(origin) && origin !== originOf(opts.config.issuer)) {
+    const origin = readSecurityHeader(
+      headersFromDistinct(request.raw.headersDistinct, request.headers as NormRequest["headers"]),
+      "origin",
+    );
+    if (origin.ambiguous || (origin.value !== undefined
+      && !opts.config.allowedOrigins.includes(origin.value)
+      && origin.value !== originOf(opts.config.issuer))) {
       reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
     }
   });

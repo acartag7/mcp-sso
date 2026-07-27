@@ -39,6 +39,8 @@ import { openSqliteStore } from "../src/store/sqlite.ts";
 import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
 import { createOAuthRouter } from "../src/adapters/express.ts";
 import { createOAuthApp } from "../src/adapters/hono.ts";
+import { headersFromDistinct, readHeader } from "../src/adapters/http.ts";
+import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 const REDIRECT = "http://127.0.0.1:9/callback"; // any loopback callback; allowlisted below
 const SUBJECT = "agent@test";
@@ -58,7 +60,10 @@ function ecJwk(): JWK {
 
 /** Build a loopback config. `issuer` may be port-less (stable across restart);
  *  `resource` is the real per-port /mcp URL. Both must be loopback for the dev flag. */
-function makeConfig(opts: { resource: string; issuer: string; signingPrivateJwk?: JWK; consentSigningSecret?: string }): BridgeConfig {
+function makeConfig(opts: {
+  resource: string; issuer: string; signingPrivateJwk?: JWK;
+  consentSigningSecret?: string; allowedOrigins?: string[];
+}): BridgeConfig {
   return createBridgeConfig({
     issuer: opts.issuer,
     resource: opts.resource,
@@ -68,7 +73,7 @@ function makeConfig(opts: { resource: string; issuer: string; signingPrivateJwk?
     redirectAllowlist: [REDIRECT],
     scopeCatalog: ["mcp:read", "mcp:write"],
     defaultScopes: ["mcp:read"],
-    allowedOrigins: [originOf(opts.issuer)],
+    allowedOrigins: opts.allowedOrigins ?? [originOf(opts.issuer)],
     dcr: { mode: "stateless" },
     dev: { allowInsecureLocalhost: true },
     accessTokenTtlSeconds: 600,
@@ -191,9 +196,10 @@ async function mountExpress(bridge: Bridge, authorizer: RequestAuthorizer, confi
   // agnostic so it covers GET/DELETE /mcp too, not just the POST route.
   app.use((req, res, next) => {
     if (req.path !== "/mcp") return next();
-    const rawOrigin = req.headers.origin;
-    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-    if (origin !== undefined && !config.allowedOrigins.includes(origin) && origin !== originOf(config.issuer)) {
+    const origin = readHeader(headersFromDistinct(req.headersDistinct, req.headers), "origin");
+    if (origin.ambiguous || (origin.value !== undefined
+      && !config.allowedOrigins.includes(origin.value)
+      && origin.value !== originOf(config.issuer))) {
       res.status(403).type("application/json").send(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null }));
       return;
     }
@@ -219,9 +225,10 @@ async function mountHono(bridge: Bridge, authorizer: RequestAuthorizer, config: 
     if (url.pathname === "/mcp") {
       // Origin gate (mirrors the example's onRequest hook) — before serveMcp reads
       // the body and for every method, so a foreign Origin is 403'd before processing.
-      const rawOrigin = req.headers.origin;
-      const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-      if (origin !== undefined && !config.allowedOrigins.includes(origin) && origin !== originOf(config.issuer)) {
+      const origin = readHeader(headersFromDistinct(req.headersDistinct, req.headers), "origin");
+      if (origin.ambiguous || (origin.value !== undefined
+        && !config.allowedOrigins.includes(origin.value)
+        && origin.value !== originOf(config.issuer))) {
         res.writeHead(403, { "content-type": "application/json" });
         res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null }));
         return;
@@ -403,7 +410,16 @@ test("integration — /mcp Origin gate: foreign Origin ⇒ 403 before parsing/au
   for (const mountFn of [mountExpress, mountHono]) {
     const port = await freePort();
     const base = `http://127.0.0.1:${port}`;
-    const config = makeConfig({ resource: `${base}/mcp`, issuer: base });
+    const allowed = "https://allowed.test";
+    const foreign = "https://evil.test";
+    const config = makeConfig({
+      resource: `${base}/mcp`,
+      issuer: base,
+      // Deliberately malformed trusted config pins occurrence handling
+      // independently of allowlist matching: the old normalized-header gate
+      // admitted either coalesced duplicate string.
+      allowedOrigins: [`${allowed}, ${foreign}`, `${foreign}, ${allowed}`],
+    });
     const store = new MemoryStore();
     const { bridge, authorizer } = deps(config, store);
     const mount = await mountFn(bridge, authorizer, config, port);
@@ -432,6 +448,17 @@ test("integration — /mcp Origin gate: foreign Origin ⇒ 403 before parsing/au
       const absent = await httpCall(base, "POST", "/mcp", { "content-type": "application/json" }, init);
       assert.equal(absent.status, 401, "absent Origin proceeds to the bearer check");
       assert.match(absent.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/, "reached the resource-server leg");
+
+      for (const origins of [
+        [["Origin", allowed], ["origin", foreign]],
+        [["origin", foreign], ["Origin", allowed]],
+      ] as const) {
+        const duplicate = await rawOccurrenceCall(
+          port, "POST", "/mcp", [["Content-Type", "application/json"], ...origins], init,
+        );
+        assert.equal(duplicate.status, 403, "duplicate Origin occurrences reject before allowlist matching");
+        assert.doesNotMatch(duplicate.headers["www-authenticate"] ?? "", /resource_metadata=/, "bearer authorization did not run");
+      }
     } finally {
       await mount.close();
       await store.close();

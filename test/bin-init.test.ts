@@ -81,6 +81,10 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     for (const marker of ['from "mcp-sso"', "registerOAuthRoutes", "isMcpPath", "loadOrCreateQuickstartSecrets", "createConsolePairingIdentity", "handlePairingAuthorize"]) {
       assert.ok(server.includes(marker), `server.ts composition root includes ${marker}`);
     }
+    assert.match(server, /request\.raw\.headersDistinct\.origin/, "generated /mcp gate reads raw Origin occurrences");
+    assert.match(server, /occurrences\?\.length === 1/, "generated /mcp gate accepts exactly one occurrence");
+    assert.match(server, /origin\.includes\(","\)/, "generated /mcp gate rejects comma-coalesced Origin");
+    assert.doesNotMatch(server, /request\.headers\.origin/, "generated /mcp gate never selects a normalized Origin");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -17,9 +17,10 @@ import { exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { pkceChallenge } from "../src/crypto.ts";
-import { AuthConfigError } from "../src/config.ts";
-import { buildExample, configFromEnv, createOidcUpstreamFromEnv, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
+import { AuthConfigError, createBridgeConfig } from "../src/config.ts";
+import { buildApp, buildExample, configFromEnv, createOidcUpstreamFromEnv, defaultListenHost } from "../examples/fastify-sqlite/app.ts";
 import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
+import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 function jwk(): JWK {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -680,6 +681,49 @@ test("integration — /mcp Origin gate (MCP Streamable HTTP DNS-rebinding MUST):
     }
   } finally {
     rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — runnable example rejects duplicate /mcp Origin occurrences before allowlist matching", async () => {
+  const issuer = "http://localhost:3000";
+  const allowed = "https://allowed.test";
+  const foreign = "https://evil.test";
+  const config = createBridgeConfig({
+    issuer,
+    resource: `${issuer}/mcp`,
+    consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: jwk(),
+    redirectAllowlist: [],
+    scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"],
+    allowedOrigins: [`${allowed}, ${foreign}`, `${foreign}, ${allowed}`],
+    dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true },
+    accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000,
+    consentTokenTtlSeconds: 300,
+    authorizationCodeTtlSeconds: 300,
+  });
+  const built = await buildApp({
+    config,
+    identity: { async verify() { return { ok: false, reason: "unused" }; } },
+  });
+  await built.app.listen({ port: 0, host: "127.0.0.1" });
+  const port = (built.app.server.address() as AddressInfo).port;
+  try {
+    for (const origins of [
+      [["Origin", allowed], ["origin", foreign]],
+      [["origin", foreign], ["Origin", allowed]],
+    ] as const) {
+      const response = await rawOccurrenceCall(
+        port, "POST", "/mcp", [["Content-Type", "application/json"], ...origins], "{}",
+      );
+      assert.equal(response.status, 403, "raw duplicate fields reject even when their coalesced string is allowlisted");
+      assert.doesNotMatch(response.headers["www-authenticate"] ?? "", /resource_metadata=/, "bearer authorization did not run");
+    }
+  } finally {
+    await built.app.close();
+    await built.close();
   }
 });
 

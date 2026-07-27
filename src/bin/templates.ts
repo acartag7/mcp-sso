@@ -127,9 +127,10 @@ async function main(): Promise<void> {
   // Origin BEFORE body parsing, for every method. isMcpPath parses the pathname (absolute-form-safe).
   app.addHook("onRequest", async (request, reply) => {
     if (!isMcpPath(request.url)) return;
-    const rawOrigin = request.headers.origin;
-    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-    if (origin !== undefined && !config.allowedOrigins.includes(origin) && origin !== originOf(config.issuer)) {
+    const occurrences = request.raw.headersDistinct.origin;
+    const origin = occurrences?.length === 1 ? occurrences[0] : undefined;
+    const ambiguous = occurrences !== undefined && (typeof origin !== "string" || origin.includes(","));
+    if (ambiguous || (origin !== undefined && !config.allowedOrigins.includes(origin) && origin !== originOf(config.issuer))) {
       reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
     }
   });

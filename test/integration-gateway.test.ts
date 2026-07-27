@@ -32,7 +32,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { pkceChallenge } from "../src/crypto.ts";
 import { AuthConfigError, createBridgeConfig } from "../src/config.ts";
 import { buildBackend, type BackendReceived } from "../examples/api-key-gateway/backend.ts";
-import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
+import { buildGateway, buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 
 const FLOW_REDIRECT = "http://localhost:4321/callback";
 // A distinctive sentinel for the backend credential so the no-leak probe can grep
@@ -216,6 +216,57 @@ test("integration — gateway /mcp Origin gate + tokenless 401 challenge on ALL 
     }
   } finally {
     await h.cleanup();
+  }
+});
+
+test("integration — gateway rejects duplicate /mcp Origin occurrences before allowlist matching", async () => {
+  const issuer = "http://localhost:3000";
+  const allowed = "https://allowed.test";
+  const foreign = "https://evil.test";
+  const config = createBridgeConfig({
+    issuer,
+    resource: `${issuer}/mcp`,
+    consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: { kty: "EC", crv: "P-256", d: "d", x: "x", y: "y" },
+    redirectAllowlist: [],
+    scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"],
+    allowedOrigins: [`${allowed}, ${foreign}`, `${foreign}, ${allowed}`],
+    dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true },
+    accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000,
+    consentTokenTtlSeconds: 300,
+    authorizationCodeTtlSeconds: 300,
+  });
+  const built = await buildGateway({
+    config,
+    backendUrl: "http://127.0.0.1:9/mcp",
+    getBackendCredential: () => BACKEND_KEY,
+    identity: { async verify() { return { ok: false, reason: "unused" }; } },
+  });
+  await built.app.listen({ port: 0, host: "127.0.0.1" });
+  const port = (built.app.server.address() as AddressInfo).port;
+  try {
+    for (const origins of [
+      [["Origin", allowed], ["origin", foreign]],
+      [["origin", foreign], ["Origin", allowed]],
+    ] as const) {
+      const response = await sendRaw(port, [
+        "POST /mcp HTTP/1.1",
+        `Host: 127.0.0.1:${port}`,
+        "Content-Type: application/json",
+        ...origins.map(([name, value]) => `${name}: ${value}`),
+        "Content-Length: 2",
+        "Connection: close",
+        "", "{}",
+      ]);
+      assert.equal(response.status, 403, "raw duplicate fields reject even when their coalesced string is allowlisted");
+      assert.doesNotMatch(response.raw, /\r\nwww-authenticate:/i, "bearer authorization did not run");
+    }
+  } finally {
+    await built.app.close();
+    await built.close();
   }
 });
 
@@ -406,4 +457,3 @@ test("integration — gateway backend: an absolute-form request-target cannot by
     await h.cleanup();
   }
 });
-

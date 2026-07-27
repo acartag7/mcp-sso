@@ -54,7 +54,10 @@ import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
 import { assertCallbackPath } from "../../src/adapters/upstream-flow-internals.ts";
-import { isMcpPath, type NormRequest, type NormResponse } from "../../src/adapters/http.ts";
+import {
+  headersFromDistinct, isMcpPath, readHeader,
+  type NormRequest, type NormResponse,
+} from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 
 export interface ExampleOptions {
@@ -144,9 +147,13 @@ export async function buildApp(opts: ExampleOptions) {
   // this hook is scoped to /mcp only.
   app.addHook("onRequest", async (request, reply) => {
     if (!isMcpPath(request.url)) return; // OAuth routes manage their own Origin; isMcpPath parses the pathname (absolute-form-safe)
-    const rawOrigin = request.headers.origin;
-    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-    if (origin !== undefined && !opts.config.allowedOrigins.includes(origin) && origin !== originOf(opts.config.issuer)) {
+    const origin = readHeader(
+      headersFromDistinct(request.raw.headersDistinct, request.headers as NormRequest["headers"]),
+      "origin",
+    );
+    if (origin.ambiguous || (origin.value !== undefined
+      && !opts.config.allowedOrigins.includes(origin.value)
+      && origin.value !== originOf(opts.config.issuer))) {
       reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
       return;
     }
