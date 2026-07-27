@@ -52,6 +52,12 @@ rotate without a lookup). Stored only as `sha256(token)`.
 - **Rotation:** `rotateRefreshToken(tokenHash, next, now)` marks the current
   token consumed, inserts the next, and returns the **consumed** record. Replay of
   an already-consumed token revokes the whole family.
+- **Prepare before write:** `OAuthTokenUseCase.exchangeAuthorizationCode`
+  parses the code record's stored scopes and constructs the signed token response
+  before `saveRefreshToken`. `OAuthTokenUseCase.refresh` reads the authoritative
+  refresh record, enforces its client/subject guards, and constructs the signed
+  response before `rotateRefreshToken`. Rotation remains the authoritative
+  single-use transaction: a `null` result discards the prepared response.
 - **Client binding (RFC 6749 §6):** the refresh grant MUST present a `client_id`
   matching the stored record; a mismatch revokes the family (theft signal).
 - **Revocation:** `revoke` looks up the family by hash (rejecting unknown tokens

@@ -185,15 +185,23 @@ client-controlled request input; when present, `prepare` uses it and does not fe
 (§17.2, shipped S3b) returns `MachineTokenResponse`: identical except it has NO
 `refresh_token` member at all — not an optional one.)*
 - **`exchangeAuthorizationCode`**: consumes the code (§7.3), verifies PKCE S256
-  and client/redirect binding, mints an ES256 access token (§7.2) + a refresh
-  token (§7.4, new family).
-- **`refresh`**: rotates the refresh token (§7.4); enforces RFC 6749 §6 client
-  binding (mismatch ⇒ family revoked ⇒ `invalid_grant`); mints a new access token
-  carrying the rotated record's scopes.
+  and client/redirect binding, then `tokenResponse` parses the stored scopes and
+  constructs the signed access/refresh response before `saveRefreshToken`
+  persists the new family. A preparation failure leaves no refresh row; the
+  already-consumed authorization code stays burned.
+- **`refresh`**: reads the authoritative row with `findRefreshToken`, enforces
+  RFC 6749 §6 client binding and the reserved subject namespace, and calls
+  `tokenResponse` before `rotateRefreshToken` (§7.4). Rotation remains atomic and
+  authoritative: a `null` result discards the prepared response and returns
+  `invalid_grant`; a mismatch revokes the family.
 - **`revoke`** (RFC 7009): **always returns 200**; an unknown or already-revoked
   token is a **no-op** (never 4xx — RFC 7009 §2.2 forbids leaking token existence
   via the response). Looks up the family by hash and revokes it; a guessed family
   id revokes nothing.
+- **Audit containment:** every `OAuthTokenUseCase` audit emission goes through
+  `writeTokenAudit`. A synchronous throw or rejected promise from a nonconforming
+  custom `AuditPort` is ignored, so it cannot replace an OAuth error, suppress a
+  prepared token response, or turn RFC 7009 revocation into a failure.
 
 ## 9.5 Error bodies
 **Raw OAuth endpoints** (token / register / revoke, and direct authorize errors)

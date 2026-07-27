@@ -15,3 +15,10 @@ personal data — the deployer owns retention/redaction). The test suite asserts
 that serialized audit output never contains raw codes, refresh tokens, or access
 tokens, across every event name (the v0.2 names are exercised by synthetic
 events through each sink; the v0.1 names additionally by the live OAuth flow).
+
+The reference sinks satisfy the fail-open port contract: their
+`writeAuthEvent` methods do not reject, and `combineAudit` isolates sibling
+sinks. `OAuthTokenUseCase` additionally calls every token/revocation audit
+through `writeTokenAudit`, which contains both synchronous throws and rejected
+promises from a nonconforming custom `AuditPort`. This is a token-boundary
+guarantee, not a claim that every use-case repairs arbitrary custom ports.

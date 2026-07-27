@@ -153,7 +153,10 @@ full pattern, topology, and Kubernetes notes in
   provenance, never from a local machine.
 - **Token handling**: authorization codes and refresh tokens are hashed at rest
   and single-use (a replayed refresh token revokes its whole family); consent
-  tokens are single-use. **Access tokens are short-TTL ES256 bearer tokens — like
+  tokens are single-use. `OAuthTokenUseCase.exchangeAuthorizationCode` and
+  `.refresh` prepare the signed response before saving or rotating refresh state;
+  their audit writes are contained by `writeTokenAudit`. **Access tokens are
+  short-TTL ES256 bearer tokens — like
   any OAuth access token, a stolen one is valid until `exp`** (no access-token
   introspection or revocation in v0.2; [threat-model row 1](docs/threat-model.md)).
   Separate signing keys for consent vs. access; timing-safe PKCE; redirect URIs
