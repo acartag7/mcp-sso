@@ -238,6 +238,12 @@ the response. Wiring rules:
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src
   'unsafe-inline'`, `X-Content-Type-Options: nosniff`, all values HTML-escaped.
+  The page sends `Referrer-Policy: same-origin`, not `no-referrer`: this keeps a
+  scheme/host/port `Origin` on the same-origin Approve POST for §9.3's unchanged
+  strict check while suppressing the authorize query from cross-origin
+  `Referer` headers. `assertApproveOrigin` remains exact: the value must equal
+  the issuer origin or an `allowedOrigins` member; no automatic opaque-Origin
+  exception or fallback is introduced.
 - Framework adapters are optional `peerDependencies` (`fastify`/`express`/`hono`);
   anything added to `devDependencies` for testing gets a `dependency-ledger` entry
   with the 15-day check.
