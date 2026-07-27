@@ -191,11 +191,12 @@ export class Bridge {
   }
 
   async handleToken(req: NormRequest): Promise<NormResponse> {
-    const { value: authorization, ambiguous } = readHeader(req.headers, "authorization");
-    const basicAttempted = hasBasicAuthorization(req.headers);
-    const body = formObject(req.body);
-    const grantType = formField(body, "grant_type");
+    let basicAttempted = false;
     try {
+      const { value: authorization, ambiguous } = readHeader(req.headers, "authorization");
+      basicAttempted = hasBasicAuthorization(req.headers);
+      const body = formObject(req.body);
+      const grantType = formField(body, "grant_type");
       await this.guard(req, "token");
       await assertUnambiguousAuthorization(ambiguous, grantType, formField(body, "client_id"), this.audit, this.clock);
       let response: UserTokenResponse | MachineTokenResponse;

@@ -201,12 +201,16 @@ test("ambiguous normalized Authorization never degrades to client_secret_post", 
   const ctx = setup(true);
   const c = await provision(ctx);
   const readsBefore = ctx.clientStore.findCalls;
-  for (const headers of [
-    { authorization: [basicHeader(c.clientId, c.clientSecret)] },
-    { authorization: [basicHeader(c.clientId, c.clientSecret), "Bearer attacker"] },
-    { authorization: ["Bearer attacker", basicHeader(c.clientId, c.clientSecret)] },
-    { Authorization: basicHeader(c.clientId, c.clientSecret), authorization: "Bearer attacker" },
-    { Authorization: "Bearer attacker", authorization: basicHeader(c.clientId, c.clientSecret) },
+  for (const { headers, basic } of [
+    { headers: { authorization: [basicHeader(c.clientId, c.clientSecret)] }, basic: true },
+    { headers: { authorization: [basicHeader(c.clientId, c.clientSecret), "Bearer attacker"] }, basic: true },
+    { headers: { authorization: ["Bearer attacker", basicHeader(c.clientId, c.clientSecret)] }, basic: true },
+    { headers: { Authorization: basicHeader(c.clientId, c.clientSecret), authorization: "Bearer attacker" }, basic: true },
+    { headers: { Authorization: "Bearer attacker", authorization: basicHeader(c.clientId, c.clientSecret) }, basic: true },
+    { headers: { authorization: ["Basic", "Bearer attacker"] }, basic: true },
+    { headers: { authorization: ["Bearer one", "Bearer two"] }, basic: false },
+    { headers: { Authorization: "Bearer one", authorization: "Bearer two" }, basic: false },
+    { headers: { authorization: ["BasicX credentials", "Bearer attacker"] }, basic: false },
   ]) {
     const res = await ctx.bridge.handleToken(req({
       headers,
@@ -215,12 +219,47 @@ test("ambiguous normalized Authorization never degrades to client_secret_post", 
     assert.equal(res.status, 401);
     assert.equal((res.body as { error: string }).error, "invalid_client");
     assert.equal((res.body as { access_token?: string }).access_token, undefined);
-    assert.match(res.headers["www-authenticate"] ?? "", /^Basic /, "any ambiguous Basic occurrence earns the challenge");
+    if (basic) assert.match(res.headers["www-authenticate"] ?? "", /^Basic /, "any ambiguous Basic occurrence earns the challenge");
+    else assert.equal(res.headers["www-authenticate"], undefined, "non-Basic ambiguity does not earn a Basic challenge");
   }
   assert.equal(ctx.clientStore.findCalls, readsBefore, "ambiguous auth rejects before any client-store lookup");
   const events = ctx.audit.events.filter((e) => e.event === "oauth.token.client_credentials");
-  assert.equal(events.length, 5, "each ambiguous client-credentials attempt emits failure evidence");
-  assert.ok(events.every((e) => e.status === "failure" && e.reason === "invalid_client"), "no success audit is emitted");
+  assert.equal(events.length, 9, "each ambiguous client-credentials attempt emits failure evidence");
+  assert.ok(events.every((e) =>
+    e.status === "failure" && e.reason === "invalid_client" && e.clientId === c.clientId),
+  "every failure carries the presented client id and no success audit is emitted");
+});
+
+test("ambiguous Authorization rejection survives a rejecting audit sink", async () => {
+  const ctx = setup(true);
+  const c = await provision(ctx);
+  const bridge = new Bridge({
+    config: ctx.config,
+    store: new MemoryStore(),
+    clock: ctx.clock,
+    audit: { async writeAuthEvent() { throw new Error("sink unavailable"); } },
+  });
+  const readsBefore = ctx.clientStore.findCalls;
+  const res = await bridge.handleToken(req({
+    headers: { authorization: ["Basic", "Bearer attacker"] },
+    body: grantBody({ client_id: c.clientId, client_secret: c.clientSecret }),
+  }));
+  assert.equal(res.status, 401);
+  assert.equal((res.body as { error: string }).error, "invalid_client");
+  assert.match(res.headers["www-authenticate"] ?? "", /^Basic /);
+  assert.equal(ctx.clientStore.findCalls, readsBefore);
+});
+
+test("token body accessor failures stay inside the OAuth error boundary", async () => {
+  const ctx = setup(true);
+  const body = Object.defineProperty({}, "grant_type", {
+    enumerable: true,
+    get() { throw new Error("getter detail must not escape"); },
+  });
+  const res = await ctx.bridge.handleToken(req({ body }));
+  assert.equal(res.status, 500);
+  assert.equal((res.body as { error: string }).error, "internal_error");
+  assert.doesNotMatch(JSON.stringify(res.body), /getter detail/);
 });
 
 test("two-methods rejection keys on the Basic SCHEME: malformed Basic + body client_secret is still two methods", async () => {

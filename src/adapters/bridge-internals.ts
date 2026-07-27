@@ -20,10 +20,14 @@ export async function assertUnambiguousAuthorization(
   audit: AuditPort, clock: ClockPort,
 ): Promise<void> {
   if (!ambiguous) return;
-  if (grantType === "client_credentials") await audit.writeAuthEvent({
-    occurredAt: new Date(clock.nowMs()).toISOString(), event: "oauth.token.client_credentials",
-    status: "failure", clientId, reason: "invalid_client",
-  });
+  if (grantType === "client_credentials") {
+    try {
+      await audit.writeAuthEvent({
+        occurredAt: new Date(clock.nowMs()).toISOString(), event: "oauth.token.client_credentials",
+        status: "failure", clientId, reason: "invalid_client",
+      });
+    } catch { /* the rejection remains authoritative when this evidence write fails */ }
+  }
   throw new OAuthError("invalid_client", "Authorization header must occur exactly once", 401);
 }
 
