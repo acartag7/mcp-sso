@@ -3123,12 +3123,12 @@ in this flow."* Decisions:
   re-provisioned (the same discipline a drifted user refresh token imposes).
   The stored ceiling is itself validated at grant time — a non-empty array of
   scope tokens. Both the authentication read and the post-authentication read
-  pass through `parseMachineClientRegistration(value, clientId)`, so a
-  custom/migrated store returning a malformed or differently keyed row fails
-  closed as `invalid_client` (never an empty-scope token or a token for the
-  embedded wrong client). The parser also enforces the `mcc_` prefix — the RS's
-  machine-vs-user distinguishability signal (RFC 9700 §4.15.1) — before the
-  record reaches token signing.
+  pass through `parseMachineClientRegistration(value, clientId, nowEpoch)`, so
+  a custom/migrated store returning a malformed, over-active, or differently
+  keyed row fails closed as `invalid_client` (never an empty-scope token or a
+  token for the embedded wrong client). The parser also enforces the `mcc_`
+  prefix — the RS's machine-vs-user distinguishability signal (RFC 9700
+  §4.15.1) — before the record reaches token signing.
   `resource` if present MUST equal `config.resource` (`invalid_target`). Mint
   an access token with `sub = client_id`
   (RFC 9068 §2.2) and the existing `client_id` claim; **NO refresh token**
