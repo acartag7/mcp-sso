@@ -109,14 +109,18 @@ green-with-wrong-results. (If a future change makes these assertions
 insufficient, promote both images to `@sha256:<digest>` pins recorded here with
 the same 15-day check.)
 
-CI verification, `process-guard`, and CodeQL use the repo-scoped
+CI verification and `process-guard` use the repo-scoped
 `[self-hosted, Linux, ARM64, mcp-sso]` runner in an isolated VM on the Mac mini.
-Main runs automatically; feature refs run only through a maintainer-triggered
-`workflow_dispatch` after their workflow diff is reviewed. The workflows do not
-subscribe to `pull_request` or arbitrary branch pushes, so fork- and
-automation-controlled workflow changes cannot reach the runner before review.
-Release publishing remains on GitHub-hosted `ubuntu-latest` to preserve the OIDC
-trusted-publishing and provenance boundary.
+CodeQL uses a separate `[self-hosted, macOS, ARM64, mcp-sso-codeql]` runner on
+the same Mac mini because the CodeQL CLI does not support Linux/ARM64; that job
+only checks out source and runs the pinned CodeQL actions, with no dependency
+install. Main and the named migration bootstrap branch run automatically;
+other feature refs run only through a maintainer-triggered `workflow_dispatch`
+after their workflow diff is reviewed.
+The workflows do not subscribe to `pull_request` or arbitrary branch pushes, so
+fork- and automation-controlled workflow changes cannot reach either runner
+before review. Release publishing remains on GitHub-hosted `ubuntu-latest` to
+preserve the OIDC trusted-publishing and provenance boundary.
 
 ## Verification & change protocol
 
