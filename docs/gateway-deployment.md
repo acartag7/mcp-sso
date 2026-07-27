@@ -104,9 +104,15 @@ rule below is implemented there.)
   (DNS-rebinding protection). `RequestAuthorizer` checks the bearer + scopes only
   — the Origin check on your `/mcp` endpoint is yours. Enforce it as a pre-parse,
   method-agnostic hook (Fastify `onRequest` / express middleware before `json()`),
-  not inside the POST handler; the SDK's
-  `StreamableHTTPServerTransport` options (`enableDnsRebindingProtection`,
-  `allowedOrigins`) are off by default.
+  not inside the POST handler. Read raw occurrence metadata
+  (`request.raw.headersDistinct` in Fastify, `req.headersDistinct` in Node-based
+  Express) before framework normalization: absent is allowed, exactly one
+  comma-free string may be allowlist-matched, and multiple, array-valued, or
+  comma-coalesced `Origin` fields are a 403. Never select the first or last
+  occurrence. A trusted proxy that selects one duplicate before forwarding has
+  erased the evidence, so configure that proxy to reject duplicates itself. The
+  SDK's `StreamableHTTPServerTransport` options
+  (`enableDnsRebindingProtection`, `allowedOrigins`) are off by default.
 - **Strip the client `Authorization` before forwarding.** Once `authorize()`
   succeeds, the inbound `Authorization: Bearer …` has done its job — it still
   carries the **bridge-minted per-user token**, which is `aud`-bound to *this*

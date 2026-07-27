@@ -53,6 +53,17 @@ root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recomme
 Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in
 [`docs/audit-deployment.md`](../audit-deployment.md).
 
+The two runnable Fastify examples apply that `/mcp` gate to Node's raw header
+occurrence metadata before the allowlist decision: `headersFromDistinct` keeps
+multiple `Origin` fields distinct and `readHeader` marks arrays,
+case-duplicated fields, and comma-coalesced values ambiguous. An absent
+`Origin` proceeds; exactly one comma-free string may be matched against
+`allowedOrigins` or the issuer origin; ambiguity is a 403 before body parsing or
+bearer authorization. The generated `server.ts` performs the same
+exactly-one-occurrence decision inline from
+`request.raw.headersDistinct.origin`. These are reference composition-root
+controls, not automatic `/mcp` middleware in the framework adapters.
+
 **Consumer-facing example helpers (DX):** five symbols the in-repo example leans on
 to implement the recommended patterns are root-exported, so a package consumer
 replicating those patterns imports them from `mcp-sso` instead of reimplementing
