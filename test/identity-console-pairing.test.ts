@@ -274,11 +274,10 @@ test("FAIL-OPEN (§17.7): a throwing/rejecting AuditPort never breaks pairing", 
   if (!bad.ok) assert.equal(bad.reason.includes("LEAKED"), false);
 });
 
-test("pairing page is frame-blocked — the CONSENT_HEADERS mirror must not drift (threat row 36)", async () => {
-  // Sibling of the consent-page assertion in bridge.test.ts. PAIRING_HEADERS is
-  // a hand-copied mirror of CONSENT_HEADERS, and a hand-copied constant is
-  // exactly what drifts: this page carries a one-time pairing code AND an
-  // Approve control, so framing it is the same clickjacking surface.
+test("pairing page keeps framing/form controls and its page-specific referrer policy", async () => {
+  // Sibling of the consent-page assertion in bridge.test.ts. Pairing has a
+  // Continue control and requires a console-only code, so it keeps form-action
+  // and no-referrer while sharing the frame-blocking controls.
   const { Bridge } = await import("../src/adapters/bridge.ts");
   const { handlePairingAuthorize } = await import("../src/adapters/pairing-flow.ts");
   const { createBridgeConfig } = await import("../src/config.ts");
@@ -320,6 +319,7 @@ test("pairing page is frame-blocked — the CONSENT_HEADERS mirror must not drif
   assert.match(csp, /frame-ancestors 'none'/, "the pairing page must be frame-blocked");
   assert.match(csp, /form-action 'self'/);
   assert.equal(res.headers["x-frame-options"], "DENY");
+  assert.equal(res.headers["referrer-policy"], "no-referrer");
   assert.match(csp, /default-src 'none'/);
   assert.equal(res.headers["x-content-type-options"], "nosniff");
   await store.close();

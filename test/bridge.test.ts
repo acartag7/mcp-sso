@@ -232,6 +232,8 @@ test("bridge: the consent page is frame-blocked (threat row 36 — clickjacking 
   // itself — asserting only that a CSP exists is what let this ship.
   assert.match(csp, /frame-ancestors 'none'/, "CSP must frame-block the consent page");
   assert.match(csp, /form-action 'self'/, "the consent POST must be pinned to this origin");
+  assert.equal(page.headers["referrer-policy"], "same-origin",
+    "the approval POST must retain its same-origin Origin without leaking a cross-origin Referer");
   // Belt-and-braces for agents predating CSP3 frame-ancestors support.
   assert.equal(page.headers["x-frame-options"], "DENY");
   // Pre-existing guarantees must survive the header change.
