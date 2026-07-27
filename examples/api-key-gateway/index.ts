@@ -8,13 +8,21 @@
 //
 // Identity = console pairing by default (zero-setup local dev: paste a one-time code
 // from the console), with the SAME env-switch to Cloudflare Access / Entra redirect /
-// Google / generic OIDC as examples/fastify-sqlite. For a real multi-user gateway use an IdP-backed port
-// (console pairing is single-operator by design — see docs/gateway-deployment.md).
+// Google / generic OIDC as examples/fastify-sqlite. Ambiguous provider selection is
+// rejected before backend configuration or listeners. For a real multi-user gateway
+// use an IdP-backed port (console pairing is single-operator by design — see
+// docs/gateway-deployment.md).
 
 import { buildBackend } from "./backend.ts";
-import { buildGatewayExample, defaultListenHost, productionIdentityConfigured } from "./app.ts";
+import {
+  buildGatewayExample,
+  defaultListenHost,
+  productionIdentityConfigured,
+} from "./app.ts";
+import { assertSingleIdentityProviderSelector } from "../fastify-sqlite/app.ts";
 
 async function main(): Promise<void> {
+  assertSingleIdentityProviderSelector(process.env);
   // Read the backend credential ONCE, behind a closure. Missing = boot failure.
   // NEVER place this in createBridgeConfig: (1) it would be rejected as an unknown
   // key with a boot AuthConfigError (contracts §5), and (2) even if accepted it

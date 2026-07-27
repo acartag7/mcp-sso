@@ -1,12 +1,13 @@
-// Integration test of the REAL PROCESS: `node examples/fastify-sqlite/index.ts`
-// spawned as a child, driven over real HTTP. This is the only test that exercises
-// listen() + the entry's main() + the default SIGTERM behavior — none of which
-// buildExample/buildApp (in-process) can reach. Also covers threat-model row 27
-// (the off-loopback pairing warning index.ts prints). TEST-ONLY: spawns the
-// shipped entry; no src/examples changes.
+// Integration tests of the REAL PROCESSES:
+// `node examples/fastify-sqlite/index.ts` and
+// `node examples/api-key-gateway/index.ts`, spawned as children. These are the
+// only tests that exercise listen() + each entry's main() ordering, which the
+// in-process builders cannot reach. Also covers threat-model row 27 (the
+// off-loopback pairing warning index.ts prints).
 
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,6 +17,7 @@ import { fileURLToPath } from "node:url";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url)); // repo root (parent of test/)
 const ENTRY = "examples/fastify-sqlite/index.ts";
+const GATEWAY_ENTRY = "examples/api-key-gateway/index.ts";
 
 /** Probe an ephemeral port by briefly listening on it (PORT=0 is useless here:
  *  index.ts prints the REQUESTED port, so the actual bound port would be
@@ -56,6 +58,32 @@ function waitForStderr(child: ChildProcess, regex: RegExp, timeoutMs: number): P
     }
     child.stderr?.on("data", onStderr);
     child.on("exit", onExit);
+  });
+}
+
+/** Capture stderr through natural process close, bounded so an entrypoint boot
+ *  regression cannot hang the suite. */
+function waitForClose(child: ChildProcess, timeoutMs: number): Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    let stderr = "";
+    const onStderr = (chunk: Buffer | string): void => { stderr += chunk.toString(); };
+    let timer: NodeJS.Timeout | undefined = setTimeout(
+      () => finish(new Error(`child did not close within ${timeoutMs}ms; stderr:\n${stderr.slice(-2000)}`)),
+      timeoutMs,
+    );
+    const onClose = (code: number | null, signal: NodeJS.Signals | null): void =>
+      finish(undefined, { code, signal, stderr });
+    function finish(
+      error: Error | undefined,
+      result?: { code: number | null; signal: NodeJS.Signals | null; stderr: string },
+    ): void {
+      if (timer) { clearTimeout(timer); timer = undefined; }
+      child.stderr?.off("data", onStderr);
+      child.off("close", onClose);
+      if (error) reject(error); else resolve(result as { code: number | null; signal: NodeJS.Signals | null; stderr: string });
+    }
+    child.stderr?.on("data", onStderr);
+    child.on("close", onClose);
   });
 }
 
@@ -106,7 +134,7 @@ async function assertWellKnownServed(base: string): Promise<void> {
 function childEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const k of Object.keys(env)) {
-    if (k.startsWith("OAUTH_") || k.startsWith("CF_ACCESS_") || k.startsWith("ENTRA_") || k.startsWith("GOOGLE_") || k.startsWith("OIDC_")) delete env[k];
+    if (k.startsWith("OAUTH_") || k.startsWith("CF_ACCESS_") || k.startsWith("ENTRA_") || k.startsWith("GOOGLE_") || k.startsWith("OIDC_") || k.startsWith("BACKEND_")) delete env[k];
   }
   return Object.assign(env, overrides);
 }
@@ -161,5 +189,34 @@ test("integration — spawned index.ts: HOST=0.0.0.0 prints the off-loopback pai
   } finally {
     killHard(child);
     await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("integration — gateway entrypoint rejects ambiguous providers before backend listen", async () => {
+  const occupied = createServer();
+  await new Promise<void>((resolve, reject) => {
+    occupied.once("error", reject);
+    occupied.listen(0, "127.0.0.1", resolve);
+  });
+  const address = occupied.address();
+  assert.ok(address && typeof address === "object", "occupied backend has a TCP address");
+  const env = childEnv({
+    BACKEND_API_KEY: randomBytes(32).toString("base64url"),
+    BACKEND_HOST: "127.0.0.1",
+    BACKEND_PORT: String(address.port),
+    ENTRA_TENANT_ID: "tenant-a",
+    CF_ACCESS_AUDIENCE: "audience-b",
+  });
+  const child = spawn("node", [GATEWAY_ENTRY], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    const exited = await waitForClose(child, 10_000);
+    assert.notEqual(exited.code, 0, "ambiguous provider configuration exits nonzero");
+    assert.match(exited.stderr, /exactly one identity provider selector may be present/);
+    assert.doesNotMatch(exited.stderr, /EADDRINUSE/, "provider validation runs before the occupied backend port is used");
+  } finally {
+    killHard(child);
+    await new Promise<void>((resolve, reject) =>
+      occupied.close((error) => { if (error) reject(error); else resolve(); })
+    );
   }
 });
