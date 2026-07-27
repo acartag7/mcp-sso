@@ -22,7 +22,8 @@ const ALL_EVENTS: AuthAuditEventName[] = [
   // v0.2 names (§17.7)
   "identity.verify", "oauth.pairing.attempt", "oauth.device.authorization",
   "oauth.device.approve", "oauth.token.device_code", "oauth.token.client_credentials",
-  "oauth.client.provision", "oauth.client.rotate_secret", "oauth.cimd.fetch",
+  "oauth.client.provision", "oauth.client.rotate_secret", "oauth.client.disable",
+  "oauth.cimd.fetch",
   "oauth.upstream.callback",
 ];
 

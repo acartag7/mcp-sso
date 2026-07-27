@@ -12,7 +12,14 @@ import { test } from "node:test";
 import type { JWK } from "jose";
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
-import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
+import type {
+  ActiveMachineClientRegistration,
+  ClientRegistration,
+  MachineClientMutationAudit,
+  MachineClientRegistration,
+  MachineClientStore,
+  UserClientRegistration,
+} from "../src/ports/client-store.ts";
 import type { NormRequest } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { RequestAuthorizer } from "../src/verifier.ts";
@@ -23,7 +30,8 @@ import { OAuthError } from "../src/errors.ts";
 import { parseBasicAuth } from "../src/client-auth.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import {
-  provisionMachineClient, rotateMachineClientSecret, type MachineClientDeps,
+  disableMachineClient, provisionMachineClient, rotateMachineClientSecret,
+  type MachineClientDeps,
 } from "../src/machine-client.ts";
 
 const NOW_MS = Date.parse("2026-07-06T12:00:00.000Z");
@@ -42,13 +50,35 @@ class MemoryAudit implements AuditPort {
   async writeAuthEvent(e: AuthAuditEvent): Promise<void> { this.events.push(e); }
 }
 
-class InMemoryClientStore implements ClientStore {
+class InMemoryClientStore implements MachineClientStore {
   readonly clients = new Map<string, ClientRegistration>();
   findCalls = 0;
-  async save(c: ClientRegistration): Promise<void> { this.clients.set(c.clientId, c); }
+  async save(c: UserClientRegistration): Promise<void> { this.clients.set(c.clientId, c); }
+  inject(c: ClientRegistration): void { this.clients.set(c.clientId, c); }
   async find(clientId: string): Promise<ClientRegistration | null> {
     this.findCalls += 1;
     return this.clients.get(clientId) ?? null;
+  }
+  async createMachineClient(
+    client: ActiveMachineClientRegistration,
+    _audit: MachineClientMutationAudit,
+  ): Promise<boolean> {
+    if (this.clients.has(client.clientId)) return false;
+    this.clients.set(client.clientId, client);
+    return true;
+  }
+  async compareAndSwapMachineClient(
+    expectedVersion: number,
+    client: MachineClientRegistration,
+    _audit: MachineClientMutationAudit,
+  ): Promise<boolean> {
+    const current = this.clients.get(client.clientId);
+    if (
+      current?.applicationType !== "machine"
+      || current.version !== expectedVersion
+    ) return false;
+    this.clients.set(client.clientId, client);
+    return true;
   }
 }
 
@@ -303,9 +333,10 @@ test("catalog drift (Codex P2): a ceiling scope removed from the live catalog is
   // ceiling includes a scope (mcp:legacy) no longer in the running catalog.
   const ctx = setup(true); // catalog = [mcp:read, mcp:write, mcp:admin]
   const driftedSecret = "mcs_" + "Z".repeat(43);
-  await ctx.clientStore.save({
+  ctx.clientStore.inject({
     clientId: "mcc_drifted", redirectUris: [], applicationType: "machine", issuedAtEpoch: Math.floor(NOW_MS / 1000),
-    allowedScopes: ["mcp:read", "mcp:legacy"], secrets: [{ hash: sha256Hex(driftedSecret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
+    allowedScopes: ["mcp:read", "mcp:legacy"], status: "active", version: 1,
+    secrets: [{ hash: sha256Hex(driftedSecret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
   });
   // Omitted scope ⇒ the full ceiling, which includes the drifted mcp:legacy ⇒ invalid_scope.
   const omitted = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcc_drifted", driftedSecret) }, body: grantBody({}) }));
@@ -327,9 +358,10 @@ test("non-mcc machine clientId (Codex P2 #3): a machine record whose id lacks th
   // break the RS's machine-vs-user distinguishability, RFC 9700 §4.15.1).
   const ctx = setup(true);
   const secret = "mcs_" + "N".repeat(43);
-  await ctx.clientStore.save({
+  ctx.clientStore.inject({
     clientId: "mcpdc_impostor", redirectUris: [], applicationType: "machine", issuedAtEpoch: Math.floor(NOW_MS / 1000),
-    allowedScopes: ["mcp:read"], secrets: [{ hash: sha256Hex(secret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
+    allowedScopes: ["mcp:read"], status: "active", version: 1,
+    secrets: [{ hash: sha256Hex(secret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
   });
   const res = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcpdc_impostor", secret) }, body: grantBody({}) }));
   assert.equal(res.status, 401);
@@ -349,9 +381,10 @@ test("poisoned allowedScopes ceiling (Codex P2 #2): malformed/empty/missing ⇒ 
   const poisoned = (allowedScopes: unknown): ClientRegistration => ({
     clientId: "mcc_poison", redirectUris: [], applicationType: "machine", issuedAtEpoch: epoch,
     secrets: [{ hash, createdAtEpoch: epoch }], allowedScopes: allowedScopes as string[],
+    status: "active", version: 1,
   });
   for (const bad of [undefined, [], "mcp:read", ["mcp:read", 123], [""]]) {
-    await ctx.clientStore.save(poisoned(bad));
+    ctx.clientStore.inject(poisoned(bad));
     const res = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcc_poison", secret) }, body: grantBody({}) }));
     assert.equal(res.status, 401, `expected 401 (not 500/empty) for allowedScopes=${JSON.stringify(bad)}`);
     assert.equal((res.body as { error: string }).error, "invalid_client", `expected invalid_client for allowedScopes=${JSON.stringify(bad)}`);
@@ -382,6 +415,18 @@ test("rotation grace: both old + new secret accepted until old expiry; only new 
   ctx.clock.advance(2 * 1000); // past grace
   assert.equal((await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader(a.clientId, a.clientSecret) }, body: grantBody({}) }))).status, 401, "old secret expired out of grace");
   assert.equal((await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader(a.clientId, b.clientSecret) }, body: grantBody({}) }))).status, 200, "new secret still valid");
+});
+
+test("disabled machine client: existing secrets immediately return 401 invalid_client", async () => {
+  const ctx = setup(true);
+  const client = await provision(ctx);
+  await disableMachineClient(ctx.machineDeps, client.clientId);
+  const response = await ctx.bridge.handleToken(req({
+    headers: { authorization: basicHeader(client.clientId, client.clientSecret) },
+    body: grantBody({}),
+  }));
+  assert.equal(response.status, 401);
+  assert.equal((response.body as { error: string }).error, "invalid_client");
 });
 
 // ---------- disabled ⇒ unsupported_grant_type + metadata does not advertise ----------

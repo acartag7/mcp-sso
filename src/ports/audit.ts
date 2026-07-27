@@ -26,6 +26,7 @@ export type AuthAuditEventName =
   | "oauth.token.client_credentials"
   | "oauth.client.provision"
   | "oauth.client.rotate_secret"
+  | "oauth.client.disable"
   | "oauth.cimd.fetch"
   | "oauth.upstream.callback";
 

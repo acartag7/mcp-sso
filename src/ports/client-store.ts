@@ -24,6 +24,8 @@ export interface ClientSecret {
   expiresAtEpoch?: number;
 }
 
+export type ActiveClientSecrets = [ClientSecret] | [ClientSecret, ClientSecret];
+
 /** A user client registered via RFC 7591 DCR (§9.2). `redirectUris` is ≥1 and
  *  each entry is validated through §10. `applicationType` selects the §10.2
  *  per-client redirect policy (native ⇒ RFC 8252 loopback any-port,
@@ -35,20 +37,37 @@ export interface UserClientRegistration {
   issuedAtEpoch: number;
 }
 
-/** A machine client provisioned out-of-band (§17.2). `redirectUris` is always
- *  `[]` (no authorization-code flow); `allowedScopes` is the per-client ceiling
- *  fixed at provisioning (⊆ scopeCatalog); `secrets` holds ≤ 2 unexpired
- *  ("active") SHA-256 digests. Machine clients are rejected at `/oauth/authorize`
- *  and the device endpoints (`invalid_client`). */
-export interface MachineClientRegistration {
+interface MachineClientRegistrationBase {
   clientId: string;
   redirectUris: string[];
   applicationType: "machine";
   issuedAtEpoch: number;
   name?: string;
   allowedScopes: string[];
-  secrets: ClientSecret[];
+  /** Monotonic mutation version used by compare-and-swap lifecycle operations. */
+  version: number;
 }
+
+/** A live machine client provisioned out-of-band (§17.2). `redirectUris` is
+ *  always `[]`; `allowedScopes` is the fixed per-client ceiling; `secrets`
+ *  holds one or two stored SHA-256 digests; verification ignores expired grace
+ *  entries until a later rotation removes them. */
+export interface ActiveMachineClientRegistration extends MachineClientRegistrationBase {
+  status: "active";
+  secrets: ActiveClientSecrets;
+}
+
+/** An auditable tombstone. Disabling clears every stored credential digest;
+ *  already-issued access tokens remain valid only until their normal expiry. */
+export interface DisabledMachineClientRegistration extends MachineClientRegistrationBase {
+  status: "disabled";
+  secrets: [];
+  disabledAtEpoch: number;
+}
+
+export type MachineClientRegistration =
+  | ActiveMachineClientRegistration
+  | DisabledMachineClientRegistration;
 
 /** A stored client record — a discriminated union on `applicationType` so a
  *  machine record CANNOT exist without its `allowedScopes` + `secrets` (no
@@ -57,6 +76,30 @@ export interface MachineClientRegistration {
 export type ClientRegistration = UserClientRegistration | MachineClientRegistration;
 
 export interface ClientStore {
-  save(client: ClientRegistration): Promise<void>;
+  save(client: UserClientRegistration): Promise<void>;
   find(clientId: string): Promise<ClientRegistration | null>;
+}
+
+/** Metadata-only durable lifecycle audit stored atomically with the matching
+ *  machine-client row mutation. It must never contain a raw secret or digest. */
+export interface MachineClientMutationAudit {
+  occurredAt: string;
+  event: "oauth.client.provision" | "oauth.client.rotate_secret" | "oauth.client.disable";
+  clientId: string;
+  scopes: string[];
+}
+
+/** Additional store contract required by out-of-band machine-client mutation.
+ *  User DCR stores that do not provision machine clients need only ClientStore.
+ *  `false` means the create collided or the CAS version no longer matched. */
+export interface MachineClientStore extends ClientStore {
+  createMachineClient(
+    client: ActiveMachineClientRegistration,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean>;
+  compareAndSwapMachineClient(
+    expectedVersion: number,
+    client: MachineClientRegistration,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean>;
 }
