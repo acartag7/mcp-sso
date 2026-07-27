@@ -76,7 +76,9 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
   `main` remain blocked by branch protection.
 - **Required checks:** branch protection requires the CI verify and
   `process-guard` contexts. CodeQL is a scheduled and maintainer-dispatched
-  analysis requirement, not a branch-protection status.
+  analysis requirement, not a branch-protection status. For a manual dispatch,
+  `attest-dispatched-checks` publishes those two contexts only after both
+  enforcing jobs pass; it runs without a checkout on the CodeQL-only runner.
 - **Public-fork and automation boundary:** CI and CodeQL do not run on
   `pull_request` or arbitrary branch pushes. Review a legitimate contribution
   first, then mirror it to a maintainer-controlled branch and dispatch the

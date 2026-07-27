@@ -108,3 +108,39 @@ jobs:
           base-ref: origin/main
           src-paths: src/
           contract-paths: docs/contracts.md
+
+  # workflow_dispatch check runs are not included in a PR's required-check
+  # rollup. Publish the exact required contexts only after both enforcing jobs
+  # succeed. This job never checks out or executes repository code.
+  attest-dispatched-checks:
+    name: attest dispatched checks
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' &&
+        needs.verify.result == 'success' &&
+        needs.process-guard.result == 'success'
+      }}
+    needs: [verify, process-guard]
+    runs-on: [self-hosted, macOS, ARM64, mcp-sso-codeql]
+    permissions:
+      statuses: write
+    steps:
+      - name: publish required commit statuses
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}"
+          /usr/bin/curl --fail --silent --show-error --output /dev/null \
+            --request POST \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data-binary '{"state":"success","context":"typecheck · lines · test · build","description":"Mac mini dispatched CI passed"}' \
+            "$status_url"
+          /usr/bin/curl --fail --silent --show-error --output /dev/null \
+            --request POST \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data-binary '{"state":"success","context":"process-guard","description":"Mac mini dispatched process guard passed"}' \
+            "$status_url"
