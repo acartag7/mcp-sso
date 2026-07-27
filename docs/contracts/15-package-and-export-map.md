@@ -142,3 +142,14 @@ the install-time floor and the `docs/dependency-ledger.md` 15-day curation rule
 are the same standard); CI actions are pinned by SHA; npm publish uses
 `--provenance` from GitHub Actions OIDC only (no local publishes). Every pin is
 recorded in `docs/dependency-ledger.md` with version + publish date.
+
+**Dependency-policy gate — PENDING in this PR:** the ledger contains one
+machine-readable record for every direct npm package and GitHub Action pin.
+`check:deps` compares those records with `package.json` and every workflow
+`uses:` entry: missing, extra, unpinned, or mismatched entries reject. Each
+third-party Action record binds its immutable commit SHA to the recorded
+release tag and publication date and must be at least 15 days old; the
+first-party `acartag7/engineering-os` exception remains explicit and
+SHA-pinned. CI runs the same gate, including the upstream tag/date check, so a
+manual workflow edit cannot bypass the quarantine or leave the prose ledger
+describing different code.
