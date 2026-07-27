@@ -81,28 +81,54 @@ workflow is written (Phase 2 scaffold) and recorded here. Intended actions (all
 pinned to a SHA whose tag is ≥15 days old at pin time):
 
 - `actions/checkout` — shallow checkout.
-- `actions/setup-node` — Node 24 + cache.
+- `actions/setup-node` — Node 24. The persistent self-hosted runner keeps pnpm's
+  content-addressed store locally; Actions cache export is intentionally disabled.
 - `pnpm/action-setup` — pnpm via corepack (matches `packageManager`).
 - `acartag7/engineering-os/process-guard` — the Engineering OS artifact-chain
   guard (freeze-hash / mixed-diff / stage-artifact) in `.github/workflows/ci.yml`.
-  Pinned to `b483fa418ffa8122588fdfa87c36f40f6908c06f` (published 2026-07-09).
+  Pinned to `c697b412abf034be7a22a53f567ec10eecc776e0` (published 2026-07-19).
   **First-party — documented exception to the 15-day floor (see below).**
 - npm publish step runs `npm publish --provenance` under the GitHub Actions OIDC
   token (**no `NPM_TOKEN` with publish rights, no local publishes**).
 
-### CI service containers (image tags)
+### CI integration containers (image tags)
 
 The `verify` job runs the `/store/mysql` and `/rate-limit/redis` integration tests
-against `mysql:8.4` and `redis:7-alpine` service containers (pinned by **tag**, not
-digest). This is a deliberate, narrower trust boundary than the SHA-pinned Actions
-above: a service image is a *test fixture*, not a build input that executes in the
-published artifact. A tag rebuild that changed `sql_mode` defaults, the default
-authentication plugin, or timezone handling would be caught loudly rather than
-silently — `migrateMysqlStore` **fail-closed asserts** `STRICT_TRANS_TABLES` in
-`sql_mode` and `utf8mb4_bin` table collation at boot, so image drift that matters for
-correctness turns the CI red, not green-with-wrong-results. (If a future change makes
-these assertions insufficient, promote both images to `@sha256:<digest>` pins recorded
-here with the same 15-day check.)
+against `mysql:8.4` and `redis:7-alpine` containers (pinned by **tag**, not
+digest). The isolated Linux runner VM on the Mac mini starts them through its
+Docker engine with `--pull=always`, waits for both health checks, publishes
+random loopback ports, and removes the containers and their anonymous volumes
+after the job. This is a deliberate, narrower trust boundary
+than the SHA-pinned Actions above: a service image is a *test fixture*, not a
+build input that executes in the published artifact. A tag rebuild that changed
+`sql_mode` defaults, the default authentication plugin, or timezone handling
+would be caught loudly rather than silently — `migrateMysqlStore` **fail-closed
+asserts** `STRICT_TRANS_TABLES` in `sql_mode` and `utf8mb4_bin` table collation
+at boot, so image drift that matters for correctness turns the CI red, not
+green-with-wrong-results. (If a future change makes these assertions
+insufficient, promote both images to `@sha256:<digest>` pins recorded here with
+the same 15-day check.)
+
+CI verification and `process-guard` use the repo-scoped
+`[self-hosted, Linux, ARM64, mcp-sso]` runner in an isolated VM on the Mac mini.
+CodeQL uses a separate `[self-hosted, macOS, ARM64, mcp-sso-codeql]` runner on
+the same Mac mini because the CodeQL CLI does not support Linux/ARM64; that job
+only checks out source, provisions Node through the pinned setup action, and
+runs CodeQL in `build-mode: none`, with no dependency install or repository
+build command. Main runs automatically; feature refs run only through a
+maintainer-triggered `workflow_dispatch` after their workflow diff is reviewed.
+The workflows do not subscribe to `pull_request` or arbitrary branch pushes, so
+fork- and automation-controlled workflow changes cannot reach either runner
+before review. Release publishing remains on GitHub-hosted `ubuntu-latest` to
+preserve the OIDC trusted-publishing and provenance boundary.
+
+GitHub does not attach `workflow_dispatch` job checks to a pull request's
+required-check rollup. For a dispatched CI run, the workflow MUST publish the
+two required commit-status contexts only after both the verify and
+`process-guard` jobs succeed. That attestation runs on the CodeQL-only Mac
+runner, performs no checkout, and alone receives `statuses: write`; the Linux
+job that executes repository code retains read-only contents permission. If
+either enforcing job fails, no success status is published.
 
 ## Verification & change protocol
 
@@ -126,9 +152,9 @@ carries no provenance attestation and is not the v0.1.0 release artifact. Every
 publish from `v0.1.0` onward goes through GitHub Actions via OIDC Trusted
 Publishing (`.github/workflows/publish.yml`), with `--provenance` intact.
 
-**Documented exception (2026-07-09):** the `acartag7/engineering-os/process-guard`
-action is pinned to `b483fa418ffa8122588fdfa87c36f40f6908c06f`, a same-day `main`
-commit published 2026-07-09 — younger than the 15-day floor. This is a deliberate,
+**Documented exception (2026-07-19):** the `acartag7/engineering-os/process-guard`
+action is pinned to `c697b412abf034be7a22a53f567ec10eecc776e0`, a `main` commit
+published 2026-07-19 — younger than the 15-day floor. This is a deliberate,
 owner-approved exception. The action is **first-party**: same owner (`acartag7`)
 as this repo, authored and controlled by the repo owner. The age floor exists to
 blunt *third-party* supply-chain risk — a compromised upstream release is usually
