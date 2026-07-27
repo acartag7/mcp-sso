@@ -189,11 +189,11 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   constructs the signed access/refresh response before `saveRefreshToken`
   persists the new family. A preparation failure leaves no refresh row; the
   already-consumed authorization code stays burned.
-- **`refresh`**: reads the authoritative row with `findRefreshToken`, enforces
-  RFC 6749 §6 client binding and the reserved subject namespace, and calls
-  `tokenResponse` before `rotateRefreshToken` (§7.4). Rotation remains atomic and
-  authoritative: a `null` result discards the prepared response and returns
-  `invalid_grant`; a mismatch revokes the family.
+- **`refresh`**: atomically rotates the refresh token (§7.4), preserving
+  consumed-token replay detection and whole-family revocation; then enforces RFC
+  6749 §6 client binding (mismatch ⇒ family revoked ⇒ `invalid_grant`) and mints
+  a new access token carrying the rotated record's scopes. The malformed-row
+  response-continuity residual is recorded in §7.4.
 - **`revoke`** (RFC 7009): **always returns 200**; an unknown or already-revoked
   token is a **no-op** (never 4xx — RFC 7009 §2.2 forbids leaking token existence
   via the response). Looks up the family by hash and revokes it; a guessed family
