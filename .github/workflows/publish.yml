@@ -1,67 +1,114 @@
 name: publish
 
-# Publish to npm via Trusted Publishing (OIDC, passwordless — no NPM_TOKEN secret).
-# NEVER auto-runs on push to main. Real publish only on a `v*.*.*` tag;
-# workflow_dispatch defaults to a dry run so the tarball can be validated without
-# publishing. No local publishes (see the threat model).
-#
-# Requires a Trusted Publisher configured on npmjs.com for this package: GitHub
-# Actions provider, repo acartag7/mcp-sso, workflow publish.yml, environment
-# publish. The npm CLI (>=11.5.1, bundled with Node 24) auto-exchanges the
-# GitHub OIDC token for a short-lived publish token when id-token: write is
-# granted — nothing to rotate, nothing to leak.
-
+# Real publication is tag-only. Manual dispatch builds the same artifact but
+# can only run npm's dry-run path.
 on:
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Dry run (validate the tarball; do not publish)"
-        type: boolean
-        default: true
   push:
     tags:
-      # Provenance ordering: the repo MUST be public before any real publish.
-      # Sigstore attests against the source repo; a private repo breaks provenance
-      # verification for auditors. Make the repo public, then tag.
       - "v*.*.*"
 
-permissions:
-  contents: read
-  id-token: write # OIDC for npm Trusted Publishing + provenance
+permissions: {}
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
-    environment: publish # gate: require explicit approval before any real publish
     permissions:
-      contents: write # for the release-entry step below (gh release create)
-      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (2026-06-18)
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (2026-06-15)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0 (2026-04-20)
         with:
           node-version: "24"
           cache: pnpm
-          registry-url: "https://registry.npmjs.org"
+      - name: require tag to match package version
+        if: github.event_name == 'push'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
       - name: enforce dependency policy
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/check-dependency-policy.mjs --verify-remote
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck && pnpm check:lines && pnpm test
+      - run: pnpm typecheck
+      - run: pnpm check:lines
+      - run: pnpm check:seams
+      - run: pnpm test
       - run: pnpm build
-      - name: npm publish (dry-run OR OIDC Trusted Publishing)
-        run: npm publish ${{ inputs.dry_run == false && '--provenance' || '--dry-run' }}
+      - name: pack once and record the tarball digest
+        run: |
+          PACK_JSON="${RUNNER_TEMP}/npm-pack.json"
+          npm pack --ignore-scripts --json > "$PACK_JSON"
+          TARBALL="$(node -e 'const r=require(process.argv[1]); if(r.length!==1) process.exit(1); process.stdout.write(r[0].filename)' "$PACK_JSON")"
+          case "$TARBALL" in mcp-sso-*.tgz) ;; *) exit 1 ;; esac
+          test -f "$TARBALL"
+          shasum -a 256 "$TARBALL" > "$TARBALL.sha256"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (2026-04-10)
+        with:
+          name: npm-package-${{ github.sha }}
+          path: |
+            mcp-sso-*.tgz
+            mcp-sso-*.tgz.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (2026-03-11)
+        with:
+          name: npm-package-${{ github.sha }}
+          path: package
+      - name: verify and dry-run the packed artifact
+        working-directory: package
+        run: |
+          shasum -a 256 -c mcp-sso-*.tgz.sha256
+          TARBALL=(mcp-sso-*.tgz)
+          test "${#TARBALL[@]}" -eq 1
+          npm publish "${TARBALL[0]}" --dry-run --ignore-scripts
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment: publish
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0 (2026-04-20)
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (2026-03-11)
+        with:
+          name: npm-package-${{ github.sha }}
+          path: package
+      - name: verify and publish the packed artifact
+        working-directory: package
+        run: |
+          shasum -a 256 -c mcp-sso-*.tgz.sha256
+          TARBALL=(mcp-sso-*.tgz)
+          test "${#TARBALL[@]}" -eq 1
+          npm publish "${TARBALL[0]}" --provenance --ignore-scripts
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
       - name: Create GitHub Release
-        # Only on a real tag push, not a workflow_dispatch dry run. Auto-generated
-        # notes are a baseline, not a substitute for hand-written highlights — edit
-        # the release afterward with a curated summary before calling it final.
-        if: github.event_name == 'push'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Pass the tag through an env var, NOT interpolated into `run:` — tag
-          # names are attacker-controlled and GitHub expands `${{ }}` before the
-          # shell starts, even inside quotes, so this is the injection-safe form.
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release create "$TAG" --generate-notes --title "$TAG"

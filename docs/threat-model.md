@@ -328,8 +328,13 @@ integration round.
   driven by the **official MCP SDK client** — must pass before a release. Green
   unit tests alone are not "done."
 - **No local publishes.** npm publish is `--provenance` from GitHub Actions
-  OIDC only. Treat every commit as will-be-public (no secrets, no internal
-  hostnames).
+  OIDC only. The workflow's read-only job builds and packs once; manual dispatch
+  can only dry-run that digest-bound artifact. Only a version-matching
+  `v*.*.*` tag enters the no-checkout/no-install OIDC publish job, and GitHub
+  Release creation runs afterward in a separate no-OIDC `contents: write` job.
+  Before tagging, the `publish` Environment must be configured as the
+  independent release-tag + owner-approval gate with admin bypass disabled.
+  Treat every commit as will-be-public (no secrets, no internal hostnames).
 - Never weaken a fail-closed control to make a test pass — the control wins;
   change the test and document why.
 

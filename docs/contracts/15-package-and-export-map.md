@@ -160,3 +160,17 @@ describing different code. The quarantine age is the upstream release's
 executed code; the remote check rejects a moved tag until a deliberate local
 pin and ledger change is reviewed. Git author/committer timestamps are not used
 as independent age evidence because the commit creator controls them.
+
+**Release-authority boundary:** `.github/workflows/publish.yml` has four
+separate jobs. A read-only build job checks out with persisted credentials
+disabled, validates a tag as exactly `v${package.version}` when the event is a
+tag push, runs the source gates, builds once, and uploads the packed tarball
+plus its SHA-256 digest. `workflow_dispatch` has no real-publish input and can
+only invoke a no-OIDC dry-run job against that artifact. The real publish job
+runs only for a matching tag push, receives `id-token: write` but no checkout,
+install, repository scripts, or `contents: write`, verifies the artifact
+digest, and publishes that tarball with provenance and scripts disabled. A
+separate post-publish job receives `contents: write` but no OIDC permission and
+creates the GitHub Release. Before any real tag, the `publish` GitHub
+Environment MUST provide the external second gate: required reviewer approval,
+no admin bypass, and a custom deployment tag policy restricted to `v*.*.*`.
