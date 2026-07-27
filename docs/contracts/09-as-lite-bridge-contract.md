@@ -237,7 +237,19 @@ the response. Wiring rules:
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src
-  'unsafe-inline'`, `X-Content-Type-Options: nosniff`, all values HTML-escaped.
+  'unsafe-inline'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`,
+  all values HTML-escaped. **0.3.0 amendment — implementation pending in this
+  PR:** the consent CSP MUST omit `form-action`: Chromium applies that directive
+  across the same-origin POST's redirect chain, so `'self'` blocks both the
+  Approve and Deny 302 from reaching a validated loopback callback. The form
+  action remains the literal `/oauth/authorize/approve`.
+  `OAuthAuthorizationUseCase.approve` invokes `assertApproveOrigin`, verifies
+  the signed consent state, and calls `assertOAuthRedirectEntry` to re-check
+  the §10.0 entry grammar before producing the redirect URL. Mode-aware
+  destination validation remains in `prepare` / `resolveAuthorizeClient` and
+  is bound into that signed state. The pairing page is a separate surface whose
+  same-origin form terminates in another bridge page; its CSP retains
+  `form-action 'self'`.
   The page sends `Referrer-Policy: same-origin`, not `no-referrer`: this keeps a
   scheme/host/port `Origin` on the same-origin Approve POST for §9.3's unchanged
   strict check while suppressing the authorize query from cross-origin
