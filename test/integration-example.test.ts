@@ -33,15 +33,34 @@ test("integration — zero-setup branch: buildExample creates a fresh state dir,
   const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-zs-"));
   const dir = join(base, "nested-state"); // does NOT exist — buildExample must create it
   try {
-    const { app, store } = await buildExample({ MCP_SSO_DIR: dir });
+    const { app, store, config } = await buildExample({ MCP_SSO_DIR: dir });
     // quickstart created the signing material + .gitignore + the dir.
     assert.ok(existsSync(dir), "state dir created");
     assert.ok(existsSync(join(dir, "secrets.json")), "quickstart wrote secrets.json");
     assert.ok(existsSync(join(dir, ".gitignore")), "quickstart wrote .gitignore");
+    assert.equal(config.cimd?.enabled, true, "zero-setup example advertises CIMD");
+    assert.equal(config.dcr.mode, "stateless", "DCR remains available as a compatibility path");
     // Pairing mode (NOT header-based): GET /oauth/authorize renders the pairing page.
     const page = await app.inject({ method: "GET", url: AUTHORIZE_QUERY });
     assert.equal(page.statusCode, 200);
     assert.match(page.body, /Pair this device/);
+    await app.close();
+    await store.close();
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — gateway zero-setup branch enables CIMD and retains DCR", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-gateway-cimd-"));
+  const dir = join(base, "state");
+  try {
+    const { app, store, config } = await buildGatewayExample(
+      { MCP_SSO_DIR: dir },
+      { backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused" },
+    );
+    assert.equal(config.cimd?.enabled, true, "gateway example advertises CIMD");
+    assert.equal(config.dcr.mode, "stateless", "gateway keeps DCR as a compatibility path");
     await app.close();
     await store.close();
   } finally {
@@ -70,6 +89,8 @@ test("integration — Cloudflare Access branch: buildExample creates the state d
       OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
     });
     assert.equal(config.issuer, "http://localhost");
+    assert.equal(config.cimd?.enabled, true, "production example advertises CIMD");
+    assert.equal(config.dcr.mode, "stateless", "DCR remains available as a compatibility path");
     assert.ok(existsSync(dir), "CF branch created the state dir (the regression)");
     assert.ok(existsSync(join(dir, "auth.db")), "sqlite opened auth.db in the state dir");
     assert.ok(existsSync(join(dir, ".gitignore")), "CF branch protected the state dir from git (managed .gitignore)");
