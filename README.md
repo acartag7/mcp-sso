@@ -135,6 +135,10 @@ full pattern, topology, and Kubernetes notes in
   `headersFromDistinct` plus `readHeader`, and the generated server checks
   `request.raw.headersDistinct.origin` inline, before parsing or bearer
   authorization. Custom `/mcp` mounts own the same DNS-rebinding check.
+- **Origin-preserving consent POST** — `Bridge.handleAuthorize` sends
+  `Referrer-Policy: same-origin`, so the same-origin approval POST retains its
+  issuer `Origin`; `assertApproveOrigin` keeps its exact issuer-or-allowlist
+  check, with no automatic opaque-Origin fallback.
 - **`jose` is the only runtime dependency**; every pin is ≥15 days old before we
   accept it; npm publishes run only through GitHub Actions with Sigstore
   provenance, never from a local machine.
