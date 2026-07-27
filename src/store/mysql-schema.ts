@@ -137,10 +137,11 @@ export async function insertRefreshToken(conn: PoolConnection, input: SaveRefres
 }
 
 export async function revokeFamily(conn: PoolConnection, familyId: string, revokedAtIso: string): Promise<void> {
-  // MySQL 8.0.20+ row-alias ODKU (NOT sqlite's `excluded`); revoked_at set once (review H1).
+  // Repeat the bound timestamp instead of using a row alias. COALESCE keeps the
+  // first revocation timestamp (review H1).
   await conn.query(
-    `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, ?) AS new ON DUPLICATE KEY UPDATE revoked_at = COALESCE(oauth_refresh_token_families.revoked_at, new.revoked_at)`,
-    [familyId, revokedAtIso],
+    `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE revoked_at = COALESCE(oauth_refresh_token_families.revoked_at, ?)`,
+    [familyId, revokedAtIso, revokedAtIso],
   );
 }
 
