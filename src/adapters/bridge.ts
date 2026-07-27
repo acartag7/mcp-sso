@@ -55,14 +55,14 @@ export interface BridgeDeps {
 // overlaid Approve button removes that judgment entirely — one click issues a
 // code — and CIMD means the attacker needs no registration to get here.
 // `frame-ancestors` does NOT fall back to `default-src` under CSP3, so
-// `default-src 'none'` alone does not frame-block; `x-frame-options` is the
-// belt-and-braces for pre-CSP3 agents. `form-action 'self'` keeps the consent
-// POST on this origin even if markup is ever injected.
+// `default-src 'none'` alone does not frame-block; `x-frame-options` covers
+// pre-CSP3 agents. Consent omits `form-action`: Chromium applies it across the
+// POST redirect chain, so `'self'` blocks loopback callbacks; the literal action and exact Origin gate remain.
 const CONSENT_HEADERS = {
   "content-type": "text/html; charset=utf-8",
   "x-content-type-options": "nosniff",
   "content-security-policy":
-    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'self'",
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
   "x-frame-options": "DENY",
   "referrer-policy": "same-origin",
 };

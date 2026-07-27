@@ -135,8 +135,7 @@ full pattern, topology, and Kubernetes notes in
   `headersFromDistinct` plus `readHeader`, and the generated server checks
   `request.raw.headersDistinct.origin` inline, before parsing or bearer
   authorization. Custom `/mcp` mounts own the same DNS-rebinding check.
-- **Browser-compatible consent return** *(0.3.0 amendment; implementation
-  pending in this PR)* — `Bridge.handleAuthorize` sends `Referrer-Policy:
+- **Browser-compatible consent return** — `Bridge.handleAuthorize` sends `Referrer-Policy:
   same-origin`, so the approval POST retains its issuer `Origin`, and its CSP
   must omit `form-action` so Chromium can follow the POST's 302 to the client
   callback. `assertApproveOrigin` keeps its exact issuer-or-allowlist check,

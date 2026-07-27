@@ -238,8 +238,8 @@ the response. Wiring rules:
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src
   'unsafe-inline'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`,
-  all values HTML-escaped. **0.3.0 amendment — implementation pending in this
-  PR:** the consent CSP MUST omit `form-action`: Chromium applies that directive
+  all values HTML-escaped. **0.3.0 amendment:** the consent CSP omits
+  `form-action`: Chromium applies that directive
   across the same-origin POST's redirect chain, so `'self'` blocks both the
   Approve and Deny 302 from reaching a validated loopback callback. The form
   action remains the literal `/oauth/authorize/approve`.
