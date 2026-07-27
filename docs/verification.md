@@ -408,10 +408,14 @@ metadata/tokenless-challenge probes and DCR registrations, Cloudflare Access
 path gating, public-CIMD resolution to authorization redirects on the Entra-
 and Google-configured gateways, and the CIMD literal-IP, DNS-rebinding,
 DNS-failure, non-200, content-type, size, and timeout deny legs.
+The durable sanitized receipt is in
+[`docs/live-verification.md`](live-verification.md#clean-main-rerun-receipt-2026-07-28).
 Browser-completed provider happy paths and refresh replay remain pending.
 
-The final-spec checklist above and the packed/published artifact smoke are also
-pending. Historical Codex CLI success remains recorded, but installed Codex CLI
-0.144.1 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
-compatibility awaits upstream resolution and retest. npm remains at 0.2.3 until
-the v0.3 release workflow completes.
+The packed-artifact pre-tag smoke is pending. The final-spec checklist is
+required before claiming conformance with the unpublished 2026-07-28 version,
+not for the existing 2025-11-25 target; the published-artifact smoke runs after
+the release workflow publishes. Historical Codex CLI success remains recorded,
+but installed Codex CLI 0.144.1 showed an RFC 9207 `iss` callback regression on
+2026-07-28; current compatibility awaits upstream resolution and retest. npm
+remains at 0.2.3 until the v0.3 release workflow completes.

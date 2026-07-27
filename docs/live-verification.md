@@ -37,10 +37,30 @@ checklist.
 | Baseline | Evidence completed | Still pending |
 | --- | --- | --- |
 | Patched, uncommitted checkout based on `ee8994a` (2026-07-26/27) | CIMD happy paths with Cloudflare Access, Entra ID, and Google; refresh rotation plus replay/family revocation; retained audit-log search found no backend credential. | This is historical live evidence, not proof of the final clean-main tree. |
-| Clean `main` at `e71a2bb` (2026-07-28, autonomous partial rerun) | Three metadata/tokenless-challenge probes and DCR registrations; Cloudflare Access path gating; Entra- and Google-configured gateways resolving a public CIMD document to their authorization redirects; CIMD rejection of literal IP, DNS rebinding, DNS failure, non-200 response, wrong content type, oversized body, and timeout. `createGuardedFetcher` enforces the CIMD network denies; `buildUnauthorizedChallenge` constructs the tokenless challenge. | Browser-completed provider happy paths and refresh replay/family revocation must be rerun before the release tag. |
+| Clean `main` at `e71a2bb` (2026-07-28, autonomous partial rerun) | Three metadata/tokenless-challenge probes and DCR registrations; Cloudflare Access path gating; Entra- and Google-configured gateways resolving a public CIMD document to their authorization redirects; CIMD rejection of literal IP, DNS rebinding, DNS failure, non-200 response, wrong content type, oversized body, and timeout. See the [sanitized receipt](#clean-main-rerun-receipt-2026-07-28). | Browser-completed provider happy paths and refresh replay/family revocation must be rerun before the release tag. |
 
 No secrets, tenant/team identifiers, provider subjects, or deployment URLs from
 either campaign are retained in this public record.
+
+### Clean-main rerun receipt (2026-07-28)
+
+The partial rerun used a clean worktree at exact commit
+`e71a2bbaf6902f98502a788a8d1e4bfc604b9bbc`. Provider configuration was loaded
+from uncommitted private environment files; the retained public receipt contains
+no provider value or deployment URL.
+
+| Probe | Observed result |
+| --- | --- |
+| Discovery and tokenless protected-resource request | All three configured gateways returned their metadata, then rejected a tokenless `/mcp` request with 401 and a `resource_metadata` challenge constructed by `buildUnauthorizedChallenge`. |
+| Dynamic registration | All three gateways returned 201 for a valid DCR registration. |
+| CIMD redirect entry | The Entra- and Google-configured gateways resolved the public CIMD document and redirected to their configured identity provider. This stopped before browser login and is not a provider happy-path claim. |
+| Cloudflare Access path gate | The public metadata, registration, token, and protected-resource paths remained reachable while the browser authorization path required the Access assertion. |
+| Guarded CIMD rejection | Authorization rejected literal-IP admission, DNS rebinding, DNS failure, non-200 response, wrong content type, body over 5 KiB, and timeout cases. These requests exercised `createGuardedFetcher` through the gateway authorization path. |
+
+The browser-completed Cloudflare Access, Entra, and Google flows and the refresh
+rotation/replay/family-revocation sequence remain release gates. The retained
+autonomous artifacts are not a substitute for that authenticated response
+corpus.
 
 ## Matrix
 
@@ -52,12 +72,13 @@ either campaign are retained in this public record.
 | local stub identity | claude.ai (custom connector) | consent (correct scopes) + `ping` round-trip | ✅† | 2026-07-04 | Via a **named Cloudflare tunnel** (transport) on a real domain — see [`troubleshooting.md`](troubleshooting.md) for why ad-hoc `--url` tunnels are unreliable. Originally ran against `DEV_STUB_SUBJECT`. Mechanics only. |
 | Cloudflare Access (production identity leg) | Claude Code (CLI), Codex CLI, claude.ai, ChatGPT, Official MCP SDK client | full flow against CF-Access-injected identity; fail-closed on policy, allowlist, and bypass | ✅ | 2026-07-07 | Five clients completed register→authorize→consent→token→`/mcp`. A denied account was stopped at the Access edge; a gateway allowlist rejection and missing-assertion rejection were audit-confirmed. The Access application was path-scoped to the browser authorize leg. Wrong-`aud` rejection was suite-covered but not separately live-driven. Codex CLI success is historical; see the current-version caveat below. |
 | Google sign-in (production identity leg) | Claude Code (CLI), Official MCP SDK client | register→authorize→Google login→callback→consent→token→`/mcp` `ping`; tokenless 401; hosted-domain rejection | ✅ | 2026-07-10 | Both clients completed the flow. The stable provider subject was consistent per account and distinct across accounts; no subject values are published. An outside hosted-domain account was rejected before token minting. Google remains the only generic-OIDC-family provider live-driven; a second generic issuer is pending. |
-| Entra ID (redirect flow, §17.11) | Claude Code | register→authorize→Entra login→consent→token→/mcp tools | ✅† | 2026-07-08 | Real enterprise deployment using mcp-sso@0.2.0. Happy path proven: Claude Code created a dynamic client (`mcpdc_…`), used PKCE S256, redirected through Entra, showed the mcp-sso consent screen, returned to the callback, and connected with scoped tools. **Deny-path (wrong-tenant, no-mapped-groups, allowlist rejection) NOT separately live-tested in this deployment** — covered by the unit suite (`entra_bad_tid`, `entra_groups_overage`, `entra_no_mapped_groups`) but not live-driven. Internal hostname, scopes, and OAuth parameters redacted. See [`docs/field-report-api-key-gateway.md`](field-report-api-key-gateway.md). |
-| Entra ID (redirect flow, §17.11) | Claude Desktop | register→authorize→Entra login→consent→token→/mcp tools | ✅† | 2026-07-08 | Same enterprise deployment. Happy path proven (connected with scoped tools; identical flow). Same deny-path caveat as the Claude Code row above. |
-| Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | full flow against Entra identity | ⬜ | — | Owner-run checklist B (claude.ai variant). |
-| Entra ID (redirect flow, §17.11) | ChatGPT (custom connector) | consent + tool round-trip against Entra identity | ⬜ | — | Owner-run checklist C (Entra variant). CF × ChatGPT is ✅ (row below); this tracks the Entra-backed ChatGPT case the old "CF or Entra" placeholder covered. |
-| Cloudflare Access | ChatGPT custom connector | consent + tool round-trip | ✅ | 2026-07-07 | ChatGPT completed register→authorize→consent→token→`/mcp` `ping` against the same sanitized Cloudflare Access deployment. Entra × ChatGPT remains ⬜. |
-| console pairing / Cloudflare Access / Entra | **api-key-gateway example** (this repo) | full proxied round trip: client → gateway → token-only backend | ⬜ | — | Owner-run checklist D. The example + its automated integration test shipped; the live-client run is owner-pending. |
+| Google sign-in (production identity leg) | Owner browser + refresh harness | authorization-code exchange→refresh A→B→C→replay A→reject current C | ✅ | 2026-07-26/27 | The patched-checkout campaign observed refresh rotation, rejection of consumed token A, and family revocation that also rejected current token C. The clean-main repetition remains a pre-tag gate. |
+| Entra ID (redirect flow, §17.11) | Claude Code | register→authorize→Entra login→consent→token→/mcp tools; provider deny sweep | ✅ | 2026-07-08 + 2026-07-26/27 | The original enterprise happy path used mcp-sso@0.2.0. The patched-checkout campaign later drove wrong-tenant, group-overage, no-group, no-mapped-group, allowlist, and guest/B2B outcomes through the shipped redirect identity path. See [`docs/field-report-api-key-gateway.md`](field-report-api-key-gateway.md). |
+| Entra ID (redirect flow, §17.11) | Claude Desktop | register→authorize→Entra login→consent→token→/mcp tools; provider deny sweep | ✅ | 2026-07-08 + 2026-07-26/27 | The original enterprise happy path completed with Claude Desktop; the later provider deny sweep is recorded in the sanitized campaign summary above. |
+| Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | CIMD register→authorize→Entra identity→consent→token→`/mcp` | ✅ | 2026-07-26/27 | Completed on the patched `ee8994a`-based checkout after the recorded live-run fixes. Clean-main browser completion remains a separate pre-tag gate. |
+| Entra ID (redirect flow, §17.11) | ChatGPT (custom connector) | CIMD register→authorize→Entra identity→consent→token→`/mcp` | ✅ | 2026-07-26/27 | Completed on the patched `ee8994a`-based checkout after the recorded live-run fixes. Clean-main browser completion remains a separate pre-tag gate. |
+| Cloudflare Access | ChatGPT custom connector | consent + tool round-trip | ✅ | 2026-07-07 | ChatGPT completed register→authorize→consent→token→`/mcp` `ping` against the same sanitized Cloudflare Access deployment. |
+| Cloudflare Access / Entra / Google | **api-key-gateway example** (this repo) | full proxied round trip: client → gateway → token-only backend | ✅ | 2026-07-26/27 | The patched-checkout campaign completed the proxied flow across all three providers. The configured backend credential appeared in zero retained audit rows and zero client-visible response bodies. Clean-main browser completion remains a pre-tag gate. |
 
 **Current Codex CLI caveat (2026-07-28):** the installed 0.144.1 client showed
 an RFC 9207 `iss` callback regression. This does not invalidate the dated
@@ -84,8 +105,9 @@ single-operator/private-console deployments only; **never expose it on a public 
 
 ## Owner-run checklists
 
-Each `⬜` row flips to `✅ <date>` only after the owner runs its checklist and records
-the observed result (and any caveat) back into the matrix row above.
+These repeatable procedures produced the dated matrix evidence above and remain
+the gate for any pending clean-main rerun. A new `⬜` row flips only after the
+owner records the observed result and caveat in the matrix.
 
 ### A — Cloudflare Access (production identity leg) × a live client
 
@@ -161,9 +183,9 @@ behavior) there too.
 
 ### C — ChatGPT (custom connector) × a live client
 
-The goal: prove mcp-sso works with ChatGPT's custom-connector OAuth client (never driven
-yet). Pick **Cloudflare Access or Entra** as the identity backend when you run it (don't
-use console pairing on a public URL).
+The goal: repeat the historically completed ChatGPT custom-connector flow against
+the release candidate. Pick **Cloudflare Access or Entra** as the identity backend
+(do not use console pairing on a public URL).
 
 - Stand up the example on a public https origin behind a named tunnel, with a real IdP
   (checklist A or B).
@@ -185,7 +207,7 @@ BACKEND_API_KEY=$(openssl rand -hex 32) \
 node examples/api-key-gateway/index.ts
 #    → prints the gateway URL + the backend it proxies to; identity is console pairing
 #      (paste the one-time code) by default. For a multi-user run, use the CF Access or
-#      Entra env-switch instead (docs/gateway-deployment.md).
+#      Entra or Google env-switch instead (docs/gateway-deployment.md).
 
 # 2. In Claude Code: claude mcp add --transport http gw http://localhost:3000/mcp
 #    → consent; call the `status` tool; the response comes from the BACKEND through the
@@ -198,10 +220,10 @@ node examples/api-key-gateway/index.ts
 #      the live run confirms it against a real client.)
 ```
 
-**Flips to ✅ when:** a real client completes the flow through the gateway, a proxied
-backend tool round-trips, and a manual check confirms the backend credential appears in
-no client-visible output. Record the identity backend used (console pairing / CF Access /
-Entra) in the matrix row.
+**Completion evidence:** a real client completes the flow through the gateway, a
+proxied backend tool round-trips, and a manual check confirms the backend
+credential appears in no client-visible output. Record the identity backend used
+(console pairing / Cloudflare Access / Entra / Google) in the matrix row.
 
 ---
 
