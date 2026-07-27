@@ -6,12 +6,11 @@ name: CodeQL
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches: ["**"]
   schedule:
     # Weekly — off the :00 mark.
     - cron: "37 8 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,7 +19,7 @@ permissions:
 jobs:
   analyze:
     name: analyze (javascript-typescript)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0 (2026-06-18)
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (2026-06-15)

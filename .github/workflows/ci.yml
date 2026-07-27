@@ -2,8 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,44 +11,13 @@ permissions:
 jobs:
   verify:
     name: typecheck · lines · test · build
-    runs-on: ubuntu-latest
-
-    # Integration backends for the MySQL StorePort (src/store/mysql) and the
-    # Redis/Valkey RateLimitPort (src/rate-limit/redis). The adapter tests gate on
-    # MYSQL_URL/REDIS_URL and HARD-FAIL in CI if either is unset (docs review B3), so
-    # a wiring typo can never silently skip coverage and print a green checkmark.
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: rootpw
-          MYSQL_DATABASE: mcp_sso
-          MYSQL_USER: mcp
-          MYSQL_PASSWORD: mcppw
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -u mcp -pmcppw --silent"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=18
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=5s
-          --health-timeout=3s
-          --health-retries=5
+    runs-on: [self-hosted, macOS, ARM64]
 
     env:
-      # RUN_INTEGRATION scopes the in-file hard-fail gate to THIS job. publish.yml also
-      # runs `pnpm test` under GitHub's ambient CI=true (without the service containers),
-      # so the gate must not key on CI alone or every release would fail at module load.
+      # RUN_INTEGRATION scopes the in-file hard-fail gate to THIS job.
       RUN_INTEGRATION: "true"
-      MYSQL_URL: mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4
-      REDIS_URL: redis://127.0.0.1:6379
+      MYSQL_CONTAINER: mcp-sso-ci-mysql-${{ github.run_id }}-${{ github.run_attempt }}
+      REDIS_CONTAINER: mcp-sso-ci-redis-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       # SHA-pinned actions (see docs/dependency-ledger.md). Bump by resolving a new
@@ -61,6 +30,50 @@ jobs:
         with:
           node-version: "24"
           cache: pnpm
+      # GitHub service containers require Linux runners. The Mac mini runner uses
+      # its local Docker engine explicitly, with random loopback ports so concurrent
+      # trusted branch runs cannot collide.
+      - name: start integration services
+        run: |
+          docker run --detach --name "$MYSQL_CONTAINER" \
+            --env MYSQL_ROOT_PASSWORD=rootpw \
+            --env MYSQL_DATABASE=mcp_sso \
+            --env MYSQL_USER=mcp \
+            --env MYSQL_PASSWORD=mcppw \
+            --publish 127.0.0.1::3306 \
+            --health-cmd="mysqladmin ping -h 127.0.0.1 -u mcp -pmcppw --silent" \
+            --health-interval=10s \
+            --health-timeout=5s \
+            --health-retries=18 \
+            mysql:8.4
+          docker run --detach --name "$REDIS_CONTAINER" \
+            --publish 127.0.0.1::6379 \
+            --health-cmd="redis-cli ping" \
+            --health-interval=5s \
+            --health-timeout=3s \
+            --health-retries=5 \
+            redis:7-alpine
+
+          for _ in {1..90}; do
+            mysql_status="$(docker inspect --format '{{.State.Health.Status}}' "$MYSQL_CONTAINER")"
+            redis_status="$(docker inspect --format '{{.State.Health.Status}}' "$REDIS_CONTAINER")"
+            if [ "$mysql_status" = healthy ] && [ "$redis_status" = healthy ]; then
+              break
+            fi
+            if [ "$mysql_status" = unhealthy ] || [ "$redis_status" = unhealthy ]; then
+              docker logs "$MYSQL_CONTAINER"
+              docker logs "$REDIS_CONTAINER"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$MYSQL_CONTAINER")" = healthy
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$REDIS_CONTAINER")" = healthy
+          mysql_port="$(docker port "$MYSQL_CONTAINER" 3306/tcp | sed 's/.*://')"
+          redis_port="$(docker port "$REDIS_CONTAINER" 6379/tcp | sed 's/.*://')"
+          echo "MYSQL_URL=mysql://mcp:mcppw@127.0.0.1:${mysql_port}/mcp_sso?charset=utf8mb4" >> "$GITHUB_ENV"
+          echo "REDIS_URL=redis://127.0.0.1:${redis_port}" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm check:lines
@@ -73,16 +86,17 @@ jobs:
       # Build smoke: the published artifact (tsc -> dist) must compile.
       - name: build smoke
         run: pnpm build
+      - name: stop integration services
+        if: always()
+        run: docker rm --force "$MYSQL_CONTAINER" "$REDIS_CONTAINER" 2>/dev/null || true
 
   # Engineering OS artifact-chain guard (freeze-hash · mixed-diff · stage-artifact).
-  # Runs only on pull_request: it diffs against the PR base branch, and github.base_ref
-  # is empty on push events. The repo predates the pipeline, so a committed
-  # .process-guard-exempt marker keeps stage-artifact quiet until the first frozen
-  # acceptance suite lands (the marker is a named gap in every audit).
+  # Public fork code must never execute on the self-hosted Mac mini. Repo-owned
+  # branch pushes produce the required check and diff against origin/main; an
+  # external contribution is mirrored to a repo-owned branch only after review.
   process-guard:
     name: process-guard
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       # fetch-depth: 0 — the guard needs full history to compute the merge-base.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0 (2026-06-18)
@@ -90,6 +104,6 @@ jobs:
           fetch-depth: 0
       - uses: acartag7/engineering-os/process-guard@c697b412abf034be7a22a53f567ec10eecc776e0 # v0.1.0
         with:
-          base-ref: origin/${{ github.base_ref }}
+          base-ref: origin/main
           src-paths: src/
           contract-paths: docs/contracts.md
