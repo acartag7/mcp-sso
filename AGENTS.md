@@ -41,7 +41,7 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
   behavior.** The RFCs above are the underlying mechanics the spec is built on;
   the MCP spec is the authority for client-facing behavior.
 - **Full requirement-by-requirement conformance matrix:**
-  [`docs/contracts.md`](docs/contracts.md) §16.
+  [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md).
 
 ## 3. Repository structure
 
@@ -54,7 +54,7 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 | `src/identity/` | **Identity adapters:** `cloudflare-access.ts`, `entra.ts`, `entra-redirect.ts`, `entra-groups.ts`, `console-pairing.ts`. |
 | `src/audit/`, `src/rate-limit/` | Reference sinks (`jsonl-file.ts`, `webhook.ts`, `combine.ts`) and `redis.ts` rate limiter. |
 | `examples/` | `fastify-sqlite/` (RS + bridge + `/mcp`) and `api-key-gateway/` (SSO front door for a token-only backend). |
-| `docs/` | **`contracts.md`** = source of truth for every port/schema/error shape; **`threat-model.md`** (STRIDE + gates); `authorization.md`, `gateway-deployment.md`, `live-verification.md`, `audit-deployment.md`, `dependency-ledger.md`, `verification.md`, `troubleshooting.md`. |
+| `docs/` | **`contracts.md`** = contract status + index; **`contracts/`** = one canonical file per numbered contract section; **`threat-model.md`** = STRIDE + gates; plus authorization, deployment, verification, dependency, and troubleshooting guides. |
 | `test/` | Unit + integration + `e2e-mcp-sdk.test.ts` (full flow through the **official MCP SDK client**). |
 
 ## 4. Commands
@@ -104,18 +104,19 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 - **npm publish with `--provenance` from GitHub Actions OIDC only** — never from
   a local machine. CI actions are pinned by commit SHA.
 - **DDD-lite:** pure core (use-cases + ports, no infra imports) / adapters at
-  the edge. Contract-first: [`docs/contracts.md`](docs/contracts.md) and
+  the edge. Contract-first: the [`docs/contracts.md`](docs/contracts.md) index,
+  its numbered contract files, and
   [`docs/threat-model.md`](docs/threat-model.md) are written and reviewed
   **BEFORE** implementation code, and MUST be updated before any change to a
-  port/schema/error shape. If code and `contracts.md` disagree, `contracts.md`
-  wins until one is deliberately changed.
+  port/schema/error shape. If code and the contract set disagree, the contract
+  set wins until one is deliberately changed.
 
 ## 6. Where to look
 
 | Task | Read this |
 | --- | --- |
 | Integrate the library | [`README.md`](README.md) + [`examples/`](examples/) |
-| Review the contract (port / schema / error shape) | [`docs/contracts.md`](docs/contracts.md) (§16 = conformance matrix) |
+| Review the contract (port / schema / error shape) | [`docs/contracts.md`](docs/contracts.md) index; [§16 conformance matrix](docs/contracts/16-spec-conformance-matrix.md) |
 | Review the threat model | [`docs/threat-model.md`](docs/threat-model.md) |
 | Deploy behind an SSO gateway | [`docs/gateway-deployment.md`](docs/gateway-deployment.md) |
 | Verify a live deployment | [`docs/live-verification.md`](docs/live-verification.md) |
@@ -166,7 +167,8 @@ client** → refresh → replay-detection (family revocation observed) → revok
 
 This section is complementary to — never in conflict with — the house rules
 above; where they overlap, they agree (fail-closed, allowlists, contract-first).
-`docs/contracts.md` remains this repo's contract source of truth.
+The `docs/contracts.md` index and its numbered files remain this repo's contract
+source of truth.
 
 tier: S
 Reference: https://github.com/acartag7/engineering-os
@@ -179,7 +181,7 @@ Non-negotiables — CI enforces these; this block just saves you a red build:
   patch. *(No acceptance suite exists yet — the repo carries a
   `.process-guard-exempt` marker that suppresses only the stage-artifact check
   until the first frozen suite lands; `freeze-hash` and `mixed-diff` run now.)*
-- Contract first: `docs/contracts.md` wins over the code and over your inference.
+- Contract first: the indexed contract set wins over the code and over your inference.
   Never implement while the contract has open decisions or points at files
   outside this repo.
 - Trust-boundary decisions are allowlists, never blocklists. Empty config counts

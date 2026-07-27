@@ -2,7 +2,9 @@
 
 **There is no shipped GitHub identity port.** `mcp-sso/identity/github` does not
 exist, and `createGitHubIdentity` is not implemented — importing either will fail.
-The port is contract-locked (`contracts.md` §17.6) but not built.
+The port is contract-locked
+([§17.6](../contracts/17-v0-2-feature-contracts.md#176-genericoidcidentity--google-preset--dedicated-github-port))
+but not built.
 
 ## Why GitHub can't use the generic OIDC port
 

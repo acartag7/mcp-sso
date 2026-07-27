@@ -1,12 +1,12 @@
 # Audit deployment guide
 
 The library **emits** structured, metadata-only audit events
-([§13](./contracts.md#13-audit-contract)); getting them to long-term storage,
+([§13](./contracts/13-audit-contract.md#13-audit-contract)); getting them to long-term storage,
 indexed, and retained is **your job**. This guide picks the path and states the
 delivery guarantees honestly.
 
 > **tl;dr** — for any deployment where events must survive, run
-> [`JsonlFileAudit`](./contracts.md#177-audit-reference-sinks--event-coverage)
+> [`JsonlFileAudit`](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage)
 > to a local file and ship it with a log shipper (Splunk Universal Forwarder,
 > Vector, Fluentd). It is the only path durable on disk; the shipper owns retry,
 > buffering, and indexing.
@@ -34,7 +34,7 @@ The sink creates the file `0600` and appends one JSON line per event with
 `\n`/`\r`, so a hostile `reason` can never start a new line. The file is
 **log-injection-safe by construction**. The library does **not** rotate it —
 point your shipper at the file and let the shipper rotate. (Mechanism details:
-[§17.7](./contracts.md#177-audit-reference-sinks--event-coverage).)
+[§17.7](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage).)
 
 Shippers that work well with append-only JSONL:
 
@@ -146,7 +146,7 @@ rejects; the other sinks still run.
 
 ## What the events look like
 
-Flat, metadata-only objects ([§13](./contracts.md#13-audit-contract)):
+Flat, metadata-only objects ([§13](./contracts/13-audit-contract.md#13-audit-contract)):
 `occurredAt`, `event`, `status`, plus optional `clientId` / `subject` /
 `resource` / `scopes` / `redirectHost` / `reason` / `ip`. No token values, no
 `Authorization` / `Set-Cookie`, no request bodies, and never the console-pairing
@@ -156,7 +156,7 @@ code. The test suite asserts this across every event name
 
 ## See also
 
-- Contracts [§13 (audit contract)](./contracts.md#13-audit-contract) and
-  [§17.7 (reference sinks + event coverage)](./contracts.md#177-audit-reference-sinks--event-coverage).
+- Contracts [§13 (audit contract)](./contracts/13-audit-contract.md#13-audit-contract) and
+  [§17.7 (reference sinks + event coverage)](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage).
 - [Threat model row 24](./threat-model.md) — audit-sink loss / injection.
 - The README [audit bullet](../README.md) for one-paragraph positioning.

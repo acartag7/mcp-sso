@@ -8,7 +8,8 @@ Three tiers:
 - **Tier 2 — packed-artifact gate.** Proves the npm package shape works, not just the source tree.
 - **Tier 3 — manual live verification.** Real IdPs, real MCP clients, production dogfood evidence.
 
-The contracts these tests enforce live in [`docs/contracts.md` §17](contracts.md); the
+The contracts these tests enforce live in
+[§17](contracts/17-v0-2-feature-contracts.md); the
 threat rows they close are 13 and 17-25 in [`docs/threat-model.md`](threat-model.md).
 
 Baseline (v0.1): `test/e2e-mcp-sdk.test.ts` drives register → authorize → token →
@@ -217,7 +218,9 @@ production contract.
 
 ### T1.S6a — CIMD security primitives
 
-The CIMD enforcement contract is [`contracts.md` §17.1](contracts.md); the
+The CIMD enforcement contract is
+[§17.1](contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract);
+the
 security target is [`threat-model.md` row 13](threat-model.md). These rows are
 its enforcement evidence.
 
@@ -345,7 +348,8 @@ text until every row below is checked off.
   re-serialization) and records the `-02` section renumbering for the next
   re-pin. NOTE: this is a
   CONTRACT-conformance check only. The CIMD implementation HAS now shipped
-  (S6a primitives + S6b flow integration; `docs/contracts.md` §16 marks CIMD
+  (S6a primitives + S6b flow integration; the
+  [§16 matrix](contracts/16-spec-conformance-matrix.md) marks CIMD
   implemented, both frozen acceptance suites active and green). That satisfies
   the old "until the implementation ships" precondition — but it does NOT by
   itself license a conformance claim: no conformance-with-final-spec claim about
@@ -377,7 +381,9 @@ For the v0.2 release:
 1. All Tier-1 rows for shipped features pass in CI.
 2. Tier 2 packed-artifact gate passes.
 3. Required Tier-3 rows for public README claims have dated evidence.
-4. The finalized MCP Authorization spec re-read against `contracts.md` §16 and §17
+4. The finalized MCP Authorization spec re-read against
+   [§16](contracts/16-spec-conformance-matrix.md) and
+   [§17](contracts/17-v0-2-feature-contracts.md)
    before any v1.0 language is used.
 
 ## Status

@@ -18,7 +18,8 @@ authorize → token → `/mcp` → refresh → replay-revocation observed → re
   npm/yarn lockfiles, ever.
 - **250-line file limit** on everything under `src/`, enforced by
   `pnpm check:lines`.
-- **Contract-first**: [`docs/contracts.md`](docs/contracts.md) and
+- **Contract-first**: the [`docs/contracts.md`](docs/contracts.md) index, its
+  numbered contract files, and
   [`docs/threat-model.md`](docs/threat-model.md) are updated *before*
   implementation changes to any port, schema, or error shape — not after.
 - **`jose` is the only runtime dependency.** Adding another one is a real
@@ -28,6 +29,6 @@ authorize → token → `/mcp` → refresh → replay-revocation observed → re
   at install time; the ledger records the version and publish date for each
   one.
 
-See [`docs/contracts.md`](docs/contracts.md) for the full port/schema/error
-surface and [`docs/threat-model.md`](docs/threat-model.md) for the security
-model any change needs to respect.
+See the [`docs/contracts.md`](docs/contracts.md) index for the full
+port/schema/error surface and [`docs/threat-model.md`](docs/threat-model.md) for
+the security model any change needs to respect.

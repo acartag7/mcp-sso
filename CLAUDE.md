@@ -21,7 +21,8 @@ specific to Claude Code sessions here and does not belong in the portable
 The canonical copy of this block lives in [`AGENTS.md`](AGENTS.md) (which this
 file includes via `@AGENTS.md`); it is repeated here for tools and readers that
 open `CLAUDE.md` directly. It is complementary to the house rules — where they
-overlap, they agree. `docs/contracts.md` remains the contract source of truth.
+overlap, they agree. The `docs/contracts.md` index and its numbered files remain
+the contract source of truth.
 
 tier: S
 Reference: https://github.com/acartag7/engineering-os
@@ -34,7 +35,7 @@ Non-negotiables — CI enforces these; this block just saves you a red build:
   patch. *(No acceptance suite exists yet — the repo carries a
   `.process-guard-exempt` marker that suppresses only the stage-artifact check
   until the first frozen suite lands; `freeze-hash` and `mixed-diff` run now.)*
-- Contract first: `docs/contracts.md` wins over the code and over your inference.
+- Contract first: the indexed contract set wins over the code and over your inference.
   Never implement while the contract has open decisions or points at files
   outside this repo.
 - Trust-boundary decisions are allowlists, never blocklists. Empty config counts

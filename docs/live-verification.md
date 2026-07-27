@@ -54,7 +54,9 @@ These four rows verify the **DCR/OAuth mechanics, not the production identity le
 At verification time the example used `DEV_STUB_SUBJECT`, a dev bypass that let the
 OAuth dance complete with no real identity provider (MCP clients don't send
 `Cf-Access-Jwt-Assertion` on their own). `DEV_STUB_SUBJECT` is now **removed** —
-replaced by console pairing ([§17.5](contracts.md)) — and the same DCR/OAuth
+replaced by console pairing
+([§17.5](contracts/17-v0-2-feature-contracts.md#175-console-pairing-identity-zero-idp-setup))
+— and the same DCR/OAuth
 mechanics are covered by the automated e2e (`test/e2e-pairing.test.ts`). The real
 Cloudflare Access identity check — header-injected, fail-closed — is now live-verified
 across Claude Code (CLI), Codex CLI, claude.ai, ChatGPT, and the official MCP SDK

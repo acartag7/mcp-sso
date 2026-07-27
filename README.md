@@ -109,8 +109,9 @@ Requires stored-DCR mode (`dcr: { mode: "stored", store }`) and
 `clientCredentials: { enabled: true }` in `createBridgeConfig`. **No refresh
 token** (the client already holds a durable credential). The `mcc_…` subject
 prefix and a `gty: "client_credentials"` marker jointly identify machine tokens
-— enforced at three points, detailed in [`docs/contracts.md`](docs/contracts.md)
-§17.2. Rotate with `rotateMachineClientSecret`.
+— enforced at three points, detailed in
+[§17.2](docs/contracts/17-v0-2-feature-contracts.md#172-client_credentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials).
+Rotate with `rotateMachineClientSecret`.
 
 ## API-key gateway: SSO in front of a token-only backend
 
