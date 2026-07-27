@@ -10,6 +10,7 @@ import { resolveClientCredentialsScope, scopeString, storedScopes } from "./scop
 import { verifyMachineClientSecret } from "./machine-client.ts";
 import { parseMachineClientRegistration } from "./machine-client-record.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
+import { writeTokenAudit } from "./token-audit.ts";
 
 export interface OAuthTokenDeps {
   config: BridgeConfig;
@@ -89,14 +90,14 @@ export class OAuthTokenUseCase {
       const refreshToken = generateRefreshToken();
       const familyId = parseRefreshFamilyId(refreshToken);
       if (!familyId) throw new OAuthError("server_error", "Refresh token generation failed", 500);
+      const prepared = await this.tokenResponse(record, refreshToken);
       await this.store.saveRefreshToken({
         tokenHash: sha256Hex(refreshToken), familyId, previousTokenHash: null,
-        clientId: record.clientId, subject: record.subject, scopes: record.scopes,
+        clientId: record.clientId, subject: record.subject, scopes: prepared.scopes,
         expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
       });
-      const response = await this.tokenResponse(record, refreshToken);
       await this.auditToken("oauth.token.authorization_code", "success", record);
-      return response;
+      return prepared.response;
     } catch (error) {
       await this.auditFailure("oauth.token.authorization_code", error, input.clientId);
       throw error;
@@ -113,30 +114,29 @@ export class OAuthTokenUseCase {
       if (!familyId) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       const nextRaw = generateRefreshToken(familyId);
       const previousHash = sha256Hex(raw);
+      const record = await this.store.findRefreshToken(previousHash);
+      if (!record || record.familyId !== familyId) throw new OAuthError("invalid_grant", "Refresh token is invalid");
+      if (!input.clientId || input.clientId !== record.clientId) {
+        await this.store.revokeRefreshTokenFamily(familyId, new Date(this.clock.nowMs()).toISOString());
+        throw new OAuthError("invalid_grant", "Refresh token client binding is invalid");
+      }
+      if (record.subject.startsWith("mcc_")) {
+        await this.store.revokeRefreshTokenFamily(familyId, new Date(this.clock.nowMs()).toISOString());
+        throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
+      }
+      const prepared = await this.tokenResponse(record, nextRaw);
       const rotated = await this.store.rotateRefreshToken(
         previousHash,
         {
           tokenHash: sha256Hex(nextRaw), familyId, previousTokenHash: previousHash,
-          clientId: input.clientId ?? "", subject: "", scopes: [],
+          clientId: record.clientId, subject: record.subject, scopes: prepared.scopes,
           expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
         },
         new Date(this.clock.nowMs()).toISOString(),
       );
       if (!rotated) throw new OAuthError("invalid_grant", "Refresh token is invalid");
-      // RFC 6749 §6: the grant must bind to the token's stored client_id. The
-      // rotated record carries the STORED client (rotation backfill, §12.2.4); a
-      // missing/mismatched client_id signals theft/replay — revoke and reject.
-      if (!input.clientId || input.clientId !== rotated.clientId) {
-        await this.store.revokeRefreshTokenFamily(familyId, new Date(this.clock.nowMs()).toISOString());
-        throw new OAuthError("invalid_grant", "Refresh token client binding is invalid");
-      }
-      if (rotated.subject.startsWith("mcc_")) { // pre-success-audit (§9.3): revoke the legacy family outright — it can never mint
-        await this.store.revokeRefreshTokenFamily(familyId, new Date(this.clock.nowMs()).toISOString());
-        throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
-      }
-      const response = await this.tokenResponse(rotated, nextRaw);
       await this.auditToken("oauth.token.refresh", "success", rotated);
-      return response;
+      return prepared.response;
     } catch (error) {
       await this.auditFailure("oauth.token.refresh", error, input.clientId);
       throw error;
@@ -173,13 +173,13 @@ export class OAuthTokenUseCase {
       const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, this.config.scopeCatalog);
       if (input.resource !== undefined && input.resource !== this.config.resource) throw new OAuthError("invalid_target", "resource does not match the configured resource");
       const accessToken = await signAccessToken({ subject: clientId, clientId, scopes, machine: true }, this.config, this.clock);
-      await this.audit.writeAuthEvent({
+      await writeTokenAudit(this.audit, {
         occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "success",
         clientId, subject: clientId, scopes, resource: this.config.resource,
       });
       return { access_token: accessToken, token_type: "Bearer", expires_in: this.config.accessTokenTtlSeconds, scope: scopeString(scopes) };
     } catch (error) {
-      await this.audit.writeAuthEvent({
+      await writeTokenAudit(this.audit, {
         occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "failure",
         clientId, reason: error instanceof OAuthError ? error.code : "internal_error",
       });
@@ -199,7 +199,7 @@ export class OAuthTokenUseCase {
         revoked = true;
       }
     }
-    await this.audit.writeAuthEvent({
+    await writeTokenAudit(this.audit, {
       occurredAt: nowIso, event: "oauth.revoke", status: "success",
       reason: revoked ? undefined : "unrecognized_token",
     });
@@ -218,25 +218,25 @@ export class OAuthTokenUseCase {
     return record;
   }
 
-  private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string): Promise<UserTokenResponse> {
+  private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string): Promise<{ response: UserTokenResponse; scopes: string[] }> {
     const scopes = storedScopes(record.scopes, this.config.scopeCatalog);
     const accessToken = await signAccessToken({ subject: record.subject, clientId: record.clientId, scopes }, this.config, this.clock);
-    return {
+    return { scopes, response: {
       access_token: accessToken, token_type: "Bearer",
       expires_in: this.config.accessTokenTtlSeconds, refresh_token: refreshToken,
       scope: scopeString(scopes),
-    };
+    } };
   }
 
   private async auditToken(event: "oauth.token.authorization_code" | "oauth.token.refresh", status: "success", record: AuthCodeRecord | RefreshTokenRecord): Promise<void> {
-    await this.audit.writeAuthEvent({
+    await writeTokenAudit(this.audit, {
       occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status,
       clientId: record.clientId, subject: record.subject, resource: this.config.resource, scopes: record.scopes,
     });
   }
 
   private async auditFailure(event: "oauth.token.authorization_code" | "oauth.token.refresh", error: unknown, clientId?: string): Promise<void> {
-    await this.audit.writeAuthEvent({
+    await writeTokenAudit(this.audit, {
       occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status: "failure",
       clientId, reason: error instanceof OAuthError ? error.code : "internal_error",
     });

@@ -38,6 +38,10 @@ class MemoryAudit implements AuditPort {
   async writeAuthEvent(event: AuthAuditEvent): Promise<void> { this.events.push(event); }
 }
 
+class ThrowingAudit implements AuditPort {
+  writeAuthEvent(): Promise<void> { throw new Error("audit unavailable"); }
+}
+
 class InMemoryClientStore implements ClientStore {
   private readonly clients = new Map<string, ClientRegistration>();
   async save(c: ClientRegistration): Promise<void> { this.clients.set(c.clientId, c); }
@@ -250,10 +254,17 @@ test("refresh token rotates and replay revokes the family", async () => {
 test("refresh with a mismatched client_id is rejected and revokes the family (RFC 6749 §6)", async () => {
   const ctx = setup();
   const initial = await exchangeCode(ctx, "refresh-verifier-123456789012345678901234567890123");
+  let rotations = 0;
+  const rotateRefreshToken = ctx.store.rotateRefreshToken.bind(ctx.store);
+  ctx.store.rotateRefreshToken = async (...args) => {
+    rotations += 1;
+    return await rotateRefreshToken(...args);
+  };
   await assert.rejects(
     ctx.token.refresh({ grantType: "refresh_token", refreshToken: initial.refresh_token, clientId: "client-2" }),
     (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant",
   );
+  assert.equal(rotations, 0, "client binding is checked before rotation");
   // the legitimate client can no longer use it either (family revoked)
   await assert.rejects(
     ctx.token.refresh({ grantType: "refresh_token", refreshToken: initial.refresh_token, clientId: "client-1" }),
@@ -330,6 +341,12 @@ test("token issuance: a mint failure audits failure-only, never success-then-fai
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   const badToken = new OAuthTokenUseCase({ config: badConfig, store: ctx.store, clock: ctx.clock, audit: ctx.audit });
+  let refreshSaves = 0;
+  const saveRefreshToken = ctx.store.saveRefreshToken.bind(ctx.store);
+  ctx.store.saveRefreshToken = async (input) => {
+    refreshSaves += 1;
+    await saveRefreshToken(input);
+  };
   const verifier = "valid-verifier-123456789012345678901234567890123";
   const { code } = await approveCode(ctx, verifier, "mcp:read"); // real-key auth mints a valid code
   await assert.rejects(
@@ -338,6 +355,75 @@ test("token issuance: a mint failure audits failure-only, never success-then-fai
   const events = ctx.audit.events.filter((e) => e.event === "oauth.token.authorization_code");
   assert.equal(events.length, 1, "exactly ONE audit event (the failure) — no success-then-failure");
   assert.equal(events[0]?.status, "failure");
+  assert.equal(refreshSaves, 0, "signing failure occurs before refresh state is saved");
+  await ctx.store.close();
+});
+
+test("token response preparation rejects malformed stored scopes before refresh state changes", async () => {
+  const ctx = setup();
+  const verifier = "stored-scope-verifier-123456789012345678901234567";
+  await ctx.store.saveAuthCode({
+    codeHash: sha256Hex("malformed-scope-code"), clientId: "client-1", subject: SUBJECT,
+    redirectUri: REDIRECT, resource: ctx.config.resource, scopes: ["not-in-catalog"],
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256",
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  let saves = 0;
+  const saveRefreshToken = ctx.store.saveRefreshToken.bind(ctx.store);
+  ctx.store.saveRefreshToken = async (input) => {
+    saves += 1;
+    await saveRefreshToken(input);
+  };
+  await assert.rejects(
+    ctx.token.exchangeAuthorizationCode({
+      grantType: "authorization_code", code: "malformed-scope-code",
+      redirectUri: REDIRECT, clientId: "client-1", codeVerifier: verifier,
+    }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_grant",
+  );
+  assert.equal(saves, 0);
+
+  const familyId = "malformedscope123";
+  const rawRefresh = `rt.${familyId}.refresh-secret`;
+  await saveRefreshToken({
+    tokenHash: sha256Hex(rawRefresh), familyId, previousTokenHash: null,
+    clientId: "client-1", subject: SUBJECT, scopes: ["not-in-catalog"],
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  let rotations = 0;
+  const rotateRefreshToken = ctx.store.rotateRefreshToken.bind(ctx.store);
+  ctx.store.rotateRefreshToken = async (...args) => {
+    rotations += 1;
+    return await rotateRefreshToken(...args);
+  };
+  await assert.rejects(
+    ctx.token.refresh({ grantType: "refresh_token", refreshToken: rawRefresh, clientId: "client-1" }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_grant",
+  );
+  assert.equal(rotations, 0);
+  await ctx.store.close();
+});
+
+test("a throwing custom audit port cannot replace token or revocation outcomes", async () => {
+  const ctx = setup();
+  const token = new OAuthTokenUseCase({
+    config: ctx.config, store: ctx.store, clock: ctx.clock, audit: new ThrowingAudit(),
+  });
+  const verifier = "throwing-audit-verifier-1234567890123456789012345";
+  const { code } = await approveCode(ctx, verifier, "mcp:read");
+  const first = await token.exchangeAuthorizationCode({
+    grantType: "authorization_code", code, redirectUri: REDIRECT,
+    clientId: "client-1", codeVerifier: verifier,
+  });
+  const refreshed = await token.refresh({
+    grantType: "refresh_token", refreshToken: first.refresh_token, clientId: "client-1",
+  });
+  assert.equal(refreshed.token_type, "Bearer");
+  await assert.rejects(
+    token.refresh({ grantType: "refresh_token", refreshToken: "invalid", clientId: "client-1" }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_grant",
+  );
+  await token.revoke(refreshed.refresh_token);
   await ctx.store.close();
 });
 
