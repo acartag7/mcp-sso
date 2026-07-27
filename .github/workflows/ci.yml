@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # Bootstrap exception for this migration branch. Feature branches use a
+    # maintainer-triggered workflow_dispatch after their workflow diff is reviewed.
+    branches: [main, ci/macmini-runners]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +13,7 @@ permissions:
 jobs:
   verify:
     name: typecheck · lines · test · build
-    runs-on: [self-hosted, macOS, ARM64, mcp-sso]
+    runs-on: [self-hosted, Linux, ARM64, mcp-sso]
 
     env:
       # RUN_INTEGRATION scopes the in-file hard-fail gate to THIS job.
@@ -29,10 +31,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.4.0 (2026-04-20)
         with:
           node-version: "24"
-          cache: pnpm
-      # GitHub service containers require Linux runners. The Mac mini runner uses
-      # its local Docker engine explicitly, with random loopback ports so concurrent
-      # trusted branch runs cannot collide.
+      # The isolated Linux VM on the Mac mini uses its Docker engine explicitly,
+      # with random loopback ports so concurrent trusted jobs cannot collide.
       - name: start integration services
         run: |
           docker run --pull=always --detach --name "$MYSQL_CONTAINER" \
@@ -88,15 +88,15 @@ jobs:
         run: pnpm build
       - name: stop integration services
         if: always()
-        run: docker rm --force "$MYSQL_CONTAINER" "$REDIS_CONTAINER" 2>/dev/null || true
+        run: docker rm --force --volumes "$MYSQL_CONTAINER" "$REDIS_CONTAINER" 2>/dev/null || true
 
   # Engineering OS artifact-chain guard (freeze-hash · mixed-diff · stage-artifact).
-  # Public fork code must never execute on the self-hosted Mac mini. Repo-owned
-  # branch pushes produce the required check and diff against origin/main; an
-  # external contribution is mirrored to a repo-owned branch only after review.
+  # Public-fork and automation-controlled workflow code must never execute on the
+  # self-hosted runner. Feature refs are dispatched by a maintainer only after the
+  # workflow diff is reviewed; external contributions are reviewed and mirrored.
   process-guard:
     name: process-guard
-    runs-on: [self-hosted, macOS, ARM64, mcp-sso]
+    runs-on: [self-hosted, Linux, ARM64, mcp-sso]
     steps:
       # fetch-depth: 0 — the guard needs full history to compute the merge-base.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0 (2026-06-18)

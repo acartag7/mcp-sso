@@ -66,14 +66,15 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 - `pnpm run build` — `rm -rf dist && tsc -p tsconfig.build.json`.
 - `npm pack --dry-run` — before any release: the tarball must contain **dist + docs + README + LICENSE only.**
 - **Release flow (immutable releases are ON):** `publish.yml` publishes to npm via OIDC Trusted Publishing **and** creates the GitHub Release. **Never pre-create the GitHub Release for a tag** before the workflow runs — under immutable releases, creating-then-deleting a release burns that tag permanently (`HTTP 422: tag_name was used by an immutable release`); the workflow's own release-create step then fails and no release page is recoverable for that tag. Correct flow: merge the version-bump PR → tag `vX.Y.Z` → the workflow publishes + creates the release (`--generate-notes`) → then edit the release with curated notes. To validate the tarball without publishing, use `npm pack --dry-run` or a `workflow_dispatch` dry run.
-- **Gates on every repo-owned branch push:** typecheck · `check:lines` · test ·
-  build · `process-guard` (artifact chain: freeze-hash · mixed-diff ·
-  stage-artifact). The guard compares the branch to `origin/main`; direct pushes
-  to `main` remain blocked by branch protection.
-- **Public-fork boundary:** CI and CodeQL are self-hosted, so they do not run on
-  `pull_request`. Review a legitimate fork contribution first, then mirror it to
-  a repo-owned branch to produce the required checks. Never approve untrusted
-  fork code onto the self-hosted runner.
+- **Self-hosted gates:** main runs automatically. For a feature branch, review
+  its workflow diff first, then dispatch CI and CodeQL against that exact ref.
+  CI runs typecheck · `check:lines` · test · build · `process-guard` (artifact
+  chain: freeze-hash · mixed-diff · stage-artifact); the guard compares the ref
+  to `origin/main`. Direct pushes to `main` remain blocked by branch protection.
+- **Public-fork and automation boundary:** CI and CodeQL do not run on
+  `pull_request` or arbitrary branch pushes. Review a legitimate contribution
+  first, then mirror it to a maintainer-controlled branch and dispatch the
+  workflows. Never run unreviewed workflow code on the self-hosted runner.
 - **Local guard hook (one-time):** `git config core.hooksPath .githooks` wires
   `.githooks/pre-commit`, a local mirror of the CI `process-guard` check (it
   locates an `engineering-os` checkout via `$ENGINEERING_OS_DIR`, a sibling
