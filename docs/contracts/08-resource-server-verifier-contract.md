@@ -34,3 +34,7 @@ class RequestAuthorizer {
 Extracts the bearer token, verifies it, enforces `requiredScope` if given, audits
 the outcome, and rethrows `OAuthError` on failure. The adapter maps the thrown
 `OAuthError` to a 401/403 with the challenge from §8.2/§8.3. **No bypass path.**
+Under the 0.3.0 §6.1 amendment, `RequestAuthorizer.authorize` takes
+one canonical clock snapshot before request processing and reuses it for
+`verifyAccessToken` and `auth.request.occurredAt`. An invalid initial snapshot
+is `invalid_token` 401 with no fabricated audit timestamp.

@@ -133,6 +133,14 @@ client-controlled request input; when present, `prepare` uses it and does not fe
    an adapter concern, Phase 3; the core supplies both sets).
 
 **`approve({ consentToken, approved?, origin? })`** → `{ redirectTo, code?, state? }`:
+- **0.3.0 finite-clock gate:** before consent-token processing and before
+  `assertApproveOrigin`, `OAuthAuthorizationUseCase.approve` takes the §6.1
+  validated snapshot with the larger approval-owned TTL offset and reuses it
+  for verification,
+  approval-owned expiry/store timestamps, and
+  `oauth.authorize.approve.occurredAt`. An invalid initial snapshot takes
+  precedence over an invalid Origin and returns the existing direct
+  `invalid_consent` 400 with no fabricated audit timestamp.
 - **CSRF/`origin`** must be exactly one primitive string equal to the issuer
   origin or a member of `allowedOrigins` — else `invalid_origin` 403 **direct**
   (a foreign origin is never redirected anywhere). `Bridge.handleApprove`
