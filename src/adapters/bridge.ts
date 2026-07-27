@@ -15,10 +15,9 @@ import { OAuthTokenUseCase, type UserTokenResponse, type MachineTokenResponse } 
 import { registerClient } from "../register.ts";
 import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "../metadata.ts";
 import { OAuthError } from "../errors.ts";
-import { isBasicAttempt } from "../client-auth.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
 import { renderConsentPage } from "./consent-page.ts";
-import { asOAuth, consentCookie, parseApproved, resolveIdentityWithAudit } from "./bridge-internals.ts";
+import { asOAuth, assertUnambiguousAuthorization, consentCookie, hasBasicAuthorization, parseApproved, resolveIdentityWithAudit } from "./bridge-internals.ts";
 export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
@@ -193,11 +192,12 @@ export class Bridge {
 
   async handleToken(req: NormRequest): Promise<NormResponse> {
     const { value: authorization, ambiguous } = readHeader(req.headers, "authorization");
+    const basicAttempted = hasBasicAuthorization(req.headers);
+    const body = formObject(req.body);
+    const grantType = formField(body, "grant_type");
     try {
       await this.guard(req, "token");
-      if (ambiguous) throw new OAuthError("invalid_client", "Authorization header must occur exactly once", 401);
-      const body = formObject(req.body);
-      const grantType = formField(body, "grant_type");
+      await assertUnambiguousAuthorization(ambiguous, grantType, formField(body, "client_id"), this.audit, this.clock);
       let response: UserTokenResponse | MachineTokenResponse;
       if (grantType === "refresh_token") {
         response = await this.token.refresh({ grantType, refreshToken: formField(body, "refresh_token"), clientId: formField(body, "client_id") });
@@ -214,11 +214,10 @@ export class Bridge {
       }
       return { status: 200, headers: { "cache-control": "no-store", "pragma": "no-cache" }, body: response };
     } catch (error) {
-      // §17.2: failed Basic client auth ⇒ WWW-Authenticate: Basic (a
-      // client_secret_post failure does not earn the Basic challenge).
+      // §17.2: failed Basic auth earns the Basic challenge; post-only does not.
       const oauth = asOAuth(error);
       const res = oauthErrorResponse(oauth);
-      if (oauth.code === "invalid_client" && oauth.status === 401 && isBasicAttempt(authorization)) {
+      if (oauth.code === "invalid_client" && oauth.status === 401 && basicAttempted) {
         res.headers["www-authenticate"] = buildBasicClientChallenge(this.config);
       }
       return res;

@@ -4,9 +4,28 @@
 
 import { OAuthError } from "../errors.ts";
 import { assertAllowedScopesCeiling } from "../scopes.ts";
-import type { AuthAuditStatus } from "../ports/audit.ts";
+import { isBasicAttempt } from "../client-auth.ts";
+import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
+import type { ClockPort } from "../ports/clock.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
 import { headerString, type NormRequest } from "./http.ts";
+
+export function hasBasicAuthorization(headers: NormRequest["headers"]): boolean {
+  return Object.entries(headers).some(([key, raw]) =>
+    key.toLowerCase() === "authorization" && (Array.isArray(raw) ? raw : [raw]).some(isBasicAttempt));
+}
+
+export async function assertUnambiguousAuthorization(
+  ambiguous: boolean, grantType: string | undefined, clientId: string | undefined,
+  audit: AuditPort, clock: ClockPort,
+): Promise<void> {
+  if (!ambiguous) return;
+  if (grantType === "client_credentials") await audit.writeAuthEvent({
+    occurredAt: new Date(clock.nowMs()).toISOString(), event: "oauth.token.client_credentials",
+    status: "failure", clientId, reason: "invalid_client",
+  });
+  throw new OAuthError("invalid_client", "Authorization header must occur exactly once", 401);
+}
 
 /** Body of `Bridge.resolveIdentity` (§17.4 item 4 / §17.7). Fail-closed:
  *  `{ ok:false }` ⇒ 401 access_denied DIRECT (redirect_uri is untrusted

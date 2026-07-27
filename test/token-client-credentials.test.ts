@@ -44,8 +44,12 @@ class MemoryAudit implements AuditPort {
 
 class InMemoryClientStore implements ClientStore {
   readonly clients = new Map<string, ClientRegistration>();
+  findCalls = 0;
   async save(c: ClientRegistration): Promise<void> { this.clients.set(c.clientId, c); }
-  async find(clientId: string): Promise<ClientRegistration | null> { return this.clients.get(clientId) ?? null; }
+  async find(clientId: string): Promise<ClientRegistration | null> {
+    this.findCalls += 1;
+    return this.clients.get(clientId) ?? null;
+  }
 }
 
 function jwk(): JWK {
@@ -196,7 +200,9 @@ test("both auth methods (Basic + body client_secret) ⇒ 401 invalid_client (RFC
 test("ambiguous normalized Authorization never degrades to client_secret_post", async () => {
   const ctx = setup(true);
   const c = await provision(ctx);
+  const readsBefore = ctx.clientStore.findCalls;
   for (const headers of [
+    { authorization: [basicHeader(c.clientId, c.clientSecret)] },
     { authorization: [basicHeader(c.clientId, c.clientSecret), "Bearer attacker"] },
     { authorization: ["Bearer attacker", basicHeader(c.clientId, c.clientSecret)] },
     { Authorization: basicHeader(c.clientId, c.clientSecret), authorization: "Bearer attacker" },
@@ -209,7 +215,12 @@ test("ambiguous normalized Authorization never degrades to client_secret_post", 
     assert.equal(res.status, 401);
     assert.equal((res.body as { error: string }).error, "invalid_client");
     assert.equal((res.body as { access_token?: string }).access_token, undefined);
+    assert.match(res.headers["www-authenticate"] ?? "", /^Basic /, "any ambiguous Basic occurrence earns the challenge");
   }
+  assert.equal(ctx.clientStore.findCalls, readsBefore, "ambiguous auth rejects before any client-store lookup");
+  const events = ctx.audit.events.filter((e) => e.event === "oauth.token.client_credentials");
+  assert.equal(events.length, 5, "each ambiguous client-credentials attempt emits failure evidence");
+  assert.ok(events.every((e) => e.status === "failure" && e.reason === "invalid_client"), "no success audit is emitted");
 });
 
 test("two-methods rejection keys on the Basic SCHEME: malformed Basic + body client_secret is still two methods", async () => {
