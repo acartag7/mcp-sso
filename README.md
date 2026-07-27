@@ -35,7 +35,8 @@ sequenceDiagram
     participant C as MCP client
     participant B as mcp-sso bridge
     participant I as Your IdP (Entra / CF Access / OIDC)
-    C->>B: CIMD client_id or DCR registration; authorize (PKCE)
+    C->>B: Identify through CIMD or register through DCR
+    C->>B: Start authorization with PKCE
     B->>I: user signs in at the IdP
     I-->>B: verified identity (id_token / signed assertion)
     B-->>C: consent screen, then a bridge-minted token (audience-bound)
