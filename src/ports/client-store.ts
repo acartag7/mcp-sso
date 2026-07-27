@@ -39,7 +39,7 @@ export interface UserClientRegistration {
  *  `[]` (no authorization-code flow); `allowedScopes` is the per-client ceiling
  *  fixed at provisioning (⊆ scopeCatalog); `secrets` holds ≤ 2 unexpired
  *  ("active") SHA-256 digests. Machine clients are rejected at `/oauth/authorize`
- *  and the device endpoints (`invalid_client`). */
+ *  and MUST be rejected at any future device endpoints (`invalid_client`). */
 export interface MachineClientRegistration {
   clientId: string;
   redirectUris: string[];

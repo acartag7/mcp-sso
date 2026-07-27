@@ -18,10 +18,11 @@ const identity = createEntraRedirectIdentity({
 }, { scopeCatalog: ["mcp:read", "mcp:write"] });
 ```
 
-> **Live status:** happy path verified 2026-07-08 (Claude Code + Claude Desktop,
-> real enterprise tenant). Production deny-path legs (wrong tenant, group overage,
-> allowlist rejection) are covered by the unit suite but not yet driven live;
-> claude.ai / ChatGPT Entra runs are not yet recorded.
+> **Live status:** historical real-tenant verification covers interactive and
+> CIMD clients plus member, wrong-tenant, group-overage, no-group,
+> no-mapped-group, allowlist, and guest/B2B outcomes through
+> `createEntraRedirectIdentity` and `resolveGroupCeiling`. The clean-`main`
+> pre-release provider rerun remains pending.
 
 There are two factories on `mcp-sso/identity/entra`:
 
@@ -155,8 +156,8 @@ scope outside the catalog, or a non-array `baseScopes`.
 
 ## Verify
 
-Run the checklist at the top of `src/identity/entra.ts` against a real tenant, and
-confirm the deny legs before flipping the `live-verification.md` rows:
+Re-run the checklist at the top of `src/identity/entra.ts` against a real tenant
+before release and confirm these historically verified deny legs still hold:
 
 - A **non-allowed tenant** user → `entra_bad_tid` (multi-tenant) or `entra_bad_iss`
   (single-tenant — the foreign `iss` is checked first).
@@ -166,9 +167,10 @@ confirm the deny legs before flipping the `live-verification.md` rows:
 - Confirm the bridge mints its **own** audience-bound token — the Entra `id_token`
   is verified then discarded.
 
-> **Guest / B2B users:** group-claim behavior for guests is unverified in
-> Microsoft's docs — confirm a guest's membership resolves as expected before
-> relying on group → scope for guests.
+> **Guest / B2B users:** a real invited guest was historically verified with
+> mapped group membership and the expected scope ceiling. Confirm the behavior
+> in your tenant before relying on it; tenant configuration still governs which
+> group claims Entra emits.
 
 See [`authorization.md`](../authorization.md) for the IdP-gate vs mcp-sso-gate
 model and [§17.4](../contracts/17-v0-2-feature-contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling)

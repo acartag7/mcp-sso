@@ -140,8 +140,9 @@ groupAuthorization: {
 Exact contract in [§17.4](contracts/17-v0-2-feature-contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling);
 attacker analysis in
 [`docs/threat-model.md`](threat-model.md) row 22. Live-tenant verification
-(incl. guest/B2B + overage) is **owner-pending** — see the manual checklist at
-the top of `src/identity/entra.ts`.
+through `createEntraRedirectIdentity` and `resolveGroupCeiling` historically
+covered member, no-group/no-mapped-group, overage, allowlist, and guest/B2B
+outcomes. The clean-`main` pre-release provider rerun remains pending.
 
 ## What neither gate decides
 
