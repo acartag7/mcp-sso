@@ -357,10 +357,26 @@ a persisted adapter is deployment-specific. The `applicationType` discriminant
 selects the record shape and drives the per-client redirect policy (§10):
 `native`/`web` are user clients (§9.2 DCR, §10.2 redirect policy); `machine`
 records are provisioned out-of-band (§17.2) and carry `allowedScopes` +
-`secrets` instead of redirect URIs. A discriminated union (not optional fields)
-makes "a machine record MUST carry `allowedScopes` + `secrets`" a compile-time
-guarantee — there is no optional-field state where a machine record silently
-lacks its secret set.
+`secrets` instead of redirect URIs. The discriminated union is the typed write
+contract: it prevents typed in-process callers from constructing a machine
+record whose `allowedScopes` or `secrets` are optional. It does not prove the
+shape of runtime data returned by a custom or persisted store.
+
+`ClientStore.find` is also a runtime boundary: a persisted or migrated row is
+not trusted merely because the port has a TypeScript return type.
+`parseMachineClientRegistration(value, expectedClientId)` accepts a stored
+machine row only when its embedded `clientId` is the requested `mcc_` key,
+`redirectUris` is empty, `applicationType` is `"machine"`, `issuedAtEpoch` is a
+non-negative safe integer, optional `name` is non-empty, `allowedScopes` is a
+non-empty array of scope tokens, and `secrets` is the one-or-two-slot §17.2
+shape (lowercase SHA-256 hashes, non-negative safe-integer timestamps, at most
+one slot without an expiry). It returns a fresh snapshot containing only those
+known fields. Secret verification, rotation, and both reads in the
+`client_credentials` grant use that parser; a malformed or key-mismatched row
+fails closed before a secret is accepted, a record is saved, or a token is
+minted. The parser deliberately does not re-check the stored ceiling against
+the current catalog: catalog narrowing is enforced when resolving the grant
+(§17.2), so a still-valid subset remains usable.
 
 ### 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's
@@ -3045,10 +3061,13 @@ in this flow."* Decisions:
   - `verifyMachineClientSecret(deps, clientId, presentedSecret)` → `boolean`:
     the timing-safe comparison primitive the token endpoint (§9.4
     client_credentials grant, S3b) composes into client authentication. Finds
-    the machine client, SHA-256s the presented secret, and constant-time
-    compares it against each **unexpired** stored hash (expired entries
-    skipped). Non-machine / unknown `clientId` ⇒ `false` (never throws — the
-    grant maps the boolean to `invalid_client`).
+    and parses the machine client through
+    `parseMachineClientRegistration(value, clientId)`, SHA-256s the presented
+    secret, and constant-time compares it against each **unexpired** stored hash
+    (expired entries skipped). Non-machine, unknown, malformed, or
+    lookup-key-mismatched records ⇒ `false` (the grant maps the boolean to
+    `invalid_client`). A rejected `ClientStore.find` remains a store error; this
+    function does not convert store I/O failure into an authentication result.
 - **`ClientStore` extension:** `applicationType` gains `"machine"`; machine
   records carry `allowedScopes: string[]` (validated ⊆ `scopeCatalog` at
   wiring) and `secrets: Array<{ hash, createdAtEpoch, expiresAtEpoch? }>`
@@ -3097,14 +3116,13 @@ in this flow."* Decisions:
   whole truth, so drift surfaces as `invalid_scope` until the client is
   re-provisioned (the same discipline a drifted user refresh token imposes).
   The stored ceiling is itself validated at grant time — a non-empty array of
-  scope tokens; `verifyMachineClientSecret` validates the secret slots but NOT
-  `allowedScopes`, so a custom/migrated store returning a valid-secret record
-  with a malformed/missing/empty ceiling fails closed as `invalid_client`
-  (never a raw `TypeError`/500, never an empty-scope token). The `mcc_`
-  clientId prefix — the RS's machine-vs-user distinguishability signal
-  (RFC 9700 §4.15.1) — is likewise re-checked at grant time: a custom/migrated
-  store returning a machine record whose id lacks the prefix fails closed as
-  `invalid_client` (no JWT `sub` collision with a human/`mcpdc_` subject).
+  scope tokens. Both the authentication read and the post-authentication read
+  pass through `parseMachineClientRegistration(value, clientId)`, so a
+  custom/migrated store returning a malformed or differently keyed row fails
+  closed as `invalid_client` (never an empty-scope token or a token for the
+  embedded wrong client). The parser also enforces the `mcc_` prefix — the RS's
+  machine-vs-user distinguishability signal (RFC 9700 §4.15.1) — before the
+  record reaches token signing.
   `resource` if present MUST equal `config.resource` (`invalid_target`). Mint
   an access token with `sub = client_id`
   (RFC 9068 §2.2) and the existing `client_id` claim; **NO refresh token**
@@ -3127,9 +3145,10 @@ in this flow."* Decisions:
   dropped so the array never exceeds two unexpired hashes. So a rotation from
   a single-secret record yields `[{old, expiresAt=now+grace}, {new}]`; a
   second rotation before the first grace elapses supersedes the prior grace
-  secret (its overlap is cut) to hold the two-active cap. Unknown clientId or
-  a non-machine clientId ⇒ `invalid_client`. Verification accepts any
-  unexpired stored hash.
+  secret (its overlap is cut) to hold the two-active cap. The stored row is
+  parsed and bound to the requested key before secret generation or `save`;
+  unknown, non-machine, malformed, or key-mismatched records ⇒
+  `invalid_client`. Verification accepts any unexpired stored hash.
 - **Audit:** `oauth.token.client_credentials`, `oauth.client.provision`,
   `oauth.client.rotate_secret` — clientId/scopes metadata only; never a secret
   or a secret hash.

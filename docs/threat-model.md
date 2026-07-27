@@ -170,7 +170,7 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day pins; SHA-pinned CI; provenance publish; no postinstall/bundler | A zero-day in jose itself — minimized by single-dep + pin + age |
 | 16 | Dev flag used to weaken a real host | Misconfiguration | `allowInsecureLocalhost` rejected unless loopback + loud warning | Someone tunnels a loopback dev instance out — dev-only, documented |
 | 17 | (v0.2) CIMD client impersonation via lookalike/localhost redirect (the MCP-documented attack: legit metadata URL + attacker's loopback redirect) | Spoofing | Exact `client_id` echo-match; redirect exact-match against the doc; consent page MUST show `client_id` host + redirect host, warns on loopback-only redirects; `client_name` labeled unverified. **The page is frame-blocked (row 36)** — without that, the user judgment this row depends on can be bypassed by an overlay rather than deceived | Real and spec-acknowledged: user judgment on lookalike domains / loopback approval remains the last line — CIMD cannot fully close this by design |
-| 18 | (v0.2) Machine-client secret theft / misuse | Spoofing / Elevation | Out-of-band provisioning only; 256-bit secrets (`mcs_`+base64url(32)); SHA-256-only storage; shown once; `verifyMachineClientSecret` uniform-work + fail-closed; scopes capped by per-client `allowedScopes` ⊆ catalog; no refresh tokens; rotation with bounded grace (≤2 active secrets). [Enforcement detail below](#row-18--machine-client-secret-enforcement) | A stolen secret is valid until rotated — there is no theft *signal* (unlike refresh replay); bounded by rotation practice + audit of `oauth.token.client_credentials` |
+| 18 | (v0.2) Machine-client secret theft / misuse | Spoofing / Elevation | Out-of-band provisioning only; 256-bit secrets (`mcs_`+base64url(32)); SHA-256-only storage; shown once; stored rows parsed and key-bound by `parseMachineClientRegistration`; `verifyMachineClientSecret` uses two digest comparisons and fails closed; scopes capped by per-client `allowedScopes` ⊆ catalog; no refresh tokens; rotation with bounded grace (≤2 active secrets). [Enforcement detail below](#row-18--machine-client-secret-enforcement) | A stolen secret is valid until rotated — there is no theft *signal* (unlike refresh replay); bounded by rotation practice + audit of `oauth.token.client_credentials` |
 | 19 | (v0.2) Device-flow `user_code` brute force | Spoofing | 34.5-bit code + 600 s TTL + built-in in-process 5-attempts-per-IP cap + `RateLimitPort` hook ≈ RFC 8628 §5.1's 2⁻³² budget | In-process cap is per-instance; multi-instance deployments need the distributed limiter ([§17.10](./contracts.md#1710-distributed-ratelimitport-redisvalkey--shipped-v012)) for the full budget |
 | 20 | (v0.2) Device-flow remote phishing (attacker delivers THEIR `user_code` to the victim) | Spoofing | Consent page echoes the `user_code` + "you are authorizing a device — confirm it is yours" (RFC 8628 §5.4 remote-phishing mitigation); short TTL limits emailed-code viability | Real-time phishing remains viable per the RFC itself; accepted with the UI mitigations, documented |
 | 21 | (v0.2) Pairing-code exposure (console scrollback, shipped logs) | Info disclosure / Spoofing | TTL 600 s, single-use, 5-attempt invalidation, session binding, ~52-bit code, in-process limiter | Shared log pipelines are OUTSIDE the deployment envelope (single-operator only) — a documented non-goal, not a mitigated risk |
@@ -255,10 +255,17 @@ nonce residual above.
   Machine clients are also rejected at `/oauth/authorize`.
 - **256-bit secrets.** `mcs_` + base64url(32). Stored as SHA-256 only. Shown
   once.
-- **Uniform-work + fail-closed verify.** `verifyMachineClientSecret` composes
-  into token-endpoint client auth: wrong secret, unknown client, and poisoned
-  record all map to `invalid_client`. There is no client-existence or
-  active-count oracle.
+- **Fixed comparison count + fail-closed verify.**
+  `verifyMachineClientSecret` composes into token-endpoint client auth: wrong
+  secret, unknown client, and poisoned record all map to `invalid_client`, and
+  the library performs two digest comparisons on every non-empty-secret path.
+  This removes an active-slot comparison-count signal; it does not equalize
+  lookup latency implemented by a custom `ClientStore`.
+- **Stored-row binding.** `parseMachineClientRegistration` checks the complete
+  persisted machine shape and requires the embedded `clientId` to equal the
+  requested lookup key. Verification, rotation, and the grant's second read
+  reject a malformed or differently keyed row before accepting a secret,
+  saving a record, or signing a token.
 - **Scope caps.** Scopes are capped by per-client `allowedScopes`, fixed ⊆
   catalog at provisioning. The grant validates the resolved scope against BOTH
   the ceiling AND the live `scopeCatalog`: `invalid_scope` on any over-ceiling
