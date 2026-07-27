@@ -1,6 +1,6 @@
 // MysqlStore — pooled persistent StorePort on mysql2. See contracts §12.3 for the
 // async/pooled pattern (begun-guard + release-in-finally, FOR UPDATE, READ COMMITTED,
-// two-step sweep, INSERT IGNORE, row-alias family upsert).
+// two-step sweep, INSERT IGNORE, direct-value family upserts).
 
 import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
@@ -64,7 +64,7 @@ export class MysqlStore implements StorePort {
     validateRefreshToken(input);
     await this.transaction(async (conn) => {
       await conn.query(
-        `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, NULL) AS new ON DUPLICATE KEY UPDATE revoked_at = oauth_refresh_token_families.revoked_at`,
+        `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, NULL) ON DUPLICATE KEY UPDATE revoked_at = oauth_refresh_token_families.revoked_at`,
         [input.familyId],
       );
       await insertRefreshToken(conn, input);
