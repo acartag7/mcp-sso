@@ -7,8 +7,7 @@
 > Update this file before any change to auth, tokens, redirect policy, the
 > store, identity, egress, or the publish pipeline.
 >
-> Status: **v0.3.1 release candidate; not yet tagged or published.** The
-> candidate carries the v0.3.0 threat controls forward and adds the
+> Status: **v0.3.1.** This release carries the v0.3.0 threat controls forward and adds the
 > post-rotation compensation in row 2 plus the atomic, auditable machine-client
 > lifecycle in row 18. Its public redirect-policy helper exposes the existing
 > §10 enforcement without changing the redirect threat boundary.
