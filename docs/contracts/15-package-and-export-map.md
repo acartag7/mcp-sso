@@ -53,6 +53,11 @@ root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recomme
 Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in
 [`docs/audit-deployment.md`](../audit-deployment.md).
 
+`assertRegistrationRedirectPolicy(value, applicationType)` is also exported
+from the root entry. Custom persisted `ClientStore` implementations use this
+existing §10.2 write-time check before saving native or web registrations,
+without importing the internal `src/redirect.ts` module.
+
 The two runnable Fastify examples apply that `/mcp` gate to Node's raw header
 occurrence metadata before the allowlist decision: `headersFromDistinct` keeps
 multiple `Origin` fields distinct and `readHeader` marks arrays,

@@ -28,6 +28,7 @@ export {
 export {
   DEFAULT_ALLOWED_REDIRECT_ORIGINS,
   assertAllowedRedirectUri, assertRedirectAllowedForClient,
+  assertRegistrationRedirectPolicy,
 } from "./redirect.ts";
 
 export {
