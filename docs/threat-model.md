@@ -303,8 +303,9 @@ nonce residual above.
   or post-narrowing-drift entry. A scope removed from the catalog after
   provisioning is never minted (matching the user-grant `normalizeScopes`
   fail-closed gate).
-- **No refresh tokens.** Rotation has at most two active secrets, a 5-minute
-  default overlap, and a hard 10-minute maximum.
+- **No refresh tokens.** Rotation has at most two active secrets. The published
+  24-hour default is also the hard maximum; deployments can explicitly request
+  a shorter overlap.
 
 ### Row 22 — group-authorization enforcement
 
