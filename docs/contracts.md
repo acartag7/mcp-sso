@@ -7,13 +7,14 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and the contract set
 > disagree, the contract set wins until one of them is deliberately changed.
 >
-> Status: **v0.3.1**. This release is based on exact merged implementation commit
-> `d9b4f089dc46cf832ac598c5fce2401b095a2654`. It adds compensating refresh-family
-> revocation through `OAuthTokenUseCase`, the versioned atomic machine-client
-> lifecycle enforced by `provisionMachineClient`, `rotateMachineClientSecret`,
-> and `disableMachineClient`, and the public
-> `assertRegistrationRedirectPolicy` helper. Registry and tag evidence belongs
-> in the release and verification receipts.
+> Status: **v0.3.2**. This release is based on exact merged implementation commit
+> `526ad2a2f1167ba7d905cb05cd3c44ce3a2c1d99`. It carries v0.3.1 forward and
+> generation-binds stored-DCR authorization codes, refresh families, and refresh
+> tokens through `OAuthAuthorizationUseCase.approve`, the atomic
+> `consumeAuthCode` and `rotateRefreshToken` store operations, and
+> `OAuthTokenUseCase`. `assertStoredDcrGenerationStore` rejects stored-mode
+> construction when a custom store lacks the generation capability. Registry
+> and tag evidence belongs in the release and verification receipts.
 >
 > The §17 feature contracts are locked; CIMD §17.1, generic OIDC, and the
 > Google preset are implemented. Google has reproducible
