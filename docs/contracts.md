@@ -8,8 +8,8 @@
 > disagree, the contract set wins until one of them is deliberately changed.
 >
 > Status: **v0.3.1 release candidate; not yet tagged or published**. The
-> candidate is stacked on exact implementation commit
-> `9033b721a7df504343b565195d3baaeea3c4ee8f`. It adds compensating refresh-family
+> candidate is based on exact merged implementation commit
+> `d9b4f089dc46cf832ac598c5fce2401b095a2654`. It adds compensating refresh-family
 > revocation through `OAuthTokenUseCase`, the versioned atomic machine-client
 > lifecycle enforced by `provisionMachineClient`, `rotateMachineClientSecret`,
 > and `disableMachineClient`, and the public
