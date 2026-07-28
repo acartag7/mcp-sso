@@ -7,8 +7,7 @@ import type { BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts"; import { assertOAuthRedirectEntry } from "./redirect.ts";
 import { expiresAtIso, generateRefreshToken, parseRefreshFamilyId, sha256Hex, signAccessToken, verifyPkceS256 } from "./crypto.ts";
 import { resolveClientCredentialsScope, scopeString, storedScopes } from "./scopes.ts";
-import { verifyMachineClientSecret } from "./machine-client.ts";
-import { parseMachineClientRegistration } from "./machine-client-record.ts";
+import { authenticateMachineClientSecret } from "./machine-client-auth.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 import { writeTokenAudit } from "./token-audit.ts";
 
@@ -146,8 +145,8 @@ export class OAuthTokenUseCase {
   /** §17.2 `client_credentials` grant: authenticate a provisioned machine client
    *  (Basic or post), resolve scope against its `allowedScopes` ceiling, mint an
    *  access token with `sub = client_id` (RFC 9068 §2.2) — NO refresh token
-   *  (§4.4.3). Composes {@link verifyMachineClientSecret}: wrong secret /
-   *  unknown client / malformed record ⇒ false ⇒ invalid_client, with a fixed
+   *  (§4.4.3). Authenticates one parsed store snapshot: wrong secret / unknown
+   *  client / malformed record ⇒ invalid_client, with a fixed
    *  two digest comparisons (custom-store lookup timing remains external). */
   async exchangeClientCredentials(input: ClientCredentialsGrantInput): Promise<MachineTokenResponse> {
     let clientId: string | undefined; // captured for the failure audit where known
@@ -165,10 +164,11 @@ export class OAuthTokenUseCase {
       if (isBasicAttempt(input.authorization) && input.clientSecret) throw new OAuthError("invalid_client", "Multiple client authentication methods present", 401);
       const clientSecret = basic ? basic.clientSecret : input.clientSecret;
       if (!clientId || !clientSecret || !clientStore) throw new OAuthError("invalid_client", "Client authentication is required", 401);
-      const ok = await verifyMachineClientSecret({ store: clientStore, catalog: this.config.scopeCatalog, clock: this.clock, audit: this.audit }, clientId, clientSecret);
-      if (!ok) throw new OAuthError("invalid_client", "Client authentication failed", 401);
-      const nowEpoch = Math.floor(this.clock.nowMs() / 1000);
-      const client = parseMachineClientRegistration(await clientStore.find(clientId), clientId, nowEpoch);
+      const client = await authenticateMachineClientSecret(
+        { store: clientStore, clock: this.clock },
+        clientId,
+        clientSecret,
+      );
       if (!client) throw new OAuthError("invalid_client", "Client authentication failed", 401);
       const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, this.config.scopeCatalog);
       if (input.resource !== undefined && input.resource !== this.config.resource) throw new OAuthError("invalid_target", "resource does not match the configured resource");

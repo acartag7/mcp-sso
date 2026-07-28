@@ -24,6 +24,19 @@ import {
   assertCallbackPath,
   ensureStateDir,
   assertRealDir,
+  disableMachineClient,
+  verifyMachineClientSecret,
+  DEFAULT_ROTATION_GRACE_SECONDS,
+  MAX_ROTATION_GRACE_SECONDS,
+  type MachineClientStore,
+  type MachineClientRegistration,
+  type VersionedMachineClientRegistration,
+  type ClientRegistration,
+  type ClientStore,
+  type MachineClientDeps,
+  type RotatedSecret,
+  type VersionedRotatedSecret,
+  type MachineClientMutationAudit,
   type UpstreamRedirectFlow,
   type RedirectIdentityPort,
   type NormRequest,
@@ -50,6 +63,37 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   assert.equal(typeof assertCallbackPath, "function", "assertCallbackPath (§17.11 callback-path validator) is root-exported");
   assert.equal(typeof ensureStateDir, "function", "ensureStateDir (atomic state-dir setup helper) is root-exported");
   assert.equal(typeof assertRealDir, "function", "assertRealDir (state-dir fs-trust bar) is root-exported");
+  assert.equal(typeof disableMachineClient, "function", "machine-client disable lifecycle is root-exported");
+  assert.equal(DEFAULT_ROTATION_GRACE_SECONDS, 86_400);
+  assert.equal(MAX_ROTATION_GRACE_SECONDS, 86_400);
+  void (null as unknown as MachineClientStore);
+  void (null as unknown as MachineClientRegistration);
+  void (null as unknown as VersionedMachineClientRegistration);
+  void (null as unknown as MachineClientMutationAudit);
+  const legacyMachine: MachineClientRegistration = {
+    clientId: "mcc_legacy",
+    redirectUris: [],
+    applicationType: "machine",
+    issuedAtEpoch: 1,
+    allowedScopes: ["mcp:read"],
+    secrets: [{ hash: "a".repeat(64), createdAtEpoch: 1 }],
+  };
+  const legacyStore: ClientStore = {
+    async save(_client: ClientRegistration): Promise<void> {},
+    async find(): Promise<ClientRegistration | null> { return legacyMachine; },
+  };
+  const compatibleDepsStore: MachineClientDeps["store"] = legacyStore;
+  assert.equal(compatibleDepsStore, legacyStore);
+  void legacyStore.save(legacyMachine);
+  void verifyMachineClientSecret({
+    store: legacyStore,
+    catalog: ["mcp:read"],
+    clock: { nowMs: () => 1_000 },
+    audit: { async writeAuthEvent(): Promise<void> {} },
+  }, legacyMachine.clientId, "mcs_wrong");
+  const legacyRotation: RotatedSecret = { clientSecret: "mcs_legacy" };
+  const versionedRotation: VersionedRotatedSecret = { ...legacyRotation, version: 1 };
+  assert.equal(versionedRotation.version, 1);
   void (null as unknown as UpstreamRedirectFlow); // type reachable
   void (null as unknown as RedirectIdentityPort); // type reachable
   void (null as unknown as NormRequest); // type reachable (the shapes handlePairingAuthorize/createUpstreamRedirectFlow take/return)

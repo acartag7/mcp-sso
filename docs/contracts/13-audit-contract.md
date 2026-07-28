@@ -7,7 +7,7 @@ host. Events (the v0.1 set plus the v0.2 additions from §17.7): `oauth.register
 `oauth.token.refresh`, `oauth.revoke`, `auth.request`, `identity.verify`,
 `oauth.pairing.attempt`, `oauth.device.authorization`, `oauth.device.approve`,
 `oauth.token.device_code`, `oauth.token.client_credentials`, `oauth.client.provision`,
-`oauth.client.rotate_secret`, `oauth.cimd.fetch`, and (§17.11, lands with the
+`oauth.client.rotate_secret`, `oauth.client.disable`, `oauth.cimd.fetch`, and (§17.11, lands with the
 upstream-redirect implementation) `oauth.upstream.callback`. Each carries `occurredAt`,
 `event`, `status: "success"|"failure"`, and optional `clientId`, `subject`,
 `resource`, `scopes`, `redirectHost`, `reason`, `ip` (adapter-populated client IP;
@@ -22,3 +22,13 @@ sinks. `OAuthTokenUseCase` additionally calls every token/revocation audit
 through `writeTokenAudit`, which contains both synchronous throws and rejected
 promises from a nonconforming custom `AuditPort`. This is a token-boundary
 guarantee, not a claim that every use-case repairs arbitrary custom ports.
+
+Machine-client lifecycle success evidence is the exception to the general
+fail-open posture. `MachineClientStore.createMachineClient` and
+`compareAndSwapMachineClient` receive a metadata-only
+`MachineClientMutationAudit` and MUST commit it in the same backend transaction
+as the credential row, or commit neither (§6.4, §17.2). The ordinary
+`AuditPort` success event is a best-effort fan-out copy after that transaction;
+its failure cannot suppress a one-time secret that already has durable
+evidence. Failure events remain best-effort because no credential mutation was
+committed.

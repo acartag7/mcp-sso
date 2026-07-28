@@ -72,8 +72,11 @@ export {
 export {
   type MachineClientDeps, type ProvisionMachineClientInput,
   type ProvisionedMachineClient, type RotateSecretOptions, type RotatedSecret,
-  DEFAULT_ROTATION_GRACE_SECONDS,
-  provisionMachineClient, rotateMachineClientSecret, verifyMachineClientSecret,
+  type VersionedRotatedSecret,
+  type DisabledMachineClient,
+  DEFAULT_ROTATION_GRACE_SECONDS, MAX_ROTATION_GRACE_SECONDS,
+  provisionMachineClient, rotateMachineClientSecret, disableMachineClient,
+  verifyMachineClientSecret,
 } from "./machine-client.ts";
 
 export { type ClockPort, SystemClock } from "./ports/clock.ts";
@@ -131,7 +134,12 @@ export {
 } from "./ports/store.ts";
 export {
   type ClientStore, type ClientRegistration, type ApplicationType,
-  type ClientSecret, type UserClientRegistration, type MachineClientRegistration,
+  type ClientSecret, type ActiveClientSecrets, type UserClientRegistration,
+  type LegacyMachineClientRegistration, type ActiveMachineClientRegistration,
+  type DisabledMachineClientRegistration, type MachineClientRegistration,
+  type VersionedMachineClientRegistration,
+  type StoredMachineClientRegistration, type MachineClientMutationAudit,
+  type MachineClientStore,
 } from "./ports/client-store.ts";
 export { type IdentityPort, type IdentityClaims, type IdentityResult, type RedirectIdentityPort, type RedirectExchangeResult } from "./ports/identity.ts";
 export { type FetcherPort, type FetchInit, type FetchResult } from "./ports/fetcher.ts";

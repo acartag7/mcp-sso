@@ -12,7 +12,15 @@ import { test } from "node:test";
 import type { JWK } from "jose";
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
-import type { ClientRegistration, ClientStore, MachineClientRegistration } from "../src/ports/client-store.ts";
+import type {
+  ActiveMachineClientRegistration,
+  ClientRegistration,
+  ClientStore,
+  LegacyMachineClientRegistration,
+  MachineClientMutationAudit,
+  MachineClientStore,
+  VersionedMachineClientRegistration,
+} from "../src/ports/client-store.ts";
 import { AuthConfigError, createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { OAuthError } from "../src/errors.ts";
 import { sha256Hex } from "../src/crypto.ts";
@@ -21,8 +29,9 @@ import { assertRedirectAllowedForClient } from "../src/redirect.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import {
-  provisionMachineClient, rotateMachineClientSecret, verifyMachineClientSecret,
-  rotateSecrets, DEFAULT_ROTATION_GRACE_SECONDS,
+  disableMachineClient, provisionMachineClient, rotateMachineClientSecret,
+  verifyMachineClientSecret, rotateSecrets, DEFAULT_ROTATION_GRACE_SECONDS,
+  MAX_ROTATION_GRACE_SECONDS,
   type MachineClientDeps,
 } from "../src/machine-client.ts";
 import { parseMachineClientRegistration } from "../src/machine-client-record.ts";
@@ -42,22 +51,61 @@ class MemoryAudit implements AuditPort {
   async writeAuthEvent(event: AuthAuditEvent): Promise<void> { this.events.push(event); }
 }
 
-class InMemoryClientStore implements ClientStore {
+class ThrowingAudit implements AuditPort {
+  async writeAuthEvent(): Promise<void> { throw new Error("supplemental audit unavailable"); }
+}
+
+class HangingAudit implements AuditPort {
+  async writeAuthEvent(): Promise<void> { return await new Promise(() => {}); }
+}
+
+class InMemoryClientStore implements MachineClientStore {
   readonly clients = new Map<string, ClientRegistration>();
+  readonly mutationAudits: MachineClientMutationAudit[] = [];
   saveCalls = 0;
+  createCalls = 0;
+  casCalls = 0;
+  failDurableAudit = false;
   async save(c: ClientRegistration): Promise<void> { this.saveCalls += 1; this.clients.set(c.clientId, c); }
   async find(clientId: string): Promise<ClientRegistration | null> { return this.clients.get(clientId) ?? null; }
   setAt(clientId: string, record: unknown): void { this.clients.set(clientId, record as ClientRegistration); }
+  async createMachineClient(
+    client: ActiveMachineClientRegistration,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean> {
+    this.createCalls += 1;
+    if (this.clients.has(client.clientId)) return false;
+    if (this.failDurableAudit) throw new Error("durable audit unavailable");
+    this.clients.set(client.clientId, client);
+    this.mutationAudits.push(audit);
+    return true;
+  }
+  async compareAndSwapMachineClient(
+    expectedVersion: number,
+    client: VersionedMachineClientRegistration,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean> {
+    this.casCalls += 1;
+    const current = this.clients.get(client.clientId);
+    if (!current || current.applicationType !== "machine") return false;
+    const currentVersion = "version" in current ? current.version : 0;
+    if (currentVersion !== expectedVersion) return false;
+    if (this.failDurableAudit) throw new Error("durable audit unavailable");
+    this.clients.set(client.clientId, client);
+    this.mutationAudits.push(audit);
+    return true;
+  }
 }
 
 interface Harness { deps: MachineClientDeps; store: InMemoryClientStore; clock: FakeClock; audit: MemoryAudit; }
 
-/** Narrow a stored record to MachineClientRegistration (these tests only ever
+/** Narrow a stored record to VersionedMachineClientRegistration (these tests only ever
  *  load provisioned machine clients). Asserts the discriminant first. */
-async function machineRecord(store: InMemoryClientStore, clientId: string): Promise<MachineClientRegistration> {
+async function machineRecord(store: InMemoryClientStore, clientId: string): Promise<VersionedMachineClientRegistration> {
   const r = await store.find(clientId);
   assert.equal(r?.applicationType, "machine");
-  return r as MachineClientRegistration;
+  assert.ok(r && "version" in r);
+  return r as VersionedMachineClientRegistration;
 }
 
 function harness(catalog: readonly string[] = CATALOG): Harness {
@@ -67,7 +115,7 @@ function harness(catalog: readonly string[] = CATALOG): Harness {
   return { deps: { store, catalog, clock, audit }, store, clock, audit };
 }
 
-function storedMachineRecord(clientId: string, secret: string): MachineClientRegistration {
+function storedMachineRecord(clientId: string, secret: string): LegacyMachineClientRegistration {
   const epoch = Math.floor(NOW_MS / 1000);
   return {
     clientId, redirectUris: [], applicationType: "machine", issuedAtEpoch: epoch,
@@ -110,6 +158,25 @@ test("provision: returns mcc_ clientId + mcs_ secret once; stores hashes only", 
   // The raw secret is NOT in the stored record — only its hash.
   const serialized = JSON.stringify(record);
   assert.equal(serialized.includes(res.clientSecret), false, "raw secret must not be persisted");
+});
+
+test("provision: a v0.3.0 ClientStore fails closed without atomic mutation methods", async () => {
+  const clock = new FakeClock(NOW_MS);
+  const audit = new MemoryAudit();
+  let saveCalls = 0;
+  const store: ClientStore = {
+    async save(): Promise<void> { saveCalls += 1; },
+    async find(): Promise<ClientRegistration | null> { return null; },
+  };
+  const deps: MachineClientDeps = { store, catalog: CATALOG, clock, audit };
+  await assert.rejects(
+    provisionMachineClient(deps, { allowedScopes: ["mcp:read"] }),
+    (error: unknown) => error instanceof OAuthError
+      && error.code === "server_error"
+      && error.message === "MachineClientStore atomic mutations are required",
+  );
+  assert.equal(saveCalls, 0);
+  assert.equal(audit.events.at(-1)?.status, "failure");
 });
 
 test("provision: secretTtlSeconds sets the first secret's expiresAtEpoch", async () => {
@@ -158,10 +225,35 @@ test("provision: rejects a TTL whose derived expiry is unsafe before save or suc
     }),
     (error: unknown) => error instanceof OAuthError && error.code === "invalid_request",
   );
-  assert.equal(h.store.saveCalls, 0);
+  assert.equal(h.store.createCalls, 0);
   assert.equal(h.audit.events.some((event) =>
     event.event === "oauth.client.provision" && event.status === "success"), false);
   assert.equal(h.audit.events.at(-1)?.reason, "invalid_request");
+});
+
+test("provision: durable-audit failure rolls back the row and returns no credential", async () => {
+  const h = harness();
+  h.store.failDurableAudit = true;
+  await assert.rejects(
+    provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] }),
+    /durable audit unavailable/,
+  );
+  assert.equal(h.store.clients.size, 0, "failed durable transaction committed no credential");
+  assert.equal(h.store.mutationAudits.length, 0, "failed durable transaction committed no audit");
+});
+
+test("provision: supplemental audit failure cannot suppress the durably committed secret", async () => {
+  const h = harness();
+  const provisioned = await provisionMachineClient(
+    { ...h.deps, audit: new ThrowingAudit() },
+    { allowedScopes: ["mcp:read"] },
+  );
+  assert.equal(h.store.mutationAudits.length, 1);
+  assert.equal(h.store.mutationAudits[0]?.event, "oauth.client.provision");
+  assert.equal(
+    await verifyMachineClientSecret(h.deps, provisioned.clientId, provisioned.clientSecret),
+    true,
+  );
 });
 
 // ---------- rotation ----------
@@ -171,19 +263,19 @@ test("rotation: from a single secret yields exactly [old-grace, new-live]", asyn
   const prov = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
   const oldHash = (await machineRecord(h.store, prov.clientId)).secrets[0]!.hash;
   h.clock.advance(1000);
-  const rot = await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 3600 });
+  const rot = await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 600 });
   assert.match(rot.clientSecret, /^mcs_[A-Za-z0-9_-]{43}$/);
   const record = await machineRecord(h.store, prov.clientId);
   assert.equal(record?.secrets.length, 2, "exactly two active secrets after rotation");
   const [grace, live] = record!.secrets;
   assert.equal(grace!.hash, oldHash, "old secret retained as grace");
-  assert.equal(grace!.expiresAtEpoch, Math.floor((NOW_MS + 1000) / 1000) + 3600);
+  assert.equal(grace!.expiresAtEpoch, Math.floor((NOW_MS + 1000) / 1000) + 600);
   assert.equal(live!.hash, sha256Hex(rot.clientSecret));
   assert.equal(live!.expiresAtEpoch, undefined, "new secret is live (no expiry)");
   assert.notEqual(rot.clientSecret, prov.clientSecret);
 });
 
-test("rotation: default grace is 24h; new secret verified, old still accepted during overlap", async () => {
+test("rotation: default grace remains 24h; new secret verified, old still accepted during overlap", async () => {
   const h = harness();
   const prov = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
   const rot = await rotateMachineClientSecret(h.deps, prov.clientId); // no opts ⇒ default grace
@@ -198,18 +290,65 @@ test("rotation: holds the two-active cap across rapid successive rotations", asy
   const h = harness();
   const prov = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
   h.clock.advance(1000);
-  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 86_400 });
+  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 600 });
   h.clock.advance(2000); // still inside the first grace window
-  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 86_400 });
+  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 600 });
   let record = await machineRecord(h.store, prov.clientId);
   assert.equal(record?.secrets.length, 2, "never more than two active secrets");
   assert.equal(record!.secrets.filter((s) => s.expiresAtEpoch === undefined).length, 1, "exactly one live secret");
   // Advance past the grace of the now-demoted secret, then rotate again → expired entry evicted.
-  h.clock.advance(86_400 * 1000 + 5000);
-  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 86_400 });
+  h.clock.advance(600 * 1000 + 5000);
+  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 600 });
   record = await machineRecord(h.store, prov.clientId);
   assert.equal(record?.secrets.length, 2, "expired secret evicted, still capped at two");
   assert.equal(record!.secrets.filter((s) => s.expiresAtEpoch === undefined).length, 1);
+});
+
+test("rotation: same-version competitors return exactly one still-valid secret", async () => {
+  const h = harness();
+  const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  const outcomes = await Promise.allSettled([
+    rotateMachineClientSecret(h.deps, provisioned.clientId),
+    rotateMachineClientSecret(h.deps, provisioned.clientId),
+  ]);
+  const winners = outcomes.filter(
+    (outcome): outcome is PromiseFulfilledResult<Awaited<ReturnType<typeof rotateMachineClientSecret>>> =>
+      outcome.status === "fulfilled",
+  );
+  const losers = outcomes.filter(
+    (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
+  );
+  assert.equal(winners.length, 1);
+  assert.equal(losers.length, 1);
+  assert.ok(losers[0]?.reason instanceof OAuthError && losers[0].reason.status === 409);
+  assert.equal(
+    await verifyMachineClientSecret(h.deps, provisioned.clientId, winners[0]!.value.clientSecret),
+    true,
+    "the only returned rotation secret remains current",
+  );
+  assert.equal(
+    h.store.mutationAudits.filter((audit) => audit.event === "oauth.client.rotate_secret").length,
+    1,
+  );
+});
+
+test("rotation: a stalled supplemental audit cannot suppress the committed secret", async () => {
+  const h = harness();
+  const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("rotation blocked on supplemental audit")), 250);
+  });
+  const rotated = await Promise.race([
+    rotateMachineClientSecret({ ...h.deps, audit: new HangingAudit() }, provisioned.clientId),
+    timeout,
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+  assert.equal(
+    await verifyMachineClientSecret(h.deps, provisioned.clientId, rotated.clientSecret),
+    true,
+  );
 });
 
 test("rotation: rejects unknown / non-machine / malformed-record clientId with invalid_client 401", async () => {
@@ -227,7 +366,7 @@ test("rotation: rejects unknown / non-machine / malformed-record clientId with i
   });
   // A machine record whose secrets is not an array (a buggy/malicious custom
   // ClientStore) yields a CONTROLLED invalid_client, not a raw TypeError.
-  await h.store.save({ clientId: "mcc_bad", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1, allowedScopes: ["mcp:read"], secrets: undefined as unknown as never[] });
+  h.store.setAt("mcc_bad", { clientId: "mcc_bad", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1, allowedScopes: ["mcp:read"], secrets: undefined });
   await assert.rejects(() => rotateMachineClientSecret(h.deps, "mcc_bad"), (e: unknown) => {
     assert.ok(e instanceof OAuthError && e.code === "invalid_client", "malformed secrets ⇒ controlled invalid_client (no raw TypeError)");
     return true;
@@ -245,17 +384,54 @@ test("rotation: rejects a bad graceSeconds", async () => {
   }
 });
 
+test("rotation: preserves the 24h default, accepts a 5m policy, and rejects above 24h before CAS", async () => {
+  const defaulted = harness();
+  const defaultedClient = await provisionMachineClient(defaulted.deps, {
+    allowedScopes: ["mcp:read"],
+  });
+  await rotateMachineClientSecret(defaulted.deps, defaultedClient.clientId);
+  const defaultedRecord = await machineRecord(defaulted.store, defaultedClient.clientId);
+  assert.equal(
+    defaultedRecord.secrets[0]?.expiresAtEpoch,
+    Math.floor(NOW_MS / 1000) + 86_400,
+  );
+
+  const accepted = harness();
+  const first = await provisionMachineClient(accepted.deps, { allowedScopes: ["mcp:read"] });
+  await rotateMachineClientSecret(accepted.deps, first.clientId, {
+    graceSeconds: 300,
+  });
+  assert.equal(accepted.store.casCalls, 1);
+
+  const atMaximum = harness();
+  const maximumClient = await provisionMachineClient(atMaximum.deps, { allowedScopes: ["mcp:read"] });
+  await rotateMachineClientSecret(atMaximum.deps, maximumClient.clientId, {
+    graceSeconds: 86_400,
+  });
+  assert.equal(atMaximum.store.casCalls, 1);
+
+  const rejected = harness();
+  const second = await provisionMachineClient(rejected.deps, { allowedScopes: ["mcp:read"] });
+  await assert.rejects(
+    rotateMachineClientSecret(rejected.deps, second.clientId, {
+      graceSeconds: 86_401,
+    }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_request",
+  );
+  assert.equal(rejected.store.casCalls, 0);
+});
+
 test("rotation: rejects a grace whose derived expiry is unsafe before save or success audit", async () => {
   const h = harness();
   const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
-  const savesBefore = h.store.saveCalls;
+  const mutationsBefore = h.store.casCalls;
   await assert.rejects(
     () => rotateMachineClientSecret(h.deps, provisioned.clientId, {
       graceSeconds: Number.MAX_SAFE_INTEGER,
     }),
     (error: unknown) => error instanceof OAuthError && error.code === "invalid_request",
   );
-  assert.equal(h.store.saveCalls, savesBefore);
+  assert.equal(h.store.casCalls, mutationsBefore);
   assert.equal(h.audit.events.some((event) =>
     event.event === "oauth.client.rotate_secret" && event.status === "success"), false);
   assert.equal(h.audit.events.at(-1)?.reason, "invalid_request");
@@ -294,6 +470,17 @@ test("rotateSecrets: a TTL-provisioned still-valid secret is demoted to now+grac
   const res = rotateSecrets([{ hash: "A", createdAtEpoch: 0, expiresAtEpoch: 600 }], 100, 600, "B");
   assert.deepEqual(res.map((s) => s.hash), ["A", "B"]);
   assert.equal(res[0]!.expiresAtEpoch, 100 + 600);
+});
+
+test("rotateSecrets: without an unbounded slot, retains the latest-expiring active secret", () => {
+  const rotated = rotateSecrets([
+    { hash: "a".repeat(64), createdAtEpoch: 100, expiresAtEpoch: 10_000 },
+    { hash: "b".repeat(64), createdAtEpoch: 200, expiresAtEpoch: 300 },
+  ], 250, 60, "c".repeat(64));
+  assert.deepEqual(rotated, [
+    { hash: "a".repeat(64), createdAtEpoch: 100, expiresAtEpoch: 310 },
+    { hash: "c".repeat(64), createdAtEpoch: 250 },
+  ]);
 });
 
 // ---------- verify (timing-safe primitive) ----------
@@ -339,6 +526,12 @@ test("stored machine grammar: malformed or mis-keyed rows fail verification and 
     ["name", { ...base, name: "" }],
     ["name type", { ...base, name: 42 as unknown as string }],
     ["allowedScopes", { ...base, allowedScopes: "mcp:read" as unknown as string[] }],
+    ["status without version", { ...base, status: "active" }],
+    ["version without status", { ...base, version: 1 }],
+    ["unknown status", { ...base, status: "paused", version: 1 }],
+    ["active carries disabledAtEpoch", { ...base, status: "active", version: 1, disabledAtEpoch: 1 }],
+    ["disabled keeps secrets", { ...base, status: "disabled", version: 1, disabledAtEpoch: 1 }],
+    ["disabled lacks epoch", { ...base, status: "disabled", version: 1, secrets: [] }],
     ["secret hash", { ...base, secrets: [{ hash: "x", createdAtEpoch: base.issuedAtEpoch }] }],
     ["secret hash case", { ...base, secrets: [{ hash: "A".repeat(64), createdAtEpoch: base.issuedAtEpoch }] }],
     ["secret createdAtEpoch", { ...base, secrets: [{ hash: sha256Hex(presented), createdAtEpoch: -1 }] }],
@@ -368,7 +561,7 @@ test("stored machine grammar: malformed or mis-keyed rows fail verification and 
       (error: unknown) => error instanceof OAuthError && error.code === "invalid_client" && error.status === 401,
       `${label}: rotation`,
     );
-    assert.equal(h.store.saveCalls, 0, `${label}: no save`);
+    assert.equal(h.store.casCalls, 0, `${label}: no CAS`);
     assert.equal(h.audit.events.some((event) => event.event === "oauth.client.rotate_secret" && event.status === "success"), false);
     assert.deepEqual(h.audit.events.at(-1), {
       occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.client.rotate_secret",
@@ -437,7 +630,54 @@ test("stored machine parser returns fresh known-field arrays and secret slots", 
   assert.notEqual(parsed.allowedScopes, input.allowedScopes);
   assert.notEqual(parsed.secrets, input.secrets);
   assert.notEqual(parsed.secrets[0], input.secrets[0]);
-  assert.deepEqual(parsed, expected);
+  assert.deepEqual(parsed, { ...expected, status: "active", version: 0 });
+});
+
+test("legacy v0.3.0 row authenticates and migrates from version 0 on first rotation", async () => {
+  const h = harness();
+  const clientId = "mcc_legacy_v030";
+  const oldSecret = "mcs_" + "L".repeat(43);
+  h.store.setAt(clientId, storedMachineRecord(clientId, oldSecret));
+  assert.equal(await verifyMachineClientSecret(h.deps, clientId, oldSecret), true);
+
+  const rotated = await rotateMachineClientSecret(h.deps, clientId);
+  assert.equal(rotated.version, 1);
+  const saved = await machineRecord(h.store, clientId);
+  assert.equal(saved.status, "active");
+  assert.equal(saved.version, 1);
+  assert.equal(await verifyMachineClientSecret(h.deps, clientId, rotated.clientSecret), true);
+  assert.equal(h.store.mutationAudits.at(-1)?.event, "oauth.client.rotate_secret");
+});
+
+test("legacy v0.3.0 row can migrate directly to a version-1 disabled tombstone", async () => {
+  const h = harness();
+  const clientId = "mcc_legacy_disable";
+  const secret = "mcs_" + "D".repeat(43);
+  h.store.setAt(clientId, storedMachineRecord(clientId, secret));
+  const disabled = await disableMachineClient(h.deps, clientId);
+  assert.equal(disabled.version, 1);
+  const stored = await machineRecord(h.store, clientId);
+  assert.equal(stored.status, "disabled");
+  assert.deepEqual(stored.secrets, []);
+  assert.equal(await verifyMachineClientSecret(h.deps, clientId, secret), false);
+});
+
+test("rotation and disable reject version overflow before CAS", async () => {
+  const h = harness();
+  const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  const current = await machineRecord(h.store, provisioned.clientId);
+  h.store.setAt(provisioned.clientId, { ...current, version: Number.MAX_SAFE_INTEGER });
+  const before = h.store.casCalls;
+  for (const mutate of [
+    () => rotateMachineClientSecret(h.deps, provisioned.clientId),
+    () => disableMachineClient(h.deps, provisioned.clientId),
+  ]) {
+    await assert.rejects(
+      mutate,
+      (error: unknown) => error instanceof OAuthError && error.code === "invalid_client",
+    );
+  }
+  assert.equal(h.store.casCalls, before);
 });
 
 test("rotation saves the parser's named projection, not unknown stored fields", async () => {
@@ -446,7 +686,7 @@ test("rotation saves the parser's named projection, not unknown stored fields", 
   const record = { ...storedMachineRecord(clientId, "mcs_" + "A".repeat(43)), operatorNote: "do not republish" };
   h.store.setAt(clientId, record);
   await rotateMachineClientSecret(h.deps, clientId);
-  const saved = h.store.clients.get(clientId) as MachineClientRegistration;
+  const saved = h.store.clients.get(clientId) as VersionedMachineClientRegistration;
   assert.equal("operatorNote" in (saved as unknown as Record<string, unknown>), false);
   assert.notEqual(saved.redirectUris, record.redirectUris);
   assert.notEqual(saved.allowedScopes, record.allowedScopes);
@@ -457,7 +697,7 @@ test("verifyMachineClientSecret: a 64-char NON-ASCII hash (byte-length mismatch)
   // Codex P2: a corrupted stored hash that is 64 JS chars but multibyte (>64 bytes)
   // must NOT make timingSafeEqual throw ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH.
   const h = harness();
-  await h.store.save({
+  h.store.setAt("mcc_m4", {
     clientId: "mcc_m4", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1,
     allowedScopes: ["mcp:read"], secrets: [{ hash: "é".repeat(64), createdAtEpoch: 1 }],
   });
@@ -466,16 +706,19 @@ test("verifyMachineClientSecret: a 64-char NON-ASCII hash (byte-length mismatch)
 
 // ---------- audit (no secret / no hash leak) ----------
 
-test("audit: provision + rotate emit metadata-only events (no secret, no hash, no mcs_)", async () => {
+test("audit: provision + rotate + disable emit metadata-only events (no secret, no hash, no mcs_)", async () => {
   const h = harness();
   const prov = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read", "mcp:write"], name: "ci-runner" });
   const rot = await rotateMachineClientSecret(h.deps, prov.clientId);
+  await disableMachineClient(h.deps, prov.clientId);
   const dump = JSON.stringify(h.audit.events);
   const provisionEvt = h.audit.events.find((e) => e.event === "oauth.client.provision" && e.status === "success");
   const rotateEvt = h.audit.events.find((e) => e.event === "oauth.client.rotate_secret" && e.status === "success");
+  const disableEvt = h.audit.events.find((e) => e.event === "oauth.client.disable" && e.status === "success");
   assert.deepEqual(provisionEvt?.scopes, ["mcp:read", "mcp:write"]);
   assert.equal(provisionEvt?.clientId, prov.clientId);
   assert.equal(rotateEvt?.clientId, prov.clientId);
+  assert.equal(disableEvt?.clientId, prov.clientId);
   // No secret value, no secret hash, no secret prefix anywhere in the audit trail.
   for (const needle of [prov.clientSecret, rot.clientSecret, sha256Hex(prov.clientSecret), sha256Hex(rot.clientSecret), "mcs_", "hash"]) {
     assert.equal(dump.toLowerCase().includes(needle.toLowerCase()), false, `audit leaked '${needle}'`);
@@ -495,6 +738,43 @@ test("audit: failed provision/rotate emit failure events with the OAuth reason",
   assert.equal(provFail.event, "oauth.client.provision");
   assert.equal(provFail.status, "failure");
   assert.equal(provFail.reason, "invalid_scope");
+});
+
+// ---------- disable ----------
+
+test("disable: atomically writes a hash-free tombstone and rejects future authentication", async () => {
+  const h = harness();
+  const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  const rotated = await rotateMachineClientSecret(h.deps, provisioned.clientId);
+  const disabled = await disableMachineClient(h.deps, provisioned.clientId);
+  assert.equal(disabled.version, 3);
+  const stored = await machineRecord(h.store, provisioned.clientId);
+  assert.equal(stored.status, "disabled");
+  assert.deepEqual(stored.secrets, []);
+  assert.equal("disabledAtEpoch" in stored, true);
+  assert.equal(await verifyMachineClientSecret(h.deps, provisioned.clientId, provisioned.clientSecret), false);
+  assert.equal(await verifyMachineClientSecret(h.deps, provisioned.clientId, rotated.clientSecret), false);
+  assert.equal(h.store.mutationAudits.at(-1)?.event, "oauth.client.disable");
+  await assert.rejects(
+    rotateMachineClientSecret(h.deps, provisioned.clientId),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_client",
+  );
+  await assert.rejects(
+    disableMachineClient(h.deps, provisioned.clientId),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_client",
+  );
+});
+
+test("disable: durable-audit failure leaves the active credential unchanged", async () => {
+  const h = harness();
+  const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  h.store.failDurableAudit = true;
+  await assert.rejects(disableMachineClient(h.deps, provisioned.clientId), /durable audit unavailable/);
+  assert.equal(await verifyMachineClientSecret(h.deps, provisioned.clientId, provisioned.clientSecret), true);
+  assert.equal(
+    h.store.mutationAudits.filter((audit) => audit.event === "oauth.client.disable").length,
+    0,
+  );
 });
 
 // ---------- open DCR rejects machine-shape ----------

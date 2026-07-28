@@ -24,6 +24,8 @@ export interface ClientSecret {
   expiresAtEpoch?: number;
 }
 
+export type ActiveClientSecrets = [ClientSecret] | [ClientSecret, ClientSecret];
+
 /** A user client registered via RFC 7591 DCR (§9.2). `redirectUris` is ≥1 and
  *  each entry is validated through §10. `applicationType` selects the §10.2
  *  per-client redirect policy (native ⇒ RFC 8252 loopback any-port,
@@ -35,11 +37,9 @@ export interface UserClientRegistration {
   issuedAtEpoch: number;
 }
 
-/** A machine client provisioned out-of-band (§17.2). `redirectUris` is always
- *  `[]` (no authorization-code flow); `allowedScopes` is the per-client ceiling
- *  fixed at provisioning (⊆ scopeCatalog); `secrets` holds ≤ 2 unexpired
- *  ("active") SHA-256 digests. Machine clients are rejected at `/oauth/authorize`
- *  and MUST be rejected at any future device endpoints (`invalid_client`). */
+/** Machine row shape published by v0.3.0. It remains public for source
+ * compatibility and is accepted as version-0 upgrade input. Atomic lifecycle
+ * writes use the separately named versioned shapes below. */
 export interface MachineClientRegistration {
   clientId: string;
   redirectUris: string[];
@@ -50,13 +50,67 @@ export interface MachineClientRegistration {
   secrets: ClientSecret[];
 }
 
-/** A stored client record — a discriminated union on `applicationType` so a
- *  machine record CANNOT exist without its `allowedScopes` + `secrets` (no
- *  optional-field state silently lacks them). Narrow on `applicationType`
- *  before reading machine-only / user-only fields. */
-export type ClientRegistration = UserClientRegistration | MachineClientRegistration;
+interface MachineClientRegistrationBase {
+  clientId: string;
+  redirectUris: string[];
+  applicationType: "machine";
+  issuedAtEpoch: number;
+  name?: string;
+  allowedScopes: string[];
+  version: number;
+}
+
+export interface ActiveMachineClientRegistration extends MachineClientRegistrationBase {
+  status: "active";
+  secrets: ActiveClientSecrets;
+}
+
+export interface DisabledMachineClientRegistration extends MachineClientRegistrationBase {
+  status: "disabled";
+  secrets: [];
+  disabledAtEpoch: number;
+}
+
+export type VersionedMachineClientRegistration =
+  | ActiveMachineClientRegistration
+  | DisabledMachineClientRegistration;
+
+export type LegacyMachineClientRegistration = MachineClientRegistration;
+
+export type StoredMachineClientRegistration =
+  | MachineClientRegistration
+  | VersionedMachineClientRegistration;
+
+/** A stored client record. The legacy member is read-only upgrade input; new
+ * machine writes use the status-discriminated versioned union above. */
+export type ClientRegistration = UserClientRegistration | StoredMachineClientRegistration;
 
 export interface ClientStore {
   save(client: ClientRegistration): Promise<void>;
   find(clientId: string): Promise<ClientRegistration | null>;
+}
+
+/** Durable lifecycle evidence committed atomically with a machine-client row.
+ * It is metadata-only: raw secrets and digests are forbidden. */
+export interface MachineClientMutationAudit {
+  occurredAt: string;
+  event: "oauth.client.provision" | "oauth.client.rotate_secret" | "oauth.client.disable";
+  clientId: string;
+  scopes: string[];
+}
+
+/** Mutation extension required only by the out-of-band machine lifecycle.
+ * `false` is a collision/version conflict and MUST commit neither row nor audit.
+ * For upgrade compatibility, expectedVersion 0 matches only a v0.3.0 row with
+ * both status and version absent. */
+export interface MachineClientStore extends ClientStore {
+  createMachineClient(
+    client: ActiveMachineClientRegistration,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean>;
+  compareAndSwapMachineClient(
+    expectedVersion: number,
+    client: VersionedMachineClientRegistration,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean>;
 }

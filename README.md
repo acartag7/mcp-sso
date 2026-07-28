@@ -102,14 +102,15 @@ For headless callers — CI jobs, service agents, schedulers. Implements the
 official MCP extension `io.modelcontextprotocol/oauth-client-credentials`.
 
 Machine clients are **provisioned out-of-band** — there's no HTTP endpoint for
-it; you run `provisionMachineClient` against the same `ClientStore` the bridge
-uses. `ClientStore` is a two-method port (`save`/`find`) **you implement against
-your own database** — the shipped `/store/sqlite` and `/store/mysql` adapters are
-`StorePort`-only (codes, refresh tokens, consent JTIs), not `ClientStore`. The
+it; you run `provisionMachineClient` against the same `MachineClientStore` the
+bridge uses. You implement that port against your database; the shipped
+`/store/sqlite` and `/store/mysql` adapters are `StorePort`-only (codes, refresh
+tokens, consent JTIs), not `ClientStore`. Machine create, rotate, and disable
+use versioned atomic mutations that commit the row with its durable audit. The
 secret is returned once and stored only as a SHA-256 hash. A custom
 `ClientStore.find(clientId)` must return the row whose embedded `clientId`
 matches that lookup key; `parseMachineClientRegistration` rejects mismatched or
-malformed machine rows before verification, rotation, or token issuance.
+malformed machine rows before verification, mutation, or token issuance.
 
 ```ts
 import { provisionMachineClient, noopAudit } from "mcp-sso";
@@ -137,7 +138,10 @@ Use that field for downstream policy; do not decode the JWT or infer from an
 `sub === client_id`, and `gty: "client_credentials"` binding — enforced at
 three points, detailed in
 [§17.2](docs/contracts/17-v0-2-feature-contracts.md#172-client_credentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials).
-Rotate with `rotateMachineClientSecret`.
+Rotate with `rotateMachineClientSecret` (the published 24-hour default is also
+the hard maximum; pass a shorter overlap such as 5 minutes explicitly), or
+revoke future token issuance with the atomic
+`disableMachineClient` tombstone.
 
 ## API-key gateway: SSO in front of a token-only backend
 

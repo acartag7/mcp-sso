@@ -1,16 +1,30 @@
-import type { ClientSecret, MachineClientRegistration } from "./ports/client-store.ts";
+import type {
+  ActiveMachineClientRegistration,
+  ClientSecret,
+  DisabledMachineClientRegistration,
+} from "./ports/client-store.ts";
 import { isScopeToken } from "./scopes.ts";
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const MAX_ACTIVE_SECRETS = 2;
 
+/** A parsed legacy row can retain expired history until its first mutation.
+ * New versioned writes use the stricter tuple from the public store contract. */
+export type ParsedActiveMachineClientRegistration =
+  Omit<ActiveMachineClientRegistration, "secrets"> & { secrets: ClientSecret[] };
+
+export type ParsedMachineClientRegistration =
+  | ParsedActiveMachineClientRegistration
+  | DisabledMachineClientRegistration;
+
 /** Parse the persisted §17.2 machine-client shape and bind it to the lookup key.
- * Returns a fresh known-field snapshot so custom-store data is not republished. */
+ * A complete v0.3.0 row with no lifecycle markers normalizes to active version
+ * 0. Returns a fresh known-field snapshot so custom-store data is not republished. */
 export function parseMachineClientRegistration(
   value: unknown,
   expectedClientId: string,
   nowEpoch: number,
-): MachineClientRegistration | null {
+): ParsedMachineClientRegistration | null {
   if (value === null || value === undefined || !isEpoch(nowEpoch)) return null;
   const record = value as Record<string, unknown>;
   if (typeof record.clientId !== "string"
@@ -24,17 +38,43 @@ export function parseMachineClientRegistration(
       && (typeof record.name !== "string" || record.name.length === 0))) return null;
 
   const allowedScopes = parseAllowedScopes(record.allowedScopes);
-  const secrets = parseSecrets(record.secrets, nowEpoch);
-  if (!allowedScopes || !secrets) return null;
-  return {
+  if (!allowedScopes) return null;
+  const base = {
     clientId: record.clientId,
-    redirectUris: [],
-    applicationType: "machine",
+    redirectUris: [] as [],
+    applicationType: "machine" as const,
     issuedAtEpoch: record.issuedAtEpoch,
     ...(record.name === undefined ? {} : { name: record.name as string }),
     allowedScopes,
-    secrets,
   };
+
+  const hasStatus = Object.hasOwn(record, "status");
+  const hasVersion = Object.hasOwn(record, "version");
+  if (!hasStatus && !hasVersion) {
+    const secrets = parseSecrets(record.secrets, nowEpoch);
+    return secrets ? { ...base, status: "active", version: 0, secrets } : null;
+  }
+  if (!hasStatus || !hasVersion || !isVersion(record.version)) return null;
+
+  if (record.status === "active") {
+    if (Object.hasOwn(record, "disabledAtEpoch")) return null;
+    const secrets = parseSecrets(record.secrets, nowEpoch);
+    if (!secrets || secrets.length < 1 || secrets.length > MAX_ACTIVE_SECRETS) return null;
+    return { ...base, status: "active", version: record.version, secrets };
+  }
+  if (record.status === "disabled") {
+    if (!Array.isArray(record.secrets)
+      || record.secrets.length !== 0
+      || !isEpoch(record.disabledAtEpoch)) return null;
+    return {
+      ...base,
+      status: "disabled",
+      version: record.version,
+      secrets: [],
+      disabledAtEpoch: record.disabledAtEpoch,
+    };
+  }
+  return null;
 }
 
 function parseAllowedScopes(value: unknown): string[] | null {
@@ -72,6 +112,10 @@ function parseSecrets(value: unknown, nowEpoch: number): ClientSecret[] | null {
     });
   }
   return secrets;
+}
+
+function isVersion(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0;
 }
 
 function isEpoch(value: unknown): value is number {

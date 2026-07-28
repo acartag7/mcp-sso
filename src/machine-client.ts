@@ -1,33 +1,35 @@
-// Machine-client provisioning primitives (contracts §17.2). Library functions,
-// NOT endpoints: machine clients are provisioned OUT-OF-BAND, never via open
-// `/oauth/register`. The `/oauth/token` client_credentials grant that CONSUMES
-// these records (`exchangeClientCredentials`) composes `verifyMachineClientSecret`.
-//
-// Secret (§17.2): `mcs_` + base64url(32) = 256 bits. Stored as UNSALTED SHA-256
-// hex only (RFC 6819 §5.1.4.1.3 salts LOW-entropy creds; a 256-bit random secret
-// needs no salt, and bcrypt on the token hot path is a DoS lever). Comparison is
-// constant-time. The raw secret is returned ONCE and never retrievable.
+// Machine-client lifecycle primitives (contracts §17.2). Library functions,
+// not endpoints: provisioning, rotation, and disable happen out of band.
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import type { ClientStore, ClientSecret, MachineClientRegistration } from "./ports/client-store.ts";
+import type {
+  ActiveMachineClientRegistration,
+  ClientStore,
+  MachineClientMutationAudit,
+  MachineClientStore,
+  VersionedMachineClientRegistration,
+} from "./ports/client-store.ts";
 import type { ClockPort } from "./ports/clock.ts";
-import type { AuditPort } from "./ports/audit.ts";
-import { sha256Hex } from "./crypto.ts";
-import { isScopeToken } from "./scopes.ts";
+import type { AuditPort, AuthAuditEvent } from "./ports/audit.ts";
 import { OAuthError } from "./errors.ts";
-import { parseMachineClientRegistration } from "./machine-client-record.ts";
+import {
+  epochSeconds,
+  hashMachineClientSecret,
+  isPositiveInteger,
+  mintClientSecret,
+  mintMachineClientId,
+  rotateSecrets,
+  validateAllowedScopes,
+} from "./machine-client-secret.ts";
+import {
+  parseMachineClientRegistration,
+  type ParsedActiveMachineClientRegistration,
+} from "./machine-client-record.ts";
 
-/** Default rotation grace (the two-active-secrets overlap window). 24 h. */
 export const DEFAULT_ROTATION_GRACE_SECONDS = 86_400;
-
-/** §17.2: a machine record holds ≤ 2 active secrets. verify caps work here and
- *  fails closed above it. Also the fixed width of verify's comparison loop. */
-const MAX_ACTIVE_SECRETS = 2;
-
-/** Never-matching 64-char digest that pads verify's loop to a fixed width. */
-const ZERO_HASH = "0".repeat(64);
-
+export const MAX_ROTATION_GRACE_SECONDS = 86_400;
 export interface MachineClientDeps {
+  /** A v0.3.0 ClientStore remains source-compatible; mutation calls require
+   * the atomic MachineClientStore extension and fail closed when it is absent. */
   store: ClientStore;
   /** `config.scopeCatalog` — allowedScopes is validated against this. */
   catalog: readonly string[];
@@ -37,38 +39,40 @@ export interface MachineClientDeps {
 
 export interface ProvisionMachineClientInput {
   name?: string;
-  /** Per-client scope ceiling. Non-empty subset of `catalog`; each entry a
-   *  single RFC 6749 scope token (the §17.2 ceiling is fixed here, at
-   *  provisioning, so it can never be silently widened). */
   allowedScopes: string[];
-  /** Optional bounded lifetime for the provisioned (first) secret. Positive
-   *  integer seconds; omitted ⇒ live until rotated. */
   secretTtlSeconds?: number;
 }
 
 export interface ProvisionedMachineClient {
-  /** `mcc_<random>` — also the token `sub` (§17.2). */
   clientId: string;
-  /** `mcs_<base64url(32)>` — returned ONCE; never stored or logged. */
   clientSecret: string;
 }
 
 export interface RotateSecretOptions {
-  /** Overlap window; defaults to DEFAULT_ROTATION_GRACE_SECONDS. */
   graceSeconds?: number;
 }
 
 export interface RotatedSecret {
   clientSecret: string;
 }
+export interface VersionedRotatedSecret extends RotatedSecret {
+  version: number;
+}
 
-/** Provision a machine client. Returns the secret ONCE; the stored record holds
- *  only the SHA-256 hash. `allowedScopes` is fixed as the per-client ceiling. */
+export interface DisabledMachineClient {
+  clientId: string;
+  disabledAtEpoch: number;
+  version: number;
+}
+
+/** Create version 1 and its required durable audit in one store transaction. */
 export async function provisionMachineClient(
   deps: MachineClientDeps,
   input: ProvisionMachineClientInput,
 ): Promise<ProvisionedMachineClient> {
+  let clientId: string | undefined;
   try {
+    const store = requireMachineClientStore(deps.store);
     const allowedScopes = validateAllowedScopes(input.allowedScopes, deps.catalog);
     if (input.name !== undefined && (typeof input.name !== "string" || input.name.length === 0)) {
       throw new OAuthError("invalid_request", "name must be a non-empty string when provided");
@@ -77,159 +81,160 @@ export async function provisionMachineClient(
       throw new OAuthError("invalid_request", "secretTtlSeconds must be a positive integer (seconds)");
     }
     const now = epochSeconds(deps.clock);
-    const ttlSeconds = input.secretTtlSeconds === undefined
+    const ttl = input.secretTtlSeconds === undefined
       ? undefined
       : validateExpiryOffset(now, input.secretTtlSeconds, "secretTtlSeconds");
-    const clientId = mintMachineClientId();
+    clientId = mintMachineClientId();
     const clientSecret = mintClientSecret();
-    const record: MachineClientRegistration = {
+    const record: ActiveMachineClientRegistration = {
       clientId,
       redirectUris: [],
       applicationType: "machine",
       issuedAtEpoch: now,
-      name: input.name,
+      ...(input.name === undefined ? {} : { name: input.name }),
       allowedScopes,
-      // Single active secret. 128-bit id ⇒ collision negligible; a custom
-      // ClientStore.save must preserve the ≤2-active invariant.
+      status: "active",
+      version: 1,
       secrets: [{
-        hash: sha256Hex(clientSecret),
+        hash: hashMachineClientSecret(clientSecret),
         createdAtEpoch: now,
-        expiresAtEpoch: ttlSeconds !== undefined ? now + ttlSeconds : undefined,
+        ...(ttl === undefined ? {} : { expiresAtEpoch: now + ttl }),
       }],
     };
-    await deps.store.save(record);
-    await deps.audit.writeAuthEvent({
-      occurredAt: new Date(deps.clock.nowMs()).toISOString(),
-      event: "oauth.client.provision", status: "success",
-      clientId, scopes: allowedScopes,
-    });
+    const durableAudit = mutationAudit(deps.clock, "oauth.client.provision", record);
+    if (!await store.createMachineClient(record, durableAudit)) {
+      throw new OAuthError("server_error", "Machine client identifier collision", 500);
+    }
+    safeAudit(deps.audit, { ...durableAudit, status: "success" });
     return { clientId, clientSecret };
   } catch (error) {
-    await deps.audit.writeAuthEvent({
-      occurredAt: new Date(deps.clock.nowMs()).toISOString(),
-      event: "oauth.client.provision", status: "failure",
-      reason: error instanceof OAuthError ? error.code : "internal_error",
-    });
+    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.provision", error, clientId));
     throw error;
   }
 }
 
-/** Rotate a machine client's secret: demote the live secret to a
- *  `now + graceSeconds` grace window, add the new live secret, and trim to the
- *  permitted active set (≤ 2 unexpired; one live). Returns the new secret ONCE.
- *  Unknown / non-machine / malformed-record clientId ⇒ `invalid_client` (401). */
+/** Rotate with one CAS winner. A conflict never returns the minted raw secret. */
 export async function rotateMachineClientSecret(
   deps: MachineClientDeps,
   clientId: string,
   opts?: RotateSecretOptions,
-): Promise<RotatedSecret> {
+): Promise<VersionedRotatedSecret> {
   try {
+    const store = requireMachineClientStore(deps.store);
     const graceSeconds = opts?.graceSeconds ?? DEFAULT_ROTATION_GRACE_SECONDS;
-    if (!isPositiveInteger(graceSeconds)) {
-      throw new OAuthError("invalid_request", "graceSeconds must be a positive integer (seconds)");
+    if (!isPositiveInteger(graceSeconds) || graceSeconds > MAX_ROTATION_GRACE_SECONDS) {
+      throw new OAuthError("invalid_request", `graceSeconds must be an integer between 1 and ${MAX_ROTATION_GRACE_SECONDS}`);
     }
     const now = epochSeconds(deps.clock);
-    const checkedGraceSeconds = validateExpiryOffset(now, graceSeconds, "graceSeconds");
-    const client = parseMachineClientRegistration(await deps.store.find(clientId), clientId, now);
-    if (!client) throw new OAuthError("invalid_client", "Machine client record is invalid", 401);
+    validateExpiryOffset(now, graceSeconds, "graceSeconds");
+    const current = requireMutableActive(
+      parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+    );
     const clientSecret = mintClientSecret();
-    const secrets = rotateSecrets(client.secrets, now, checkedGraceSeconds, sha256Hex(clientSecret));
-    await deps.store.save({ ...client, secrets });
-    await deps.audit.writeAuthEvent({
-      occurredAt: new Date(deps.clock.nowMs()).toISOString(),
-      event: "oauth.client.rotate_secret", status: "success",
-      clientId, scopes: client.allowedScopes,
-    });
-    return { clientSecret };
+    const next: ActiveMachineClientRegistration = {
+      ...current,
+      version: current.version + 1,
+      secrets: rotateSecrets(
+        current.secrets,
+        now,
+        graceSeconds,
+        hashMachineClientSecret(clientSecret),
+      ),
+    };
+    const durableAudit = mutationAudit(deps.clock, "oauth.client.rotate_secret", next);
+    if (!await store.compareAndSwapMachineClient(current.version, next, durableAudit)) {
+      throw new OAuthError("invalid_request", "Machine client changed; retry rotation", 409);
+    }
+    safeAudit(deps.audit, { ...durableAudit, status: "success" });
+    return { clientSecret, version: next.version };
   } catch (error) {
-    await deps.audit.writeAuthEvent({
-      occurredAt: new Date(deps.clock.nowMs()).toISOString(),
-      event: "oauth.client.rotate_secret", status: "failure",
-      clientId,
-      reason: error instanceof OAuthError ? error.code : "internal_error",
-    });
+    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.rotate_secret", error, clientId));
     throw error;
   }
 }
 
-/** Timing-safe verification primitive the §9.4 client_credentials grant (S3b)
- *  composes into client authentication. Fixed-comparison + fail-closed: the
- *  secret is hashed BEFORE the lookup; every non-empty-secret path runs the same
- *  two-comparison loop (no slot/active-count signal from digest comparisons).
- *  A missing / non-machine / malformed record ⇒ `false`; store I/O errors still
- *  propagate, and custom-store lookup latency is outside this primitive. */
-export async function verifyMachineClientSecret(
+/** Atomically replace an active credential with a hash-free tombstone. */
+export async function disableMachineClient(
   deps: MachineClientDeps,
   clientId: string,
-  presentedSecret: string,
-): Promise<boolean> {
-  if (typeof presentedSecret !== "string" || presentedSecret.length === 0) return false;
-  const presented = sha256Hex(presentedSecret);
-  const now = epochSeconds(deps.clock);
-  const client = parseMachineClientRegistration(await deps.store.find(clientId), clientId, now);
-  const active = client?.secrets
-    .filter((secret) => secret.expiresAtEpoch === undefined || secret.expiresAtEpoch > now)
-    .map((secret) => secret.hash) ?? [];
-  let matched = false;
-  for (let i = 0; i < MAX_ACTIVE_SECRETS; i++) {
-    if (timingSafeHexEqual(presented, active[i] ?? ZERO_HASH)) matched = true;
-  }
-  return matched;
-}
-
-/** Pure rotation model (exported for tests): the permitted active set after a
- *  rotation — one NEW live secret plus at most one grace secret. DROP every
- *  already-expired entry first (an expired secret is never demoted back to life
- *  — no resurrection); demote the live (or, if none, newest unexpired) secret to
- *  `now + graceSeconds` (§17.2: "expires the old at now + grace", overriding any
- *  prior expiry); drop all other older entries so ≤ 2 unexpired remain. */
-export function rotateSecrets(
-  existing: readonly ClientSecret[],
-  now: number,
-  graceSeconds: number,
-  newHash: string,
-): ClientSecret[] {
-  const unexpired = existing.filter((s) => s.expiresAtEpoch === undefined || s.expiresAtEpoch > now);
-  if (unexpired.length === 0) return [{ hash: newHash, createdAtEpoch: now }];
-  const demoteSource = unexpired.find((s) => s.expiresAtEpoch === undefined)
-    ?? [...unexpired].sort((a, b) => b.createdAtEpoch - a.createdAtEpoch)[0]!;
-  return [
-    { hash: demoteSource.hash, createdAtEpoch: demoteSource.createdAtEpoch, expiresAtEpoch: now + graceSeconds },
-    { hash: newHash, createdAtEpoch: now },
-  ];
-}
-
-function validateAllowedScopes(input: unknown, catalog: readonly string[]): string[] {
-  if (!Array.isArray(input) || input.length === 0) {
-    throw new OAuthError("invalid_scope", "allowedScopes must be a non-empty array");
-  }
-  const allowed = new Set(catalog);
-  const out: string[] = [];
-  for (const scope of input) {
-    if (typeof scope !== "string" || !isScopeToken(scope)) {
-      throw new OAuthError("invalid_scope", "allowedScopes entries must be single RFC 6749 scope tokens");
+): Promise<DisabledMachineClient> {
+  try {
+    const store = requireMachineClientStore(deps.store);
+    const now = epochSeconds(deps.clock);
+    const current = requireMutableActive(
+      parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+    );
+    const next: VersionedMachineClientRegistration = {
+      ...current,
+      status: "disabled",
+      version: current.version + 1,
+      secrets: [],
+      disabledAtEpoch: now,
+    };
+    const durableAudit = mutationAudit(deps.clock, "oauth.client.disable", next);
+    if (!await store.compareAndSwapMachineClient(current.version, next, durableAudit)) {
+      throw new OAuthError("invalid_request", "Machine client changed; retry disable", 409);
     }
-    if (!allowed.has(scope)) {
-      throw new OAuthError("invalid_scope", "allowedScopes must be a subset of scopeCatalog");
-    }
-    if (!out.includes(scope)) out.push(scope);
+    safeAudit(deps.audit, { ...durableAudit, status: "success" });
+    return { clientId, disabledAtEpoch: now, version: next.version };
+  } catch (error) {
+    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.disable", error, clientId));
+    throw error;
   }
-  return out;
 }
 
-/** Constant-time digest equality. Compares BYTE length (not JS-char length): a
- *  corrupted hash that is 64 code units but non-ASCII would otherwise make
- *  timingSafeEqual throw — so this never throws. Belt-and-suspenders behind the
- *  64-hex filter. */
-function timingSafeHexEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ba.length !== bb.length) return false;
-  return timingSafeEqual(ba, bb);
+function requireMutableActive(
+  client: ReturnType<typeof parseMachineClientRegistration>,
+): ParsedActiveMachineClientRegistration {
+  if (client?.status !== "active" || client.version >= Number.MAX_SAFE_INTEGER) {
+    throw new OAuthError("invalid_client", "Machine client record is invalid or inactive", 401);
+  }
+  return client;
 }
 
-function isPositiveInteger(value: number): boolean {
-  return Number.isInteger(value) && value > 0;
+function mutationAudit(
+  clock: ClockPort,
+  event: MachineClientMutationAudit["event"],
+  client: VersionedMachineClientRegistration,
+): MachineClientMutationAudit {
+  return {
+    occurredAt: new Date(clock.nowMs()).toISOString(),
+    event,
+    clientId: client.clientId,
+    scopes: [...client.allowedScopes],
+  };
+}
+
+function requireMachineClientStore(store: ClientStore): MachineClientStore {
+  const candidate = store as Partial<MachineClientStore>;
+  if (typeof candidate.createMachineClient !== "function"
+    || typeof candidate.compareAndSwapMachineClient !== "function") {
+    throw new OAuthError("server_error", "MachineClientStore atomic mutations are required", 500);
+  }
+  return candidate as MachineClientStore;
+}
+
+function failureAudit(
+  clock: ClockPort,
+  event: MachineClientMutationAudit["event"],
+  error: unknown,
+  clientId?: string,
+): AuthAuditEvent {
+  return {
+    occurredAt: new Date(clock.nowMs()).toISOString(),
+    event,
+    status: "failure",
+    clientId,
+    reason: error instanceof OAuthError ? error.code : "internal_error",
+  };
+}
+
+function safeAudit(audit: AuditPort, event: AuthAuditEvent): void {
+  try {
+    void Promise.resolve(audit.writeAuthEvent(event)).catch(() => {});
+  } catch {
+    // A success already has durable store evidence; a failure committed no row.
+  }
 }
 
 function validateExpiryOffset(now: number, seconds: number, field: string): number {
@@ -240,9 +245,5 @@ function validateExpiryOffset(now: number, seconds: number, field: string): numb
   return seconds;
 }
 
-function epochSeconds(clock: ClockPort): number {
-  return Math.floor(clock.nowMs() / 1000);
-}
-
-function mintMachineClientId(): string { return `mcc_${randomBytes(16).toString("base64url")}`; }
-function mintClientSecret(): string { return `mcs_${randomBytes(32).toString("base64url")}`; }
+export { rotateSecrets } from "./machine-client-secret.ts";
+export { verifyMachineClientSecret } from "./machine-client-auth.ts";
