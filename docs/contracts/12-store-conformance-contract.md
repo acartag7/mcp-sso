@@ -112,7 +112,7 @@ store without the generation capability marker.
    family, the call leaves every member inactive; repeating it keeps the family
    inactive. The use-case reuses the rotation timestamp, so compensation does
    not introduce a second clock decision after the state mutation.
-10. **Stored-DCR grant generation (0.3.2 — PENDING implementation):**
+10. **Stored-DCR grant generation (0.3.2):**
     `STORED_DCR_GRANT_GENERATION` is the library-owned positive safe integer
     `1`; it is not deployer configuration and not a per-client policy version.
     New auth codes and refresh families issued while stored-DCR mode is active
@@ -121,19 +121,21 @@ store without the generation capability marker.
     deployment cutover generation too.
 
     Reference SQL migrations add nullable `grant_generation` to
-    `oauth_auth_codes` and `oauth_refresh_token_families`. There is deliberately
-    no non-null/default clause: an old binary using the previous explicit insert
-    column list writes SQL `NULL`, making the row unambiguously legacy after a
-    rollback. Reference row projection maps missing/malformed values to legacy
-    `null`.
+    `oauth_auth_codes`, `oauth_refresh_token_families`, and
+    `oauth_refresh_tokens`. There is deliberately no non-null/default clause:
+    an old binary using the previous explicit insert column list writes SQL
+    `NULL`, making either a new family or a successor inserted into an existing
+    current family unambiguously legacy after a rollback. Reference row
+    projection maps missing/malformed values to legacy `null`.
 
     `consumeAuthCode(hash, now, expectedGeneration?)` always burns the selected
     code, but returns it only when unexpired and its generation equals a supplied
     expectation. `rotateRefreshToken(hash, next, now, expectedGeneration?)`
-    compares the family generation before replay handling, predecessor
-    consumption, or successor insertion; rotation copies the stored generation
-    and ignores caller substitution. `findGrantedScopes(subject, clientId, now,
-    expectedGeneration?)` filters by family generation. Thus an old binary
+    compares both the family and token-row generations before replay handling,
+    predecessor consumption, or successor insertion; rotation copies the stored
+    token generation and ignores caller substitution.
+    `findGrantedScopes(subject, clientId, now, expectedGeneration?)` filters by
+    both generations. Thus an old binary
     cannot write a post-purge grant that a re-upgraded binary accepts or
     accumulates merely because the client ID currently exists.
 

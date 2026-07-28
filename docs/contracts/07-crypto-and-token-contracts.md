@@ -45,14 +45,14 @@ Format `ac_<base64url(32 random bytes)>`. Stored only as `sha256(code)`.
 Single-use: `consumeAuthCode` deletes on read; missing or expired → `invalid_grant`.
 A failed PKCE or client/redirect mismatch **still consumes the code** (one-shot).
 
-**0.3.2 stored-DCR generation amendment — PENDING implementation.** An
+**0.3.2 stored-DCR generation amendment.** An
 authorization code issued under `dcr.mode:"stored"` carries
 `grantGeneration = STORED_DCR_GRANT_GENERATION`. Code consumption supplies that
 expected generation to the store and repeats the equality check on the returned
-record before PKCE or token preparation. A missing, `null`, malformed, or
-different generation is consumed/burned and returns the same `invalid_grant` as
-an unknown code. A valid stored `ClientStore` row does not make a legacy code
-eligible.
+record in `OAuthTokenUseCase.consumeValidCode` before PKCE or token preparation.
+A missing, `null`, malformed, or different generation is consumed/burned and
+returns the same `invalid_grant` as an unknown code. A valid stored
+`ClientStore` row does not make a legacy code eligible.
 
 ## 7.4 Refresh token (family, rotation, replay detection)
 Format `rt.<familyId>.<base64url(32 random bytes)>`. `familyId` is a random
@@ -61,7 +61,7 @@ rotate without a lookup). Stored only as `sha256(token)`.
 - **Rotation:** `rotateRefreshToken(tokenHash, next, now)` marks the current
   token consumed, inserts the next, and returns the **consumed** record. Replay of
   an already-consumed token revokes the whole family.
-- **0.3.2 stored-DCR generation — PENDING implementation:** a refresh family
+- **0.3.2 stored-DCR generation:** a refresh family
   created from a stored-DCR-mode authorization code carries that code's
   current generation. Rotation takes the expected generation, compares it
   before consuming the predecessor or inserting a successor, and

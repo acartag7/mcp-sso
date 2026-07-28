@@ -188,7 +188,7 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   and client/redirect binding, then `tokenResponse` parses the stored scopes and
   constructs the signed access/refresh response before `saveRefreshToken`
   persists the new family. A preparation failure leaves no refresh row; the
-  already-consumed authorization code stays burned. **0.3.2 PENDING:** in
+  already-consumed authorization code stays burned. **0.3.2:** in
   stored-DCR mode, generation mismatch is the first stored-record
   validity check and is indistinguishable from any other `invalid_grant`; the
   new refresh family inherits the accepted code generation.
@@ -201,7 +201,8 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   the error, and returns no token. When that store call succeeds, a malformed
   row or signing failure leaves no active unreturned successor. When it rejects,
   durable state remains store-dependent; the boundary is recorded in §7.4.
-  **0.3.2 PENDING:** stored-DCR-mode refresh rotation also requires the current
+  **0.3.2:** `OAuthTokenUseCase.refresh` requires stored-DCR-mode refresh
+  rotation to check the current
   grant generation inside the atomic store operation. A valid present-day
   `ClientStore.find(clientId)` result is not grant provenance and is never used
   as a substitute.

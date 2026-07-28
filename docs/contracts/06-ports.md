@@ -64,13 +64,14 @@ Methods: `saveAuthCode`, `consumeAuthCode`, `saveRefreshToken`, `rotateRefreshTo
 provenance. In stateless mode client_ids are ephemeral, so a grant keyed by
 `(subject, clientId)` is meaningless; those authorizations stand alone.)
 
-**0.3.2 stored-DCR generation capability — PENDING implementation.** The
+**0.3.2 stored-DCR generation capability.** The
 library-owned `STORED_DCR_GRANT_GENERATION` is currently `1`. A `StorePort`
 used with `dcr.mode:"stored"` MUST advertise
-`storedDcrGrantGeneration: 1`; construction fails closed when that capability
-is absent or different. This is an additive runtime capability check so an old
-custom store cannot silently ignore the generation argument and contribute a
-legacy grant.
+`storedDcrGrantGeneration: 1`; `assertStoredDcrGenerationStore` makes
+`OAuthAuthorizationUseCase` and `OAuthTokenUseCase` construction fail closed
+when that capability is absent or different. This is an additive runtime
+capability check so an old custom store cannot silently ignore the generation
+argument and contribute a legacy grant.
 
 While stored-DCR mode is active, the use-cases pass generation `1` to
 `consumeAuthCode`, `rotateRefreshToken`, and `findGrantedScopes`. The reference
