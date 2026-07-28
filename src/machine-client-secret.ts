@@ -39,7 +39,9 @@ export function rotateSecrets(
   );
   if (unexpired.length === 0) return [{ hash: newHash, createdAtEpoch: now }];
   const demoteSource = unexpired.find((secret) => secret.expiresAtEpoch === undefined)
-    ?? [...unexpired].sort((a, b) => b.createdAtEpoch - a.createdAtEpoch)[0]!;
+    ?? [...unexpired].sort((a, b) =>
+      (b.expiresAtEpoch! - a.expiresAtEpoch!)
+      || (b.createdAtEpoch - a.createdAtEpoch))[0]!;
   return [
     {
       hash: demoteSource.hash,

@@ -439,6 +439,17 @@ test("rotateSecrets: a TTL-provisioned still-valid secret is demoted to now+grac
   assert.equal(res[0]!.expiresAtEpoch, 100 + 600);
 });
 
+test("rotateSecrets: without an unbounded slot, retains the latest-expiring active secret", () => {
+  const rotated = rotateSecrets([
+    { hash: "a".repeat(64), createdAtEpoch: 100, expiresAtEpoch: 10_000 },
+    { hash: "b".repeat(64), createdAtEpoch: 200, expiresAtEpoch: 300 },
+  ], 250, 60, "c".repeat(64));
+  assert.deepEqual(rotated, [
+    { hash: "a".repeat(64), createdAtEpoch: 100, expiresAtEpoch: 310 },
+    { hash: "c".repeat(64), createdAtEpoch: 250 },
+  ]);
+});
+
 // ---------- verify (timing-safe primitive) ----------
 
 test("verifyMachineClientSecret: correct true, wrong/expired/non-machine false, no throw", async () => {
