@@ -22,7 +22,7 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — `createGuardedFetcher` + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`), including §10.0 redirect-entry canonicality. Claude Code 2.1.220 completed CIMD authorization and protected tool calls through exact runtime commit `af2a61f` with Cloudflare Access, Entra, and Google on 2026-07-28. The 2026-07-28 final-spec checklist found no relevant change | §6.6, §17.1 |
+| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — `createGuardedFetcher` + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`), including §10.0 redirect-entry canonicality. Claude Code 2.1.220 completed CIMD authorization and protected tool calls through exact runtime commit `af2a61f` with Cloudflare Access, Entra, and Google on 2026-07-28. The final-spec checklist remains pending the official final artifact | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | ✅ v0.2 shipped (S3a provisioning/rotation + S3b grant: Basic+post auth, `MachineTokenResponse`, metadata-gated advertisement) | §17.2 |
@@ -34,9 +34,7 @@
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
 
-**Spec-final re-check:** completed 2026-07-28. The final text retained the
-checklist's DCR, CIMD, RFC 9207 `iss`, and `application_type` positions, so no
-conformance row changed. The backward-compatible authorization hardening is
-built in; see [`docs/verification.md` — "Spec-release re-verification (due
-2026-07-28)"](../verification.md#spec-release-re-verification-due-2026-07-28).
-The final text changes nothing about the RS model or the bridge architecture.
+**Spec-final re-check:** pending the official 2026-07-28 final artifact. The
+`2026-07-28-RC` and later merged pre-publication changes were reviewed, and the
+backward-compatible authorization hardening is built in. See the blocking
+[`docs/verification.md` checklist](../verification.md#spec-release-re-verification-due-2026-07-28).

@@ -21,13 +21,13 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 
 ## 2. MCP specification compliance
 
-- **Spec target:** **MCP Authorization `2025-11-25`** — the stable spec clients
-  implement. The next spec version is **final on `2026-07-28`** (its RC was
-  locked 2026-05-21); the RC's backward-compatible hardening items (e.g. RFC
-  9207 `iss`) are already built in. Before any release claims conformance
-  with the 2026-07-28 final text, the manual maintainer checklist in
+- **Spec target:** **MCP Authorization `2025-11-25`** — the stable published
+  spec clients implement. The `2026-07-28-RC` backward-compatible hardening
+  items (e.g. RFC 9207 `iss`) are built in, but the official final artifact is
+  not yet published. Before any release claims conformance with the final text,
+  complete the manual maintainer checklist in
   [`docs/verification.md`](docs/verification.md#spec-release-re-verification-due-2026-07-28)
-  ("Spec-release re-verification") MUST be completed (see
+  ("Spec-release re-verification"; see
   [`docs/contracts.md`](docs/contracts.md) §0 status).
 - **Governing RFCs:** [9728](https://datatracker.ietf.org/doc/html/rfc9728)
   (Protected Resource Metadata / PRM), [8707](https://datatracker.ietf.org/doc/html/rfc8707)

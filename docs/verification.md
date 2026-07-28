@@ -274,9 +274,10 @@ Run after the source-tree gates, before tagging.
 **2026-07-28 receipt.** T2.1-T2.6 passed from clean commit
 `e71a2bbaf6902f98502a788a8d1e4bfc604b9bbc`: 866 tests passed with zero
 skipped; the tarball contained only `dist/`, `docs/`, `README.md`, `LICENSE`,
-and `package.json`; a temporary install without optional peers imported all 13
-public entry points; and the installed root package produced authorization
-server and protected-resource metadata.
+and `package.json`; a temporary install without optional peers imported the
+eight peer-free public entry points, all 13 public entry points imported after
+their declared optional peers were installed, and the installed root package
+produced authorization-server and protected-resource metadata.
 
 ### Release-authority gate
 
@@ -340,23 +341,22 @@ Minimum evidence per live row:
 
 ## Spec-release re-verification (due 2026-07-28)
 
-MANUAL maintainer checklist — not automated, not CI-enforced. Execute on or
-after 2026-07-28 (the MCP Authorization spec's final-publication date; its
-release candidate locked 2026-05-21). This checklist BLOCKS any release
-whose docs or marketing claim conformance with the 2026-07-28 final spec
-text until every row below is checked off. Completed 2026-07-28; the final
-publication introduced no checklist-relevant change from the pre-publication
-text reviewed below.
+MANUAL maintainer checklist — not automated, not CI-enforced. Execute after the
+official MCP Authorization 2026-07-28 final artifact is published. The release
+candidate locked 2026-05-21, but as of this receipt only the
+`2026-07-28-RC` prerelease exists. This checklist BLOCKS any docs or marketing
+claim of conformance with the final text until every row below is checked off.
 
-- [x] **(a) DCR deprecation wording.** The published final spec retains the
-  Dynamic Client Registration deprecation language from the pre-publication
+- [ ] **(a) DCR deprecation wording.** Confirm that the published final spec
+  retains the Dynamic Client Registration deprecation language from the
+  pre-publication
   changelog: "Deprecate the OAuth 2.0 Dynamic Client
   Registration Protocol (RFC7591)... It remains available for backwards
   compatibility with authorization servers that do not support Client ID
   Metadata Documents." This wording entered after the RC lock (PR #2858,
-  merged 2026-06-04) and was re-confirmed in the final text.
-- [x] **(b) CIMD normative level + draft revision.** Client ID Metadata
-  Documents remain a SHOULD, and the final spec cites draft `-00`. This repo's
+  merged 2026-06-04); confirm it against the final artifact.
+- [ ] **(b) CIMD normative level + draft revision.** Confirm whether Client ID
+  Metadata Documents remain a SHOULD and which draft the final spec cites. This repo's
   §17.1 CONTRACT builds to the stricter `-01`, and `-02`
   (published 2026-07-06) was reviewed 2026-07-10 — every `-02` normative
   change is covered by §17.1 as written. The former caveat is resolved: the
@@ -376,14 +376,14 @@ text reviewed below.
   replacement 2026-07-28 run satisfies it: Claude Code 2.1.220 completed CIMD
   authorization and protected calls through exact runtime commit `af2a61f`
   with Cloudflare Access, Entra, and Google.
-- [x] **(c) RFC 9207 `iss` + `application_type`.** Authorization-server `iss`
-  remains a SHOULD with a signposted future MUST. MCP clients still MUST send
+- [ ] **(c) RFC 9207 `iss` + `application_type`.** Confirm whether
+  authorization-server `iss` remains a SHOULD with a signposted future MUST
+  and whether MCP clients still MUST send
   an appropriate `application_type` during DCR; `Bridge.handleRegister`
   forwards it to `registerClient`, which accepts the supported `"native"` and
   `"web"` values.
-- [x] **(d) Record the outcome.** No checklist item moved between the
-  pre-publication text and final publication. `docs/contracts.md` and the §16
-  matrix record that outcome as of 2026-07-28.
+- [ ] **(d) Record the outcome.** After the final artifact exists, update
+  `docs/contracts.md` and the §16 matrix with the exact result.
 
 ## Done rules
 
@@ -428,11 +428,12 @@ A→B→C rotation, HTTP 400 `invalid_grant` for replayed A, and HTTP 400
 `invalid_grant` for current C after family revocation. Retained client results
 and all three audit logs contained zero backend-key matches.
 
-The packed-artifact pre-tag smoke passed at exact clean-main commit `e71a2bb`;
-the published-artifact smoke still runs after the release workflow publishes.
-The 2026-07-28 final-spec checklist completed with no checklist-relevant change;
-the release remains targeted at 2025-11-25 for current client interoperability.
+The packed-artifact pre-tag smoke passed at exact clean-main commit `e71a2bb`.
+The published `mcp-sso@0.3.0` artifact repeated the eight peer-free and all-13
+with-peers import smokes, produced both metadata documents, and carried verified
+registry signatures and attestations. The implementation is reviewed against
+`2026-07-28-RC`; the official final artifact and final-spec checklist remain
+pending, so the release targets MCP Authorization 2025-11-25.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
-compatibility awaits upstream resolution and retest. The post-publish 0.3.0
-installed-package smoke is the final release step.
+compatibility awaits upstream resolution and retest.
