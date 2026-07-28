@@ -22,21 +22,21 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — S6a primitives + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`), including §10.0 redirect-entry canonicality. **Not yet live-verified** against a real CIMD-first client (CIMD-LIVE pending), and any 2026-07-28 spec-final conformance claim is gated on the `docs/verification.md` spec-release re-verification | §6.6, §17.1 |
+| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — `createGuardedFetcher` + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`), including §10.0 redirect-entry canonicality. Claude Code 2.1.220 completed CIMD authorization and protected tool calls through exact runtime commit `af2a61f` with Cloudflare Access, Entra, and Google on 2026-07-28. The 2026-07-28 final-spec checklist found no relevant change | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | ✅ v0.2 shipped (S3a provisioning/rotation + S3b grant: Basic+post auth, `MachineTokenResponse`, metadata-gated advertisement) | §17.2 |
-| Device authorization grant (RFC 8628) | 🔒 v0.2 contract locked | §17.3 |
-| Entra group→scope ceiling (Gate 2) | ✅ v0.2 shipped (S2a core `allowedScopes` engine + S2b Entra group→scope producer) | §17.4 |
+| Device authorization grant (RFC 8628) | 🔒 contract locked; not implemented | §17.3 |
+| Entra group→scope ceiling (Gate 2) | ✅ v0.2 shipped (`createEntraRedirectIdentity` + `resolveGroupCeiling`); member, deny, overage, and guest/B2B outcomes were observed only on an unarchived patched checkout and require a clean-runtime rerun before being claimed as currently live-verified | §17.4 |
 | Console-pairing identity | ✅ v0.2 shipped (S1b) — `createConsolePairingIdentity`, 12-char base-20 code, lazy/single-use/TTL/attempt-cap, `oauth.pairing.attempt` | §17.5 |
-| `GenericOidcIdentity` + Google preset + GitHub port | ✅ v0.2 shipped (S4a) — GenericOidcIdentity + Google preset as `RedirectIdentityPort`s (discovery + manual endpoints, multi-audience reject, at_hash, iat required); GitHub port still 🔒 locked (separate dedicated port) | §17.6 |
+| `GenericOidcIdentity` + Google preset + GitHub port | ✅ v0.2 shipped (S4a) — GenericOidcIdentity + Google preset as `RedirectIdentityPort`s (discovery + manual endpoints, multi-audience reject, at_hash, iat required); Google is historically live-verified, while a second non-Google generic issuer remains pending; GitHub port still 🔒 locked and unimplemented | §17.6 |
 | Upstream redirect-leg orchestrator (`RedirectIdentityPort` + flow cookie) | ✅ v0.2 shipped — `createUpstreamRedirectFlow` + `createEntraRedirectIdentity`, signed flow cookie (HS256 consent secret, per-flow aud `mcp-sso/upstream-flow` + `callbackPath`, single-use `upf_` jti), 13-row callback failure table, `oauth.upstream.callback` audit | §17.11 |
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
 
-**Spec-final re-check gate:** the RC's (locked 2026-05-21) backward-compatible
-hardening items are built in now; before any release claims conformance with
-the 2026-07-28 final text, complete [`docs/verification.md` — "Spec-release
-re-verification (due
+**Spec-final re-check:** completed 2026-07-28. The final text retained the
+checklist's DCR, CIMD, RFC 9207 `iss`, and `application_type` positions, so no
+conformance row changed. The backward-compatible authorization hardening is
+built in; see [`docs/verification.md` — "Spec-release re-verification (due
 2026-07-28)"](../verification.md#spec-release-re-verification-due-2026-07-28).
-The RC changes nothing about the RS model or the bridge architecture.
+The final text changes nothing about the RS model or the bridge architecture.

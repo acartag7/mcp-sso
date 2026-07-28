@@ -341,9 +341,12 @@ S6a acceptance suite, and the flow rules (H) are to be implemented and tested in
 S6b. **Status: those PRs have landed** — the S6a primitives, both frozen
 acceptance suites, and the S6b flow integration are implemented, and §16 now
 tracks CIMD as implemented, including the §10.0 amendment to rule 20.
-What remains beyond that is live verification (CIMD-LIVE) and,
-for any conformance claim against the 2026-07-28 final spec text, the
-`docs/verification.md` spec-release re-verification.
+A patched-checkout campaign subsequently observed real CIMD-first clients
+across Cloudflare Access, Entra, and Google, but its exact dirty tree was not
+archived and does not qualify as release evidence. On 2026-07-28, Claude Code
+2.1.220 repeated CIMD authorization and protected tool calls through exact
+runtime commit `af2a61f` with all three providers. The 2026-07-28 final-spec
+re-verification found no checklist-relevant change to this contract.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -1055,7 +1058,8 @@ in this flow."* Decisions:
   records carry `allowedScopes: string[]` (validated ⊆ `scopeCatalog` at
   wiring) and `secrets: Array<{ hash, createdAtEpoch, expiresAtEpoch? }>`
   (max 2 active); `redirectUris` MUST be `[]`; machine clients are rejected at
-  `/oauth/authorize` and the device endpoints (`invalid_client`).
+  `/oauth/authorize` and MUST be rejected at any future device endpoints
+  (`invalid_client`).
 - **Secret contract:** `mcs_` + base64url(32 CSPRNG bytes) — 256-bit,
   clearing RFC 6749 §10.10 (≥2⁻¹²⁸ MUST) and RFC 6819 §5.1.4.2.2. Stored as
   **unsalted SHA-256 hex only**: RFC 6819 §5.1.4.1.3 conditions salting/work
@@ -1158,11 +1162,18 @@ in this flow."* Decisions:
 
 ## 17.3 Device authorization grant (RFC 8628)
 
+> **CONTRACT ONLY — NOT IMPLEMENTED.** No device endpoint, device-code store
+> record, approval surface, polling limiter, or metadata advertisement ships.
+> The public audit type reserves the three §17.3 event names
+> (`oauth.device.authorization`, `oauth.device.approve`, and
+> `oauth.token.device_code`), but no runtime emits them. Everything below
+> specifies a future implementation.
+
 Honest scope note: RFC 8628 is in neither the MCP core spec nor any official
-MCP extension (SEP-2059 was closed unadopted). This ships for the owner's real
-non-MCP-shaped clients (CLI over SSH, sandboxed CI agents) as standard OAuth,
-discoverable via RFC 8414 metadata; MCP clients will not discover it via the
-MCP spec.
+MCP extension (SEP-2059 was closed unadopted). This contract targets the
+owner's non-MCP-shaped clients (CLI over SSH, sandboxed CI agents) as standard
+OAuth, discoverable via RFC 8414 metadata; MCP clients would not discover it
+via the MCP spec.
 
 - **Endpoint:** `POST ${issuer}/oauth/device_authorization` (behind
   `RateLimitPort`, key `device:<ip>`). Request: `client_id` required
@@ -1269,9 +1280,13 @@ MCP spec.
 > `entra_groups_overage` and `_claim_sources` is NEVER dereferenced; no groups +
 > empty `baseScopes` fails with `entra_no_groups`. Reasons flow through
 > `Bridge.resolveIdentity`'s `identity.verify` emission (S2a). Gates green
-> (typecheck · lines · 244/244 test · build). **Live-tenant verification (incl.
-> guest/B2B + overage) is owner-pending** — manual checklist at the top of
-> `src/identity/entra.ts`.
+> (typecheck · lines · 244/244 test · build). The
+> `createEntraRedirectIdentity` → `resolveGroupCeiling` path was subsequently
+> observed for member, no-group/no-mapped-group, overage, allowlist, and
+> guest/B2B outcomes on an unarchived patched checkout; those deny/ceiling
+> observations do not qualify as verified rows. The clean-runtime CIMD happy
+> path was repeated at `af2a61f` on 2026-07-28, while the deny/ceiling sweep
+> remains pending.
 
 Entra-specific by design (the owner's real deployment; do not generalize
 prematurely). Facts verified against Microsoft Learn 2026-07-04: JWT group
@@ -1392,8 +1407,11 @@ groupAuthorization?: {
   takes effect at the next full authorize. Residual risk documented in the
   threat model; deployers needing faster revocation shorten
   `refreshTokenTtlSeconds` or revoke families.
-- Guest (B2B) behavior is UNVERIFIED in Microsoft's docs — added to the Entra
-  live-verification checklist rather than assumed.
+- Guest (B2B) behavior was observed with a real invited guest whose mapped group
+  membership produced the expected ceiling, but that patched checkout's exact
+  tree was not archived. The observation does not satisfy the release-evidence
+  contract or support a current live claim for every Entra tenant
+  configuration.
 - **Audit:** event `identity.verify` (emitted by `Bridge.resolveIdentity`,
   S2a; success/failure + reason) carries the Entra reasons
   `entra_groups_overage`, `entra_no_groups`, and `entra_no_mapped_groups` —
@@ -1461,9 +1479,11 @@ gate replaces no-gate).
 > (`createGoogleIdentity` + `createGoogleRedirectIdentity`), ship as
 > `RedirectIdentityPort`s consumed by the §17.11 orchestrator. They are
 > unit/flow-verified only (synthetic RS256/ES256 id_tokens through the real
-> `validateGenericOidcIdToken`/`validateGoogleIdToken` → bridge path); a real
-> live sign-in is owner-pending (manual checklist at the top of each source
-> file). The dedicated GitHub port stays 🔒 locked (its own port — no OIDC
+> `validateGenericOidcIdToken`/`validateGoogleIdToken` → bridge path). Google
+> was subsequently live-verified, including the hosted-domain deny path, and
+> its CIMD happy path was repeated at exact runtime commit `af2a61f` on
+> 2026-07-28. A second non-Google generic-OIDC issuer remains pending. The
+> dedicated GitHub port stays 🔒 locked (its own port — no OIDC
 > discovery, no id_token; identity via the REST API). Setup guides:
 > [`docs/identity/generic-oidc.md`](../identity/generic-oidc.md),
 > [`docs/identity/google.md`](../identity/google.md).
@@ -1711,12 +1731,11 @@ The framework-free orchestrator for **redirect-based upstream IdPs** — the
 `pairing-flow.ts`-style sibling that turns the shipped Entra *primitives*
 (`getAuthorizationUrl`, `exchangeCodeForToken`, `verify` — §6.5) into a mounted
 flow: GET `/oauth/authorize` → persist flow state → 302 to the IdP → callback →
-validate → exchange → verify → `bridge.handleAuthorize` → consent page. Today a
-deployer must hand-write this dance (state CSRF binding, nonce/id_token replay,
-callback validation — the highest-risk per-deployment code in the system); every
-live-verified row so far ran via Cloudflare Access, whose edge did the browser
-leg. One orchestrator serves Entra now and the §17.6 ports
-(GenericOidc/Google/GitHub) later.
+validate → exchange → verify → `bridge.handleAuthorize` → consent page. Before
+this orchestrator shipped, deployers had to hand-write that high-risk dance
+(state CSRF binding, nonce/id_token replay, callback validation). Historical
+live verification has now exercised Cloudflare Access, Entra, and Google
+browser legs. The contract-only GitHub port remains future work.
 
 **Port surface — `RedirectIdentityPort` (new, in `ports/identity.ts`):**
 

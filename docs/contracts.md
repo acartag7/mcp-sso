@@ -9,16 +9,19 @@
 >
 > Status: **v0.2.3 shipped** (`mcp-sso@0.2.3` on npm) + **unreleased v0.3
 > hardening on `main`**. The §17 feature contracts are locked; CIMD §17.1,
-> generic OIDC, and the Google preset are implemented, while device flow §17.3
-> and the dedicated GitHub port in §17.6 remain contract-only. Spec conformance
+> generic OIDC, and the Google preset are implemented. Google has reproducible
+> historical live verification; CIMD was live-verified through exact runtime
+> commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
+> A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
+> dedicated GitHub port in §17.6 remain contract-only. Spec conformance
 > target: **MCP Authorization 2025-11-25** (the stable spec clients implement); the next
-> spec version is **final on 2026-07-28** (its RC was locked 2026-05-21) —
-> the RC's backward-compatible hardening items (e.g. RFC 9207 `iss`) are
-> built in now. Before any release claims conformance with the 2026-07-28
-> final text, the manual maintainer checklist in
+> spec version is **final on 2026-07-28** (its RC was locked 2026-05-21).
+> Its backward-compatible hardening items (e.g. RFC 9207 `iss`) are built in,
+> and the 2026-07-28 maintainer re-verification found no checklist-relevant
+> changes from the pre-publication text. See the completed checklist in
 > [`docs/verification.md` — "Spec-release re-verification (due
 > 2026-07-28)"](verification.md#spec-release-re-verification-due-2026-07-28)
-> MUST be completed.
+> for the exact outcome.
 
 ## Contents
 

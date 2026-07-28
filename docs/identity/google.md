@@ -58,8 +58,10 @@ while the `hd` claim is Google-signed). Outcomes: a `hd` mismatch →
 
 ## Live verification (the manual checklist)
 
-Before claiming Google works end-to-end, run the checklist at the top of
-[`src/identity/google.ts`](../../src/identity/google.ts): create the client → sign
-in → confirm the subject is the stable `sub` and the bridge mints its **own**
-token → (with `hostedDomain`) confirm a user outside the Workspace is rejected.
-A README/live-verification conformance row is added only after a real live pass.
+Google was historically live-verified end to end: sign-in produced the stable
+`sub`, the bridge minted its own token, and `hostedDomain` rejected an account
+outside the configured Workspace. On 2026-07-28, Claude Code 2.1.220 repeated
+the CIMD happy path and protected `status` call through exact runtime commit
+`af2a61f`. Re-run the checklist at the top of
+[`src/identity/google.ts`](../../src/identity/google.ts) for deployment-specific
+allowlist or hosted-domain changes.

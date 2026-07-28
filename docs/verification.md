@@ -14,7 +14,8 @@ threat rows they close are 13 and 17-25 in [`docs/threat-model.md`](threat-model
 
 Baseline (v0.1): `test/e2e-mcp-sdk.test.ts` drives register → authorize → token →
 protected `/mcp` with the official MCP SDK client → refresh → replay/family
-revocation → revoke. The store-conformance suite covers memory and sqlite.
+revocation → revoke. The shared store-conformance suite covers memory, sqlite,
+and mysql.
 Everything below extends that baseline; nothing replaces it.
 
 ## Rules
@@ -38,22 +39,17 @@ never replace CI security tests.
 
 ## Harness helpers
 
-Shared helpers, not one-off tests per feature file.
+The current shared helpers are:
 
 | Helper | Purpose |
 |---|---|
-| `test/lib/oauth-flow.ts` | Drive register/authorize/approve/token/refresh/revoke against an adapter client. |
-| `test/lib/mcp-sdk-flow.ts` | Call protected `/mcp` with the official MCP SDK client and a bridge token. |
-| `test/lib/adapter-matrix.ts` | Run the same assertions against Fastify, Express, and Hono. |
-| `test/lib/store-conformance.ts` | Single source for StorePort invariants; extend for device-code records. |
-| `test/lib/fake-clock.ts` | Deterministic expiry and TTL checks. |
-| `test/lib/audit-capture.ts` | Capture audit events; assert no secrets appear. |
-| `test/lib/provider-stubs.ts` | Loopback OIDC/GitHub-style token/userinfo stubs where contracts allow local endpoints. |
-| `test/lib/cimd-network.ts` | Fake resolver plus guarded low-level transport for SSRF, rebinding, redirect, cap, and timeout cases. |
-| `test/lib/package-smoke.ts` | Shared logic for the packed npm artifact smoke test. |
+| `test/lib/adapter-flow.ts` | Shared authorize/token flow assertions for Fastify, Express, and Hono. |
+| `test/lib/adapter-header-flow.ts` | Shared raw-header and duplicate-header assertions across adapters. |
+| `test/lib/store-conformance.ts` | Single source for StorePort invariants across memory, sqlite, and mysql. |
 
-The existing `test/lib/adapter-flow.ts` can be extended or replaced by the first
-three helpers.
+Other integration and release checks live in their named `test/*.test.ts` or
+`scripts/*.mjs` entrypoints; this document does not promise helper files that do
+not exist.
 
 ## Tier 1 — CI tests
 
@@ -268,12 +264,19 @@ Run after the source-tree gates, before tagging.
 
 | # | Scenario | Assert |
 |---|---|---|
-| T2.1 | Source-tree gates | `pnpm run typecheck`, `pnpm run check:lines`, `pnpm test`, `pnpm run build` all green from a clean tree. |
+| T2.1 | Source-tree gates | `pnpm run typecheck`, `pnpm run check:lines`, `pnpm run check:seams`, `pnpm test`, `pnpm run build` all green from a clean tree. |
 | T2.2 | `npm pack --dry-run` | Tarball contains `dist`, README, LICENSE, and intended docs only. |
 | T2.3 | Install packed artifact in a temp project | Public exports import successfully without source files. |
 | T2.4 | Minimal metadata smoke from the installed package | Config + metadata endpoint works from the installed package. |
 | T2.5 | Optional peer behavior | Importing core does not require fastify/express/hono/mysql/redis unless that adapter is imported. |
 | T2.6 | Dependency ledger | Every new dependency or optional peer has version, publish date, and age recorded. |
+
+**2026-07-28 receipt.** T2.1-T2.6 passed from clean commit
+`e71a2bbaf6902f98502a788a8d1e4bfc604b9bbc`: 866 tests passed with zero
+skipped; the tarball contained only `dist/`, `docs/`, `README.md`, `LICENSE`,
+and `package.json`; a temporary install without optional peers imported all 13
+public entry points; and the installed root package produced authorization
+server and protected-resource metadata.
 
 ### Release-authority gate
 
@@ -299,7 +302,7 @@ a security property.
 | Google identity | Real Google OAuth app | Stable subject observed; allowed/rejected allowlist cases; hosted-domain behavior if configured. |
 | GitHub identity | Real GitHub OAuth app | Numeric id subject, verified primary email behavior, allowlist reject. |
 | Device flow | Real terminal + browser | Request code, approve/deny, poll success/failure, protected `/mcp`. |
-| CIMD | Owner-controlled HTTPS metadata URL | Valid-doc happy path plus proof the public deployment uses the guarded fetcher. |
+| CIMD | Owner-controlled HTTPS metadata URL | The clean-main rerun exercised guarded-fetcher deny legs. Claude Code 2.1.220 then completed CIMD authorization and protected calls through exact runtime commit `af2a61f` with Cloudflare Access, Entra, and Google. |
 | MCP clients | curl, official MCP SDK, Claude Code, claude.ai, ChatGPT where available | Date, client version if known, exact caveat if any row is partial. |
 
 README conformance rows can be upgraded only after the relevant Tier-3 evidence
@@ -331,6 +334,9 @@ Minimum evidence per live row:
 4. Sanitized config shape — never secrets.
 5. Pass/fail for each scenario named in the Tier-3 row.
 6. Exact caveat if any step was skipped, simulated, or only partially verified.
+7. Protocol-accurate step names: a CIMD flow starts with an HTTPS `client_id`
+   at authorize and does not call `/oauth/register`; only a DCR flow includes
+   registration.
 
 ## Spec-release re-verification (due 2026-07-28)
 
@@ -338,20 +344,20 @@ MANUAL maintainer checklist — not automated, not CI-enforced. Execute on or
 after 2026-07-28 (the MCP Authorization spec's final-publication date; its
 release candidate locked 2026-05-21). This checklist BLOCKS any release
 whose docs or marketing claim conformance with the 2026-07-28 final spec
-text until every row below is checked off.
+text until every row below is checked off. Completed 2026-07-28; the final
+publication introduced no checklist-relevant change from the pre-publication
+text reviewed below.
 
-- [ ] **(a) DCR deprecation wording.** Confirm the published final spec
-  retains the Dynamic Client Registration deprecation language from the
-  current draft changelog: "Deprecate the OAuth 2.0 Dynamic Client
+- [x] **(a) DCR deprecation wording.** The published final spec retains the
+  Dynamic Client Registration deprecation language from the pre-publication
+  changelog: "Deprecate the OAuth 2.0 Dynamic Client
   Registration Protocol (RFC7591)... It remains available for backwards
   compatibility with authorization servers that do not support Client ID
-  Metadata Documents." This wording entered the draft AFTER the RC lock (PR
-  #2858, merged 2026-06-04), so it must be re-confirmed against the final
-  text, not assumed to have carried over unchanged.
-- [ ] **(b) CIMD normative level + draft revision.** Confirm Client ID
-  Metadata Documents remain a SHOULD in the final spec, and record which
-  CIMD draft revision the final spec cites. The spec currently cites draft
-  `-00`; this repo's §17.1 CONTRACT builds to the stricter `-01`, and `-02`
+  Metadata Documents." This wording entered after the RC lock (PR #2858,
+  merged 2026-06-04) and was re-confirmed in the final text.
+- [x] **(b) CIMD normative level + draft revision.** Client ID Metadata
+  Documents remain a SHOULD, and the final spec cites draft `-00`. This repo's
+  §17.1 CONTRACT builds to the stricter `-01`, and `-02`
   (published 2026-07-06) was reviewed 2026-07-10 — every `-02` normative
   change is covered by §17.1 as written. The former caveat is resolved: the
   §17.1 precision amendment (landed 2026-07-16, closing issue #58) pins the
@@ -364,19 +370,20 @@ text until every row below is checked off.
   [§16 matrix](contracts/16-spec-conformance-matrix.md) marks CIMD
   implemented, both frozen acceptance suites active and green). That satisfies
   the old "until the implementation ships" precondition — but it does NOT by
-  itself license a conformance claim: no conformance-with-final-spec claim about
-  CIMD RUNTIME behavior may be checked off until THIS re-verification is
-  completed against the 2026-07-28 final text, and CIMD-LIVE remains outstanding
-  for any "verified against a real client" claim.
-- [ ] **(c) RFC 9207 `iss` + `application_type`.** Confirm the final spec's
-  normative level for the RFC 9207 `iss` parameter (the draft has it as
-  SHOULD, with a signposted future MUST) and confirm `/oauth/register`
-  tolerates the new client-side `application_type` MUST introduced by
-  SEP-837.
-- [ ] **(d) Record the outcome.** Update the `docs/contracts.md` status line
-  (§0) and the §16 conformance matrix if any of (a)-(c) moved between draft
-  and final; otherwise record "no change" with the date this checklist was
-  run.
+  itself license a runtime-verification claim. The patched `ee8994a`-based
+  checkout produced historical observations, but its exact dirty tree was not
+  archived and therefore does not satisfy this file's evidence contract. The
+  replacement 2026-07-28 run satisfies it: Claude Code 2.1.220 completed CIMD
+  authorization and protected calls through exact runtime commit `af2a61f`
+  with Cloudflare Access, Entra, and Google.
+- [x] **(c) RFC 9207 `iss` + `application_type`.** Authorization-server `iss`
+  remains a SHOULD with a signposted future MUST. MCP clients still MUST send
+  an appropriate `application_type` during DCR; `Bridge.handleRegister`
+  forwards it to `registerClient`, which accepts the supported `"native"` and
+  `"web"` values.
+- [x] **(d) Record the outcome.** No checklist item moved between the
+  pre-publication text and final publication. `docs/contracts.md` and the §16
+  matrix record that outcome as of 2026-07-28.
 
 ## Done rules
 
@@ -384,11 +391,12 @@ Per build session:
 
 1. Add or update the Tier-1 rows for that session.
 2. Keep the baseline official MCP SDK flow green.
-3. Run `pnpm run typecheck`, `pnpm run check:lines`, `pnpm test`, `pnpm run build`.
+3. Run `pnpm run typecheck`, `pnpm run check:lines`, `pnpm run check:seams`,
+   `pnpm test`, `pnpm run build`.
 4. Push and confirm GitHub CI green.
 5. Update roadmap memory with the commit SHA and any Tier-3 live status.
 
-For the v0.2 release:
+For the v0.3 release:
 
 1. All Tier-1 rows for shipped features pass in CI.
 2. Tier 2 packed-artifact gate passes.
@@ -400,6 +408,31 @@ For the v0.2 release:
 
 ## Status
 
-This file is the intended harness design. The v0.1 baseline exists today; most
-v0.2 rows are not yet implemented. Each implementation session turns its rows
-into executable tests before the feature is called done.
+The v0.3 feature rows already implemented on `main` are backed by the current
+automated suite; rows for unshipped GitHub identity and device flow remain
+future plans, not release claims. A 2026-07-26/27 patched, uncommitted checkout
+based on `ee8994a` produced CIMD and refresh-replay observations, but its exact
+dirty tree was not archived and those observations do not qualify as verified
+rows under the minimum evidence contract. On
+2026-07-28, an autonomous clean-main rerun at `e71a2bb` completed three
+metadata/tokenless-challenge probes and DCR registrations, Cloudflare Access
+path gating, public-CIMD resolution to authorization redirects on the Entra-
+and Google-configured gateways, and the CIMD literal-IP, DNS-rebinding,
+DNS-failure, non-200, content-type, size, and timeout deny legs.
+The durable sanitized receipt is in
+[`docs/live-verification.md`](live-verification.md#clean-main-rerun-receipt-2026-07-28).
+At exact runtime commit `af2a61f`, Claude Code 2.1.220 then completed CIMD
+authorization and protected `status` calls with Cloudflare Access, Entra, and
+Google. A corrected refresh harness required and observed 200 responses for
+A→B→C rotation, HTTP 400 `invalid_grant` for replayed A, and HTTP 400
+`invalid_grant` for current C after family revocation. Retained client results
+and all three audit logs contained zero backend-key matches.
+
+The packed-artifact pre-tag smoke passed at exact clean-main commit `e71a2bb`;
+the published-artifact smoke still runs after the release workflow publishes.
+The 2026-07-28 final-spec checklist completed with no checklist-relevant change;
+the release remains targeted at 2025-11-25 for current client interoperability.
+Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
+showed an RFC 9207 `iss` callback regression on 2026-07-28; current
+compatibility awaits upstream resolution and retest. npm remains at 0.2.3 until
+the v0.3 release workflow completes.

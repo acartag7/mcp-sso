@@ -10,7 +10,7 @@
 [![node](https://img.shields.io/node/v/mcp-sso)](package.json)
 [![runtime deps](https://img.shields.io/badge/runtime%20deps-1%20(jose)-blue)](docs/dependency-ledger.md)
 
-[Quickstart](#quickstart) · [Client registration](docs/client-registration.md) · [Configuration](docs/configuration.md) · [Machine-to-machine](#machine-to-machine-client_credentials) · [API-key gateway](#api-key-gateway-sso-in-front-of-a-token-only-backend) · [Security](#security) · [Alternatives](#alternatives) · [Status](#status) · [Threat model](docs/threat-model.md) · [Live verification](docs/live-verification.md)
+[Quickstart](#quickstart) · [Client registration](docs/client-registration.md) · [Configuration](docs/configuration.md) · [Machine-to-machine](#machine-to-machine-client_credentials) · [API-key gateway](#api-key-gateway-sso-in-front-of-a-token-only-backend) · [Security](#security) · [Alternatives](#alternatives) · [Roadmap](#roadmap) · [Threat model](docs/threat-model.md)
 
 ## The problem
 
@@ -35,7 +35,8 @@ sequenceDiagram
     participant C as MCP client
     participant B as mcp-sso bridge
     participant I as Your IdP (Entra / CF Access / OIDC)
-    C->>B: CIMD client_id or DCR registration; authorize (PKCE)
+    C->>B: Identify through CIMD or register through DCR
+    C->>B: Start authorization with PKCE
     B->>I: user signs in at the IdP
     I-->>B: verified identity (id_token / signed assertion)
     B-->>C: consent screen, then a bridge-minted token (audience-bound)
@@ -58,14 +59,13 @@ claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp
 ```
 
 The generated server enables CIMD and retains stateless DCR compatibility; the
-client chooses which registration method it uses. That default is on `main` and
-ships in 0.3; until then `npx` installs 0.2.3, whose quickstart still uses DCR.
-The generated project is the zero-setup console-pairing path. To run the
-repository's real-identity-provider example instead, start from an
-**mcp-sso repository checkout** (not the generated `my-mcp-server` directory),
-copy [`docs/.env.example`](docs/.env.example) to `.env`, configure one of
-Cloudflare Access, Entra ID, Google, or generic OIDC, and explicitly load it
-when starting the env-driven
+client chooses which registration method it uses. The generated project is the
+zero-setup console-pairing path. To run the repository's
+real-identity-provider example instead, start from an **mcp-sso repository
+checkout** (not the generated `my-mcp-server` directory), copy
+[`docs/.env.example`](docs/.env.example) to `.env`, configure one of Cloudflare
+Access, Entra ID, Google, or generic OIDC, and explicitly load it when starting
+the env-driven
 [`examples/fastify-sqlite/`](examples/fastify-sqlite) composition root:
 
 ```bash
@@ -205,20 +205,17 @@ mcp-sso bridges.
 | [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | You need **device flow** today (mcp-sso has `client_credentials`, not device flow). |
 | [`workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) | Your MCP server **is** a Cloudflare Worker. |
 
-## Status
+## Roadmap
 
-mcp-sso is live-verified against real MCP clients — Claude Code, Codex CLI,
-claude.ai, ChatGPT, and the official MCP SDK on a real Cloudflare Access tenant;
-Entra ID (redirect flow) with Claude Code and Claude Desktop in a real
-enterprise deployment; and Google sign-in with Claude Code and the official MCP
-SDK. The full provider × client matrix lives in
-[`docs/live-verification.md`](docs/live-verification.md).
+After 0.3.0, the next planned areas are:
 
-## Roadmap (v0.3)
-
-CIMD (Client ID Metadata Documents) is implemented on `main` behind the S6a/S6b
-work and ships in v0.3; it is not yet live-verified against a real CIMD-first
-client.
+- **Device authorization (RFC 8628)** for interactive login from SSH sessions,
+  terminals, and other environments that cannot receive a browser callback.
+- **GitHub identity** for teams that use GitHub as the upstream login provider.
+- **Multi-resource deployments** so one authorization service can protect
+  multiple MCP audiences without weakening audience isolation.
+- **PostgreSQL storage and additional provider presets** when real deployments
+  justify them.
 
 ## License
 

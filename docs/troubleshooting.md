@@ -3,7 +3,16 @@
 Operational gotchas hit while reproducing this repo's own verification steps —
 kept here because they cost real time to work out and aren't obvious from
 `cloudflared --help`. The live client conformance results these relate to are
-in [`README.md`](../README.md#live-client-verification).
+in [`live-verification.md`](live-verification.md).
+
+## Codex CLI 0.144.1 callback regression
+
+On 2026-07-28 the installed Codex CLI 0.144.1 failed the OAuth callback when
+the authorization response included the RFC 9207 `iss` parameter. Historical
+Codex CLI verification remains valid, but current-version compatibility is
+pending an upstream resolution and retest. mcp-sso continues to emit `iss`
+through `redirectWithCode`; do not disable the protocol binding as a client
+workaround.
 
 ## Cloudflare tunnels (claude.ai custom-connector check)
 
