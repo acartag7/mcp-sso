@@ -1047,7 +1047,7 @@ in this flow."* Decisions:
     derived expiry is not a non-negative safe integer is `invalid_request`
     before client-id/secret generation, `createMachineClient`, or a success
     audit.
-  - `rotateMachineClientSecret(deps, clientId, { graceSeconds = 300 })` →
+  - `rotateMachineClientSecret(deps, clientId, { graceSeconds = 86400 })` →
     `VersionedRotatedSecret { clientSecret, version }` (see Rotation below).
     The published v0.3.0 `RotatedSecret { clientSecret }` remains its base type
     for patch source compatibility.
@@ -1151,11 +1151,13 @@ in this flow."* Decisions:
   optional one, so an accidental `refresh_token: undefined` is
   unrepresentable. The token endpoint returns one or the other by grant type.
 - **Rotation:** `rotateMachineClientSecret(deps, clientId, { graceSeconds =
-  300 })` — adds the new secret (live, no `expiresAtEpoch`), expires the
+  86400 })` — adds the new secret (live, no `expiresAtEpoch`), expires the
   currently-live secret at `now + grace` (the two-active-secrets overlap
   pattern, per Okta/Entra practice; RFC 7592 is Experimental and
-  hard-cutover, not used). `DEFAULT_ROTATION_GRACE_SECONDS` is 300 seconds and
-  the hard `MAX_ROTATION_GRACE_SECONDS` is 600 seconds. A non-positive,
+  hard-cutover, not used). Patch releases preserve the published
+  `DEFAULT_ROTATION_GRACE_SECONDS` of 86,400 seconds; the hard
+  `MAX_ROTATION_GRACE_SECONDS` is also 86,400 seconds. Deployments that need a
+  shorter overlap pass it explicitly. A non-positive,
   non-integer, above-maximum, or unsafe derived grace is `invalid_request`
   before secret generation, CAS, or a success audit. The record's `secrets`
   array is then **exactly**
