@@ -94,6 +94,12 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
    erasing the family's replay signal. Practically unreachable under SHA-256,
    but all reference stores must agree (parity by fixture — this invariant was
    previously asserted for MySQL only, and `MemoryStore` silently diverged).
+9. **Post-rotation compensation:** after `rotateRefreshToken` succeeds, a
+   response-preparation failure is compensated through
+   `revokeRefreshTokenFamily(familyId, rotatedAtIso)` (§7.4). For that known
+   family, the call leaves every member inactive; repeating it keeps the family
+   inactive. The use-case reuses the rotation timestamp, so compensation does
+   not introduce a second clock decision after the state mutation.
 
 ## 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`) — in-process maps; dev/test only, labeled loud.

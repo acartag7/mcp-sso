@@ -57,16 +57,28 @@ rotate without a lookup). Stored only as `sha256(token)`.
   scopes and constructs the signed token response before `saveRefreshToken`.
   Rotation deliberately remains atomic and authoritative before refresh-response
   preparation so a replayed consumed predecessor always revokes its family.
+- **Refresh-response compensation after rotation:** after a successful
+  `rotateRefreshToken`, `OAuthTokenUseCase.refresh` treats every remaining step
+  as one response-preparation unit. A client-binding or reserved-subject
+  rejection, malformed stored scopes, signing failure, response-construction
+  failure, or success-audit event-construction failure MUST revoke the whole
+  rotated family before the error escapes. The revocation reuses the exact
+  canonical timestamp already passed to `rotateRefreshToken`; compensation
+  never depends on a second clock read. No successor secret is returned on a
+  failed preparation, and the committed successor cannot remain active in a
+  conforming available store.
 - **Client binding (RFC 6749 §6):** the refresh grant MUST present a `client_id`
   matching the stored record; a mismatch revokes the family (theft signal).
 - **Revocation:** `revoke` looks up the family by hash (rejecting unknown tokens
   harmlessly) and revokes the family.
 
-Residual: a malformed refresh row can still rotate before scope/signing
-preparation fails. Reference paths cannot create such a row; it requires store
-corruption, migration drift, or a nonconforming custom store. Moving preparation
-earlier without exposing atomic consumed/revoked state skips replay-family
-revocation, so a complete fix requires a separate StorePort contract amendment.
+The store remains an availability boundary: if the compensating
+`revokeRefreshTokenFamily` call itself fails, the token endpoint fails closed
+with no response, but the library cannot claim that unavailable external
+storage durably recorded the revocation. Reference stores perform the
+revocation before the preparation error escapes. Moving preparation before
+rotation is not an alternative: it can skip the atomic consumed-token replay
+detection and whole-family revocation that `rotateRefreshToken` owns.
 
 ## 7.5 PKCE S256 (timing-safe)
 `verifyPkceS256(verifier, challenge)` rejects malformed inputs outright (verifier
