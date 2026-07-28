@@ -434,5 +434,5 @@ The 2026-07-28 final-spec checklist completed with no checklist-relevant change;
 the release remains targeted at 2025-11-25 for current client interoperability.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
-compatibility awaits upstream resolution and retest. npm remains at 0.2.3 until
-the v0.3 release workflow completes.
+compatibility awaits upstream resolution and retest. The post-publish 0.3.0
+installed-package smoke is the final release step.

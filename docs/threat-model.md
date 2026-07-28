@@ -7,11 +7,10 @@
 > Update this file before any change to auth, tokens, redirect policy, the
 > store, identity, egress, or the publish pipeline.
 >
-> Status: **v0.2 shipped (through v0.2.3; CIMD implemented on `main`,
-> unreleased).** Threats 17–25 cover the
+> Status: **v0.3.0.** Threats 17–25 cover the
 > [§17](./contracts/17-v0-2-feature-contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
-> contracts — most shipped in v0.2; CIMD (§17.1) is implemented on `main`
-> (S6a/S6b, frozen suites active; not yet released to npm), with historical
+> contracts — most shipped in v0.2; CIMD (§17.1) ships in v0.3.0
+> (S6a/S6b, frozen suites active), with
 > live verification across Cloudflare Access, Entra, and Google. Claude Code
 > 2.1.220 repeated all three CIMD happy paths and protected calls at exact
 > runtime commit `af2a61f` on 2026-07-28; the Entra deny/ceiling sweep remains
