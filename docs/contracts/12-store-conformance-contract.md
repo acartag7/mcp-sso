@@ -20,12 +20,14 @@ interface RefreshTokenRecord {
 }
 interface SaveAuthCodeInput {
   /* AuthCodeRecord fields; optional only for source compatibility with a
-     pre-0.3.2 custom store. Omitted is persisted/read as legacy null. */
+     pre-0.3.2 caller. Current API omission defaults to generation 1;
+     explicit null and old SQL inserts are legacy. */
   grantGeneration?: number | null;
 }
 interface SaveRefreshTokenInput {
   tokenHash: string; familyId: string; previousTokenHash: string | null;
   clientId: string; subject: string; scopes: string[]; expiresAt: string;
+  /* Same omission/null write semantics as SaveAuthCodeInput. */
   grantGeneration?: number | null;
 }
 ```
@@ -41,8 +43,8 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
 The generation property remains optional in the public TypeScript record/input
 shapes so a patch upgrade does not make an existing custom store fail to
 compile. Reference stores always project it explicitly; the use-cases treat
-`undefined` exactly like legacy `null`, and stored-DCR construction rejects a
-store without the generation capability marker.
+`undefined` on a returned record exactly like legacy `null`, and stored-DCR
+construction rejects a store without the generation capability marker.
 
 ## 12.2 Invariants the suite asserts
 1. **Hashed, single-use auth codes:** `consumeAuthCode` deletes on read; a second
