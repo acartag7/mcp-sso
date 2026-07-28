@@ -259,19 +259,19 @@ test("rotation: from a single secret yields exactly [old-grace, new-live]", asyn
   const prov = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
   const oldHash = (await machineRecord(h.store, prov.clientId)).secrets[0]!.hash;
   h.clock.advance(1000);
-  const rot = await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 3600 });
+  const rot = await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 600 });
   assert.match(rot.clientSecret, /^mcs_[A-Za-z0-9_-]{43}$/);
   const record = await machineRecord(h.store, prov.clientId);
   assert.equal(record?.secrets.length, 2, "exactly two active secrets after rotation");
   const [grace, live] = record!.secrets;
   assert.equal(grace!.hash, oldHash, "old secret retained as grace");
-  assert.equal(grace!.expiresAtEpoch, Math.floor((NOW_MS + 1000) / 1000) + 3600);
+  assert.equal(grace!.expiresAtEpoch, Math.floor((NOW_MS + 1000) / 1000) + 600);
   assert.equal(live!.hash, sha256Hex(rot.clientSecret));
   assert.equal(live!.expiresAtEpoch, undefined, "new secret is live (no expiry)");
   assert.notEqual(rot.clientSecret, prov.clientSecret);
 });
 
-test("rotation: default grace is 24h; new secret verified, old still accepted during overlap", async () => {
+test("rotation: default grace is 5m; new secret verified, old still accepted during overlap", async () => {
   const h = harness();
   const prov = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
   const rot = await rotateMachineClientSecret(h.deps, prov.clientId); // no opts ⇒ default grace
@@ -286,15 +286,15 @@ test("rotation: holds the two-active cap across rapid successive rotations", asy
   const h = harness();
   const prov = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
   h.clock.advance(1000);
-  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 86_400 });
+  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 600 });
   h.clock.advance(2000); // still inside the first grace window
-  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 86_400 });
+  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 600 });
   let record = await machineRecord(h.store, prov.clientId);
   assert.equal(record?.secrets.length, 2, "never more than two active secrets");
   assert.equal(record!.secrets.filter((s) => s.expiresAtEpoch === undefined).length, 1, "exactly one live secret");
   // Advance past the grace of the now-demoted secret, then rotate again → expired entry evicted.
-  h.clock.advance(86_400 * 1000 + 5000);
-  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 86_400 });
+  h.clock.advance(600 * 1000 + 5000);
+  await rotateMachineClientSecret(h.deps, prov.clientId, { graceSeconds: 600 });
   record = await machineRecord(h.store, prov.clientId);
   assert.equal(record?.secrets.length, 2, "expired secret evicted, still capped at two");
   assert.equal(record!.secrets.filter((s) => s.expiresAtEpoch === undefined).length, 1);
@@ -361,7 +361,15 @@ test("rotation: rejects a bad graceSeconds", async () => {
   }
 });
 
-test("rotation: accepts the 24-hour maximum and rejects one second above it before CAS", async () => {
+test("rotation: defaults to 300 seconds, accepts 600, and rejects 601 before CAS", async () => {
+  const defaulted = harness();
+  const defaultedClient = await provisionMachineClient(defaulted.deps, {
+    allowedScopes: ["mcp:read"],
+  });
+  await rotateMachineClientSecret(defaulted.deps, defaultedClient.clientId);
+  const defaultedRecord = await machineRecord(defaulted.store, defaultedClient.clientId);
+  assert.equal(defaultedRecord.secrets[0]?.expiresAtEpoch, Math.floor(NOW_MS / 1000) + 300);
+
   const accepted = harness();
   const first = await provisionMachineClient(accepted.deps, { allowedScopes: ["mcp:read"] });
   await rotateMachineClientSecret(accepted.deps, first.clientId, {

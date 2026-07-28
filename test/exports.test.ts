@@ -63,8 +63,8 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   assert.equal(typeof ensureStateDir, "function", "ensureStateDir (atomic state-dir setup helper) is root-exported");
   assert.equal(typeof assertRealDir, "function", "assertRealDir (state-dir fs-trust bar) is root-exported");
   assert.equal(typeof disableMachineClient, "function", "machine-client disable lifecycle is root-exported");
-  assert.equal(DEFAULT_ROTATION_GRACE_SECONDS, 86_400);
-  assert.equal(MAX_ROTATION_GRACE_SECONDS, 86_400);
+  assert.equal(DEFAULT_ROTATION_GRACE_SECONDS, 300);
+  assert.equal(MAX_ROTATION_GRACE_SECONDS, 600);
   void (null as unknown as MachineClientStore);
   void (null as unknown as MachineClientRegistration);
   void (null as unknown as VersionedMachineClientRegistration);
