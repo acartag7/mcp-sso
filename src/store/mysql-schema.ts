@@ -84,13 +84,26 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
 }
 
 async function ensureColumn(conn: PoolConnection, table: string, column: string): Promise<void> {
+  if (await columnExists(conn, table, column)) return;
+  try {
+    await conn.query(`ALTER TABLE ${table} ADD COLUMN ${column} BIGINT UNSIGNED NULL`);
+  } catch (error) {
+    if (!isMysqlError(error, "ER_DUP_FIELDNAME")
+      || !await columnExists(conn, table, column)) throw error;
+  }
+}
+
+async function columnExists(conn: PoolConnection, table: string, column: string): Promise<boolean> {
   const [rows] = await conn.query<RowDataPacket[]>(
     "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
     [table, column],
   );
-  if (rows.length === 0) {
-    await conn.query(`ALTER TABLE ${table} ADD COLUMN ${column} BIGINT UNSIGNED NULL`);
-  }
+  return rows.length > 0;
+}
+
+function isMysqlError(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null
+    && (error as { code?: unknown }).code === code;
 }
 
 async function assertStrictMode(conn: PoolConnection): Promise<void> {
