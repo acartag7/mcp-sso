@@ -140,9 +140,10 @@ groupAuthorization: {
 Exact contract in [§17.4](contracts/17-v0-2-feature-contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling);
 attacker analysis in
 [`docs/threat-model.md`](threat-model.md) row 22. Live-tenant verification
-through `createEntraRedirectIdentity` and `resolveGroupCeiling` historically
-covered member, no-group/no-mapped-group, overage, allowlist, and guest/B2B
-outcomes. The clean-`main` pre-release provider rerun remains pending.
+through `createEntraRedirectIdentity` completed a clean-runtime CIMD happy path
+at `af2a61f` on 2026-07-28. Member, no-group/no-mapped-group, overage,
+allowlist, and guest/B2B outcomes were observed on an unarchived patched
+checkout and remain pending verification as deny/ceiling rows.
 
 ## What neither gate decides
 

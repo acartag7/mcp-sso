@@ -18,11 +18,12 @@ const identity = createEntraRedirectIdentity({
 }, { scopeCatalog: ["mcp:read", "mcp:write"] });
 ```
 
-> **Live status:** historical real-tenant verification covers interactive and
-> CIMD clients plus member, wrong-tenant, group-overage, no-group,
-> no-mapped-group, allowlist, and guest/B2B outcomes through
-> `createEntraRedirectIdentity` and `resolveGroupCeiling`. The clean-`main`
-> pre-release provider rerun remains pending.
+> **Live status:** Claude Code 2.1.220 completed the real-tenant CIMD happy path
+> and protected gateway call through `createEntraRedirectIdentity` at exact
+> runtime commit `af2a61f` on 2026-07-28. Member, wrong-tenant, group-overage,
+> no-group, no-mapped-group, allowlist, and guest/B2B outcomes were observed on
+> an unarchived patched checkout and remain pending verification as
+> deny/ceiling rows.
 
 There are two factories on `mcp-sso/identity/entra`:
 
@@ -157,7 +158,8 @@ scope outside the catalog, or a non-array `baseScopes`.
 ## Verify
 
 Re-run the checklist at the top of `src/identity/entra.ts` against a real tenant
-before release and confirm these historically verified deny legs still hold:
+before relying on these deny/ceiling behaviors. They were observed on an
+unarchived patched checkout and do not yet qualify as verified rows:
 
 - A **non-allowed tenant** user → `entra_bad_tid` (multi-tenant) or `entra_bad_iss`
   (single-tenant — the foreign `iss` is checked first).
@@ -167,10 +169,10 @@ before release and confirm these historically verified deny legs still hold:
 - Confirm the bridge mints its **own** audience-bound token — the Entra `id_token`
   is verified then discarded.
 
-> **Guest / B2B users:** a real invited guest was historically verified with
-> mapped group membership and the expected scope ceiling. Confirm the behavior
-> in your tenant before relying on it; tenant configuration still governs which
-> group claims Entra emits.
+> **Guest / B2B users:** a real invited guest was observed with mapped group
+> membership and the expected scope ceiling on the unarchived patched checkout.
+> Confirm the behavior in your tenant before relying on it; tenant
+> configuration still governs which group claims Entra emits.
 
 See [`authorization.md`](../authorization.md) for the IdP-gate vs mcp-sso-gate
 model and [§17.4](../contracts/17-v0-2-feature-contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling)

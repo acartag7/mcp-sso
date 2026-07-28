@@ -212,9 +212,11 @@ mcp-sso is live-verified against real MCP clients — Claude Code, Codex CLI,
 claude.ai, ChatGPT, and the official MCP SDK on a real Cloudflare Access tenant;
 Entra ID (redirect flow) with Claude Code and Claude Desktop in a real
 enterprise deployment; and Google sign-in with Claude Code and the official MCP
-SDK. CIMD completed live provider flows with Cloudflare Access, Entra ID, and
-Google on 2026-07-26/27. Those CIMD runs used a patched checkout based on
-`ee8994a`; the clean-main pre-release rerun is tracked separately in the
+SDK. A 2026-07-26/27 campaign observed CIMD provider flows with Cloudflare
+Access, Entra ID, and Google, but its exact dirty tree was not archived and it
+does not qualify as release evidence. On 2026-07-28, Claude Code 2.1.220
+repeated the CIMD flow through exact runtime commit `af2a61f` across all three
+providers and called the protected gateway tool successfully. See the
 [verification matrix](docs/live-verification.md).
 
 Historical Codex CLI success remains valid, but the installed Codex CLI 0.144.1
@@ -226,11 +228,12 @@ provider × client matrix lives in
 ## Roadmap (v0.3)
 
 CIMD (Client ID Metadata Documents) is implemented, suite-covered, and
-historically live-verified against three identity providers. Before v0.3 ships,
-the remaining pre-tag gates are the clean-main provider happy-path and refresh
-replay rerun plus the packed-artifact smoke. The 2026-07-28 final-spec
-re-verification found no checklist-relevant changes; the release remains
-targeted at 2025-11-25 for current client interoperability. The
+live-verified with Cloudflare Access, Entra ID, and Google at exact runtime
+commit `af2a61f`. The guarded CIMD deny legs, refresh
+rotation/replay/family-revocation sequence, and packed artifact also passed; the
+artifact imported all 13 public exports and produced metadata. The 2026-07-28
+final-spec re-verification found no checklist-relevant changes; the release
+remains targeted at 2025-11-25 for current client interoperability. The
 published-artifact smoke follows the release workflow. The current npm release
 remains 0.2.3.
 

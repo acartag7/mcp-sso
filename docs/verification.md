@@ -271,6 +271,13 @@ Run after the source-tree gates, before tagging.
 | T2.5 | Optional peer behavior | Importing core does not require fastify/express/hono/mysql/redis unless that adapter is imported. |
 | T2.6 | Dependency ledger | Every new dependency or optional peer has version, publish date, and age recorded. |
 
+**2026-07-28 receipt.** T2.1-T2.6 passed from clean commit
+`e71a2bbaf6902f98502a788a8d1e4bfc604b9bbc`: 866 tests passed with zero
+skipped; the tarball contained only `dist/`, `docs/`, `README.md`, `LICENSE`,
+and `package.json`; a temporary install without optional peers imported all 13
+public entry points; and the installed root package produced authorization
+server and protected-resource metadata.
+
 ### Release-authority gate
 
 Before tagging, verify the `publish` GitHub Environment through the repository
@@ -295,7 +302,7 @@ a security property.
 | Google identity | Real Google OAuth app | Stable subject observed; allowed/rejected allowlist cases; hosted-domain behavior if configured. |
 | GitHub identity | Real GitHub OAuth app | Numeric id subject, verified primary email behavior, allowlist reject. |
 | Device flow | Real terminal + browser | Request code, approve/deny, poll success/failure, protected `/mcp`. |
-| CIMD | Owner-controlled HTTPS metadata URL | Historical happy paths completed with Cloudflare Access, Entra ID, and Google on 2026-07-26/27. The clean-main rerun has exercised the guarded-fetcher deny legs; provider happy paths remain pending. |
+| CIMD | Owner-controlled HTTPS metadata URL | The clean-main rerun exercised guarded-fetcher deny legs. Claude Code 2.1.220 then completed CIMD authorization and protected calls through exact runtime commit `af2a61f` with Cloudflare Access, Entra, and Google. |
 | MCP clients | curl, official MCP SDK, Claude Code, claude.ai, ChatGPT where available | Date, client version if known, exact caveat if any row is partial. |
 
 README conformance rows can be upgraded only after the relevant Tier-3 evidence
@@ -363,9 +370,12 @@ text reviewed below.
   [§16 matrix](contracts/16-spec-conformance-matrix.md) marks CIMD
   implemented, both frozen acceptance suites active and green). That satisfies
   the old "until the implementation ships" precondition — but it does NOT by
-  itself license a runtime-verification claim. CIMD-LIVE is complete as
-  historical evidence from the patched `ee8994a`-based checkout; the clean-main
-  provider rerun remains a separate pre-tag gate.
+  itself license a runtime-verification claim. The patched `ee8994a`-based
+  checkout produced historical observations, but its exact dirty tree was not
+  archived and therefore does not satisfy this file's evidence contract. The
+  replacement 2026-07-28 run satisfies it: Claude Code 2.1.220 completed CIMD
+  authorization and protected calls through exact runtime commit `af2a61f`
+  with Cloudflare Access, Entra, and Google.
 - [x] **(c) RFC 9207 `iss` + `application_type`.** Authorization-server `iss`
   remains a SHOULD with a signposted future MUST. MCP clients still MUST send
   an appropriate `application_type` during DCR; `Bridge.handleRegister`
@@ -400,9 +410,10 @@ For the v0.3 release:
 
 The v0.3 feature rows already implemented on `main` are backed by the current
 automated suite; rows for unshipped GitHub identity and device flow remain
-future plans, not release claims. Historical live evidence from 2026-07-26/27
-used a patched, uncommitted checkout based on `ee8994a` and completed CIMD happy
-paths across three providers plus refresh replay/family revocation. On
+future plans, not release claims. A 2026-07-26/27 patched, uncommitted checkout
+based on `ee8994a` produced CIMD and refresh-replay observations, but its exact
+dirty tree was not archived and those observations do not qualify as verified
+rows under the minimum evidence contract. On
 2026-07-28, an autonomous clean-main rerun at `e71a2bb` completed three
 metadata/tokenless-challenge probes and DCR registrations, Cloudflare Access
 path gating, public-CIMD resolution to authorization redirects on the Entra-
@@ -410,13 +421,18 @@ and Google-configured gateways, and the CIMD literal-IP, DNS-rebinding,
 DNS-failure, non-200, content-type, size, and timeout deny legs.
 The durable sanitized receipt is in
 [`docs/live-verification.md`](live-verification.md#clean-main-rerun-receipt-2026-07-28).
-Browser-completed provider happy paths and refresh replay remain pending.
+At exact runtime commit `af2a61f`, Claude Code 2.1.220 then completed CIMD
+authorization and protected `status` calls with Cloudflare Access, Entra, and
+Google. A corrected refresh harness required and observed 200 responses for
+A→B→C rotation, HTTP 400 `invalid_grant` for replayed A, and HTTP 400
+`invalid_grant` for current C after family revocation. Retained client results
+and all three audit logs contained zero backend-key matches.
 
-The packed-artifact pre-tag smoke is pending. The 2026-07-28 final-spec
-checklist completed with no checklist-relevant change; the release remains
-targeted at 2025-11-25 for current client interoperability. The
-published-artifact smoke runs after the release workflow publishes. Historical
-Codex CLI success remains recorded, but installed Codex CLI 0.144.1 showed an
-RFC 9207 `iss` callback regression on 2026-07-28; current compatibility awaits
-upstream resolution and retest. npm remains at 0.2.3 until the v0.3 release
-workflow completes.
+The packed-artifact pre-tag smoke passed at exact clean-main commit `e71a2bb`;
+the published-artifact smoke still runs after the release workflow publishes.
+The 2026-07-28 final-spec checklist completed with no checklist-relevant change;
+the release remains targeted at 2025-11-25 for current client interoperability.
+Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
+showed an RFC 9207 `iss` callback regression on 2026-07-28; current
+compatibility awaits upstream resolution and retest. npm remains at 0.2.3 until
+the v0.3 release workflow completes.

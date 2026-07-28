@@ -9,9 +9,10 @@
 >
 > Status: **v0.2.3 shipped** (`mcp-sso@0.2.3` on npm) + **unreleased v0.3
 > hardening on `main`**. The §17 feature contracts are locked; CIMD §17.1,
-> generic OIDC, and the Google preset are implemented. CIMD and Google have
-> historical live verification; the clean-`main` pre-release rerun and a second,
-> non-Google generic-OIDC issuer remain pending. Device flow §17.3 and the
+> generic OIDC, and the Google preset are implemented. Google has reproducible
+> historical live verification; CIMD was live-verified through exact runtime
+> commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
+> A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
 > dedicated GitHub port in §17.6 remain contract-only. Spec conformance
 > target: **MCP Authorization 2025-11-25** (the stable spec clients implement); the next
 > spec version is **final on 2026-07-28** (its RC was locked 2026-05-21).

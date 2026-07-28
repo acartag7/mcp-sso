@@ -341,10 +341,12 @@ S6a acceptance suite, and the flow rules (H) are to be implemented and tested in
 S6b. **Status: those PRs have landed** — the S6a primitives, both frozen
 acceptance suites, and the S6b flow integration are implemented, and §16 now
 tracks CIMD as implemented, including the §10.0 amendment to rule 20.
-CIMD was subsequently live-verified with real CIMD-first clients across
-Cloudflare Access, Entra, and Google. The clean-`main` pre-release rerun remains
-pending. The 2026-07-28 final-spec re-verification found no checklist-relevant
-change to this contract.
+A patched-checkout campaign subsequently observed real CIMD-first clients
+across Cloudflare Access, Entra, and Google, but its exact dirty tree was not
+archived and does not qualify as release evidence. On 2026-07-28, Claude Code
+2.1.220 repeated CIMD authorization and protected tool calls through exact
+runtime commit `af2a61f` with all three providers. The 2026-07-28 final-spec
+re-verification found no checklist-relevant change to this contract.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -1280,9 +1282,11 @@ via the MCP spec.
 > `Bridge.resolveIdentity`'s `identity.verify` emission (S2a). Gates green
 > (typecheck · lines · 244/244 test · build). The
 > `createEntraRedirectIdentity` → `resolveGroupCeiling` path was subsequently
-> live-verified for member, no-group/no-mapped-group, overage, allowlist, and
-> guest/B2B outcomes. The clean-`main` pre-release provider rerun remains
-> pending.
+> observed for member, no-group/no-mapped-group, overage, allowlist, and
+> guest/B2B outcomes on an unarchived patched checkout; those deny/ceiling
+> observations do not qualify as verified rows. The clean-runtime CIMD happy
+> path was repeated at `af2a61f` on 2026-07-28, while the deny/ceiling sweep
+> remains pending.
 
 Entra-specific by design (the owner's real deployment; do not generalize
 prematurely). Facts verified against Microsoft Learn 2026-07-04: JWT group
@@ -1403,9 +1407,11 @@ groupAuthorization?: {
   takes effect at the next full authorize. Residual risk documented in the
   threat model; deployers needing faster revocation shorten
   `refreshTokenTtlSeconds` or revoke families.
-- Guest (B2B) behavior was historically live-verified with a real invited guest
-  whose mapped group membership produced the expected ceiling; this is runtime
-  evidence, not a claim about every Entra tenant configuration.
+- Guest (B2B) behavior was observed with a real invited guest whose mapped group
+  membership produced the expected ceiling, but that patched checkout's exact
+  tree was not archived. The observation does not satisfy the release-evidence
+  contract or support a current live claim for every Entra tenant
+  configuration.
 - **Audit:** event `identity.verify` (emitted by `Bridge.resolveIdentity`,
   S2a; success/failure + reason) carries the Entra reasons
   `entra_groups_overage`, `entra_no_groups`, and `entra_no_mapped_groups` —
@@ -1474,9 +1480,10 @@ gate replaces no-gate).
 > `RedirectIdentityPort`s consumed by the §17.11 orchestrator. They are
 > unit/flow-verified only (synthetic RS256/ES256 id_tokens through the real
 > `validateGenericOidcIdToken`/`validateGoogleIdToken` → bridge path). Google
-> was subsequently live-verified, including the hosted-domain deny path. A
-> second non-Google generic-OIDC issuer and the clean-`main` pre-release rerun
-> remain pending. The dedicated GitHub port stays 🔒 locked (its own port — no OIDC
+> was subsequently live-verified, including the hosted-domain deny path, and
+> its CIMD happy path was repeated at exact runtime commit `af2a61f` on
+> 2026-07-28. A second non-Google generic-OIDC issuer remains pending. The
+> dedicated GitHub port stays 🔒 locked (its own port — no OIDC
 > discovery, no id_token; identity via the REST API). Setup guides:
 > [`docs/identity/generic-oidc.md`](../identity/generic-oidc.md),
 > [`docs/identity/google.md`](../identity/google.md).
