@@ -228,10 +228,11 @@ provider × client matrix lives in
 CIMD (Client ID Metadata Documents) is implemented, suite-covered, and
 historically live-verified against three identity providers. Before v0.3 ships,
 the remaining pre-tag gates are the clean-main provider happy-path and refresh
-replay rerun plus the packed-artifact smoke. Rechecking the unpublished
-2026-07-28 final spec is required before claiming conformance with that version,
-not for the existing 2025-11-25 target. The published-artifact smoke follows
-the release workflow. The current npm release remains 0.2.3.
+replay rerun plus the packed-artifact smoke. The 2026-07-28 final-spec
+re-verification found no checklist-relevant changes; the release remains
+targeted at 2025-11-25 for current client interoperability. The
+published-artifact smoke follows the release workflow. The current npm release
+remains 0.2.3.
 
 ## License
 

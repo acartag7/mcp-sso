@@ -22,7 +22,7 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — `createGuardedFetcher` + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`), including §10.0 redirect-entry canonicality. Historically live-verified with real CIMD-first clients across Cloudflare Access, Entra, and Google; the clean-`main` pre-release rerun remains pending. Any 2026-07-28 spec-final conformance claim remains gated on publication of the final text and the `docs/verification.md` re-verification | §6.6, §17.1 |
+| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — `createGuardedFetcher` + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`), including §10.0 redirect-entry canonicality. Historically live-verified with real CIMD-first clients across Cloudflare Access, Entra, and Google; the clean-`main` pre-release rerun remains pending. The 2026-07-28 final-spec checklist found no relevant change | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | ✅ v0.2 shipped (S3a provisioning/rotation + S3b grant: Basic+post auth, `MachineTokenResponse`, metadata-gated advertisement) | §17.2 |
@@ -34,10 +34,9 @@
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
 
-**Spec-final re-check gate:** the RC's (locked 2026-05-21) backward-compatible
-hardening items are built in now. The 2026-07-28 final text is not yet
-published; before any release claims conformance with it, complete
-[`docs/verification.md` — "Spec-release
-re-verification (due
+**Spec-final re-check:** completed 2026-07-28. The final text retained the
+checklist's DCR, CIMD, RFC 9207 `iss`, and `application_type` positions, so no
+conformance row changed. The backward-compatible authorization hardening is
+built in; see [`docs/verification.md` — "Spec-release re-verification (due
 2026-07-28)"](../verification.md#spec-release-re-verification-due-2026-07-28).
-The RC changes nothing about the RS model or the bridge architecture.
+The final text changes nothing about the RS model or the bridge architecture.

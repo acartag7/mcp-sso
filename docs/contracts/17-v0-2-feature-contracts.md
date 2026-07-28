@@ -343,8 +343,8 @@ acceptance suites, and the S6b flow integration are implemented, and §16 now
 tracks CIMD as implemented, including the §10.0 amendment to rule 20.
 CIMD was subsequently live-verified with real CIMD-first clients across
 Cloudflare Access, Entra, and Google. The clean-`main` pre-release rerun remains
-pending, as does publication and re-verification of the 2026-07-28 final spec
-text before any conformance claim against it.
+pending. The 2026-07-28 final-spec re-verification found no checklist-relevant
+change to this contract.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048

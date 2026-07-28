@@ -337,20 +337,20 @@ MANUAL maintainer checklist — not automated, not CI-enforced. Execute on or
 after 2026-07-28 (the MCP Authorization spec's final-publication date; its
 release candidate locked 2026-05-21). This checklist BLOCKS any release
 whose docs or marketing claim conformance with the 2026-07-28 final spec
-text until every row below is checked off.
+text until every row below is checked off. Completed 2026-07-28; the final
+publication introduced no checklist-relevant change from the pre-publication
+text reviewed below.
 
-- [ ] **(a) DCR deprecation wording.** Confirm the published final spec
-  retains the Dynamic Client Registration deprecation language from the
-  current draft changelog: "Deprecate the OAuth 2.0 Dynamic Client
+- [x] **(a) DCR deprecation wording.** The published final spec retains the
+  Dynamic Client Registration deprecation language from the pre-publication
+  changelog: "Deprecate the OAuth 2.0 Dynamic Client
   Registration Protocol (RFC7591)... It remains available for backwards
   compatibility with authorization servers that do not support Client ID
-  Metadata Documents." This wording entered the draft AFTER the RC lock (PR
-  #2858, merged 2026-06-04), so it must be re-confirmed against the final
-  text, not assumed to have carried over unchanged.
-- [ ] **(b) CIMD normative level + draft revision.** Confirm Client ID
-  Metadata Documents remain a SHOULD in the final spec, and record which
-  CIMD draft revision the final spec cites. The spec currently cites draft
-  `-00`; this repo's §17.1 CONTRACT builds to the stricter `-01`, and `-02`
+  Metadata Documents." This wording entered after the RC lock (PR #2858,
+  merged 2026-06-04) and was re-confirmed in the final text.
+- [x] **(b) CIMD normative level + draft revision.** Client ID Metadata
+  Documents remain a SHOULD, and the final spec cites draft `-00`. This repo's
+  §17.1 CONTRACT builds to the stricter `-01`, and `-02`
   (published 2026-07-06) was reviewed 2026-07-10 — every `-02` normative
   change is covered by §17.1 as written. The former caveat is resolved: the
   §17.1 precision amendment (landed 2026-07-16, closing issue #58) pins the
@@ -363,20 +363,17 @@ text until every row below is checked off.
   [§16 matrix](contracts/16-spec-conformance-matrix.md) marks CIMD
   implemented, both frozen acceptance suites active and green). That satisfies
   the old "until the implementation ships" precondition — but it does NOT by
-  itself license a conformance claim: no conformance-with-final-spec claim about
-  CIMD RUNTIME behavior may be checked off until THIS re-verification is
-  completed against the 2026-07-28 final text. CIMD-LIVE is complete as
+  itself license a runtime-verification claim. CIMD-LIVE is complete as
   historical evidence from the patched `ee8994a`-based checkout; the clean-main
   provider rerun remains a separate pre-tag gate.
-- [ ] **(c) RFC 9207 `iss` + `application_type`.** Confirm the final spec's
-  normative level for the RFC 9207 `iss` parameter (the draft has it as
-  SHOULD, with a signposted future MUST) and confirm `/oauth/register`
-  tolerates the new client-side `application_type` MUST introduced by
-  SEP-837.
-- [ ] **(d) Record the outcome.** Update the `docs/contracts.md` status line
-  (§0) and the §16 conformance matrix if any of (a)-(c) moved between draft
-  and final; otherwise record "no change" with the date this checklist was
-  run.
+- [x] **(c) RFC 9207 `iss` + `application_type`.** Authorization-server `iss`
+  remains a SHOULD with a signposted future MUST. MCP clients still MUST send
+  an appropriate `application_type` during DCR; `Bridge.handleRegister`
+  forwards it to `registerClient`, which accepts the supported `"native"` and
+  `"web"` values.
+- [x] **(d) Record the outcome.** No checklist item moved between the
+  pre-publication text and final publication. `docs/contracts.md` and the §16
+  matrix record that outcome as of 2026-07-28.
 
 ## Done rules
 
@@ -415,10 +412,11 @@ The durable sanitized receipt is in
 [`docs/live-verification.md`](live-verification.md#clean-main-rerun-receipt-2026-07-28).
 Browser-completed provider happy paths and refresh replay remain pending.
 
-The packed-artifact pre-tag smoke is pending. The final-spec checklist is
-required before claiming conformance with the unpublished 2026-07-28 version,
-not for the existing 2025-11-25 target; the published-artifact smoke runs after
-the release workflow publishes. Historical Codex CLI success remains recorded,
-but installed Codex CLI 0.144.1 showed an RFC 9207 `iss` callback regression on
-2026-07-28; current compatibility awaits upstream resolution and retest. npm
-remains at 0.2.3 until the v0.3 release workflow completes.
+The packed-artifact pre-tag smoke is pending. The 2026-07-28 final-spec
+checklist completed with no checklist-relevant change; the release remains
+targeted at 2025-11-25 for current client interoperability. The
+published-artifact smoke runs after the release workflow publishes. Historical
+Codex CLI success remains recorded, but installed Codex CLI 0.144.1 showed an
+RFC 9207 `iss` callback regression on 2026-07-28; current compatibility awaits
+upstream resolution and retest. npm remains at 0.2.3 until the v0.3 release
+workflow completes.

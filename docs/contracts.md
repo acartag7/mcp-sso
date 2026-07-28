@@ -14,14 +14,13 @@
 > non-Google generic-OIDC issuer remain pending. Device flow §17.3 and the
 > dedicated GitHub port in §17.6 remain contract-only. Spec conformance
 > target: **MCP Authorization 2025-11-25** (the stable spec clients implement); the next
-> spec version was scheduled for **2026-07-28** but its final text is not yet
-> published (its RC was locked 2026-05-21) —
-> the RC's backward-compatible hardening items (e.g. RFC 9207 `iss`) are
-> built in now. Before any release claims conformance with the 2026-07-28
-> final text, the manual maintainer checklist in
+> spec version is **final on 2026-07-28** (its RC was locked 2026-05-21).
+> Its backward-compatible hardening items (e.g. RFC 9207 `iss`) are built in,
+> and the 2026-07-28 maintainer re-verification found no checklist-relevant
+> changes from the pre-publication text. See the completed checklist in
 > [`docs/verification.md` — "Spec-release re-verification (due
 > 2026-07-28)"](verification.md#spec-release-re-verification-due-2026-07-28)
-> MUST be completed.
+> for the exact outcome.
 
 ## Contents
 
