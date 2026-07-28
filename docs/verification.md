@@ -301,6 +301,19 @@ separate release commit. It is not evidence of a `v0.3.1` tag or npm
 publication; the final versioned head, hosted CI and review, publish dry-run,
 and installed-artifact smoke remain release gates.
 
+**v0.3.2 prepublication candidate input (2026-07-28).** Exact merged
+implementation commit `526ad2a2f1167ba7d905cb05cd3c44ce3a2c1d99`
+contains the stored-DCR grant-generation cutover. Version candidate
+`6b87d804084d899aa29942ae1348f9983ac79619` passed typecheck, line,
+acceptance-seam, dependency-policy, process-guard, and CodeQL checks; 899 local
+tests and 926 hosted tests with real MySQL and Redis passed with zero skipped,
+followed by a clean build. Its 204-file dry-run artifact declared version
+0.3.2 and contained only `dist/`, `docs/`, `README.md`, `LICENSE`, and
+`package.json`. The documentation-status correction after that candidate must
+pass the same exact-head gates and review before merge. This receipt is not
+evidence of a `v0.3.2` tag or npm publication; the final versioned head,
+publish workflow, and installed registry-artifact smoke remain release gates.
+
 ### Release-authority gate
 
 Before tagging, verify the `publish` GitHub Environment through the repository
