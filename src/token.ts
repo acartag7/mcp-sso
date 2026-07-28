@@ -114,6 +114,7 @@ export class OAuthTokenUseCase {
       if (!familyId) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       const nextRaw = generateRefreshToken(familyId);
       const previousHash = sha256Hex(raw);
+      const rotatedAtIso = new Date(this.clock.nowMs()).toISOString();
       const rotated = await this.store.rotateRefreshToken(
         previousHash,
         {
@@ -121,22 +122,21 @@ export class OAuthTokenUseCase {
           clientId: input.clientId ?? "", subject: "", scopes: [],
           expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
         },
-        new Date(this.clock.nowMs()).toISOString(),
+        rotatedAtIso,
       );
       if (!rotated) throw new OAuthError("invalid_grant", "Refresh token is invalid");
-      // RFC 6749 §6: the grant must bind to the token's stored client_id. The
-      // Rotated record carries the STORED client; mismatch means theft/replay.
-      if (!input.clientId || input.clientId !== rotated.clientId) {
-        await this.store.revokeRefreshTokenFamily(familyId, new Date(this.clock.nowMs()).toISOString());
-        throw new OAuthError("invalid_grant", "Refresh token client binding is invalid");
+      try {
+        // The rotated record's stored client is authoritative (RFC 6749 §6).
+        if (!input.clientId || input.clientId !== rotated.clientId) throw new OAuthError("invalid_grant", "Refresh token client binding is invalid");
+        if (rotated.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
+        const prepared = await this.tokenResponse(rotated, nextRaw);
+        await this.auditToken("oauth.token.refresh", "success", rotated);
+        return prepared.response;
+      } catch (error) {
+        // Preparation stays after replay-authoritative rotation; failures revoke its unreturned successor.
+        await this.store.revokeRefreshTokenFamily(familyId, rotatedAtIso);
+        throw error;
       }
-      if (rotated.subject.startsWith("mcc_")) { // pre-success-audit (§9.3): revoke the legacy family outright — it can never mint
-        await this.store.revokeRefreshTokenFamily(familyId, new Date(this.clock.nowMs()).toISOString());
-        throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
-      }
-      const prepared = await this.tokenResponse(rotated, nextRaw);
-      await this.auditToken("oauth.token.refresh", "success", rotated);
-      return prepared.response;
     } catch (error) {
       await this.auditFailure("oauth.token.refresh", error, input.clientId);
       throw error;

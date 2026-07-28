@@ -192,8 +192,12 @@ client-controlled request input; when present, `prepare` uses it and does not fe
 - **`refresh`**: atomically rotates the refresh token (§7.4), preserving
   consumed-token replay detection and whole-family revocation; then enforces RFC
   6749 §6 client binding (mismatch ⇒ family revoked ⇒ `invalid_grant`) and mints
-  a new access token carrying the rotated record's scopes. The malformed-row
-  response-continuity residual is recorded in §7.4.
+  a new access token carrying the rotated record's scopes. After a successful
+  rotation, every remaining failure path attempts compensation by calling
+  `revokeRefreshTokenFamily` once with the rotation timestamp before propagating
+  the error, and returns no token. When that store call succeeds, a malformed
+  row or signing failure leaves no active unreturned successor. When it rejects,
+  durable state remains store-dependent; the boundary is recorded in §7.4.
 - **`revoke`** (RFC 7009): **always returns 200**; an unknown or already-revoked
   token is a **no-op** (never 4xx — RFC 7009 §2.2 forbids leaking token existence
   via the response). Looks up the family by hash and revokes it; a guessed family

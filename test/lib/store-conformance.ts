@@ -53,6 +53,30 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: explicit family revocation is idempotent and disables a rotated successor`, async () => {
+    const store = make();
+    await store.saveRefreshToken(refresh("comp-one", "fam-comp", null, FUTURE));
+    const rotated = await store.rotateRefreshToken(
+      sha256Hex("comp-one"),
+      refresh("comp-two", "fam-comp", sha256Hex("comp-one"), FUTURE),
+      NOW,
+    );
+    assert.ok(rotated, "control rotation succeeds");
+    await store.revokeRefreshTokenFamily("fam-comp", NOW);
+    await store.revokeRefreshTokenFamily("fam-comp", LATER);
+    assert.deepEqual(await store.findGrantedScopes("subject-1", "client-1", LATER), []);
+    assert.equal(
+      await store.rotateRefreshToken(
+        sha256Hex("comp-two"),
+        refresh("comp-three", "fam-comp", sha256Hex("comp-two"), FUTURE),
+        LATER,
+      ),
+      null,
+      "the compensated successor stays inactive",
+    );
+    await store.close();
+  });
+
   test(`${label}: rotation backfill ignores caller-supplied identity (fix #3)`, async () => {
     const store = make();
     await store.saveRefreshToken(refresh("m1", "fam-m", null, FUTURE));
