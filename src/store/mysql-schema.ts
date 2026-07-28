@@ -16,7 +16,10 @@
 
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput } from "../ports/store.ts";
-import { StoreInputError, assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
+import {
+  StoreInputError, assertGrantGeneration, assertSha256Hex,
+  assertUtcIsoTimestamp, grantGenerationForWrite, grantGenerationFromStored,
+} from "../ports/store.ts";
 
 export const MYSQL_OAUTH_TABLES = [
   "oauth_auth_codes", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_consent_jtis",
@@ -33,12 +36,14 @@ const MIGRATIONS = [
     code_challenge VARCHAR(255) NOT NULL,
     code_challenge_method VARCHAR(16) NOT NULL CHECK (code_challenge_method = 'S256'),
     expires_at VARCHAR(24) NOT NULL,
+    grant_generation BIGINT UNSIGNED,
     PRIMARY KEY (code_hash),
     INDEX idx_oauth_auth_codes_expires_at (expires_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
   `CREATE TABLE IF NOT EXISTS oauth_refresh_token_families (
     family_id VARCHAR(64) NOT NULL,
     revoked_at VARCHAR(24),
+    grant_generation BIGINT UNSIGNED,
     PRIMARY KEY (family_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
   `CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
@@ -50,6 +55,7 @@ const MIGRATIONS = [
     scopes_json TEXT NOT NULL,
     expires_at VARCHAR(24) NOT NULL,
     consumed_at VARCHAR(24),
+    grant_generation BIGINT UNSIGNED,
     PRIMARY KEY (token_hash),
     INDEX idx_oauth_refresh_tokens_family_id (family_id),
     INDEX idx_oauth_refresh_tokens_expires_at (expires_at),
@@ -70,8 +76,21 @@ const MIGRATIONS = [
 export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await assertStrictMode(conn);
   for (const ddl of MIGRATIONS) await conn.query(ddl);
+  await ensureColumn(conn, "oauth_auth_codes", "grant_generation");
+  await ensureColumn(conn, "oauth_refresh_token_families", "grant_generation");
+  await ensureColumn(conn, "oauth_refresh_tokens", "grant_generation");
   await assertColumnCollations(conn);
   await assertInnoDBEngine(conn);
+}
+
+async function ensureColumn(conn: PoolConnection, table: string, column: string): Promise<void> {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+    [table, column],
+  );
+  if (rows.length === 0) {
+    await conn.query(`ALTER TABLE ${table} ADD COLUMN ${column} BIGINT UNSIGNED NULL`);
+  }
 }
 
 async function assertStrictMode(conn: PoolConnection): Promise<void> {
@@ -126,13 +145,13 @@ async function assertInnoDBEngine(conn: PoolConnection): Promise<void> {
 
 // ---- Row interfaces + DML/validation helpers (shared with mysql.ts) ----
 
-export interface AuthCodeRow { code_hash: string; client_id: string; subject: string; redirect_uri: string; resource: string; scopes_json: string; code_challenge: string; code_challenge_method: "S256"; expires_at: string }
-export interface RefreshTokenRow { token_hash: string; family_id: string; previous_token_hash: string | null; client_id: string; subject: string; scopes_json: string; expires_at: string; consumed_at: string | null; f_revoked_at: string | null }
+export interface AuthCodeRow { code_hash: string; client_id: string; subject: string; redirect_uri: string; resource: string; scopes_json: string; code_challenge: string; code_challenge_method: "S256"; expires_at: string; grant_generation: unknown }
+export interface RefreshTokenRow { token_hash: string; family_id: string; previous_token_hash: string | null; client_id: string; subject: string; scopes_json: string; expires_at: string; consumed_at: string | null; grant_generation: unknown; f_revoked_at: string | null; f_grant_generation: unknown }
 
 export async function insertRefreshToken(conn: PoolConnection, input: SaveRefreshTokenInput): Promise<void> {
   await conn.query(
-    `INSERT INTO oauth_refresh_tokens (token_hash, family_id, previous_token_hash, client_id, subject, scopes_json, expires_at, consumed_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-    [input.tokenHash, input.familyId, input.previousTokenHash, input.clientId, input.subject, JSON.stringify(input.scopes), input.expiresAt],
+    `INSERT INTO oauth_refresh_tokens (token_hash, family_id, previous_token_hash, client_id, subject, scopes_json, expires_at, consumed_at, grant_generation) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+    [input.tokenHash, input.familyId, input.previousTokenHash, input.clientId, input.subject, JSON.stringify(input.scopes), input.expiresAt, grantGenerationForWrite(input.grantGeneration)],
   );
 }
 
@@ -150,20 +169,21 @@ export function isDuplicateEntry(error: unknown): boolean {
 }
 
 export function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow): SaveRefreshTokenInput {
-  return { ...input, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json) };
+  return { ...input, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), grantGeneration: grantGenerationFromStored(row.grant_generation) };
 }
 
 export function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {
-  return { codeHash: row.code_hash, clientId: row.client_id, subject: row.subject, redirectUri: row.redirect_uri, resource: row.resource, scopes: parseScopes(row.scopes_json), codeChallenge: row.code_challenge, codeChallengeMethod: row.code_challenge_method, expiresAt: row.expires_at };
+  return { codeHash: row.code_hash, clientId: row.client_id, subject: row.subject, redirectUri: row.redirect_uri, resource: row.resource, scopes: parseScopes(row.scopes_json), codeChallenge: row.code_challenge, codeChallengeMethod: row.code_challenge_method, expiresAt: row.expires_at, grantGeneration: grantGenerationFromStored(row.grant_generation) };
 }
 
 export function refreshTokenFromRow(row: RefreshTokenRow): RefreshTokenRecord {
-  return { tokenHash: row.token_hash, familyId: row.family_id, previousTokenHash: row.previous_token_hash, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), expiresAt: row.expires_at };
+  return { tokenHash: row.token_hash, familyId: row.family_id, previousTokenHash: row.previous_token_hash, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), expiresAt: row.expires_at, grantGeneration: grantGenerationFromStored(row.grant_generation) };
 }
 
 export function validateAuthCode(input: SaveAuthCodeInput): void {
   assertSha256Hex(input.codeHash, "codeHash");
   assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
+  assertGrantGeneration(input.grantGeneration, "grantGeneration");
   if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
 }
 
@@ -171,6 +191,7 @@ export function validateRefreshToken(input: SaveRefreshTokenInput): void {
   assertSha256Hex(input.tokenHash, "tokenHash");
   if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
   assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
+  assertGrantGeneration(input.grantGeneration, "grantGeneration");
 }
 
 export function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {

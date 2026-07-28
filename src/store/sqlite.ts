@@ -8,19 +8,19 @@ import { chmodSync } from "node:fs";
 import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
-import { StoreInputError, assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
+import {
+  STORED_DCR_GRANT_GENERATION, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
+  grantGenerationForWrite, grantGenerationFromStored,
+} from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
-
-interface AuthCodeRow {
-  code_hash: string; client_id: string; subject: string; redirect_uri: string; resource: string;
-  scopes_json: string; code_challenge: string; code_challenge_method: "S256"; expires_at: string;
-}
-interface RefreshTokenRow {
-  token_hash: string; family_id: string; previous_token_hash: string | null; client_id: string;
-  subject: string; scopes_json: string; expires_at: string; consumed_at: string | null; revoked_at: string | null;
-}
+import {
+  authCodeFromRow, insertRefreshToken, nextFromRow, parseScopes,
+  refreshTokenFromRow, revokeFamily, validateAuthCode, validateRefreshToken,
+  validateRotation, type AuthCodeRow, type RefreshTokenRow,
+} from "./sqlite-records.ts";
 
 export class SqliteStore implements StorePort {
+  readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   private closed = false;
   private readonly db: DatabaseSync;
 
@@ -33,14 +33,15 @@ export class SqliteStore implements StorePort {
     validateAuthCode(input);
     this.db.prepare(`INSERT INTO oauth_auth_codes (
       code_hash, client_id, subject, redirect_uri, resource, scopes_json,
-      code_challenge, code_challenge_method, expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      code_challenge, code_challenge_method, expires_at, grant_generation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       input.codeHash, input.clientId, input.subject, input.redirectUri, input.resource,
-      JSON.stringify(input.scopes), input.codeChallenge, input.codeChallengeMethod, input.expiresAt,
+      JSON.stringify(input.scopes), input.codeChallenge, input.codeChallengeMethod,
+      input.expiresAt, grantGenerationForWrite(input.grantGeneration),
     );
   }
 
-  async consumeAuthCode(codeHash: string, nowIso: string): Promise<AuthCodeRecord | null> {
+  async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number): Promise<AuthCodeRecord | null> {
     this.ensureOpen();
     assertSha256Hex(codeHash, "codeHash");
     assertUtcIsoTimestamp(nowIso, "nowIso");
@@ -48,7 +49,9 @@ export class SqliteStore implements StorePort {
       const row = this.db.prepare(`SELECT * FROM oauth_auth_codes WHERE code_hash = ?`).get(codeHash) as AuthCodeRow | undefined;
       if (!row) return null;
       this.db.prepare(`DELETE FROM oauth_auth_codes WHERE code_hash = ?`).run(codeHash);
-      return row.expires_at > nowIso ? authCodeFromRow(row) : null;
+      const record = authCodeFromRow(row);
+      return row.expires_at > nowIso
+        && (expectedGrantGeneration === undefined || record.grantGeneration === expectedGrantGeneration) ? record : null;
     });
   }
 
@@ -65,22 +68,32 @@ export class SqliteStore implements StorePort {
     this.ensureOpen();
     validateRefreshToken(input);
     this.transaction(() => {
-      this.db.prepare(
-        `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, NULL) ON CONFLICT(family_id) DO NOTHING`,
-      ).run(input.familyId);
+      const generation = grantGenerationForWrite(input.grantGeneration);
+      this.db.prepare(`INSERT INTO oauth_refresh_token_families (
+        family_id, revoked_at, grant_generation
+      ) VALUES (?, NULL, ?) ON CONFLICT(family_id) DO NOTHING`).run(input.familyId, generation);
+      const family = this.db.prepare(
+        `SELECT grant_generation FROM oauth_refresh_token_families WHERE family_id = ?`,
+      ).get(input.familyId) as { grant_generation: unknown };
+      if (grantGenerationFromStored(family.grant_generation) !== generation) {
+        throw new StoreInputError("family grantGeneration mismatch");
+      }
       insertRefreshToken(this.db, input);
     });
   }
 
-  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): Promise<RefreshTokenRecord | null> {
+  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
     validateRotation(tokenHash, next, nowIso);
     return this.transaction(() => {
       const row = this.db.prepare(
-        `SELECT t.*, f.revoked_at FROM oauth_refresh_tokens t
+        `SELECT t.*, f.revoked_at, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t
          JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ?`,
       ).get(tokenHash) as RefreshTokenRow | undefined;
       if (!row || row.revoked_at !== null) return null;
+      if (expectedGrantGeneration !== undefined
+        && (grantGenerationFromStored(row.f_grant_generation) !== expectedGrantGeneration
+          || grantGenerationFromStored(row.grant_generation) !== expectedGrantGeneration)) return null;
       if (row.consumed_at !== null) {
         revokeFamily(this.db, row.family_id, nowIso);
         return null;
@@ -104,22 +117,27 @@ export class SqliteStore implements StorePort {
     this.ensureOpen();
     return this.transaction(() => {
       const row = this.db.prepare(
-        `SELECT t.*, f.revoked_at FROM oauth_refresh_tokens t
+        `SELECT t.*, f.revoked_at, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t
          JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ?`,
       ).get(tokenHash) as RefreshTokenRow | undefined;
       return row ? refreshTokenFromRow(row) : null;
     });
   }
 
-  async findGrantedScopes(subject: string, clientId: string, nowIso: string): Promise<string[]> {
+  async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number): Promise<string[]> {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
     return this.transaction(() => {
+      const generationClause = expectedGrantGeneration === undefined
+        ? "" : " AND f.grant_generation = ? AND t.grant_generation = ?";
       const rows = this.db.prepare(
         `SELECT t.scopes_json FROM oauth_refresh_tokens t
          JOIN oauth_refresh_token_families f ON f.family_id = t.family_id
-         WHERE t.subject = ? AND t.client_id = ? AND t.consumed_at IS NULL AND f.revoked_at IS NULL AND t.expires_at > ?`,
-      ).all(subject, clientId, nowIso) as { scopes_json: string }[];
+         WHERE t.subject = ? AND t.client_id = ? AND t.consumed_at IS NULL
+         AND f.revoked_at IS NULL AND t.expires_at > ?${generationClause}`,
+      ).all(...(expectedGrantGeneration === undefined
+        ? [subject, clientId, nowIso]
+        : [subject, clientId, nowIso, expectedGrantGeneration, expectedGrantGeneration])) as { scopes_json: string }[];
       const out: string[] = [];
       for (const row of rows) for (const s of parseScopes(row.scopes_json)) if (!out.includes(s)) out.push(s);
       return out;
@@ -184,66 +202,4 @@ export function openSqliteStore(filename: string): SqliteStore {
   }
   migrateSqliteStore(db);
   return new SqliteStore(db);
-}
-
-function insertRefreshToken(db: DatabaseSync, input: SaveRefreshTokenInput): void {
-  db.prepare(`INSERT INTO oauth_refresh_tokens (
-    token_hash, family_id, previous_token_hash, client_id, subject, scopes_json, expires_at, consumed_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`).run(
-    input.tokenHash, input.familyId, input.previousTokenHash, input.clientId, input.subject,
-    JSON.stringify(input.scopes), input.expiresAt,
-  );
-}
-
-function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow): SaveRefreshTokenInput {
-  return { ...input, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json) };
-}
-
-function revokeFamily(db: DatabaseSync, familyId: string, revokedAtIso: string): void {
-  db.prepare(
-    `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, ?)
-     ON CONFLICT(family_id) DO UPDATE SET revoked_at = COALESCE(oauth_refresh_token_families.revoked_at, excluded.revoked_at)`,
-  ).run(familyId, revokedAtIso);
-}
-
-function validateAuthCode(input: SaveAuthCodeInput): void {
-  assertSha256Hex(input.codeHash, "codeHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-  if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
-}
-
-function validateRefreshToken(input: SaveRefreshTokenInput): void {
-  assertSha256Hex(input.tokenHash, "tokenHash");
-  if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
-  assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
-}
-
-function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
-  assertSha256Hex(tokenHash, "tokenHash");
-  validateRefreshToken(next);
-  assertUtcIsoTimestamp(nowIso, "nowIso");
-  if (next.previousTokenHash !== tokenHash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
-}
-
-function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {
-  return {
-    codeHash: row.code_hash, clientId: row.client_id, subject: row.subject, redirectUri: row.redirect_uri,
-    resource: row.resource, scopes: parseScopes(row.scopes_json), codeChallenge: row.code_challenge,
-    codeChallengeMethod: row.code_challenge_method, expiresAt: row.expires_at,
-  };
-}
-
-function refreshTokenFromRow(row: RefreshTokenRow): RefreshTokenRecord {
-  return {
-    tokenHash: row.token_hash, familyId: row.family_id, previousTokenHash: row.previous_token_hash,
-    clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), expiresAt: row.expires_at,
-  };
-}
-
-function parseScopes(value: string): string[] {
-  const parsed = JSON.parse(value) as unknown;
-  if (!Array.isArray(parsed) || parsed.some((scope) => typeof scope !== "string")) {
-    throw new Error("Stored scopes are invalid");
-  }
-  return parsed;
 }

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { STORED_DCR_GRANT_GENERATION } from "../src/ports/store.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
 import { runStoreConformance } from "./lib/store-conformance.ts";
@@ -57,4 +58,116 @@ test("SqliteStore: a file: URI filename is not chmod'd (URI string not passed to
   // opened; URI names are detected and skipped so valid SQLite URIs work.
   const store = openSqliteStore("file:mcp-sso-uri-test?mode=memory");
   await store.close();
+});
+
+test("SqliteStore: generation survives reopen and old-column inserts remain legacy", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-generation-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const first = openSqliteStore(file);
+    await first.saveAuthCode({
+      codeHash: sha256Hex("current-code"), clientId: "existing-client", subject: "s",
+      redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
+      scopes: ["mcp:read"], codeChallenge: "x", codeChallengeMethod: "S256",
+      expiresAt: "2026-07-03T13:00:00.000Z", grantGeneration: STORED_DCR_GRANT_GENERATION,
+    });
+    await first.saveRefreshToken({
+      tokenHash: sha256Hex("current-refresh"), familyId: "current-family",
+      previousTokenHash: null, clientId: "existing-client", subject: "s",
+      scopes: ["mcp:read"], expiresAt: "2026-07-03T13:00:00.000Z",
+      grantGeneration: STORED_DCR_GRANT_GENERATION,
+    });
+    await first.close();
+
+    const oldBinary = new DatabaseSync(file);
+    oldBinary.prepare(`INSERT INTO oauth_auth_codes (
+      code_hash, client_id, subject, redirect_uri, resource, scopes_json,
+      code_challenge, code_challenge_method, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      sha256Hex("legacy-code"), "existing-client", "s", "https://client.test/callback",
+      "https://api.test/mcp", '["mcp:read"]', "x", "S256", "2026-07-03T13:00:00.000Z",
+    );
+    oldBinary.prepare(
+      `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, NULL)`,
+    ).run("legacy-family");
+    oldBinary.prepare(`INSERT INTO oauth_refresh_tokens (
+      token_hash, family_id, previous_token_hash, client_id, subject,
+      scopes_json, expires_at, consumed_at
+    ) VALUES (?, ?, NULL, ?, ?, ?, ?, NULL)`).run(
+      sha256Hex("legacy-refresh"), "legacy-family", "existing-client",
+      "s", '["mcp:write"]', "2026-07-03T13:00:00.000Z",
+    );
+    oldBinary.prepare(`INSERT INTO oauth_refresh_tokens (
+      token_hash, family_id, previous_token_hash, client_id, subject,
+      scopes_json, expires_at, consumed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`).run(
+      sha256Hex("legacy-in-current-family"), "current-family",
+      sha256Hex("current-refresh"), "existing-client", "s",
+      '["mcp:write"]', "2026-07-03T13:00:00.000Z",
+    );
+    oldBinary.close();
+
+    const reopened = openSqliteStore(file);
+    assert.equal(
+      (await reopened.consumeAuthCode(
+        sha256Hex("current-code"), "2026-07-03T12:00:00.000Z",
+        STORED_DCR_GRANT_GENERATION,
+      ))?.grantGeneration,
+      STORED_DCR_GRANT_GENERATION,
+      "a genuine current code survives restart",
+    );
+    assert.equal(
+      await reopened.consumeAuthCode(
+        sha256Hex("legacy-code"), "2026-07-03T12:00:00.000Z",
+        STORED_DCR_GRANT_GENERATION,
+      ),
+      null,
+      "old explicit-column insert receives SQL NULL and is rejected",
+    );
+    assert.ok(await reopened.rotateRefreshToken(
+      sha256Hex("current-refresh"),
+      {
+        tokenHash: sha256Hex("current-successor"), familyId: "current-family",
+        previousTokenHash: sha256Hex("current-refresh"), clientId: "ignored",
+        subject: "ignored", scopes: [], expiresAt: "2026-07-03T13:00:00.000Z",
+        grantGeneration: 2,
+      },
+      "2026-07-03T12:00:00.000Z",
+      STORED_DCR_GRANT_GENERATION,
+    ), "a genuine current family survives restart");
+    assert.equal(await reopened.rotateRefreshToken(
+      sha256Hex("legacy-refresh"),
+      {
+        tokenHash: sha256Hex("legacy-successor"), familyId: "legacy-family",
+        previousTokenHash: sha256Hex("legacy-refresh"), clientId: "existing-client",
+        subject: "s", scopes: [], expiresAt: "2026-07-03T13:00:00.000Z",
+        grantGeneration: STORED_DCR_GRANT_GENERATION,
+      },
+      "2026-07-03T12:00:00.000Z",
+      STORED_DCR_GRANT_GENERATION,
+    ), null);
+    assert.equal(await reopened.findRefreshToken(sha256Hex("legacy-successor")), null);
+    assert.equal(await reopened.rotateRefreshToken(
+      sha256Hex("legacy-in-current-family"),
+      {
+        tokenHash: sha256Hex("legacy-current-successor"), familyId: "current-family",
+        previousTokenHash: sha256Hex("legacy-in-current-family"), clientId: "existing-client",
+        subject: "s", scopes: [], expiresAt: "2026-07-03T13:00:00.000Z",
+        grantGeneration: STORED_DCR_GRANT_GENERATION,
+      },
+      "2026-07-03T12:00:00.000Z",
+      STORED_DCR_GRANT_GENERATION,
+    ), null, "old successor in a current family is still legacy");
+    assert.deepEqual(
+      await reopened.findGrantedScopes(
+        "s", "existing-client", "2026-07-03T12:00:00.000Z",
+        STORED_DCR_GRANT_GENERATION,
+      ),
+      ["mcp:read"],
+      "old successor in a current family cannot contribute scopes",
+    );
+    await reopened.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

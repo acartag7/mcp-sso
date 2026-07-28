@@ -4,7 +4,10 @@
 
 import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
-import { assertSha256Hex, assertUtcIsoTimestamp } from "../ports/store.ts";
+import {
+  STORED_DCR_GRANT_GENERATION, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
+  grantGenerationForWrite, grantGenerationFromStored,
+} from "../ports/store.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
   authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
@@ -12,6 +15,7 @@ import {
 } from "./mysql-schema.ts";
 
 export class MysqlStore implements StorePort {
+  readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   private closed = false;
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
@@ -28,12 +32,12 @@ export class MysqlStore implements StorePort {
     this.ensureOpen();
     validateAuthCode(input);
     await this.pool.query(
-      `INSERT INTO oauth_auth_codes (code_hash, client_id, subject, redirect_uri, resource, scopes_json, code_challenge, code_challenge_method, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [input.codeHash, input.clientId, input.subject, input.redirectUri, input.resource, JSON.stringify(input.scopes), input.codeChallenge, input.codeChallengeMethod, input.expiresAt],
+      `INSERT INTO oauth_auth_codes (code_hash, client_id, subject, redirect_uri, resource, scopes_json, code_challenge, code_challenge_method, expires_at, grant_generation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [input.codeHash, input.clientId, input.subject, input.redirectUri, input.resource, JSON.stringify(input.scopes), input.codeChallenge, input.codeChallengeMethod, input.expiresAt, grantGenerationForWrite(input.grantGeneration)],
     );
   }
 
-  async consumeAuthCode(codeHash: string, nowIso: string): Promise<AuthCodeRecord | null> {
+  async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number): Promise<AuthCodeRecord | null> {
     this.ensureOpen();
     assertSha256Hex(codeHash, "codeHash");
     assertUtcIsoTimestamp(nowIso, "nowIso");
@@ -42,7 +46,9 @@ export class MysqlStore implements StorePort {
       const row = rows[0] as AuthCodeRow | undefined;
       if (!row) return null;
       await conn.query(`DELETE FROM oauth_auth_codes WHERE code_hash = ?`, [codeHash]);
-      return row.expires_at > nowIso ? authCodeFromRow(row) : null;
+      const record = authCodeFromRow(row);
+      return row.expires_at > nowIso
+        && (expectedGrantGeneration === undefined || record.grantGeneration === expectedGrantGeneration) ? record : null;
     });
   }
 
@@ -63,24 +69,34 @@ export class MysqlStore implements StorePort {
     this.ensureOpen();
     validateRefreshToken(input);
     await this.transaction(async (conn) => {
+      const generation = grantGenerationForWrite(input.grantGeneration);
       await conn.query(
-        `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, NULL) ON DUPLICATE KEY UPDATE revoked_at = oauth_refresh_token_families.revoked_at`,
+        `INSERT INTO oauth_refresh_token_families (family_id, revoked_at, grant_generation) VALUES (?, NULL, ?) ON DUPLICATE KEY UPDATE revoked_at = oauth_refresh_token_families.revoked_at`,
+        [input.familyId, generation],
+      );
+      const [families] = await conn.query<RowDataPacket[]>(
+        `SELECT grant_generation FROM oauth_refresh_token_families WHERE family_id = ? FOR UPDATE`,
         [input.familyId],
       );
+      const family = families[0] as { grant_generation?: unknown } | undefined;
+      if (grantGenerationFromStored(family?.grant_generation) !== generation) throw new StoreInputError("family grantGeneration mismatch");
       await insertRefreshToken(conn, input);
     });
   }
 
-  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): Promise<RefreshTokenRecord | null> {
+  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
     validateRotation(tokenHash, next, nowIso);
     return this.transaction(async (conn) => {
       const [rows] = await conn.query<RowDataPacket[]>(
-        `SELECT t.*, f.revoked_at AS f_revoked_at FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ? FOR UPDATE`,
+        `SELECT t.*, f.revoked_at AS f_revoked_at, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ? FOR UPDATE`,
         [tokenHash],
       );
       const row = rows[0] as RefreshTokenRow | undefined;
       if (!row || row.f_revoked_at !== null) return null;
+      if (expectedGrantGeneration !== undefined
+        && (grantGenerationFromStored(row.f_grant_generation) !== expectedGrantGeneration
+          || grantGenerationFromStored(row.grant_generation) !== expectedGrantGeneration)) return null;
       if (row.consumed_at !== null) { await revokeFamily(conn, row.family_id, nowIso); return null; } // SAME conn — review B1
       if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
       // Insert successor BEFORE marking the predecessor consumed: a colliding successor
@@ -105,20 +121,25 @@ export class MysqlStore implements StorePort {
   async findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
     const [rows] = await this.pool.query<RowDataPacket[]>(
-      `SELECT t.*, f.revoked_at AS f_revoked_at FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ?`,
+      `SELECT t.*, f.revoked_at AS f_revoked_at, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ?`,
       [tokenHash],
     );
     const row = rows[0] as RefreshTokenRow | undefined;
     return row ? refreshTokenFromRow(row) : null;
   }
 
-  async findGrantedScopes(subject: string, clientId: string, nowIso: string): Promise<string[]> {
+  async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number): Promise<string[]> {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
+    const generationClause = expectedGrantGeneration === undefined
+      ? "" : " AND f.grant_generation = ? AND t.grant_generation = ?";
     const [rows] = await this.pool.query<RowDataPacket[]>(
       `SELECT t.scopes_json FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id
-       WHERE t.subject = ? AND t.client_id = ? AND t.consumed_at IS NULL AND f.revoked_at IS NULL AND t.expires_at > ?`,
-      [subject, clientId, nowIso],
+       WHERE t.subject = ? AND t.client_id = ? AND t.consumed_at IS NULL
+       AND f.revoked_at IS NULL AND t.expires_at > ?${generationClause}`,
+      expectedGrantGeneration === undefined
+        ? [subject, clientId, nowIso]
+        : [subject, clientId, nowIso, expectedGrantGeneration, expectedGrantGeneration],
     );
     const out: string[] = [];
     for (const row of rows as { scopes_json: string }[]) for (const s of parseScopes(row.scopes_json)) if (!out.includes(s)) out.push(s);
