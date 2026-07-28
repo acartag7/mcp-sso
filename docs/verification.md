@@ -279,6 +279,17 @@ eight peer-free public entry points, all 13 public entry points imported after
 their declared optional peers were installed, and the installed root package
 produced authorization-server and protected-resource metadata.
 
+**v0.3.1 prepublication candidate input (2026-07-28).** Exact merged
+implementation commit `d9b4f089dc46cf832ac598c5fce2401b095a2654`
+passed typecheck, line, acceptance-seam, and dependency-policy checks; 886 local
+tests and 910 hosted integration tests passed with zero skipped, followed by a
+clean build and `npm pack --dry-run`. The 200-file dry-run artifact had only
+`dist/`, `docs/`, `README.md`, `LICENSE`, and `package.json` at its root. That
+input still declares package version 0.3.0 because the version bump is a
+separate release commit. It is not evidence of a `v0.3.1` tag or npm
+publication; the final versioned head, hosted CI and review, publish dry-run,
+and installed-artifact smoke remain release gates.
+
 ### Release-authority gate
 
 Before tagging, verify the `publish` GitHub Environment through the repository

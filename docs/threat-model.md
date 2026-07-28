@@ -7,7 +7,11 @@
 > Update this file before any change to auth, tokens, redirect policy, the
 > store, identity, egress, or the publish pipeline.
 >
-> Status: **v0.3.0.** Threats 17–25 cover the
+> Status: **v0.3.1.** This release carries the v0.3.0 threat controls forward and adds the
+> post-rotation compensation in row 2 plus the atomic, auditable machine-client
+> lifecycle in row 18. Its public redirect-policy helper exposes the existing
+> §10 enforcement without changing the redirect threat boundary.
+> Threats 17–25 cover the
 > [§17](./contracts/17-v0-2-feature-contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
 > contracts — most shipped in v0.2; CIMD (§17.1) ships in v0.3.0
 > (S6a/S6b, frozen suites active), with
