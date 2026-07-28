@@ -1,5 +1,4 @@
 // OAuthTokenUseCase — auth-code exchange, refresh rotation, revocation (contracts §9.4). Refresh enforces RFC 6749 §6 client binding (mismatch revokes the family); revoke follows RFC 7009 (always succeeds; unknown token is a no-op).
-
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { AuthCodeRecord, RefreshTokenRecord, StorePort } from "./ports/store.ts";
@@ -10,14 +9,13 @@ import { resolveClientCredentialsScope, scopeString, storedScopes } from "./scop
 import { authenticateMachineClientSecret } from "./machine-client-auth.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 import { writeTokenAudit } from "./token-audit.ts";
-
+import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
 export interface OAuthTokenDeps {
   config: BridgeConfig;
   store: StorePort;
   clock: ClockPort;
   audit: AuditPort;
 }
-
 export interface AuthorizationCodeGrantInput {
   grantType?: string;
   code?: string;
@@ -25,13 +23,11 @@ export interface AuthorizationCodeGrantInput {
   clientId?: string;
   codeVerifier?: string;
 }
-
 export interface RefreshGrantInput {
   grantType?: string;
   refreshToken?: string;
   clientId?: string;
 }
-
 /** §17.2 `client_credentials` grant input. `authorization` is the raw
  *  Authorization header (Basic parsed here); `clientId`/`clientSecret` are the
  *  `client_secret_post` form fields. The grant resolves which method was used. */
@@ -43,7 +39,6 @@ export interface ClientCredentialsGrantInput {
   scope?: string;
   resource?: string;
 }
-
 /** User-grant response (authorization_code / refresh / device): access + refresh. */
 export interface UserTokenResponse {
   access_token: string;
@@ -77,6 +72,7 @@ export class OAuthTokenUseCase {
     this.store = deps.store;
     this.clock = deps.clock;
     this.audit = deps.audit;
+    assertStoredDcrGenerationStore(this.config, this.store);
   }
 
   async exchangeAuthorizationCode(input: AuthorizationCodeGrantInput): Promise<UserTokenResponse> {
@@ -94,6 +90,7 @@ export class OAuthTokenUseCase {
         tokenHash: sha256Hex(refreshToken), familyId, previousTokenHash: null,
         clientId: record.clientId, subject: record.subject, scopes: prepared.scopes,
         expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
+        grantGeneration: record.grantGeneration,
       });
       await this.auditToken("oauth.token.authorization_code", "success", record);
       return prepared.response;
@@ -122,9 +119,11 @@ export class OAuthTokenUseCase {
           expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
         },
         rotatedAtIso,
+        expectedStoredDcrGrantGeneration(this.config),
       );
       if (!rotated) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       try {
+        if (!hasExpectedGrantGeneration(rotated, expectedStoredDcrGrantGeneration(this.config))) throw new OAuthError("invalid_grant", "Refresh token is invalid");
         // The rotated record's stored client is authoritative (RFC 6749 §6).
         if (!input.clientId || input.clientId !== rotated.clientId) throw new OAuthError("invalid_grant", "Refresh token client binding is invalid");
         if (rotated.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
@@ -206,8 +205,9 @@ export class OAuthTokenUseCase {
   }
 
   private async consumeValidCode(input: AuthorizationCodeGrantInput): Promise<AuthCodeRecord> {
-    const code = requiredStr(input.code, "code"), record = await this.store.consumeAuthCode(sha256Hex(code), new Date(this.clock.nowMs()).toISOString());
-    if (!record) throw new OAuthError("invalid_grant", "Authorization code is invalid"); const redirectUri = record.redirectUri;
+    const code = requiredStr(input.code, "code"), expected = expectedStoredDcrGrantGeneration(this.config);
+    const record = await this.store.consumeAuthCode(sha256Hex(code), new Date(this.clock.nowMs()).toISOString(), expected);
+    if (!record || !hasExpectedGrantGeneration(record, expected)) throw new OAuthError("invalid_grant", "Authorization code is invalid"); const redirectUri = record.redirectUri;
     try { assertOAuthRedirectEntry(redirectUri); } catch { throw new OAuthError("invalid_grant", "Authorization code is invalid"); }
     if (input.clientId !== record.clientId || input.redirectUri !== redirectUri) {
       throw new OAuthError("invalid_grant", "Authorization code is invalid");

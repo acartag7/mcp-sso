@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import type { SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../../src/ports/store.ts";
-import { StoreInputError } from "../../src/ports/store.ts";
+import { STORED_DCR_GRANT_GENERATION, StoreInputError } from "../../src/ports/store.ts";
 
 const NOW = "2026-07-03T12:00:00.000Z";
 const LATER = "2026-07-03T12:05:00.000Z";
@@ -30,6 +30,22 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
       store.saveAuthCode({ ...authCode("bad", FUTURE), codeHash: "not-a-hash" }),
       (e: unknown) => e instanceof StoreInputError,
     );
+    await store.close();
+  });
+
+  test(`${label}: stored-DCR generation rejects and burns legacy auth codes`, async () => {
+    const store = make();
+    assert.equal(store.storedDcrGrantGeneration, STORED_DCR_GRANT_GENERATION);
+    await store.saveAuthCode(authCode("generation-current", FUTURE, STORED_DCR_GRANT_GENERATION));
+    assert.equal(
+      (await store.consumeAuthCode(sha256Hex("generation-current"), NOW, STORED_DCR_GRANT_GENERATION))?.grantGeneration,
+      STORED_DCR_GRANT_GENERATION,
+    );
+    await store.saveAuthCode(authCode("generation-legacy", FUTURE, null));
+    assert.equal(await store.consumeAuthCode(sha256Hex("generation-legacy"), NOW, STORED_DCR_GRANT_GENERATION), null);
+    assert.equal(await store.consumeAuthCode(sha256Hex("generation-legacy"), NOW), null, "legacy code was burned");
+    await store.saveAuthCode(authCode("generation-other", FUTURE, 2));
+    assert.equal(await store.consumeAuthCode(sha256Hex("generation-other"), NOW, STORED_DCR_GRANT_GENERATION), null);
     await store.close();
   });
 
@@ -93,6 +109,43 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: refresh generation is checked before rotation and copied from durable state`, async () => {
+    const store = make();
+    await store.saveRefreshToken(refresh("gen-current", "fam-gen", null, FUTURE, STORED_DCR_GRANT_GENERATION));
+    const rotated = await store.rotateRefreshToken(
+      sha256Hex("gen-current"),
+      refresh("gen-successor", "fam-gen", sha256Hex("gen-current"), FUTURE, 2),
+      NOW,
+      STORED_DCR_GRANT_GENERATION,
+    );
+    assert.equal(rotated?.grantGeneration, STORED_DCR_GRANT_GENERATION);
+    assert.equal((await store.findRefreshToken(sha256Hex("gen-successor")))?.grantGeneration, STORED_DCR_GRANT_GENERATION);
+
+    await store.saveRefreshToken(refresh("gen-legacy", "fam-legacy", null, FUTURE, null));
+    assert.equal(
+      await store.rotateRefreshToken(
+        sha256Hex("gen-legacy"),
+        refresh("legacy-successor", "fam-legacy", sha256Hex("gen-legacy"), FUTURE, STORED_DCR_GRANT_GENERATION),
+        NOW,
+        STORED_DCR_GRANT_GENERATION,
+      ),
+      null,
+    );
+    assert.ok(await store.findRefreshToken(sha256Hex("gen-legacy")), "legacy predecessor was not consumed");
+    assert.equal(await store.findRefreshToken(sha256Hex("legacy-successor")), null, "no successor became live");
+    await store.saveRefreshToken(refresh("gen-other", "fam-other", null, FUTURE, 2));
+    assert.equal(
+      await store.rotateRefreshToken(
+        sha256Hex("gen-other"),
+        refresh("other-successor", "fam-other", sha256Hex("gen-other"), FUTURE),
+        NOW,
+        STORED_DCR_GRANT_GENERATION,
+      ),
+      null,
+    );
+    await store.close();
+  });
+
   test(`${label}: a successor-hash collision returns null and leaves the predecessor unconsumed (§12.2 invariant 8)`, async () => {
     const store = make();
     await store.saveRefreshToken(refresh("col-orig", "fam-col", null, FUTURE));
@@ -145,6 +198,29 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: findGrantedScopes excludes legacy and non-current generations`, async () => {
+    const store = make();
+    await store.saveRefreshToken(refresh("scope-current", "fam-scope-current", null, FUTURE, STORED_DCR_GRANT_GENERATION));
+    await store.saveRefreshToken({
+      ...refresh("scope-legacy", "fam-scope-legacy", null, FUTURE, null),
+      scopes: ["mcp:write"],
+    });
+    await store.saveRefreshToken({
+      ...refresh("scope-other", "fam-scope-other", null, FUTURE, 2),
+      scopes: ["mcp:admin"],
+    });
+    assert.deepEqual(
+      await store.findGrantedScopes("subject-1", "client-1", NOW, STORED_DCR_GRANT_GENERATION),
+      ["mcp:read"],
+    );
+    assert.deepEqual(
+      (await store.findGrantedScopes("subject-1", "client-1", NOW)).sort(),
+      ["mcp:admin", "mcp:read", "mcp:write"],
+      "control: omission preserves stateless/non-cutover behavior",
+    );
+    await store.close();
+  });
+
   test(`${label}: consumeConsentJti rejects a non-3-ms timestamp (addendum 10)`, async () => {
     const store = make();
     await assert.rejects(store.consumeConsentJti("jti", "not-a-timestamp"), (e: unknown) => e instanceof StoreInputError);
@@ -194,18 +270,20 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 }
 
-function authCode(rawCode: string, expiresAt: string): SaveAuthCodeInput {
+function authCode(rawCode: string, expiresAt: string, grantGeneration?: number | null): SaveAuthCodeInput {
   return {
     codeHash: sha256Hex(rawCode), clientId: "client-1", subject: "subject-1",
     redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
-    scopes: ["mcp:read"], codeChallenge: "pkce-challenge", codeChallengeMethod: "S256", expiresAt,
+    scopes: ["mcp:read"], codeChallenge: "pkce-challenge",
+    codeChallengeMethod: "S256", expiresAt, grantGeneration,
   };
 }
 
-function refresh(rawToken: string, familyId: string, previousTokenHash: string | null, expiresAt: string): SaveRefreshTokenInput {
+function refresh(rawToken: string, familyId: string, previousTokenHash: string | null, expiresAt: string, grantGeneration?: number | null): SaveRefreshTokenInput {
   return {
     tokenHash: sha256Hex(rawToken), familyId, previousTokenHash,
-    clientId: "client-1", subject: "subject-1", scopes: ["mcp:read"], expiresAt,
+    clientId: "client-1", subject: "subject-1",
+    scopes: ["mcp:read"], expiresAt, grantGeneration,
   };
 }
 

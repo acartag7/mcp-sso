@@ -75,6 +75,21 @@ registrations or `client_credentials`. Stateless DCR requires no shared
 `ClientStore`; stored DCR does. CIMD itself does not write a client registration
 and does not need a `ClientStore`.
 
+### Upgrading stored DCR to 0.3.2
+
+The reference SQLite and MySQL stores add nullable generation columns when they
+open. Authorization codes and refresh sessions created before 0.3.2 have no
+generation and are rejected with `invalid_grant`; affected users authenticate
+once again. Sessions created by 0.3.2 keep their generation across ordinary
+restarts.
+
+Custom `StorePort` implementations must persist `grantGeneration`, implement
+the expected-generation arguments on code consumption, refresh rotation, and
+scope reads, and advertise `storedDcrGrantGeneration: 1` before deploying
+0.3.2. `assertStoredDcrGenerationStore` rejects stored-DCR startup otherwise.
+During a rollback, an older binary can still write legacy rows, but 0.3.2 will
+reject those rows when it returns.
+
 See [configuration.md](configuration.md) for bridge and identity-provider
 environment variables. Client registration is independent of the upstream IdP:
 Cloudflare Access, Entra ID, Google, and generic OIDC use the same CIMD/DCR

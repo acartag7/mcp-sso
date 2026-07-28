@@ -11,15 +11,24 @@ interface AuthCodeRecord {
   codeHash: string; clientId: string; subject: string; redirectUri: string;
   resource: string; scopes: string[]; codeChallenge: string;
   codeChallengeMethod: "S256"; expiresAt: string;
+  grantGeneration?: number | null;
 }
 interface RefreshTokenRecord {
   tokenHash: string; familyId: string; previousTokenHash: string | null;
   clientId: string; subject: string; scopes: string[]; expiresAt: string;
+  grantGeneration?: number | null;
 }
-interface SaveAuthCodeInput { /* AuthCodeRecord minus codeHash-as-source */ }
+interface SaveAuthCodeInput {
+  /* AuthCodeRecord fields; optional only for source compatibility with a
+     pre-0.3.2 caller. Current API omission defaults to generation 1;
+     explicit null and old SQL inserts are legacy. */
+  grantGeneration?: number | null;
+}
 interface SaveRefreshTokenInput {
   tokenHash: string; familyId: string; previousTokenHash: string | null;
   clientId: string; subject: string; scopes: string[]; expiresAt: string;
+  /* Same omission/null write semantics as SaveAuthCodeInput. */
+  grantGeneration?: number | null;
 }
 ```
 Inputs are validated: `assertSha256Hex` for every hash; `assertUtcIsoTimestamp`
@@ -31,6 +40,11 @@ string compare), and mixed precision inverts ordering (`"...00Z"` sorts after
 "S256"`; on rotation `next.previousTokenHash === tokenHash`. **`consumeConsentJti`
 validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, where
 `jti` rows were written with an unvalidated timestamp; the library closes it).
+The generation property remains optional in the public TypeScript record/input
+shapes so a patch upgrade does not make an existing custom store fail to
+compile. Reference stores always project it explicitly; the use-cases treat
+`undefined` on a returned record exactly like legacy `null`, and stored-DCR
+construction rejects a store without the generation capability marker.
 
 ## 12.2 Invariants the suite asserts
 1. **Hashed, single-use auth codes:** `consumeAuthCode` deletes on read; a second
@@ -100,6 +114,39 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
    family, the call leaves every member inactive; repeating it keeps the family
    inactive. The use-case reuses the rotation timestamp, so compensation does
    not introduce a second clock decision after the state mutation.
+10. **Stored-DCR grant generation (0.3.2):**
+    `STORED_DCR_GRANT_GENERATION` is the library-owned positive safe integer
+    `1`; it is not deployer configuration and not a per-client policy version.
+    New auth codes and refresh families issued while stored-DCR mode is active
+    carry it. Stateless-DCR records use `null`. CIMD still does not accumulate
+    scopes, but when it is enabled alongside stored DCR its grants carry the
+    deployment cutover generation too.
+
+    Reference SQL migrations add nullable `grant_generation` to
+    `oauth_auth_codes`, `oauth_refresh_token_families`, and
+    `oauth_refresh_tokens`. There is deliberately no non-null/default clause:
+    an old binary using the previous explicit insert column list writes SQL
+    `NULL`, making either a new family or a successor inserted into an existing
+    current family unambiguously legacy after a rollback. Reference row
+    projection maps missing/malformed values to legacy `null`.
+
+    `consumeAuthCode(hash, now, expectedGeneration?)` always burns the selected
+    code, but returns it only when unexpired and its generation equals a supplied
+    expectation. `rotateRefreshToken(hash, next, now, expectedGeneration?)`
+    compares both the family and token-row generations before replay handling,
+    predecessor consumption, or successor insertion; rotation copies the stored
+    token generation and ignores caller substitution.
+    `findGrantedScopes(subject, clientId, now, expectedGeneration?)` filters by
+    both generations. Thus an old binary
+    cannot write a post-purge grant that a re-upgraded binary accepts or
+    accumulates merely because the client ID currently exists.
+
+    The use-cases repeat returned-record equality before token preparation.
+    Stored-DCR mode requires the store capability marker
+    `storedDcrGrantGeneration: 1`; an absent/different marker is a boot
+    `AuthConfigError`, preventing a custom store that ignores the new optional
+    parameters from failing open. A current-generation family survives ordinary
+    process/store restarts.
 
 ## 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`) — in-process maps; dev/test only, labeled loud.
@@ -140,7 +187,10 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
   `createMysqlStore` owns the pool it creates (`close()` ends it); constructing
   `new MysqlStore(appPool)` with a caller-supplied shared pool leaves ownership — and
   the `close()` lifecycle — with the caller, so closing the store won't tear down a
-  pool other components still use. Two performance
+  pool other components still use. Nullable-column migration is safe under
+  concurrent replica startup: `ensureColumn` tolerates only MySQL
+  `ER_DUP_FIELDNAME`, then re-reads `information_schema` and succeeds only when
+  the raced column now exists; every other DDL error propagates. Two performance
   trade-offs are accepted as-is, both because the path is low-QPS OAuth state, not a
   hot loop: (1) `READ COMMITTED` is set per transaction (one extra ~1ms round-trip)
   because `mysql2`'s pool exposes no per-connection init hook to set it once; (2)

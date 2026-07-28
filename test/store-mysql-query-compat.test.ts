@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Pool, PoolConnection } from "mysql2/promise";
+import { STORED_DCR_GRANT_GENERATION } from "../src/ports/store.ts";
 import { MysqlStore } from "../src/store/mysql.ts";
 
 const FUTURE = "2026-07-27T13:00:00.000Z";
@@ -16,6 +17,9 @@ function recordingStore(): { readonly store: MysqlStore; readonly queries: Recor
   const connection = {
     query: async (sql: string, values?: unknown[]) => {
       queries.push({ sql, values });
+      if (sql.startsWith("SELECT grant_generation")) {
+        return [[{ grant_generation: STORED_DCR_GRANT_GENERATION }], []];
+      }
       return [[], []];
     },
     beginTransaction: async () => {},
@@ -46,6 +50,12 @@ test("MysqlStore family upserts bind incoming values without row aliases", async
   );
   assert.ok(createQuery);
   assert.doesNotMatch(createQuery.sql, /VALUES\s*\([^)]*\)\s+AS\s+/iu);
+  assert.deepEqual(createQuery.values, ["family", STORED_DCR_GRANT_GENERATION]);
+  const tokenQuery = created.queries.find(({ sql }) =>
+    sql.startsWith("INSERT INTO oauth_refresh_tokens")
+  );
+  assert.ok(tokenQuery);
+  assert.equal(tokenQuery.values?.at(-1), STORED_DCR_GRANT_GENERATION);
 
   const revoked = recordingStore();
   await revoked.store.revokeRefreshTokenFamily("family", REVOKED);

@@ -6,7 +6,6 @@
 // stands alone (§17.1.6 decision 3). CIMD resolution is one of the two named
 // resolution boundaries (decision 2): it happens inside `prepare`'s
 // pre-validation, and every failure maps to the anti-oracle generic there.
-
 import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { StorePort } from "./ports/store.ts";
@@ -23,12 +22,12 @@ import { buildErrorRedirect } from "./challenge.ts";
 import type { CimdResolver } from "./cimd/resolve.ts";
 import type { CimdRegistration } from "./cimd/registration.ts";
 import { assertOAuthRedirectEntry } from "./redirect.ts";
+import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, newGrantGeneration } from "./stored-dcr-generation.ts";
 import {
   accumulationAllowed, assertApproveCimdGate, assertApproveOrigin, cimdDisplay, dedupe, hostOf,
   redirectWithCode, requiredStr, resolveAuthorizeClient,
   type CimdConsentDisplay,
 } from "./authorize-internals.ts";
-
 export interface OAuthAuthorizationDeps {
   config: BridgeConfig;
   store: StorePort;
@@ -38,7 +37,6 @@ export interface OAuthAuthorizationDeps {
    *  constructs one per instance so direct and upstream share ONE cache. */
   cimd?: CimdResolver;
 }
-
 export interface AuthorizeRequestInput {
   clientId?: string;
   redirectUri?: string;
@@ -104,6 +102,7 @@ export class OAuthAuthorizationUseCase {
     this.clock = deps.clock;
     this.audit = deps.audit;
     this.cimd = deps.cimd;
+    assertStoredDcrGenerationStore(this.config, this.store);
   }
 
   async prepare(input: AuthorizeRequestInput): Promise<PreparedConsent> {
@@ -171,7 +170,7 @@ export class OAuthAuthorizationUseCase {
       // §17.1.6 decision 3 (NEGATIVE class): accumulate iff stored-DCR AND NOT
       // scheme-shaped. Never keyed on cimd_verified.
       const rawPrior = accumulationAllowed(this.config, clientId)
-        ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString())
+        ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config))
         : [];
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
       const priorScopes = claims.allowedScopes ? rawPrior.filter((s) => claims.allowedScopes!.includes(s)) : rawPrior;
@@ -213,7 +212,7 @@ export class OAuthAuthorizationUseCase {
 
       // Scope accumulation: stored-DCR OPAQUE clients only (§17.1.6 decision 3).
       const priorScopes = accumulationAllowed(this.config, consent.clientId)
-        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString())
+        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config))
         : [];
       const union = dedupe([...consent.scopes, ...priorScopes]);
       // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
@@ -230,6 +229,7 @@ export class OAuthAuthorizationUseCase {
         codeChallenge: consent.codeChallenge,
         codeChallengeMethod: "S256",
         expiresAt: expiresAtIso(operationClock, this.config.authorizationCodeTtlSeconds),
+        grantGeneration: newGrantGeneration(this.config),
       });
       await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject }, operationClock);
       return { code, redirectTo: redirectWithCode(consent.redirectUri, code, this.config.issuer, consent.state), state: consent.state };
