@@ -187,7 +187,10 @@ construction rejects a store without the generation capability marker.
   `createMysqlStore` owns the pool it creates (`close()` ends it); constructing
   `new MysqlStore(appPool)` with a caller-supplied shared pool leaves ownership — and
   the `close()` lifecycle — with the caller, so closing the store won't tear down a
-  pool other components still use. Two performance
+  pool other components still use. Nullable-column migration is safe under
+  concurrent replica startup: `ensureColumn` tolerates only MySQL
+  `ER_DUP_FIELDNAME`, then re-reads `information_schema` and succeeds only when
+  the raced column now exists; every other DDL error propagates. Two performance
   trade-offs are accepted as-is, both because the path is low-QPS OAuth state, not a
   hot loop: (1) `READ COMMITTED` is set per transaction (one extra ~1ms round-trip)
   because `mysql2`'s pool exposes no per-connection init hook to set it once; (2)
