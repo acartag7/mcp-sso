@@ -275,7 +275,7 @@ test("rotation: from a single secret yields exactly [old-grace, new-live]", asyn
   assert.notEqual(rot.clientSecret, prov.clientSecret);
 });
 
-test("rotation: default grace is 5m; new secret verified, old still accepted during overlap", async () => {
+test("rotation: default grace remains 24h; new secret verified, old still accepted during overlap", async () => {
   const h = harness();
   const prov = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
   const rot = await rotateMachineClientSecret(h.deps, prov.clientId); // no opts ⇒ default grace
@@ -384,27 +384,37 @@ test("rotation: rejects a bad graceSeconds", async () => {
   }
 });
 
-test("rotation: defaults to 300 seconds, accepts 600, and rejects 601 before CAS", async () => {
+test("rotation: preserves the 24h default, accepts a 5m policy, and rejects above 24h before CAS", async () => {
   const defaulted = harness();
   const defaultedClient = await provisionMachineClient(defaulted.deps, {
     allowedScopes: ["mcp:read"],
   });
   await rotateMachineClientSecret(defaulted.deps, defaultedClient.clientId);
   const defaultedRecord = await machineRecord(defaulted.store, defaultedClient.clientId);
-  assert.equal(defaultedRecord.secrets[0]?.expiresAtEpoch, Math.floor(NOW_MS / 1000) + 300);
+  assert.equal(
+    defaultedRecord.secrets[0]?.expiresAtEpoch,
+    Math.floor(NOW_MS / 1000) + 86_400,
+  );
 
   const accepted = harness();
   const first = await provisionMachineClient(accepted.deps, { allowedScopes: ["mcp:read"] });
   await rotateMachineClientSecret(accepted.deps, first.clientId, {
-    graceSeconds: MAX_ROTATION_GRACE_SECONDS,
+    graceSeconds: 300,
   });
   assert.equal(accepted.store.casCalls, 1);
+
+  const atMaximum = harness();
+  const maximumClient = await provisionMachineClient(atMaximum.deps, { allowedScopes: ["mcp:read"] });
+  await rotateMachineClientSecret(atMaximum.deps, maximumClient.clientId, {
+    graceSeconds: 86_400,
+  });
+  assert.equal(atMaximum.store.casCalls, 1);
 
   const rejected = harness();
   const second = await provisionMachineClient(rejected.deps, { allowedScopes: ["mcp:read"] });
   await assert.rejects(
     rotateMachineClientSecret(rejected.deps, second.clientId, {
-      graceSeconds: MAX_ROTATION_GRACE_SECONDS + 1,
+      graceSeconds: 86_401,
     }),
     (error: unknown) => error instanceof OAuthError && error.code === "invalid_request",
   );

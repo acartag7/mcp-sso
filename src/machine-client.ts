@@ -25,8 +25,8 @@ import {
   type ParsedActiveMachineClientRegistration,
 } from "./machine-client-record.ts";
 
-export const DEFAULT_ROTATION_GRACE_SECONDS = 300;
-export const MAX_ROTATION_GRACE_SECONDS = 600;
+export const DEFAULT_ROTATION_GRACE_SECONDS = 86_400;
+export const MAX_ROTATION_GRACE_SECONDS = 86_400;
 export interface MachineClientDeps {
   /** A v0.3.0 ClientStore remains source-compatible; mutation calls require
    * the atomic MachineClientStore extension and fail closed when it is absent. */
