@@ -25,6 +25,7 @@ import {
   ensureStateDir,
   assertRealDir,
   disableMachineClient,
+  verifyMachineClientSecret,
   DEFAULT_ROTATION_GRACE_SECONDS,
   MAX_ROTATION_GRACE_SECONDS,
   type MachineClientStore,
@@ -84,6 +85,12 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   const compatibleDepsStore: MachineClientDeps["store"] = legacyStore;
   assert.equal(compatibleDepsStore, legacyStore);
   void legacyStore.save(legacyMachine);
+  void verifyMachineClientSecret({
+    store: legacyStore,
+    catalog: ["mcp:read"],
+    clock: { nowMs: () => 1_000 },
+    audit: { async writeAuthEvent(): Promise<void> {} },
+  }, legacyMachine.clientId, "mcs_wrong");
   const legacyRotation: RotatedSecret = { clientSecret: "mcs_legacy" };
   const versionedRotation: VersionedRotatedSecret = { ...legacyRotation, version: 1 };
   assert.equal(versionedRotation.version, 1);

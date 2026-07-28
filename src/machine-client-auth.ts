@@ -1,5 +1,6 @@
 import type { ClientStore } from "./ports/client-store.ts";
 import type { ClockPort } from "./ports/clock.ts";
+import type { MachineClientDeps } from "./machine-client.ts";
 import {
   hashMachineClientSecret,
   verifyPresentedHash,
@@ -23,16 +24,19 @@ export async function authenticateMachineClientSecret(
     clientId,
     now,
   );
-  return client?.status === "active"
-    && verifyPresentedHash(presentedHash, client.secrets, now)
-    ? client
-    : null;
+  const activeClient = client?.status === "active" ? client : null;
+  const matched = verifyPresentedHash(
+    presentedHash,
+    activeClient?.secrets ?? [],
+    now,
+  );
+  return activeClient && matched ? activeClient : null;
 }
 
 /** Timing-safe verification. Missing, disabled, malformed, or poisoned rows
  * return false; store I/O failures still propagate. */
 export async function verifyMachineClientSecret(
-  deps: { store: ClientStore; clock: ClockPort },
+  deps: MachineClientDeps,
   clientId: string,
   presentedSecret: string,
 ): Promise<boolean> {
