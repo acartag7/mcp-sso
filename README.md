@@ -138,8 +138,9 @@ Use that field for downstream policy; do not decode the JWT or infer from an
 `sub === client_id`, and `gty: "client_credentials"` binding — enforced at
 three points, detailed in
 [§17.2](docs/contracts/17-v0-2-feature-contracts.md#172-client_credentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials).
-Rotate with `rotateMachineClientSecret` (24-hour maximum overlap), or revoke
-future token issuance with the atomic `disableMachineClient` tombstone.
+Rotate with `rotateMachineClientSecret` (5-minute default, 10-minute maximum
+overlap), or revoke future token issuance with the atomic
+`disableMachineClient` tombstone.
 
 ## API-key gateway: SSO in front of a token-only backend
 
