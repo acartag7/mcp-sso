@@ -7,8 +7,17 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and the contract set
 > disagree, the contract set wins until one of them is deliberately changed.
 >
-> Status: **v0.3.0**. The §17 feature contracts are locked; CIMD §17.1,
-> generic OIDC, and the Google preset are implemented. Google has reproducible
+> Status: **v0.3.1 release candidate; not yet tagged or published**. The
+> candidate is stacked on exact implementation commit
+> `9033b721a7df504343b565195d3baaeea3c4ee8f`. It adds compensating refresh-family
+> revocation through `OAuthTokenUseCase`, the versioned atomic machine-client
+> lifecycle enforced by `provisionMachineClient`, `rotateMachineClientSecret`,
+> and `disableMachineClient`, and the public
+> `assertRegistrationRedirectPolicy` helper. This source status does not assert
+> hosted review, registry publication, or a `v0.3.1` tag.
+>
+> The §17 feature contracts are locked; CIMD §17.1, generic OIDC, and the
+> Google preset are implemented. Google has reproducible
 > historical live verification; CIMD was live-verified through exact runtime
 > commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
 > A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
