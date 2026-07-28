@@ -105,10 +105,10 @@ export async function provisionMachineClient(
     if (!await store.createMachineClient(record, durableAudit)) {
       throw new OAuthError("server_error", "Machine client identifier collision", 500);
     }
-    await safeAudit(deps.audit, { ...durableAudit, status: "success" });
+    safeAudit(deps.audit, { ...durableAudit, status: "success" });
     return { clientId, clientSecret };
   } catch (error) {
-    await safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.provision", error, clientId));
+    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.provision", error, clientId));
     throw error;
   }
 }
@@ -145,10 +145,10 @@ export async function rotateMachineClientSecret(
     if (!await store.compareAndSwapMachineClient(current.version, next, durableAudit)) {
       throw new OAuthError("invalid_request", "Machine client changed; retry rotation", 409);
     }
-    await safeAudit(deps.audit, { ...durableAudit, status: "success" });
+    safeAudit(deps.audit, { ...durableAudit, status: "success" });
     return { clientSecret, version: next.version };
   } catch (error) {
-    await safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.rotate_secret", error, clientId));
+    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.rotate_secret", error, clientId));
     throw error;
   }
 }
@@ -175,10 +175,10 @@ export async function disableMachineClient(
     if (!await store.compareAndSwapMachineClient(current.version, next, durableAudit)) {
       throw new OAuthError("invalid_request", "Machine client changed; retry disable", 409);
     }
-    await safeAudit(deps.audit, { ...durableAudit, status: "success" });
+    safeAudit(deps.audit, { ...durableAudit, status: "success" });
     return { clientId, disabledAtEpoch: now, version: next.version };
   } catch (error) {
-    await safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.disable", error, clientId));
+    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.disable", error, clientId));
     throw error;
   }
 }
@@ -229,9 +229,9 @@ function failureAudit(
   };
 }
 
-async function safeAudit(audit: AuditPort, event: AuthAuditEvent): Promise<void> {
+function safeAudit(audit: AuditPort, event: AuthAuditEvent): void {
   try {
-    await audit.writeAuthEvent(event);
+    void Promise.resolve(audit.writeAuthEvent(event)).catch(() => {});
   } catch {
     // A success already has durable store evidence; a failure committed no row.
   }

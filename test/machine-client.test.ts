@@ -55,6 +55,10 @@ class ThrowingAudit implements AuditPort {
   async writeAuthEvent(): Promise<void> { throw new Error("supplemental audit unavailable"); }
 }
 
+class HangingAudit implements AuditPort {
+  async writeAuthEvent(): Promise<void> { return await new Promise(() => {}); }
+}
+
 class InMemoryClientStore implements MachineClientStore {
   readonly clients = new Map<string, ClientRegistration>();
   readonly mutationAudits: MachineClientMutationAudit[] = [];
@@ -325,6 +329,25 @@ test("rotation: same-version competitors return exactly one still-valid secret",
   assert.equal(
     h.store.mutationAudits.filter((audit) => audit.event === "oauth.client.rotate_secret").length,
     1,
+  );
+});
+
+test("rotation: a stalled supplemental audit cannot suppress the committed secret", async () => {
+  const h = harness();
+  const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("rotation blocked on supplemental audit")), 250);
+  });
+  const rotated = await Promise.race([
+    rotateMachineClientSecret({ ...h.deps, audit: new HangingAudit() }, provisioned.clientId),
+    timeout,
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+  assert.equal(
+    await verifyMachineClientSecret(h.deps, provisioned.clientId, rotated.clientSecret),
+    true,
   );
 });
 
