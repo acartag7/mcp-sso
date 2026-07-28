@@ -335,6 +335,54 @@ test("refresh signing failure compensates the committed rotation through Bridge.
   await ctx.store.close();
 });
 
+test("refresh compensation store failure returns no token and preserves the store boundary", async () => {
+  const ctx = setup();
+  const initial = await exchangeCode(ctx, "store-failure-verifier-123456789012345678901234567890");
+  const badConfig = createBridgeConfig({
+    ...ctx.config,
+    signingPrivateJwk: {
+      kty: "EC", crv: "P-256", x: "x", y: "y", d: "d", alg: "ES256", kid: "bad",
+    } as JWK,
+    signingKeyId: "bad",
+  });
+  const revocations: Array<{ familyId: string; at: string }> = [];
+  ctx.store.revokeRefreshTokenFamily = async (familyId, at) => {
+    revocations.push({ familyId, at });
+    throw new Error("store unavailable");
+  };
+  const bridge = new Bridge({
+    config: badConfig, store: ctx.store, clock: ctx.clock, audit: ctx.audit,
+  });
+  const response = await bridge.handleToken({
+    query: {}, headers: {},
+    body: {
+      grant_type: "refresh_token",
+      refresh_token: initial.refresh_token,
+      client_id: "client-1",
+    },
+  });
+  const familyId = initial.refresh_token.split(".")[1]!;
+  const nowIso = new Date(NOW_MS).toISOString();
+  assert.equal(response.status, 500);
+  assert.deepEqual(response.body, {
+    error: "internal_error", error_description: "OAuth request failed",
+  });
+  assert.equal("access_token" in (response.body as object), false);
+  assert.equal("refresh_token" in (response.body as object), false);
+  assert.deepEqual(revocations, [{ familyId, at: nowIso }], "one compensation attempt at the rotation timestamp");
+  assert.equal(
+    ctx.audit.events.some((event) => event.event === "oauth.token.refresh" && event.status === "success"),
+    false,
+    "a failed response and failed compensation never emit token success",
+  );
+  assert.deepEqual(
+    (await ctx.store.findGrantedScopes(SUBJECT, "client-1", nowIso)).sort(),
+    ["mcp:read", "mcp:write"],
+    "the rejecting store demonstrates why durable compensation remains store-dependent",
+  );
+  await ctx.store.close();
+});
+
 test("malformed stored scopes after rotation revoke the committed successor", async () => {
   const ctx = setup();
   const familyId = "malformedscopes012345";

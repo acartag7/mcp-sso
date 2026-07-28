@@ -177,9 +177,10 @@ full pattern, topology, and Kubernetes notes in
   and single-use (a replayed refresh token revokes its whole family); consent
   tokens are single-use. `OAuthTokenUseCase.exchangeAuthorizationCode` prepares
   the signed response before saving refresh state;
-  `OAuthTokenUseCase.refresh` revokes the rotated family if any later response
-  preparation step fails; all `OAuthTokenUseCase` audit writes are contained by
-  `writeTokenAudit`. **Access tokens are
+  `OAuthTokenUseCase.refresh` attempts to revoke the rotated family if any later
+  response preparation step fails and returns no token; durable compensation
+  still depends on the configured store accepting that write. All
+  `OAuthTokenUseCase` audit writes are contained by `writeTokenAudit`. **Access tokens are
   short-TTL ES256 bearer tokens — like
   any OAuth access token, a stolen one is valid until `exp`** (no access-token
   introspection or revocation in v0.2; [threat-model row 1](docs/threat-model.md)).
