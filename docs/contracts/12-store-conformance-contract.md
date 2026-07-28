@@ -11,12 +11,12 @@ interface AuthCodeRecord {
   codeHash: string; clientId: string; subject: string; redirectUri: string;
   resource: string; scopes: string[]; codeChallenge: string;
   codeChallengeMethod: "S256"; expiresAt: string;
-  grantGeneration: number | null;
+  grantGeneration?: number | null;
 }
 interface RefreshTokenRecord {
   tokenHash: string; familyId: string; previousTokenHash: string | null;
   clientId: string; subject: string; scopes: string[]; expiresAt: string;
-  grantGeneration: number | null;
+  grantGeneration?: number | null;
 }
 interface SaveAuthCodeInput {
   /* AuthCodeRecord fields; optional only for source compatibility with a
@@ -38,6 +38,11 @@ string compare), and mixed precision inverts ordering (`"...00Z"` sorts after
 "S256"`; on rotation `next.previousTokenHash === tokenHash`. **`consumeConsentJti`
 validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, where
 `jti` rows were written with an unvalidated timestamp; the library closes it).
+The generation property remains optional in the public TypeScript record/input
+shapes so a patch upgrade does not make an existing custom store fail to
+compile. Reference stores always project it explicitly; the use-cases treat
+`undefined` exactly like legacy `null`, and stored-DCR construction rejects a
+store without the generation capability marker.
 
 ## 12.2 Invariants the suite asserts
 1. **Hashed, single-use auth codes:** `consumeAuthCode` deletes on read; a second
