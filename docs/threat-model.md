@@ -181,7 +181,7 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 10 | Scope escalation | Elevation | `normalizeScopes` vs catalog (unknown ⇒ reject); server-authoritative prior-scopes (derived, not client-claimed); consent shows the delta; `requireScope` at the RS | None |
 | 11 | Consent replay | Tampering | Single-use consent JTI; atomic `consumeConsentJti` | None |
 | 12 | Identity spoofing | Spoofing | `IdentityPort` verifies the upstream credential; no/failed identity ⇒ 401 fail-closed; no passthrough | Depends on the concrete port validating iss/aud/tid. Header mode (`identityHeader`) carries a nonce residual — [see below](#row-12--header-mode-nonce-residual). The §17.11 redirect orchestrator does not (it mints its own nonce, row 31) |
-| 13 | SSRF via CIMD (v0.2) | SSRF | `createGuardedFetcher` enforces the full [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract) contract: URL admission (https-only, no userinfo/fragment/query/dot-segments/IP-literals/CRLF), complete IANA IPv4+IPv6 blocklists (binary compare; embedding prefixes blocked wholesale), all-records DNS validation + pinned connect (no re-resolve), redirects refused (draft -01 MUST NOT), 200-only, 5 KiB cap, 5 s deadline, single generic client-facing error | Timing side-channel could leak coarse network facts (fetch duration); accepted — response content/error shape leak nothing |
+| 13 | SSRF via CIMD (v0.2) | SSRF | `createGuardedFetcher` enforces the [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract) network boundary: URL admission (https-only, no userinfo/fragment/query/dot-segments/IP-literals/CRLF), complete IANA IPv4+IPv6 blocklists (binary compare; embedding prefixes blocked wholesale), all-records DNS validation + pinned connect (no re-resolve), redirects refused (draft -01 MUST NOT), 200-only, 5 KiB cap, and 5 s deadline. `CimdResolver.resolve` catches resolution failures and `mapCimdError` collapses them to one generic client-facing `invalid_client` | Timing side-channel could leak coarse network facts (fetch duration); accepted — response content/error shape leak nothing |
 | 14 | Secrets in logs/audit | Info disclosure | Metadata-only audit; tests assert no raw secrets leak | None |
 | 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day pins; SHA-pinned CI; provenance publish; no postinstall/bundler | A zero-day in jose itself — minimized by single-dep + pin + age |
 | 16 | Dev flag used to weaken a real host | Misconfiguration | `allowInsecureLocalhost` rejected unless loopback + loud warning | Someone tunnels a loopback dev instance out — dev-only, documented |
@@ -383,9 +383,10 @@ deployer acts on.
     ([§12.3](./contracts/12-store-conformance-contract.md#123-reference-adapters) for the two accepted
     trade-offs).
 - **CIMD (v0.2) adds an outbound-fetch SSRF surface.** `createGuardedFetcher`
-  enforces the full
+  enforces the network
   [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract)
-  control set (row 13).
+  control set; `CimdResolver.resolve` and `mapCimdError` provide the anti-oracle
+  boundary (row 13).
 - **Upstream-flow replay detection is store-scoped, and abandoned flows are
   invisible.** The flow cookie's single-use `jti` is consumed through the store:
   behind multiple replicas with the per-process memory store, a callback replay
