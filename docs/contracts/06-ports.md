@@ -80,7 +80,7 @@ interface UserClientRegistration {
   applicationType: "native" | "web";   // RC item (b)
   issuedAtEpoch: number;
 }
-interface MachineClientRegistration {
+interface MachineClientRegistration {              // v0.3.0 public shape
   clientId: string;             // "mcc_<random>" — sub prefix marks machine tokens
   redirectUris: string[];       // always [] — machine clients have no redirect
   applicationType: "machine";
@@ -89,22 +89,77 @@ interface MachineClientRegistration {
   allowedScopes: string[];      // ⊆ scopeCatalog, validated at provisioning
   secrets: ClientSecret[];      // ≤ 2 unexpired ("active"); see §17.2 rotation
 }
-type ClientRegistration = UserClientRegistration | MachineClientRegistration;
+interface MachineClientBase {
+  clientId: string;
+  redirectUris: string[];
+  applicationType: "machine";
+  issuedAtEpoch: number;
+  name?: string;
+  allowedScopes: string[];
+  version: number;              // positive safe integer; incremented by mutation
+}
+interface ActiveMachineClientRegistration extends MachineClientBase {
+  status: "active";
+  secrets: [ClientSecret] | [ClientSecret, ClientSecret];
+}
+interface DisabledMachineClientRegistration extends MachineClientBase {
+  status: "disabled";
+  secrets: [];
+  disabledAtEpoch: number;
+}
+type VersionedMachineClientRegistration =
+  | ActiveMachineClientRegistration
+  | DisabledMachineClientRegistration;
+type LegacyMachineClientRegistration = MachineClientRegistration;
+type StoredMachineClientRegistration =
+  | MachineClientRegistration
+  | VersionedMachineClientRegistration;
+type ClientRegistration =
+  | UserClientRegistration
+  | StoredMachineClientRegistration;
 
 interface ClientStore {
   save(client: ClientRegistration): Promise<void>;
   find(clientId: string): Promise<ClientRegistration | null>;
+}
+
+interface MachineClientMutationAudit {
+  occurredAt: string;
+  event:
+    | "oauth.client.provision"
+    | "oauth.client.rotate_secret"
+    | "oauth.client.disable";
+  clientId: string;
+  scopes: string[];
+}
+
+interface MachineClientStore extends ClientStore {
+  createMachineClient(
+    client: ActiveMachineClientRegistration,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean>;
+  compareAndSwapMachineClient(
+    expectedVersion: number,
+    client: VersionedMachineClientRegistration,
+    audit: MachineClientMutationAudit,
+  ): Promise<boolean>;
 }
 ```
 Required only when `dcr.mode === "stored"`. Reference: in-memory map (Phase 2);
 a persisted adapter is deployment-specific. The `applicationType` discriminant
 selects the record shape and drives the per-client redirect policy (§10):
 `native`/`web` are user clients (§9.2 DCR, §10.2 redirect policy); `machine`
-records are provisioned out-of-band (§17.2) and carry `allowedScopes` +
-`secrets` instead of redirect URIs. The discriminated union is the typed write
-contract: it prevents typed in-process callers from constructing a machine
-record whose `allowedScopes` or `secrets` are optional. It does not prove the
-shape of runtime data returned by a custom or persisted store.
+records are provisioned out-of-band (§17.2). The v0.3.0
+`MachineClientRegistration` name and `ClientStore.save(ClientRegistration)`
+signature remain source-compatible; lifecycle functions never use `save` for a
+machine mutation. Their `MachineClientDeps.store` remains typed as
+`ClientStore`, then requires the additive `MachineClientStore` methods at
+runtime and fails before generating a credential or mutating state when either
+method is absent. Every new machine write uses that extension: create or
+compare-and-swap commits the versioned row and supplied metadata-only durable
+audit record in one backend transaction, or neither. `false` means collision,
+missing row, or version conflict; it MUST commit neither row nor audit. New
+rows start at version 1. A disable writes a tombstone with no secret hashes.
 
 `ClientStore.find` is also a runtime boundary: a persisted or migrated row is
 not trusted merely because the port has a TypeScript return type.
@@ -117,14 +172,22 @@ SHA-256 hashes, non-negative safe-integer timestamps, at most one slot without
 an expiry, and at most two active slots (`expiresAtEpoch` absent or
 `expiresAtEpoch > nowEpoch`). Structurally valid expired history is accepted;
 rotation drops it rather than making an otherwise valid migrated row
-unreadable. The parser returns a fresh snapshot containing only those known
-fields. Secret verification, rotation, and both reads in the
-`client_credentials` grant use that parser with the current clock epoch; a
+unreadable. For upgrade compatibility, a complete v0.3.0 row with BOTH
+`status` and `version` absent is treated as active version 0; either field
+present without the other is malformed. A store CAS with `expectedVersion: 0`
+MUST match only such an unversioned row. Its first rotation or disable writes
+the version-1 shape atomically, so verification remains available while stores
+roll forward. New records and versioned records require the full lifecycle
+shape: positive safe-integer version, active with one or two secrets, or
+disabled with zero secrets and a non-negative safe-integer disable epoch. The
+parser returns a fresh known-field snapshot. Secret verification, rotation,
+disable, and the single authenticated `client_credentials` store snapshot use
+that parser with the current clock epoch; a
 malformed, over-active, or key-mismatched row fails closed before a secret is
-accepted, a record is saved, or a token is minted. The parser deliberately does
-not re-check the stored ceiling against the current catalog: catalog narrowing
-is enforced when resolving the grant (§17.2), so a still-valid subset remains
-usable.
+accepted, a record is mutated, or a token is minted. The parser deliberately
+does not re-check the stored ceiling against the current catalog: catalog
+narrowing is enforced when resolving the grant (§17.2), so a still-valid
+subset remains usable.
 
 ## 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's

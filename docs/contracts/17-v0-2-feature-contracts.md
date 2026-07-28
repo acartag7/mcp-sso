@@ -1000,8 +1000,11 @@ in this flow."* Decisions:
   use-cases take a deps object — `{ store, catalog, clock, audit }` — so they
   can validate `allowedScopes` against `scopeCatalog` (item below), stamp
   epochs, and emit audit without hidden globals (same deps-first shape as
-  `registerClient`). `catalog` is `config.scopeCatalog`; `store` is the stored
-  `ClientStore`.
+  `registerClient`). `catalog` is `config.scopeCatalog`. For patch
+  compatibility `MachineClientDeps.store` remains typed as `ClientStore`; each
+  lifecycle mutation requires the additive `MachineClientStore` methods at
+  runtime and fails before credential generation or mutation when they are
+  absent.
   - `provisionMachineClient(deps, { name?, allowedScopes, secretTtlSeconds? })`
     → `{ clientId, clientSecret }`. `clientId` = `mcc_<random>` — the prefix is
     enforced, giving a namespace disjoint from human subjects and from `mcpdc_`
@@ -1042,9 +1045,16 @@ in this flow."* Decisions:
     provisioned secret's `expiresAtEpoch = now + ttl` (a bounded-lifetime
     first secret); omitted ⇒ the secret is live until rotated. A TTL whose
     derived expiry is not a non-negative safe integer is `invalid_request`
-    before client-id/secret generation, `ClientStore.save`, or a success audit.
+    before client-id/secret generation, `createMachineClient`, or a success
+    audit.
   - `rotateMachineClientSecret(deps, clientId, { graceSeconds = 86400 })` →
-    `{ clientSecret }` (see Rotation below).
+    `VersionedRotatedSecret { clientSecret, version }` (see Rotation below).
+    The published v0.3.0 `RotatedSecret { clientSecret }` remains its base type
+    for patch source compatibility.
+  - `disableMachineClient(deps, clientId)` →
+    `{ clientId, disabledAtEpoch, version }`. It atomically replaces an active
+    record with a hash-free tombstone and its durable audit. Existing access
+    tokens remain valid only until their ordinary access-token expiry.
   - `verifyMachineClientSecret(deps, clientId, presentedSecret)` → `boolean`:
     the timing-safe comparison primitive the token endpoint (§9.4
     client_credentials grant, S3b) composes into client authentication. Finds
@@ -1055,12 +1065,27 @@ in this flow."* Decisions:
     lookup-key-mismatched records ⇒ `false` (the grant maps the boolean to
     `invalid_client`). A rejected `ClientStore.find` remains a store error; this
     function does not convert store I/O failure into an authentication result.
-- **`ClientStore` extension:** `applicationType` gains `"machine"`; machine
-  records carry `allowedScopes: string[]` (validated ⊆ `scopeCatalog` at
-  wiring) and `secrets: Array<{ hash, createdAtEpoch, expiresAtEpoch? }>`
-  (max 2 active); `redirectUris` MUST be `[]`; machine clients are rejected at
+- **`MachineClientStore` extension:** `applicationType` gains `"machine"`;
+  the v0.3.0 `MachineClientRegistration` name/shape and
+  `ClientStore.save(ClientRegistration)` signature remain public and
+  source-compatible as legacy input. New writes use the separately named
+  `VersionedMachineClientRegistration` union;
+  active machine records carry `status: "active"`, a positive monotonic
+  `version`, `allowedScopes: string[]` (validated ⊆ `scopeCatalog` at wiring),
+  and one or two `{ hash, createdAtEpoch, expiresAtEpoch? }` secrets. Disabled
+  tombstones carry `status: "disabled"`, a disable epoch, and no secrets.
+  `redirectUris` MUST be `[]`; machine clients are rejected at
   `/oauth/authorize` and MUST be rejected at any future device endpoints
-  (`invalid_client`).
+  (`invalid_client`). Lifecycle functions never write a machine row through
+  the compatibility `ClientStore.save` method.
+  `createMachineClient(client, audit)` and
+  `compareAndSwapMachineClient(expectedVersion, client, audit)` commit the row
+  and durable metadata-only lifecycle audit in one backend transaction or
+  commit neither; `false` is a no-write collision/conflict. New records start
+  at version 1. A complete legacy v0.3.0 record with no `status` or `version`
+  remains readable as active version 0; `expectedVersion: 0` matches only that
+  shape, and its first successful mutation writes version 1. A partial marker,
+  malformed full record, or version overflow fails closed before mutation.
 - **Secret contract:** `mcs_` + base64url(32 CSPRNG bytes) — 256-bit,
   clearing RFC 6749 §10.10 (≥2⁻¹²⁸ MUST) and RFC 6819 §5.1.4.2.2. Stored as
   **unsalted SHA-256 hex only**: RFC 6819 §5.1.4.1.3 conditions salting/work
@@ -1106,8 +1131,8 @@ in this flow."* Decisions:
   whole truth, so drift surfaces as `invalid_scope` until the client is
   re-provisioned (the same discipline a drifted user refresh token imposes).
   The stored ceiling is itself validated at grant time — a non-empty array of
-  scope tokens. Both the authentication read and the post-authentication read
-  pass through `parseMachineClientRegistration(value, clientId, nowEpoch)`, so
+  scope tokens. Authentication and scope resolution use one fresh snapshot
+  returned by `parseMachineClientRegistration(value, clientId, nowEpoch)`, so
   a custom/migrated store returning a malformed, over-active, or differently
   keyed row fails closed as `invalid_client` (never an empty-scope token or a
   token for the embedded wrong client). The parser also enforces the `mcc_`
@@ -1129,9 +1154,11 @@ in this flow."* Decisions:
   86400 })` — adds the new secret (live, no `expiresAtEpoch`), expires the
   currently-live secret at `now + grace` (the two-active-secrets overlap
   pattern, per Okta/Entra practice; RFC 7592 is Experimental and
-  hard-cutover, not used). A grace value whose derived expiry is not a
-  non-negative safe integer is `invalid_request` before secret generation,
-  `ClientStore.save`, or a success audit. The record's `secrets` array is then **exactly**
+  hard-cutover, not used). `DEFAULT_ROTATION_GRACE_SECONDS` and the hard
+  `MAX_ROTATION_GRACE_SECONDS` are both 86,400 (24 hours). A non-positive,
+  non-integer, above-maximum, or unsafe derived grace is `invalid_request`
+  before secret generation, CAS, or a success audit. The record's `secrets`
+  array is then **exactly**
   the permitted active set: the new live secret plus at most one grace secret
   (the latest-expiring); any older/expired (`expiresAtEpoch ≤ now`) entry is
   dropped so the array never exceeds two unexpired hashes. So a rotation from
@@ -1142,24 +1169,21 @@ in this flow."* Decisions:
   unknown, non-machine, malformed, or key-mismatched records ⇒
   `invalid_client`. Verification accepts any unexpired stored hash.
 - **Audit:** `oauth.token.client_credentials`, `oauth.client.provision`,
-  `oauth.client.rotate_secret` — clientId/scopes metadata only; never a secret
-  or a secret hash.
+  `oauth.client.rotate_secret`, `oauth.client.disable` — clientId/scopes
+  metadata only; never a secret or a secret hash. Each lifecycle success audit
+  is durable in the same `MachineClientStore` transaction as its row mutation.
+  The ordinary `AuditPort` copy is best-effort and cannot turn a committed,
+  one-time secret into an error response.
 - The MCP `initialize`-handshake extension advertisement
   (`capabilities.extensions`) is the host app's/example's concern, not the
   bridge's.
-- **Concurrency residual (deployment-discipline-enforced).** Provisioning and
-  rotation are non-atomic read-modify-write sequences over the deployer-supplied
-  `ClientStore` (`find` → compute → `save`); the port has no compare-and-swap
-  primitive. Two concurrent rotations on the same clientId race last-write-wins
-  and can silently discard one just-minted secret (an operational hazard, not a
-  security breach — the persisted state is always a valid ≤2-active set and no
-  secret is leaked). These are low-frequency out-of-band admin operations;
-  single-operator provisioning is safe. A multi-instance deployment using a
-  shared store MUST serialize rotations (or the port gains a CAS primitive —
-  deferred; it would affect ONLY provisioning/rotation, since `client_credentials`
-  issuance is stateless: the grant reads the record, signs a JWT with no
-  server-side token write, and returns no refresh token, so concurrent
-  multi-instance issuance is safe and raises no atomicity concern).
+- **Concurrency:** a rotation reads a fully parsed, key-bound active snapshot,
+  derives version `n + 1`, and submits one CAS with expected version `n`.
+  Exactly one same-version competitor can commit and return its raw secret;
+  losers receive a conflict before any secret is returned. Provision, rotate,
+  and disable commit their required durable audit in that same mutation.
+  `client_credentials` issuance remains stateless: it reads the record, signs a
+  JWT with no server-side token write, and returns no refresh token.
 
 ## 17.3 Device authorization grant (RFC 8628)
 

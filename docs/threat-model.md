@@ -188,7 +188,7 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day pins; SHA-pinned CI; provenance publish; no postinstall/bundler | A zero-day in jose itself — minimized by single-dep + pin + age |
 | 16 | Dev flag used to weaken a real host | Misconfiguration | `allowInsecureLocalhost` rejected unless loopback + loud warning | Someone tunnels a loopback dev instance out — dev-only, documented |
 | 17 | (v0.2) CIMD client impersonation via lookalike/localhost redirect (the MCP-documented attack: legit metadata URL + attacker's loopback redirect) | Spoofing | Exact `client_id` echo-match; redirect exact-match against the doc; the consent page presents the client-ID and redirect hosts first as the decision anchors, warns on loopback-only redirects, and renders `client_name` second as self-reported, unverified text. **The page is frame-blocked (row 36)** — without that, the user judgment this row depends on can be bypassed by an overlay rather than deceived | Real and spec-acknowledged: user judgment on lookalike domains / loopback approval remains the last line — CIMD cannot fully close this by design |
-| 18 | (v0.2) Machine-client secret theft / misuse | Spoofing / Elevation | Out-of-band provisioning only; 256-bit secrets (`mcs_`+base64url(32)); SHA-256-only storage; shown once; stored rows parsed and key-bound by `parseMachineClientRegistration`; `verifyMachineClientSecret` uses two digest comparisons and fails closed; scopes capped by per-client `allowedScopes` ⊆ catalog; no refresh tokens; rotation with bounded grace (≤2 active secrets). [Enforcement detail below](#row-18--machine-client-secret-enforcement) | A stolen secret is valid until rotated — there is no theft *signal* (unlike refresh replay); bounded by rotation practice + audit of `oauth.token.client_credentials` |
+| 18 | (v0.2) Machine-client secret theft / misuse | Spoofing / Elevation | Out-of-band provisioning only; 256-bit secrets (`mcs_`+base64url(32)); SHA-256-only storage; shown once; stored rows parsed and key-bound by `parseMachineClientRegistration`; versioned create/CAS/disable commits each mutation with durable audit; concurrent rotation has one winner; disabled tombstones contain no hashes; `verifyMachineClientSecret` uses two digest comparisons and fails closed; scopes capped by per-client `allowedScopes` ⊆ catalog; no refresh tokens; rotation grace hard-capped at 24 h (≤2 active secrets). [Enforcement detail below](#row-18--machine-client-secret-enforcement) | A stolen secret is valid until rotated or disabled — there is no theft *signal* (unlike refresh replay); already-issued access tokens remain valid until their ordinary expiry |
 | 19 | (contract-only) Device-flow `user_code` brute force | Spoofing | No device endpoint ships. §17.3 requires a 34.5-bit code, 600 s TTL, built-in in-process attempt cap, and `RateLimitPort` hook before this surface can be implemented | Not an active runtime threat; the specified per-instance residual applies only to a future implementation |
 | 20 | (contract-only) Device-flow remote phishing (attacker delivers THEIR `user_code` to the victim) | Spoofing | No device consent page ships. §17.3 requires the future page to echo the code and warn the user to confirm the device | Not an active runtime threat; real-time phishing remains a future RFC 8628 residual |
 | 21 | (v0.2) Pairing-code exposure (console scrollback, shipped logs) | Info disclosure / Spoofing | TTL 600 s, single-use, 5-attempt invalidation, session binding, ~52-bit code, in-process limiter | Shared log pipelines are OUTSIDE the deployment envelope (single-operator only) — a documented non-goal, not a mitigated risk |
@@ -285,18 +285,26 @@ nonce residual above.
   persisted machine shape and requires the embedded `clientId` to equal the
   requested lookup key. Its clock-relative active-secret cap permits expired
   history for rotation cleanup but rejects more than two active slots.
-  Verification, rotation, and the grant's second read reject a malformed,
-  over-active, or differently keyed row before accepting a secret, saving a
+  Verification, rotation, and the grant's authenticated snapshot reject a malformed,
+  over-active, or differently keyed row before accepting a secret, mutating a
   record, or signing a token. Provisioning and rotation also reject TTL/grace
   values whose derived expiry is not a safe integer before secret generation,
-  saving, or a success audit.
+  mutation, or a success audit.
+- **Atomic lifecycle.** `MachineClientStore.createMachineClient` and
+  `compareAndSwapMachineClient` commit the versioned row and metadata-only
+  lifecycle audit in one transaction or neither. Same-version rotations have
+  one CAS winner, and a conflict returns no secret. Disable atomically replaces
+  the active row with a hash-free tombstone. Valid unversioned v0.3.0
+  rows normalize to active version 0 and move to version 1 on first mutation;
+  partial lifecycle markers fail closed.
 - **Scope caps.** Scopes are capped by per-client `allowedScopes`, fixed ⊆
   catalog at provisioning. The grant validates the resolved scope against BOTH
   the ceiling AND the live `scopeCatalog`: `invalid_scope` on any over-ceiling
   or post-narrowing-drift entry. A scope removed from the catalog after
   provisioning is never minted (matching the user-grant `normalizeScopes`
   fail-closed gate).
-- **No refresh tokens.** Rotation has bounded grace (≤ 2 active secrets).
+- **No refresh tokens.** Rotation has at most two active secrets and a hard
+  24-hour grace maximum.
 
 ### Row 22 — group-authorization enforcement
 
