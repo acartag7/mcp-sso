@@ -18,6 +18,7 @@ import {
 import {
   type ApproveResult, type PreparedConsent, OAuthAuthorizationUseCase,
 } from "../src/authorize.ts";
+import { Bridge } from "../src/adapters/bridge.ts";
 import { OAuthTokenUseCase, type TokenResponse } from "../src/token.ts";
 import { registerClient } from "../src/register.ts";
 import { MemoryStore } from "../src/store/memory.ts";
@@ -290,6 +291,77 @@ test("refresh with a mismatched client_id is rejected and revokes the family (RF
   await assert.rejects(
     ctx.token.refresh({ grantType: "refresh_token", refreshToken: initial.refresh_token, clientId: "client-1" }),
     (e: unknown) => e instanceof OAuthError,
+  );
+  await ctx.store.close();
+});
+
+test("refresh signing failure compensates the committed rotation through Bridge.handleToken", async () => {
+  const ctx = setup();
+  const initial = await exchangeCode(ctx, "sign-failure-verifier-123456789012345678901234567890");
+  const badConfig = createBridgeConfig({
+    ...ctx.config,
+    signingPrivateJwk: {
+      kty: "EC", crv: "P-256", x: "x", y: "y", d: "d", alg: "ES256", kid: "bad",
+    } as JWK,
+    signingKeyId: "bad",
+  });
+  const revocations: Array<{ familyId: string; at: string }> = [];
+  const revokeFamily = ctx.store.revokeRefreshTokenFamily.bind(ctx.store);
+  ctx.store.revokeRefreshTokenFamily = async (familyId, at) => {
+    revocations.push({ familyId, at });
+    await revokeFamily(familyId, at);
+  };
+  const bridge = new Bridge({
+    config: badConfig, store: ctx.store, clock: ctx.clock, audit: ctx.audit,
+  });
+  const response = await bridge.handleToken({
+    query: {}, headers: {},
+    body: {
+      grant_type: "refresh_token",
+      refresh_token: initial.refresh_token,
+      client_id: "client-1",
+    },
+  });
+  const familyId = initial.refresh_token.split(".")[1]!;
+  const nowIso = new Date(NOW_MS).toISOString();
+  assert.equal(response.status, 500);
+  assert.equal((response.body as { error: string }).error, "internal_error");
+  assert.deepEqual(revocations, [{ familyId, at: nowIso }]);
+  assert.deepEqual(
+    await ctx.store.findGrantedScopes(SUBJECT, "client-1", nowIso),
+    [],
+    "the signing failure left no active unreturned successor",
+  );
+  await ctx.store.close();
+});
+
+test("malformed stored scopes after rotation revoke the committed successor", async () => {
+  const ctx = setup();
+  const familyId = "malformedscopes012345";
+  const rawRefresh = `rt.${familyId}.secret-1234567890`;
+  await ctx.store.saveRefreshToken({
+    tokenHash: sha256Hex(rawRefresh), familyId, previousTokenHash: null,
+    clientId: "client-1", subject: SUBJECT, scopes: ["not-in-catalog"],
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  const revocations: Array<{ familyId: string; at: string }> = [];
+  const revokeFamily = ctx.store.revokeRefreshTokenFamily.bind(ctx.store);
+  ctx.store.revokeRefreshTokenFamily = async (revokedFamilyId, at) => {
+    revocations.push({ familyId: revokedFamilyId, at });
+    await revokeFamily(revokedFamilyId, at);
+  };
+  const nowIso = new Date(NOW_MS).toISOString();
+  await assert.rejects(
+    ctx.token.refresh({
+      grantType: "refresh_token", refreshToken: rawRefresh, clientId: "client-1",
+    }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_grant",
+  );
+  assert.deepEqual(revocations, [{ familyId, at: nowIso }]);
+  assert.deepEqual(
+    await ctx.store.findGrantedScopes(SUBJECT, "client-1", nowIso),
+    [],
+    "the malformed row left no active unreturned successor",
   );
   await ctx.store.close();
 });
