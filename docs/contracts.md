@@ -13,11 +13,10 @@
 > commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
 > A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
 > dedicated GitHub port in §17.6 remain contract-only. Spec conformance
-> target: **MCP Authorization 2025-11-25** (the stable spec clients implement); the next
-> spec version is **final on 2026-07-28** (its RC was locked 2026-05-21).
-> Its backward-compatible hardening items (e.g. RFC 9207 `iss`) are built in,
-> and the 2026-07-28 maintainer re-verification found no checklist-relevant
-> changes from the pre-publication text. See the completed checklist in
+> target: **MCP Authorization 2025-11-25**. The backward-compatible
+> `2026-07-28-RC` hardening items (e.g. RFC 9207 `iss`) are built in. The
+> official final artifact is not yet published, so final-text re-verification
+> and any final conformance claim remain pending. See the blocking checklist in
 > [`docs/verification.md` — "Spec-release re-verification (due
 > 2026-07-28)"](verification.md#spec-release-re-verification-due-2026-07-28)
 > for the exact outcome.

@@ -345,8 +345,9 @@ A patched-checkout campaign subsequently observed real CIMD-first clients
 across Cloudflare Access, Entra, and Google, but its exact dirty tree was not
 archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 2.1.220 repeated CIMD authorization and protected tool calls through exact
-runtime commit `af2a61f` with all three providers. The 2026-07-28 final-spec
-re-verification found no checklist-relevant change to this contract.
+runtime commit `af2a61f` with all three providers. The implementation was
+reviewed against `2026-07-28-RC`; final-spec re-verification remains pending
+the official final artifact.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048

@@ -18,4 +18,7 @@
 - **RFC 8252** — Native apps; loopback redirect any-port rule (§7.3).
 - **RFC 9207** — `iss` parameter in the authorization response (RC: also
   advertise `authorization_response_iss_parameter_supported: true`).
-- **MCP Authorization 2025-11-25** — the conformance target clients implement.
+- **MCP Authorization 2025-11-25** — the current conformance target.
+- **MCP Authorization 2026-07-28-RC** — reviewed and implemented where its
+  authorization changes are backward-compatible; final publication remains
+  pending.
