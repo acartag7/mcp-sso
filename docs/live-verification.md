@@ -179,9 +179,10 @@ works against a real Entra tenant, end-to-end through a browser, with a live MCP
 
 **Flips to ✅ when:** a real Entra user completes the redirect flow through a browser
 and a tool round-trips; AND a user outside `ENTRA_SUBJECT_ALLOWLIST` / the wrong tenant
-is rejected. The manual checklist at the top of `src/identity/entra-redirect.ts` is the
-gate before claiming live-complete — record the live result (incl. guest/B2B + overage
-behavior) there too.
+is rejected. The redirect-mechanics checklist is at the top of
+`src/identity/entra-redirect.ts`; the deny, group-overage, and guest/B2B checklist
+is at the top of `src/identity/entra.ts`. Record both before claiming the combined
+provider flow and deny sweep live-complete.
 
 ### C — ChatGPT (custom connector) × a live client
 
@@ -194,8 +195,10 @@ the release candidate. Pick **Cloudflare Access or Entra** as the identity backe
 - In ChatGPT, add the connector at `https://<your-host>/mcp`; complete the OAuth flow;
   call a tool.
 
-**Flips to ✅ when:** ChatGPT completes registration + consent and a tool round-trips.
-Record which IdP you used as the provider in the matrix row.
+**Completion evidence:** ChatGPT identifies through an HTTPS CIMD `client_id` or
+completes DCR registration, matching the mode named in the matrix row, then
+completes authorization, consent, and a tool round-trip. Record which IdP was
+used.
 
 ### D — api-key-gateway example × a live client
 
