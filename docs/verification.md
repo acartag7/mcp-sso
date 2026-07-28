@@ -170,7 +170,7 @@ Notes:
 | GG.3 | Old binary writes a null/missing-generation refresh family after cutover | Current binary returns `invalid_grant` before consuming it or creating a successor. |
 | GG.4 | Rotation caller substitutes generation | All three stores preserve the family generation from durable state. |
 | GG.5 | Legacy/non-current active refresh rows exist | `findGrantedScopes` excludes their scopes. |
-| GG.6 | Store lacks the generation capability in stored-DCR mode | Construction fails closed with `AuthConfigError`; stateless/CIMD operation remains unchanged. |
+| GG.6 | Store lacks the generation capability in stored-DCR mode | Construction fails closed with `AuthConfigError`; stateless-DCR operation remains unchanged. CIMD alongside stored DCR uses the same cutover generation without enabling accumulation. |
 
 ### T1.S4a — Generic OIDC and Google preset
 

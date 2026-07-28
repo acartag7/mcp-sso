@@ -72,12 +72,13 @@ is absent or different. This is an additive runtime capability check so an old
 custom store cannot silently ignore the generation argument and contribute a
 legacy grant.
 
-For an opaque stored-DCR client, the use-cases pass generation `1` to
+While stored-DCR mode is active, the use-cases pass generation `1` to
 `consumeAuthCode`, `rotateRefreshToken`, and `findGrantedScopes`. The reference
 stores check it inside the same transaction/critical section as consumption or
 rotation, and `findGrantedScopes` returns only matching rows. The optional
-method argument remains omitted for stateless DCR and CIMD grants; they do not
-participate in this stored-DCR cutover discriminator. Full record and legacy
+method argument remains omitted in stateless-DCR mode. A CIMD grant issued while
+stored-DCR mode is active carries the same deployment cutover generation, but
+remains excluded from scope accumulation under §17.1.6. Full record and legacy
 rules are in §12.
 
 ## 6.4 `ClientStore` (stored-DCR mode only — fix #4)

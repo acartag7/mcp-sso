@@ -46,7 +46,7 @@ Single-use: `consumeAuthCode` deletes on read; missing or expired → `invalid_g
 A failed PKCE or client/redirect mismatch **still consumes the code** (one-shot).
 
 **0.3.2 stored-DCR generation amendment — PENDING implementation.** An
-authorization code for an opaque client under `dcr.mode:"stored"` carries
+authorization code issued under `dcr.mode:"stored"` carries
 `grantGeneration = STORED_DCR_GRANT_GENERATION`. Code consumption supplies that
 expected generation to the store and repeats the equality check on the returned
 record before PKCE or token preparation. A missing, `null`, malformed, or
@@ -62,7 +62,7 @@ rotate without a lookup). Stored only as `sha256(token)`.
   token consumed, inserts the next, and returns the **consumed** record. Replay of
   an already-consumed token revokes the whole family.
 - **0.3.2 stored-DCR generation — PENDING implementation:** a refresh family
-  created from an opaque stored-DCR authorization code carries that code's
+  created from a stored-DCR-mode authorization code carries that code's
   current generation. Rotation takes the expected generation, compares it
   before consuming the predecessor or inserting a successor, and
   authoritative-copies the family's stored generation. Missing, `null`,

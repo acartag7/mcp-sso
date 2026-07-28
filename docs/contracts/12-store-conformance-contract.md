@@ -110,8 +110,10 @@ validates its `expiresAtIso` too** (addendum 10 — a known gap in the source, w
 10. **Stored-DCR grant generation (0.3.2 — PENDING implementation):**
     `STORED_DCR_GRANT_GENERATION` is the library-owned positive safe integer
     `1`; it is not deployer configuration and not a per-client policy version.
-    New opaque stored-DCR auth codes and refresh families carry it. Stateless
-    DCR and CIMD records use `null`.
+    New auth codes and refresh families issued while stored-DCR mode is active
+    carry it. Stateless-DCR records use `null`. CIMD still does not accumulate
+    scopes, but when it is enabled alongside stored DCR its grants carry the
+    deployment cutover generation too.
 
     Reference SQL migrations add nullable `grant_generation` to
     `oauth_auth_codes` and `oauth_refresh_token_families`. There is deliberately
