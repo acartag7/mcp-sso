@@ -12,8 +12,8 @@
 > revocation through `OAuthTokenUseCase`, the versioned atomic machine-client
 > lifecycle enforced by `provisionMachineClient`, `rotateMachineClientSecret`,
 > and `disableMachineClient`, and the public
-> `assertRegistrationRedirectPolicy` helper. Registry and tag evidence is
-> recorded separately in the release and verification receipts.
+> `assertRegistrationRedirectPolicy` helper. Registry and tag evidence belongs
+> in the release and verification receipts.
 >
 > The §17 feature contracts are locked; CIMD §17.1, generic OIDC, and the
 > Google preset are implemented. Google has reproducible
