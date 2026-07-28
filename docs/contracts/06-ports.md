@@ -64,6 +64,22 @@ Methods: `saveAuthCode`, `consumeAuthCode`, `saveRefreshToken`, `rotateRefreshTo
 provenance. In stateless mode client_ids are ephemeral, so a grant keyed by
 `(subject, clientId)` is meaningless; those authorizations stand alone.)
 
+**0.3.2 stored-DCR generation capability — PENDING implementation.** The
+library-owned `STORED_DCR_GRANT_GENERATION` is currently `1`. A `StorePort`
+used with `dcr.mode:"stored"` MUST advertise
+`storedDcrGrantGeneration: 1`; construction fails closed when that capability
+is absent or different. This is an additive runtime capability check so an old
+custom store cannot silently ignore the generation argument and contribute a
+legacy grant.
+
+For an opaque stored-DCR client, the use-cases pass generation `1` to
+`consumeAuthCode`, `rotateRefreshToken`, and `findGrantedScopes`. The reference
+stores check it inside the same transaction/critical section as consumption or
+rotation, and `findGrantedScopes` returns only matching rows. The optional
+method argument remains omitted for stateless DCR and CIMD grants; they do not
+participate in this stored-DCR cutover discriminator. Full record and legacy
+rules are in §12.
+
 ## 6.4 `ClientStore` (stored-DCR mode only — fix #4)
 ```ts
 type ApplicationType = "native" | "web" | "machine";   // "machine" added §17.2

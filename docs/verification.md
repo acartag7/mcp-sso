@@ -161,6 +161,17 @@ Notes:
 | S3b.7 | Response shape | No `refresh_token` member exists at all. |
 | S3b.8 | User grant regression | Authorization-code and refresh flows unchanged. |
 
+### T1.GG — stored-DCR grant-generation cutover (0.3.2 PENDING)
+
+| # | Scenario | Assert |
+|---|---|---|
+| GG.1 | Current-generation code and refresh family across reopen/restart | Exchange and refresh still succeed. |
+| GG.2 | Old binary writes a null/missing-generation code after cutover | Current binary burns it and returns `invalid_grant`, for both an unknown and an existing stored client ID. |
+| GG.3 | Old binary writes a null/missing-generation refresh family after cutover | Current binary returns `invalid_grant` before consuming it or creating a successor. |
+| GG.4 | Rotation caller substitutes generation | All three stores preserve the family generation from durable state. |
+| GG.5 | Legacy/non-current active refresh rows exist | `findGrantedScopes` excludes their scopes. |
+| GG.6 | Store lacks the generation capability in stored-DCR mode | Construction fails closed with `AuthConfigError`; stateless/CIMD operation remains unchanged. |
+
 ### T1.S4a — Generic OIDC and Google preset
 
 | # | Scenario | Assert |

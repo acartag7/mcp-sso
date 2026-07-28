@@ -188,7 +188,10 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   and client/redirect binding, then `tokenResponse` parses the stored scopes and
   constructs the signed access/refresh response before `saveRefreshToken`
   persists the new family. A preparation failure leaves no refresh row; the
-  already-consumed authorization code stays burned.
+  already-consumed authorization code stays burned. **0.3.2 PENDING:** for an
+  opaque stored-DCR client, generation mismatch is the first stored-record
+  validity check and is indistinguishable from any other `invalid_grant`; the
+  new refresh family inherits the accepted code generation.
 - **`refresh`**: atomically rotates the refresh token (§7.4), preserving
   consumed-token replay detection and whole-family revocation; then enforces RFC
   6749 §6 client binding (mismatch ⇒ family revoked ⇒ `invalid_grant`) and mints
@@ -198,6 +201,10 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   the error, and returns no token. When that store call succeeds, a malformed
   row or signing failure leaves no active unreturned successor. When it rejects,
   durable state remains store-dependent; the boundary is recorded in §7.4.
+  **0.3.2 PENDING:** opaque stored-DCR refresh rotation also requires the current
+  grant generation inside the atomic store operation. A valid present-day
+  `ClientStore.find(clientId)` result is not grant provenance and is never used
+  as a substitute.
 - **`revoke`** (RFC 7009): **always returns 200**; an unknown or already-revoked
   token is a **no-op** (never 4xx — RFC 7009 §2.2 forbids leaking token existence
   via the response). Looks up the family by hash and revokes it; a guessed family
