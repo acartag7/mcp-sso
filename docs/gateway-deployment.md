@@ -49,9 +49,9 @@ coding agent ──OAuth (CIMD or DCR + PKCE)──▶ gateway ──▶ upstrea
 
 ## Client registration at the gateway
 
-The examples on `main` enable CIMD and retain stateless DCR. This default first
-ships in 0.3. Recommend CIMD to clients that support it; DCR remains the
-compatibility path. The bridge does not negotiate or automatically fall back:
+The 0.3.0 examples enable CIMD and retain stateless DCR. Recommend CIMD to
+clients that support it; DCR remains the compatibility path. The bridge does
+not negotiate or automatically fall back:
 an HTTPS-shaped `client_id` selects CIMD, while a client that uses DCR first
 obtains an opaque id from `/oauth/register`. Neither path changes the upstream
 identity provider.

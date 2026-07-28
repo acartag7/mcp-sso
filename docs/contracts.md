@@ -7,8 +7,7 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and the contract set
 > disagree, the contract set wins until one of them is deliberately changed.
 >
-> Status: **v0.2.3 shipped** (`mcp-sso@0.2.3` on npm) + **unreleased v0.3
-> hardening on `main`**. The §17 feature contracts are locked; CIMD §17.1,
+> Status: **v0.3.0**. The §17 feature contracts are locked; CIMD §17.1,
 > generic OIDC, and the Google preset are implemented. Google has reproducible
 > historical live verification; CIMD was live-verified through exact runtime
 > commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
