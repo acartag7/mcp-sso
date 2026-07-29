@@ -100,6 +100,13 @@ copies, and normalizes the singleton form to a one-entry internal catalog. It
 does not introduce dynamic resources, wildcard entries, aliases, or a policy
 callback.
 
+Each `ResourceDefinition` admits exactly the three shown own properties:
+`resource`, `scopeCatalog`, and `defaultScopes`. An extra string- or
+symbol-keyed property is a boot `AuthConfigError` naming the offending key.
+The published definition is constructed only from the three snapshotted,
+validated values; a typo or secret parked on an input object is neither
+silently ignored nor copied into `bridge.config`.
+
 `legacySingletonResource` is an optional, explicit upgrade attestation, not a
 resource selector. It is accepted only in the singleton form and must
 canonicalize exactly to `resource`. When present, it states that every
@@ -118,8 +125,15 @@ resource inference.
 One `canonicalResource(value)` parser owns configuration and request equality:
 the input is a primitive non-empty absolute URL; production requires `https`
 and the existing loopback-only development exception applies; userinfo, query,
-and fragment are rejected. URL parsing lower-cases scheme/host, removes an
-ordinary default port, and resolves dot segments. An origin-only resource
+and fragment are rejected. Before `new URL`, the raw value must use an
+ASCII-case-insensitive `https://` prefix (or `http://` under the loopback
+exception) with exactly two scheme-delimiter slashes and a non-slash authority
+start. Before parsing, `?` and `#` are rejected even when their query or
+fragment is empty; `@` is rejected in the raw authority; and an explicit empty
+port delimiter is rejected. Any backslash, ASCII whitespace/control character,
+or `%` not followed by two hexadecimal digits is rejected. The parser never
+trims or repairs raw syntax. URL parsing then lower-cases scheme/host, removes
+an ordinary default port, and resolves dot segments. An origin-only resource
 canonicalizes without a trailing slash; non-root paths retain their
 trailing-slash distinction. The canonical value is stored in grant records and
 JWT `aud`. Duplicate canonical resources are a boot error.
@@ -131,14 +145,15 @@ narrows previously accepted query/userinfo resource URLs because they cannot
 produce an unambiguous RFC 9728 PRM route.
 
 The catalog represents independently addressable MCP endpoints. For example,
-one Atesaki deployment may configure
-`https://atesaki.dev/grafana/mcp`,
-`https://atesaki.dev/captatum/mcp`, and
-`https://atesaki.dev/memory/mcp`, while each client selects only the endpoint
-it needs. It does not turn one MCP connection into a tool multiplexer. A local
-Atesaki process may expose the same paths on loopback without requiring inbound
-OAuth; Atesaki's separate role as an OAuth client of protected remote MCP
-servers is outside mcp-sso.
+one deployment may configure
+`https://mcp.example/grafana/mcp`,
+`https://mcp.example/fetch/mcp`, and
+`https://mcp.example/memory/mcp`, while each client selects only the endpoint
+it needs. It does not turn one MCP connection into a tool multiplexer or let
+one connection, consent, grant, refresh family, machine credential, or access
+token span resources. A host process may expose the same paths on loopback
+without requiring inbound OAuth, and a host's separate role as an OAuth client
+of protected remote MCP servers is outside mcp-sso.
 
 **Boot validation (all throw `AuthConfigError`, never warn):**
 
@@ -149,11 +164,16 @@ servers is outside mcp-sso.
   JS/cast-TS caller parked on the input — e.g. a backend API key, or a typo like
   `issuers` — would otherwise ship on that public object. Park secrets in your
   own closure; do not put them in the `createBridgeConfig` input.
-- `issuer` and `resource` are absolute `https://` URLs (the bridge does not run
-  over plain http in production). Their **origins** are computed once and reused.
+- `issuer` and every resource selected by the active configuration branch are
+  absolute `https://` URLs (the bridge does not run over plain http in
+  production). The singleton branch validates its one `resource`; the
+  multi-resource branch validates every `ResourceDefinition.resource` and does
+  not require the absent top-level `resource`. Their **origins** are computed
+  once and reused.
   **Local-dev escape hatch:** `dev.allowInsecureLocalhost` permits `http://`
-  `issuer`/`resource` **only on loopback** (`localhost`/`127.0.0.1`/`[::1]`); it is
-  rejected at boot if either origin is not loopback and it emits a loud warning.
+  `issuer` and selected resources **only on loopback**
+  (`localhost`/`127.0.0.1`/`[::1]`); it is rejected at boot if any selected
+  origin is not loopback and it emits a loud warning.
   This exists for the Phase 4 local example (Claude Code expects `http://localhost`);
   it can never weaken a real (non-loopback) deployment. Deployers who want zero http
   anywhere can use a tunnel (cloudflared / mkcert) instead — no flag required.
@@ -161,9 +181,12 @@ servers is outside mcp-sso.
 - `signingPrivateJwk` parses to an EC P-256 key with `d`, `x`, `y` present. (jose
   rejects zero-length keys; we validate shape explicitly so a misconfigured boot
   fails closed independent of jose upgrades.)
-- `defaultScopes ⊆ scopeCatalog` and `scopeCatalog` is non-empty. An empty
-  catalog means the resource honors no scopes and every authorize fails closed —
-  the deployer MUST declare scopes explicitly.
+- The singleton branch checks top-level `defaultScopes ⊆ scopeCatalog` and a
+  non-empty `scopeCatalog`. The multi-resource branch does not require that
+  absent top-level pair; it applies the same subset and non-empty checks to
+  every selected definition. An empty catalog means the resource honors no
+  scopes and every authorize fails closed — the deployer MUST declare scopes
+  explicitly.
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
 - `redirectAllowlist` is an array, and **every entry satisfies the §10.0

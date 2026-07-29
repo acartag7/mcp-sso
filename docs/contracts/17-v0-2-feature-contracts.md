@@ -1241,10 +1241,8 @@ via the MCP spec.
   `RateLimitPort`, key `device:<ip>`). Request: `client_id` required
   (stateless: any non-empty; stored: must exist and not be `machine`; CIMD
   URL ids allowed — the document is fetched/validated per 17.1), `scope`
-  optional (§11 normalization), and exactly one `resource` selected by §9.7
-  (omission only for a singleton catalog). Duplicate parameters rejected
-  (§3.1 MUST NOT). The selected immutable `ResourceDefinition` owns scope
-  normalization and is stored in the device record.
+  optional (§11 normalization), `resource` optional (must equal
+  `config.resource`). Duplicate parameters rejected (§3.1 MUST NOT).
 - **Response** (200, `application/json`, `cache-control: no-store`):
   `device_code`, `user_code`, `verification_uri` = `${issuer}/oauth/device`,
   `verification_uri_complete` = `${issuer}/oauth/device?user_code=XXXX-XXXX`,
@@ -1274,11 +1272,8 @@ via the MCP spec.
   interval +5 — server-side mirror of the client's `slow_down` MUST),
   `resolveDeviceCode(userCodeHash, {status, subject, approvedScopes}, nowIso)`
   (CAS `pending`→`approved`/`denied`), `consumeApprovedDeviceCode(hash,
-  nowIso, resourceBinding?)` (single-use delete-on-read for token issuance;
-  atomically compares the optional expected canonical resource first and
-  returns the same fieldless `{ status: "resource_mismatch" }` outcome without
-  deletion), and `sweepExpired` extended to device codes. Timestamps follow
-  §12.1 (3-ms rule).
+  nowIso)` (single-use delete-on-read for token issuance), and `sweepExpired`
+  extended to device codes. Timestamps follow §12.1 (3-ms rule).
 - **Verification UI (adapter):** `GET /oauth/device` renders enter-the-code
   first (prefilled from `user_code` query for the `_complete` variant); on a
   canonicalized match, identity resolution runs (the SAME `IdentityPort`
@@ -1292,42 +1287,36 @@ via the MCP spec.
   of. Contract: a separate `DeviceConsentClaims` token — HS256 with the same
   consent secret but a DISTINCT pinned audience `"mcp-sso/device-consent"`
   (so the two token kinds can never validate on each other's surface),
-  claims `{ userCodeHash, clientId, resource, scopes, allowedScopes?, subject,
-  jti, iat, exp }` — and a separate `approveDevice({ deviceConsentToken,
+  claims `{ userCodeHash, clientId, scopes, allowedScopes?, subject, jti,
+  iat, exp }` — and a separate `approveDevice({ deviceConsentToken,
   approved?, origin? })` use-case returning `{ decision: "approved" |
   "denied" }` with no redirect member. It shares the Origin/CSRF rule and the
   single-use-JTI store primitive (`consumeConsentJti`) with §9.3. The §17.4
-  group ceiling applies here exactly as at authorize. Approval re-resolves the
-  signed resource and scopes against the live catalog before its device-record
-  CAS; removal is `invalid_target`, narrowing is `invalid_scope`, and neither
-  path approves the record.
+  group ceiling applies here exactly as at authorize.
 - **Token endpoint:** `grant_type=urn:ietf:params:oauth:grant-type:device_code`
-  + `device_code` + `client_id` + exactly one §9.7 `resource` (omission only in
-  singleton mode). The endpoint first resolves that request value against the
-  current catalog, then compares the canonical result to the stored device
-  record inside `consumeApprovedDeviceCode` before consumption. Omission
-  therefore means the current singleton resource: a device record created
-  earlier for A can omit only when the current singleton is still A; singleton
-  B is `invalid_target`. Client mismatch is `invalid_grant`; the typed resource
-  mismatch outcome is `invalid_target` before record consumption, so the client
-  can retry at the stored resource. Error state machine, all HTTP 400
-  §5.2-shaped:
+  + `device_code` + `client_id` (must match the record; mismatch ⇒
+  `invalid_grant`). Error state machine, all HTTP 400 §5.2-shaped:
   `authorization_pending` (pending), `slow_down` (poll arrived before the
   current interval elapsed; interval grows +5 persistently),
   `access_denied` (denied — terminal; record deleted on delivery),
   `expired_token` (expired — terminal). Success: `consumeApprovedDeviceCode`
   (single-use) → mint access + refresh tokens (new family) with
-  `approvedScopes` and the record's authoritative resource — this IS a user
-  grant, so refresh tokens apply, unlike 17.2. The new refresh family and access
-  token retain that resource, and device polling never selects from a global
-  catalog. Its later refreshes use the ordinary §7/§9.7 lineage rule: if the
-  resource is absent from the current catalog, selection is `invalid_target`
-  before rotation; if the selected current resource differs from the family,
-  the same error occurs without a successor write.
+  `approvedScopes` — this IS a user grant, so refresh tokens apply, unlike
+  17.2.
 - **Metadata:** `device_authorization_endpoint` + `grant_types_supported` +=
   the device URN.
 - **Audit:** `oauth.device.authorization`, `oauth.device.approve`
   (approved/denied), `oauth.token.device_code`.
+
+**Device flow stays singleton-only under the 0.4.0 catalog.** The §5.1
+multi-resource catalog does not extend to this contract-only grant. Selecting a
+resource at device authorization, carrying it through the device record and
+device-consent token, revalidating it at approval, comparing it inside the
+atomic poll/consume operation, and copying it onto the device-issued access
+token and refresh family are all **deferred to the separate device-flow feature
+contract**, which must specify them before any device runtime ships. A
+deployment that enables the multi-resource form therefore does not enable this
+grant, and 0.4.0 multi-resource authorization is not gated on device flow.
 
 ## 17.4 Entra group-based authorization (Gate 2 becomes a scope ceiling)
 
