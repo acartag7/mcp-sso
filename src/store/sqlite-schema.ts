@@ -23,7 +23,8 @@ const MIGRATIONS = [
   `CREATE TABLE IF NOT EXISTS oauth_refresh_token_families (
     family_id TEXT PRIMARY KEY NOT NULL,
     revoked_at TEXT,
-    grant_generation INTEGER
+    grant_generation INTEGER,
+    resource TEXT
   ) STRICT`,
   `CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
     token_hash TEXT PRIMARY KEY NOT NULL,
@@ -35,6 +36,7 @@ const MIGRATIONS = [
     expires_at TEXT NOT NULL,
     consumed_at TEXT,
     grant_generation INTEGER,
+    resource TEXT,
     FOREIGN KEY (family_id) REFERENCES oauth_refresh_token_families (family_id) ON DELETE CASCADE
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_family_id ON oauth_refresh_tokens (family_id)`,
@@ -51,14 +53,16 @@ export function migrateSqliteStore(db: DatabaseSync): void {
   for (const migration of MIGRATIONS) {
     db.exec(migration);
   }
-  ensureColumn(db, "oauth_auth_codes", "grant_generation");
-  ensureColumn(db, "oauth_refresh_token_families", "grant_generation");
-  ensureColumn(db, "oauth_refresh_tokens", "grant_generation");
+  ensureColumn(db, "oauth_auth_codes", "grant_generation", "INTEGER");
+  ensureColumn(db, "oauth_refresh_token_families", "grant_generation", "INTEGER");
+  ensureColumn(db, "oauth_refresh_tokens", "grant_generation", "INTEGER");
+  ensureColumn(db, "oauth_refresh_token_families", "resource", "TEXT");
+  ensureColumn(db, "oauth_refresh_tokens", "resource", "TEXT");
 }
 
-function ensureColumn(db: DatabaseSync, table: string, column: string): void {
+function ensureColumn(db: DatabaseSync, table: string, column: string, type: "INTEGER" | "TEXT"): void {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (!rows.some((row) => row.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER`);
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
 }

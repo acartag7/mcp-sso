@@ -33,6 +33,8 @@ export interface RefreshTokenRecord {
   expiresAt: string;
   /** Durable token/family generation; null means legacy/non-stored. */
   grantGeneration?: number | null;
+  /** Canonical resource (0.4.0); null/absent = legacy pre-0.4 lineage. */
+  resource?: string | null;
 }
 
 export interface SaveAuthCodeInput {
@@ -59,22 +61,51 @@ export interface SaveRefreshTokenInput {
   expiresAt: string;
   /** Omitted defaults to the current generation; null is legacy/non-stored. */
   grantGeneration?: number | null;
+  /** Canonical resource (0.4.0); new writes store a non-null canonical value.
+   *  Omitted/null is a legacy pre-0.4 lineage (contracts §12.2 invariant 11). */
+  resource?: string | null;
 }
+
+/** Request-side resource expectation passed to rotation / scope derivation
+ *  (contracts §6.3, §12.2 invariant 11). `allowLegacySingletonBinding` is set
+ *  ONLY when singleton mode + an explicit `legacySingletonResource` attests the
+ *  same canonical resource; null pre-0.4 lineage then binds to that sole resource. */
+export interface ResourceBindingExpectation {
+  resource: string;
+  allowLegacySingletonBinding: boolean;
+}
+
+/** Fieldless rotation outcome: an otherwise-valid unconsumed current family/token
+ *  pair whose stored resource differs from the expectation. Carries NO record
+ *  fields and commits NO mutation; the use-case maps it to `invalid_target`. */
+export interface ResourceMismatch {
+  status: "resource_mismatch";
+}
+
+/** Rotation may return the consumed record, a fieldless resource mismatch, or
+ *  null (missing/expired/replayed/malformed/generation-mismatched/unattested). */
+export type RefreshRotationResult = RefreshTokenRecord | ResourceMismatch | null;
 
 export interface StorePort {
   /** Required capability marker when BridgeConfig uses stored DCR. */
   readonly storedDcrGrantGeneration?: number;
+  /** Required capability marker when the catalog is multi-resource or DCR is
+   *  stored (0.4.0). Absent/different ⇒ boot AuthConfigError via
+   *  assertResourceBindingStore, so a custom store cannot silently ignore it. */
+  readonly resourceBinding?: 1;
   saveAuthCode(input: SaveAuthCodeInput): Promise<void>;
   /** Single-use; removes on read. Returns null if missing/expired. */
   consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number): Promise<AuthCodeRecord | null>;
   saveRefreshToken(input: SaveRefreshTokenInput): Promise<void>;
-  /** Returns the consumed record (and rotates), or null if missing/expired/revoked. */
+  /** Returns the consumed record (and rotates), a resource mismatch, or null if
+   *  missing/expired/revoked/replayed (§12.2 invariant 11 owns the ordering). */
   rotateRefreshToken(
     tokenHash: string,
     next: SaveRefreshTokenInput,
     nowIso: string,
     expectedGrantGeneration?: number,
-  ): Promise<RefreshTokenRecord | null>;
+    resourceBinding?: ResourceBindingExpectation,
+  ): Promise<RefreshRotationResult>;
   /** Revoke every token in the family. Replay-detection path. */
   revokeRefreshTokenFamily(familyId: string, revokedAtIso: string): Promise<void>;
   /** Find a refresh token by its hash, or null if it does not exist. */
@@ -82,9 +113,16 @@ export interface StorePort {
   /** Bind a consent token to a single use. true on first use, false on replay. */
   consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean>;
   /** Derive the union of granted scopes from this (subject, clientId)'s ACTIVE
-   *  refresh tokens (unconsumed, unrevoked, unexpired). Read-only; no grant table.
-   *  Invoked only in stored-DCR mode (contracts §9.3). */
-  findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number): Promise<string[]>;
+   *  refresh tokens (unconsumed, unrevoked, unexpired), keyed additionally by
+   *  resource and generation when expectations are supplied. Read-only; no grant
+   *  table. Invoked only in stored-DCR mode (contracts §9.3). */
+  findGrantedScopes(
+    subject: string,
+    clientId: string,
+    nowIso: string,
+    expectedGrantGeneration?: number,
+    resourceBinding?: ResourceBindingExpectation,
+  ): Promise<string[]>;
   /** Delete expired auth codes, JTIs, unconsumed expired refresh tokens, orphaned
    *  revoked families. */
   sweepExpired(nowIso: string): Promise<void>;

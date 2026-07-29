@@ -44,6 +44,7 @@ const MIGRATIONS = [
     family_id VARCHAR(64) NOT NULL,
     revoked_at VARCHAR(24),
     grant_generation BIGINT UNSIGNED,
+    resource VARCHAR(2048),
     PRIMARY KEY (family_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
   `CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
@@ -56,6 +57,7 @@ const MIGRATIONS = [
     expires_at VARCHAR(24) NOT NULL,
     consumed_at VARCHAR(24),
     grant_generation BIGINT UNSIGNED,
+    resource VARCHAR(2048),
     PRIMARY KEY (token_hash),
     INDEX idx_oauth_refresh_tokens_family_id (family_id),
     INDEX idx_oauth_refresh_tokens_expires_at (expires_at),
@@ -76,17 +78,19 @@ const MIGRATIONS = [
 export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await assertStrictMode(conn);
   for (const ddl of MIGRATIONS) await conn.query(ddl);
-  await ensureColumn(conn, "oauth_auth_codes", "grant_generation");
-  await ensureColumn(conn, "oauth_refresh_token_families", "grant_generation");
-  await ensureColumn(conn, "oauth_refresh_tokens", "grant_generation");
+  await ensureColumn(conn, "oauth_auth_codes", "grant_generation", "BIGINT UNSIGNED NULL");
+  await ensureColumn(conn, "oauth_refresh_token_families", "grant_generation", "BIGINT UNSIGNED NULL");
+  await ensureColumn(conn, "oauth_refresh_tokens", "grant_generation", "BIGINT UNSIGNED NULL");
+  await ensureColumn(conn, "oauth_refresh_token_families", "resource", "VARCHAR(2048) NULL");
+  await ensureColumn(conn, "oauth_refresh_tokens", "resource", "VARCHAR(2048) NULL");
   await assertColumnCollations(conn);
   await assertInnoDBEngine(conn);
 }
 
-async function ensureColumn(conn: PoolConnection, table: string, column: string): Promise<void> {
+async function ensureColumn(conn: PoolConnection, table: string, column: string, definition: string): Promise<void> {
   if (await columnExists(conn, table, column)) return;
   try {
-    await conn.query(`ALTER TABLE ${table} ADD COLUMN ${column} BIGINT UNSIGNED NULL`);
+    await conn.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   } catch (error) {
     if (!isMysqlError(error, "ER_DUP_FIELDNAME")
       || !await columnExists(conn, table, column)) throw error;
@@ -159,12 +163,12 @@ async function assertInnoDBEngine(conn: PoolConnection): Promise<void> {
 // ---- Row interfaces + DML/validation helpers (shared with mysql.ts) ----
 
 export interface AuthCodeRow { code_hash: string; client_id: string; subject: string; redirect_uri: string; resource: string; scopes_json: string; code_challenge: string; code_challenge_method: "S256"; expires_at: string; grant_generation: unknown }
-export interface RefreshTokenRow { token_hash: string; family_id: string; previous_token_hash: string | null; client_id: string; subject: string; scopes_json: string; expires_at: string; consumed_at: string | null; grant_generation: unknown; f_revoked_at: string | null; f_grant_generation: unknown }
+export interface RefreshTokenRow { token_hash: string; family_id: string; previous_token_hash: string | null; client_id: string; subject: string; scopes_json: string; expires_at: string; consumed_at: string | null; grant_generation: unknown; resource: unknown; f_revoked_at: string | null; f_grant_generation: unknown; f_resource: unknown }
 
 export async function insertRefreshToken(conn: PoolConnection, input: SaveRefreshTokenInput): Promise<void> {
   await conn.query(
-    `INSERT INTO oauth_refresh_tokens (token_hash, family_id, previous_token_hash, client_id, subject, scopes_json, expires_at, consumed_at, grant_generation) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
-    [input.tokenHash, input.familyId, input.previousTokenHash, input.clientId, input.subject, JSON.stringify(input.scopes), input.expiresAt, grantGenerationForWrite(input.grantGeneration)],
+    `INSERT INTO oauth_refresh_tokens (token_hash, family_id, previous_token_hash, client_id, subject, scopes_json, expires_at, consumed_at, grant_generation, resource) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+    [input.tokenHash, input.familyId, input.previousTokenHash, input.clientId, input.subject, JSON.stringify(input.scopes), input.expiresAt, grantGenerationForWrite(input.grantGeneration), resourceForWrite(input.resource)],
   );
 }
 
@@ -181,16 +185,16 @@ export function isDuplicateEntry(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { code?: string }).code === "ER_DUP_ENTRY";
 }
 
-export function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow): SaveRefreshTokenInput {
-  return { ...input, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), grantGeneration: grantGenerationFromStored(row.grant_generation) };
+export function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow, resource: string | null): SaveRefreshTokenInput {
+  return { ...input, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), grantGeneration: grantGenerationFromStored(row.grant_generation), resource };
 }
 
 export function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {
   return { codeHash: row.code_hash, clientId: row.client_id, subject: row.subject, redirectUri: row.redirect_uri, resource: row.resource, scopes: parseScopes(row.scopes_json), codeChallenge: row.code_challenge, codeChallengeMethod: row.code_challenge_method, expiresAt: row.expires_at, grantGeneration: grantGenerationFromStored(row.grant_generation) };
 }
 
-export function refreshTokenFromRow(row: RefreshTokenRow): RefreshTokenRecord {
-  return { tokenHash: row.token_hash, familyId: row.family_id, previousTokenHash: row.previous_token_hash, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), expiresAt: row.expires_at, grantGeneration: grantGenerationFromStored(row.grant_generation) };
+export function refreshTokenFromRow(row: RefreshTokenRow, resource?: string | null): RefreshTokenRecord {
+  return { tokenHash: row.token_hash, familyId: row.family_id, previousTokenHash: row.previous_token_hash, clientId: row.client_id, subject: row.subject, scopes: parseScopes(row.scopes_json), expiresAt: row.expires_at, grantGeneration: grantGenerationFromStored(row.grant_generation), resource: resource === undefined ? resourceFromStored(row.resource) ?? null : resource };
 }
 
 export function validateAuthCode(input: SaveAuthCodeInput): void {
@@ -205,6 +209,10 @@ export function validateRefreshToken(input: SaveRefreshTokenInput): void {
   if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
   assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
   assertGrantGeneration(input.grantGeneration, "grantGeneration");
+  if (input.resource !== undefined && input.resource !== null
+    && (typeof input.resource !== "string" || input.resource.length === 0)) {
+    throw new StoreInputError("resource must be a non-empty string or null");
+  }
 }
 
 export function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
@@ -212,6 +220,17 @@ export function validateRotation(tokenHash: string, next: SaveRefreshTokenInput,
   validateRefreshToken(next);
   assertUtcIsoTimestamp(nowIso, "nowIso");
   if (next.previousTokenHash !== tokenHash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
+}
+
+/** URL canonicalization is owned by canonicalResource before the store boundary. */
+export function resourceForWrite(value: string | null | undefined): string | null {
+  return value === undefined ? null : value;
+}
+
+/** Distinguishes a valid SQL NULL from malformed stored data. */
+export function resourceFromStored(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 export function parseScopes(value: string): string[] {

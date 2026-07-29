@@ -15,7 +15,7 @@ import { createPool, type Pool, type PoolConnection, type RowDataPacket } from "
 import type { StorePort } from "../src/ports/store.ts";
 import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
-import { runStoreConformance } from "./lib/store-conformance.ts";
+import { runResourceBindingConformance, runStoreConformance } from "./lib/store-conformance.ts";
 
 const RUN_INTEGRATION = process.env.RUN_INTEGRATION === "true";
 const MYSQL_URL = process.env.MYSQL_URL;
@@ -86,6 +86,7 @@ function make(): StorePort {
 
 if (RUN) {
   runStoreConformance("MysqlStore", make);
+  runResourceBindingConformance("MysqlStore", make);
 
   test("MysqlStore: concurrent rotation serializes (FOR UPDATE prevents double-spend) — review H3", async () => {
     const store = make();

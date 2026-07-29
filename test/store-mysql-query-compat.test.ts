@@ -18,7 +18,7 @@ function recordingStore(): { readonly store: MysqlStore; readonly queries: Recor
     query: async (sql: string, values?: unknown[]) => {
       queries.push({ sql, values });
       if (sql.startsWith("SELECT grant_generation")) {
-        return [[{ grant_generation: STORED_DCR_GRANT_GENERATION }], []];
+        return [[{ grant_generation: STORED_DCR_GRANT_GENERATION, resource: null }], []];
       }
       return [[], []];
     },
@@ -50,12 +50,13 @@ test("MysqlStore family upserts bind incoming values without row aliases", async
   );
   assert.ok(createQuery);
   assert.doesNotMatch(createQuery.sql, /VALUES\s*\([^)]*\)\s+AS\s+/iu);
-  assert.deepEqual(createQuery.values, ["family", STORED_DCR_GRANT_GENERATION]);
+  assert.deepEqual(createQuery.values, ["family", STORED_DCR_GRANT_GENERATION, null]);
   const tokenQuery = created.queries.find(({ sql }) =>
     sql.startsWith("INSERT INTO oauth_refresh_tokens")
   );
   assert.ok(tokenQuery);
-  assert.equal(tokenQuery.values?.at(-1), STORED_DCR_GRANT_GENERATION);
+  assert.equal(tokenQuery.values?.at(-2), STORED_DCR_GRANT_GENERATION);
+  assert.equal(tokenQuery.values?.at(-1), null, "omitted resource is written as explicit legacy NULL");
 
   const revoked = recordingStore();
   await revoked.store.revokeRefreshTokenFamily("family", REVOKED);

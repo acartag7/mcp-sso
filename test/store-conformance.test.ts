@@ -12,10 +12,13 @@ import { test } from "node:test";
 import { STORED_DCR_GRANT_GENERATION } from "../src/ports/store.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
-import { runStoreConformance } from "./lib/store-conformance.ts";
+import { runResourceBindingConformance, runStoreConformance } from "./lib/store-conformance.ts";
 
 runStoreConformance("MemoryStore", () => new MemoryStore());
 runStoreConformance("SqliteStore", () => openSqliteStore(":memory:"));
+// §12.2 invariant 11 is capability-gated and runs unchanged against each capable store.
+runResourceBindingConformance("MemoryStore", () => new MemoryStore());
+runResourceBindingConformance("SqliteStore", () => openSqliteStore(":memory:"));
 
 test("SqliteStore (file): persists no raw secrets and only OAuth tables", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-idp-store-"));

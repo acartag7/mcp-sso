@@ -15,26 +15,28 @@ export interface AuthCodeRow {
 export interface RefreshTokenRow {
   token_hash: string; family_id: string; previous_token_hash: string | null;
   client_id: string; subject: string; scopes_json: string; expires_at: string;
-  consumed_at: string | null; grant_generation: unknown; revoked_at: string | null;
-  f_grant_generation: unknown;
+  consumed_at: string | null; grant_generation: unknown; resource: unknown;
+  revoked_at: string | null; f_grant_generation: unknown; f_resource: unknown;
 }
 
 export function insertRefreshToken(db: DatabaseSync, input: SaveRefreshTokenInput): void {
   db.prepare(`INSERT INTO oauth_refresh_tokens (
     token_hash, family_id, previous_token_hash, client_id, subject, scopes_json,
-    expires_at, consumed_at, grant_generation
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`).run(
+    expires_at, consumed_at, grant_generation, resource
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`).run(
     input.tokenHash, input.familyId, input.previousTokenHash, input.clientId, input.subject,
     JSON.stringify(input.scopes), input.expiresAt,
-    grantGenerationForWrite(input.grantGeneration),
+    grantGenerationForWrite(input.grantGeneration), resourceForWrite(input.resource),
   );
 }
 
-export function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow): SaveRefreshTokenInput {
+export function nextFromRow(
+  input: SaveRefreshTokenInput, row: RefreshTokenRow, resource: string | null,
+): SaveRefreshTokenInput {
   return {
     ...input, clientId: row.client_id, subject: row.subject,
     scopes: parseScopes(row.scopes_json),
-    grantGeneration: grantGenerationFromStored(row.grant_generation),
+    grantGeneration: grantGenerationFromStored(row.grant_generation), resource,
   };
 }
 
@@ -57,6 +59,10 @@ export function validateRefreshToken(input: SaveRefreshTokenInput): void {
   if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
   assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
   assertGrantGeneration(input.grantGeneration, "grantGeneration");
+  if (input.resource !== undefined && input.resource !== null
+    && (typeof input.resource !== "string" || input.resource.length === 0)) {
+    throw new StoreInputError("resource must be a non-empty string or null");
+  }
 }
 
 export function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
@@ -76,14 +82,27 @@ export function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {
   };
 }
 
-export function refreshTokenFromRow(row: RefreshTokenRow): RefreshTokenRecord {
+export function refreshTokenFromRow(row: RefreshTokenRow, resource?: string | null): RefreshTokenRecord {
   return {
     tokenHash: row.token_hash, familyId: row.family_id,
     previousTokenHash: row.previous_token_hash, clientId: row.client_id,
     subject: row.subject, scopes: parseScopes(row.scopes_json),
     expiresAt: row.expires_at,
     grantGeneration: grantGenerationFromStored(row.grant_generation),
+    resource: resource === undefined ? resourceFromStored(row.resource) ?? null : resource,
   };
+}
+
+/** Omission is an explicit pre-0.4 legacy NULL. URL canonicalization is owned by
+ *  canonicalResource before the store boundary; the store preserves exact bytes. */
+export function resourceForWrite(value: string | null | undefined): string | null {
+  return value === undefined ? null : value;
+}
+
+/** Distinguishes a valid SQL NULL from malformed stored data. */
+export function resourceFromStored(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 export function parseScopes(value: string): string[] {

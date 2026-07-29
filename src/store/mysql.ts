@@ -1,21 +1,22 @@
-// MysqlStore — pooled persistent StorePort on mysql2. See contracts §12.3 for the
-// async/pooled pattern (begun-guard + release-in-finally, FOR UPDATE, READ COMMITTED,
-// two-step sweep, INSERT IGNORE, direct-value family upserts).
+// MysqlStore — pooled StorePort; contracts §12.3 owns its transactional patterns.
 
 import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
-import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
+import type { AuthCodeRecord, RefreshRotationResult, RefreshTokenRecord, ResourceBindingExpectation,
+  SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored,
 } from "../ports/store.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
-  authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
+  authCodeFromRow, refreshTokenFromRow, resourceForWrite, resourceFromStored,
+  validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
   type AuthCodeRow, type RefreshTokenRow,
 } from "./mysql-schema.ts";
 
 export class MysqlStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
+  readonly resourceBinding = 1 as const;
   private closed = false;
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
@@ -70,45 +71,59 @@ export class MysqlStore implements StorePort {
     validateRefreshToken(input);
     await this.transaction(async (conn) => {
       const generation = grantGenerationForWrite(input.grantGeneration);
+      const resource = resourceForWrite(input.resource);
       await conn.query(
-        `INSERT INTO oauth_refresh_token_families (family_id, revoked_at, grant_generation) VALUES (?, NULL, ?) ON DUPLICATE KEY UPDATE revoked_at = oauth_refresh_token_families.revoked_at`,
-        [input.familyId, generation],
+        `INSERT INTO oauth_refresh_token_families (family_id, revoked_at, grant_generation, resource) VALUES (?, NULL, ?, ?) ON DUPLICATE KEY UPDATE revoked_at = oauth_refresh_token_families.revoked_at`,
+        [input.familyId, generation, resource],
       );
       const [families] = await conn.query<RowDataPacket[]>(
-        `SELECT grant_generation FROM oauth_refresh_token_families WHERE family_id = ? FOR UPDATE`,
-        [input.familyId],
+        `SELECT grant_generation, resource FROM oauth_refresh_token_families WHERE family_id = ? FOR UPDATE`, [input.familyId],
       );
-      const family = families[0] as { grant_generation?: unknown } | undefined;
+      const family = families[0] as { grant_generation?: unknown; resource?: unknown } | undefined;
       if (grantGenerationFromStored(family?.grant_generation) !== generation) throw new StoreInputError("family grantGeneration mismatch");
+      if (resourceFromStored(family?.resource) !== resource) throw new StoreInputError("family resource mismatch");
       await insertRefreshToken(conn, input);
     });
   }
 
-  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number): Promise<RefreshTokenRecord | null> {
+  async rotateRefreshToken(
+    tokenHash: string, next: SaveRefreshTokenInput, nowIso: string,
+    expectedGrantGeneration?: number, resourceBinding?: ResourceBindingExpectation,
+  ): Promise<RefreshRotationResult> {
     this.ensureOpen();
     validateRotation(tokenHash, next, nowIso);
     return this.transaction(async (conn) => {
       const [rows] = await conn.query<RowDataPacket[]>(
-        `SELECT t.*, f.revoked_at AS f_revoked_at, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ? FOR UPDATE`,
-        [tokenHash],
+        `SELECT t.*, f.revoked_at AS f_revoked_at, f.grant_generation AS f_grant_generation, f.resource AS f_resource FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ? FOR UPDATE`, [tokenHash],
       );
       const row = rows[0] as RefreshTokenRow | undefined;
       if (!row || row.f_revoked_at !== null) return null;
       if (expectedGrantGeneration !== undefined
         && (grantGenerationFromStored(row.f_grant_generation) !== expectedGrantGeneration
           || grantGenerationFromStored(row.grant_generation) !== expectedGrantGeneration)) return null;
-      if (row.consumed_at !== null) { await revokeFamily(conn, row.family_id, nowIso); return null; } // SAME conn — review B1
+      const familyResource = resourceFromStored(row.f_resource);
+      const tokenResource = resourceFromStored(row.resource);
+      // Replay FIRST, before ANY resource comparison (rationale in memory.ts).
+      if (row.consumed_at !== null) { await revokeFamily(conn, row.family_id, nowIso); return null; }
+      if (familyResource === undefined || tokenResource === undefined || tokenResource !== familyResource) return null;
+      // Replay precedes request-resource comparison and always revokes on this locked connection.
       if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
-      // Insert successor BEFORE marking the predecessor consumed: a colliding successor
-      // hash returns null WITHOUT consuming the predecessor (sqlite parity; Codex P2).
-      try {
-        await insertRefreshToken(conn, nextFromRow(next, row)); // Fix #3 backfill from the consumed row
-      } catch (error) {
-        if (isDuplicateEntry(error)) return null;
-        throw error;
+      let successorResource = familyResource;
+      let legacyBind = false;
+      if (resourceBinding !== undefined) {
+        if (familyResource !== null) {
+          if (familyResource !== resourceBinding.resource) return { status: "resource_mismatch" };
+        } else if (resourceBinding.allowLegacySingletonBinding) {
+          successorResource = resourceBinding.resource; legacyBind = true;
+        } else return null;
+      }
+      try { await insertRefreshToken(conn, nextFromRow(next, row, successorResource)); } catch (error) { if (isDuplicateEntry(error)) return null; throw error; }
+      if (legacyBind) {
+        await conn.query(`UPDATE oauth_refresh_token_families SET resource = ? WHERE family_id = ? AND resource IS NULL`, [successorResource, row.family_id]);
+        await conn.query(`UPDATE oauth_refresh_tokens SET resource = ? WHERE token_hash = ? AND resource IS NULL`, [successorResource, tokenHash]);
       }
       await conn.query(`UPDATE oauth_refresh_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL`, [nowIso, tokenHash]);
-      return refreshTokenFromRow(row);
+      return refreshTokenFromRow(row, successorResource);
     });
   }
 
@@ -128,18 +143,25 @@ export class MysqlStore implements StorePort {
     return row ? refreshTokenFromRow(row) : null;
   }
 
-  async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number): Promise<string[]> {
+  async findGrantedScopes(
+    subject: string, clientId: string, nowIso: string,
+    expectedGrantGeneration?: number, resourceBinding?: ResourceBindingExpectation,
+  ): Promise<string[]> {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
     const generationClause = expectedGrantGeneration === undefined
       ? "" : " AND f.grant_generation = ? AND t.grant_generation = ?";
+    const resourceClause = resourceBinding === undefined ? ""
+      : resourceBinding.allowLegacySingletonBinding
+        ? " AND ((f.resource = ? AND t.resource = ?) OR (f.resource IS NULL AND t.resource IS NULL))"
+        : " AND f.resource = ? AND t.resource = ?";
+    const params: (string | number)[] = [subject, clientId, nowIso];
+    if (expectedGrantGeneration !== undefined) params.push(expectedGrantGeneration, expectedGrantGeneration);
+    if (resourceBinding !== undefined) params.push(resourceBinding.resource, resourceBinding.resource);
     const [rows] = await this.pool.query<RowDataPacket[]>(
       `SELECT t.scopes_json FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id
        WHERE t.subject = ? AND t.client_id = ? AND t.consumed_at IS NULL
-       AND f.revoked_at IS NULL AND t.expires_at > ?${generationClause}`,
-      expectedGrantGeneration === undefined
-        ? [subject, clientId, nowIso]
-        : [subject, clientId, nowIso, expectedGrantGeneration, expectedGrantGeneration],
+       AND f.revoked_at IS NULL AND t.expires_at > ?${generationClause}${resourceClause}`, params,
     );
     const out: string[] = [];
     for (const row of rows as { scopes_json: string }[]) for (const s of parseScopes(row.scopes_json)) if (!out.includes(s)) out.push(s);

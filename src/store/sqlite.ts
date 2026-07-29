@@ -6,7 +6,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { chmodSync } from "node:fs";
 import type {
-  AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
+  AuthCodeRecord, RefreshRotationResult, RefreshTokenRecord, ResourceBindingExpectation,
+  SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
@@ -15,12 +16,14 @@ import {
 import { migrateSqliteStore } from "./sqlite-schema.ts";
 import {
   authCodeFromRow, insertRefreshToken, nextFromRow, parseScopes,
-  refreshTokenFromRow, revokeFamily, validateAuthCode, validateRefreshToken,
-  validateRotation, type AuthCodeRow, type RefreshTokenRow,
+  refreshTokenFromRow, resourceForWrite, resourceFromStored, revokeFamily,
+  validateAuthCode, validateRefreshToken, validateRotation,
+  type AuthCodeRow, type RefreshTokenRow,
 } from "./sqlite-records.ts";
 
 export class SqliteStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
+  readonly resourceBinding = 1 as const;
   private closed = false;
   private readonly db: DatabaseSync;
 
@@ -69,41 +72,61 @@ export class SqliteStore implements StorePort {
     validateRefreshToken(input);
     this.transaction(() => {
       const generation = grantGenerationForWrite(input.grantGeneration);
+      const resource = resourceForWrite(input.resource);
       this.db.prepare(`INSERT INTO oauth_refresh_token_families (
-        family_id, revoked_at, grant_generation
-      ) VALUES (?, NULL, ?) ON CONFLICT(family_id) DO NOTHING`).run(input.familyId, generation);
+        family_id, revoked_at, grant_generation, resource
+      ) VALUES (?, NULL, ?, ?) ON CONFLICT(family_id) DO NOTHING`).run(input.familyId, generation, resource);
       const family = this.db.prepare(
-        `SELECT grant_generation FROM oauth_refresh_token_families WHERE family_id = ?`,
-      ).get(input.familyId) as { grant_generation: unknown };
+        `SELECT grant_generation, resource FROM oauth_refresh_token_families WHERE family_id = ?`,
+      ).get(input.familyId) as { grant_generation: unknown; resource: unknown };
       if (grantGenerationFromStored(family.grant_generation) !== generation) {
         throw new StoreInputError("family grantGeneration mismatch");
       }
+      if (resourceFromStored(family.resource) !== resource) throw new StoreInputError("family resource mismatch");
       insertRefreshToken(this.db, input);
     });
   }
 
-  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number): Promise<RefreshTokenRecord | null> {
+  async rotateRefreshToken(
+    tokenHash: string, next: SaveRefreshTokenInput, nowIso: string,
+    expectedGrantGeneration?: number, resourceBinding?: ResourceBindingExpectation,
+  ): Promise<RefreshRotationResult> {
     this.ensureOpen();
     validateRotation(tokenHash, next, nowIso);
     return this.transaction(() => {
       const row = this.db.prepare(
-        `SELECT t.*, f.revoked_at, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t
-         JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ?`,
+        `SELECT t.*, f.revoked_at, f.grant_generation AS f_grant_generation, f.resource AS f_resource
+         FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id
+         WHERE t.token_hash = ?`,
       ).get(tokenHash) as RefreshTokenRow | undefined;
       if (!row || row.revoked_at !== null) return null;
       if (expectedGrantGeneration !== undefined
         && (grantGenerationFromStored(row.f_grant_generation) !== expectedGrantGeneration
           || grantGenerationFromStored(row.grant_generation) !== expectedGrantGeneration)) return null;
-      if (row.consumed_at !== null) {
-        revokeFamily(this.db, row.family_id, nowIso);
-        return null;
-      }
+      const familyResource = resourceFromStored(row.f_resource);
+      const tokenResource = resourceFromStored(row.resource);
+      // Replay FIRST, before ANY resource comparison (rationale in memory.ts).
+      if (row.consumed_at !== null) { revokeFamily(this.db, row.family_id, nowIso); return null; }
+      if (familyResource === undefined || tokenResource === undefined || tokenResource !== familyResource) return null;
       if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
+      let successorResource = familyResource;
+      let legacyBind = false;
+      if (resourceBinding !== undefined) {
+        if (familyResource !== null) {
+          if (familyResource !== resourceBinding.resource) return { status: "resource_mismatch" };
+        } else if (resourceBinding.allowLegacySingletonBinding) {
+          successorResource = resourceBinding.resource;
+          legacyBind = true;
+        } else return null;
+      }
       if (this.db.prepare(`SELECT token_hash FROM oauth_refresh_tokens WHERE token_hash = ?`).get(next.tokenHash)) return null;
+      if (legacyBind) {
+        this.db.prepare(`UPDATE oauth_refresh_token_families SET resource = ? WHERE family_id = ? AND resource IS NULL`).run(successorResource, row.family_id);
+        this.db.prepare(`UPDATE oauth_refresh_tokens SET resource = ? WHERE token_hash = ? AND resource IS NULL`).run(successorResource, tokenHash);
+      }
       this.db.prepare(`UPDATE oauth_refresh_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL`).run(nowIso, tokenHash);
-      // Fix #3 backfill: successor takes clientId/subject/scopes from the consumed row.
-      insertRefreshToken(this.db, nextFromRow(next, row));
-      return refreshTokenFromRow(row);
+      insertRefreshToken(this.db, nextFromRow(next, row, successorResource));
+      return refreshTokenFromRow(row, successorResource);
     });
   }
 
@@ -124,20 +147,28 @@ export class SqliteStore implements StorePort {
     });
   }
 
-  async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number): Promise<string[]> {
+  async findGrantedScopes(
+    subject: string, clientId: string, nowIso: string,
+    expectedGrantGeneration?: number, resourceBinding?: ResourceBindingExpectation,
+  ): Promise<string[]> {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
     return this.transaction(() => {
       const generationClause = expectedGrantGeneration === undefined
         ? "" : " AND f.grant_generation = ? AND t.grant_generation = ?";
+      const resourceClause = resourceBinding === undefined ? ""
+        : resourceBinding.allowLegacySingletonBinding
+          ? " AND ((f.resource = ? AND t.resource = ?) OR (f.resource IS NULL AND t.resource IS NULL))"
+          : " AND f.resource = ? AND t.resource = ?";
+      const params: (string | number | null)[] = [subject, clientId, nowIso];
+      if (expectedGrantGeneration !== undefined) params.push(expectedGrantGeneration, expectedGrantGeneration);
+      if (resourceBinding !== undefined) params.push(resourceBinding.resource, resourceBinding.resource);
       const rows = this.db.prepare(
         `SELECT t.scopes_json FROM oauth_refresh_tokens t
          JOIN oauth_refresh_token_families f ON f.family_id = t.family_id
          WHERE t.subject = ? AND t.client_id = ? AND t.consumed_at IS NULL
-         AND f.revoked_at IS NULL AND t.expires_at > ?${generationClause}`,
-      ).all(...(expectedGrantGeneration === undefined
-        ? [subject, clientId, nowIso]
-        : [subject, clientId, nowIso, expectedGrantGeneration, expectedGrantGeneration])) as { scopes_json: string }[];
+         AND f.revoked_at IS NULL AND t.expires_at > ?${generationClause}${resourceClause}`,
+      ).all(...params) as { scopes_json: string }[];
       const out: string[] = [];
       for (const row of rows) for (const s of parseScopes(row.scopes_json)) if (!out.includes(s)) out.push(s);
       return out;

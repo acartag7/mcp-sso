@@ -122,10 +122,10 @@ export class OAuthTokenUseCase {
         expectedStoredDcrGrantGeneration(this.config),
       );
       if (!rotated) throw new OAuthError("invalid_grant", "Refresh token is invalid");
+      if ("status" in rotated) throw new OAuthError("invalid_target", "refresh token bound to a different resource"); // fieldless mismatch, no mutation -> no §7.4 family revocation
       try {
         if (!hasExpectedGrantGeneration(rotated, expectedStoredDcrGrantGeneration(this.config))) throw new OAuthError("invalid_grant", "Refresh token is invalid");
-        // The rotated record's stored client is authoritative (RFC 6749 §6).
-        if (!input.clientId || input.clientId !== rotated.clientId) throw new OAuthError("invalid_grant", "Refresh token client binding is invalid");
+        if (!input.clientId || input.clientId !== rotated.clientId) throw new OAuthError("invalid_grant", "Refresh token client binding is invalid"); // stored client authoritative (RFC 6749 §6)
         if (rotated.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
         const prepared = await this.tokenResponse(rotated, nextRaw);
         await this.auditToken("oauth.token.refresh", "success", rotated);
