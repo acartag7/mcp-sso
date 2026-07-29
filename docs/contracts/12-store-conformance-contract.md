@@ -17,6 +17,7 @@ interface RefreshTokenRecord {
   tokenHash: string; familyId: string; previousTokenHash: string | null;
   clientId: string; subject: string; scopes: string[]; expiresAt: string;
   grantGeneration?: number | null;
+  resource?: string | null; // PENDING 0.4.0; new writes non-null
 }
 interface SaveAuthCodeInput {
   /* AuthCodeRecord fields; optional only for source compatibility with a
@@ -29,6 +30,7 @@ interface SaveRefreshTokenInput {
   clientId: string; subject: string; scopes: string[]; expiresAt: string;
   /* Same omission/null write semantics as SaveAuthCodeInput. */
   grantGeneration?: number | null;
+  resource?: string | null; // PENDING 0.4.0; old writes are legacy
 }
 ```
 Inputs are validated: `assertSha256Hex` for every hash; `assertUtcIsoTimestamp`
@@ -147,6 +149,28 @@ construction rejects a store without the generation capability marker.
     `AuthConfigError`, preventing a custom store that ignores the new optional
     parameters from failing open. A current-generation family survives ordinary
     process/store restarts.
+11. **Resource lineage (PENDING 0.4.0 — NOT ENFORCED at this commit):**
+    new refresh families and tokens store one canonical non-null resource.
+    Rotation compares the family row, consumed token row, and optional request
+    expectation before replay handling or mutation, then copies the stored
+    resource to the successor. `findGrantedScopes` includes the expected
+    resource predicate alongside subject, client, time, and generation.
+
+    Reference SQL migrations add nullable `resource` columns to
+    `oauth_refresh_token_families` and `oauth_refresh_tokens` with no database
+    default, so an old binary's explicit insert remains legacy `NULL`.
+    In singleton mode only, rotation atomically binds a null family/token to the
+    sole resource and a null active row may contribute prior scopes there. In
+    multi-resource mode a null/malformed/disagreeing lineage returns no
+    rotation, contributes no scopes, and is never assigned the request value.
+    The additive `resourceBinding: 1` marker is required for a custom store in
+    multi-resource mode. The shared conformance suite owns memory, SQLite, and
+    MySQL parity, including restart and old-binary insert fixtures.
+
+    `assertResourceBindingStore` checks `resourceBinding: 1` in `Bridge`,
+    `OAuthAuthorizationUseCase`, and `OAuthTokenUseCase` construction before
+    any store or adapter side effect. The marker is not a lazy per-operation
+    probe, and direct exported use-case construction does not bypass it.
 
 ## 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`) — in-process maps; dev/test only, labeled loud.

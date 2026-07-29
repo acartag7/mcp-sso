@@ -82,6 +82,39 @@ stored-DCR mode is active carries the same deployment cutover generation, but
 remains excluded from scope accumulation under §17.1.6. Full record and legacy
 rules are in §12.
 
+**0.4.0 resource-lineage capability (PENDING — NOT ENFORCED at this
+commit).** `RefreshTokenRecord` and refresh-family state gain one nullable
+resource for rolling-upgrade compatibility. `rotateRefreshToken` and
+`findGrantedScopes` gain an optional resource expectation; a multi-resource
+bridge requires the additive `resourceBinding: 1` capability marker so an old
+custom store cannot silently ignore it. Rotation compares the stored family
+and token resources inside its atomic operation and authoritative-copies the
+stored resource to the successor. Scope derivation keys by
+`(subject, clientId, resource, grantGeneration)`. Full legacy and migration
+rules are in §12.2 invariant 11.
+
+`assertResourceBindingStore(config, store)` checks the marker during
+multi-resource construction. `Bridge`, `OAuthAuthorizationUseCase`, and
+`OAuthTokenUseCase` each call it so the exported direct-use-case path cannot
+bypass the composition-root guard. The check precedes any store write, audit
+event, network operation, content-parser registration, or framework route
+registration. Absence or a value other than `1` is a boot `AuthConfigError`,
+never a first-refresh surprise.
+
+```ts
+interface ResourceBindingExpectation {
+  resource: string;
+  allowLegacySingletonBinding: boolean;
+}
+
+rotateRefreshToken(hash, next, now, expectedGeneration?, resourceBinding?)
+findGrantedScopes(subject, clientId, now, expectedGeneration?, resourceBinding?)
+```
+
+The last parameter is optional for source compatibility. Multi-resource use
+passes `{ resource, allowLegacySingletonBinding: false }`; singleton use passes
+the sole resource with `true`.
+
 ## 6.4 `ClientStore` (stored-DCR mode only — fix #4)
 ```ts
 type ApplicationType = "native" | "web" | "machine";   // "machine" added §17.2
@@ -206,6 +239,14 @@ accepted, a record is mutated, or a token is minted. The parser deliberately
 does not re-check the stored ceiling against the current catalog: catalog
 narrowing is enforced when resolving the grant (§17.2), so a still-valid
 subset remains usable.
+
+**0.4.0 machine resource binding (PENDING — NOT ENFORCED at this commit).**
+New active and disabled machine records carry one canonical `resource`.
+Provisioning dependencies add that resource beside the existing per-resource
+catalog; rotation and disable preserve it through the existing CAS operation.
+A legacy record without the field resolves only under a singleton catalog and
+writes the sole resource on its first successful lifecycle mutation. It is
+`invalid_client` under a multi-resource catalog.
 
 ## 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's

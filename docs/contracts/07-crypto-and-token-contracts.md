@@ -40,6 +40,18 @@ the existing `invalid_token` 401.
 **once** (memoized on the config) rather than per request, as the source does.
 `verifyAccessToken` reuses the cached `CryptoKey`.
 
+**0.4.0 resource amendment (PENDING — NOT ENFORCED at this commit).**
+`AccessTokenClaims` adds required `resource: string`, so `signAccessToken`
+receives one resolved canonical resource explicitly and emits exactly one
+primitive-string `aud`; it never selects a first/default resource from global
+config. `verifyAccessToken(token, config, clock, expectedResource?)` uses the
+explicit configured resource, with omission permitted only for a singleton
+catalog. In addition to jose signature/issuer/audience verification, it
+requires `payload.aud` itself to be a primitive string exactly equal to that
+resource. A signed `aud: [A, B]` is `invalid_token`, including when the array
+contains the expected resource. `VerifiedAccessToken` exposes the verified
+`resource`.
+
 ## 7.3 Authorization code (hashed, single-use)
 Format `ac_<base64url(32 random bytes)>`. Stored only as `sha256(code)`.
 Single-use: `consumeAuthCode` deletes on read; missing or expired → `invalid_grant`.
@@ -97,6 +109,14 @@ storage durably recorded the revocation. Reference stores perform the
 revocation before the preparation error escapes. Moving preparation before
 rotation is not an alternative: it can skip the atomic consumed-token replay
 detection and whole-family revocation that `rotateRefreshToken` owns.
+
+**0.4.0 refresh resource amendment (PENDING — NOT ENFORCED at this
+commit).** A refresh family and every token in it carry one canonical resource.
+Rotation compares family, consumed-token, and request expectation before
+consumption, then copies the stored resource to the successor. A mismatch
+returns no successor. A legacy null lineage binds atomically to the sole
+configured resource only in singleton mode; multi-resource mode rejects it as
+`invalid_grant` without assigning a request-selected resource.
 
 ## 7.5 PKCE S256 (timing-safe)
 `verifyPkceS256(verifier, challenge)` rejects malformed inputs outright (verifier

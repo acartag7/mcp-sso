@@ -1187,6 +1187,18 @@ in this flow."* Decisions:
   `client_credentials` issuance remains stateless: it reads the record, signs a
   JWT with no server-side token write, and returns no refresh token.
 
+**0.4.0 multi-resource amendment (PENDING — NOT ENFORCED at this commit).**
+`MachineClientDeps` adds required `resource: string`; its existing `catalog`
+must be that resource's catalog. New active and disabled records carry the
+canonical resource. Provisioning binds it before secret generation, lifecycle
+CAS operations preserve it, and `client_credentials` requires the selected
+request resource to equal it. After successful client authentication and
+before scope resolution or signing, a bound credential used for another
+configured resource is `invalid_target`; wrong/unknown credentials remain
+`invalid_client`. A legacy unbound record resolves only under a singleton
+catalog and is written bound on its first successful lifecycle mutation; it is
+`invalid_client` under a multi-resource catalog.
+
 ## 17.3 Device authorization grant (RFC 8628)
 
 > **CONTRACT ONLY — NOT IMPLEMENTED.** No device endpoint, device-code store

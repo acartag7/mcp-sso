@@ -287,3 +287,77 @@ the response. Wiring rules:
 - Framework adapters are optional `peerDependencies` (`fastify`/`express`/`hono`);
   anything added to `devDependencies` for testing gets a `dependency-ledger` entry
   with the 15-day check.
+
+## 9.7 Multi-resource request and metadata behavior (PENDING 0.4.0)
+
+> **NOT ENFORCED at this commit.**
+
+- Authorization and token requests accept exactly one primitive-string
+  `resource`. Repeated/array, malformed, or unknown values are
+  `invalid_target`. Omission resolves only when the normalized catalog has one
+  entry; it is `invalid_target` with two or more entries. Every adapter
+  preserves repeated query/form occurrences into the normalized request; no
+  framework may collapse duplicate `resource` parameters to first/last wins.
+- The resolved immutable `ResourceDefinition` supplies defaults and scope
+  validation through consent, approval, code exchange, refresh, and
+  `client_credentials`. Approval re-resolves the signed resource against the
+  current catalog before saving a code.
+- Consent and authorization codes retain one resource. Refresh and machine
+  lineage follow §§6–7/12. A token-endpoint resource must equal stored lineage;
+  mismatch writes no successor and mints no token. Code mismatch burns the
+  one-time code but saves no refresh token.
+- Prior grants are keyed by subject, client, resource, and generation. The same
+  scope string at A is not evidence at B. `IdentityPort.allowedScopes` remains
+  a generic ceiling intersected with the selected resource catalog; no
+  resource policy callback is added.
+- Authorization-server metadata publishes the sorted de-duplicated union of
+  all resource scope catalogs. It does not publish `protected_resources`:
+  that name is not standard MCP/OAuth metadata and no concrete consumer
+  requires an mcp-sso-specific extension. One PRM document contains only its
+  exact resource, issuer, and resource-owned scopes.
+- The canonical PRM URL inserts
+  `/.well-known/oauth-protected-resource` between resource origin and path. A
+  challenge uses that path-inserted URL for its pinned resource.
+- Each adapter mount may select a non-empty `protectedResources` subset of the
+  bridge catalog. Omission selects all resources for a same-origin,
+  distinct-path deployment; one resource per mount supports subdomains that
+  reuse a pathname. Before the first framework side effect, the adapter
+  canonicalizes and resolves the whole subset, computes each exact route
+  pathname from `protectedResourceMetadataUrl(resource).pathname`, and rejects
+  duplicate pathnames with `AuthConfigError` naming the pathname and both
+  resources. `/path` and `/path/` remain distinct; equal paths on different
+  origins still collide within one mount and require separate one-resource
+  mounts. The root fallback is registered only for a one-resource mount or an
+  exact origin-root resource; it never guesses among path resources. Fastify,
+  Express, and Hono share this rule.
+
+The config snapshot is immutable for one bridge instance. Restarting with a
+changed catalog has explicit non-revocation semantics:
+
+- Omitting a resource from the next instance removes its adapter routes and
+  PRM, makes new requests for it `invalid_target`, and prevents a new
+  authorizer from being constructed for it. Persisted resource-bound refresh
+  and machine records are retained. Already-signed access tokens are stateless
+  and are not revoked by the config change.
+- Re-adding the same canonical URL means restoring the same security resource,
+  not creating a new generation. An unexpired access token may verify again,
+  and still-valid refresh or machine credentials may resume. A clean
+  replacement uses a different canonical resource URL, leaving old credentials
+  bound to the retired URL. Reusing the same URL with a clean slate additionally
+  requires an operator-managed purge/revocation of its refresh and machine
+  state plus keeping the endpoint absent for at least the maximum access-token
+  lifetime; 0.4.0 has no resource-generation reset operation.
+- Narrowing a resource's scope catalog is not retroactive for already-signed
+  access tokens; they expire normally. Pending consent is rejected if its
+  resource is absent (`invalid_target`) or any signed scope is no longer
+  configured (`invalid_scope`), with no code saved. Existing codes and refresh
+  families whose stored scopes are no longer a subset of the current catalog
+  are `invalid_grant`. Machine issuance rejects a removed requested or implicit
+  ceiling scope with `invalid_scope`; a request for a still-current subset may
+  continue.
+
+Multi-resource support does not combine tools from several resources into one
+MCP endpoint, dynamically route one MCP connection between resources, or let
+one connection, consent, grant, refresh family, machine credential, or access
+token span resources. Backend routing and outbound MCP OAuth-client behavior
+remain application responsibilities.

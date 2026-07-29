@@ -19,6 +19,13 @@ drives §8.3.
 | `server_error` | 500 | — | internal failure (e.g. refresh generation) |
 | `internal_error` | 500 | — | unexpected (mapped from non-OAuthError) |
 
+**0.4.0 `invalid_target` amendment (PENDING — NOT ENFORCED at this commit).**
+The same 400 code covers a repeated/array, malformed, unknown, or missing
+resource in a multi-resource request, plus a request resource that disagrees
+with stored code/refresh/machine lineage. Missing/malformed persisted
+interactive lineage is `invalid_grant`; the machine equivalent is
+`invalid_client`. JWT audience failures remain `invalid_token`.
+
 `invalid_consent` (400) is internal to consent verification. `invalid_store_input`
 (`StoreInputError`) is thrown by store validation and is a programmer error, not
 an OAuth response.

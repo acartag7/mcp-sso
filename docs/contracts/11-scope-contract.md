@@ -13,3 +13,11 @@
   (`priorScopes = []`); CIMD accumulation is deferred (§17.1.6 decision 3). Consent UI shows the **delta** (new
   scopes only); rendering is an adapter concern (Phase 3), the core supplies the
   before/after sets.
+
+**0.4.0 amendment (PENDING — NOT ENFORCED at this commit).** Scope catalogs and
+defaults belong to a `ResourceDefinition`. Requested, default, accumulated, and
+machine scopes are validated only against the selected resource's catalog.
+`findGrantedScopes` filters by resource, so equal scope strings on two resources
+do not share prior grants. Authorization-server metadata alone publishes the
+deterministic union; that union is discovery data and is never an enforcement
+catalog.

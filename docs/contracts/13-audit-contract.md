@@ -16,6 +16,18 @@ that serialized audit output never contains raw codes, refresh tokens, or access
 tokens, across every event name (the v0.2 names are exercised by synthetic
 events through each sink; the v0.1 names additionally by the live OAuth flow).
 
+**0.4.0 amendment (PENDING — NOT ENFORCED at this commit).** The following
+events carry the selected canonical `resource` whenever they are emitted:
+`oauth.authorize.prepare`, `oauth.authorize.approve`,
+`oauth.token.authorization_code`, `oauth.token.refresh`, `oauth.revoke`,
+`auth.request`, `oauth.token.client_credentials`, `oauth.client.provision`,
+`oauth.client.rotate_secret`, and `oauth.client.disable`.
+`oauth.upstream.callback` carries it only after a flow cookie has been verified
+and its resource resolved; failures before that boundary omit it. Registration,
+identity verification, pairing, and CIMD-fetch events are not grant-resource
+events and do not gain a synthetic resource. The field remains metadata, never
+a token value or request-selected unvalidated string.
+
 The reference sinks satisfy the fail-open port contract: their
 `writeAuthEvent` methods do not reject, and `combineAudit` isolates sibling
 sinks. `OAuthTokenUseCase` additionally calls every token/revocation audit

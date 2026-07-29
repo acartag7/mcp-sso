@@ -74,3 +74,15 @@ Under the 0.3.0 §6.1 amendment, `RequestAuthorizer.authorize` takes
 one canonical clock snapshot before request processing and reuses it for
 `verifyAccessToken` and `auth.request.occurredAt`. An invalid initial snapshot
 is `invalid_token` 401 with no fabricated audit timestamp.
+
+## 8.5 Resource-pinned authorizer (PENDING 0.4.0)
+
+> **NOT ENFORCED at this commit.**
+
+Every `RequestAuthorizer` instance is constructed with one configured canonical
+resource through an additive `resource?: string` constructor dependency.
+Omission resolves only for a singleton catalog; it is a construction error for
+a multi-resource catalog. The pin supplies access-token verification, the
+`resource` returned through `VerifiedAccessToken`, `AuthorizedSubject`, and
+`RequestAuthResult`, and the PRM URL in every 401/403 challenge. A request
+cannot repoint an existing authorizer instance.

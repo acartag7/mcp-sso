@@ -29,6 +29,17 @@
 > [`docs/verification.md` — "Spec-release re-verification (due
 > 2026-07-28)"](verification.md#spec-release-re-verification-due-2026-07-28)
 > for the exact outcome.
+>
+> **PENDING 0.4.0 — NOT ENFORCED at this commit:** the numbered sections now
+> define a finite multi-resource catalog and one-resource grant lineage. The
+> runtime, frozen acceptance activation, migrations, adapters, examples, and
+> conformance matrix remain separate follow-up PRs.
+>
+> The target deployment is one issuer protecting several independently
+> addressable MCP resources, such as `/grafana/mcp`, `/captatum/mcp`, and
+> `/memory/mcp`. A client connects only to the resource endpoint whose tools it
+> needs. This does not combine several tool catalogs behind one MCP endpoint,
+> and no connection, grant, or token spans resources.
 
 ## Contents
 
