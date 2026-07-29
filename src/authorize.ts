@@ -12,7 +12,7 @@ import type { StorePort } from "./ports/store.ts";
 import type { BridgeConfig } from "./config.ts";
 import type { ConsentRequestClaims } from "./crypto.ts";
 import { OAuthError, withRedirect } from "./errors.ts";
-import { writeAuthorizeFailure, writeAuthorizeSuccess, type AuthorizeAuditEvent, type AuthorizeAuditSuccess } from "./authorize-audit.ts";
+import { writeAuthorizeFailure, writeAuthorizeSuccess } from "./authorize-audit.ts";
 import {
   expiresAtIso, generateAuthorizationCode, sha256Hex,
   signConsentToken, verifyConsentToken,
@@ -22,11 +22,11 @@ import { buildErrorRedirect } from "./challenge.ts";
 import type { CimdResolver } from "./cimd/resolve.ts";
 import type { CimdRegistration } from "./cimd/registration.ts";
 import { assertOAuthRedirectEntry } from "./redirect.ts";
-import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, newGrantGeneration } from "./stored-dcr-generation.ts";
+import { expectedStoredDcrGrantGeneration, newGrantGeneration } from "./stored-dcr-generation.ts";
 import {
-  accumulationAllowed, assertApproveCimdGate, assertApproveOrigin, cimdDisplay, dedupe, hostOf,
-  redirectWithCode, requiredStr, resolveAuthorizeClient,
-  type CimdConsentDisplay,
+  accumulationAllowed, assertApproveCimdGate, assertApproveOrigin, assertConsentResourceCurrent,
+  authorizeBinding, cimdDisplay, dedupe, hostOf, initAuthorizeCatalog, redirectWithCode, requiredStr,
+  resolveAuthorizeClient, resolveResource, type CimdConsentDisplay, type ResourceCatalog,
 } from "./authorize-internals.ts";
 export interface OAuthAuthorizationDeps {
   config: BridgeConfig;
@@ -91,6 +91,7 @@ const AUDIT_APPROVE = "oauth.authorize.approve";
 
 export class OAuthAuthorizationUseCase {
   private readonly config: BridgeConfig;
+  private readonly catalog: ResourceCatalog;
   private readonly store: StorePort;
   private readonly clock: ClockPort;
   private readonly audit: AuditPort;
@@ -102,7 +103,7 @@ export class OAuthAuthorizationUseCase {
     this.clock = deps.clock;
     this.audit = deps.audit;
     this.cimd = deps.cimd;
-    assertStoredDcrGenerationStore(this.config, this.store);
+    this.catalog = initAuthorizeCatalog(this.config, this.store);
   }
 
   async prepare(input: AuthorizeRequestInput): Promise<PreparedConsent> {
@@ -139,13 +140,12 @@ export class OAuthAuthorizationUseCase {
         if (input.responseType !== "code") {
           throw new OAuthError("unsupported_response_type", "Only response_type=code is supported");
         }
-        const resource = input.resource || this.config.resource;
-        if (resource !== this.config.resource) throw new OAuthError("invalid_target", "Unknown OAuth resource");
+        const selected = resolveResource(this.catalog, input.resource);
         if (input.codeChallengeMethod !== "S256") {
           throw new OAuthError("invalid_request", "PKCE code_challenge_method must be S256");
         }
         const codeChallenge = requiredStr(input.codeChallenge, "code_challenge");
-        const requested = normalizeScopes(input.scope, this.config.scopeCatalog, this.config.defaultScopes);
+        const requested = normalizeScopes(input.scope, selected.scopeCatalog, selected.defaultScopes);
         // §17.4: a present ceiling (any array, incl. []) narrows requested/default
         // scopes by intersection (defaultScopes already folded into `requested`).
         const scopes = ceiling ? requested.filter((s) => ceiling.includes(s)) : requested;
@@ -156,7 +156,7 @@ export class OAuthAuthorizationUseCase {
           throw new OAuthError("access_denied", "No requested scopes are within the authorized ceiling");
         }
         claims = {
-          clientId, redirectUri, resource, scopes, codeChallenge, codeChallengeMethod: "S256",
+          clientId, redirectUri, resource: selected.resource, scopes, codeChallenge, codeChallengeMethod: "S256",
           state, subject: input.subject, allowedScopes: ceiling,
           // Provenance for THIS flow only (decision 3): a genuinely-validated
           // CIMD registration — its own fetch/cache hit, or the carried one.
@@ -170,18 +170,18 @@ export class OAuthAuthorizationUseCase {
       // §17.1.6 decision 3 (NEGATIVE class): accumulate iff stored-DCR AND NOT
       // scheme-shaped. Never keyed on cimd_verified.
       const rawPrior = accumulationAllowed(this.config, clientId)
-        ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config))
+        ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), authorizeBinding(this.catalog, claims.resource))
         : [];
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
       const priorScopes = claims.allowedScopes ? rawPrior.filter((s) => claims.allowedScopes!.includes(s)) : rawPrior;
       const consentToken = await signConsentToken(claims, this.config, this.clock);
-      await this.auditSuccess(AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject: input.subject });
+      await writeAuthorizeSuccess(this.audit, this.clock, AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject: input.subject });
       return {
         consentToken, ...claims, priorScopes,
         ...(resolved.registration ? { cimd: cimdDisplay(resolved.registration, redirectUri) } : {}),
       };
     } catch (error) {
-      await this.auditFailure(AUDIT_PREPARE, error, clientId, input.redirectUri);
+      await writeAuthorizeFailure(this.audit, this.clock, AUDIT_PREPARE, error, clientId, input.redirectUri);
       throw error;
     }
   }
@@ -200,9 +200,14 @@ export class OAuthAuthorizationUseCase {
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
       if (input.approved !== true) {
         const redirectTo = buildErrorRedirect(consent.redirectUri, "access_denied", consent.state);
-        await this.auditFailure(AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject, operationClock);
+        await writeAuthorizeFailure(this.audit, operationClock, AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject);
         return { redirectTo, state: consent.state };
       }
+
+      // §9.7: re-resolve the signed resource against the CURRENT catalog before any
+      // side effect. A removed resource is invalid_target; a scope no longer in that
+      // resource's catalog is invalid_scope. Neither consumes the JTI nor saves a code.
+      assertConsentResourceCurrent(this.catalog, consent.resource, consent.scopes);
 
       // Single-use consent JTI; replay is an integrity failure (direct).
       const consentExpiresAt = expiresAtIso(operationClock, this.config.consentTokenTtlSeconds);
@@ -212,7 +217,7 @@ export class OAuthAuthorizationUseCase {
 
       // Scope accumulation: stored-DCR OPAQUE clients only (§17.1.6 decision 3).
       const priorScopes = accumulationAllowed(this.config, consent.clientId)
-        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config))
+        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), authorizeBinding(this.catalog, consent.resource))
         : [];
       const union = dedupe([...consent.scopes, ...priorScopes]);
       // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
@@ -231,19 +236,11 @@ export class OAuthAuthorizationUseCase {
         expiresAt: expiresAtIso(operationClock, this.config.authorizationCodeTtlSeconds),
         grantGeneration: newGrantGeneration(this.config),
       });
-      await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject }, operationClock);
+      await writeAuthorizeSuccess(this.audit, operationClock, AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject });
       return { code, redirectTo: redirectWithCode(consent.redirectUri, code, this.config.issuer, consent.state), state: consent.state };
     } catch (error) {
-      await this.auditFailure(AUDIT_APPROVE, error, undefined, undefined, undefined, operationClock);
+      await writeAuthorizeFailure(this.audit, operationClock, AUDIT_APPROVE, error);
       throw error;
     }
-  }
-
-  private auditSuccess(event: AuthorizeAuditEvent, r: AuthorizeAuditSuccess, clock: ClockPort = this.clock): Promise<void> {
-    return writeAuthorizeSuccess(this.audit, clock, event, r);
-  }
-
-  private auditFailure(event: AuthorizeAuditEvent, error: unknown, clientId?: string, redirectUri?: string, subject?: string, clock: ClockPort = this.clock): Promise<void> {
-    return writeAuthorizeFailure(this.audit, clock, event, error, clientId, redirectUri, subject);
   }
 }

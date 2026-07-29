@@ -14,6 +14,13 @@ import {
   cimdRedirectMatches, displayHost, everyRedirectIsLoopback, isCimdClientId,
   isSchemeShaped, type CimdRegistration,
 } from "./cimd/registration.ts";
+import { buildResourceCatalog, resolveResource } from "./resource.ts";
+import type { ResourceCatalog, ResourceConfiguration } from "./resource.ts";
+import type { ResourceBindingExpectation, StorePort } from "./ports/store.ts";
+import { assertStoredDcrGenerationStore } from "./stored-dcr-generation.ts";
+
+export { resolveResource };
+export type { ResourceCatalog };
 
 /** Display-only CIMD fields handed to the consent renderer (§17.1.6 decision
  *  1c / §17.1.4). `clientName` is UNVERIFIED text — the renderer escapes it. */
@@ -155,4 +162,34 @@ export function dedupe(values: string[]): string[] {
 export function requiredStr(value: string | undefined, label: string): string {
   if (typeof value === "string" && value) return value;
   throw new OAuthError("invalid_request", `${label} is required`);
+}
+
+/** Build the immutable catalog once at construction and assert the store
+ *  capability in the same step (both are boot-time guards). */
+export function initAuthorizeCatalog(config: BridgeConfig, store: StorePort): ResourceCatalog {
+  assertStoredDcrGenerationStore(config, store);
+  return buildResourceCatalog(
+    config as unknown as ResourceConfiguration,
+    { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },
+  );
+}
+
+/** The resource-binding expectation passed to findGrantedScopes: the resolved
+ *  resource string plus legacy-singleton binding (one catalog entry ⇒ a null
+ *  pre-0.4 prior grant can only be from this resource). A prior grant for
+ *  resource A is never evidence for B (§9.7). */
+export function authorizeBinding(catalog: ResourceCatalog, resource: string): ResourceBindingExpectation {
+  return { resource, allowLegacySingletonBinding: catalog.entries.length === 1 };
+}
+
+/** Approval re-resolves the signed consent resource against the CURRENT catalog
+ *  before saving a code (§9.7). A removed resource is invalid_target; a scope no
+ *  longer in that resource's catalog is invalid_scope. Neither saves a code. */
+export function assertConsentResourceCurrent(catalog: ResourceCatalog, resource: string, scopes: readonly string[]): void {
+  const resolved = resolveResource(catalog, resource);
+  for (const scope of scopes) {
+    if (!resolved.scopeCatalog.includes(scope)) {
+      throw new OAuthError("invalid_scope", "A consent scope is no longer in the resource catalog");
+    }
+  }
 }

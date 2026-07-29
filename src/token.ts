@@ -9,7 +9,8 @@ import { resolveClientCredentialsScope, scopeString, storedScopes } from "./scop
 import { authenticateMachineClientSecret } from "./machine-client-auth.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 import { writeTokenAudit } from "./token-audit.ts";
-import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
+import { expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
+import { initTokenCatalog, refreshBindingExpectation, resolveRecordResource, requiredStr, type ResourceCatalog } from "./token-resource.ts";
 export interface OAuthTokenDeps {
   config: BridgeConfig;
   store: StorePort;
@@ -63,6 +64,7 @@ export interface MachineTokenResponse {
 
 export class OAuthTokenUseCase {
   private readonly config: BridgeConfig;
+  private readonly catalog: ResourceCatalog;
   private readonly store: StorePort;
   private readonly clock: ClockPort;
   private readonly audit: AuditPort;
@@ -72,7 +74,7 @@ export class OAuthTokenUseCase {
     this.store = deps.store;
     this.clock = deps.clock;
     this.audit = deps.audit;
-    assertStoredDcrGenerationStore(this.config, this.store);
+    this.catalog = initTokenCatalog(this.config, this.store);
   }
 
   async exchangeAuthorizationCode(input: AuthorizationCodeGrantInput): Promise<UserTokenResponse> {
@@ -90,7 +92,7 @@ export class OAuthTokenUseCase {
         tokenHash: sha256Hex(refreshToken), familyId, previousTokenHash: null,
         clientId: record.clientId, subject: record.subject, scopes: prepared.scopes,
         expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
-        grantGeneration: record.grantGeneration,
+        grantGeneration: record.grantGeneration, resource: prepared.resource,
       });
       await this.auditToken("oauth.token.authorization_code", "success", record);
       return prepared.response;
@@ -120,6 +122,7 @@ export class OAuthTokenUseCase {
         },
         rotatedAtIso,
         expectedStoredDcrGrantGeneration(this.config),
+        refreshBindingExpectation(this.catalog),
       );
       if (!rotated) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       if ("status" in rotated) throw new OAuthError("invalid_target", "refresh token bound to a different resource"); // fieldless mismatch, no mutation -> no §7.4 family revocation
@@ -218,10 +221,11 @@ export class OAuthTokenUseCase {
     return record;
   }
 
-  private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string): Promise<{ response: UserTokenResponse; scopes: string[] }> {
-    const scopes = storedScopes(record.scopes, this.config.scopeCatalog);
-    const accessToken = await signAccessToken({ subject: record.subject, clientId: record.clientId, scopes, resource: this.config.resource }, this.config, this.clock);
-    return { scopes, response: {
+  private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string): Promise<{ response: UserTokenResponse; scopes: string[]; resource: string }> {
+    const resolved = resolveRecordResource(this.catalog, record.resource);
+    const scopes = storedScopes(record.scopes, resolved.scopeCatalog);
+    const accessToken = await signAccessToken({ subject: record.subject, clientId: record.clientId, scopes, resource: resolved.resource }, this.config, this.clock);
+    return { scopes, resource: resolved.resource, response: {
       access_token: accessToken, token_type: "Bearer",
       expires_in: this.config.accessTokenTtlSeconds, refresh_token: refreshToken,
       scope: scopeString(scopes),
@@ -231,7 +235,7 @@ export class OAuthTokenUseCase {
   private async auditToken(event: "oauth.token.authorization_code" | "oauth.token.refresh", status: "success", record: AuthCodeRecord | RefreshTokenRecord): Promise<void> {
     await writeTokenAudit(this.audit, {
       occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status,
-      clientId: record.clientId, subject: record.subject, resource: this.config.resource, scopes: record.scopes,
+      clientId: record.clientId, subject: record.subject, resource: typeof record.resource === "string" ? record.resource : this.config.resource, scopes: record.scopes,
     });
   }
 
@@ -241,9 +245,4 @@ export class OAuthTokenUseCase {
       clientId, reason: error instanceof OAuthError ? error.code : "internal_error",
     });
   }
-}
-
-function requiredStr(value: string | undefined, label: string): string {
-  if (typeof value === "string" && value) return value;
-  throw new OAuthError("invalid_request", `${label} is required`);
 }

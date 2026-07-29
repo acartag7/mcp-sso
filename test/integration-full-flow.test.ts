@@ -477,16 +477,19 @@ test("integration — sqlite FILE store: full round-trip survives restart (live 
   if (process.platform === "win32") return; // node:sqlite file-lock/perm parity is POSIX-only
   const dir = await mkdtemp(join(tmpdir(), "mcp-sso-int-sqlite-file-"));
   const sqliteFile = join(dir, "auth.db");
-  // STABLE signing material + port-less loopback issuer across restart: the issuer
-  // must be stable so the pre-restart consent token still verifies on reopen.
+  // STABLE signing material + port-less loopback issuer+resource across restart:
+  // the issuer must be stable so the pre-restart consent token still verifies on
+  // reopen, and the resource must be stable so pre-restart refresh-token lineage
+  // still resolves against the catalog (0.4.0 binds refresh tokens to resource).
   const signingPrivateJwk = ecJwk();
   const consentSigningSecret = "s".repeat(40);
   const STABLE_ISSUER = "http://127.0.0.1";
+  const STABLE_RESOURCE = "http://127.0.0.1/mcp";
   try {
     // --- run 1: drive the flow through the first refresh, then close ---
     const port1 = await freePort();
     const base1 = `http://127.0.0.1:${port1}`;
-    const config1 = makeConfig({ resource: `${base1}/mcp`, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
+    const config1 = makeConfig({ resource: STABLE_RESOURCE, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
     const store1 = openSqliteStore(sqliteFile);
     const { bridge: bridge1, authorizer: authorizer1 } = deps(config1, store1);
     const mount1 = await mountExpress(bridge1, authorizer1, config1, port1);
@@ -501,7 +504,7 @@ test("integration — sqlite FILE store: full round-trip survives restart (live 
     // --- reopen run 2: SAME file + signing material + issuer (mirrors a restart) ---
     const port2 = await freePort();
     const base2 = `http://127.0.0.1:${port2}`;
-    const config2 = makeConfig({ resource: `${base2}/mcp`, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
+    const config2 = makeConfig({ resource: STABLE_RESOURCE, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
     const store2 = openSqliteStore(sqliteFile);
     const { bridge: bridge2, authorizer: authorizer2 } = deps(config2, store2);
     const mount2 = await mountExpress(bridge2, authorizer2, config2, port2);
