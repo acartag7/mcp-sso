@@ -55,6 +55,7 @@ class ThrowingAudit implements AuditPort {
 }
 
 class InMemoryClientStore implements MachineClientStore {
+  readonly machineClientResourceBinding = 1 as const;
   readonly clients = new Map<string, ClientRegistration>();
   readonly queuedFinds: ClientRegistration[] = [];
   findCalls = 0;
@@ -66,7 +67,12 @@ class InMemoryClientStore implements MachineClientStore {
   }
   queueFinds(...records: ClientRegistration[]): void { this.queuedFinds.push(...records); }
   setAt(clientId: string, record: unknown): void {
-    this.clients.set(clientId, record as ClientRegistration);
+    const value = record !== null && typeof record === "object"
+      && (record as { applicationType?: unknown }).applicationType === "machine"
+      && !Object.hasOwn(record, "resource")
+      ? { ...record, resource: RESOURCE }
+      : record;
+    this.clients.set(clientId, value as ClientRegistration);
   }
   async createMachineClient(
     client: ActiveMachineClientRegistration,
@@ -121,7 +127,7 @@ function setup(enabled: boolean): Ctx {
   return {
     bridge: new Bridge({ config, store, clock, audit }),
     config, clock, audit, clientStore,
-    machineDeps: { store: clientStore, catalog: [...CATALOG], clock, audit },
+    machineDeps: { store: clientStore, catalog: [...CATALOG], resource: RESOURCE, clock, audit },
   };
 }
 

@@ -47,6 +47,8 @@ export interface MachineClientRegistration {
   issuedAtEpoch: number;
   name?: string;
   allowedScopes: string[];
+  /** Canonical resource. Absent/null is readable only as pre-0.4 legacy input. */
+  resource?: string | null;
   secrets: ClientSecret[];
 }
 
@@ -57,6 +59,8 @@ interface MachineClientRegistrationBase {
   issuedAtEpoch: number;
   name?: string;
   allowedScopes: string[];
+  /** Optional in the public type only so a pre-0.4 row remains representable. */
+  resource?: string | null;
   version: number;
 }
 
@@ -86,6 +90,8 @@ export type StoredMachineClientRegistration =
 export type ClientRegistration = UserClientRegistration | StoredMachineClientRegistration;
 
 export interface ClientStore {
+  /** Required by every activated machine-credential path (contracts §6.4). */
+  readonly machineClientResourceBinding?: 1;
   save(client: ClientRegistration): Promise<void>;
   find(clientId: string): Promise<ClientRegistration | null>;
 }
@@ -97,6 +103,7 @@ export interface MachineClientMutationAudit {
   event: "oauth.client.provision" | "oauth.client.rotate_secret" | "oauth.client.disable";
   clientId: string;
   scopes: string[];
+  resource: string;
 }
 
 /** Mutation extension required only by the out-of-band machine lifecycle.
@@ -104,6 +111,7 @@ export interface MachineClientMutationAudit {
  * For upgrade compatibility, expectedVersion 0 matches only a v0.3.0 row with
  * both status and version absent. */
 export interface MachineClientStore extends ClientStore {
+  readonly machineClientResourceBinding: 1;
   createMachineClient(
     client: ActiveMachineClientRegistration,
     audit: MachineClientMutationAudit,

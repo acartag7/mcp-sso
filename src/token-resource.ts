@@ -3,8 +3,9 @@
 // catalog is built once per use-case instance; every lineage check re-resolves a
 // stored record's resource against the CURRENT catalog.
 
-import type { BridgeConfig } from "./config.ts";
+import { AuthConfigError, type BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
+import { assertMachineClientResourceStore } from "./machine-client-resource.ts";
 import type { ResourceBindingExpectation, StorePort } from "./ports/store.ts";
 import { buildResourceCatalog, resolveResource } from "./resource.ts";
 import type { ResourceCatalog, ResourceConfiguration, ResolvedResource } from "./resource.ts";
@@ -15,6 +16,12 @@ export type { ResourceCatalog } from "./resource.ts";
 /** Build the immutable catalog once at construction and assert the store
  *  capability in the same step (both are boot-time guards). */
 export function initTokenCatalog(config: BridgeConfig, store: StorePort): ResourceCatalog {
+  if (config.clientCredentials?.enabled) {
+    if (config.dcr.mode !== "stored") {
+      throw new AuthConfigError("clientCredentials.enabled requires dcr.mode 'stored'");
+    }
+    assertMachineClientResourceStore(config.dcr.store);
+  }
   assertStoredDcrGenerationStore(config, store);
   return buildResourceCatalog(
     config as unknown as ResourceConfiguration,

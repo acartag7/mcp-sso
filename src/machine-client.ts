@@ -5,7 +5,6 @@ import type {
   ActiveMachineClientRegistration,
   ClientStore,
   MachineClientMutationAudit,
-  MachineClientStore,
   VersionedMachineClientRegistration,
 } from "./ports/client-store.ts";
 import type { ClockPort } from "./ports/clock.ts";
@@ -24,6 +23,9 @@ import {
   parseMachineClientRegistration,
   type ParsedActiveMachineClientRegistration,
 } from "./machine-client-record.ts";
+import {
+  lifecycleMachineClientResource, machineClientResourceContext, mutationAudit,
+} from "./machine-client-resource.ts";
 
 export const DEFAULT_ROTATION_GRACE_SECONDS = 86_400;
 export const MAX_ROTATION_GRACE_SECONDS = 86_400;
@@ -31,8 +33,12 @@ export interface MachineClientDeps {
   /** A v0.3.0 ClientStore remains source-compatible; mutation calls require
    * the atomic MachineClientStore extension and fail closed when it is absent. */
   store: ClientStore;
-  /** `config.scopeCatalog` — allowedScopes is validated against this. */
+  /** The scope catalog owned by `resource`; the pair is validated at entry. */
   catalog: readonly string[];
+  /** Canonical resource this credential is provisioned and mutated under. */
+  resource: string;
+  /** Explicit singleton attestation permitting a pre-0.4 row to bind on mutation. */
+  legacySingletonResource?: string;
   clock: ClockPort;
   audit: AuditPort;
 }
@@ -72,8 +78,9 @@ export async function provisionMachineClient(
 ): Promise<ProvisionedMachineClient> {
   let clientId: string | undefined;
   try {
-    const store = requireMachineClientStore(deps.store);
-    const allowedScopes = validateAllowedScopes(input.allowedScopes, deps.catalog);
+    const context = machineClientResourceContext(deps);
+    const store = context.store;
+    const allowedScopes = validateAllowedScopes(input.allowedScopes, context.scopeCatalog);
     if (input.name !== undefined && (typeof input.name !== "string" || input.name.length === 0)) {
       throw new OAuthError("invalid_request", "name must be a non-empty string when provided");
     }
@@ -93,6 +100,7 @@ export async function provisionMachineClient(
       issuedAtEpoch: now,
       ...(input.name === undefined ? {} : { name: input.name }),
       allowedScopes,
+      resource: context.resource,
       status: "active",
       version: 1,
       secrets: [{
@@ -101,7 +109,7 @@ export async function provisionMachineClient(
         ...(ttl === undefined ? {} : { expiresAtEpoch: now + ttl }),
       }],
     };
-    const durableAudit = mutationAudit(deps.clock, "oauth.client.provision", record);
+    const durableAudit = mutationAudit(deps.clock, "oauth.client.provision", record, context.resource);
     if (!await store.createMachineClient(record, durableAudit)) {
       throw new OAuthError("server_error", "Machine client identifier collision", 500);
     }
@@ -120,7 +128,8 @@ export async function rotateMachineClientSecret(
   opts?: RotateSecretOptions,
 ): Promise<VersionedRotatedSecret> {
   try {
-    const store = requireMachineClientStore(deps.store);
+    const context = machineClientResourceContext(deps);
+    const store = context.store;
     const graceSeconds = opts?.graceSeconds ?? DEFAULT_ROTATION_GRACE_SECONDS;
     if (!isPositiveInteger(graceSeconds) || graceSeconds > MAX_ROTATION_GRACE_SECONDS) {
       throw new OAuthError("invalid_request", `graceSeconds must be an integer between 1 and ${MAX_ROTATION_GRACE_SECONDS}`);
@@ -128,11 +137,13 @@ export async function rotateMachineClientSecret(
     const now = epochSeconds(deps.clock);
     validateExpiryOffset(now, graceSeconds, "graceSeconds");
     const current = requireMutableActive(
-      parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+      parseMachineClientRegistration(await store.find(clientId), clientId, now),
     );
+    const resource = lifecycleMachineClientResource(current.resource, context);
     const clientSecret = mintClientSecret();
     const next: ActiveMachineClientRegistration = {
       ...current,
+      resource,
       version: current.version + 1,
       secrets: rotateSecrets(
         current.secrets,
@@ -141,7 +152,7 @@ export async function rotateMachineClientSecret(
         hashMachineClientSecret(clientSecret),
       ),
     };
-    const durableAudit = mutationAudit(deps.clock, "oauth.client.rotate_secret", next);
+    const durableAudit = mutationAudit(deps.clock, "oauth.client.rotate_secret", next, resource);
     if (!await store.compareAndSwapMachineClient(current.version, next, durableAudit)) {
       throw new OAuthError("invalid_request", "Machine client changed; retry rotation", 409);
     }
@@ -159,19 +170,22 @@ export async function disableMachineClient(
   clientId: string,
 ): Promise<DisabledMachineClient> {
   try {
-    const store = requireMachineClientStore(deps.store);
+    const context = machineClientResourceContext(deps);
+    const store = context.store;
     const now = epochSeconds(deps.clock);
     const current = requireMutableActive(
-      parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+      parseMachineClientRegistration(await store.find(clientId), clientId, now),
     );
+    const resource = lifecycleMachineClientResource(current.resource, context);
     const next: VersionedMachineClientRegistration = {
       ...current,
+      resource,
       status: "disabled",
       version: current.version + 1,
       secrets: [],
       disabledAtEpoch: now,
     };
-    const durableAudit = mutationAudit(deps.clock, "oauth.client.disable", next);
+    const durableAudit = mutationAudit(deps.clock, "oauth.client.disable", next, resource);
     if (!await store.compareAndSwapMachineClient(current.version, next, durableAudit)) {
       throw new OAuthError("invalid_request", "Machine client changed; retry disable", 409);
     }
@@ -190,28 +204,6 @@ function requireMutableActive(
     throw new OAuthError("invalid_client", "Machine client record is invalid or inactive", 401);
   }
   return client;
-}
-
-function mutationAudit(
-  clock: ClockPort,
-  event: MachineClientMutationAudit["event"],
-  client: VersionedMachineClientRegistration,
-): MachineClientMutationAudit {
-  return {
-    occurredAt: new Date(clock.nowMs()).toISOString(),
-    event,
-    clientId: client.clientId,
-    scopes: [...client.allowedScopes],
-  };
-}
-
-function requireMachineClientStore(store: ClientStore): MachineClientStore {
-  const candidate = store as Partial<MachineClientStore>;
-  if (typeof candidate.createMachineClient !== "function"
-    || typeof candidate.compareAndSwapMachineClient !== "function") {
-    throw new OAuthError("server_error", "MachineClientStore atomic mutations are required", 500);
-  }
-  return candidate as MachineClientStore;
 }
 
 function failureAudit(

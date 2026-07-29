@@ -264,6 +264,7 @@ test("prior grants are isolated by resource even when both share a scope string"
 // ---------------------------------------------------------------------------
 
 class MachineTestStore implements MachineClientStore {
+  readonly machineClientResourceBinding = 1 as const;
   private readonly clients = new Map<string, ClientRegistration>();
   async save(c: ClientRegistration): Promise<void> { this.clients.set(c.clientId, c); }
   async find(clientId: string): Promise<ClientRegistration | null> { return this.clients.get(clientId) ?? null; }
@@ -295,7 +296,8 @@ test("client_credentials rejects an empty-string resource at the token endpoint"
     clientCredentials: { enabled: true },
   });
   const machineDeps: MachineClientDeps = {
-    store: clientStore, catalog: config.scopeCatalog, clock: new SystemClock(), audit: noopAudit,
+    store: clientStore, catalog: config.scopeCatalog, resource: A,
+    clock: new SystemClock(), audit: noopAudit,
   };
   const provisioned = await provisionMachineClient(machineDeps, { allowedScopes: ["mcp:read"] });
   const token = new OAuthTokenUseCase({

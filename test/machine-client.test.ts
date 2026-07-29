@@ -38,6 +38,7 @@ import { parseMachineClientRegistration } from "../src/machine-client-record.ts"
 
 const NOW_MS = Date.parse("2026-07-06T12:00:00.000Z");
 const CATALOG = ["mcp:read", "mcp:write", "mcp:admin"];
+const RESOURCE = "https://api.test/mcp";
 
 class FakeClock implements ClockPort {
   private ms: number;
@@ -60,6 +61,7 @@ class HangingAudit implements AuditPort {
 }
 
 class InMemoryClientStore implements MachineClientStore {
+  readonly machineClientResourceBinding = 1 as const;
   readonly clients = new Map<string, ClientRegistration>();
   readonly mutationAudits: MachineClientMutationAudit[] = [];
   saveCalls = 0;
@@ -112,7 +114,10 @@ function harness(catalog: readonly string[] = CATALOG): Harness {
   const store = new InMemoryClientStore();
   const clock = new FakeClock(NOW_MS);
   const audit = new MemoryAudit();
-  return { deps: { store, catalog, clock, audit }, store, clock, audit };
+  return {
+    deps: { store, catalog, resource: RESOURCE, legacySingletonResource: RESOURCE, clock, audit },
+    store, clock, audit,
+  };
 }
 
 function storedMachineRecord(clientId: string, secret: string): LegacyMachineClientRegistration {
@@ -165,10 +170,11 @@ test("provision: a v0.3.0 ClientStore fails closed without atomic mutation metho
   const audit = new MemoryAudit();
   let saveCalls = 0;
   const store: ClientStore = {
+    machineClientResourceBinding: 1,
     async save(): Promise<void> { saveCalls += 1; },
     async find(): Promise<ClientRegistration | null> { return null; },
   };
-  const deps: MachineClientDeps = { store, catalog: CATALOG, clock, audit };
+  const deps: MachineClientDeps = { store, catalog: CATALOG, resource: RESOURCE, clock, audit };
   await assert.rejects(
     provisionMachineClient(deps, { allowedScopes: ["mcp:read"] }),
     (error: unknown) => error instanceof OAuthError

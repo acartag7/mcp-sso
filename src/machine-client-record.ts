@@ -3,6 +3,7 @@ import type {
   ClientSecret,
   DisabledMachineClientRegistration,
 } from "./ports/client-store.ts";
+import { canonicalResource } from "./resource.ts";
 import { isScopeToken } from "./scopes.ts";
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
@@ -38,7 +39,8 @@ export function parseMachineClientRegistration(
       && (typeof record.name !== "string" || record.name.length === 0))) return null;
 
   const allowedScopes = parseAllowedScopes(record.allowedScopes);
-  if (!allowedScopes) return null;
+  const resource = parseStoredResource(record);
+  if (!allowedScopes || resource === null) return null;
   const base = {
     clientId: record.clientId,
     redirectUris: [] as [],
@@ -46,6 +48,7 @@ export function parseMachineClientRegistration(
     issuedAtEpoch: record.issuedAtEpoch,
     ...(record.name === undefined ? {} : { name: record.name as string }),
     allowedScopes,
+    ...(resource === undefined ? {} : { resource }),
   };
 
   const hasStatus = Object.hasOwn(record, "status");
@@ -85,6 +88,22 @@ function parseAllowedScopes(value: unknown): string[] | null {
     scopes.push(scope);
   }
   return scopes;
+}
+
+/** Present resource data must already be the canonical primitive string. The
+ * loopback dev exception is admitted here because the parser has no deployment
+ * config; later equality is against the selected/configured canonical value. */
+function parseStoredResource(record: Record<string, unknown>): string | undefined | null {
+  if (!Object.hasOwn(record, "resource")) return undefined;
+  const resource = record.resource;
+  if (typeof resource !== "string" || resource.length === 0) return null;
+  try {
+    return canonicalResource(resource, { allowInsecureLocalhost: true }) === resource
+      ? resource
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseSecrets(value: unknown, nowEpoch: number): ClientSecret[] | null {

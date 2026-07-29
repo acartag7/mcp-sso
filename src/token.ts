@@ -7,6 +7,7 @@ import { OAuthError } from "./errors.ts"; import { assertOAuthRedirectEntry } fr
 import { expiresAtIso, generateRefreshToken, parseRefreshFamilyId, sha256Hex, signAccessToken, verifyPkceS256 } from "./crypto.ts";
 import { resolveClientCredentialsScope, scopeString, storedScopes } from "./scopes.ts";
 import { authenticateMachineClientSecret } from "./machine-client-auth.ts";
+import { resolveMachineClientTokenResource } from "./machine-client-resource.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 import { writeTokenAudit } from "./token-audit.ts";
 import { expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
@@ -172,12 +173,12 @@ export class OAuthTokenUseCase {
         clientSecret,
       );
       if (!client) throw new OAuthError("invalid_client", "Client authentication failed", 401);
-      const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, this.config.scopeCatalog);
-      if (input.resource !== undefined && input.resource !== this.config.resource) throw new OAuthError("invalid_target", "resource does not match the configured resource");
-      const accessToken = await signAccessToken({ subject: clientId, clientId, scopes, resource: this.config.resource, machine: true }, this.config, this.clock);
+      const selected = resolveMachineClientTokenResource(client.resource, this.catalog, input.resource);
+      const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, selected.scopeCatalog);
+      const accessToken = await signAccessToken({ subject: clientId, clientId, scopes, resource: selected.resource, machine: true }, this.config, this.clock);
       await writeTokenAudit(this.audit, {
         occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "success",
-        clientId, subject: clientId, scopes, resource: this.config.resource,
+        clientId, subject: clientId, scopes, resource: selected.resource,
       });
       return { access_token: accessToken, token_type: "Bearer", expires_in: this.config.accessTokenTtlSeconds, scope: scopeString(scopes) };
     } catch (error) {
