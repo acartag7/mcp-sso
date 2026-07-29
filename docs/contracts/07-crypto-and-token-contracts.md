@@ -112,8 +112,11 @@ detection and whole-family revocation that `rotateRefreshToken` owns.
 
 **0.4.0 refresh resource amendment (PENDING — NOT ENFORCED at this
 commit).** A refresh family and every token in it carry one canonical resource.
-Rotation establishes stored family/token resource equality, then handles a
-consumed-token **replay first** — a replayed predecessor revokes its family and
+Rotation handles a consumed-token **replay first — before any resource
+comparison**, including the stored family/token equality check, because an older
+consumed member of an attested legacy chain still carries a null resource and
+would otherwise fail that check and escape revocation. A replayed predecessor
+revokes its family and
 returns `invalid_grant` even when the request names a different configured
 resource, so resource mismatch can never downgrade replay detection into a
 retryable error. Only for an unconsumed token does rotation compare the request

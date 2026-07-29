@@ -151,9 +151,17 @@ construction rejects a store without the generation capability marker.
     process/store restarts.
 11. **Resource lineage (PENDING 0.4.0 — NOT ENFORCED at this commit):**
     new refresh families and tokens store one canonical non-null resource.
-    Rotation parses and generation-checks the family and token rows and
-    establishes their stored resource equality, then handles a consumed-token
-    replay before comparing the optional request expectation. Replay revokes
+    Rotation parses and generation-checks the family and token rows, then
+    handles a consumed-token replay **before any resource comparison at all** —
+    before the stored family/token equality check as well as before the optional
+    request expectation. A consumed token is a replay whatever resource it
+    carries. This ordering is load-bearing rather than stylistic: attested
+    legacy binding stamps the family and the token being rotated, but NOT older
+    consumed members of a pre-0.4 chain, which keep a null resource. Comparing
+    stored equality first would make a replayed older predecessor fail that
+    check and return early, so the theft would revoke nothing and the live
+    family would stay usable. Stored equality is established after replay
+    handling and still gates every non-replay path. Replay revokes
     that stored family even when the request names another configured resource
     and returns `null`/`invalid_grant`; it never becomes a retryable resource
     mismatch. For an unconsumed token, rotation compares the family row, token
