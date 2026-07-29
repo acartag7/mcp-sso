@@ -135,8 +135,19 @@ or `%` not followed by two hexadecimal digits is rejected. The parser never
 trims or repairs raw syntax. URL parsing then lower-cases scheme/host, removes
 an ordinary default port, and resolves dot segments. An origin-only resource
 canonicalizes without a trailing slash; non-root paths retain their
-trailing-slash distinction. The canonical value is stored in grant records and
-JWT `aud`. Duplicate canonical resources are a boot error.
+trailing-slash distinction. A resource identifier is capped at 2048 UTF-8 bytes,
+checked before the character scans and URL parsing — the same bound the sibling
+redirect-entry parser applies, and load-bearing here because this parser also
+canonicalizes request-supplied values. The canonical value is stored in grant
+records and JWT `aud`. Duplicate canonical resources are a boot error.
+
+Canonicalization is deliberately *syntactic*, not a DNS or semantic equivalence:
+`https://h.example/mcp` and `https://h.example./mcp` (fully-qualified trailing
+dot) canonicalize to different resources even though both resolve to the same
+host, and neither trips the duplicate check. That is correct for RFC 8707, whose
+audiences are exact string identifiers, but it means a deployer who configures
+both forms gets two independent resources whose tokens do not interoperate.
+Configure one spelling per endpoint and use it everywhere.
 
 Each resource's catalog is non-empty and duplicate-free, contains only RFC 6749
 scope tokens, and owns a duplicate-free defaults subset. Different resources
