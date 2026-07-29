@@ -61,6 +61,87 @@ interface BridgeConfig {
 }
 ```
 
+### 5.1 Multi-resource configuration (PENDING 0.4.0)
+
+> **NOT ENFORCED at this commit.** The singleton form above remains shipped.
+
+One issuer and signing-key set may serve a finite configured resource catalog.
+The existing `{ resource, scopeCatalog, defaultScopes }` trio and a new
+`resources` form are mutually exclusive:
+
+```ts
+interface ResourceDefinition {
+  resource: string;
+  scopeCatalog: string[];
+  defaultScopes: string[];
+}
+
+interface MultiResourceBridgeConfig {
+  resources: ResourceDefinition[]; // non-empty
+  // all existing common BridgeConfig fields; no singleton trio
+}
+
+type ResourceConfiguration =
+  | { resource: string; scopeCatalog: string[]; defaultScopes: string[];
+      legacySingletonResource?: string; resources?: never }
+  | { resources: ResourceDefinition[]; resource?: never;
+      scopeCatalog?: never; defaultScopes?: never;
+      legacySingletonResource?: never };
+```
+
+At activation the common fields from the shipped interface above and
+`ResourceConfiguration` form the public `BridgeConfig` union; the first member
+is the existing singleton shape.
+
+An empty `resources` array, a partial singleton trio, both forms, or neither
+form is a boot `AuthConfigError`. `createBridgeConfig` snapshots each selected
+definition and nested scope array once, validates them, freezes the published
+copies, and normalizes the singleton form to a one-entry internal catalog. It
+does not introduce dynamic resources, wildcard entries, aliases, or a policy
+callback.
+
+`legacySingletonResource` is an optional, explicit upgrade attestation, not a
+resource selector. It is accepted only in the singleton form and must
+canonicalize exactly to `resource`. When present, it states that every
+pre-0.4 stored record with null/missing resource lineage was issued for that
+same resource. The later lineage/store contract defines the permitted lazy
+binding; this catalog slice does not activate it. Omitting the attestation
+keeps new and already-bound singleton flows source-compatible but will reject
+unbound legacy refresh and machine state once lineage enforcement activates. A
+deployment changing A to B cannot set the field to A because it disagrees with
+B, and must not attest B for A-originated records. The multi-resource form
+always rejects the field. There is deliberately no automatic default to the
+current resource: the library cannot distinguish an A→A upgrade from an A→B
+replacement by inspecting a null legacy row. The 0.4.0 migration guide and
+release notes must call out the attestation before upgrade; omission is the
+fail-closed choice, not silent resource inference.
+
+One `canonicalResource(value)` parser owns configuration and later request
+equality: the input is a primitive non-empty absolute URL; production requires
+`https` and the existing loopback-only development exception applies; userinfo,
+query, and fragment are rejected. URL parsing lower-cases scheme/host, removes
+an ordinary default port, and resolves dot segments. An origin-only resource
+canonicalizes without a trailing slash; non-root paths retain their
+trailing-slash distinction. Later lineage/token slices store this canonical
+value in grants and JWT `aud`. Duplicate canonical resources are a boot error.
+
+Each resource's catalog is non-empty and duplicate-free, contains only RFC 6749
+scope tokens, and owns a duplicate-free defaults subset. Different resources
+may use the same scope string without sharing grant state. This amendment
+narrows previously accepted query/userinfo resource URLs because they cannot
+produce an unambiguous RFC 9728 PRM route.
+
+The catalog represents independently addressable MCP endpoints. For example,
+one Atesaki deployment may configure
+`https://atesaki.dev/grafana/mcp`,
+`https://atesaki.dev/captatum/mcp`, and
+`https://atesaki.dev/memory/mcp`, while each client selects only the endpoint
+it needs. It does not turn one MCP connection into a tool multiplexer or let
+one connection, consent, grant, refresh family, machine credential, or access
+token span resources. A local Atesaki process may expose the same paths on
+loopback without requiring inbound OAuth; Atesaki's separate role as an OAuth
+client of protected remote MCP servers is outside mcp-sso.
+
 **Boot validation (all throw `AuthConfigError`, never warn):**
 
 - The input admits **only** the `BridgeConfig` fields enumerated above — no
