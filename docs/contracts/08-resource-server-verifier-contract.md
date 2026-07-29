@@ -45,10 +45,18 @@ Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-re
   **PENDING 0.4.0 — NOT ENFORCED at this commit:** under a multi-resource
   catalog the root form cannot identify which resource a challenge is about, so
   a challenge from a resource-pinned authorizer (§8.5) will advertise the
-  **path-inserted** URL for its own pinned resource,
-  `protectedResourceMetadataUrl(resource)`. A single-entry catalog keeps
-  emitting the root form, so existing singleton clients see no change.
+  **path-inserted** URL for its own pinned resource. A single-entry catalog
+  keeps emitting the root form, so existing singleton clients see no change.
+  The shipped `protectedResourceMetadataUrl(config)` takes the whole config and
+  returns the root-form URL as a **string**; the activating PR must give it a
+  resource-taking form (and any adapter needing a route path must derive that
+  pathname from the returned URL, not read `.pathname` off a string). The
+  existing single-argument export stays source-compatible.
 - `scope` = space-joined `scopeCatalog` (tells the client what it may request).
+  **PENDING 0.4.0:** the multi-resource form has no top-level `scopeCatalog`, so
+  a challenge takes the catalog of its own **pinned** resource (§8.5) — never
+  the issuer-wide union, which would advertise scopes this resource does not
+  honor and send the client into an `invalid_scope` authorize.
 - `error`/`error_description` included when the rejection reason is known
   (`invalid_token`, `invalid_request`, `insufficient_scope`).
 

@@ -177,6 +177,7 @@ interface MachineClientRegistration {              // v0.3.0 public shape
 }
 interface MachineClientBase {
   clientId: string;
+  resource?: string | null;     // PENDING 0.4.0; new writes non-null canonical
   redirectUris: string[];
   applicationType: "machine";
   issuedAtEpoch: number;
@@ -279,9 +280,17 @@ subset remains usable.
 New active and disabled machine records carry one canonical `resource`.
 `MachineClientBase` gains `resource?: string | null` — optional in the type only
 so a pre-0.4 row remains readable — and
-`parseMachineClientRegistration` adds it to its acceptance list: present means a
-non-empty string that survives `canonicalResource`, and a malformed or
-non-string value makes the row unreadable rather than unbound. Without that
+**`parseMachineClientRegistration` adds `resource` to its enumerated acceptance
+criteria**, alongside `clientId`/`redirectUris`/`applicationType`/
+`issuedAtEpoch`/`name`/`allowedScopes`/`secrets`: present means a non-empty
+string that survives `canonicalResource` unchanged, and a malformed or
+non-string value makes the row unreadable rather than unbound. The parser is the
+single chokepoint between the untrusted store and the token use-case, so the
+value it returns is the one `client_credentials` compares. Omitting it from the
+parser leaves only two outcomes, both wrong: every machine credential reads as
+legacy-unbound and the feature is dead, or an implementer reaches around the
+parser to the raw row and compares an unvalidated, possibly non-canonical string
+against a canonicalized request value — breaking the §5.1 one-parser rule. Without that
 parser rule the enforcement boundary is unreachable, because the value
 `client_credentials` compares would never have been type-checked at the store
 boundary. Absent is the legacy case governed by the attestation rule below.
@@ -289,7 +298,13 @@ A lifecycle CAS (`rotateMachineClientSecret`, `disableMachineClient`) whose
 deps name a different resource than the stored record is `invalid_target`
 BEFORE the CAS: rotation and disable preserve the stored resource and are never
 a rebinding primitive, so a credential provisioned for A cannot be moved to B by
-rotating it under B's dependencies. Re-provisioning is the only path to another
+rotating it under B's dependencies. `MachineClientDeps.resource` is therefore an
+**expectation to check, never the source of the written value**: the CAS
+new-record copies `resource` from the parsed stored record, so even an
+implementation that skipped the equality check could not rebind A to B by
+passing different deps. `MachineClientDeps.catalog` must be the catalog owned by
+`deps.resource`; because a caller supplies both independently, provisioning
+validates that pairing against the configured catalog rather than trusting it. Re-provisioning is the only path to another
 resource, and it issues a new credential.
 Provisioning dependencies add that resource beside the existing per-resource
 catalog; rotation and disable preserve it through the existing CAS operation.

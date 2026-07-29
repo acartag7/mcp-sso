@@ -295,9 +295,20 @@ the response. Wiring rules:
 - Authorization and token requests accept exactly one primitive-string
   `resource`. Repeated/array, malformed, or unknown values are
   `invalid_target`. Omission resolves only when the normalized catalog has one
-  entry; it is `invalid_target` with two or more entries. Every adapter
-  preserves repeated query/form occurrences into the normalized request; no
-  framework may collapse duplicate `resource` parameters to first/last wins.
+  entry; it is `invalid_target` with two or more entries.
+  Repeated occurrences are detectable on the **query** side, where
+  `NormRequest.query` already carries `string | string[]` and an array value is
+  `invalid_target`. They are **not** detectable in a form body as shipped: the
+  reference content-type parsers build the body with
+  `Object.fromEntries(new URLSearchParams(...))`, which is last-wins, so a
+  duplicate `resource` is collapsed before the core sees it. The activating PR
+  either preserves multiplicity for the OAuth parameter keys in all three
+  adapters' body parsers, or this contract states plainly that duplicate
+  detection is query-only. It must not assert an adapter-wide guarantee the
+  shipped parsers cannot keep — a custom mount owns its own body parsing either
+  way. This does not weaken audience binding: a collapsed duplicate still
+  resolves to exactly one resource and the minted token carries that one
+  audience.
 - The resolved immutable `ResourceDefinition` supplies defaults and scope
   validation through consent, approval, code exchange, refresh, and
   `client_credentials`. Approval re-resolves the signed resource against the
@@ -332,12 +343,25 @@ the response. Wiring rules:
   distinct-path deployment; one resource per mount supports subdomains that
   reuse a pathname. Before the first framework side effect, the adapter
   canonicalizes and resolves the whole subset, computes each exact route
-  pathname from `protectedResourceMetadataUrl(resource).pathname`, and rejects
+  pathname from the path-inserted PRM URL for that resource, and rejects
   duplicate pathnames with `AuthConfigError` naming the pathname and both
   resources. Equal paths on different origins still collide within one mount and
   require separate one-resource mounts: a mount registers by pathname and cannot
   distinguish two origins, so two resources differing only by host are a
   collision, not a working configuration.
+  **Catalog identity is stricter than HTTP route identity, so route computation
+  must not be the only collision check.** `canonicalResource` keeps
+  percent-encoding as WHATWG serializes it, so `https://h/a` and `https://h/%61`
+  are two distinct catalog entries with distinct computed pathnames — yet every
+  HTTP router decodes the request path, so one incoming request matches both.
+  Express additionally routes case-insensitively and non-strictly by default, so
+  `/a` and `/A` collide there but not in the catalog. The route-collision check
+  therefore compares pathnames **after percent-decoding and ASCII-lowercasing**,
+  and rejects the pair at boot even though the resources themselves are
+  distinct: a deployment must not be able to configure two resources the shipped
+  adapters cannot address independently. Adapters are additionally registered
+  with case-sensitive, strict routing where the framework offers it, so the
+  boot-time check and the runtime router agree on identity.
   **`/path` and `/path/` are distinct resources but are NOT distinct PRM
   routes.** The shipped `protectedResourceMetadataUrls` strips leading and
   trailing slashes from the resource path (`metadata.ts`), so
