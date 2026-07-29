@@ -7,6 +7,7 @@ import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
 import { parseRedirectEntry, RedirectEntryError } from "./redirect-entry.ts";
+import { canonicalResource } from "./resource.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
 
@@ -99,7 +100,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   // arrays remain the issue-#100 residual. redirectAllowlist is snapshotted here
   // because §10.0 owns its validate-and-publish boundary.
   const issuer = input.issuer;
-  const resource = input.resource;
+  const rawResource = input.resource;
   const consentSigningSecret = input.consentSigningSecret;
   const signingPrivateJwk = input.signingPrivateJwk;
   const signingKeyId = input.signingKeyId;
@@ -127,7 +128,9 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const authorizationCodeTtlSeconds = input.authorizationCodeTtlSeconds;
 
   validateUrl(allowInsecureLocalhost, "issuer", issuer);
-  validateUrl(allowInsecureLocalhost, "resource", resource);
+  // §5.1 resource authority + canonical parser live in resource.ts; the
+  // published `resource` is the canonical form (input is read exactly once).
+  const resource = canonicalResource(rawResource, { allowInsecureLocalhost });
   if (consentSigningSecret.trim().length < 32) {
     throw new AuthConfigError("consentSigningSecret must be at least 32 characters");
   }
