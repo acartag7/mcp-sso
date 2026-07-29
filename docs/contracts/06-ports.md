@@ -135,7 +135,15 @@ Existing custom implementations returning only `RefreshTokenRecord | null`
 remain valid narrow implementations. A `resource_mismatch` result is emitted
 only when an otherwise-valid, **unconsumed** current family/token pair differs
 from the expected canonical resource; it carries no record fields and commits
-no mutation. `OAuthTokenUseCase` maps it to `invalid_target`. A consumed
+no mutation. `OAuthTokenUseCase` maps it to `invalid_target`.
+**That mapping MUST happen before the refresh preparation wrapper**, whose
+`catch` revokes the whole family to kill an unreturned successor (§7.4). The
+no-mutation property is a store-layer guarantee only; the mismatch outcome is a
+truthy value, so a use-case that lets it fall into that wrapper would revoke the
+victim's entire family on a wrong-resource guess — turning a non-mutating
+rejection into a cross-resource denial-of-service against a token the caller
+already holds. The typed outcome is checked immediately after the rotation call
+and outside the wrapper. A consumed
 predecessor is replay-handled first: the store revokes its family even when the
 request names a different configured resource, returns `null`, and the
 use-case reports `invalid_grant`. Missing, expired, replayed, malformed,
