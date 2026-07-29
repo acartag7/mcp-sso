@@ -8,7 +8,7 @@ import type { BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { signingKeyId, signKey, verifyKey } from "./crypto-keys.ts";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
-import { buildResourceCatalog, resolveResource } from "./resource.ts";
+import { buildResourceCatalog, canonicalResource, resolveResource } from "./resource.ts";
 import type { ResourceConfiguration } from "./resource.ts";
 import { scopeString, type CredentialKind } from "./scopes.ts";
 
@@ -78,11 +78,24 @@ export async function verifyAccessToken(
   }
 }
 
+/** Resolve the expected audience for one verification.
+ *
+ *  A caller that already holds a pinned resource — `RequestAuthorizer` resolves
+ *  one at construction — passes it here on every request. Rebuilding the whole
+ *  catalog to re-derive a string boot already validated would re-parse the URL
+ *  and re-scan every scope catalog on the busiest path in the library, so a
+ *  value that is ALREADY canonical is accepted as-is. `canonicalResource` is
+ *  idempotent, which is what makes that check exact rather than a shortcut: an
+ *  input that is not its own canonical form is not a configured resource, and
+ *  falls through to the full catalog resolution (which rejects it). */
 function configuredResource(config: BridgeConfig, requested: string | undefined): string {
-  const catalog = buildResourceCatalog(
-    config as unknown as ResourceConfiguration,
-    { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },
-  );
+  const options = { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true };
+  if (requested !== undefined) {
+    let canonical: string;
+    try { canonical = canonicalResource(requested, options); } catch { canonical = ""; }
+    if (canonical === requested) return canonical;
+  }
+  const catalog = buildResourceCatalog(config as unknown as ResourceConfiguration, options);
   return resolveResource(catalog, requested).resource;
 }
 

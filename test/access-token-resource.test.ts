@@ -10,6 +10,7 @@ import { OAuthError } from "../src/errors.ts";
 import { noopAudit } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { ResourceDefinition } from "../src/resource.ts";
+import { canonicalResource } from "../src/resource.ts";
 import { RequestAuthorizer } from "../src/verifier.ts";
 
 const NOW_MS = Date.parse("2026-07-29T12:00:00.000Z");
@@ -138,4 +139,24 @@ test("RequestAuthorizer pins one catalog resource at construction", async () => 
       .authorize({ authorization: `Bearer ${token}` }),
     invalidToken,
   );
+});
+
+const CANON = { allowInsecureLocalhost: false } as const;
+
+test("the already-canonical fast path cannot widen the accepted audience", () => {
+  // configuredResource() short-circuits when the caller's pinned resource is
+  // already its own canonical form. That is safe only because canonicalResource
+  // is IDEMPOTENT: a non-canonical string is never its own canonical form, so it
+  // falls through to full catalog resolution instead of being trusted as-is.
+  for (const raw of [
+    "https://a.test/mcp", "https://a.test", "https://a.test/", "https://A.test/mcp",
+    "https://a.test:443/mcp", "https://a.test/a/../mcp", "https://a.test/mcp/",
+    "https://a.test//mcp", "https://a.test/%6dcp", "https://[::1]/mcp",
+    "https://a.test:8443/mcp", "https://a.test./mcp",
+  ]) {
+    const once = canonicalResource(raw, CANON);
+    assert.equal(canonicalResource(once, CANON), once, `not idempotent: ${raw}`);
+    // The fast path fires iff the input already equals its canonical form.
+    assert.equal(once === raw, raw === once, `fast-path condition diverged: ${raw}`);
+  }
 });
