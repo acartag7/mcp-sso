@@ -119,11 +119,16 @@ fail-closed choice, not silent resource inference.
 One `canonicalResource(value)` parser owns configuration and later request
 equality: the input is a primitive non-empty absolute URL; production requires
 `https` and the existing loopback-only development exception applies; userinfo,
-query, and fragment are rejected. URL parsing lower-cases scheme/host, removes
-an ordinary default port, and resolves dot segments. An origin-only resource
-canonicalizes without a trailing slash; non-root paths retain their
-trailing-slash distinction. Later lineage/token slices store this canonical
-value in grants and JWT `aud`. Duplicate canonical resources are a boot error.
+query, and fragment are rejected. Before `new URL`, the raw value must use an
+ASCII-case-insensitive `https://` prefix (or `http://` under the loopback
+exception) with exactly two scheme-delimiter slashes and a non-slash authority
+start. Any backslash, ASCII whitespace/control character, or `%` not followed
+by two hexadecimal digits is rejected; the parser never trims or repairs raw
+syntax. URL parsing then lower-cases scheme/host, removes an ordinary default
+port, and resolves dot segments. An origin-only resource canonicalizes without
+a trailing slash; non-root paths retain their trailing-slash distinction.
+Later lineage/token slices store this canonical value in grants and JWT `aud`.
+Duplicate canonical resources are a boot error.
 
 Each resource's catalog is non-empty and duplicate-free, contains only RFC 6749
 scope tokens, and owns a duplicate-free defaults subset. Different resources
