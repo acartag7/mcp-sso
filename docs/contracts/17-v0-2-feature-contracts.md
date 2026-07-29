@@ -1201,6 +1201,19 @@ attestation canonicalizes exactly to `resource`, and is written bound on its
 first successful lifecycle mutation; it is `invalid_client` without that
 attestation and under every multi-resource catalog.
 
+Every store used by those machine paths advertises
+`machineClientResourceBinding: 1`. Each exported lifecycle function checks it
+at entry, and the `client_credentials` token use-case checks it at construction,
+before any secret generation, store operation, token signing, success audit, or
+adapter side effect. A best-effort failure audit may follow and omits resource.
+The existing lifecycle method names alone are not evidence that a custom store
+persists the added resource field; absence or a different marker is an
+`AuthConfigError`. A deployment that does not enable machine credentials does
+not need the marker. The transactional
+`MachineClientMutationAudit` also gains the required canonical resource, so a
+successful write cannot persist resource-bound credentials with unbound
+durable evidence.
+
 The §12.2 mixed-version cutover precondition also covers the machine
 `ClientStore`: all pre-0.4 token handlers must be drained before enabling a
 multi-resource catalog or replacing the singleton resource URL. An old handler

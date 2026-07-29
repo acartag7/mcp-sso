@@ -133,11 +133,14 @@ Without that attestation singleton use passes `false`; null legacy lineage
 cannot be inferred from whichever resource happens to be configured now.
 Existing custom implementations returning only `RefreshTokenRecord | null`
 remain valid narrow implementations. A `resource_mismatch` result is emitted
-only when a valid current family/token pair exists but differs from the
-expected canonical resource; it carries no record fields and commits no
-mutation. `OAuthTokenUseCase` maps it to `invalid_target`. Missing, expired,
-replayed, malformed, generation-mismatched, or unattested-null lineage remains
-`null` and maps to `invalid_grant`.
+only when an otherwise-valid, **unconsumed** current family/token pair differs
+from the expected canonical resource; it carries no record fields and commits
+no mutation. `OAuthTokenUseCase` maps it to `invalid_target`. A consumed
+predecessor is replay-handled first: the store revokes its family even when the
+request names a different configured resource, returns `null`, and the
+use-case reports `invalid_grant`. Missing, expired, replayed, malformed,
+generation-mismatched, or unattested-null lineage likewise remains `null` and
+maps to `invalid_grant`.
 
 ## 6.4 `ClientStore` (stored-DCR mode only — fix #4)
 ```ts
@@ -272,6 +275,29 @@ A legacy record without the field resolves only under a singleton catalog and
 writes the sole resource on its first successful lifecycle mutation only when
 `legacySingletonResource` attests it. It is `invalid_client` when the
 attestation is absent and under every multi-resource catalog.
+
+At 0.4 activation a client store used by machine provisioning, lifecycle
+mutation, or `client_credentials` issuance MUST advertise the additive
+`machineClientResourceBinding: 1` capability. The public `ClientStore` gains
+optional readonly `machineClientResourceBinding?: 1` for structural
+compatibility, while `MachineClientStore` refines it to required readonly
+`machineClientResourceBinding: 1`. `assertMachineClientResourceStore` runs at
+entry to `provisionMachineClient`, `rotateMachineClientSecret`, and
+`disableMachineClient`, and in `OAuthTokenUseCase` construction when
+`clientCredentials.enabled`, before client-id/secret generation, a store read
+or write, token signing, success-audit emission, or framework route
+registration. A best-effort failure audit may follow the rejection and omits
+resource under §13 because no resource-bound store capability was established.
+Merely implementing the pre-0.4 lifecycle method names is insufficient: an old
+custom store can otherwise accept an extra record field, discard it, and report
+a successful atomic mutation. Missing or different capability is an
+`AuthConfigError`. Ordinary stored-DCR deployments with machine credentials
+disabled do not require this capability.
+
+At the same activation `MachineClientMutationAudit` gains a required canonical
+`resource`; every successful create/CAS transaction persists that resource in
+both the credential row and its durable evidence. Failure events remain
+best-effort and follow §13's post-resolution rule.
 
 ## 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's

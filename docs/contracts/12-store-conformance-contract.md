@@ -151,15 +151,22 @@ construction rejects a store without the generation capability marker.
     process/store restarts.
 11. **Resource lineage (PENDING 0.4.0 — NOT ENFORCED at this commit):**
     new refresh families and tokens store one canonical non-null resource.
-    Rotation compares the family row, consumed token row, and optional request
-    expectation before replay handling or mutation, then copies the stored
-    resource to the successor. `findGrantedScopes` includes the expected
-    resource predicate alongside subject, client, time, and generation.
-    A valid current lineage whose resource differs from the expectation returns
-    the fieldless `{ status: "resource_mismatch" }` outcome without consuming
-    the predecessor or inserting a successor; every other invalid lineage
-    remains `null`. This typed result is what lets the use-case return
-    `invalid_target` without a racy pre-read or exposing stored record fields.
+    Rotation parses and generation-checks the family and token rows and
+    establishes their stored resource equality, then handles a consumed-token
+    replay before comparing the optional request expectation. Replay revokes
+    that stored family even when the request names another configured resource
+    and returns `null`/`invalid_grant`; it never becomes a retryable resource
+    mismatch. For an unconsumed token, rotation compares the family row, token
+    row, and request expectation before successor mutation, then copies the
+    stored resource to the successor.
+    `findGrantedScopes` includes the expected resource predicate alongside
+    subject, client, time, and generation.
+    An otherwise-valid unconsumed current lineage whose resource differs from
+    the expectation returns the fieldless `{ status: "resource_mismatch" }`
+    outcome without consuming the predecessor or inserting a successor; every
+    other invalid lineage remains `null`. This typed result is what lets the
+    use-case return `invalid_target` without a racy pre-read or exposing stored
+    record fields.
 
     Reference SQL migrations add nullable `resource` columns to
     `oauth_refresh_token_families` and `oauth_refresh_tokens` with no database

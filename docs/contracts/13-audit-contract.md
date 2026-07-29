@@ -16,12 +16,21 @@ that serialized audit output never contains raw codes, refresh tokens, or access
 tokens, across every event name (the v0.2 names are exercised by synthetic
 events through each sink; the v0.1 names additionally by the live OAuth flow).
 
-**0.4.0 amendment (PENDING — NOT ENFORCED at this commit).** The following
-events carry the selected canonical `resource` whenever they are emitted:
+**0.4.0 amendment (PENDING — NOT ENFORCED at this commit).** After a path has
+resolved a canonical resource from the configured catalog or from verified
+signed/stored lineage, the following events carry that canonical `resource`:
 `oauth.authorize.prepare`, `oauth.authorize.approve`,
 `oauth.token.authorization_code`, `oauth.token.refresh`, `oauth.revoke`,
 `auth.request`, `oauth.token.client_credentials`, `oauth.client.provision`,
 `oauth.client.rotate_secret`, and `oauth.client.disable`.
+Failures before that boundary omit the field: examples include missing,
+repeated, malformed, or unknown request resources; an unknown authorization
+code or refresh-token hash; and idempotent revocation of an unrecognized
+token. A resolved configured request resource may be recorded on a later
+credential mismatch, but raw/unrecognized request text is never copied merely
+to populate the field. Revocation includes a resource only when its existing
+verification/store path already establishes one; it does not add a racy lookup
+solely for audit enrichment.
 `oauth.upstream.callback` carries it only after a flow cookie has been verified
 and its resource resolved; failures before that boundary omit it. Registration,
 identity verification, pairing, and CIMD-fetch events are not grant-resource
