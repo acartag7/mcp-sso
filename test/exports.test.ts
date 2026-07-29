@@ -103,7 +103,7 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   void (null as unknown as NormRequest); // type reachable (the shapes handlePairingAuthorize/createUpstreamRedirectFlow take/return)
   void (null as unknown as NormResponse);
   const credentialKind: CredentialKind = "machine";
-  const verified: VerifiedAccessToken = { subject: "mcc_service", clientId: "mcc_service", scopes: ["mcp:read"], credentialKind };
+  const verified: VerifiedAccessToken = { subject: "mcc_service", clientId: "mcc_service", scopes: ["mcp:read"], resource: "https://api.test/mcp", credentialKind };
   const authorized: AuthorizedSubject = verified;
   const requestResult: RequestAuthResult = authorized;
   assert.equal(requestResult.credentialKind, "machine", "credential kind is present on every root-exported public result type");

@@ -6,7 +6,6 @@
 import { importJWK } from "jose";
 import type { JWK } from "jose";
 import type { BridgeConfig } from "./config.ts";
-import { publicJwk } from "./crypto.ts";
 
 // --- fix #6: memoized key imports (WeakMap keyed by the stable private-JWK ref) ---
 // jose's importJWK returns CryptoKey | Uint8Array (CryptoKey for our EC keys). We
@@ -23,6 +22,19 @@ export function signKey(config: BridgeConfig): Promise<ImportedKey> {
 
 export function verifyKey(config: BridgeConfig): Promise<ImportedKey> {
   return cached(verifyKeyCache, config.signingPrivateJwk, () => importJWK(publicJwk(config), "ES256"));
+}
+
+export function signingKeyId(config: BridgeConfig): string | undefined {
+  const kid = config.signingPrivateJwk.kid;
+  return config.signingKeyId ?? (typeof kid === "string" && kid ? kid : undefined);
+}
+
+export function publicJwk(config: BridgeConfig): JWK {
+  const jwk = config.signingPrivateJwk;
+  return {
+    kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y,
+    alg: "ES256", use: "sig", kid: signingKeyId(config),
+  };
 }
 
 function cached(map: WeakMap<JWK, Promise<ImportedKey>>, jwk: JWK, load: () => Promise<ImportedKey>): Promise<ImportedKey> {

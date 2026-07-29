@@ -10,6 +10,7 @@ export interface AuthorizedSubject {
   subject: string;
   clientId: string;
   scopes: string[];
+  resource: string;
   credentialKind: CredentialKind;
 }
 

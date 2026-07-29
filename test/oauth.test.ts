@@ -582,9 +582,9 @@ test("verifier classifies the complete machine triad and rejects every partial/c
     );
   }
 
-  const machine = await signAccessToken({ subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], machine: true }, ctx.config, ctx.clock);
+  const machine = await signAccessToken({ subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], resource: ctx.config.resource, machine: true }, ctx.config, ctx.clock);
   assert.deepEqual(await verifyAccessToken(machine, ctx.config, ctx.clock), {
-    subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], credentialKind: "machine",
+    subject: "mcc_svc1", clientId: "mcc_svc1", scopes: ["mcp:read"], resource: ctx.config.resource, credentialKind: "machine",
   });
   await ctx.store.close();
 });
@@ -596,7 +596,7 @@ test("a stateless mcc_ opaque client completes the authorization-code flow as in
   );
   assert.deepEqual(await verifyAccessToken(token.access_token, ctx.config, ctx.clock), {
     subject: SUBJECT, clientId: "mcc_opaque_client",
-    scopes: ["mcp:read"], credentialKind: "interactive",
+    scopes: ["mcp:read"], resource: ctx.config.resource, credentialKind: "interactive",
   });
   await ctx.store.close();
 });
@@ -854,11 +854,11 @@ function baseInput() {
 
 test("requireScope step-up (403 insufficient_scope)", () => {
   assert.doesNotThrow(() => requireScope({
-    subject: "s", clientId: "c", scopes: ["mcp:read"], credentialKind: "interactive",
+    subject: "s", clientId: "c", scopes: ["mcp:read"], resource: "https://api.test/mcp", credentialKind: "interactive",
   }, "mcp:read"));
   assert.throws(
     () => requireScope({
-      subject: "s", clientId: "c", scopes: ["mcp:read"], credentialKind: "interactive",
+      subject: "s", clientId: "c", scopes: ["mcp:read"], resource: "https://api.test/mcp", credentialKind: "interactive",
     }, "mcp:write"),
     (e: unknown) => e instanceof OAuthError && e.code === "insufficient_scope" && e.status === 403,
   );

@@ -4,16 +4,20 @@
 
 import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
-import type { BridgeConfig } from "./config.ts";
+import { AuthConfigError, type BridgeConfig } from "./config.ts";
 import type { AuthorizedSubject } from "./scopes.ts";
 import { requireScope } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { verifyAccessToken } from "./crypto.ts";
+import { buildResourceCatalog, resolveResource } from "./resource.ts";
+import type { ResourceConfiguration } from "./resource.ts";
 
 export interface RequestAuthDeps {
   config: BridgeConfig;
   clock: ClockPort;
   audit: AuditPort;
+  /** Canonical resource pinned to this authorizer. Omission is singleton-only. */
+  resource?: string;
 }
 
 export interface RequestAuthInput {
@@ -27,11 +31,13 @@ export class RequestAuthorizer {
   private readonly config: BridgeConfig;
   private readonly clock: ClockPort;
   private readonly audit: AuditPort;
+  readonly resource: string;
 
   constructor(deps: RequestAuthDeps) {
     this.config = deps.config;
     this.clock = deps.clock;
     this.audit = deps.audit;
+    this.resource = authorizerResource(deps.config, deps.resource);
   }
 
   async authorize(input: RequestAuthInput): Promise<RequestAuthResult> {
@@ -41,7 +47,7 @@ export class RequestAuthorizer {
     const occurredAt = new Date(operationClock.nowMs()).toISOString();
     try {
       const token = bearerToken(input.authorization);
-      const verified = await verifyAccessToken(token, this.config, operationClock);
+      const verified = await verifyAccessToken(token, this.config, operationClock, this.resource);
       if (input.requiredScope) requireScope(verified, input.requiredScope);
       await this.audit.writeAuthEvent({
         occurredAt,
@@ -63,6 +69,22 @@ export class RequestAuthorizer {
 
 export function createRequestAuthorizer(deps: RequestAuthDeps): RequestAuthorizer {
   return new RequestAuthorizer(deps);
+}
+
+function authorizerResource(config: BridgeConfig, requested: string | undefined): string {
+  const catalog = buildResourceCatalog(
+    config as unknown as ResourceConfiguration,
+    { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },
+  );
+  try {
+    return resolveResource(catalog, requested).resource;
+  } catch {
+    throw new AuthConfigError(
+      requested === undefined
+        ? "RequestAuthorizer.resource is required when multiple resources are configured"
+        : "RequestAuthorizer.resource must match a configured canonical resource",
+    );
+  }
 }
 
 function bearerToken(header: string | string[] | undefined): string {

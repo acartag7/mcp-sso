@@ -71,7 +71,7 @@ function isOAuth(code: string, status: number): (error: unknown) => boolean {
 
 async function expiredAccessToken(): Promise<string> {
   return signAccessToken(
-    { subject: "operator", clientId: "client-1", scopes: ["mcp:read"] },
+    { subject: "operator", clientId: "client-1", scopes: ["mcp:read"], resource: config.resource },
     config,
     issuedClock,
   );
@@ -95,7 +95,7 @@ async function validAccessToken(): Promise<string> {
 
 async function accessTokenAt(nowMs: number): Promise<string> {
   return signAccessToken(
-    { subject: "operator", clientId: "client-1", scopes: ["mcp:read"] },
+    { subject: "operator", clientId: "client-1", scopes: ["mcp:read"], resource: config.resource },
     config,
     { nowMs: () => nowMs },
   );
@@ -216,6 +216,7 @@ test("RequestAuthorizer reuses one snapshot on the success exit", async () => {
       subject: "operator",
       clientId: "client-1",
       scopes: ["mcp:read"],
+      resource: config.resource,
       credentialKind: "interactive",
     },
   );

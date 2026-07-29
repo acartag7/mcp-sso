@@ -3,9 +3,13 @@
 // `scope` (+ optional error), not a bare `Bearer` (the source bug).
 
 import type { BridgeConfig } from "./config.ts";
-import { originOf } from "./config.ts";
+import { originOf, pathAfterOrigin } from "./config.ts";
+import { buildResourceCatalog, resolveResource } from "./resource.ts";
+import type { ResourceConfiguration } from "./resource.ts";
 
 export interface ChallengeOptions {
+  /** Resource pin for the challenge PRM URL. Omission preserves singleton calls. */
+  resource?: string;
   /** Catalog the client may request (space-joined into `scope`). */
   scope?: readonly string[];
   /** OAuth error code, e.g. "invalid_token" or "insufficient_scope". */
@@ -13,16 +17,26 @@ export interface ChallengeOptions {
   errorDescription?: string;
 }
 
-/** The PRM URL advertised in the challenge (resource origin, root form — the
- *  path-inserted form is also served, §9.1). */
-export function protectedResourceMetadataUrl(config: BridgeConfig): string {
-  return `${originOf(config.resource)}/.well-known/oauth-protected-resource`;
+/** The PRM URL advertised in the challenge. Legacy singleton omission keeps the
+ *  root form; an explicit authorizer pin uses the resource path-inserted form. */
+export function protectedResourceMetadataUrl(config: BridgeConfig, resource?: string): string {
+  if (resource === undefined && Object.hasOwn(config, "resource")) {
+    return `${originOf(config.resource)}/.well-known/oauth-protected-resource`;
+  }
+  const catalog = buildResourceCatalog(
+    config as unknown as ResourceConfiguration,
+    { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },
+  );
+  const resolved = resolveResource(catalog, resource).resource;
+  const root = `${originOf(resolved)}/.well-known/oauth-protected-resource`;
+  const path = pathAfterOrigin(resolved).replace(/^\/+|\/+$/g, "");
+  return path ? `${root}/${path}` : root;
 }
 
 /** Build the exact `WWW-Authenticate` value for a 401. */
 export function buildUnauthorizedChallenge(config: BridgeConfig, opts: ChallengeOptions = {}): string {
   const params: string[] = [];
-  params.push(`Bearer resource_metadata="${protectedResourceMetadataUrl(config)}"`);
+  params.push(`Bearer resource_metadata="${protectedResourceMetadataUrl(config, opts.resource)}"`);
   if (opts.scope && opts.scope.length > 0) params.push(`scope="${opts.scope.join(" ")}"`);
   if (opts.error) {
     params.push(`error="${opts.error}"`);

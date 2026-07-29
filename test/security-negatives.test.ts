@@ -52,7 +52,7 @@ test("security — cross-resource audience fail-closed (RFC 8707 §7.2): a token
   const configA = httpsConfig("https://api-a.test/mcp", key);
   const configB = httpsConfig("https://api-b.test/mcp", key);
   const clock = new SystemClock();
-  const tokenA = await signAccessToken({ subject: "subj-a", clientId: "c", scopes: ["mcp:read"] }, configA, clock);
+  const tokenA = await signAccessToken({ subject: "subj-a", clientId: "c", scopes: ["mcp:read"], resource: configA.resource }, configA, clock);
 
   // Positive contrast: A's own authorizer accepts its token.
   const ok = await authorizer(configA).authorize({ authorization: `Bearer ${tokenA}` });

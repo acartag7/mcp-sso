@@ -70,7 +70,7 @@ test("S1b.2: token survives restart — reload yields identical secrets and a pr
     const first = await loadOrCreateQuickstartSecrets({ dir: target });
     // Mint a token with the first-boot material.
     const config1 = configFrom(first);
-    const token = await signAccessToken({ subject: "agent@test", clientId: "c1", scopes: ["mcp:read"] }, config1, new SystemClock());
+    const token = await signAccessToken({ subject: "agent@test", clientId: "c1", scopes: ["mcp:read"], resource: config1.resource }, config1, new SystemClock());
 
     // "Restart": reload from the same dir.
     const second = await loadOrCreateQuickstartSecrets({ dir: target });

@@ -4,13 +4,19 @@
 // key is memoized (the source re-imported per request).
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { SignJWT, importJWK, jwtVerify } from "jose";
-import type { JWK, JWTPayload } from "jose";
+import { SignJWT, jwtVerify } from "jose";
+import type { JWTPayload } from "jose";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { BridgeConfig } from "./config.ts";
-import { scopeString, type CredentialKind } from "./scopes.ts";
+import { scopeString } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
-import { consentSecret, signKey, verifyKey } from "./crypto-keys.ts";
+import { consentSecret } from "./crypto-keys.ts";
+
+export {
+  type AccessTokenClaims, type VerifiedAccessToken,
+  signAccessToken, verifyAccessToken,
+} from "./access-token.ts";
+export { publicJwk } from "./crypto-keys.ts";
 
 const CONSENT_AUDIENCE = "mcp-sso/consent";
 const CONSENT_TYP = "mcp-sso-consent";
@@ -37,19 +43,6 @@ export interface ConsentRequestClaims {
    *  genuine validation this flow. OMITTED when absent/false — never
    *  `cimd_verified: false`. It is NEVER a scope-accumulation entitlement. */
   cimdVerified?: true;
-}
-
-export interface AccessTokenClaims {
-  subject: string;
-  clientId: string;
-  scopes: string[]; machine?: boolean; // client_credentials grant ⇒ mints the gty marker claim (§17.2)
-}
-
-export interface VerifiedAccessToken {
-  subject: string;
-  clientId: string;
-  scopes: string[];
-  credentialKind: CredentialKind;
 }
 
 export function sha256Hex(value: string): string {
@@ -133,46 +126,8 @@ export async function verifyConsentToken(token: string, config: BridgeConfig, cl
   }
 }
 
-export async function signAccessToken(claims: AccessTokenClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
-  const now = nowSeconds(clock);
-  const key = await signKey(config);
-  return await new SignJWT({ client_id: claims.clientId, scope: scopeString(claims.scopes), ...(claims.machine ? { gty: "client_credentials" } : {}) })
-    .setProtectedHeader({ alg: "ES256", kid: keyId(config), typ: "JWT" })
-    .setIssuer(config.issuer)
-    .setSubject(claims.subject)
-    .setAudience(config.resource)
-    .setIssuedAt(now)
-    .setExpirationTime(now + config.accessTokenTtlSeconds)
-    .sign(key);
-}
-
-export async function verifyAccessToken(token: string, config: BridgeConfig, clock: ClockPort): Promise<VerifiedAccessToken> {
-  try {
-    const nowMs = finiteClockSnapshot(clock);
-    const key = await verifyKey(config);
-    const { payload } = await jwtVerify(token, key, {
-      algorithms: ["ES256"],
-      issuer: config.issuer,
-      audience: config.resource,
-      currentDate: new Date(nowMs),
-    });
-    return accessClaims(payload);
-  } catch {
-    throw new OAuthError("invalid_token", "Bearer token is invalid", 401);
-  }
-}
-
-export function publicJwk(config: BridgeConfig): JWK {
-  const jwk = config.signingPrivateJwk;
-  return { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, alg: "ES256", use: "sig", kid: keyId(config) };
-}
-
 export function expiresAtIso(clock: ClockPort, ttlSeconds: number): string {
   return new Date(clock.nowMs() + ttlSeconds * 1000).toISOString();
-}
-
-function keyId(config: BridgeConfig): string | undefined {
-  return config.signingKeyId ?? stringClaim(config.signingPrivateJwk.kid);
 }
 
 function consentClaims(payload: JWTPayload): ConsentRequestClaims {
@@ -202,25 +157,6 @@ function cimdVerifiedClaim(payload: JWTPayload): { cimdVerified?: true } {
   if (!Object.hasOwn(payload, "cimd_verified")) return {};
   if (payload.cimd_verified !== true) throw new Error("cimd_verified must be true when present");
   return { cimdVerified: true };
-}
-
-function accessClaims(payload: JWTPayload): VerifiedAccessToken {
-  const subject = requiredString(payload.sub, "sub");
-  const clientId = requiredString(payload.client_id, "client_id");
-  return {
-    subject,
-    clientId,
-    scopes: payload.scope === "" ? [] : typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [],
-    credentialKind: credentialKindClaim(payload, subject, clientId),
-  };
-}
-
-function credentialKindClaim(payload: JWTPayload, subject: string, clientId: string): CredentialKind {
-  const machineSubject = subject.startsWith("mcc_");
-  const hasGrantType = Object.hasOwn(payload, "gty");
-  if (!machineSubject && !hasGrantType) return "interactive";
-  if (machineSubject && clientId === subject && hasGrantType && payload.gty === "client_credentials") return "machine";
-  throw new Error("partial or conflicting machine credential binding");
 }
 
 function requiredString(value: unknown, label: string): string {
