@@ -18,6 +18,8 @@ import type {
 import { STORED_DCR_GRANT_GENERATION } from "../src/ports/store.ts";
 import { OAuthError } from "../src/errors.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { INVALID_RESOURCE, resourceParam } from "../src/adapters/http.ts";
+import { buildResourceCatalog, resolveResource } from "../src/resource.ts";
 import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
 import { OAuthTokenUseCase } from "../src/token.ts";
 import {
@@ -348,4 +350,25 @@ test("a store without the resourceBinding marker is rejected at construction", (
   assert.ok(new OAuthAuthorizationUseCase({
     config: storedDcrConfig(), store: new MemoryStore(), clock: new SystemClock(), audit: noopAudit,
   }));
+});
+
+test("adapter boundary does not collapse an invalid resource into omission", () => {
+  // The core resolver is fail-closed, but the HTTP boundary reached it FIRST:
+  // queryString() returned value[0] for a repeated parameter and formField()
+  // mapped "" and non-strings to undefined. Omission is MEANINGFUL for resource
+  // (it selects the sole configured entry), so collapsing junk into omission
+  // silently selected a resource the caller never asked for.
+  assert.equal(resourceParam(undefined), undefined, "genuine omission stays omission");
+  assert.equal(resourceParam(A), A, "a valid string passes through");
+  assert.equal(resourceParam(""), INVALID_RESOURCE, "empty string is not omission");
+  assert.equal(resourceParam([A, B]), INVALID_RESOURCE, "repeated parameter is not first-wins");
+  assert.equal(resourceParam([A]), INVALID_RESOURCE, "even a single-element array is repeated syntax");
+  assert.equal(resourceParam(42), INVALID_RESOURCE, "a non-string is not omission");
+  assert.equal(resourceParam(null), INVALID_RESOURCE, "null is not omission");
+  // The sentinel can never match a configured resource: it is non-canonical.
+  const catalog = buildResourceCatalog(
+    { resource: A, scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"] },
+    { allowInsecureLocalhost: false },
+  );
+  assert.throws(() => resolveResource(catalog, INVALID_RESOURCE), invalidTarget);
 });

@@ -22,7 +22,7 @@ export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
-import {
+import { resourceParam,
   formField, formObject, headerString, oauthErrorResponse, queryString, readHeader,
   type NormRequest, type NormResponse,
 } from "./http.ts";
@@ -138,7 +138,7 @@ export class Bridge {
         responseType: queryString(req.query, "response_type"),
         codeChallenge: queryString(req.query, "code_challenge"),
         codeChallengeMethod: queryString(req.query, "code_challenge_method"),
-        resource: queryString(req.query, "resource"),
+        resource: resourceParam(req.query["resource"]),
         scope: queryString(req.query, "scope"),
         state: queryString(req.query, "state"),
         subject: identity.subject,
@@ -205,7 +205,7 @@ export class Bridge {
       } else if (grantType === "client_credentials") {
         response = await this.token.exchangeClientCredentials({
           grantType, authorization, clientId: formField(body, "client_id"), clientSecret: formField(body, "client_secret"),
-          scope: formField(body, "scope"), resource: formField(body, "resource"),
+          scope: formField(body, "scope"), resource: resourceParam(formObject(body)["resource"]),
         });
       } else {
         response = await this.token.exchangeAuthorizationCode({
