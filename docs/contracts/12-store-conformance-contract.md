@@ -155,14 +155,23 @@ construction rejects a store without the generation capability marker.
     expectation before replay handling or mutation, then copies the stored
     resource to the successor. `findGrantedScopes` includes the expected
     resource predicate alongside subject, client, time, and generation.
+    A valid current lineage whose resource differs from the expectation returns
+    the fieldless `{ status: "resource_mismatch" }` outcome without consuming
+    the predecessor or inserting a successor; every other invalid lineage
+    remains `null`. This typed result is what lets the use-case return
+    `invalid_target` without a racy pre-read or exposing stored record fields.
 
     Reference SQL migrations add nullable `resource` columns to
     `oauth_refresh_token_families` and `oauth_refresh_tokens` with no database
     default, so an old binary's explicit insert remains legacy `NULL`.
-    In singleton mode only, rotation atomically binds a null family/token to the
-    sole resource and a null active row may contribute prior scopes there. In
-    multi-resource mode a null/malformed/disagreeing lineage returns no
-    rotation, contributes no scopes, and is never assigned the request value.
+    In singleton mode with a matching explicit `legacySingletonResource`
+    attestation, rotation atomically binds a null family/token to the sole
+    resource and a null active row may contribute prior scopes there. Without
+    that attestation—or in multi-resource mode—a
+    null/malformed/disagreeing lineage returns no rotation, contributes no
+    scopes, and is never assigned the request value. This prevents a v0.3
+    singleton A record from being inferred as B merely because the first v0.4
+    process changed its singleton URL.
     The additive `resourceBinding: 1` marker is required for a custom store in
     multi-resource mode. The shared conformance suite owns memory, SQLite, and
     MySQL parity, including restart and old-binary insert fixtures.

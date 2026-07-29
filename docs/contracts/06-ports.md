@@ -107,13 +107,33 @@ interface ResourceBindingExpectation {
   allowLegacySingletonBinding: boolean;
 }
 
-rotateRefreshToken(hash, next, now, expectedGeneration?, resourceBinding?)
+interface ResourceMismatch {
+  status: "resource_mismatch";
+}
+
+type RefreshRotationResult =
+  | RefreshTokenRecord
+  | ResourceMismatch
+  | null;
+
+rotateRefreshToken(hash, next, now, expectedGeneration?, resourceBinding?):
+  Promise<RefreshRotationResult>
 findGrantedScopes(subject, clientId, now, expectedGeneration?, resourceBinding?)
 ```
 
 The last parameter is optional for source compatibility. Multi-resource use
 passes `{ resource, allowLegacySingletonBinding: false }`; singleton use passes
-the sole resource with `true`.
+the sole resource and sets `allowLegacySingletonBinding: true` only when
+`legacySingletonResource` explicitly attests that same canonical resource.
+Without that attestation singleton use passes `false`; null legacy lineage
+cannot be inferred from whichever resource happens to be configured now.
+Existing custom implementations returning only `RefreshTokenRecord | null`
+remain valid narrow implementations. A `resource_mismatch` result is emitted
+only when a valid current family/token pair exists but differs from the
+expected canonical resource; it carries no record fields and commits no
+mutation. `OAuthTokenUseCase` maps it to `invalid_target`. Missing, expired,
+replayed, malformed, generation-mismatched, or unattested-null lineage remains
+`null` and maps to `invalid_grant`.
 
 ## 6.4 `ClientStore` (stored-DCR mode only — fix #4)
 ```ts
@@ -245,8 +265,9 @@ New active and disabled machine records carry one canonical `resource`.
 Provisioning dependencies add that resource beside the existing per-resource
 catalog; rotation and disable preserve it through the existing CAS operation.
 A legacy record without the field resolves only under a singleton catalog and
-writes the sole resource on its first successful lifecycle mutation. It is
-`invalid_client` under a multi-resource catalog.
+writes the sole resource on its first successful lifecycle mutation only when
+`legacySingletonResource` attests it. It is `invalid_client` when the
+attestation is absent and under every multi-resource catalog.
 
 ## 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's

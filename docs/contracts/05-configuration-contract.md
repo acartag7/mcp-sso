@@ -83,9 +83,10 @@ interface MultiResourceBridgeConfig {
 
 type ResourceConfiguration =
   | { resource: string; scopeCatalog: string[]; defaultScopes: string[];
-      resources?: never }
+      legacySingletonResource?: string; resources?: never }
   | { resources: ResourceDefinition[]; resource?: never;
-      scopeCatalog?: never; defaultScopes?: never };
+      scopeCatalog?: never; defaultScopes?: never;
+      legacySingletonResource?: never };
 ```
 
 At activation the common fields from the shipped interface above and
@@ -98,6 +99,21 @@ definition and nested scope array once, validates them, freezes the published
 copies, and normalizes the singleton form to a one-entry internal catalog. It
 does not introduce dynamic resources, wildcard entries, aliases, or a policy
 callback.
+
+`legacySingletonResource` is an optional, explicit upgrade attestation, not a
+resource selector. It is accepted only in the singleton form and must
+canonicalize exactly to `resource`. When present, it states that every
+pre-0.4 stored record with null/missing resource lineage was issued for that
+same resource and permits the one-time lazy binding in §§6–7/12/17. Omitting it
+keeps new and already-bound singleton flows source-compatible but rejects
+unbound legacy refresh and machine state. A deployment changing A to B cannot
+set the field to A because it disagrees with B, and must not attest B for
+A-originated records. The multi-resource form always rejects the field. There
+is deliberately no automatic default to the current resource: the library
+cannot distinguish an A→A upgrade from an A→B replacement by inspecting a null
+legacy row. The 0.4.0 migration guide and release notes must call out the
+attestation before upgrade; omission is the fail-closed choice, not silent
+resource inference.
 
 One `canonicalResource(value)` parser owns configuration and request equality:
 the input is a primitive non-empty absolute URL; production requires `https`

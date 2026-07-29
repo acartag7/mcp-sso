@@ -115,8 +115,9 @@ commit).** A refresh family and every token in it carry one canonical resource.
 Rotation compares family, consumed-token, and request expectation before
 consumption, then copies the stored resource to the successor. A mismatch
 returns no successor. A legacy null lineage binds atomically to the sole
-configured resource only in singleton mode; multi-resource mode rejects it as
-`invalid_grant` without assigning a request-selected resource.
+configured resource only in singleton mode with the matching explicit
+`legacySingletonResource` attestation; otherwise it is `invalid_grant` without
+assigning a request-selected resource.
 
 ## 7.5 PKCE S256 (timing-safe)
 `verifyPkceS256(verifier, challenge)` rejects malformed inputs outright (verifier

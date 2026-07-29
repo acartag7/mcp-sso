@@ -341,12 +341,18 @@ changed catalog has explicit non-revocation semantics:
   and are not revoked by the config change.
 - Re-adding the same canonical URL means restoring the same security resource,
   not creating a new generation. An unexpired access token may verify again,
-  and still-valid refresh or machine credentials may resume. A clean
-  replacement uses a different canonical resource URL, leaving old credentials
-  bound to the retired URL. Reusing the same URL with a clean slate additionally
-  requires an operator-managed purge/revocation of its refresh and machine
-  state plus keeping the endpoint absent for at least the maximum access-token
-  lifetime; 0.4.0 has no resource-generation reset operation.
+  and already-bound refresh or machine credentials may resume. Null pre-0.4
+  state resumes only under the matching `legacySingletonResource` attestation;
+  it is never inferred from a replacement URL. A clean replacement uses a
+  different canonical resource URL, leaving bound credentials attached to the
+  retired URL. Reusing the same URL with a clean slate additionally requires an
+  operator-managed purge/revocation of its refresh and machine state plus
+  keeping the endpoint absent for at least the maximum access-token lifetime;
+  0.4.0 has no resource-generation reset operation.
+- Moving from multi-resource config back to singleton resumes already-bound
+  state only for the selected canonical resource. State bound to every other
+  former resource remains mismatched and cannot be selected; null pre-0.4 state
+  still requires the matching explicit attestation.
 - Narrowing a resource's scope catalog is not retroactive for already-signed
   access tokens; they expire normally. Pending consent is rejected if its
   resource is absent (`invalid_target`) or any signed scope is no longer

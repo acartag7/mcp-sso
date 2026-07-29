@@ -25,8 +25,11 @@ events carry the selected canonical `resource` whenever they are emitted:
 `oauth.upstream.callback` carries it only after a flow cookie has been verified
 and its resource resolved; failures before that boundary omit it. Registration,
 identity verification, pairing, and CIMD-fetch events are not grant-resource
-events and do not gain a synthetic resource. The field remains metadata, never
-a token value or request-selected unvalidated string.
+events and do not gain a synthetic resource. When the contract-only §17.3
+device grant is implemented, `oauth.device.authorization`,
+`oauth.device.approve`, and `oauth.token.device_code` carry the record's
+selected resource under the same rule. The field remains metadata, never a
+token value or request-selected unvalidated string.
 
 The reference sinks satisfy the fail-open port contract: their
 `writeAuthEvent` methods do not reject, and `combineAudit` isolates sibling
