@@ -9,6 +9,7 @@ import type { ResourceBindingExpectation, StorePort } from "./ports/store.ts";
 import { buildResourceCatalog, resolveResource } from "./resource.ts";
 import type { ResourceCatalog, ResourceConfiguration, ResolvedResource } from "./resource.ts";
 import { assertStoredDcrGenerationStore } from "./stored-dcr-generation.ts";
+import { assertResourceBindingStore } from "./resource-binding.ts";
 
 export type { ResourceCatalog } from "./resource.ts";
 
@@ -16,6 +17,7 @@ export type { ResourceCatalog } from "./resource.ts";
  *  capability in the same step (both are boot-time guards). */
 export function initTokenCatalog(config: BridgeConfig, store: StorePort): ResourceCatalog {
   assertStoredDcrGenerationStore(config, store);
+  assertResourceBindingStore(config, store);
   return buildResourceCatalog(
     config as unknown as ResourceConfiguration,
     { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },

@@ -18,6 +18,7 @@ import { buildResourceCatalog, resolveResource } from "./resource.ts";
 import type { ResourceCatalog, ResourceConfiguration } from "./resource.ts";
 import type { ResourceBindingExpectation, StorePort } from "./ports/store.ts";
 import { assertStoredDcrGenerationStore } from "./stored-dcr-generation.ts";
+import { assertResourceBindingStore } from "./resource-binding.ts";
 
 export { resolveResource };
 export type { ResourceCatalog };
@@ -168,6 +169,7 @@ export function requiredStr(value: string | undefined, label: string): string {
  *  capability in the same step (both are boot-time guards). */
 export function initAuthorizeCatalog(config: BridgeConfig, store: StorePort): ResourceCatalog {
   assertStoredDcrGenerationStore(config, store);
+  assertResourceBindingStore(config, store);
   return buildResourceCatalog(
     config as unknown as ResourceConfiguration,
     { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },

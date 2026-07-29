@@ -65,6 +65,18 @@ function singletonConfig(): BridgeConfig {
   });
 }
 
+/** Stored-DCR singleton: the branch where prior-scope accumulation is possible,
+ *  so the resource-binding capability is required even with one resource. */
+function storedDcrConfig(): BridgeConfig {
+  return createBridgeConfig({
+    ...commonFields(),
+    resource: A,
+    scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"],
+    dcr: { mode: "stored", store: new TestClientStore() },
+  });
+}
+
 function multiConfig(dcrMode: "stateless" | "stored" = "stateless", store?: ClientStore): BridgeConfig {
   const resources: ResourceDefinition[] = [
     { resource: A, scopeCatalog: ["shared", "a:read"], defaultScopes: ["a:read"] },
@@ -311,4 +323,29 @@ test("client_credentials rejects an empty-string resource at the token endpoint"
     invalidTarget,
     "empty-string resource must not silently match config.resource",
   );
+});
+
+test("a store without the resourceBinding marker is rejected at construction", () => {
+  // The capability gate is what stops a custom store that silently IGNORES the
+  // resource argument from participating in prior-scope accumulation. It must
+  // fire at construction — before any store write, audit event, or route
+  // registration — not on the first refresh.
+  const narrow = new MemoryStore() as unknown as Record<string, unknown>;
+  Object.defineProperty(narrow, "resourceBinding", { value: undefined, configurable: true });
+  const deps = { store: narrow as never, clock: new SystemClock(), audit: noopAudit };
+
+  // stored-DCR singleton: required because findGrantedScopes returns only scopes,
+  // so the use-case cannot repair a store that ignored the resource predicate.
+  assert.throws(
+    () => new OAuthAuthorizationUseCase({ config: storedDcrConfig(), ...deps }),
+    /resourceBinding 1 is required/,
+  );
+  assert.throws(
+    () => new OAuthTokenUseCase({ config: storedDcrConfig(), ...deps }),
+    /resourceBinding 1 is required/,
+  );
+  // The compliant reference store constructs fine.
+  assert.ok(new OAuthAuthorizationUseCase({
+    config: storedDcrConfig(), store: new MemoryStore(), clock: new SystemClock(), audit: noopAudit,
+  }));
 });
