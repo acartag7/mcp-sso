@@ -265,3 +265,13 @@ test("resources array is snapshotted once: a length-shifting Proxy cannot smuggl
   // Exactly the one entry the length check accepted — never the later-revealed second.
   assert.deepEqual(catalog.entries.map((e) => e.resource), [R1]);
 });
+
+test("resource identifiers are byte-capped like their redirect-entry sibling", () => {
+  // canonicalResource also canonicalizes REQUEST-supplied values, so the input is
+  // untrusted; the cap matches MAX_ENTRY_BYTES in redirect-entry.ts (2048).
+  const under = `https://a.test/${"x".repeat(2000)}`;
+  assert.equal(canonicalResource(under, SECURE), under);
+  authError(() => canonicalResource(`https://a.test/${"x".repeat(2100)}`, SECURE), /2048 UTF-8 bytes/);
+  // Multi-byte characters count as BYTES, not code units.
+  authError(() => canonicalResource(`https://a.test/${"é".repeat(1100)}`, SECURE), /2048 UTF-8 bytes/);
+});
