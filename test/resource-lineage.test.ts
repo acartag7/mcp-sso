@@ -22,6 +22,7 @@ import { INVALID_RESOURCE, resourceParam } from "../src/adapters/http.ts";
 import { buildResourceCatalog, resolveResource } from "../src/resource.ts";
 import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
 import { OAuthTokenUseCase } from "../src/token.ts";
+import { Bridge } from "../src/adapters/bridge.ts";
 import {
   generateRefreshToken, parseRefreshFamilyId, pkceChallenge, sha256Hex,
 } from "../src/crypto.ts";
@@ -371,4 +372,41 @@ test("adapter boundary does not collapse an invalid resource into omission", () 
     { allowInsecureLocalhost: false },
   );
   assert.throws(() => resolveResource(catalog, INVALID_RESOURCE), invalidTarget);
+});
+
+test("Bridge.handleToken rejects an empty or repeated resource through the real boundary", async () => {
+  // Drives the ACTUAL call site, not the helper: reverting bridge.ts to
+  // formField()/queryString() must turn this red. Testing resourceParam alone
+  // would stay green with the call sites reverted — a tautology.
+  const clientStore = new MachineTestStore();
+  const config = createBridgeConfig({
+    ...commonFields(),
+    resource: A, scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
+    dcr: { mode: "stored", store: clientStore },
+    clientCredentials: { enabled: true },
+  });
+  const provisioned = await provisionMachineClient(
+    { store: clientStore, catalog: config.scopeCatalog, clock: new SystemClock(), audit: noopAudit },
+    { allowedScopes: ["mcp:read"] },
+  );
+  const bridge = new Bridge({
+    config, store: new MemoryStore(), clock: new SystemClock(), audit: noopAudit,
+  });
+  const post = (resource: unknown) => bridge.handleToken({
+    query: {}, headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: {
+      grant_type: "client_credentials", client_id: provisioned.clientId,
+      client_secret: provisioned.clientSecret, resource,
+    },
+  } as never);
+
+  // A valid resource still works through the same path (guards the negatives).
+  const ok = await post(A);
+  assert.equal(ok.status, 200, "a valid resource still mints a token");
+
+  for (const [label, value] of [["empty", ""], ["repeated", [A, B]], ["non-string", 42]] as const) {
+    const res = await post(value);
+    const body = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+    assert.equal(body?.error, "invalid_target", `${label} resource must be invalid_target, got ${body?.error}`);
+  }
 });
