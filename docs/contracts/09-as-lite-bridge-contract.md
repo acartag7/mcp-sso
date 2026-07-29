@@ -317,7 +317,16 @@ the response. Wiring rules:
   exact resource, issuer, and resource-owned scopes.
 - The canonical PRM URL inserts
   `/.well-known/oauth-protected-resource` between resource origin and path. A
-  challenge uses that path-inserted URL for its pinned resource.
+  challenge uses that path-inserted URL for its pinned resource, amending the
+  §8.2 root-form default; a single-entry catalog keeps emitting the root form.
+- **The PRM document body is per-resource, not just the route.** §9.1 serves
+  *identical* JSON at the root and path-inserted paths, which is only
+  unambiguous because a singleton has one resource. Under a multi-resource
+  catalog each path-inserted route MUST return the PRM document of the resource
+  whose path it carries — `protectedResourceMetadata` therefore takes one
+  resolved `ResourceDefinition` rather than reading `config.resource`. A route
+  that resolved the correct path but returned the first/default resource's body
+  would tell a client that resource B is protected by resource A's scopes.
 - Each adapter mount may select a non-empty `protectedResources` subset of the
   bridge catalog. Omission selects all resources for a same-origin,
   distinct-path deployment; one resource per mount supports subdomains that
@@ -325,11 +334,28 @@ the response. Wiring rules:
   canonicalizes and resolves the whole subset, computes each exact route
   pathname from `protectedResourceMetadataUrl(resource).pathname`, and rejects
   duplicate pathnames with `AuthConfigError` naming the pathname and both
-  resources. `/path` and `/path/` remain distinct; equal paths on different
-  origins still collide within one mount and require separate one-resource
-  mounts. The root fallback is registered only for a one-resource mount or an
+  resources. Equal paths on different origins still collide within one mount and
+  require separate one-resource mounts: a mount registers by pathname and cannot
+  distinguish two origins, so two resources differing only by host are a
+  collision, not a working configuration.
+  **`/path` and `/path/` are distinct resources but are NOT distinct PRM
+  routes.** The shipped `protectedResourceMetadataUrls` strips leading and
+  trailing slashes from the resource path (`metadata.ts`), so
+  `https://h/mcp` and `https://h/mcp/` both yield
+  `https://h/.well-known/oauth-protected-resource/mcp`. Configuring both in one
+  catalog therefore passes the canonical-duplicate check and still collides at
+  the route layer. The route-collision check compares the COMPUTED pathnames,
+  not the resources, so it catches this pair and fails boot. 0.4.0 does not
+  change the stripping rule; it makes the resulting collision explicit rather
+  than letting one resource's document answer for the other. The root fallback is registered only for a one-resource mount or an
   exact origin-root resource; it never guesses among path resources. Fastify,
-  Express, and Hono share this rule.
+  Express, and Hono share this rule. This narrows §9.1's "identical JSON at
+  both paths": that rule continues to hold for a one-resource mount (where the
+  root form is unambiguous), while a multi-resource mount registers only the
+  path-inserted routes and each returns its own resource's document. Omitting
+  the root route is deliberate — a client that constructs the root URL for a
+  path resource gets a 404 rather than a confidently wrong document naming
+  another resource.
 
 The config snapshot is immutable for one bridge instance. Restarting with a
 changed catalog has explicit non-revocation semantics:
@@ -346,9 +372,15 @@ changed catalog has explicit non-revocation semantics:
   it is never inferred from a replacement URL. A clean replacement uses a
   different canonical resource URL, leaving bound credentials attached to the
   retired URL. Reusing the same URL with a clean slate additionally requires an
-  operator-managed purge/revocation of its refresh and machine state plus
-  keeping the endpoint absent for at least the maximum access-token lifetime;
-  0.4.0 has no resource-generation reset operation.
+  operator-managed purge/revocation of **every** credential bound to it — refresh
+  families and tokens, machine records, and unconsumed authorization codes — plus
+  keeping the endpoint absent for at least the longest of the access-token,
+  authorization-code, and consent-token lifetimes. Signed consent tokens are
+  stateless and cannot be purged, so the consent TTL is a hard floor on the
+  absence window: re-adding the URL sooner lets a pre-purge consent token be
+  approved into a fresh authorization code for the "clean" resource. 0.4.0 has
+  no resource-generation reset operation, which is exactly why this is an
+  operator procedure with a stated waiting period rather than a library call.
 - Moving from multi-resource config back to singleton resumes already-bound
   state only for the selected canonical resource. State bound to every other
   former resource remains mismatched and cannot be selected; null pre-0.4 state
@@ -361,6 +393,14 @@ changed catalog has explicit non-revocation semantics:
   are `invalid_grant`. Machine issuance rejects a removed requested or implicit
   ceiling scope with `invalid_scope`; a request for a still-current subset may
   continue.
+  That rejection is **evaluated per request, not recorded**: a refresh family
+  whose stored scopes left the catalog is rejected while they are absent and
+  becomes usable again if the deployer re-adds those scopes, because nothing
+  retires the family in between. Scope narrowing is therefore a live
+  authorization ceiling, NOT a revocation primitive. A deployer who intends a
+  scope to be permanently unusable must revoke the affected families (or purge
+  the resource per the clean-replacement rule above); removing it from the
+  catalog alone is reversible by a later config change.
 
 Multi-resource support does not combine tools from several resources into one
 MCP endpoint, dynamically route one MCP connection between resources, or let

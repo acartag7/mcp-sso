@@ -1192,8 +1192,10 @@ in this flow."* Decisions:
 `legacySingletonResource?: string`; its existing `catalog` must be that
 resource's catalog. New active and disabled records carry the canonical
 resource. Provisioning binds it before secret generation, lifecycle CAS
-operations preserve it, and `client_credentials` requires the selected request
-resource to equal it. After successful client authentication and before scope
+operations preserve it — a rotate/disable whose `MachineClientDeps.resource`
+disagrees with the stored record is `invalid_target` before the CAS, never a
+silent rebind — and `client_credentials` requires the selected request resource
+to equal it. After successful client authentication and before scope
 resolution or signing, a bound credential used for another configured resource
 is `invalid_target`; wrong/unknown credentials remain `invalid_client`. A
 legacy unbound record resolves only under a singleton catalog when the optional

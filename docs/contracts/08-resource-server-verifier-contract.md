@@ -42,6 +42,12 @@ Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-re
 ```
 - `resource_metadata` = the **PRM URL at the resource origin** (root form; the
   path-inserted form is also served — §9). Quoted per RFC 7235.
+  **PENDING 0.4.0 — NOT ENFORCED at this commit:** under a multi-resource
+  catalog the root form cannot identify which resource a challenge is about, so
+  a challenge from a resource-pinned authorizer (§8.5) will advertise the
+  **path-inserted** URL for its own pinned resource,
+  `protectedResourceMetadataUrl(resource)`. A single-entry catalog keeps
+  emitting the root form, so existing singleton clients see no change.
 - `scope` = space-joined `scopeCatalog` (tells the client what it may request).
 - `error`/`error_description` included when the rejection reason is known
   (`invalid_token`, `invalid_request`, `insufficient_scope`).

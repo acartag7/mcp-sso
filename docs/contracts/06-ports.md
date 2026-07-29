@@ -269,6 +269,20 @@ subset remains usable.
 
 **0.4.0 machine resource binding (PENDING — NOT ENFORCED at this commit).**
 New active and disabled machine records carry one canonical `resource`.
+`MachineClientBase` gains `resource?: string | null` — optional in the type only
+so a pre-0.4 row remains readable — and
+`parseMachineClientRegistration` adds it to its acceptance list: present means a
+non-empty string that survives `canonicalResource`, and a malformed or
+non-string value makes the row unreadable rather than unbound. Without that
+parser rule the enforcement boundary is unreachable, because the value
+`client_credentials` compares would never have been type-checked at the store
+boundary. Absent is the legacy case governed by the attestation rule below.
+A lifecycle CAS (`rotateMachineClientSecret`, `disableMachineClient`) whose
+deps name a different resource than the stored record is `invalid_target`
+BEFORE the CAS: rotation and disable preserve the stored resource and are never
+a rebinding primitive, so a credential provisioned for A cannot be moved to B by
+rotating it under B's dependencies. Re-provisioning is the only path to another
+resource, and it issues a new credential.
 Provisioning dependencies add that resource beside the existing per-resource
 catalog; rotation and disable preserve it through the existing CAS operation.
 A legacy record without the field resolves only under a singleton catalog and
