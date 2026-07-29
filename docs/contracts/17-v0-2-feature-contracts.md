@@ -1201,6 +1201,14 @@ attestation canonicalizes exactly to `resource`, and is written bound on its
 first successful lifecycle mutation; it is `invalid_client` without that
 attestation and under every multi-resource catalog.
 
+The §12.2 mixed-version cutover precondition also covers the machine
+`ClientStore`: all pre-0.4 token handlers must be drained before enabling a
+multi-resource catalog or replacing the singleton resource URL. An old handler
+ignores the new machine `resource` field and could otherwise authenticate a B
+credential while signing its configured A audience. Rollback must use an
+isolated pre-cutover store and cannot receive machine credentials issued after
+that activation.
+
 ## 17.3 Device authorization grant (RFC 8628)
 
 > **CONTRACT ONLY — NOT IMPLEMENTED.** No device endpoint, device-code store
@@ -2037,11 +2045,13 @@ the decision-2 generic `invalid_client` so document size is not a content oracle
    same advisory posture — `false` ⇒ 429, thrown ⇒ fail-open). Rationale: each
    initiated flow authorizes at most one outbound token-endpoint call at the
    callback, so limiting initiation bounds exchange amplification.
-2. Any `OAUTH_PARAM_KEYS` parameter present **more than once** (array-valued
-   in `NormRequest.query`) ⇒ **direct 400 `invalid_request`** before any
-   cookie is set — RFC 6749 §3.1 forbids repeated request parameters, and
-   silently picking first/last would make parameter-pollution behavior
-   adapter-dependent.
+2. Any `OAUTH_PARAM_KEYS` parameter except `resource` present **more than
+   once** (array-valued in `NormRequest.query`) ⇒ **direct 400
+   `invalid_request`** before any cookie is set — RFC 6749 §3.1 forbids
+   repeated request parameters, and silently picking first/last would make
+   parameter-pollution behavior adapter-dependent. A repeated `resource` is
+   preserved until step 3 establishes a trusted redirect, then follows the
+   §9.7 `invalid_target` rule instead of this generic pre-validation row.
 3. `client_id` present and `redirect_uri` **mode-appropriately validated**
    (§17.1.6 decision 1a): for a literal-lowercase-`https://` CIMD id with `cimd`
    enabled, the CIMD document match (shape-first, BEFORE any `store.find`);
@@ -2052,6 +2062,10 @@ the decision-2 generic `invalid_client` so document size is not a content oracle
    `response_type`/scope/PKCE validation — a malformed request costs one IdP
    round-trip and then errors on the proper §9.3 channel, instead of this leg
    growing a drift-prone duplicate validator.
+3a. After that trusted redirect is established, a repeated/array `resource`
+   returns a **302 `invalid_target`** through the normal §9.3 redirect channel
+   using the single validated client `state`. It sets no flow cookie, performs
+   no IdP redirect, and never serializes the array into JWT `params`.
 4. Generate `state`/`nonce`/verifier+challenge, sign the flow JWT, `Set-Cookie`,
    302 to `identity.buildAuthorizationUrl(...)`. Nothing is persisted
    server-side at this step; an abandoned flow is just an expired cookie.

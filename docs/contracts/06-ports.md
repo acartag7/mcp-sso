@@ -84,22 +84,26 @@ rules are in §12.
 
 **0.4.0 resource-lineage capability (PENDING — NOT ENFORCED at this
 commit).** `RefreshTokenRecord` and refresh-family state gain one nullable
-resource for rolling-upgrade compatibility. `rotateRefreshToken` and
+resource for upgrade compatibility and explicit legacy detection. `rotateRefreshToken` and
 `findGrantedScopes` gain an optional resource expectation; a multi-resource
-bridge requires the additive `resourceBinding: 1` capability marker so an old
-custom store cannot silently ignore it. Rotation compares the stored family
-and token resources inside its atomic operation and authoritative-copies the
-stored resource to the successor. Scope derivation keys by
+bridge—and any stored-DCR bridge where prior-scope accumulation is
+possible—requires the additive `resourceBinding: 1` capability marker so an
+old custom store cannot silently ignore it. Rotation compares the stored
+family and token resources inside its atomic operation and
+authoritative-copies the stored resource to the successor. Scope derivation keys by
 `(subject, clientId, resource, grantGeneration)`. Full legacy and migration
 rules are in §12.2 invariant 11.
 
 `assertResourceBindingStore(config, store)` checks the marker during
-multi-resource construction. `Bridge`, `OAuthAuthorizationUseCase`, and
+construction whenever the normalized catalog has multiple entries or
+`dcr.mode === "stored"`. `Bridge`, `OAuthAuthorizationUseCase`, and
 `OAuthTokenUseCase` each call it so the exported direct-use-case path cannot
-bypass the composition-root guard. The check precedes any store write, audit
-event, network operation, content-parser registration, or framework route
-registration. Absence or a value other than `1` is a boot `AuthConfigError`,
-never a first-refresh surprise.
+bypass the composition-root guard. Requiring it for stored singleton mode is
+load-bearing: `findGrantedScopes` returns only scopes, so the use-case cannot
+repair a custom store that ignored the resource predicate. The check precedes
+any store write, audit event, network operation, content-parser registration,
+or framework route registration. Absence or a value other than `1` is a boot
+`AuthConfigError`, never a first-refresh surprise.
 
 ```ts
 interface ResourceBindingExpectation {

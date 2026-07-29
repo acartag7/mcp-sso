@@ -173,13 +173,31 @@ construction rejects a store without the generation capability marker.
     singleton A record from being inferred as B merely because the first v0.4
     process changed its singleton URL.
     The additive `resourceBinding: 1` marker is required for a custom store in
-    multi-resource mode. The shared conformance suite owns memory, SQLite, and
-    MySQL parity, including restart and old-binary insert fixtures.
+    multi-resource mode and whenever stored-DCR prior-scope accumulation is
+    enabled, including singleton mode. The shared conformance suite owns
+    memory, SQLite, and MySQL parity, including restart and old-binary insert
+    fixtures.
 
     `assertResourceBindingStore` checks `resourceBinding: 1` in `Bridge`,
     `OAuthAuthorizationUseCase`, and `OAuthTokenUseCase` construction before
-    any store or adapter side effect. The marker is not a lazy per-operation
-    probe, and direct exported use-case construction does not bypass it.
+    any store or adapter side effect whenever the catalog is multi-resource or
+    DCR is stored. The marker is not a lazy per-operation probe, and direct
+    exported use-case construction does not bypass it.
+
+    **Mixed-version cutover precondition:** before starting the first
+    multi-resource process—or changing a singleton resource URL—the operator
+    must drain every pre-0.4 token handler that can access the same store.
+    After a resource-bound record has been written, rollback to a pre-0.4
+    handler against that store is unsupported and unsafe: the old binary
+    ignores the resource columns and can rotate a B-bound refresh token while
+    minting its configured A audience. Nullable columns make old writes
+    detectable by 0.4; they cannot make an already-running old binary enforce a
+    field it does not know. A rollback requires an isolated pre-cutover store
+    snapshot and must not receive any refresh or machine credential issued
+    after activation. This is a deployment cutover gate, not a runtime claim
+    that one process can discover another old process. The same drain applies
+    to a separately configured `ClientStore`; §17.2 records the machine-token
+    sibling.
 
 ## 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`) — in-process maps; dev/test only, labeled loud.
