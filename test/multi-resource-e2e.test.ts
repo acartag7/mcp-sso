@@ -29,6 +29,20 @@ function jwk(): JWK {
 
 const SIGNING = jwk();
 
+/** Every JSON path in `doc` whose leaf value contains `needle`. Walking to the
+ *  leaves and reporting WHERE the leak is beats `JSON.stringify(doc).includes()`:
+ *  a failure names the offending field instead of only proving one exists, and
+ *  a stringified blob cannot distinguish a leaked value from a key name. */
+function mentionsOf(doc: unknown, needle: string, path = "$"): string[] {
+  if (typeof doc === "string") return doc.includes(needle) ? [path] : [];
+  if (Array.isArray(doc)) return doc.flatMap((v, i) => mentionsOf(v, needle, `${path}[${i}]`));
+  if (doc && typeof doc === "object") {
+    return Object.entries(doc).flatMap(([k, v]) =>
+      [...(k.includes(needle) ? [`${path}.${k} (key)`] : []), ...mentionsOf(v, needle, `${path}.${k}`)]);
+  }
+  return [];
+}
+
 /** Both resources deliberately share the scope string "shared": a token minted
  *  for A must still be worthless at B. Isolation cannot come from scope names. */
 function twoResourceConfig(): BridgeConfig {
@@ -120,8 +134,8 @@ test("e2e: each resource publishes only its own PRM document", async () => {
   };
   assert.ok(!scopesOf(prmA).includes("memory:read"), "A's PRM must not advertise B's scopes");
   assert.ok(!scopesOf(prmB).includes("grafana:read"), "B's PRM must not advertise A's scopes");
-  assert.equal(JSON.stringify(prmA).includes(B), false, "A's PRM must not mention B");
-  assert.equal(JSON.stringify(prmB).includes(A), false, "B's PRM must not mention A");
+  assert.deepEqual(mentionsOf(prmA, B), [], "A's PRM must not mention B");
+  assert.deepEqual(mentionsOf(prmB, A), [], "B's PRM must not mention A");
 });
 
 test("e2e: a refresh family bound to A cannot be rotated at B", async () => {
