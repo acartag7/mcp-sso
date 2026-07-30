@@ -31,13 +31,19 @@ export class RequestAuthorizer {
   private readonly config: BridgeConfig;
   private readonly clock: ClockPort;
   private readonly audit: AuditPort;
-  readonly resource: string;
+  readonly #pinnedResource: string;
+
+  /** The canonical resource this instance verifies for. A getter over a private
+   *  slot, not a `readonly` field: `readonly` erases at runtime, so a JS consumer
+   *  could assign `authorizer.resource = B` and make an A-pinned instance accept
+   *  B-audience tokens. */
+  get resource(): string { return this.#pinnedResource; }
 
   constructor(deps: RequestAuthDeps) {
     this.config = deps.config;
     this.clock = deps.clock;
     this.audit = deps.audit;
-    this.resource = authorizerResource(deps.config, deps.resource);
+    this.#pinnedResource = authorizerResource(deps.config, deps.resource);
   }
 
   async authorize(input: RequestAuthInput): Promise<RequestAuthResult> {
@@ -47,13 +53,13 @@ export class RequestAuthorizer {
     const occurredAt = new Date(operationClock.nowMs()).toISOString();
     try {
       const token = bearerToken(input.authorization);
-      const verified = await verifyAccessToken(token, this.config, operationClock, this.resource);
+      const verified = await verifyAccessToken(token, this.config, operationClock, this.#pinnedResource);
       if (input.requiredScope) requireScope(verified, input.requiredScope);
       await this.audit.writeAuthEvent({
         occurredAt,
         event: "auth.request", status: "success",
         clientId: verified.clientId, subject: verified.subject, scopes: verified.scopes,
-        resource: this.resource, reason: input.requiredScope,
+        resource: this.#pinnedResource, reason: input.requiredScope,
       });
       return verified;
     } catch (error) {
@@ -63,7 +69,7 @@ export class RequestAuthorizer {
         // The pin is resolved at CONSTRUCTION from trusted config, so it is known
         // even when the token is not — this is not the §13 pre-resolution case,
         // which only withholds unvalidated REQUEST text.
-        resource: this.resource,
+        resource: this.#pinnedResource,
         reason: error instanceof OAuthError ? error.code : "invalid_token",
       });
       throw error;

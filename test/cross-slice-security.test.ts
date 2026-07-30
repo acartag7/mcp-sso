@@ -193,3 +193,53 @@ test("scope arrays are snapshotted once, not validated then re-read", () => {
   assert.deepEqual([...cat.entries[0]!.scopeCatalog], ["ok"]);
   assert.equal(reads, 1, `each element must be read exactly once, got ${reads} reads`);
 });
+
+test("post-resolution authorize failures name the resource; pre-resolution ones do not", async () => {
+  // §13: once a canonical resource is established — from the catalog, or from
+  // VERIFIED signed lineage — a failure event carries it, so an operator can
+  // attribute the failure to a target. Before that boundary the field is omitted
+  // rather than echoing unvalidated request text.
+  const { OAuthAuthorizationUseCase } = await import("../src/authorize.ts");
+  const { createBridgeConfig } = await import("../src/config.ts");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { SystemClock } = await import("../src/ports/clock.ts");
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const events: AuthAuditEvent[] = [];
+
+  const config = createBridgeConfig({
+    issuer: "https://iss.test", consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" },
+    redirectAllowlist: ["https://c.test/cb"], allowedOrigins: ["https://iss.test"],
+    dcr: { mode: "stateless" }, accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 60,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    resources: [
+      { resource: A, scopeCatalog: ["shared"], defaultScopes: ["shared"] },
+      { resource: B, scopeCatalog: ["shared"], defaultScopes: ["shared"] },
+    ],
+  } as never);
+
+  const auth = new OAuthAuthorizationUseCase({
+    config, store: new MemoryStore(), clock: new SystemClock(),
+    audit: { async writeAuthEvent(e: AuthAuditEvent) { events.push(e); } },
+  });
+
+  // Resource B resolves, THEN the PKCE method check fails (it runs after
+  // selection, inside the same try) => the failure event must name B.
+  await assert.rejects(() => auth.prepare({
+    clientId: "c1", redirectUri: "https://c.test/cb", responseType: "code",
+    codeChallenge: "x".repeat(43), codeChallengeMethod: "plain",
+    subject: "u@test", resource: B,
+  } as never));
+  const afterResolve = events.at(-1);
+  assert.equal(afterResolve?.status, "failure");
+  assert.equal(afterResolve?.resource, B, "a post-resolution failure attributes to its target");
+
+  // An UNKNOWN resource never resolves => the field must be absent, not guessed.
+  events.length = 0;
+  await assert.rejects(() => auth.prepare({
+    clientId: "c1", redirectUri: "https://c.test/cb", responseType: "code",
+    codeChallenge: "x".repeat(43), codeChallengeMethod: "S256",
+    subject: "u@test", resource: "https://evil.test/mcp",
+  } as never));
+  assert.equal(events.at(-1)?.resource, undefined, "pre-resolution failures omit the field");
+});

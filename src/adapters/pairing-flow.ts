@@ -15,7 +15,7 @@
 import type { Bridge } from "./bridge.ts";
 import type { AnyBridgeConfig } from "../config.ts";
 import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
-import { formField, queryString, type NormRequest, type NormResponse } from "./http.ts";
+import { formField, formObject, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
 
 // Pairing keeps its page-specific `form-action`: Continue terminates on this
@@ -88,6 +88,17 @@ export async function handlePairingAuthorize(
 function gatherOAuthParams(req: NormRequest): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of OAUTH_PARAM_KEYS) {
+    if (key === "resource") {
+      // `resource` selects the audience, so an invalid value must NOT collapse
+      // into omission (which selects the sole configured resource) and a repeated
+      // value must not become first-wins. Carry the sentinel through the pairing
+      // form so the synthetic authorize rejects it as invalid_target, exactly as
+      // a direct request would.
+      const raw = req.query["resource"] ?? formObject(req.body)["resource"];
+      const selected = resourceParam(raw);
+      if (typeof selected === "string") out[key] = selected;
+      continue;
+    }
     const v = queryString(req.query, key) ?? formField(req.body, key);
     if (typeof v === "string") out[key] = v;
   }

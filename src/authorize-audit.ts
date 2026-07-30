@@ -31,13 +31,17 @@ export async function writeAuthorizeSuccess(
 /** Only the OAuth error CODE is audited — never the description, which can
  *  carry externally-influenced text (log-injection / leak). An unrecognized
  *  throwable is the fixed `internal_error`. */
+/** `resource` is passed ONLY once a canonical resource has been established —
+ *  from the catalog or from verified signed lineage (§13). A failure before that
+ *  boundary omits it rather than echoing unvalidated request text. */
 export async function writeAuthorizeFailure(
   audit: AuditPort, clock: ClockPort, event: AuthorizeAuditEvent, error: unknown,
-  clientId?: string, redirectUri?: string, subject?: string,
+  clientId?: string, redirectUri?: string, subject?: string, resource?: string,
 ): Promise<void> {
   await audit.writeAuthEvent({
     occurredAt: new Date(clock.nowMs()).toISOString(), event, status: "failure",
     clientId, subject, redirectHost: redirectUri ? hostOf(redirectUri) : undefined,
+    ...(resource === undefined ? {} : { resource }),
     reason: error instanceof OAuthError ? error.code : "internal_error",
   });
 }

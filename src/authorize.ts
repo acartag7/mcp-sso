@@ -107,7 +107,7 @@ export class OAuthAuthorizationUseCase {
   }
 
   async prepare(input: AuthorizeRequestInput): Promise<PreparedConsent> {
-    let clientId: string | undefined;
+    let clientId: string | undefined; let resolvedResource: string | undefined; // §13: set on resolve
     let redirectUri: string | undefined;
     try {
       // --- PRE-VALIDATION: direct errors, never redirect ---
@@ -141,6 +141,7 @@ export class OAuthAuthorizationUseCase {
           throw new OAuthError("unsupported_response_type", "Only response_type=code is supported");
         }
         const selected = resolveResource(this.catalog, input.resource);
+        resolvedResource = selected.resource;
         if (input.codeChallengeMethod !== "S256") {
           throw new OAuthError("invalid_request", "PKCE code_challenge_method must be S256");
         }
@@ -181,12 +182,12 @@ export class OAuthAuthorizationUseCase {
         ...(resolved.registration ? { cimd: cimdDisplay(resolved.registration, redirectUri) } : {}),
       };
     } catch (error) {
-      await writeAuthorizeFailure(this.audit, this.clock, AUDIT_PREPARE, error, clientId, input.redirectUri);
+      await writeAuthorizeFailure(this.audit, this.clock, AUDIT_PREPARE, error, clientId, input.redirectUri, undefined, resolvedResource);
       throw error;
     }
   }
   async approve(input: ApproveInput): Promise<ApproveResult> {
-    let operationClock: ClockPort;
+    let operationClock: ClockPort; let approvedResource: string | undefined; // §13: set on verify
     const maxFutureMs = Math.max(this.config.consentTokenTtlSeconds, this.config.authorizationCodeTtlSeconds) * 1000;
     try { operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock, maxFutureMs)); }
     catch { throw new OAuthError("invalid_consent", "Consent token is invalid or expired"); }
@@ -194,13 +195,14 @@ export class OAuthAuthorizationUseCase {
       assertApproveOrigin(this.config, input.origin);
       const token = requiredStr(input.consentToken, "consent_token");
       const consent = await verifyConsentToken(token, this.config, operationClock);
+      approvedResource = consent.resource; // VERIFIED signed lineage: safe to audit (§13)
       // Scheme/claim gate runs before Deny, jti consume, or storage (§17.1.6 decision 3).
       assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
       assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
       if (input.approved !== true) {
         const redirectTo = buildErrorRedirect(consent.redirectUri, "access_denied", consent.state);
-        await writeAuthorizeFailure(this.audit, operationClock, AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject);
+        await writeAuthorizeFailure(this.audit, operationClock, AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject, consent.resource);
         return { redirectTo, state: consent.state };
       }
 
@@ -239,7 +241,7 @@ export class OAuthAuthorizationUseCase {
       await writeAuthorizeSuccess(this.audit, operationClock, AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject });
       return { code, redirectTo: redirectWithCode(consent.redirectUri, code, this.config.issuer, consent.state), state: consent.state };
     } catch (error) {
-      await writeAuthorizeFailure(this.audit, operationClock, AUDIT_APPROVE, error);
+      await writeAuthorizeFailure(this.audit, operationClock, AUDIT_APPROVE, error, undefined, undefined, undefined, approvedResource);
       throw error;
     }
   }
