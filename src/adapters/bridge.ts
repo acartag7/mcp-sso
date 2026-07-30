@@ -210,7 +210,7 @@ export class Bridge<Config extends AnyBridgeConfig = BridgeConfig> {
       } else {
         response = await this.token.exchangeAuthorizationCode({
           grantType, code: formField(body, "code"), redirectUri: formField(body, "redirect_uri"),
-          clientId: formField(body, "client_id"), codeVerifier: formField(body, "code_verifier"),
+          clientId: formField(body, "client_id"), codeVerifier: formField(body, "code_verifier"), resource: resourceParam(formObject(body)["resource"]),
         });
       }
       return { status: 200, headers: { "cache-control": "no-store", "pragma": "no-cache" }, body: response };

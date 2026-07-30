@@ -176,12 +176,19 @@ export function initAuthorizeCatalog(config: BridgeConfig, store: StorePort): Re
   );
 }
 
-/** The resource-binding expectation passed to findGrantedScopes: the resolved
- *  resource string plus legacy-singleton binding (one catalog entry ⇒ a null
- *  pre-0.4 prior grant can only be from this resource). A prior grant for
- *  resource A is never evidence for B (§9.7). */
+/** The expectation passed to `findGrantedScopes`. A prior grant for resource A is
+ *  never evidence for B (§9.7).
+ *
+ *  Legacy null rows count on a ONE-ENTRY catalog without requiring the
+ *  attestation, unlike rotation. The two paths carry different risk: rotation
+ *  WRITES a permanent binding, so an operator who changed the singleton URL in
+ *  the same upgrade would rebind A-originated lineage to B — which is why that
+ *  path demands the explicit attestation. `findGrantedScopes` only READS: it
+ *  decides which previously approved scopes to re-offer for consent, mints
+ *  nothing, and binds nothing. On a multi-entry catalog a null row is still
+ *  ambiguous and never counted. */
 export function authorizeBinding(catalog: ResourceCatalog, resource: string): ResourceBindingExpectation {
-  return { resource, allowLegacySingletonBinding: catalog.legacyBindingPermitted };
+  return { resource, allowLegacySingletonBinding: catalog.entries.length === 1 };
 }
 
 /** Approval re-resolves the signed consent resource against the CURRENT catalog

@@ -77,3 +77,19 @@ export function requiredStr(value: string | undefined, label: string): string {
   if (typeof value === "string" && value) return value;
   throw new OAuthError("invalid_request", `${label} is required`);
 }
+
+/** §9.7: a request-supplied `resource` on code exchange must equal the resource
+ *  already bound into the consumed record. The STORED value stays authoritative
+ *  for signing — this only rejects a request that names a different one, rather
+ *  than silently ignoring the parameter. Omission resolves via the catalog, so a
+ *  multi-resource deployment cannot omit it. */
+export function assertRequestResourceMatchesRecord(
+  catalog: ResourceCatalog,
+  storedResource: string | null | undefined,
+  requested: string | undefined,
+): void {
+  const stored = resolveRecordResource(catalog, storedResource);
+  if (resolveResource(catalog, requested).resource !== stored.resource) {
+    throw new OAuthError("invalid_target", "resource does not match the authorization code");
+  }
+}

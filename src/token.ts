@@ -11,7 +11,7 @@ import { resolveMachineClientTokenResource } from "./machine-client-resource.ts"
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 import { writeTokenAudit } from "./token-audit.ts";
 import { expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
-import { initTokenCatalog, refreshBindingExpectation, resolveRecordResource, requiredStr, type ResourceCatalog } from "./token-resource.ts";
+import { assertRequestResourceMatchesRecord, initTokenCatalog, refreshBindingExpectation, resolveRecordResource, requiredStr, type ResourceCatalog } from "./token-resource.ts";
 export interface OAuthTokenDeps {
   config: BridgeConfig;
   store: StorePort;
@@ -23,7 +23,7 @@ export interface AuthorizationCodeGrantInput {
   code?: string;
   redirectUri?: string;
   clientId?: string;
-  codeVerifier?: string;
+  codeVerifier?: string; resource?: string;   // resource: RFC 8707, must match the code's lineage
 }
 export interface RefreshGrantInput {
   grantType?: string; refreshToken?: string; clientId?: string;
@@ -83,6 +83,7 @@ export class OAuthTokenUseCase {
         throw new OAuthError("unsupported_grant_type", "grant_type is not supported");
       }
       const record = await this.consumeValidCode(input);
+      assertRequestResourceMatchesRecord(this.catalog, record.resource, input.resource); // §9.7; after burn, before lineage
       if (record.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace"); // pre-side-effect (§9.3): code burned, NO refresh token saved, no success audited
       const refreshToken = generateRefreshToken();
       const familyId = parseRefreshFamilyId(refreshToken);
