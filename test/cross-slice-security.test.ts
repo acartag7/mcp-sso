@@ -243,3 +243,18 @@ test("post-resolution authorize failures name the resource; pre-resolution ones 
   } as never));
   assert.equal(events.at(-1)?.resource, undefined, "pre-resolution failures omit the field");
 });
+
+test("pairing round-trip does not collapse a repeated resource", async () => {
+  // The pairing form carries authorize params through hidden fields. Reading
+  // them with the general query helper made resource=A&resource=B authorize A
+  // (first-wins) — the fourth place this parameter failed to reach its guard.
+  const { gatherPairingOAuthParams } = await import("../src/adapters/pairing-flow.ts");
+  const req = { query: { resource: [A, B], client_id: "c1" }, body: undefined, headers: {} };
+  const params = gatherPairingOAuthParams(req as never);
+  assert.notEqual(params.resource, A, "a repeated resource must NOT become first-wins");
+  assert.equal(params.resource, INVALID_RESOURCE, "it carries the sentinel so authorize rejects it");
+  assert.throws(() => resolveResource(multi, params.resource!));
+  // A single valid value still round-trips untouched.
+  const ok = gatherPairingOAuthParams({ query: { resource: A }, body: undefined, headers: {} } as never);
+  assert.equal(ok.resource, A);
+});
