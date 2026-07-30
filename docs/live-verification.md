@@ -270,7 +270,25 @@ claude mcp add --transport http grafana https://<your-host>/grafana/mcp
 claude mcp add --transport http memory  https://<your-host>/memory/mcp
 ```
 
-For each of Claude Code, claude.ai and ChatGPT, record:
+**Two helper scripts do the parts that do not need a browser.** Generate the env
+(real signing material; CF Access fields left blank for you to fill):
+
+```bash
+node scripts/live-multi-resource-env.mjs https://<your-host> > live.env
+$EDITOR live.env      # fill CF_ACCESS_AUDIENCE + CF_ACCESS_ISSUER
+set -a && . ./live.env && set +a
+node examples/fastify-multi-resource/index.ts &
+```
+
+Once the tunnel is up, check discovery, challenges, metadata isolation, the
+Origin gate, and that the OAuth API paths are NOT behind the Access app:
+
+```bash
+node scripts/live-multi-resource-check.mjs https://<your-host>   # exit 0 = all passed
+```
+
+That script cannot prove the cross-resource token rejection — that needs a real
+grant. For each of Claude Code, claude.ai and ChatGPT, record:
 
 1. discovery reaches **each** resource's own PRM document (not the root one);
 2. the consent screen for `/grafana/mcp` offers only that resource's scopes;
