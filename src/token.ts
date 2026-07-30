@@ -152,7 +152,7 @@ export class OAuthTokenUseCase {
    *  client / malformed record ⇒ invalid_client, with a fixed
    *  two digest comparisons (custom-store lookup timing remains external). */
   async exchangeClientCredentials(input: ClientCredentialsGrantInput): Promise<MachineTokenResponse> {
-    let clientId: string | undefined; // captured for the failure audit where known
+    let clientId: string | undefined; let resolved: string | undefined; // for the failure audit
     try {
       // Fail-closed (defense-in-depth): metadata does not advertise the surface
       // unless enabled; boot already requires stored DCR when it is.
@@ -174,6 +174,7 @@ export class OAuthTokenUseCase {
       );
       if (!client) throw new OAuthError("invalid_client", "Client authentication failed", 401);
       const selected = resolveMachineClientTokenResource(client.resource, this.catalog, input.resource);
+      resolved = selected.resource;   // §13: a later failure attributes to it
       const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, selected.scopeCatalog);
       const accessToken = await signAccessToken({ subject: clientId, clientId, scopes, resource: selected.resource, machine: true }, this.config, this.clock);
       await writeTokenAudit(this.audit, {
@@ -184,7 +185,7 @@ export class OAuthTokenUseCase {
     } catch (error) {
       await writeTokenAudit(this.audit, {
         occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "failure",
-        clientId, reason: error instanceof OAuthError ? error.code : "internal_error",
+        clientId, ...(resolved === undefined ? {} : { resource: resolved }), reason: error instanceof OAuthError ? error.code : "internal_error",
       });
       throw error;
     }

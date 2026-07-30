@@ -127,7 +127,15 @@ export function canonicalResource(value: unknown, options: CanonicalResourceOpti
   } else if (url.protocol !== "https:") {
     throw new AuthConfigError("resource scheme must be https (or loopback http)");
   }
-  return url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
+  const canonical = url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
+  // Bound the CANONICAL form too, not just the raw input. WHATWG percent-encodes
+  // every non-ASCII byte, so a 2 KB raw resource can serialize to ~6 KB — which
+  // boots fine and then fails every store write against the VARCHAR(2048)
+  // resource columns. The persisted value is the one that must fit.
+  if (canonical.length > MAX_RESOURCE_BYTES) {
+    throw new AuthConfigError(`resource canonicalizes to ${canonical.length} characters, exceeding the ${MAX_RESOURCE_BYTES} storage limit`);
+  }
+  return canonical;
 }
 
 // The catalog builder and request resolver live in ./resource-catalog.ts (this

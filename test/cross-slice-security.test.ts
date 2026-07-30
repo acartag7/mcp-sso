@@ -316,3 +316,15 @@ test("unattested legacy scopes never reach a grant for a replacement resource", 
     `an unattested legacy scope must not enter a grant for a replacement resource, got ${JSON.stringify(record!.scopes)}`);
   assert.deepEqual(record!.scopes, ["read"], "only what the consent page actually showed");
 });
+
+test("a resource whose CANONICAL form exceeds storage is rejected at boot", () => {
+  // The cap bounded the raw input only. WHATWG percent-encodes every non-ASCII
+  // byte, so a 2 KB raw resource can serialize to ~6 KB: the deployment booted
+  // and then failed every store write against the VARCHAR(2048) columns.
+  const inflating = `https://a.test/${"é".repeat(1000)}`;   // ~2015 raw bytes
+  assert.ok(Buffer.byteLength(inflating, "utf8") <= 2048, "raw input passes the byte cap");
+  assert.throws(() => canonicalResource(inflating, OPT), /canonicalizes to/);
+  // ASCII of the same raw size still fits, and a shorter non-ASCII path is fine.
+  assert.doesNotThrow(() => canonicalResource(`https://a.test/${"x".repeat(2000)}`, OPT));
+  assert.doesNotThrow(() => canonicalResource(`https://a.test/${"é".repeat(300)}`, OPT));
+});
