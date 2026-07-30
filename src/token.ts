@@ -193,17 +193,16 @@ export class OAuthTokenUseCase {
    *  already-revoked token is a no-op — it never leaks existence via 4xx. */
   async revoke(refreshToken: string | undefined): Promise<void> {
     const nowIso = new Date(this.clock.nowMs()).toISOString();
-    let revoked = false;
-    if (refreshToken) {
-      const existing = await this.store.findRefreshToken(sha256Hex(refreshToken));
-      if (existing) {
-        await this.store.revokeRefreshTokenFamily(existing.familyId, nowIso);
-        revoked = true;
-      }
+    let resource: string | undefined;   // from VERIFIED stored lineage (§13), never request text
+    const existing = refreshToken ? await this.store.findRefreshToken(sha256Hex(refreshToken)) : null;
+    if (existing) {
+      try { resource = resolveRecordResource(this.catalog, existing.resource).resource; } catch { /* omit */ }
+      await this.store.revokeRefreshTokenFamily(existing.familyId, nowIso);
     }
     await writeTokenAudit(this.audit, {
       occurredAt: nowIso, event: "oauth.revoke", status: "success",
-      reason: revoked ? undefined : "unrecognized_token",
+      ...(resource === undefined ? {} : { resource }),
+      reason: existing ? undefined : "unrecognized_token",
     });
   }
 

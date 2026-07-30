@@ -294,21 +294,6 @@ the response. Wiring rules:
   `resource`. Repeated/array, malformed, or unknown values are
   `invalid_target`. Omission resolves only when the normalized catalog has one
   entry; it is `invalid_target` with two or more entries.
-<<<<<<< Updated upstream
-  Repeated occurrences are detectable on the **query** side, where
-  `NormRequest.query` already carries `string | string[]` and an array value is
-  `invalid_target`. They are **not** detectable in a form body as shipped: the
-  reference content-type parsers build the body with
-  `Object.fromEntries(new URLSearchParams(...))`, which is last-wins, so a
-  duplicate `resource` is collapsed before the core sees it. The activating PR
-  either preserves multiplicity for the OAuth parameter keys in all three
-  adapters' body parsers, or this contract states plainly that duplicate
-  detection is query-only. It must not assert an adapter-wide guarantee the
-  shipped parsers cannot keep — a custom mount owns its own body parsing either
-  way. This does not weaken audience binding: a collapsed duplicate still
-  resolves to exactly one resource and the minted token carries that one
-  audience.
-=======
   A repeated occurrence is detected on the **query** side, where
   `NormRequest.query` carries `string | string[]` and the boundary reader turns
   an array into a rejected value rather than first-wins. It is **not** detectable
@@ -320,7 +305,6 @@ the response. Wiring rules:
   resource and the minted token carries that one audience. The boundary reader
   never maps an invalid value onto omission, because omission selects the sole
   configured resource.
->>>>>>> Stashed changes
 - The resolved immutable `ResourceDefinition` supplies defaults and scope
   validation through consent, approval, code exchange, refresh, and
   `client_credentials`. Approval re-resolves the signed resource against the
@@ -374,16 +358,15 @@ the response. Wiring rules:
   adapters cannot address independently. Adapters are additionally registered
   with case-sensitive, strict routing where the framework offers it, so the
   boot-time check and the runtime router agree on identity.
-  **`/path` and `/path/` are distinct resources but are NOT distinct PRM
-  routes.** The shipped `protectedResourceMetadataUrls` strips leading and
-  trailing slashes from the resource path (`metadata.ts`), so
-  `https://h/mcp` and `https://h/mcp/` both yield
-  `https://h/.well-known/oauth-protected-resource/mcp`. Configuring both in one
-  catalog therefore passes the canonical-duplicate check and still collides at
-  the route layer. The route-collision check compares the COMPUTED pathnames,
-  not the resources, so it catches this pair and fails boot. 0.4.0 does not
-  change the stripping rule; it makes the resulting collision explicit rather
-  than letting one resource's document answer for the other. The root fallback is registered only for a one-resource mount or an
+  **`/path` and `/path/` are distinct resources AND distinct PRM routes.** The
+  path-inserted URL preserves the resource pathname verbatim, so
+  `https://h/mcp` and `https://h/mcp/` yield
+  `/.well-known/oauth-protected-resource/mcp` and `.../mcp/` respectively, and
+  the shipped adapters register them under strict, case-sensitive matching so
+  each serves its own document. This replaces the earlier slash-stripping
+  behavior, which mapped two distinct resources onto one route and forced a boot
+  collision; distinct resources now stay independently addressable, which is what
+  the catalog already promised.
   exact origin-root resource; it never guesses among path resources. Fastify,
   Express, and Hono share this rule. This narrows §9.1's "identical JSON at
   both paths": that rule continues to hold for a one-resource mount (where the

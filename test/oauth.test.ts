@@ -389,6 +389,8 @@ test("malformed stored scopes after rotation revoke the committed successor", as
   const rawRefresh = `rt.${familyId}.secret-1234567890`;
   await ctx.store.saveRefreshToken({
     tokenHash: sha256Hex(rawRefresh), familyId, previousTokenHash: null,
+    // Resource-bound: this row exercises malformed SCOPES, not legacy migration.
+    resource: ctx.config.resource,
     clientId: "client-1", subject: SUBJECT, scopes: ["not-in-catalog"],
     expiresAt: "2099-01-01T00:00:00.000Z",
   });
@@ -623,6 +625,9 @@ test("token issuance rejects a LEGACY stored grant whose subject is in the reser
   const rawRefresh = `rt.${legacyFamily}.secret-1234567890`;
   await ctx.store.saveRefreshToken({
     tokenHash: sha256Hex(rawRefresh), familyId: legacyFamily, previousTokenHash: null,
+    // Resource-bound: this row exercises the reserved mcc_ SUBJECT guard, not
+    // legacy migration — an unbound row would be rejected before reaching it.
+    resource: ctx.config.resource,
     clientId: "client-1", subject: "mcc_legacy", scopes: ["mcp:read"], expiresAt: "2099-01-01T00:00:00.000Z",
   });
   await assert.rejects(

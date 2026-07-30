@@ -120,6 +120,7 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 | Review the threat model | [`docs/threat-model.md`](docs/threat-model.md) |
 | Deploy behind an SSO gateway | [`docs/gateway-deployment.md`](docs/gateway-deployment.md) |
 | Verify a live deployment | [`docs/live-verification.md`](docs/live-verification.md) |
+| Upgrade from 0.3.x (BREAKING) | [`docs/upgrading-0.4.md`](docs/upgrading-0.4.md) |
 | Authorization model (IdP-side vs mcp-sso gates) | [`docs/authorization.md`](docs/authorization.md) |
 | Dependency provenance | [`docs/dependency-ledger.md`](docs/dependency-ledger.md) |
 | Audit sinks / residuals | [`docs/audit-deployment.md`](docs/audit-deployment.md) |

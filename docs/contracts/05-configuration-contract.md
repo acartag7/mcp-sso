@@ -107,20 +107,31 @@ The published definition is constructed only from the three snapshotted,
 validated values; a typo or secret parked on an input object is neither
 silently ignored nor copied into `bridge.config`.
 
-`legacySingletonResource` is an optional, explicit upgrade attestation, not a
-resource selector. It is accepted only in the singleton form and must
-canonicalize exactly to `resource`. When present, it states that every
-pre-0.4 stored record with null/missing resource lineage was issued for that
-same resource and permits the one-time lazy binding in §§6–7/12/17. Omitting it
-keeps new and already-bound singleton flows source-compatible but rejects
-unbound legacy refresh and machine state. A deployment changing A to B cannot
-set the field to A because it disagrees with B, and must not attest B for
-A-originated records. The multi-resource form always rejects the field. There
-is deliberately no automatic default to the current resource: the library
-cannot distinguish an A→A upgrade from an A→B replacement by inspecting a null
-legacy row. The 0.4.0 migration guide and release notes must call out the
-attestation before upgrade; omission is the fail-closed choice, not silent
-resource inference.
+**BREAKING at 0.4.0: refresh tokens and machine credentials issued before the
+upgrade stop working by default, and every user re-authorizes once.** Records
+written by 0.3.x carry no resource, and a null row cannot say which resource it
+was issued for. Rather than guess, unbound legacy lineage is `invalid_grant`
+(interactive) or `invalid_client` (machine). Re-authorization is the DEFAULT
+because it is the only outcome that is correct without trusting an unverifiable
+claim — an operator who upgrades and changes the resource URL in the same step
+would otherwise have every pre-upgrade consent silently transferred to the new
+URL, auto-approving scopes the user granted somewhere else.
+
+`legacySingletonResource` is the opt-out escape hatch for deployments that
+cannot re-authorize their fleet, not the recommended path. It is accepted only
+in the singleton form, must canonicalize exactly to `resource`, and asserts that
+every pre-0.4 null-resource record was issued for that same resource; only then
+does the one-time lazy binding in §§6–7/12/17 apply. **Its limitation is
+load-bearing and must be documented wherever it is offered: the library verifies
+only that the value equals the CURRENT resource, so an operator who has already
+changed the URL can satisfy it with the new value and rebind old grants anyway.**
+It is an assertion the library cannot check, which is why it is not the default.
+The multi-resource form always rejects the field. There is deliberately no
+automatic default to the current resource: the library cannot distinguish an
+A→A upgrade from an A→B replacement by inspecting a null legacy row.
+
+The release notes and migration guide MUST lead with the re-authorization
+requirement, not with the escape hatch.
 
 One `canonicalResource(value)` parser owns configuration and request equality:
 the input is a primitive non-empty absolute URL; production requires `https`

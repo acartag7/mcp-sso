@@ -10,6 +10,7 @@ import type { ResourceBindingExpectation, StorePort } from "./ports/store.ts";
 import { buildResourceCatalog, resolveResource } from "./resource.ts";
 import type { ResourceCatalog, ResourceConfiguration, ResolvedResource } from "./resource.ts";
 import { assertStoredDcrGenerationStore } from "./stored-dcr-generation.ts";
+import { assertResourceBindingStore } from "./resource-binding.ts";
 
 export type { ResourceCatalog } from "./resource.ts";
 
@@ -23,6 +24,7 @@ export function initTokenCatalog(config: BridgeConfig, store: StorePort): Resour
     assertMachineClientResourceStore(config.dcr.store);
   }
   assertStoredDcrGenerationStore(config, store);
+  assertResourceBindingStore(config, store);
   return buildResourceCatalog(
     config as unknown as ResourceConfiguration,
     { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },
@@ -64,9 +66,10 @@ export function refreshBindingExpectation(
   const selected = resolveResource(catalog, requested);
   return {
     resource: selected.resource,
-    // A null pre-0.4 lineage can only have come from the sole resource, so lazy
-    // binding is offered exclusively to a one-entry catalog.
-    allowLegacySingletonBinding: catalog.entries.length === 1,
+    // A one-entry catalog is NOT sufficient: an A-to-B singleton URL replacement
+    // also has one entry, and inferring B for an A-originated null row would
+    // rebind it. Only the explicit legacySingletonResource attestation permits it.
+    allowLegacySingletonBinding: catalog.legacyBindingPermitted,
   };
 }
 

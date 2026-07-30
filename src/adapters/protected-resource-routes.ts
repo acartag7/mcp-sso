@@ -32,6 +32,7 @@ export function planProtectedResourceRoutes(
     resource,
     pathname: new URL(pathInsertedProtectedResourceMetadataUrl(resource.resource)).pathname,
   }));
+  routes.forEach((route) => rejectRouteMetacharacters(route.pathname, route.resource.resource));
   rejectRouteCollisions(routes);
   const rootRoute = routes.find((route) => route.pathname === "/.well-known/oauth-protected-resource");
   const rootFallback = selected.length === 1 && rootRoute === undefined ? selected[0] : undefined;
@@ -84,4 +85,29 @@ function routeIdentity(pathname: string): string {
   try { decoded = decodeURIComponent(pathname); }
   catch { throw new AuthConfigError(`protected-resource route pathname cannot be percent-decoded: ${pathname}`); }
   return decoded.replace(/[A-Z]/g, (char) => char.toLowerCase());
+}
+
+/** Reject router metacharacters in a computed route pathname.
+ *
+ *  Fastify, Express and Hono all read `:name` as a parameter and `*` as a
+ *  wildcard, so a resource path containing them registers a MATCHING route
+ *  rather than a literal one: a resource at `/mcp/:id` answers
+ *  `/mcp/anything` and shadows a sibling resource, returning one resource's
+ *  metadata for another's URL — and the pathname-collision check cannot see it,
+ *  because the two literal strings differ.
+ *
+ *  This rejects rather than escapes: escaping differs per framework, and a
+ *  resource identifier containing router syntax has no legitimate use here.
+ *  Allowlist at the trust boundary — the check is on the COMPUTED pathname, so
+ *  it cannot be sidestepped by percent-encoding that the URL parser resolves. */
+function rejectRouteMetacharacters(pathname: string, resource: string): void {
+  const found = /[:*?{}()\[\]+]/.exec(pathname);
+  if (found !== null) {
+    throw new AuthConfigError(
+      `resource "${resource}" produces the protected-resource route "${pathname}", which contains the ` +
+        `framework route metacharacter "${found[0]}". Fastify, Express and Hono would treat it as a ` +
+        `parameter or wildcard and match other paths, so it could shadow another resource. ` +
+        `Use a resource path without route metacharacters.`,
+    );
+  }
 }

@@ -12,6 +12,10 @@
 
 [Quickstart](#quickstart) · [Client registration](docs/client-registration.md) · [Configuration](docs/configuration.md) · [Machine-to-machine](#machine-to-machine-client_credentials) · [API-key gateway](#api-key-gateway-sso-in-front-of-a-token-only-backend) · [Security](#security) · [Alternatives](#alternatives) · [Roadmap](#roadmap) · [Threat model](docs/threat-model.md)
 
+> **Upgrading from 0.3.x?** 0.4.0 is a breaking change: refresh tokens and
+> machine credentials issued before the upgrade stop working, and every user
+> re-authorizes once. See [docs/upgrading-0.4.md](docs/upgrading-0.4.md).
+
 ## The problem
 
 Remote MCP servers need auth. The default is a static API key pasted into every
