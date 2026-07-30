@@ -52,6 +52,11 @@ if (phases["s6b-cimd-flow"] !== true) {
   function config(mode: "stateless" | "stored", clients?: any, cimd: boolean = true): any {
     return createBridgeConfig({
       issuer: "https://auth.test", resource: "https://api.test/mcp",
+      // 0.4.0: seedGrant() writes pre-0.4 rows with no resource. This suite tests
+      // prior-grant ACCUMULATION, not legacy migration, so it attests that those
+      // rows belong to the one configured resource. Without it they are correctly
+      // rejected as unbound legacy lineage and the CONTROL row cannot accumulate.
+      legacySingletonResource: "https://api.test/mcp",
       consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: jwk(), signingKeyId: "k",
       redirectAllowlist: [CIMD_REDIRECT], scopeCatalog: ["mcp:read", "mcp:write", "mcp:admin"], defaultScopes: ["mcp:read"],
       allowedOrigins: ["https://auth.test"],
