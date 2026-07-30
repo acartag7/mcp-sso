@@ -100,6 +100,38 @@ export async function buildApp(opts: {
   await registerOAuthRoutes(app, { bridge, identity: opts.identity });
 
   const origin = new URL(opts.config.issuer).origin;
+
+  // Origin gate — MCP Streamable HTTP DNS-rebinding protection. Scoped to the
+  // resource paths and placed in an onRequest hook so it runs BEFORE body
+  // parsing and for EVERY method, not just the POST handler below.
+  //
+  // NOTE: the single-resource examples use `isMcpPath`, which hard-codes the
+  // pathname "/mcp" (src/adapters/http.ts:130) and therefore does NOT match
+  // "/grafana/mcp". A multi-resource deployment must gate on its own configured
+  // paths — reusing isMcpPath here would silently disable this protection.
+  const resourcePaths = new Set<string>(RESOURCE_PATHS);
+  app.addHook("onRequest", async (request, reply) => {
+    let pathname: string;
+    try {
+      pathname = new URL(request.url, "http://localhost").pathname;
+    } catch {
+      return; // Not a resource path we gate; the route layer handles it.
+    }
+    if (!resourcePaths.has(pathname)) return; // OAuth routes manage their own Origin.
+    const header = request.headers.origin;
+    // An ambiguous (repeated) Origin is rejected rather than best-effort parsed.
+    if (Array.isArray(header)) {
+      reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
+      return;
+    }
+    // An ABSENT Origin proceeds — MCP clients are not browsers. A PRESENT one
+    // must be allowlisted.
+    if (typeof header === "string" && !opts.config.allowedOrigins.includes(header) && header !== origin) {
+      reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
+      return;
+    }
+  });
+
   for (const path of RESOURCE_PATHS) {
     const resource = `${origin}${path}`;
     const authorizer = new RequestAuthorizer({ config: opts.config, clock, audit, resource });

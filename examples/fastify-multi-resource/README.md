@@ -48,6 +48,18 @@ Two capture landmines: `CF_ACCESS_ISSUER` has **no trailing slash** (jose matche
 `iss` exactly), and `CF_ACCESS_AUDIENCE` is the app's hex **AUD tag**, not the
 hostname.
 
+## The Origin gate is not reusable from the single-resource examples
+
+`app.ts` installs its own `onRequest` Origin check (MCP Streamable HTTP
+DNS-rebinding protection) keyed on the **configured resource paths**.
+
+The single-resource examples use the exported `isMcpPath` helper, which
+hard-codes the pathname `/mcp` ([`src/adapters/http.ts:130`](../../src/adapters/http.ts)).
+It returns `false` for `/grafana/mcp`, so reusing it in a multi-resource
+deployment would leave the gate installed but never firing. If you change
+`RESOURCE_PATHS`, the gate follows automatically; if you copy this wiring
+elsewhere, keep the path set and the gate in sync.
+
 ## Serving more or fewer resources
 
 Edit `RESOURCE_PATHS` and `SCOPES` in [`app.ts`](app.ts). Each entry becomes a

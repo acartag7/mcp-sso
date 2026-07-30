@@ -124,3 +124,35 @@ test("example: a token minted for one resource is refused at the other", async (
     await app.close();
   }
 });
+
+test("example: a foreign Origin is rejected before the handler runs", async () => {
+  const config = buildConfig(env());
+  const clock = new SystemClock();
+  const app = await buildApp({ config, identity: stubIdentity });
+  try {
+    const token = await signAccessToken(
+      { clientId: "c1", subject: "user@example", scopes: ["mcp:read"], resource: `${ORIGIN}${PATH_A}` },
+      config, clock,
+    );
+    const send = (origin?: string) => app.inject({
+      method: "POST", url: PATH_A,
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+        ...(origin === undefined ? {} : { origin }),
+      },
+      payload: JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: 1 }),
+    });
+
+    // DNS-rebinding protection: a browser-supplied foreign Origin is refused
+    // even with a perfectly valid token. isMcpPath() would not match this path,
+    // so the gate has to key on the configured resource paths.
+    assert.equal((await send("https://evil.example")).statusCode, 403, "foreign Origin must be refused");
+    // An absent Origin is normal for MCP clients, which are not browsers.
+    assert.equal((await send()).statusCode, 200, "absent Origin must proceed");
+    assert.equal((await send(ORIGIN)).statusCode, 200, "the server's own Origin must proceed");
+  } finally {
+    await app.close();
+  }
+});
