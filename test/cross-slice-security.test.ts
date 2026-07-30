@@ -258,3 +258,61 @@ test("pairing round-trip does not collapse a repeated resource", async () => {
   const ok = gatherPairingOAuthParams({ query: { resource: A }, body: undefined, headers: {} } as never);
   assert.equal(ok.resource, A);
 });
+
+test("unattested legacy scopes never reach a grant for a replacement resource", async () => {
+  // The read/write split was wrong. `findGrantedScopes` was allowed to count
+  // legacy null rows on any one-entry catalog because it "only reads" — but
+  // approve() UNIONS the result into the authorization code. During an A-to-B
+  // singleton URL change, an unattested legacy `admin` grant from A landed in a
+  // B code while the consent page showed only the newly requested scope.
+  const { OAuthAuthorizationUseCase } = await import("../src/authorize.ts");
+  const { createBridgeConfig } = await import("../src/config.ts");
+  const { generateKeyPairSync, createHash } = await import("node:crypto");
+  const { SystemClock } = await import("../src/ports/clock.ts");
+  const { noopAudit } = await import("../src/ports/audit.ts");
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const sha = (v: string) => createHash("sha256").update(v).digest("hex");
+  const REPLACEMENT = "https://new-resource.test/mcp";
+
+  const clients = {
+    m: new Map<string, unknown>(),
+    async save(c: { clientId: string }) { this.m.set(c.clientId, c); },
+    async find(id: string) { return this.m.get(id) ?? null; },
+  };
+  await clients.save({ clientId: "stored-client", redirectUris: ["https://c.test/cb"], applicationType: "web" } as never);
+
+  const config = createBridgeConfig({
+    issuer: "https://iss.test", resource: REPLACEMENT,
+    consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" },
+    redirectAllowlist: ["https://c.test/cb"], scopeCatalog: ["read", "admin"], defaultScopes: ["read"],
+    allowedOrigins: ["https://iss.test"], dcr: { mode: "stored", store: clients },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    // deliberately NO legacySingletonResource
+  } as never);
+
+  const store = new MemoryStore();
+  await store.saveRefreshToken({
+    tokenHash: sha("legacy-token"), familyId: "legacyfamily000000001", previousTokenHash: null,
+    clientId: "stored-client", subject: "user-1", scopes: ["admin"],
+    expiresAt: "2099-01-01T00:00:00.000Z", grantGeneration: 1,
+  });
+
+  const auth = new OAuthAuthorizationUseCase({ config, store, clock: new SystemClock(), audit: noopAudit });
+  const prepared = await auth.prepare({
+    clientId: "stored-client", redirectUri: "https://c.test/cb", responseType: "code",
+    codeChallenge: "x".repeat(43), codeChallengeMethod: "S256",
+    subject: "user-1", scope: "read", resource: REPLACEMENT,
+  } as never);
+  const approved = await auth.approve({
+    consentToken: prepared.consentToken, approved: true, origin: "https://iss.test",
+  } as never);
+
+  const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+  const record = await store.consumeAuthCode(sha(code), new Date().toISOString(), 1);
+  assert.ok(record, "the code was saved");
+  assert.ok(!record!.scopes.includes("admin"),
+    `an unattested legacy scope must not enter a grant for a replacement resource, got ${JSON.stringify(record!.scopes)}`);
+  assert.deepEqual(record!.scopes, ["read"], "only what the consent page actually showed");
+});

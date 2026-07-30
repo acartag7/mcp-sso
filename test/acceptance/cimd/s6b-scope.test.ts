@@ -52,6 +52,13 @@ if (phases["s6b-cimd-flow"] !== true) {
   function config(mode: "stateless" | "stored", clients?: any, cimd: boolean = true): any {
     return createBridgeConfig({
       issuer: "https://auth.test", resource: "https://api.test/mcp",
+      // 0.4.0: seedGrant() writes pre-0.4 rows with no resource. Accumulating
+      // such a row requires the explicit attestation, because approve() unions
+      // prior scopes into the authorization code — during an A-to-B singleton
+      // URL change an unattested legacy grant would otherwise add scopes the
+      // consent page never showed. This suite tests ACCUMULATION, not legacy
+      // migration, so it attests that its rows belong to the one resource.
+      legacySingletonResource: "https://api.test/mcp",
       consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: jwk(), signingKeyId: "k",
       redirectAllowlist: [CIMD_REDIRECT], scopeCatalog: ["mcp:read", "mcp:write", "mcp:admin"], defaultScopes: ["mcp:read"],
       allowedOrigins: ["https://auth.test"],

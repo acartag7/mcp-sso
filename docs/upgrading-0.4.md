@@ -50,11 +50,11 @@ createBridgeConfig({
 This asserts that every pre-0.4 record with no resource was issued for that same
 resource. Existing refresh tokens then bind to it on first use and keep working.
 
-It is required only for the WRITE path — rotation permanently binds a record, so
-an operator who changed the URL in the same upgrade would rebind old lineage to
-the new resource. Read-only prior-grant accumulation does not require it on a
-one-entry catalog: it re-offers previously approved scopes for consent, mints
-nothing and binds nothing.
+It is required for BOTH paths. Rotation permanently binds a record, and
+prior-grant accumulation feeds the authorization code: approval unions
+previously granted scopes into the code, so without the attestation an
+A-to-B URL change would add scopes to a B grant that the consent page never
+displayed.
 
 **Understand its limitation before relying on it.** The library verifies only
 that the value equals your *current* `resource`. If you have already changed the

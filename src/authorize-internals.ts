@@ -188,7 +188,7 @@ export function initAuthorizeCatalog(config: BridgeConfig, store: StorePort): Re
  *  nothing, and binds nothing. On a multi-entry catalog a null row is still
  *  ambiguous and never counted. */
 export function authorizeBinding(catalog: ResourceCatalog, resource: string): ResourceBindingExpectation {
-  return { resource, allowLegacySingletonBinding: catalog.entries.length === 1 };
+  return { resource, allowLegacySingletonBinding: catalog.legacyBindingPermitted };
 }
 
 /** Approval re-resolves the signed consent resource against the CURRENT catalog

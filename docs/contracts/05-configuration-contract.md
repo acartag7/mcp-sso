@@ -117,12 +117,12 @@ claim — an operator who upgrades and changes the resource URL in the same step
 would otherwise have every pre-upgrade consent silently transferred to the new
 URL, auto-approving scopes the user granted somewhere else.
 
-The attestation gates the WRITE path only. Rotation permanently binds a record,
-so it demands the explicit claim. Read-only prior-grant accumulation
-(`findGrantedScopes`) still counts null rows on a one-entry catalog: it decides
-which already-approved scopes to re-offer at consent, mints nothing and binds
-nothing, so the rebind risk does not arise. A multi-entry catalog never counts a
-null row on either path.
+The attestation gates BOTH the write and the read path. Rotation permanently
+binds a record. `findGrantedScopes` looks read-only but is not: §9.3 approval
+unions its result into the authorization code, so an unattested legacy row from
+resource A can add a scope to a grant for replacement resource B that the
+consent page never displayed. A read whose result becomes a grant is not a read.
+A multi-entry catalog never counts a null row on either path.
 
 `legacySingletonResource` is the opt-out escape hatch for deployments that
 cannot re-authorize their fleet, not the recommended path. It is accepted only
