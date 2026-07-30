@@ -1,0 +1,63 @@
+# Two MCP resources behind one mcp-sso issuer
+
+One issuer, one signing key, one client registry, one consent screen — and two
+independently addressable MCP resources:
+
+| Resource | Scopes | PRM document |
+| --- | --- | --- |
+| `https://<host>/grafana/mcp` | `mcp:read`, `grafana:admin` | `/.well-known/oauth-protected-resource/grafana/mcp` |
+| `https://<host>/memory/mcp` | `mcp:read`, `memory:curate` | `/.well-known/oauth-protected-resource/memory/mcp` |
+
+A client connects only to the endpoint whose tools it needs. **A token minted for
+`/grafana/mcp` is refused at `/memory/mcp`** — both resources publish `mcp:read`,
+so the audience binding is the only thing separating them. That is the property
+this example exists to demonstrate, and
+[`test/example-multi-resource.test.ts`](../../test/example-multi-resource.test.ts)
+asserts it against this exact code.
+
+## Run it locally
+
+```bash
+OAUTH_ISSUER=https://<your-host> \
+OAUTH_CONSENT_SIGNING_SECRET=$(openssl rand -hex 32) \
+OAUTH_SIGNING_PRIVATE_JWK='{"kty":"EC","crv":"P-256",...}' \
+OAUTH_SIGNING_KEY_ID=k1 \
+OAUTH_REDIRECT_ALLOWLIST=https://claude.ai/api/mcp/auth_callback \
+CF_ACCESS_AUDIENCE=<your-app-aud> \
+CF_ACCESS_CERTS_URL=https://<team>.cloudflareaccess.com/cdn-cgi/access/certs \
+CF_ACCESS_ISSUER=https://<team>.cloudflareaccess.com \
+CF_ACCESS_EMAIL_ALLOWLIST=you@example.com \
+SQLITE_FILE=./mcp-sso.db \
+node examples/fastify-multi-resource/index.ts
+```
+
+Every value above is required. A blank string is treated as missing config and
+fails the boot — no listener binds until the whole config parses.
+
+## Cloudflare Access scoping
+
+Scope the Access application to **`/oauth/authorize*` only**, never the whole
+hostname. CF Access is the assertion-injecting proxy for the browser authorize
+leg; the paths the MCP client calls server-side — `/.well-known/*`,
+`/oauth/register`, `/oauth/token`, `/oauth/revoke`, and both `/mcp` endpoints
+(protected by the bridge's own audience-bound tokens) — must stay public. A
+whole-hostname Access app returns a login redirect on every path and the flow
+cannot complete.
+
+Two capture landmines: `CF_ACCESS_ISSUER` has **no trailing slash** (jose matches
+`iss` exactly), and `CF_ACCESS_AUDIENCE` is the app's hex **AUD tag**, not the
+hostname.
+
+## Serving more or fewer resources
+
+Edit `RESOURCE_PATHS` and `SCOPES` in [`app.ts`](app.ts). Each entry becomes a
+configured resource, a PRM document, a mounted endpoint and a pinned
+`RequestAuthorizer`. Two colliding paths are a boot failure, not a silent
+override.
+
+## Adapting it
+
+The example uses Cloudflare Access and SQLite because they need no extra
+infrastructure. Swap `buildIdentity` for any identity adapter (`mcp-sso/identity/entra`,
+`mcp-sso/identity/google`, `mcp-sso/identity/generic-oidc`) and `openSqliteStore`
+for `mcp-sso/store/mysql` without touching the resource wiring.

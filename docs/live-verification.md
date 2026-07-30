@@ -93,6 +93,7 @@ only. Provider secrets and identifiers remained in private environment files.
 | Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ⬜ | 2026-07-26/27 | Observed on the patched, uncommitted `ee8994a`-based checkout, whose exact tree was not archived. This does not qualify as a verified row; clean-main browser completion is required. |
 | Entra ID (redirect flow, §17.11) | ChatGPT (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ⬜ | 2026-07-26/27 | Observed on the patched, uncommitted `ee8994a`-based checkout, whose exact tree was not archived. This does not qualify as a verified row; clean-main browser completion is required. |
 | Cloudflare Access | ChatGPT custom connector | consent + tool round-trip | ✅ | 2026-07-07 | ChatGPT completed register→authorize→consent→token→`/mcp` `ping` against the same sanitized Cloudflare Access deployment. |
+| Cloudflare Access (production identity leg) | Claude Code, claude.ai, ChatGPT | **two resources on one issuer**: per-resource PRM discovery → grant at A → tool call at A → **A's token refused at B** → refresh at A refused when it names B | ⬜ | — | 0.4.0 gate. Run `examples/fastify-multi-resource` (checklist E). Tests the one assumption static review cannot reach: whether real clients follow **path-inserted PRM URLs** for two sibling resources on one host. Recorded fallback if a client cannot: one resource per subdomain. |
 | Cloudflare Access / Entra / Google | Claude Code 2.1.220 + **api-key-gateway example** | full CIMD proxied round trip: client → gateway → token-only backend | ✅ | 2026-07-28 | All three `status` calls returned the expected allowlisted response shape at exact runtime commit `af2a61f1aa772a7f3963acfa9dab15c47f676607`; retained client results and all three audit logs had zero backend-key matches. |
 
 **Current Codex CLI caveat (2026-07-28):** the installed 0.144.1 client showed
@@ -242,6 +243,49 @@ node examples/api-key-gateway/index.ts
 proxied backend tool round-trips, and a manual check confirms the backend
 credential appears in no client-visible output. Record the identity backend used
 (console pairing / Cloudflare Access / Entra / Google) in the matrix row.
+
+### E — two resources on one issuer (0.4.0) × a live client
+
+The goal: prove a real MCP client discovers and completes the flow for **two
+sibling resources on one host**, and that a token issued for one is refused at
+the other. Everything else about multi-resource isolation is covered by the
+suite; this checklist exists for the one assumption static review cannot reach —
+whether real clients follow **path-inserted PRM URLs**
+(`/.well-known/oauth-protected-resource/grafana/mcp`) rather than only the
+root-level document.
+
+Use [`examples/fastify-multi-resource`](../examples/fastify-multi-resource/),
+which serves `/grafana/mcp` and `/memory/mcp` from one issuer. Both publish a
+shared `mcp:read` scope on purpose: if isolation held only because the scope
+names differed, this checklist would pass while proving nothing.
+
+```bash
+# Same env as checklist A (real signing material, CF Access app path-scoped to
+# /oauth/authorize*), plus a durable store so the refresh leg survives a restart:
+SQLITE_FILE=./mcp-sso.db node examples/fastify-multi-resource/index.ts &
+cloudflared tunnel --config tunnel-config.yml run     # named tunnel, not --url
+
+# Add BOTH resources as separate servers in the client, e.g.:
+claude mcp add --transport http grafana https://<your-host>/grafana/mcp
+claude mcp add --transport http memory  https://<your-host>/memory/mcp
+```
+
+For each of Claude Code, claude.ai and ChatGPT, record:
+
+1. discovery reaches **each** resource's own PRM document (not the root one);
+2. the consent screen for `/grafana/mcp` offers only that resource's scopes;
+3. a tool call succeeds at `/grafana/mcp`;
+4. **the same client's `/grafana/mcp` token is refused at `/memory/mcp`** — the
+   property the release exists for. Capture the `WWW-Authenticate` challenge and
+   confirm it names `/memory/mcp`'s PRM URL, so the client is told where to get a
+   correct token rather than simply failing;
+5. refresh succeeds at `/grafana/mcp` and is refused when it names `/memory/mcp`.
+
+**Flips to ✅ when:** all five hold for at least one client, with client name and
+version recorded per row. **If a client cannot follow path-inserted PRM URLs,**
+record it as a client limitation, not an mcp-sso defect, and note the fallback:
+one resource per subdomain, each with a root-level PRM document. That fallback
+changes deployment guidance only — no code change.
 
 ---
 
