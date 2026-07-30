@@ -11,7 +11,7 @@ import type {
 } from "../ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, StoreInputError, assertGrantGeneration,
-  assertSha256Hex, assertUtcIsoTimestamp, grantGenerationForWrite,
+  assertSha256Hex, assertUtcIsoTimestamp, grantGenerationForWrite, isCanonicalStoredResource,
 } from "../ports/store.ts";
 
 type StoredRefresh = RefreshTokenRecord & { consumedAt: string | null; resource: string | null };
@@ -99,6 +99,10 @@ export class MemoryStore implements StorePort {
     // Step 3: establish stored family/token resource equality (family authoritative).
     const storedResource = family.resource;
     if (current.resource !== storedResource) return null; // disagreeing lineage
+    // Malformed/non-canonical persisted lineage means the RECORD is unusable:
+    // return null (invalid_grant) rather than compare it and report a resource
+    // mismatch (invalid_target), which would tell the client to retry forever.
+    if (storedResource !== null && !isCanonicalStoredResource(storedResource)) return null;
     if (current.expiresAt <= nowIso || next.familyId !== current.familyId) return null;
     // Steps 4-5: compare the optional request expectation (unconsumed token only).
     // Determined WITHOUT mutating, so a later collision (null, no successor) leaves state.

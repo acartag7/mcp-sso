@@ -322,6 +322,26 @@ export function runResourceBindingConformance(label: string, make: () => StorePo
     await store.close();
   });
 
+  test(`${label}: malformed persisted lineage is invalid_grant, not a retryable mismatch`, async () => {
+    // The library only ever writes canonical resources, so a non-empty stored
+    // value that is not canonical means the RECORD is unusable — migrated by
+    // hand, corrupted, or written by something else. Rotation must return null
+    // (invalid_grant: discard this grant) rather than compare it and report a
+    // resource mismatch (invalid_target: retry another resource), which would
+    // tell the client to keep retrying a record that can never work.
+    const store = make();
+    await store.saveRefreshToken(refreshRes("bad-1", "fam-bad", null, FUTURE, "not-a-url"));
+    assert.equal(
+      await store.rotateRefreshToken(sha256Hex("bad-1"), refreshRes("bad-2", "fam-bad", sha256Hex("bad-1"), FUTURE, "not-a-url"), NOW, undefined, expectA()),
+      null, "malformed stored lineage yields no rotation");
+    // A non-canonical spelling of a REAL resource is equally unusable.
+    await store.saveRefreshToken(refreshRes("nc-1", "fam-nc", null, FUTURE, "https://API-A.test:443/mcp"));
+    assert.equal(
+      await store.rotateRefreshToken(sha256Hex("nc-1"), refreshRes("nc-2", "fam-nc", sha256Hex("nc-1"), FUTURE, "https://API-A.test:443/mcp"), NOW, undefined, expectA()),
+      null, "non-canonical stored lineage yields no rotation");
+    await store.close();
+  });
+
   test(`${label}: rotation copies the STORED resource to the successor, ignoring the caller-supplied value`, async () => {
     const store = make();
     await store.saveRefreshToken(refreshRes("rc-1", "fam-rc", null, FUTURE, RES_A));

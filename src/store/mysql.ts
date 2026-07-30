@@ -1,11 +1,11 @@
 // MysqlStore — pooled StorePort; contracts §12.3 owns its transactional patterns.
 
 import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
-import type { AuthCodeRecord, RefreshRotationResult, RefreshTokenRecord, ResourceBindingExpectation,
-  SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
+import type { AuthCodeRecord, RefreshRotationResult, RefreshTokenRecord,
+  ResourceBindingExpectation, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
-  grantGenerationForWrite, grantGenerationFromStored,
+  grantGenerationForWrite, grantGenerationFromStored, isCanonicalStoredResource,
 } from "../ports/store.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
@@ -106,6 +106,7 @@ export class MysqlStore implements StorePort {
       // Replay FIRST, before ANY resource comparison (rationale in memory.ts).
       if (row.consumed_at !== null) { await revokeFamily(conn, row.family_id, nowIso); return null; }
       if (familyResource === undefined || tokenResource === undefined || tokenResource !== familyResource) return null;
+      if (familyResource !== null && !isCanonicalStoredResource(familyResource)) return null; // unusable record
       // Replay precedes request-resource comparison and always revokes on this locked connection.
       if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
       let successorResource = familyResource;
@@ -213,8 +214,7 @@ export class MysqlStore implements StorePort {
     const conn = await this.pool.getConnection();
     let begun = false;
     try {
-      // Next-tx form (not SET SESSION): scopes READ COMMITTED to THIS transaction so a
-      // shared pool (new MysqlStore(appPool)) doesn't inherit it after release (Codex P2).
+      // Next-tx form (not SET SESSION): scopes READ COMMITTED to THIS transaction so a shared pool doesn't inherit it after release (Codex P2).
       await conn.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
       await conn.beginTransaction();
       begun = true;

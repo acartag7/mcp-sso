@@ -167,3 +167,30 @@ export function grantGenerationFromStored(value: unknown): number | null {
 export function grantGenerationForWrite(value: number | null | undefined): number | null {
   return value === undefined ? STORED_DCR_GRANT_GENERATION : grantGenerationFromStored(value);
 }
+
+/** True when a STORED resource value is usable lineage.
+ *
+ *  The library only ever persists canonical resources, so a non-empty stored
+ *  value that is not in canonical form means the record itself is unusable —
+ *  migrated by hand, corrupted, or written by something else. Rotation must
+ *  return null (`invalid_grant`: discard this grant) rather than compare it and
+ *  report a resource mismatch (`invalid_target`: retry another resource), which
+ *  would tell the client to keep trying a record that can never work.
+ *
+ *  Deliberately syntactic and dependency-free: the stores stay parser-free, and
+ *  the canonical form is exactly what `canonicalResource` emits — lowercase
+ *  scheme/host, no default port, no userinfo/query/fragment, no trailing slash
+ *  on an origin-only value. A value that survives this check unchanged is one
+ *  this library could have written. */
+export function isCanonicalStoredResource(value: string): boolean {
+  if (value.length === 0 || value.length > 2048) return false;
+  if (/[\\\s?#]/.test(value)) return false;
+  const match = /^(https?):\/\/([^/]+)(\/.*)?$/.exec(value);
+  if (match === null) return false;
+  const [, scheme, authority, path] = match;
+  if (scheme !== scheme!.toLowerCase() || authority !== authority!.toLowerCase()) return false;
+  if (authority!.includes("@") || authority!.endsWith(":")) return false;
+  if (/:(80|443)$/.test(authority!)) return false;          // default ports are stripped
+  if (path === "/") return false;                            // origin-only carries no trailing slash
+  return path === undefined || !path.includes("/./") && !path.includes("/../");
+}

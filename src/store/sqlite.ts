@@ -12,7 +12,7 @@ import type {
 import {
   STORED_DCR_GRANT_GENERATION, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored,
-} from "../ports/store.ts";
+  isCanonicalStoredResource } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
 import {
   authCodeFromRow, insertRefreshToken, nextFromRow, parseScopes,
@@ -108,6 +108,8 @@ export class SqliteStore implements StorePort {
       // Replay FIRST, before ANY resource comparison (rationale in memory.ts).
       if (row.consumed_at !== null) { revokeFamily(this.db, row.family_id, nowIso); return null; }
       if (familyResource === undefined || tokenResource === undefined || tokenResource !== familyResource) return null;
+      // Malformed persisted lineage = unusable record: null, not a mismatch.
+      if (familyResource !== null && !isCanonicalStoredResource(familyResource)) return null;
       if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
       let successorResource = familyResource;
       let legacyBind = false;
