@@ -8,6 +8,12 @@ import { AuthConfigError } from "./config.ts";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+/** Hard cap on a resource identifier, matching MAX_ENTRY_BYTES in
+ *  `redirect-entry.ts` — its sibling parser at the same trust boundary. This
+ *  parser also canonicalizes REQUEST-supplied `resource` values, so the input is
+ *  untrusted and needs a bound before any per-character scan or `new URL`. */
+const MAX_RESOURCE_BYTES = 2048;
+
 export interface ResourceDefinition {
   resource: string;
   scopeCatalog: string[];
@@ -76,6 +82,11 @@ export function snapshotOwn(source: object, keys: readonly string[]): Record<str
 export function canonicalResource(value: unknown, options: CanonicalResourceOptions): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new AuthConfigError("resource must be a non-empty string");
+  }
+  // Bound BEFORE the regex scans and `new URL` below: this parser is reached by
+  // request-supplied values, so an unbounded string is untrusted work.
+  if (Buffer.byteLength(value, "utf8") > MAX_RESOURCE_BYTES) {
+    throw new AuthConfigError(`resource must not exceed ${MAX_RESOURCE_BYTES} UTF-8 bytes`);
   }
   const allowInsecureLocalhost = options.allowInsecureLocalhost === true;
   const prefix = allowInsecureLocalhost ? /^(https|http):\/\//i.exec(value) : /^https:\/\//i.exec(value);
