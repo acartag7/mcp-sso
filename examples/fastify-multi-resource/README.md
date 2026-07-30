@@ -67,6 +67,33 @@ configured resource, a PRM document, a mounted endpoint and a pinned
 `RequestAuthorizer`. Two colliding paths are a boot failure, not a silent
 override.
 
+## Client compatibility (verified live 2026-07-30)
+
+Two resources on one host, driven through each client's real connector flow:
+
+| Client | Result |
+| --- | --- |
+| Claude Code 2.1.220 | both resources; CIMD and DCR |
+| ChatGPT connector | both resources; CIMD and DCR |
+| Codex CLI 0.147.0 | works via DCR only — [no CIMD support](https://github.com/openai/codex/issues/13200) |
+| claude.ai connector | **fails**: rejects `/grafana/mcp` before contacting the server ([#738](https://github.com/anthropics/claude-ai-mcp/issues/738)) |
+
+claude.ai connects to the same server at `/mcp`, so the blocker is the
+multi-segment path, not this example. If you need claude.ai, run one resource per
+subdomain, each mounted at `/mcp`.
+
+Two operator scripts support a live run:
+
+```bash
+node scripts/live-multi-resource-env.mjs https://<your-host> > live.env
+node scripts/live-multi-resource-check.mjs https://<your-host>
+```
+
+The first generates real signing material (CF Access fields left to fill); the
+second checks per-resource PRM discovery, metadata and scope isolation, the
+Origin gate, and that the OAuth API paths are not behind the identity proxy.
+Exit 0 means the deployment is sound before any client is involved.
+
 ## Adapting it
 
 The example uses Cloudflare Access and SQLite because they need no extra

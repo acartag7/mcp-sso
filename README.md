@@ -159,6 +159,44 @@ the hard maximum; pass a shorter overlap such as 5 minutes explicitly), or
 revoke future token issuance with the atomic
 `disableMachineClient` tombstone.
 
+## Several MCP resources behind one issuer
+
+One issuer, one signing key, one client registry, one consent screen — and
+several independently addressable MCP resources:
+
+```ts
+createBridgeConfig({
+  issuer: "https://mcp.example",
+  resources: [
+    { resource: "https://mcp.example/grafana/mcp", scopeCatalog: ["grafana:read"], defaultScopes: ["grafana:read"] },
+    { resource: "https://mcp.example/memory/mcp",  scopeCatalog: ["memory:read"],  defaultScopes: ["memory:read"] },
+  ],
+  // ...common fields unchanged
+});
+```
+
+A client connects only to the endpoint whose tools it needs, and **a token minted
+for one resource is refused at another** — exactly one resource binds into every
+consent, authorization code, refresh family, machine credential, access token,
+verifier, PRM document and challenge. Two resources may share a scope name; the
+audience binding, not the scope, is what separates them. Existing single-resource
+configuration keeps working unchanged.
+
+Worked example: [`examples/fastify-multi-resource/`](examples/fastify-multi-resource).
+
+**Client support, verified live 2026-07-30** against two resources on one host:
+
+| Client | Result |
+| --- | --- |
+| Claude Code 2.1.220 | works (CIMD and DCR) |
+| ChatGPT connector | works (CIMD and DCR) |
+| Codex CLI 0.147.0 | works via DCR; [no CIMD support](https://github.com/openai/codex/issues/13200) |
+| claude.ai connector | **cannot reach a multi-segment path** — [anthropics/claude-ai-mcp#738](https://github.com/anthropics/claude-ai-mcp/issues/738) |
+
+claude.ai rejects a URL like `https://host/grafana/mcp` before contacting the
+server; the same server at `https://host/mcp` connects. If you need claude.ai,
+serve one resource per subdomain, each at `/mcp`, until that is fixed upstream.
+
 ## API-key gateway: SSO in front of a token-only backend
 
 The common production shape: an internal MCP server that only accepts a static
@@ -235,8 +273,6 @@ After 0.3.0, the next planned areas are:
 - **Device authorization (RFC 8628)** for interactive login from SSH sessions,
   terminals, and other environments that cannot receive a browser callback.
 - **GitHub identity** for teams that use GitHub as the upstream login provider.
-- **Multi-resource deployments** so one authorization service can protect
-  multiple MCP audiences without weakening audience isolation.
 - **PostgreSQL storage and additional provider presets** when real deployments
   justify them.
 

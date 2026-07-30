@@ -189,14 +189,22 @@ each added only by the people who need it.
 - **Audience isolation.** Tokens are minted with `aud = resource` and verified
   fail-closed (§7.2), so a token stolen from the Splunk gateway is rejected
   outright by every other gateway.
-- **Prefer subdomains over path-mounting.** Path-mounted resources
-  (`resource: https://example.com/splunk/mcp`) serve the RFC 9728 path-inserted
-  PRM route, but the `WWW-Authenticate` challenge always points clients at the
-  origin-**root** PRM URL. With two bridges under one origin, both `/mcp`
-  challenges advertise the *same* root route — a client hitting the "other"
-  backend discovers the wrong issuer/resource and gets rejected fail-closed.
-  Single-origin multi-bridge needs custom per-bridge challenge routing you own;
-  one-origin-per-bridge (subdomains) makes the built-in challenge correct.
+- **Path-mounting works; subdomains are the compatible default.** Since 0.4.0 a
+  path-mounted resource (`https://example.com/splunk/mcp`) serves its own
+  RFC 9728 path-inserted PRM route *and* its `WWW-Authenticate` challenge names
+  that per-resource route, so two resources under one origin each send clients to
+  the correct document. (Before 0.4.0 every challenge pointed at the origin-root
+  PRM URL, so a second resource under one origin sent clients to the wrong
+  issuer — that defect is fixed.)
+
+  The remaining reason to prefer subdomains is **client compatibility**, not
+  correctness: the claude.ai connector rejects a multi-segment resource URL
+  before it contacts the server
+  ([anthropics/claude-ai-mcp#738](https://github.com/anthropics/claude-ai-mcp/issues/738)).
+  Claude Code, ChatGPT and Codex CLI all handle path-mounted resources. If
+  claude.ai is in scope, serve one resource per subdomain, each at `/mcp`;
+  otherwise path-mounting is fully supported and needs no custom challenge
+  routing.
 - Adding backend N+1 is a config change, not a code change: same image, new
   hostname, new resource, new backend credential.
 
