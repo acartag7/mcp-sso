@@ -101,13 +101,17 @@ function routeIdentity(pathname: string): string {
  *  Allowlist at the trust boundary — the check is on the COMPUTED pathname, so
  *  it cannot be sidestepped by percent-encoding that the URL parser resolves. */
 function rejectRouteMetacharacters(pathname: string, resource: string): void {
-  // ALLOWLIST, not a blocklist. A blocklist of router metacharacters was wrong
-  // twice: it missed `!`, which the pinned Express/path-to-regexp reserves, and
-  // each framework reserves its own set. Only characters that are unreserved in
-  // a URL path — plus `/` and a percent-escape — can be registered as a literal
-  // route by every adapter, and a resource path outside that set has no
-  // legitimate use here. Percent-escapes are already validated by the parser.
-  const found = /[^A-Za-z0-9\-._~/%]/.exec(pathname);
+  // ALLOWLIST, not a blocklist: a blocklist of router metacharacters was wrong
+  // twice (it missed `!`, which the pinned Express/path-to-regexp reserves).
+  //
+  // The set is RFC 3986 `pchar` MINUS the characters the three routers actually
+  // reserve. Unreserved (A-Z a-z 0-9 - . _ ~), the sub-delims that all three
+  // register literally (; = & , @ $ '), plus `/` and percent-escapes. Verified
+  // against Fastify, Express and Hono rather than assumed. Excluded: `: * ? { }
+  // ( ) [ ] + !` — parameter, wildcard, group and optional syntax in at least
+  // one router. Narrowing this further rejects resources the config accepts,
+  // leaving a bridge that cannot serve its own contracted metadata route.
+  const found = /[^A-Za-z0-9\-._~;=&,@$'/%]/.exec(pathname);
   if (found !== null) {
     throw new AuthConfigError(
       `resource "${resource}" produces the protected-resource route "${pathname}", which contains the ` +

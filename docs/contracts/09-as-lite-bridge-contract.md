@@ -367,7 +367,10 @@ the response. Wiring rules:
   behavior, which mapped two distinct resources onto one route and forced a boot
   collision; distinct resources now stay independently addressable, which is what
   the catalog already promised.
-  exact origin-root resource; it never guesses among path resources. Fastify,
+  The **root fallback** — `/.well-known/oauth-protected-resource` with no
+  inserted path — is registered only when the mount selects exactly ONE resource
+  and that resource did not already produce the root route itself, i.e. it is not
+  an exact origin-root resource; it never guesses among path resources. Fastify,
   Express, and Hono share this rule. This narrows §9.1's "identical JSON at
   both paths": that rule continues to hold for a one-resource mount (where the
   root form is unambiguous), while a multi-resource mount registers only the

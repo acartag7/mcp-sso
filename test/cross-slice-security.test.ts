@@ -589,8 +589,10 @@ test("PRM route characters are allowlisted, not blocklisted", async () => {
     resource: `https://h${path}`, scopeCatalog: ["x"], defaultScopes: ["x"],
   } as never);
 
-  // Unreserved path characters, "/" and percent-escapes register literally.
-  for (const ok of ["/mcp", "/a-b.c_d~e/mcp", "/%6dcp"]) {
+  // pchar minus what the routers reserve — verified against all three, not
+  // assumed. Narrowing further would reject resources the config accepts,
+  // leaving a bridge unable to serve its own contracted metadata route.
+  for (const ok of ["/mcp", "/a-b.c_d~e/mcp", "/%6dcp", "/mcp;v=1", "/mcp,a", "/mcp@v", "/mcp$x", "/mcp&y"]) {
     assert.ok(planProtectedResourceRoutes(cfg(ok)), `${ok} is safe as a literal route`);
   }
   // Anything a router might reserve is refused BEFORE any route is registered.
