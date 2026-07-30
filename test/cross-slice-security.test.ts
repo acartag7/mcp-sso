@@ -150,3 +150,46 @@ test("code exchange rejects a resource that disagrees with the code's lineage", 
   // An unknown request resource is rejected, never matched loosely.
   assert.throws(() => assertRequestResourceMatchesRecord(multi, A, "https://evil.test/mcp"), isTarget);
 });
+
+test("stored lineage errors distinguish unusable from retryable", async () => {
+  // The distinction is client-facing: invalid_target tells a client to retry
+  // another resource; invalid_grant tells it to discard an unusable grant.
+  // Persisted lineage is always written canonical, so a malformed or
+  // non-canonical stored value means the RECORD is broken, not the request.
+  const { resolveRecordResource } = await import("../src/token-resource.ts");
+  const { OAuthError } = await import("../src/errors.ts");
+  const code = (fn: () => unknown): string => {
+    try { fn(); return "no-throw"; } catch (e) { return e instanceof OAuthError ? e.code : "other"; }
+  };
+
+  assert.equal(code(() => resolveRecordResource(multi, null)), "invalid_grant", "absent lineage");
+  assert.equal(code(() => resolveRecordResource(multi, "")), "invalid_grant", "empty lineage");
+  assert.equal(code(() => resolveRecordResource(multi, "not-a-url")), "invalid_grant", "malformed lineage");
+  assert.equal(code(() => resolveRecordResource(multi, "https://A.test/mcp")), "invalid_grant",
+    "non-canonical spelling means the record was not written by this library");
+  assert.equal(code(() => resolveRecordResource(multi, "https://a.test:443/mcp")), "invalid_grant",
+    "default-port spelling is likewise non-canonical");
+  // A well-formed canonical resource that is simply no longer configured stays
+  // retryable — that is the case invalid_target exists for.
+  assert.equal(code(() => resolveRecordResource(multi, "https://gone.test/mcp")), "invalid_target");
+  assert.equal(code(() => resolveRecordResource(multi, A)), "no-throw");
+});
+
+test("scope arrays are snapshotted once, not validated then re-read", () => {
+  // validate-then-re-read is this repo's recurring validate-vs-publish class.
+  // Both scope validators now build one copy and validate THAT copy, so a
+  // stateful array cannot answer differently to validation and to construction.
+  let reads = 0;
+  const counting = new Proxy(["ok"], {
+    get(t, p, r) {
+      if (typeof p === "string" && /^\d+$/.test(p)) reads++;
+      return Reflect.get(t, p, r);
+    },
+  });
+  const cat = buildResourceCatalog(
+    { resources: [{ resource: A, scopeCatalog: counting, defaultScopes: ["ok"] }] } as never,
+    OPT,
+  );
+  assert.deepEqual([...cat.entries[0]!.scopeCatalog], ["ok"]);
+  assert.equal(reads, 1, `each element must be read exactly once, got ${reads} reads`);
+});

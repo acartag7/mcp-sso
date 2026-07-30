@@ -7,7 +7,7 @@ import { AuthConfigError, type AnyBridgeConfig as BridgeConfig } from "./config.
 import { OAuthError } from "./errors.ts";
 import { assertMachineClientResourceStore } from "./machine-client-resource.ts";
 import type { ResourceBindingExpectation, StorePort } from "./ports/store.ts";
-import { buildResourceCatalog, resolveResource } from "./resource.ts";
+import { buildResourceCatalog, canonicalResource, resolveResource } from "./resource.ts";
 import type { ResourceCatalog, ResourceConfiguration, ResolvedResource } from "./resource.ts";
 import { assertStoredDcrGenerationStore } from "./stored-dcr-generation.ts";
 import { assertResourceBindingStore } from "./resource-binding.ts";
@@ -42,6 +42,21 @@ export function resolveRecordResource(
 ): ResolvedResource {
   if (typeof resource !== "string" || resource.length === 0) {
     throw new OAuthError("invalid_grant", "Stored grant carries no resource lineage");
+  }
+  // Persisted lineage must already BE canonical — the library only ever writes
+  // canonical values. A malformed or non-canonical stored value means the record
+  // is unusable, which is invalid_grant (discard this grant), NOT invalid_target
+  // (retry a different resource). §14 assigns malformed persisted interactive
+  // lineage to invalid_grant; invalid_target is reserved for a well-formed
+  // resource that is simply no longer configured.
+  let canonical: string;
+  try {
+    canonical = canonicalResource(resource, { allowInsecureLocalhost: catalog.allowInsecureLocalhost });
+  } catch {
+    throw new OAuthError("invalid_grant", "Stored grant carries malformed resource lineage");
+  }
+  if (canonical !== resource) {
+    throw new OAuthError("invalid_grant", "Stored grant carries non-canonical resource lineage");
   }
   return resolveResource(catalog, resource);
 }

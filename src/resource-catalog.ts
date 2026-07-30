@@ -183,27 +183,41 @@ function validateScopeCatalog(value: unknown): string[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new AuthConfigError("scopeCatalog must be a non-empty array");
   }
+  // Snapshot ONCE, then validate and return THAT copy. Validating the caller's
+  // array and re-reading it to build the result is the validate-vs-publish
+  // pattern: a Proxy- or accessor-backed array can answer differently across the
+  // two reads and publish a value validation never saw.
+  const length = value.length;
+  if (!Number.isInteger(length) || length <= 0) {
+    throw new AuthConfigError("scopeCatalog must be a non-empty array");
+  }
+  const snapshot = Array.from({ length }, (_, index) => (value as unknown[])[index]);
   const seen = new Set<string>();
-  for (const scope of value) {
+  for (const scope of snapshot) {
     if (typeof scope !== "string" || !isScopeToken(scope)) {
       throw new AuthConfigError("scopeCatalog must contain only RFC 6749 scope tokens");
     }
     if (seen.has(scope)) throw new AuthConfigError("scopeCatalog must not contain duplicates");
     seen.add(scope);
   }
-  return [...value] as string[];
+  return snapshot as string[];
 }
 
 function validateDefaultScopes(value: unknown, catalog: readonly string[]): string[] {
   if (!Array.isArray(value)) throw new AuthConfigError("defaultScopes must be an array");
+  const length = value.length;
+  if (!Number.isInteger(length) || length < 0) {
+    throw new AuthConfigError("defaultScopes must be an array");
+  }
+  const snapshot = Array.from({ length }, (_, index) => (value as unknown[])[index]); // snapshot-once (see above)
   const allowed = new Set(catalog);
   const seen = new Set<string>();
-  for (const scope of value) {
+  for (const scope of snapshot) {
     if (typeof scope !== "string" || !allowed.has(scope)) {
       throw new AuthConfigError("defaultScopes must be a subset of scopeCatalog");
     }
     if (seen.has(scope)) throw new AuthConfigError("defaultScopes must not contain duplicates");
     seen.add(scope);
   }
-  return [...value] as string[];
+  return snapshot as string[];
 }
