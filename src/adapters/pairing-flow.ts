@@ -56,7 +56,7 @@ export async function handlePairingAuthorize(
   req: NormRequest,
 ): Promise<NormResponse> {
   const { bridge, pairing } = deps;
-  const oauthParams = gatherOAuthParams(req);
+  const oauthParams = gatherPairingOAuthParams(req);
   const submittedCode = method === "POST" ? formField(req.body, "pairing_code") : undefined;
 
   if (submittedCode) {
@@ -85,7 +85,7 @@ export async function handlePairingAuthorize(
   return pairingPage(session, oauthParams);
 }
 
-function gatherOAuthParams(req: NormRequest): Record<string, string> {
+export function gatherPairingOAuthParams(req: NormRequest): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of OAUTH_PARAM_KEYS) {
     if (key === "resource") {
