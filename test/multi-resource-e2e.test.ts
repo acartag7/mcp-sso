@@ -114,8 +114,12 @@ test("e2e: each resource publishes only its own PRM document", async () => {
   assert.equal(prmB.resource, B);
   // Neither document leaks the other resource or the issuer-wide scope union:
   // telling a client that A honors B's scopes sends it into invalid_scope.
-  assert.ok(!prmA.scopes_supported?.includes("memory:read"), "A's PRM must not advertise B's scopes");
-  assert.ok(!prmB.scopes_supported?.includes("grafana:read"), "B's PRM must not advertise A's scopes");
+  const scopesOf = (doc: unknown): string[] => {
+    const value = (doc as { scopes_supported?: unknown }).scopes_supported;
+    return Array.isArray(value) ? value as string[] : [];
+  };
+  assert.ok(!scopesOf(prmA).includes("memory:read"), "A's PRM must not advertise B's scopes");
+  assert.ok(!scopesOf(prmB).includes("grafana:read"), "B's PRM must not advertise A's scopes");
   assert.equal(JSON.stringify(prmA).includes(B), false, "A's PRM must not mention B");
   assert.equal(JSON.stringify(prmB).includes(A), false, "B's PRM must not mention A");
 });

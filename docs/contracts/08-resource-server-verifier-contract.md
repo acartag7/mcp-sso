@@ -42,8 +42,13 @@ Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-re
 ```
 - `resource_metadata` = the root-form PRM URL for a source-compatible unpinned
   singleton call; a resource-pinned authorizer uses that resource's canonical
-  path-inserted URL (§8.5/§9.7). Quoted per RFC 7235.
-- `scope` = the selected resource's space-joined `scopeCatalog`.
+  path-inserted URL (§8.5/§9.7). Quoted per RFC 7235. Under a multi-resource
+  catalog the root form cannot identify which resource a challenge is about,
+  which is why the pin selects the path-inserted form; a single-entry catalog
+  keeps emitting the root form, so existing singleton clients see no change.
+- `scope` = the selected resource's space-joined `scopeCatalog` — never the
+  issuer-wide union, which would advertise scopes this resource does not honor
+  and send the client into an `invalid_scope` authorize.
 - `error`/`error_description` included when the rejection reason is known
   (`invalid_token`, `invalid_request`, `insufficient_scope`).
 

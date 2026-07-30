@@ -1192,8 +1192,10 @@ in this flow."* Decisions:
 `legacySingletonResource?: string`; its existing `catalog` must be that
 resource's catalog. New active and disabled records carry the canonical
 resource. Provisioning binds it before secret generation, lifecycle CAS
-operations preserve it, and `client_credentials` requires the selected request
-resource to equal it. After successful client authentication and before scope
+operations preserve it — a rotate/disable whose `MachineClientDeps.resource`
+disagrees with the stored record is `invalid_target` before the CAS, never a
+silent rebind — and `client_credentials` requires the selected request resource
+to equal it. After successful client authentication and before scope
 resolution or signing, a bound credential used for another configured resource
 is `invalid_target`; wrong/unknown credentials remain `invalid_client`. A
 legacy unbound record resolves only under a singleton catalog when the optional
@@ -2047,13 +2049,17 @@ the decision-2 generic `invalid_client` so document size is not a content oracle
    same advisory posture — `false` ⇒ 429, thrown ⇒ fail-open). Rationale: each
    initiated flow authorizes at most one outbound token-endpoint call at the
    callback, so limiting initiation bounds exchange amplification.
-2. Any `OAUTH_PARAM_KEYS` parameter except `resource` present **more than
-   once** (array-valued in `NormRequest.query`) ⇒ **direct 400
-   `invalid_request`** before any cookie is set — RFC 6749 §3.1 forbids
-   repeated request parameters, and silently picking first/last would make
-   parameter-pollution behavior adapter-dependent. A repeated `resource` is
-   preserved until step 3 establishes a trusted redirect, then follows the
-   §9.7 `invalid_target` rule instead of this generic pre-validation row.
+2. Any `OAUTH_PARAM_KEYS` parameter present **more than once** (array-valued
+   in `NormRequest.query`) ⇒ **direct 400 `invalid_request`** before any cookie
+   is set — RFC 6749 §3.1 forbids repeated request parameters, and silently
+   picking first/last would make parameter-pollution behavior
+   adapter-dependent. `resource` is in `OAUTH_PARAM_KEYS` and is deliberately
+   NOT exempted: a duplicate is rejected here, on the upstream leg, before any
+   client or redirect is resolved. §9.7's redirect-channel `invalid_target` for
+   a repeated `resource` governs the §9.3 authorize endpoint, which has no
+   pre-redirect leg; it does not relax this row. Returning the error earlier and
+   more bluntly is strictly safer, and a 400 here costs a caller nothing it
+   could have obtained by sending one `resource`.
 3. `client_id` present and `redirect_uri` **mode-appropriately validated**
    (§17.1.6 decision 1a): for a literal-lowercase-`https://` CIMD id with `cimd`
    enabled, the CIMD document match (shape-first, BEFORE any `store.find`);
@@ -2064,10 +2070,6 @@ the decision-2 generic `invalid_client` so document size is not a content oracle
    `response_type`/scope/PKCE validation — a malformed request costs one IdP
    round-trip and then errors on the proper §9.3 channel, instead of this leg
    growing a drift-prone duplicate validator.
-3a. After that trusted redirect is established, a repeated/array `resource`
-   returns a **302 `invalid_target`** through the normal §9.3 redirect channel
-   using the single validated client `state`. It sets no flow cookie, performs
-   no IdP redirect, and never serializes the array into JWT `params`.
 4. Generate `state`/`nonce`/verifier+challenge, sign the flow JWT, `Set-Cookie`,
    302 to `identity.buildAuthorizationUrl(...)`. Nothing is persisted
    server-side at this step; an abandoned flow is just an expired cookie.
