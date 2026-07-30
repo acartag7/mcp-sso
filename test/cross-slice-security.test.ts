@@ -129,3 +129,24 @@ test("Codex P2: auth.request carries the pinned resource on success AND failure"
   assert.equal(events[0]?.status, "failure");
   assert.equal(events[0]?.resource, B, "a rejection must still name the endpoint that rejected");
 });
+
+test("code exchange rejects a resource that disagrees with the code's lineage", async () => {
+  // Third occurrence of "the parameter never reaches its guard" — after refresh
+  // and the HTTP boundary. The stored record stays authoritative for signing, so
+  // no wrong-audience token was ever minted; the defect was that a request naming
+  // a DIFFERENT resource was silently accepted instead of invalid_target.
+  const { assertRequestResourceMatchesRecord } = await import("../src/token-resource.ts");
+  const { OAuthError } = await import("../src/errors.ts");
+  const isTarget = (e: unknown) => e instanceof OAuthError && e.code === "invalid_target";
+
+  // A code bound to A, exchanged while naming B.
+  assert.throws(() => assertRequestResourceMatchesRecord(multi, A, B), isTarget);
+  // ...and the mirror direction.
+  assert.throws(() => assertRequestResourceMatchesRecord(multi, B, A), isTarget);
+  // Matching request is accepted.
+  assert.doesNotThrow(() => assertRequestResourceMatchesRecord(multi, A, A));
+  // Omission cannot select for a multi-entry catalog.
+  assert.throws(() => assertRequestResourceMatchesRecord(multi, A, undefined), isTarget);
+  // An unknown request resource is rejected, never matched loosely.
+  assert.throws(() => assertRequestResourceMatchesRecord(multi, A, "https://evil.test/mcp"), isTarget);
+});
