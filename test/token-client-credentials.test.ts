@@ -127,7 +127,7 @@ function setup(enabled: boolean): Ctx {
   return {
     bridge: new Bridge({ config, store, clock, audit }),
     config, clock, audit, clientStore,
-    machineDeps: { store: clientStore, catalog: [...CATALOG], resource: RESOURCE, clock, audit },
+    machineDeps: { store: clientStore, catalog: [...CATALOG], resource: RESOURCE, clock, audit, config },
   };
 }
 

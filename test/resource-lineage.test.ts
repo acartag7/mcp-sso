@@ -296,7 +296,7 @@ test("client_credentials rejects an empty-string resource at the token endpoint"
     clientCredentials: { enabled: true },
   });
   const machineDeps: MachineClientDeps = {
-    store: clientStore, catalog: config.scopeCatalog, resource: A,
+    store: clientStore, catalog: config.scopeCatalog, resource: A, config,
     clock: new SystemClock(), audit: noopAudit,
   };
   const provisioned = await provisionMachineClient(machineDeps, { allowedScopes: ["mcp:read"] });

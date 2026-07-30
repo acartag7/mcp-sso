@@ -9,7 +9,7 @@ import { resolveClientCredentialsScope, scopeString, storedScopes } from "./scop
 import { authenticateMachineClientSecret } from "./machine-client-auth.ts";
 import { resolveMachineClientTokenResource } from "./machine-client-resource.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
-import { writeTokenAudit } from "./token-audit.ts";
+import { writeTokenAudit, writeTokenFailure } from "./token-audit.ts";
 import { expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
 import { assertRequestResourceMatchesRecord, initTokenCatalog, refreshBindingExpectation, resolveRecordResource, requiredStr, type ResourceCatalog } from "./token-resource.ts";
 export interface OAuthTokenDeps {
@@ -78,6 +78,7 @@ export class OAuthTokenUseCase {
   }
 
   async exchangeAuthorizationCode(input: AuthorizationCodeGrantInput): Promise<UserTokenResponse> {
+    let grantResource: string | undefined; // §13
     try {
       if (input.grantType !== "authorization_code") {
         throw new OAuthError("unsupported_grant_type", "grant_type is not supported");
@@ -89,6 +90,7 @@ export class OAuthTokenUseCase {
       const familyId = parseRefreshFamilyId(refreshToken);
       if (!familyId) throw new OAuthError("server_error", "Refresh token generation failed", 500);
       const prepared = await this.tokenResponse(record, refreshToken);
+      grantResource = prepared.resource;
       await this.store.saveRefreshToken({
         tokenHash: sha256Hex(refreshToken), familyId, previousTokenHash: null,
         clientId: record.clientId, subject: record.subject, scopes: prepared.scopes,
@@ -98,12 +100,13 @@ export class OAuthTokenUseCase {
       await this.auditToken("oauth.token.authorization_code", "success", record);
       return prepared.response;
     } catch (error) {
-      await this.auditFailure("oauth.token.authorization_code", error, input.clientId);
+      await writeTokenFailure(this.audit, this.clock, "oauth.token.authorization_code", error, input.clientId, grantResource);
       throw error;
     }
   }
 
   async refresh(input: RefreshGrantInput): Promise<UserTokenResponse> {
+    let grantResource: string | undefined; // §13
     try {
       if (input.grantType !== "refresh_token") {
         throw new OAuthError("unsupported_grant_type", "grant_type is not supported");
@@ -132,6 +135,7 @@ export class OAuthTokenUseCase {
         if (!input.clientId || input.clientId !== rotated.clientId) throw new OAuthError("invalid_grant", "Refresh token client binding is invalid"); // stored client authoritative (RFC 6749 §6)
         if (rotated.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
         const prepared = await this.tokenResponse(rotated, nextRaw);
+        grantResource = prepared.resource;
         await this.auditToken("oauth.token.refresh", "success", rotated);
         return prepared.response;
       } catch (error) {
@@ -140,7 +144,7 @@ export class OAuthTokenUseCase {
         throw error;
       }
     } catch (error) {
-      await this.auditFailure("oauth.token.refresh", error, input.clientId);
+      await writeTokenFailure(this.audit, this.clock, "oauth.token.refresh", error, input.clientId, grantResource);
       throw error;
     }
   }
@@ -238,12 +242,6 @@ export class OAuthTokenUseCase {
       occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status,
       clientId: record.clientId, subject: record.subject, scopes: record.scopes,
       resource: typeof record.resource === "string" ? record.resource : this.catalog.legacySingletonResource,
-    });
-  }
-  private async auditFailure(event: "oauth.token.authorization_code" | "oauth.token.refresh", error: unknown, clientId?: string): Promise<void> {
-    await writeTokenAudit(this.audit, {
-      occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status: "failure",
-      clientId, reason: error instanceof OAuthError ? error.code : "internal_error",
     });
   }
 }

@@ -145,14 +145,20 @@ function requireMachineClientStore(store: ClientStore): MachineClientStore {
  *  success and every use of the credential then fails, with no signal at the
  *  point the mistake was made. Validate at the boundary instead.
  *
- *  Optional for source compatibility: a pre-0.4 caller that passes no config
- *  keeps the previous behavior. */
+ *  Mandatory rather than opt-in: a validation nobody passes is not a validation,
+ *  and every in-repo call site already has the config to hand. */
 function assertConfiguredPair(
   config: AnyBridgeConfig | undefined,
   resource: string,
   scopes: readonly string[],
 ): void {
-  if (config === undefined) return;
+  if (config === undefined) {
+    throw new AuthConfigError(
+      "MachineClientDeps.config is required: without the bridge configuration this boundary " +
+        "cannot tell whether `resource` is one this deployment serves, so provisioning would " +
+        "succeed for a credential no token request can ever use",
+    );
+  }
   const configured = buildResourceCatalog(
     config as unknown as ResourceConfiguration,
     { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },

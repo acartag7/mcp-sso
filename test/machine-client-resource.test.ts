@@ -118,11 +118,12 @@ function singletonConfig(store: ClientStore, attested = false): BridgeConfig {
   } as unknown as BridgeConfig;
 }
 
-function deps(store: ClientStore, resource = A, legacySingletonResource?: string): MachineClientDeps {
+function deps(store: ClientStore, resource = A, legacySingletonResource?: string, config?: BridgeConfig): MachineClientDeps {
   return {
     store,
     resource,
     catalog: [...SCOPES],
+    config: config ?? multiConfig(store),
     ...(legacySingletonResource === undefined ? {} : { legacySingletonResource }),
     clock: new FixedClock(),
     audit: noopAudit,
@@ -282,6 +283,7 @@ test("lifecycle uses the exact store snapshot whose capability it checked", asyn
     },
     resource: A,
     catalog: [...SCOPES],
+    config: multiConfig(checked),
     clock: new FixedClock(),
     audit: noopAudit,
   } as MachineClientDeps;

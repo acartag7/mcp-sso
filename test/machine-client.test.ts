@@ -115,7 +115,7 @@ function harness(catalog: readonly string[] = CATALOG): Harness {
   const clock = new FakeClock(NOW_MS);
   const audit = new MemoryAudit();
   return {
-    deps: { store, catalog, resource: RESOURCE, legacySingletonResource: RESOURCE, clock, audit },
+    deps: { store, catalog, resource: RESOURCE, legacySingletonResource: RESOURCE, clock, audit, config: storedConfig(store) },
     store, clock, audit,
   };
 }
@@ -174,7 +174,7 @@ test("provision: a v0.3.0 ClientStore fails closed without atomic mutation metho
     async save(): Promise<void> { saveCalls += 1; },
     async find(): Promise<ClientRegistration | null> { return null; },
   };
-  const deps: MachineClientDeps = { store, catalog: CATALOG, resource: RESOURCE, clock, audit };
+  const deps: MachineClientDeps = { store, catalog: CATALOG, resource: RESOURCE, clock, audit, config: storedConfig(store) };
   await assert.rejects(
     provisionMachineClient(deps, { allowedScopes: ["mcp:read"] }),
     (error: unknown) => error instanceof OAuthError

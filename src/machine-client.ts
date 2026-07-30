@@ -43,9 +43,8 @@ export interface MachineClientDeps {
   /** The bridge configuration. When supplied, `resource` must be one of ITS
    *  configured resources and `catalog` must be that resource's own scope
    *  catalog — otherwise provisioning would accept an unconfigured resource or
-   *  invented scopes and mint a credential that fails at every use. Optional
-   *  only for source compatibility with pre-0.4 callers. */
-  config?: AnyBridgeConfig;
+   *  invented scopes and report success for a credential that fails at every use. */
+  config: AnyBridgeConfig;
   clock: ClockPort;
   audit: AuditPort;
 }
