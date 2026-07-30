@@ -52,6 +52,17 @@ export function machineClientResourceContext(
     throw new AuthConfigError("MachineClientDeps.catalog must be a scope array");
   }
   assertConfiguredPair(deps.config, resource, scopes);
+  // The attestation is a SINGLETON-only concept. The catalog built below is a
+  // throwaway one-entry catalog, so it would mark the attestation valid even for
+  // a multi-resource bridge — binding a pre-0.4 unbound credential to whichever
+  // resource the caller happened to select, which multi-resource mode forbids.
+  // Derive the permission from the VALIDATED bridge config, not from deps.
+  if (legacySingletonResource !== undefined && isMultiResource(deps.config)) {
+    throw new AuthConfigError(
+      "legacySingletonResource is not accepted under a multi-resource configuration: " +
+        "a pre-0.4 record with no resource cannot be attributed to one of several resources",
+    );
+  }
   const catalog = buildResourceCatalog({
     resource,
     scopeCatalog: [...scopes],
@@ -188,4 +199,13 @@ function assertConfiguredPair(
         "it must be that resource's own catalog, not a subset",
     );
   }
+}
+
+/** True when the bridge serves more than one resource. */
+function isMultiResource(config: AnyBridgeConfig | undefined): boolean {
+  if (config === undefined) return false;
+  return buildResourceCatalog(
+    config as unknown as ResourceConfiguration,
+    { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },
+  ).entries.length > 1;
 }

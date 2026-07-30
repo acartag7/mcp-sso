@@ -389,6 +389,10 @@ test("stored-lineage canonicality agrees with the real parser in both directions
   for (const raw of [
     "https://a.test/mcp", "https://a.test", "https://a.test/mcp/", "http://localhost/mcp",
     "https://a.test:8443/mcp", "https://a.test/%6dcp", "https://A.test/MCP", "https://a.test:443/mcp",
+    // Scheme-specific default ports: only https:443 and http:80 are stripped, so
+    // these two are legitimate non-default ports the parser preserves.
+    "https://a.test:80/mcp", "http://localhost:443/mcp",
+    "http://localhost:80/mcp", "https://a.test/a/../mcp",
   ]) {
     const emitted = canonicalResource(raw, DEV);
     assert.ok(isCanonicalStoredResource(emitted),
@@ -396,7 +400,7 @@ test("stored-lineage canonicality agrees with the real parser in both directions
   }
   for (const notCanonical of [
     "https://h/%zz", "https://h/%", "https://h/%2",        // malformed escapes
-    "not-a-url", "https://A.test/mcp", "https://a.test:443/mcp",
+    "not-a-url", "https://A.test/mcp", "https://a.test:443/mcp", "http://a.test:80/mcp",
     "https://a.test/", "https://u@a.test/mcp", "https://a.test/mcp?x=1", "",
   ]) {
     assert.ok(!isCanonicalStoredResource(notCanonical),
@@ -441,4 +445,88 @@ test("machine deps must carry the resource's WHOLE catalog, not a subset", async
     /omits "write"/, "a subset catalog is rejected at the deps, where the mistake is");
   // The complete catalog provisions, including the scope the subset would have hidden.
   assert.ok(await provisionMachineClient(deps(["read", "write"]), { allowedScopes: ["write"] }));
+});
+
+test("upgrading a v0.3 database can still complete a consent approval", async () => {
+  // saveAuthCode INSERTs `resource`, but the migration added the column only to
+  // the two refresh tables. An existing deployment upgraded in place kept its old
+  // oauth_auth_codes and every consent approval failed with
+  // "table oauth_auth_codes has no column named resource".
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { openSqliteStore } = await import("../src/store/sqlite.ts");
+
+  const file = join(mkdtempSync(join(tmpdir(), "mcp-sso-v03-")), "auth.db");
+  const legacy = new DatabaseSync(file);
+  // The v0.3 schema: no resource column anywhere.
+  legacy.exec(`CREATE TABLE oauth_auth_codes (code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL,
+    subject TEXT NOT NULL, redirect_uri TEXT NOT NULL, scopes_json TEXT NOT NULL,
+    code_challenge TEXT NOT NULL, code_challenge_method TEXT NOT NULL,
+    expires_at TEXT NOT NULL, grant_generation INTEGER)`);
+  legacy.exec(`CREATE TABLE oauth_refresh_token_families (family_id TEXT PRIMARY KEY,
+    revoked_at TEXT, grant_generation INTEGER)`);
+  legacy.exec(`CREATE TABLE oauth_refresh_tokens (token_hash TEXT PRIMARY KEY, family_id TEXT NOT NULL,
+    previous_token_hash TEXT, client_id TEXT NOT NULL, subject TEXT NOT NULL, scopes_json TEXT NOT NULL,
+    expires_at TEXT NOT NULL, consumed_at TEXT, grant_generation INTEGER)`);
+  legacy.exec(`CREATE TABLE oauth_consent_jtis (jti TEXT PRIMARY KEY, expires_at TEXT NOT NULL)`);
+  legacy.close();
+
+  const store = openSqliteStore(file);   // runs the migration
+  await store.saveAuthCode({
+    codeHash: "a".repeat(64), clientId: "c1", subject: "u1",
+    redirectUri: "https://c.test/cb", resource: A, scopes: ["read"],
+    codeChallenge: "x".repeat(43), codeChallengeMethod: "S256",
+    expiresAt: "2099-01-01T00:00:00.000Z", grantGeneration: 1,
+  });
+  const consumed = await store.consumeAuthCode("a".repeat(64), "2026-07-30T12:00:00.000Z", 1);
+  assert.equal(consumed?.resource, A, "the migrated column round-trips the resource");
+  await store.close();
+});
+
+test("the legacy machine attestation is refused under a multi-resource catalog", async () => {
+  // The context builds a throwaway ONE-entry catalog, which marked the
+  // attestation valid even for a multi-resource bridge — letting a rotate or
+  // disable bind a pre-0.4 unbound credential to whichever resource the caller
+  // selected. Multi-resource mode forbids legacy binding entirely.
+  const { machineClientResourceContext } = await import("../src/machine-client-resource.ts");
+  const { createBridgeConfig } = await import("../src/config.ts");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { SystemClock } = await import("../src/ports/clock.ts");
+  const { noopAudit } = await import("../src/ports/audit.ts");
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+  class Store {
+    rows = new Map<string, unknown>();
+    machineClientResourceBinding = 1 as const;
+    storedDcrGrantGeneration = 1 as const;
+    async find() { return null; }
+    async save() {}
+    async createMachineClient() { return true; }
+    async compareAndSwapMachineClient() { return true; }
+  }
+  const store = new Store();
+  const multiCfg = createBridgeConfig({
+    issuer: "https://iss.test", consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" },
+    redirectAllowlist: ["https://c.test/cb"], allowedOrigins: ["https://iss.test"],
+    dcr: { mode: "stored", store }, clientCredentials: { enabled: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 60,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    resources: [
+      { resource: A, scopeCatalog: ["shared"], defaultScopes: ["shared"] },
+      { resource: B, scopeCatalog: ["shared"], defaultScopes: ["shared"] },
+    ],
+  } as never);
+
+  assert.throws(() => machineClientResourceContext({
+    store, catalog: ["shared"], resource: A, legacySingletonResource: A,
+    config: multiCfg, clock: new SystemClock(), audit: noopAudit,
+  } as never), /not accepted under a multi-resource configuration/);
+  // Without the attestation the same multi-resource context is fine.
+  assert.ok(machineClientResourceContext({
+    store, catalog: ["shared"], resource: A,
+    config: multiCfg, clock: new SystemClock(), audit: noopAudit,
+  } as never));
 });

@@ -19,7 +19,7 @@ function racingConnection(options: RaceOptions): {
         return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       }
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) {
-        if (values?.[0] === "oauth_auth_codes") {
+        if (values?.[0] === "oauth_auth_codes" && values?.[1] === "grant_generation") {
           targetReads += 1;
           return [targetReads > 1 && options.materializes ? [{ 1: 1 }] : [], []];
         }

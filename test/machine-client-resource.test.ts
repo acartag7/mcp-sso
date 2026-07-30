@@ -264,7 +264,9 @@ test("legacy unbound rows require singleton attestation and bind on first mutati
   });
   assert.equal((await verifyAccessToken(issued.access_token, attestedConfig, new FixedClock(), A)).resource, A);
 
-  await rotateMachineClientSecret(deps(store, A, A), clientId);
+  // Singleton attestation belongs with a SINGLETON config: 0.4.0 refuses the
+  // attestation outright under a multi-resource catalog.
+  await rotateMachineClientSecret(deps(store, A, A, attestedConfig), clientId);
   const migrated = store.rows.get(clientId)! as VersionedMachineClientRegistration;
   assert.equal(migrated.version, 1);
   assert.equal(migrated.resource, A);

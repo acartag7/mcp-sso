@@ -81,6 +81,9 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await ensureColumn(conn, "oauth_auth_codes", "grant_generation", "BIGINT UNSIGNED NULL");
   await ensureColumn(conn, "oauth_refresh_token_families", "grant_generation", "BIGINT UNSIGNED NULL");
   await ensureColumn(conn, "oauth_refresh_tokens", "grant_generation", "BIGINT UNSIGNED NULL");
+  // saveAuthCode INSERTs resource; without this an upgraded v0.3 database cannot
+  // complete any consent approval (sibling of the refresh columns below).
+  await ensureColumn(conn, "oauth_auth_codes", "resource", "VARCHAR(2048) NULL");
   await ensureColumn(conn, "oauth_refresh_token_families", "resource", "VARCHAR(2048) NULL");
   await ensureColumn(conn, "oauth_refresh_tokens", "resource", "VARCHAR(2048) NULL");
   await assertColumnCollations(conn);

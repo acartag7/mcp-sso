@@ -56,6 +56,9 @@ export function migrateSqliteStore(db: DatabaseSync): void {
   ensureColumn(db, "oauth_auth_codes", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_token_families", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_tokens", "grant_generation", "INTEGER");
+  // Auth codes carry a resource too: saveAuthCode INSERTs it, so omitting this
+  // column leaves an upgraded v0.3 database unable to complete ANY consent.
+  ensureColumn(db, "oauth_auth_codes", "resource", "TEXT");
   ensureColumn(db, "oauth_refresh_token_families", "resource", "TEXT");
   ensureColumn(db, "oauth_refresh_tokens", "resource", "TEXT");
 }

@@ -191,7 +191,9 @@ export function isCanonicalStoredResource(value: string): boolean {
   const [, scheme, authority, path] = match;
   if (scheme !== scheme!.toLowerCase() || authority !== authority!.toLowerCase()) return false;
   if (authority!.includes("@") || authority!.endsWith(":")) return false;
-  if (/:(80|443)$/.test(authority!)) return false;          // default ports are stripped
+  // Default ports are SCHEME-SPECIFIC: only https:443 and http:80 are stripped.
+  // https://h:80 and http://h:443 are legitimate non-default ports.
+  if (authority!.endsWith(scheme === "https" ? ":443" : ":80")) return false;
   if (path === "/") return false;                            // origin-only carries no trailing slash
   return path === undefined || !path.includes("/./") && !path.includes("/../");
 }
