@@ -23,7 +23,7 @@ import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import {
-  formField, formObject, headerString, oauthErrorResponse, queryString, readHeader,
+  formField, formObject, headerString, oauthErrorResponse, queryString, readHeader, resourceParam,
   type NormRequest, type NormResponse,
 } from "./http.ts";
 
@@ -138,7 +138,7 @@ export class Bridge<Config extends AnyBridgeConfig = BridgeConfig> {
         responseType: queryString(req.query, "response_type"),
         codeChallenge: queryString(req.query, "code_challenge"),
         codeChallengeMethod: queryString(req.query, "code_challenge_method"),
-        resource: queryString(req.query, "resource"),
+        resource: resourceParam(req.query["resource"]),
         scope: queryString(req.query, "scope"),
         state: queryString(req.query, "state"),
         subject: identity.subject,
@@ -201,11 +201,11 @@ export class Bridge<Config extends AnyBridgeConfig = BridgeConfig> {
       await assertUnambiguousAuthorization(ambiguous, grantType, formField(body, "client_id"), this.audit, this.clock);
       let response: UserTokenResponse | MachineTokenResponse;
       if (grantType === "refresh_token") {
-        response = await this.token.refresh({ grantType, refreshToken: formField(body, "refresh_token"), clientId: formField(body, "client_id") });
+        response = await this.token.refresh({ grantType, refreshToken: formField(body, "refresh_token"), clientId: formField(body, "client_id"), resource: resourceParam(formObject(body)["resource"]) });
       } else if (grantType === "client_credentials") {
         response = await this.token.exchangeClientCredentials({
           grantType, authorization, clientId: formField(body, "client_id"), clientSecret: formField(body, "client_secret"),
-          scope: formField(body, "scope"), resource: formField(body, "resource"),
+          scope: formField(body, "scope"), resource: resourceParam(formObject(body)["resource"]),
         });
       } else {
         response = await this.token.exchangeAuthorizationCode({

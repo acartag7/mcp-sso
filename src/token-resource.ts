@@ -49,14 +49,25 @@ export function resolveRecordResource(
  *  only be from this resource). A multi-resource catalog carries no request-side
  *  selector yet — the store copies the stored resource and the post-rotation
  *  resolveRecordResource validates it against the catalog. */
-export function refreshBindingExpectation(catalog: ResourceCatalog): ResourceBindingExpectation | undefined {
-  if (catalog.entries.length === 1) {
-    const only = catalog.entries[0];
-    if (only !== undefined) {
-      return { resource: only.resource, allowLegacySingletonBinding: true };
-    }
-  }
-  return undefined;
+/** The resource expectation passed into `rotateRefreshToken`.
+ *
+ *  A multi-resource catalog MUST always produce an expectation: returning
+ *  `undefined` there would tell the store "any resource is acceptable" and let an
+ *  A-bound family rotate under B. The request value selects the entry (and is
+ *  itself fail-closed — unknown/empty/repeated is `invalid_target`); omission
+ *  resolves only for a single-entry catalog, which is also the only place legacy
+ *  null lineage may bind. */
+export function refreshBindingExpectation(
+  catalog: ResourceCatalog,
+  requested?: string,
+): ResourceBindingExpectation {
+  const selected = resolveResource(catalog, requested);
+  return {
+    resource: selected.resource,
+    // A null pre-0.4 lineage can only have come from the sole resource, so lazy
+    // binding is offered exclusively to a one-entry catalog.
+    allowLegacySingletonBinding: catalog.entries.length === 1,
+  };
 }
 
 export function requiredStr(value: string | undefined, label: string): string {

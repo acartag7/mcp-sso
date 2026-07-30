@@ -26,9 +26,8 @@ export interface AuthorizationCodeGrantInput {
   codeVerifier?: string;
 }
 export interface RefreshGrantInput {
-  grantType?: string;
-  refreshToken?: string;
-  clientId?: string;
+  grantType?: string; refreshToken?: string; clientId?: string;
+  resource?: string;   // RFC 8707; omission resolves only for a one-entry catalog (§9.7)
 }
 /** §17.2 `client_credentials` grant input. `authorization` is the raw
  *  Authorization header (Basic parsed here); `clientId`/`clientSecret` are the
@@ -123,7 +122,7 @@ export class OAuthTokenUseCase {
         },
         rotatedAtIso,
         expectedStoredDcrGrantGeneration(this.config),
-        refreshBindingExpectation(this.catalog),
+        refreshBindingExpectation(this.catalog, input.resource),
       );
       if (!rotated) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       if ("status" in rotated) throw new OAuthError("invalid_target", "refresh token bound to a different resource"); // fieldless mismatch, no mutation -> no §7.4 family revocation
