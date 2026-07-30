@@ -7,6 +7,7 @@ import type {
   MachineClientMutationAudit,
   VersionedMachineClientRegistration,
 } from "./ports/client-store.ts";
+import type { AnyBridgeConfig } from "./config.ts";
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort, AuthAuditEvent } from "./ports/audit.ts";
 import { OAuthError } from "./errors.ts";
@@ -39,6 +40,12 @@ export interface MachineClientDeps {
   resource: string;
   /** Explicit singleton attestation permitting a pre-0.4 row to bind on mutation. */
   legacySingletonResource?: string;
+  /** The bridge configuration. When supplied, `resource` must be one of ITS
+   *  configured resources and `catalog` must be that resource's own scope
+   *  catalog — otherwise provisioning would accept an unconfigured resource or
+   *  invented scopes and mint a credential that fails at every use. Optional
+   *  only for source compatibility with pre-0.4 callers. */
+  config?: AnyBridgeConfig;
   clock: ClockPort;
   audit: AuditPort;
 }

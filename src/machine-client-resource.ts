@@ -1,7 +1,7 @@
 // Machine-client resource binding and store capability checks (contracts §6.4,
 // §17.2). Kept separate so machine-client.ts remains below the source line cap.
 
-import { AuthConfigError } from "./config.ts";
+import { AuthConfigError, type AnyBridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import type {
   ClientStore, MachineClientMutationAudit, MachineClientStore,
@@ -9,9 +9,10 @@ import type {
 } from "./ports/client-store.ts";
 import type { ClockPort } from "./ports/clock.ts";
 import { buildResourceCatalog, resolveResource } from "./resource.ts";
-import type { ResolvedResource, ResourceCatalog } from "./resource.ts";
+import type { ResolvedResource, ResourceCatalog, ResourceConfiguration } from "./resource.ts";
 
 export interface MachineClientResourceDeps {
+  config?: AnyBridgeConfig;
   store: ClientStore;
   resource: string;
   catalog: readonly string[];
@@ -50,6 +51,7 @@ export function machineClientResourceContext(
   if (!Array.isArray(scopes)) {
     throw new AuthConfigError("MachineClientDeps.catalog must be a scope array");
   }
+  assertConfiguredPair(deps.config, resource, scopes);
   const catalog = buildResourceCatalog({
     resource,
     scopeCatalog: [...scopes],
@@ -131,4 +133,41 @@ function requireMachineClientStore(store: ClientStore): MachineClientStore {
     throw new OAuthError("server_error", "MachineClientStore atomic mutations are required", 500);
   }
   return candidate as MachineClientStore;
+}
+
+/** Validate the deps `resource`/`catalog` pair against the BRIDGE's configured
+ *  catalog, when the caller supplies the config.
+ *
+ *  Without this the context builds a THROWAWAY catalog from whatever deps carry,
+ *  so provisioning accepts an unconfigured resource, or one resource paired with
+ *  another's scopes, or invented scopes entirely. Nothing is minted — token-time
+ *  checks still reject the credential — but it fails LATE: provisioning reports
+ *  success and every use of the credential then fails, with no signal at the
+ *  point the mistake was made. Validate at the boundary instead.
+ *
+ *  Optional for source compatibility: a pre-0.4 caller that passes no config
+ *  keeps the previous behavior. */
+function assertConfiguredPair(
+  config: AnyBridgeConfig | undefined,
+  resource: string,
+  scopes: readonly string[],
+): void {
+  if (config === undefined) return;
+  const configured = buildResourceCatalog(
+    config as unknown as ResourceConfiguration,
+    { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },
+  );
+  const entry = configured.entries.find((e) => e.resource === resource);
+  if (entry === undefined) {
+    throw new AuthConfigError(
+      `MachineClientDeps.resource "${resource}" is not a configured resource of this bridge`,
+    );
+  }
+  const owned = new Set(entry.scopeCatalog);
+  const stray = scopes.find((scope) => !owned.has(scope));
+  if (stray !== undefined) {
+    throw new AuthConfigError(
+      `MachineClientDeps.catalog contains "${stray}", which is not in the scope catalog of "${resource}"`,
+    );
+  }
 }

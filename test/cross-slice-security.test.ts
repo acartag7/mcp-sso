@@ -328,3 +328,51 @@ test("a resource whose CANONICAL form exceeds storage is rejected at boot", () =
   assert.doesNotThrow(() => canonicalResource(`https://a.test/${"x".repeat(2000)}`, OPT));
   assert.doesNotThrow(() => canonicalResource(`https://a.test/${"é".repeat(300)}`, OPT));
 });
+
+test("machine provisioning validates deps against the bridge's own catalog", async () => {
+  // The context built a THROWAWAY catalog from whatever deps carried, so
+  // provisioning accepted an unconfigured resource, one resource paired with
+  // another's scopes, or invented scopes. Nothing was minted — token-time checks
+  // still rejected the credential — but it failed LATE: provisioning reported
+  // success and every use then failed, with no signal where the mistake was made.
+  const { provisionMachineClient } = await import("../src/machine-client.ts");
+  const { createBridgeConfig } = await import("../src/config.ts");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { SystemClock } = await import("../src/ports/clock.ts");
+  const { noopAudit } = await import("../src/ports/audit.ts");
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+  class Store {
+    rows = new Map<string, { clientId: string; resource?: string }>();
+    machineClientResourceBinding = 1 as const;
+    storedDcrGrantGeneration = 1 as const;
+    async find(id: string) { return this.rows.get(id) ?? null; }
+    async save(c: { clientId: string }) { this.rows.set(c.clientId, c); }
+    async createMachineClient(rec: { clientId: string }) { this.rows.set(rec.clientId, rec); return true; }
+    async compareAndSwapMachineClient(_v: number, next: { clientId: string }) { this.rows.set(next.clientId, next); return true; }
+  }
+  const store = new Store();
+  const config = createBridgeConfig({
+    issuer: "https://iss.test", consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" },
+    redirectAllowlist: ["https://c.test/cb"], allowedOrigins: ["https://iss.test"],
+    dcr: { mode: "stored", store }, clientCredentials: { enabled: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 60,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    resources: [
+      { resource: A, scopeCatalog: ["shared"], defaultScopes: ["shared"] },
+      { resource: B, scopeCatalog: ["shared", "b:only"], defaultScopes: ["shared"] },
+    ],
+  } as never);
+  const deps = (resource: string, catalog: string[]) =>
+    ({ store, catalog, resource, config, clock: new SystemClock(), audit: noopAudit }) as never;
+
+  await assert.rejects(() => provisionMachineClient(deps(A, ["b:only"]), { allowedScopes: ["b:only"] }),
+    /not in the scope catalog/, "A must not be provisioned with B's scope");
+  await assert.rejects(() => provisionMachineClient(deps("https://evil.test/mcp", ["shared"]), { allowedScopes: ["shared"] }),
+    /not a configured resource/, "an unconfigured resource must be rejected");
+  await assert.rejects(() => provisionMachineClient(deps(A, ["invented"]), { allowedScopes: ["invented"] }),
+    /not in the scope catalog/, "an invented scope must be rejected");
+  // The legitimate pairing still provisions.
+  assert.ok(await provisionMachineClient(deps(A, ["shared"]), { allowedScopes: ["shared"] }));
+});
