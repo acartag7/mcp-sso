@@ -187,6 +187,7 @@ test("RequestAuthorizer reuses one snapshot for expiry rejection and audit", asy
     occurredAt: new Date(NOW_MS).toISOString(),
     event: "auth.request",
     status: "failure",
+    resource: "https://api.test/mcp",   // the pin is trusted config, known even when the token is not
     reason: "invalid_token",
   }]);
 });
@@ -228,6 +229,7 @@ test("RequestAuthorizer reuses one snapshot on the success exit", async () => {
     clientId: "client-1",
     subject: "operator",
     scopes: ["mcp:read"],
+    resource: "https://api.test/mcp",
     reason: "mcp:read",
   }]);
 });

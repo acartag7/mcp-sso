@@ -13,6 +13,7 @@ import { test } from "node:test";
 import { buildResourceCatalog, canonicalResource, resolveResource } from "../src/resource.ts";
 import { INVALID_RESOURCE, resourceParam } from "../src/adapters/http.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import type { AuthAuditEvent } from "../src/ports/audit.ts";
 
 const OPT = { allowInsecureLocalhost: false } as const;
 const A = "https://a.test/mcp";
@@ -93,4 +94,38 @@ test("MR2: a wrong-resource guess rejects without mutating (no cross-resource Do
     { resource: A, allowLegacySingletonBinding: false });
   assert.ok(rotated && !("status" in rotated), "the mismatch consumed nothing");
   await store.close();
+});
+
+test("Codex P2: auth.request carries the pinned resource on success AND failure", async () => {
+  // The authorizer's resource is resolved at CONSTRUCTION from trusted config, so
+  // it is known even when the token is not. Omitting it left operators unable to
+  // tell WHICH protected resource accepted or rejected a token — the one fact a
+  // multi-resource audit trail exists to record.
+  const { RequestAuthorizer } = await import("../src/verifier.ts");
+  const { createBridgeConfig } = await import("../src/config.ts");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const events: AuthAuditEvent[] = [];
+
+  const config = createBridgeConfig({
+    issuer: "https://iss.test", consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" },
+    redirectAllowlist: ["https://c.test/cb"], allowedOrigins: ["https://iss.test"],
+    dcr: { mode: "stateless" }, accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 60,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    resources: [
+      { resource: A, scopeCatalog: ["shared"], defaultScopes: ["shared"] },
+      { resource: B, scopeCatalog: ["shared"], defaultScopes: ["shared"] },
+    ],
+  } as never);
+
+  const authorizer = new RequestAuthorizer({
+    config, resource: B, clock: { nowMs: () => Date.now() },
+    audit: { async writeAuthEvent(e: AuthAuditEvent) { events.push(e); } },
+  });
+  await assert.rejects(() => authorizer.authorize({ authorization: "Bearer nope" }));
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.event, "auth.request");
+  assert.equal(events[0]?.status, "failure");
+  assert.equal(events[0]?.resource, B, "a rejection must still name the endpoint that rejected");
 });

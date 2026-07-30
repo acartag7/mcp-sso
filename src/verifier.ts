@@ -53,13 +53,17 @@ export class RequestAuthorizer {
         occurredAt,
         event: "auth.request", status: "success",
         clientId: verified.clientId, subject: verified.subject, scopes: verified.scopes,
-        reason: input.requiredScope,
+        resource: this.resource, reason: input.requiredScope,
       });
       return verified;
     } catch (error) {
       await this.audit.writeAuthEvent({
         occurredAt,
         event: "auth.request", status: "failure",
+        // The pin is resolved at CONSTRUCTION from trusted config, so it is known
+        // even when the token is not — this is not the §13 pre-resolution case,
+        // which only withholds unvalidated REQUEST text.
+        resource: this.resource,
         reason: error instanceof OAuthError ? error.code : "invalid_token",
       });
       throw error;
