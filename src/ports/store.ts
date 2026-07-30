@@ -185,6 +185,7 @@ export function grantGenerationForWrite(value: number | null | undefined): numbe
 export function isCanonicalStoredResource(value: string): boolean {
   if (value.length === 0 || value.length > 2048) return false;
   if (/[\\\s?#]/.test(value)) return false;
+  if (/%(?![0-9a-fA-F]{2})/.test(value)) return false;   // a malformed escape is not something this library wrote
   const match = /^(https?):\/\/([^/]+)(\/.*)?$/.exec(value);
   if (match === null) return false;
   const [, scheme, authority, path] = match;

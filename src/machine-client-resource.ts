@@ -169,11 +169,23 @@ function assertConfiguredPair(
       `MachineClientDeps.resource "${resource}" is not a configured resource of this bridge`,
     );
   }
+  // Compare as SETS, not one-way. A stray scope is an invented permission; a
+  // MISSING one silently narrows provisioning, so a scope the bridge really does
+  // configure gets rejected and the error blames `allowedScopes` rather than the
+  // deps that were actually wrong. The catalog must BE the resource's catalog.
   const owned = new Set(entry.scopeCatalog);
+  const supplied = new Set(scopes);
   const stray = scopes.find((scope) => !owned.has(scope));
   if (stray !== undefined) {
     throw new AuthConfigError(
       `MachineClientDeps.catalog contains "${stray}", which is not in the scope catalog of "${resource}"`,
+    );
+  }
+  const missing = entry.scopeCatalog.find((scope) => !supplied.has(scope));
+  if (missing !== undefined) {
+    throw new AuthConfigError(
+      `MachineClientDeps.catalog omits "${missing}" from the scope catalog of "${resource}"; ` +
+        "it must be that resource's own catalog, not a subset",
     );
   }
 }

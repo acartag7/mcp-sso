@@ -376,3 +376,69 @@ test("machine provisioning validates deps against the bridge's own catalog", asy
   // The legitimate pairing still provisions.
   assert.ok(await provisionMachineClient(deps(A, ["shared"]), { allowedScopes: ["shared"] }));
 });
+
+test("stored-lineage canonicality agrees with the real parser in both directions", async () => {
+  // The helper is a dependency-free restatement of the canonical form, so it can
+  // drift from the parser that actually produces those values. It accepted
+  // malformed percent escapes the parser rejects — values this library could
+  // never have written, which then read as retryable mismatches instead of
+  // unusable records. This pins the two-way agreement, not one example.
+  const { isCanonicalStoredResource } = await import("../src/ports/store.ts");
+  const DEV = { allowInsecureLocalhost: true } as const;
+
+  for (const raw of [
+    "https://a.test/mcp", "https://a.test", "https://a.test/mcp/", "http://localhost/mcp",
+    "https://a.test:8443/mcp", "https://a.test/%6dcp", "https://A.test/MCP", "https://a.test:443/mcp",
+  ]) {
+    const emitted = canonicalResource(raw, DEV);
+    assert.ok(isCanonicalStoredResource(emitted),
+      `the parser emits ${emitted}, so stored-lineage validation must accept it`);
+  }
+  for (const notCanonical of [
+    "https://h/%zz", "https://h/%", "https://h/%2",        // malformed escapes
+    "not-a-url", "https://A.test/mcp", "https://a.test:443/mcp",
+    "https://a.test/", "https://u@a.test/mcp", "https://a.test/mcp?x=1", "",
+  ]) {
+    assert.ok(!isCanonicalStoredResource(notCanonical),
+      `${JSON.stringify(notCanonical)} is not a value this library writes`);
+  }
+});
+
+test("machine deps must carry the resource's WHOLE catalog, not a subset", async () => {
+  // The check was one-way: it caught invented scopes but not a shrunken catalog,
+  // so a scope the bridge really does configure was rejected — and the error
+  // blamed allowedScopes rather than the deps that were actually wrong.
+  const { provisionMachineClient } = await import("../src/machine-client.ts");
+  const { createBridgeConfig } = await import("../src/config.ts");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { SystemClock } = await import("../src/ports/clock.ts");
+  const { noopAudit } = await import("../src/ports/audit.ts");
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+  class Store {
+    rows = new Map<string, { clientId: string }>();
+    machineClientResourceBinding = 1 as const;
+    storedDcrGrantGeneration = 1 as const;
+    async find(id: string) { return this.rows.get(id) ?? null; }
+    async save(c: { clientId: string }) { this.rows.set(c.clientId, c); }
+    async createMachineClient(rec: { clientId: string }) { this.rows.set(rec.clientId, rec); return true; }
+    async compareAndSwapMachineClient(_v: number, next: { clientId: string }) { this.rows.set(next.clientId, next); return true; }
+  }
+  const store = new Store();
+  const config = createBridgeConfig({
+    issuer: "https://iss.test", consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" },
+    redirectAllowlist: ["https://c.test/cb"], allowedOrigins: ["https://iss.test"],
+    dcr: { mode: "stored", store }, clientCredentials: { enabled: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 60,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    resources: [{ resource: A, scopeCatalog: ["read", "write"], defaultScopes: ["read"] }],
+  } as never);
+  const deps = (catalog: string[]) =>
+    ({ store, catalog, resource: A, config, clock: new SystemClock(), audit: noopAudit }) as never;
+
+  await assert.rejects(() => provisionMachineClient(deps(["read"]), { allowedScopes: ["read"] }),
+    /omits "write"/, "a subset catalog is rejected at the deps, where the mistake is");
+  // The complete catalog provisions, including the scope the subset would have hidden.
+  assert.ok(await provisionMachineClient(deps(["read", "write"]), { allowedScopes: ["write"] }));
+});
