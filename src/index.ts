@@ -132,7 +132,11 @@ export { Bridge, type BridgeDeps } from "./adapters/bridge.ts";
 // onRequest Origin-gate hook (DNS-rebinding protection that runs BEFORE the bearer
 // check + for every method) scopes to MCP paths via isMcpPath(request.url); see
 // examples/fastify-sqlite. Root-exported so adopters of the recommended Origin-gate
-// pattern import it from the package root, not an internal adapter path. NormRequest
+// pattern import it from the package root, not an internal adapter path.
+// SINGLE-RESOURCE ONLY: it matches the literal pathname "/mcp", so a resource
+// mounted elsewhere (/grafana/mcp) never matches and the gate silently never
+// fires. Multi-resource deployments gate on their own configured resource paths
+// — see examples/fastify-multi-resource. NormRequest
 // / NormResponse are the normalized shapes the framework-free surface speaks — the
 // types handlePairingAuthorize + createUpstreamRedirectFlow take/return — so a
 // consumer mounting those surfaces can type-check them (contracts §15 DX).

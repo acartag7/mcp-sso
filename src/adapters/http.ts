@@ -124,7 +124,14 @@ export function formObject(body: unknown): Record<string, unknown> {
  *  routes to `/mcp` while `request.url` is the full URL — a raw `=== "/mcp"` (or
  *  `.split("?")[0]`) misses that form and skips the gate. Centralized here so the
  *  examples' Origin gate + JSON body parser treat `/mcp` consistently regardless
- *  of request-target form (the absolute-form string check is a recurring footgun). */
+ *  of request-target form (the absolute-form string check is a recurring footgun).
+ *
+ *  SINGLE-RESOURCE ONLY. It matches the literal pathname `/mcp`, so it returns
+ *  false for a resource mounted anywhere else (`/grafana/mcp`, `/team-a/mcp`).
+ *  A multi-resource deployment must scope its Origin gate to its OWN configured
+ *  resource paths: using this helper there installs a hook that never fires,
+ *  silently disabling DNS-rebinding protection. See
+ *  `examples/fastify-multi-resource` for that pattern. */
 export function isMcpPath(requestUrl: string): boolean {
   try {
     return new URL(requestUrl, "http://localhost").pathname === "/mcp";

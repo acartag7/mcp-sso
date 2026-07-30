@@ -50,7 +50,11 @@ to scope DNS-rebinding protection to MCP paths (it robustly handles the
 absolute-form request-target `POST http://host/mcp`, which a raw `=== "/mcp"` misses;
 run before the bearer check, for every method — see `examples/fastify-sqlite`) — is
 root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recommended
-Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in
+Origin-gate pattern need not import an internal adapter path. It is
+**single-resource only**: it matches the literal pathname `/mcp`, so a resource
+mounted elsewhere (`/grafana/mcp`) never matches and a gate scoped with it never
+fires. A multi-resource deployment (§5.1) MUST scope its Origin gate to its own
+configured resource paths — see `examples/fastify-multi-resource`. Deployer guidance for the audit sinks lives in
 [`docs/audit-deployment.md`](../audit-deployment.md).
 
 `assertRegistrationRedirectPolicy(value, applicationType)` is also exported

@@ -69,6 +69,18 @@ test("isMcpPath: absolute-form request-targets are recognized (the raw string-ch
   assert.equal(isMcpPath("http://attacker.invalid/mcp?x=1"), true);
 });
 
+test("isMcpPath: multi-resource paths do NOT match (documented single-resource limit)", () => {
+  // 0.4.0 mounts resources at arbitrary paths. This helper matches the literal
+  // "/mcp" only, so an Origin gate scoped with it would never fire for these —
+  // silently disabling DNS-rebinding protection. The behaviour is deliberate and
+  // documented at the export site + contracts §15; this test pins it so the
+  // limitation cannot be quietly "fixed" into a prefix match (which would then
+  // gate unrelated paths) or forgotten.
+  assert.equal(isMcpPath("/grafana/mcp"), false);
+  assert.equal(isMcpPath("/memory/mcp"), false);
+  assert.equal(isMcpPath("https://api.example.com/team-a/mcp"), false);
+});
+
 test("isMcpPath: non-/mcp targets and garbage return false without throwing", () => {
   assert.equal(isMcpPath("/oauth/authorize"), false);
   assert.equal(isMcpPath("/mcp/tools"), false); // a subpath is not /mcp
