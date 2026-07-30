@@ -34,6 +34,10 @@ const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const kid = `live-${randomBytes(4).toString("hex")}`;
 const jwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid };
 
+// Values are single-quoted so the file survives `set -a && . ./live.env`:
+// unquoted JSON loses its double quotes to the shell and JSON.parse then fails
+// before the flow starts. Generated values are hex/base64url/JSON with no
+// single quote, so ' quoting needs no escaping.
 // Redirect URIs for the clients checklist E drives. Claude Code registers its
 // own loopback callback via DCR, so only the hosted clients need listing.
 const redirects = [
@@ -45,11 +49,11 @@ process.stdout.write(`# Generated for the two-resource live gate — do NOT comm
 # Issuer: ${origin}
 # Resources: ${origin}/grafana/mcp and ${origin}/memory/mcp
 
-OAUTH_ISSUER=${origin}
+OAUTH_ISSUER='${origin}'
 OAUTH_SIGNING_KEY_ID=${kid}
-OAUTH_SIGNING_PRIVATE_JWK=${JSON.stringify(jwk)}
+OAUTH_SIGNING_PRIVATE_JWK='${JSON.stringify(jwk)}'
 OAUTH_CONSENT_SIGNING_SECRET=${randomBytes(32).toString("hex")}
-OAUTH_REDIRECT_ALLOWLIST=${redirects.join(",")}
+OAUTH_REDIRECT_ALLOWLIST='${redirects.join(",")}'
 
 # --- Fill these from Cloudflare Zero Trust ------------------------------------
 # CF_ACCESS_AUDIENCE  = the application's hex AUD tag (NOT the hostname)
@@ -58,12 +62,12 @@ OAUTH_REDIRECT_ALLOWLIST=${redirects.join(",")}
 # gates /mcp and /oauth/token too, so the client's server-side calls get a login
 # redirect and the flow cannot complete.
 CF_ACCESS_AUDIENCE=
-CF_ACCESS_ISSUER=https://<team>.cloudflareaccess.com
-CF_ACCESS_CERTS_URL=https://<team>.cloudflareaccess.com/cdn-cgi/access/certs
-CF_ACCESS_EMAIL_ALLOWLIST=you@example.com
+CF_ACCESS_ISSUER='https://YOUR-TEAM.cloudflareaccess.com'
+CF_ACCESS_CERTS_URL='https://YOUR-TEAM.cloudflareaccess.com/cdn-cgi/access/certs'
+CF_ACCESS_EMAIL_ALLOWLIST='you@example.com'
 
 # --- Server -------------------------------------------------------------------
-SQLITE_FILE=./live-multi-resource.db
+SQLITE_FILE='./live-multi-resource.db'
 PORT=8787
 HOST=127.0.0.1
 `);

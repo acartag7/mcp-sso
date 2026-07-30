@@ -16,9 +16,14 @@ function catalog(config: BridgeConfig) {
   );
 }
 
-/** RFC 8414 authorization-server metadata. Resource scopes are the deterministic
- *  issuer-wide union; resource documents below remain resource-specific. */
+/** RFC 8414 authorization-server metadata. `scopes_supported` is emitted ONLY
+ *  for a single-resource catalog (where it equals that resource's own set); with
+ *  several resources it is omitted rather than published as a cross-resource
+ *  union no single resource honours. Resource documents below are always
+ *  resource-specific. */
 export function authorizationServerMetadata(config: BridgeConfig): Record<string, unknown> {
+  const built = catalog(config);
+  const entries = built.entries;
   const ccEnabled = config.clientCredentials?.enabled === true;
   return {
     issuer: config.issuer,
@@ -35,7 +40,16 @@ export function authorizationServerMetadata(config: BridgeConfig): Record<string
     token_endpoint_auth_methods_supported: ccEnabled
       ? ["none", "client_secret_basic", "client_secret_post"]
       : ["none"],
-    scopes_supported: scopeUnion(catalog(config)),
+    // RFC 8414 makes `scopes_supported` OPTIONAL, and it is omitted when more
+    // than one resource is configured. The AS-level value would have to be the
+    // union across resources, and a client that reads its scope set from here
+    // (rather than from the per-resource PRM) then builds a request no single
+    // resource can satisfy — observed live: Codex CLI 0.146.0 requested the
+    // full union against one resource and was rejected `invalid_scope`.
+    // Omitting the field forces clients to the PRM, which carries the
+    // authoritative per-resource catalog. A singleton catalog keeps the field:
+    // there the union IS the resource's own set, so it is accurate.
+    ...(entries.length === 1 ? { scopes_supported: scopeUnion(built) } : {}),
     authorization_response_iss_parameter_supported: true,
     ...(config.cimd?.enabled === true ? { client_id_metadata_document_supported: true } : {}),
   };

@@ -85,6 +85,9 @@ export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
  *  use-cases accept. */
 export function createBridgeConfig(input: BridgeConfig): BridgeConfig;
 export function createBridgeConfig(input: MultiResourceBridgeConfig): MultiResourceBridgeConfig;
+// A runtime-selected config matches neither narrow overload (TS hides the impl
+// signature ⇒ TS2769); the narrow two above still preserve the exact return type.
+export function createBridgeConfig(input: AnyBridgeConfig): AnyBridgeConfig;
 export function createBridgeConfig(input: AnyBridgeConfig): AnyBridgeConfig {
   // Fail-closed (contracts §5): reject unknown own keys FIRST. `Reflect.ownKeys`
   // covers string AND symbol keys — the latter would survive the `{ ...input }`
@@ -237,13 +240,6 @@ function validateTtl(value: number, label: string): void {
   }
 }
 
-/** Origin (scheme://host[:port]) of a URL. */
-export function originOf(value: string): string {
-  const u = new URL(value);
-  return `${u.protocol}//${u.host}`;
-}
-
-/** Pathname of a URL (e.g. "/mcp" or "/"); used for the path-inserted PRM route. */
-export function pathAfterOrigin(value: string): string {
-  return new URL(value).pathname;
-}
+// Re-exported from ./url.ts (moved out: not configuration logic). Existing
+// importers, including the frozen acceptance suite, import these from here.
+export { originOf, pathAfterOrigin } from "./url.ts";

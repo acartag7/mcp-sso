@@ -324,11 +324,15 @@ test("e2e multi-resource: each endpoint publishes its own PRM over real HTTP", a
       assert.equal(doc.resource, `${origin}${path}`);
       assert.ok(!JSON.stringify(doc).includes(other), `${path}'s PRM must not mention ${other}`);
     }
-    // AS metadata is issuer-wide and publishes the union for discovery only.
+    // AS metadata omits scopes_supported in multi-resource mode: a cross-resource
+    // union is a set no single resource honours, and a client that reads its
+    // request scopes from here rather than the PRM is rejected invalid_scope
+    // (observed live with Codex CLI 0.146.0). Asserted over real HTTP because
+    // that is exactly how a client sees it.
     const asMeta = await fetch(new URL("/.well-known/oauth-authorization-server", base));
     const meta = await asMeta.json() as Record<string, unknown>;
-    assert.deepEqual(meta.scopes_supported, ["grafana:admin", "mcp:read", "memory:curate"].sort(),
-      "AS metadata publishes the sorted union of both catalogs");
+    assert.equal("scopes_supported" in meta, false,
+      "AS metadata must not publish a cross-resource scope union");
     assert.equal("protected_resources" in meta, false, "no non-standard protected_resources field");
   } finally {
     await app.close();

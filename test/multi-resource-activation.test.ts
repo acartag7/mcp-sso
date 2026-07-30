@@ -76,10 +76,25 @@ test("two-resource config activates while the singleton input/output stays uncha
   assert.equal(Object.hasOwn(singleton, "resources"), false);
 });
 
-test("AS metadata publishes the sorted scope union and no non-standard resource list", () => {
+test("AS metadata omits scopes_supported for a multi-resource catalog", () => {
+  // A cross-resource union is a scope set NO single resource honours. A client
+  // that reads its request scopes from the AS document (Codex CLI 0.146.0 does)
+  // then asks for scopes the target resource cannot issue and is rejected
+  // invalid_scope. RFC 8414 makes the field OPTIONAL, so it is omitted and the
+  // per-resource PRM stays the authoritative source.
   const metadata = authorizationServerMetadata(multi());
-  assert.deepEqual(metadata.scopes_supported, ["alpha", "shared", "zeta"]);
+  assert.equal(Object.hasOwn(metadata, "scopes_supported"), false);
   assert.equal(Object.hasOwn(metadata, "protected_resources"), false);
+});
+
+test("AS metadata keeps scopes_supported for a single-resource catalog", () => {
+  // With one resource the union IS that resource's own set, so the field is
+  // accurate and 0.3.x behaviour is preserved for existing deployments.
+  const metadata = authorizationServerMetadata(createBridgeConfig({
+    ...common(),
+    resources: [{ resource: A, scopeCatalog: ["alpha", "shared"], defaultScopes: ["shared"] }],
+  } as never) as never);
+  assert.deepEqual(metadata.scopes_supported, ["alpha", "shared"]);
 });
 
 test("challenge and URL helpers pin the path-inserted PRM and resource-owned scopes", () => {

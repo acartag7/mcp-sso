@@ -9,7 +9,15 @@ adapter (Phase 3) exposes them over HTTP.
   `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `registration_endpoint`,
   `revocation_endpoint`, `response_types_supported: ["code"]`,
   `grant_types_supported: ["authorization_code","refresh_token"]`,
-  `code_challenge_methods_supported: ["S256"]`, `scopes_supported: catalog`,
+  `code_challenge_methods_supported: ["S256"]`,
+  **`scopes_supported` only when exactly one resource is configured** (RFC 8414
+  makes the field OPTIONAL). With several resources the AS-level value could only
+  be a cross-resource union — a set no single resource honours — and a client that
+  reads its request scopes from this document rather than the per-resource PRM
+  then builds a request the target resource rejects as `invalid_scope`. Observed
+  live 2026-07-30 with Codex CLI 0.146.0. The field is therefore omitted in
+  multi-resource mode and the PRM below stays the authoritative per-resource
+  source; a singleton catalog keeps it, where the union IS that resource's set,
   `token_endpoint_auth_methods_supported: ["none"]` (public clients + PKCE), and
   **`authorization_response_iss_parameter_supported: true`** *(RC item (a))*.
 - **`protectedResourceMetadata(config)`** (RFC 9728), served at **both**:

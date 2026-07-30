@@ -19,6 +19,9 @@ if (!origin) {
 }
 
 const PATHS = ["/grafana/mcp", "/memory/mcp"];
+// The scope each resource owns EXCLUSIVELY. A document that advertises the
+// sibling's private scope has leaked even if it never names the sibling's URL.
+const PRIVATE_SCOPE = { "/grafana/mcp": "grafana:admin", "/memory/mcp": "memory:curate" };
 const TIMEOUT_MS = 10_000;
 
 let failures = 0;
@@ -63,6 +66,13 @@ for (const path of PATHS) {
   const blob = JSON.stringify(doc);
   if (blob.includes(`${origin}${other}`)) bad(`${path} PRM mentions ${other}`, blob.slice(0, 200));
   else ok(`${path} PRM does not mention ${other}`);
+  // A URL check alone passes a document that publishes the sibling's private
+  // scope without naming its URL — the leak that matters for consent.
+  const scopes = Array.isArray(doc.scopes_supported) ? doc.scopes_supported : [];
+  const foreign = PRIVATE_SCOPE[other];
+  if (scopes.includes(foreign)) bad(`${path} PRM advertises ${other}'s private scope`, `scopes_supported = ${JSON.stringify(scopes)}`);
+  else if (!scopes.includes(PRIVATE_SCOPE[path])) bad(`${path} PRM is missing its own scope ${PRIVATE_SCOPE[path]}`, `scopes_supported = ${JSON.stringify(scopes)}`);
+  else ok(`${path} PRM advertises only its own scopes`);
 }
 
 // 3. An unauthenticated call is challenged, and the challenge points at THIS
