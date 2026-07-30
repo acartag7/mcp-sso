@@ -569,3 +569,33 @@ test("a one-entry `resources` config still forbids the legacy attestation", asyn
   } as never), /multi-resource configuration/,
     "one entry in the `resources` form is still the multi-resource form");
 });
+
+test("PRM route characters are allowlisted, not blocklisted", async () => {
+  // A blocklist of router metacharacters was wrong twice: it missed `!`, which
+  // the pinned Express/path-to-regexp reserves, so mounting threw MID-REGISTRATION
+  // — after the authorization-server route was already added — instead of failing
+  // as the promised pre-side-effect AuthConfigError. Each framework reserves its
+  // own set, so only characters safe as a literal route everywhere are accepted.
+  const { planProtectedResourceRoutes } = await import("../src/adapters/protected-resource-routes.ts");
+  const { createBridgeConfig } = await import("../src/config.ts");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const cfg = (path: string) => createBridgeConfig({
+    issuer: "https://iss.test", consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" },
+    redirectAllowlist: ["https://c.test/cb"], allowedOrigins: ["https://iss.test"],
+    dcr: { mode: "stateless" }, accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 60,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    resource: `https://h${path}`, scopeCatalog: ["x"], defaultScopes: ["x"],
+  } as never);
+
+  // Unreserved path characters, "/" and percent-escapes register literally.
+  for (const ok of ["/mcp", "/a-b.c_d~e/mcp", "/%6dcp"]) {
+    assert.ok(planProtectedResourceRoutes(cfg(ok)), `${ok} is safe as a literal route`);
+  }
+  // Anything a router might reserve is refused BEFORE any route is registered.
+  for (const bad of ["/mcp/!x", "/mcp/:id", "/mcp/*rest", "/mcp/(x)", "/mcp/x+y"]) {
+    assert.throws(() => planProtectedResourceRoutes(cfg(bad)), /not safe to register as a literal route/,
+      `${bad} must fail preflight`);
+  }
+});

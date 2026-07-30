@@ -101,13 +101,19 @@ function routeIdentity(pathname: string): string {
  *  Allowlist at the trust boundary — the check is on the COMPUTED pathname, so
  *  it cannot be sidestepped by percent-encoding that the URL parser resolves. */
 function rejectRouteMetacharacters(pathname: string, resource: string): void {
-  const found = /[:*?{}()\[\]+]/.exec(pathname);
+  // ALLOWLIST, not a blocklist. A blocklist of router metacharacters was wrong
+  // twice: it missed `!`, which the pinned Express/path-to-regexp reserves, and
+  // each framework reserves its own set. Only characters that are unreserved in
+  // a URL path — plus `/` and a percent-escape — can be registered as a literal
+  // route by every adapter, and a resource path outside that set has no
+  // legitimate use here. Percent-escapes are already validated by the parser.
+  const found = /[^A-Za-z0-9\-._~/%]/.exec(pathname);
   if (found !== null) {
     throw new AuthConfigError(
       `resource "${resource}" produces the protected-resource route "${pathname}", which contains the ` +
-        `framework route metacharacter "${found[0]}". Fastify, Express and Hono would treat it as a ` +
-        `parameter or wildcard and match other paths, so it could shadow another resource. ` +
-        `Use a resource path without route metacharacters.`,
+        `character "${found[0]}", which is not safe to register as a literal route. ` +
+        `Frameworks reserve their own metacharacters (Express rejects "!", all three read ":" and "*"), ` +
+        `so only unreserved path characters, "/" and percent-escapes are accepted here.`,
     );
   }
 }
