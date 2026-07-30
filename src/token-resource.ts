@@ -102,9 +102,10 @@ export function assertRequestResourceMatchesRecord(
   catalog: ResourceCatalog,
   storedResource: string | null | undefined,
   requested: string | undefined,
-): void {
+): string {
   const stored = resolveRecordResource(catalog, storedResource);
   if (resolveResource(catalog, requested).resource !== stored.resource) {
     throw new OAuthError("invalid_target", "resource does not match the authorization code");
   }
+  return stored.resource;   // returned so the caller can attribute LATER failures (§13)
 }

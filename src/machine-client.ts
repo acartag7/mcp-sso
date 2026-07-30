@@ -82,9 +82,10 @@ export async function provisionMachineClient(
   deps: MachineClientDeps,
   input: ProvisionMachineClientInput,
 ): Promise<ProvisionedMachineClient> {
+  let auditedResource: string | undefined; // §13
   let clientId: string | undefined;
   try {
-    const context = machineClientResourceContext(deps);
+    const context = machineClientResourceContext(deps); auditedResource = context.resource;
     const store = context.store;
     const allowedScopes = validateAllowedScopes(input.allowedScopes, context.scopeCatalog);
     if (input.name !== undefined && (typeof input.name !== "string" || input.name.length === 0)) {
@@ -122,7 +123,7 @@ export async function provisionMachineClient(
     safeAudit(deps.audit, { ...durableAudit, status: "success" });
     return { clientId, clientSecret };
   } catch (error) {
-    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.provision", error, clientId));
+    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.provision", error, clientId, auditedResource));
     throw error;
   }
 }
@@ -133,8 +134,9 @@ export async function rotateMachineClientSecret(
   clientId: string,
   opts?: RotateSecretOptions,
 ): Promise<VersionedRotatedSecret> {
+  let auditedResource: string | undefined; // §13
   try {
-    const context = machineClientResourceContext(deps);
+    const context = machineClientResourceContext(deps); auditedResource = context.resource;
     const store = context.store;
     const graceSeconds = opts?.graceSeconds ?? DEFAULT_ROTATION_GRACE_SECONDS;
     if (!isPositiveInteger(graceSeconds) || graceSeconds > MAX_ROTATION_GRACE_SECONDS) {
@@ -165,7 +167,7 @@ export async function rotateMachineClientSecret(
     safeAudit(deps.audit, { ...durableAudit, status: "success" });
     return { clientSecret, version: next.version };
   } catch (error) {
-    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.rotate_secret", error, clientId));
+    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.rotate_secret", error, clientId, auditedResource));
     throw error;
   }
 }
@@ -175,8 +177,9 @@ export async function disableMachineClient(
   deps: MachineClientDeps,
   clientId: string,
 ): Promise<DisabledMachineClient> {
+  let auditedResource: string | undefined; // §13
   try {
-    const context = machineClientResourceContext(deps);
+    const context = machineClientResourceContext(deps); auditedResource = context.resource;
     const store = context.store;
     const now = epochSeconds(deps.clock);
     const current = requireMutableActive(
@@ -198,7 +201,7 @@ export async function disableMachineClient(
     safeAudit(deps.audit, { ...durableAudit, status: "success" });
     return { clientId, disabledAtEpoch: now, version: next.version };
   } catch (error) {
-    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.disable", error, clientId));
+    safeAudit(deps.audit, failureAudit(deps.clock, "oauth.client.disable", error, clientId, auditedResource));
     throw error;
   }
 }
@@ -212,14 +215,13 @@ function requireMutableActive(
   return client;
 }
 
-function failureAudit(
-  clock: ClockPort,
-  event: MachineClientMutationAudit["event"],
-  error: unknown,
-  clientId?: string,
+function failureAudit(   // `resource` only once the context resolved one (§13)
+  clock: ClockPort, event: MachineClientMutationAudit["event"],
+  error: unknown, clientId?: string, resource?: string,
 ): AuthAuditEvent {
   return {
     occurredAt: new Date(clock.nowMs()).toISOString(),
+    ...(resource === undefined ? {} : { resource }),
     event,
     status: "failure",
     clientId,

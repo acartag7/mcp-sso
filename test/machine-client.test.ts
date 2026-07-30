@@ -571,7 +571,8 @@ test("stored machine grammar: malformed or mis-keyed rows fail verification and 
     assert.equal(h.audit.events.some((event) => event.event === "oauth.client.rotate_secret" && event.status === "success"), false);
     assert.deepEqual(h.audit.events.at(-1), {
       occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.client.rotate_secret",
-      status: "failure", clientId: "mcc_lookup", reason: "invalid_client",
+      // The context resolved the resource before this failure, so §13 records it.
+      resource: RESOURCE, status: "failure", clientId: "mcc_lookup", reason: "invalid_client",
     });
   }
 });

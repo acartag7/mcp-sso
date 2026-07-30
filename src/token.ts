@@ -84,13 +84,12 @@ export class OAuthTokenUseCase {
         throw new OAuthError("unsupported_grant_type", "grant_type is not supported");
       }
       const record = await this.consumeValidCode(input);
-      assertRequestResourceMatchesRecord(this.catalog, record.resource, input.resource); // §9.7; after burn, before lineage
+      grantResource = assertRequestResourceMatchesRecord(this.catalog, record.resource, input.resource); // §9.7 + §13
       if (record.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace"); // pre-side-effect (§9.3): code burned, NO refresh token saved, no success audited
       const refreshToken = generateRefreshToken();
       const familyId = parseRefreshFamilyId(refreshToken);
       if (!familyId) throw new OAuthError("server_error", "Refresh token generation failed", 500);
       const prepared = await this.tokenResponse(record, refreshToken);
-      grantResource = prepared.resource;
       await this.store.saveRefreshToken({
         tokenHash: sha256Hex(refreshToken), familyId, previousTokenHash: null,
         clientId: record.clientId, subject: record.subject, scopes: prepared.scopes,

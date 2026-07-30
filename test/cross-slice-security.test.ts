@@ -400,6 +400,7 @@ test("stored-lineage canonicality agrees with the real parser in both directions
   }
   for (const notCanonical of [
     "https://h/%zz", "https://h/%", "https://h/%2",        // malformed escapes
+    "https://h:abc/a", "https://h:99999/a", "https://h::1/a", "https://[bad/a",  // bad authority
     "not-a-url", "https://A.test/mcp", "https://a.test:443/mcp", "http://a.test:80/mcp",
     "https://a.test/", "https://u@a.test/mcp", "https://a.test/mcp?x=1", "",
   ]) {
@@ -529,4 +530,42 @@ test("the legacy machine attestation is refused under a multi-resource catalog",
     store, catalog: ["shared"], resource: A,
     config: multiCfg, clock: new SystemClock(), audit: noopAudit,
   } as never));
+});
+
+test("a one-entry `resources` config still forbids the legacy attestation", async () => {
+  // Keyed on the configuration KIND, not the entry count. `{ resources: [one] }`
+  // is a valid multi-resource configuration that happens to list one entry
+  // today; counting entries called it a singleton and re-admitted the
+  // attestation, letting an ambiguous pre-0.4 credential be reattributed.
+  const { machineClientResourceContext } = await import("../src/machine-client-resource.ts");
+  const { createBridgeConfig } = await import("../src/config.ts");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { SystemClock } = await import("../src/ports/clock.ts");
+  const { noopAudit } = await import("../src/ports/audit.ts");
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+  class Store {
+    machineClientResourceBinding = 1 as const;
+    storedDcrGrantGeneration = 1 as const;
+    async find() { return null; }
+    async save() {}
+    async createMachineClient() { return true; }
+    async compareAndSwapMachineClient() { return true; }
+  }
+  const store = new Store();
+  const oneEntryMulti = createBridgeConfig({
+    issuer: "https://iss.test", consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" },
+    redirectAllowlist: ["https://c.test/cb"], allowedOrigins: ["https://iss.test"],
+    dcr: { mode: "stored", store }, clientCredentials: { enabled: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 60,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    resources: [{ resource: A, scopeCatalog: ["shared"], defaultScopes: ["shared"] }],
+  } as never);
+
+  assert.throws(() => machineClientResourceContext({
+    store, catalog: ["shared"], resource: A, legacySingletonResource: A,
+    config: oneEntryMulti, clock: new SystemClock(), audit: noopAudit,
+  } as never), /multi-resource configuration/,
+    "one entry in the `resources` form is still the multi-resource form");
 });

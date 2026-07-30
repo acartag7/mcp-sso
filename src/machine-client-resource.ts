@@ -201,11 +201,17 @@ function assertConfiguredPair(
   }
 }
 
-/** True when the bridge serves more than one resource. */
+/** True when the bridge uses the multi-resource FORM.
+ *
+ *  Keyed on the configuration kind, not the entry count: `{ resources: [one] }`
+ *  is a valid multi-resource configuration that happens to list a single entry
+ *  today. Counting entries would call it a singleton and re-admit the legacy
+ *  attestation, letting an ambiguous pre-0.4 credential be reattributed to that
+ *  resource — exactly what the `resources` form forbids. */
 function isMultiResource(config: AnyBridgeConfig | undefined): boolean {
   if (config === undefined) return false;
   return buildResourceCatalog(
     config as unknown as ResourceConfiguration,
     { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },
-  ).entries.length > 1;
+  ).configurationKind === "multi";
 }

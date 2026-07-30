@@ -5,6 +5,8 @@
 // via findGrantedScopes). Every adapter (memory, sqlite, any downstream SQL)
 // must satisfy the §12 invariants, asserted by the store-conformance suite.
 
+import { canonicalResource } from "../resource.ts";
+
 export interface AuthCodeRecord {
   /** sha256(raw code). */
   codeHash: string;
@@ -168,32 +170,22 @@ export function grantGenerationForWrite(value: number | null | undefined): numbe
   return value === undefined ? STORED_DCR_GRANT_GENERATION : grantGenerationFromStored(value);
 }
 
-/** True when a STORED resource value is usable lineage.
+/** True when a STORED resource value is one this library could have written.
  *
- *  The library only ever persists canonical resources, so a non-empty stored
- *  value that is not in canonical form means the record itself is unusable —
- *  migrated by hand, corrupted, or written by something else. Rotation must
- *  return null (`invalid_grant`: discard this grant) rather than compare it and
- *  report a resource mismatch (`invalid_target`: retry another resource), which
- *  would tell the client to keep trying a record that can never work.
+ *  Delegates to the REAL parser rather than restating the canonical grammar. An
+ *  earlier hand-written restatement drifted from it three separate times —
+ *  accepting malformed percent escapes, rejecting legitimate non-default ports,
+ *  and accepting authorities like `h:abc` that WHATWG rejects. Each drift made a
+ *  corrupted record look like a retryable resource mismatch, or a valid one look
+ *  corrupt. Idempotence is the whole test: canonicalResource emits canonical
+ *  values, so a stored value is canonical exactly when parsing it returns itself.
  *
- *  Deliberately syntactic and dependency-free: the stores stay parser-free, and
- *  the canonical form is exactly what `canonicalResource` emits — lowercase
- *  scheme/host, no default port, no userinfo/query/fragment, no trailing slash
- *  on an origin-only value. A value that survives this check unchanged is one
- *  this library could have written. */
+ *  The dev exception is accepted here because the STORE cannot know the boot
+ *  flag; a loopback http resource is only reachable if boot already allowed it. */
 export function isCanonicalStoredResource(value: string): boolean {
-  if (value.length === 0 || value.length > 2048) return false;
-  if (/[\\\s?#]/.test(value)) return false;
-  if (/%(?![0-9a-fA-F]{2})/.test(value)) return false;   // a malformed escape is not something this library wrote
-  const match = /^(https?):\/\/([^/]+)(\/.*)?$/.exec(value);
-  if (match === null) return false;
-  const [, scheme, authority, path] = match;
-  if (scheme !== scheme!.toLowerCase() || authority !== authority!.toLowerCase()) return false;
-  if (authority!.includes("@") || authority!.endsWith(":")) return false;
-  // Default ports are SCHEME-SPECIFIC: only https:443 and http:80 are stripped.
-  // https://h:80 and http://h:443 are legitimate non-default ports.
-  if (authority!.endsWith(scheme === "https" ? ":443" : ":80")) return false;
-  if (path === "/") return false;                            // origin-only carries no trailing slash
-  return path === undefined || !path.includes("/./") && !path.includes("/../");
+  try {
+    return canonicalResource(value, { allowInsecureLocalhost: true }) === value;
+  } catch {
+    return false;
+  }
 }
