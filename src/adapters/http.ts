@@ -2,7 +2,7 @@
 // (contracts §9.6). Normalized request/response shapes so the Bridge logic is
 // framework-agnostic, plus OAuthError → response mapping and subject resolution.
 
-import type { BridgeConfig } from "../config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "../config.ts";
 import { originOf } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildErrorRedirect, buildUnauthorizedChallenge } from "../challenge.ts";

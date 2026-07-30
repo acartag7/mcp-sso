@@ -5,7 +5,7 @@
 // resolution boundaries — direct-mode `prepare` and the upstream-redirect
 // authorize — so a cross-mode repeat of one raw client_id is ONE fetch.
 
-import type { BridgeConfig } from "../config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "../config.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";

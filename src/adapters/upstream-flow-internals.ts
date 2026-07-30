@@ -97,7 +97,7 @@ const RESERVED_CALLBACK_ROUTES = [
  *  callback request hits. RAW char checks run BEFORE URL parsing (the §17.1
  *  dot-segment lesson: WHATWG normalizes `/%2e%2e/` away pre-parse); the
  *  normalized-equality check catches whatever survives. */
-export function assertCallbackPath(path: string, issuerOrigin: string, resourcePath: string): void {
+export function assertCallbackPath(path: string, issuerOrigin: string, resourcePath: string | readonly string[]): void {
   if (typeof path !== "string" || !path.startsWith("/")) {
     throw new AuthConfigError("callbackPath must start with '/'");
   }
@@ -114,7 +114,8 @@ export function assertCallbackPath(path: string, issuerOrigin: string, resourceP
   let normalized: string;
   try { normalized = new URL(issuerOrigin + path).pathname; } catch { throw new AuthConfigError("callbackPath is not a valid path under the issuer origin"); }
   if (normalized !== path) throw new AuthConfigError(`callbackPath must equal its normalized form (got '${normalized}')`);
-  if (RESERVED_CALLBACK_ROUTES.includes(path) || path === resourcePath || path.startsWith("/.well-known/")) {
+  const resourcePaths = typeof resourcePath === "string" ? [resourcePath] : resourcePath;
+  if (RESERVED_CALLBACK_ROUTES.includes(path) || resourcePaths.includes(path) || path.startsWith("/.well-known/")) {
     throw new AuthConfigError(`callbackPath must not be a reserved route: ${path}`);
   }
 }

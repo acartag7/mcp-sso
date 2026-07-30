@@ -3,7 +3,7 @@
 // catalog is built once per use-case instance; every lineage check re-resolves a
 // stored record's resource against the CURRENT catalog.
 
-import { AuthConfigError, type BridgeConfig } from "./config.ts";
+import { AuthConfigError, type AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { assertMachineClientResourceStore } from "./machine-client-resource.ts";
 import type { ResourceBindingExpectation, StorePort } from "./ports/store.ts";

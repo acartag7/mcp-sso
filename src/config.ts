@@ -7,7 +7,10 @@ import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
 import { parseRedirectEntry, RedirectEntryError } from "./redirect-entry.ts";
-import { canonicalResource } from "./resource.ts";
+import { buildResourceCatalog, resourceConfigurationFromCatalog } from "./resource.ts";
+import type {
+  MultiResourceConfiguration, ResourceConfiguration, SingletonResourceConfiguration,
+} from "./resource.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
 
@@ -28,15 +31,12 @@ export interface ClientCredentialsOptions {
   enabled: boolean;
 }
 
-export interface BridgeConfig {
+export interface BridgeConfigCommon {
   issuer: string;
-  resource: string;
   consentSigningSecret: string;
   signingPrivateJwk: JWK;
   signingKeyId?: string;
   redirectAllowlist: string[];
-  scopeCatalog: string[];
-  defaultScopes: string[];
   allowedOrigins: string[];
   dcr: DcrMode;
   dev?: DevOptions;
@@ -47,6 +47,15 @@ export interface BridgeConfig {
   consentTokenTtlSeconds: number;
   authorizationCodeTtlSeconds: number;
 }
+
+/** Existing singleton output type. The generic mode is additive so annotations
+ *  written before 0.4 keep their non-optional singleton properties. */
+export type BridgeConfig<Mode extends "singleton" | "multi" | "any" = "singleton"> =
+  BridgeConfigCommon & (Mode extends "singleton" ? SingletonResourceConfiguration
+    : Mode extends "multi" ? MultiResourceConfiguration : ResourceConfiguration);
+/** The complete public configuration union accepted by bridge/core surfaces. */
+export type AnyBridgeConfig = BridgeConfig<"any">;
+export type MultiResourceBridgeConfig = BridgeConfig<"multi">;
 
 export class AuthConfigError extends Error {
   readonly code = "invalid_auth_config";
@@ -63,9 +72,9 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
  *  direction — until you add it. Exported so tests can assert "no key outside
  *  this set survives" against the source of truth. */
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
-  "issuer", "resource", "consentSigningSecret", "signingPrivateJwk",
-  "signingKeyId", "redirectAllowlist", "scopeCatalog", "defaultScopes",
-  "allowedOrigins", "dcr", "dev", "clientCredentials", "cimd",
+  "issuer", "resource", "resources", "legacySingletonResource",
+  "consentSigningSecret", "signingPrivateJwk", "signingKeyId", "redirectAllowlist",
+  "scopeCatalog", "defaultScopes", "allowedOrigins", "dcr", "dev", "clientCredentials", "cimd",
   "accessTokenTtlSeconds", "refreshTokenTtlSeconds", "consentTokenTtlSeconds",
   "authorizationCodeTtlSeconds",
 ]);
@@ -74,7 +83,9 @@ export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
  *  it never degrades to a silent default. The dev escape hatch, when accepted,
  *  emits an advisory warning (see below). The returned object is the only thing
  *  use-cases accept. */
-export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
+export function createBridgeConfig(input: BridgeConfig): BridgeConfig;
+export function createBridgeConfig(input: MultiResourceBridgeConfig): MultiResourceBridgeConfig;
+export function createBridgeConfig(input: AnyBridgeConfig): AnyBridgeConfig {
   // Fail-closed (contracts §5): reject unknown own keys FIRST. `Reflect.ownKeys`
   // covers string AND symbol keys — the latter would survive the `{ ...input }`
   // spread below, so a symbol-keyed secret would otherwise reach the frozen
@@ -96,18 +107,15 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   // `ownKeys` trap could inject an unknown key via that spread. Pinning every
   // field to one read and building the output from named locals closes both
   // (contracts §5; the promise on KNOWN_CONFIG_KEYS above is then actually true).
-  // Nested object fields (dcr/clientCredentials) and the three non-redirect
-  // arrays remain the issue-#100 residual. redirectAllowlist is snapshotted here
-  // because §10.0 owns its validate-and-publish boundary.
+  // Nested dcr/clientCredentials fields and allowedOrigins remain the issue-#100
+  // residual. Resource arrays are snapshotted by buildResourceCatalog below;
+  // redirectAllowlist is snapshotted here because §10.0 owns that boundary.
   const issuer = input.issuer;
-  const rawResource = input.resource;
   const consentSigningSecret = input.consentSigningSecret;
   const signingPrivateJwk = input.signingPrivateJwk;
   const signingKeyId = input.signingKeyId;
   const rawRedirectAllowlist = input.redirectAllowlist;
   const redirectAllowlist = snapshotRedirectAllowlist(rawRedirectAllowlist);
-  const scopeCatalog = input.scopeCatalog;
-  const defaultScopes = input.defaultScopes;
   const allowedOrigins = input.allowedOrigins;
   const dcr = input.dcr;
   const dcrMode = dcr.mode;
@@ -128,19 +136,13 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const authorizationCodeTtlSeconds = input.authorizationCodeTtlSeconds;
 
   validateUrl(allowInsecureLocalhost, "issuer", issuer);
-  // §5.1 resource authority + canonical parser live in resource.ts; the
-  // published `resource` is the canonical form (input is read exactly once).
-  const resource = canonicalResource(rawResource, { allowInsecureLocalhost });
+  const resourceCatalog = buildResourceCatalog(
+    input as ResourceConfiguration, { allowInsecureLocalhost },
+  );
   if (consentSigningSecret.trim().length < 32) {
     throw new AuthConfigError("consentSigningSecret must be at least 32 characters");
   }
   validateSigningKey(signingPrivateJwk);
-  if (!Array.isArray(scopeCatalog) || scopeCatalog.length === 0) {
-    throw new AuthConfigError("scopeCatalog must be a non-empty array");
-  }
-  if (!defaultScopes.every((s) => scopeCatalog.includes(s))) {
-    throw new AuthConfigError("defaultScopes must be a subset of scopeCatalog");
-  }
   validateTtl(accessTokenTtlSeconds, "accessTokenTtlSeconds");
   validateTtl(refreshTokenTtlSeconds, "refreshTokenTtlSeconds");
   validateTtl(consentTokenTtlSeconds, "consentTokenTtlSeconds");
@@ -178,8 +180,8 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
     );
   }
   return Object.freeze({
-    issuer, resource, consentSigningSecret, signingPrivateJwk, signingKeyId,
-    redirectAllowlist, scopeCatalog, defaultScopes, allowedOrigins, dcr, dev,
+    issuer, ...resourceConfigurationFromCatalog(resourceCatalog), consentSigningSecret,
+    signingPrivateJwk, signingKeyId, redirectAllowlist, allowedOrigins, dcr, dev,
     clientCredentials, cimd, accessTokenTtlSeconds, refreshTokenTtlSeconds,
     consentTokenTtlSeconds, authorizationCodeTtlSeconds,
   });

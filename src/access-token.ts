@@ -4,7 +4,7 @@
 
 import { SignJWT, jwtVerify } from "jose";
 import type { JWTPayload } from "jose";
-import type { BridgeConfig } from "./config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { signingKeyId, signKey, verifyKey } from "./crypto-keys.ts";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";

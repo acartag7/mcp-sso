@@ -61,9 +61,9 @@ interface BridgeConfig {
 }
 ```
 
-### 5.1 Multi-resource configuration (PENDING 0.4.0)
+### 5.1 Multi-resource configuration (0.4.0)
 
-> **NOT ENFORCED at this commit.** The singleton form above remains shipped.
+The singleton form above remains source-compatible; the multi-resource form is additive.
 
 One issuer and signing-key set may serve a finite configured resource catalog.
 The existing `{ resource, scopeCatalog, defaultScopes }` trio and a new

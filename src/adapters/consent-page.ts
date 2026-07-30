@@ -10,7 +10,7 @@
 // (threat-model row 17 XSS + impersonation). It SHOULD warn when every
 // registered redirect is loopback.
 
-import type { BridgeConfig } from "../config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "../config.ts";
 import type { PreparedConsent } from "../authorize.ts";
 
 const esc = (v: string): string => v.replace(/[<>&"']/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;" })[c] ?? c);

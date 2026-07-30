@@ -7,7 +7,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import type { JWTPayload } from "jose";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
-import type { BridgeConfig } from "./config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import { scopeString } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { consentSecret } from "./crypto-keys.ts";

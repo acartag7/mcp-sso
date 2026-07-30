@@ -5,13 +5,14 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { IdentityPort } from "../ports/identity.ts";
-import { pathAfterOrigin } from "../config.ts";
+import type { AnyBridgeConfig } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
+import { planProtectedResourceRoutes } from "./protected-resource-routes.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface HonoAdapterOptions {
-  bridge: Bridge;
+  bridge: Bridge<AnyBridgeConfig>;
   /** IdentityPort for the default header-based authorize. Required unless
    *  `skipAuthorize` is set (console pairing owns the authorize route). */
   identity?: IdentityPort;
@@ -32,11 +33,20 @@ export interface HonoAdapterOptions {
    *  audit events omit `ip`. The adapter NEVER reads X-Forwarded-For on its
    *  own: an attacker-chosen header must not select the rate-limit bucket. */
   clientIp?: (c: Context) => string | undefined;
+  /** Non-empty configured resource subset served by this mount; omission serves all. */
+  protectedResources?: readonly string[];
 }
 
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
-  const app = new Hono();
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, clientIp } = opts;
+  const prm = planProtectedResourceRoutes(bridge.config, opts.protectedResources);
+  if (upstream && (identity || skipAuthorize)) {
+    throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  }
+  if (!upstream && !skipAuthorize && !identity) {
+    throw new Error("createOAuthApp: identity is required unless skipAuthorize or upstream is set");
+  }
+  const app = new Hono({ strict: true });
 
   const toNorm = async (c: Context): Promise<NormRequest> => {
     const ct = c.req.header("content-type") ?? "";
@@ -75,22 +85,22 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
     return new Response(r.body === undefined || r.body === null ? null : JSON.stringify(r.body), { status: r.status, headers });
   };
 
-  const resourcePath = pathAfterOrigin(bridge.config.resource);
   app.get("/.well-known/oauth-authorization-server", async (c) => send(c, await bridge.handleAuthorizationServerMetadata()));
-  app.get("/.well-known/oauth-protected-resource", async (c) => send(c, await bridge.handleProtectedResourceMetadata()));
-  app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (c) => send(c, await bridge.handleProtectedResourceMetadata()));
+  for (const route of prm.routes) {
+    app.get(route.pathname, async (c) => send(c, await bridge.handleProtectedResourceMetadata(route.resource.resource)));
+  }
+  if (prm.rootFallback !== undefined) {
+    const resource = prm.rootFallback.resource;
+    app.get("/.well-known/oauth-protected-resource", async (c) => send(c, await bridge.handleProtectedResourceMetadata(resource)));
+  }
   app.get("/oauth/jwks", async (c) => send(c, await bridge.handleJwks()));
   app.post("/oauth/register", async (c) => send(c, await bridge.handleRegister(await toNorm(c))));
-  if (upstream && (identity || skipAuthorize)) {
-    throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
-  }
   if (upstream) {
     const up = upstream;
     app.get("/oauth/authorize", async (c) => send(c, await up.handleAuthorize(await toNorm(c))));
     app.get(up.callbackPath, async (c) => send(c, await up.handleCallback(await toNorm(c))));
   } else if (!skipAuthorize) {
-    if (!identity) throw new Error("createOAuthApp: identity is required unless skipAuthorize or upstream is set");
-    const id = identity;
+    const id = identity as IdentityPort;
     app.get("/oauth/authorize", async (c) => {
       // Identity resolution is pre-validation. Route throws through the direct
       // §9.5 path, stripping any redirect target a user-supplied IdentityPort put

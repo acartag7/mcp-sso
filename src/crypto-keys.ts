@@ -5,7 +5,7 @@
 
 import { importJWK } from "jose";
 import type { JWK } from "jose";
-import type { BridgeConfig } from "./config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "./config.ts";
 
 // --- fix #6: memoized key imports (WeakMap keyed by the stable private-JWK ref) ---
 // jose's importJWK returns CryptoKey | Uint8Array (CryptoKey for our EC keys). We

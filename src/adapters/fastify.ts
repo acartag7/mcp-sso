@@ -5,13 +5,14 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityPort } from "../ports/identity.ts";
-import { pathAfterOrigin } from "../config.ts";
+import { AuthConfigError, type AnyBridgeConfig } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
+import { planProtectedResourceRoutes } from "./protected-resource-routes.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
 
 export interface FastifyAdapterOptions {
-  bridge: Bridge;
+  bridge: Bridge<AnyBridgeConfig>;
   /** IdentityPort for the default header-based authorize. Required unless
    *  `skipAuthorize` is set (console pairing owns the authorize route). */
   identity?: IdentityPort;
@@ -25,10 +26,26 @@ export interface FastifyAdapterOptions {
    *  → upstream.handleAuthorize and GET upstream.callbackPath → upstream.handleCallback.
    *  Mutually exclusive with `identity`/`identityHeader` and `skipAuthorize`. */
   upstream?: UpstreamRedirectFlow;
+  /** Non-empty configured resource subset served by this mount; omission serves all. */
+  protectedResources?: readonly string[];
 }
 
 export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
+  const prm = planProtectedResourceRoutes(bridge.config, opts.protectedResources);
+  const initial = app.initialConfig as typeof app.initialConfig & {
+    routerOptions?: { caseSensitive?: boolean; ignoreTrailingSlash?: boolean };
+  };
+  const routeOptions = initial.routerOptions ?? initial;
+  if (routeOptions.caseSensitive === false || routeOptions.ignoreTrailingSlash === true) {
+    throw new AuthConfigError("registerOAuthRoutes requires Fastify case-sensitive, strict route matching");
+  }
+  if (upstream && (identity || skipAuthorize)) {
+    throw new Error("registerOAuthRoutes: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  }
+  if (!upstream && !skipAuthorize && !identity) {
+    throw new Error("registerOAuthRoutes: identity is required unless skipAuthorize or upstream is set");
+  }
 
   app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
     done(null, Object.fromEntries(new URLSearchParams(String(body))));
@@ -46,22 +63,22 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
     reply.code(res.status).send(res.body);
   };
 
-  const resourcePath = pathAfterOrigin(bridge.config.resource); // e.g. "/mcp"
   app.get("/.well-known/oauth-authorization-server", async (_req, reply) => send(reply, await bridge.handleAuthorizationServerMetadata()));
-  app.get("/.well-known/oauth-protected-resource", async (_req, reply) => send(reply, await bridge.handleProtectedResourceMetadata()));
-  app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (_req, reply) => send(reply, await bridge.handleProtectedResourceMetadata()));
+  for (const route of prm.routes) {
+    app.get(route.pathname, async (_req, reply) => send(reply, await bridge.handleProtectedResourceMetadata(route.resource.resource)));
+  }
+  if (prm.rootFallback !== undefined) {
+    const resource = prm.rootFallback.resource;
+    app.get("/.well-known/oauth-protected-resource", async (_req, reply) => send(reply, await bridge.handleProtectedResourceMetadata(resource)));
+  }
   app.get("/oauth/jwks", async (_req, reply) => send(reply, await bridge.handleJwks()));
   app.post("/oauth/register", async (req, reply) => send(reply, await bridge.handleRegister(toNorm(req))));
-  if (upstream && (identity || skipAuthorize)) {
-    throw new Error("registerOAuthRoutes: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
-  }
   if (upstream) {
     const up = upstream;
     app.get("/oauth/authorize", async (req, reply) => send(reply, await up.handleAuthorize(toNorm(req))));
     app.get(up.callbackPath, async (req, reply) => send(reply, await up.handleCallback(toNorm(req))));
   } else if (!skipAuthorize) {
-    if (!identity) throw new Error("registerOAuthRoutes: identity is required unless skipAuthorize or upstream is set");
-    const id = identity;
+    const id = identity as IdentityPort;
     app.get("/oauth/authorize", async (req, reply) => {
       // Identity resolution is pre-validation. Route throws through the direct
       // §9.5 path, stripping any redirect target a user-supplied IdentityPort put

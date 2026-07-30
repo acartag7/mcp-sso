@@ -1,4 +1,4 @@
-import { AuthConfigError, type BridgeConfig } from "./config.ts";
+import { AuthConfigError, type AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import {
   STORED_DCR_GRANT_GENERATION,
   type AuthCodeRecord,

@@ -16,7 +16,7 @@ that serialized audit output never contains raw codes, refresh tokens, or access
 tokens, across every event name (the v0.2 names are exercised by synthetic
 events through each sink; the v0.1 names additionally by the live OAuth flow).
 
-**0.4.0 amendment (PENDING — NOT ENFORCED at this commit).** After a path has
+**0.4.0 amendment.** After a path has
 resolved a canonical resource from the configured catalog or from verified
 signed/stored lineage, the following events carry that canonical `resource`:
 `oauth.authorize.prepare`, `oauth.authorize.approve`,

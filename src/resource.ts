@@ -22,6 +22,7 @@ export interface ResolvedResource {
 
 export interface ResourceCatalog {
   readonly entries: readonly ResolvedResource[];
+  readonly configurationKind: "singleton" | "multi";
   /** Boot decision under which entries were canonicalized; {@link resolveResource}
    *  reuses it so a request canonicalizes the SAME way as the catalog. */
   readonly allowInsecureLocalhost: boolean;
@@ -33,9 +34,15 @@ export interface CanonicalResourceOptions {
   readonly allowInsecureLocalhost: boolean;
 }
 
-export type ResourceConfiguration =
-  | { resource: string; scopeCatalog: string[]; defaultScopes: string[]; legacySingletonResource?: string; resources?: never }
-  | { resources: ResourceDefinition[]; resource?: never; scopeCatalog?: never; defaultScopes?: never; legacySingletonResource?: never };
+export type SingletonResourceConfiguration = {
+  resource: string; scopeCatalog: string[]; defaultScopes: string[];
+  legacySingletonResource?: string; resources?: never;
+};
+export type MultiResourceConfiguration = {
+  resources: ResourceDefinition[]; resource?: never; scopeCatalog?: never;
+  defaultScopes?: never; legacySingletonResource?: never;
+};
+export type ResourceConfiguration = SingletonResourceConfiguration | MultiResourceConfiguration;
 
 /** Read each named field EXACTLY ONCE, from an OWN data property, into a plain
  *  snapshot. Everything downstream validates and publishes THAT snapshot, so a
@@ -115,5 +122,5 @@ export function canonicalResource(value: unknown, options: CanonicalResourceOpti
 // The catalog builder and request resolver live in ./resource-catalog.ts (this
 // file is at the 250-line ceiling). Re-exported so callers keep one import site.
 export {
-  buildResourceCatalog, scopeUnion, resolveResource,
+  buildResourceCatalog, resourceConfigurationFromCatalog, scopeUnion, resolveResource,
 } from "./resource-catalog.ts";

@@ -4,7 +4,7 @@
 // approve-time gates, and the consent display projection — plus the small pure
 // helpers the use-case already had.
 
-import type { BridgeConfig } from "./config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import { originOf } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "./redirect.ts";

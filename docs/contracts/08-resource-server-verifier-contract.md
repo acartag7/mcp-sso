@@ -40,9 +40,10 @@ Returns the exact `WWW-Authenticate` value for a 401. The source's bug was a bar
 ```
 Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource", scope="mcp:read mcp:write", error="invalid_token", error_description="Bearer token is invalid"
 ```
-- `resource_metadata` = the **PRM URL at the resource origin** (root form; the
-  path-inserted form is also served — §9). Quoted per RFC 7235.
-- `scope` = space-joined `scopeCatalog` (tells the client what it may request).
+- `resource_metadata` = the root-form PRM URL for a source-compatible unpinned
+  singleton call; a resource-pinned authorizer uses that resource's canonical
+  path-inserted URL (§8.5/§9.7). Quoted per RFC 7235.
+- `scope` = the selected resource's space-joined `scopeCatalog`.
 - `error`/`error_description` included when the rejection reason is known
   (`invalid_token`, `invalid_request`, `insufficient_scope`).
 
@@ -75,9 +76,7 @@ one canonical clock snapshot before request processing and reuses it for
 `verifyAccessToken` and `auth.request.occurredAt`. An invalid initial snapshot
 is `invalid_token` 401 with no fabricated audit timestamp.
 
-## 8.5 Resource-pinned authorizer (PENDING 0.4.0)
-
-> **NOT ENFORCED at this commit.**
+## 8.5 Resource-pinned authorizer (0.4.0)
 
 Every `RequestAuthorizer` instance is constructed with one configured canonical
 resource through an additive `resource?: string` constructor dependency.

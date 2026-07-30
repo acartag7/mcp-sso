@@ -3,7 +3,7 @@
 // thin mapper around this; all OAuth logic stays in the core. The adapter resolves
 // the subject (via its IdentityPort) before calling handleAuthorize.
 
-import type { BridgeConfig } from "../config.ts";
+import type { AnyBridgeConfig, BridgeConfig } from "../config.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { StorePort } from "../ports/store.ts";
@@ -27,8 +27,8 @@ import {
   type NormRequest, type NormResponse,
 } from "./http.ts";
 
-export interface BridgeDeps {
-  config: BridgeConfig;
+export interface BridgeDeps<Config extends AnyBridgeConfig = BridgeConfig> {
+  config: Config;
   store: StorePort;
   clock: ClockPort;
   audit: AuditPort;
@@ -67,8 +67,8 @@ const CONSENT_HEADERS = {
   "referrer-policy": "same-origin",
 };
 
-export class Bridge {
-  readonly config: BridgeConfig;
+export class Bridge<Config extends AnyBridgeConfig = BridgeConfig> {
+  readonly config: Config;
   private readonly clock: ClockPort;
   private readonly audit: AuditPort;
   private readonly auth: OAuthAuthorizationUseCase;
@@ -81,7 +81,7 @@ export class Bridge {
    *  `AuthConfigError` at BOOT, never at the first request. */
   readonly cimd: CimdResolver;
 
-  constructor(deps: BridgeDeps) {
+  constructor(deps: BridgeDeps<Config>) {
     this.config = deps.config;
     this.clock = deps.clock;
     this.audit = deps.audit;
@@ -95,8 +95,8 @@ export class Bridge {
   async handleAuthorizationServerMetadata(): Promise<NormResponse> {
     return { status: 200, headers: { "cache-control": "public, max-age=300" }, body: authorizationServerMetadata(this.config) };
   }
-  async handleProtectedResourceMetadata(): Promise<NormResponse> {
-    return { status: 200, headers: { "cache-control": "public, max-age=300" }, body: protectedResourceMetadata(this.config) };
+  async handleProtectedResourceMetadata(resource?: string): Promise<NormResponse> {
+    return { status: 200, headers: { "cache-control": "public, max-age=300" }, body: protectedResourceMetadata(this.config, resource) };
   }
   async handleJwks(): Promise<NormResponse> {
     return { status: 200, headers: { "cache-control": "public, max-age=60" }, body: jwks(this.config) };

@@ -4,9 +4,18 @@
 // and identity ports arrive in Phase 3. See docs/contracts.md.
 
 export {
-  type BridgeConfig, type DcrMode, type DevOptions, type ClientCredentialsOptions,
-  AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin,
+  type BridgeConfig, type AnyBridgeConfig, type MultiResourceBridgeConfig,
+  type BridgeConfigCommon, type DcrMode, type DevOptions, type ClientCredentialsOptions,
+  AuthConfigError, createBridgeConfig, originOf,
+  pathAfterOrigin,
 } from "./config.ts";
+export {
+  type ResourceDefinition, type ResourceConfiguration,
+  type SingletonResourceConfiguration, type MultiResourceConfiguration,
+  type ResolvedResource, type ResourceCatalog, canonicalResource,
+  buildResourceCatalog, resolveResource,
+  scopeUnion,
+} from "./resource.ts";
 
 export {
   type RedirectTarget, OAuthError, oauthErrorBody, withRedirect,

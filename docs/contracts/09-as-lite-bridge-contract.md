@@ -288,9 +288,7 @@ the response. Wiring rules:
   anything added to `devDependencies` for testing gets a `dependency-ledger` entry
   with the 15-day check.
 
-## 9.7 Multi-resource request and metadata behavior (PENDING 0.4.0)
-
-> **NOT ENFORCED at this commit.**
+## 9.7 Multi-resource request and metadata behavior (0.4.0)
 
 - Authorization and token requests accept exactly one primitive-string
   `resource`. Repeated/array, malformed, or unknown values are

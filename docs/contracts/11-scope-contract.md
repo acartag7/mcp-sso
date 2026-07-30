@@ -14,7 +14,7 @@
   scopes only); rendering is an adapter concern (Phase 3), the core supplies the
   before/after sets.
 
-**0.4.0 amendment (PENDING — NOT ENFORCED at this commit).** Scope catalogs and
+**0.4.0 amendment.** Scope catalogs and
 defaults belong to a `ResourceDefinition`. Requested, default, accumulated, and
 machine scopes are validated only against the selected resource's catalog.
 `findGrantedScopes` filters by resource, so equal scope strings on two resources

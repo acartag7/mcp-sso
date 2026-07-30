@@ -40,7 +40,7 @@ the existing `invalid_token` 401.
 **once** (memoized on the config) rather than per request, as the source does.
 `verifyAccessToken` reuses the cached `CryptoKey`.
 
-**0.4.0 resource amendment (PENDING — NOT ENFORCED at this commit).**
+**0.4.0 resource amendment.**
 `AccessTokenClaims` adds required `resource: string`, so `signAccessToken`
 receives one resolved canonical resource explicitly and emits exactly one
 primitive-string `aud`; it never selects a first/default resource from global
@@ -110,8 +110,8 @@ revocation before the preparation error escapes. Moving preparation before
 rotation is not an alternative: it can skip the atomic consumed-token replay
 detection and whole-family revocation that `rotateRefreshToken` owns.
 
-**0.4.0 refresh resource amendment (PENDING — NOT ENFORCED at this
-commit).** A refresh family and every token in it carry one canonical resource.
+**0.4.0 refresh resource amendment.** A refresh family and every token in it
+carry one canonical resource.
 Rotation compares family, consumed-token, and request expectation before
 consumption, then copies the stored resource to the successor. A mismatch
 returns no successor. A legacy null lineage binds atomically to the sole

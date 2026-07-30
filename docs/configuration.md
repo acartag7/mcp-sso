@@ -52,6 +52,27 @@ negotiate or fall back between them. See the
 [§17.1](contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract)
 for the fetch, redirect, and validation contract.
 
+## Resource catalog (library API)
+
+Existing singleton callers keep the same `{ resource, scopeCatalog,
+defaultScopes }` fields. To protect several independently scoped MCP resources
+with one issuer, replace that trio with a non-empty `resources` array:
+
+```ts
+const config = createBridgeConfig({
+  ...commonBridgeFields,
+  resources: [
+    { resource: "https://api.example.com/search/mcp", scopeCatalog: ["search:read"], defaultScopes: ["search:read"] },
+    { resource: "https://api.example.com/admin/mcp", scopeCatalog: ["admin:read"], defaultScopes: [] },
+  ],
+});
+```
+
+The forms are mutually exclusive. Each Fastify, Express, or Hono adapter mount
+serves all configured PRM routes by default, or a non-empty subset through
+`protectedResources`. The env-driven runnable examples below intentionally keep
+the singleton `OAUTH_RESOURCE` shape.
+
 ## Bridge (`OAUTH_*`) — required for any real identity branch
 
 | Var | Req | Default | Purpose |

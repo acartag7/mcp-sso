@@ -82,9 +82,8 @@ stored-DCR mode is active carries the same deployment cutover generation, but
 remains excluded from scope accumulation under §17.1.6. Full record and legacy
 rules are in §12.
 
-**0.4.0 resource-lineage capability (PENDING — NOT ENFORCED at this
-commit).** `RefreshTokenRecord` and refresh-family state gain one nullable
-resource for upgrade compatibility and explicit legacy detection. `rotateRefreshToken` and
+**0.4.0 resource-lineage capability.** `RefreshTokenRecord` and refresh-family
+state gain one nullable resource for upgrade compatibility and explicit legacy detection. `rotateRefreshToken` and
 `findGrantedScopes` gain an optional resource expectation; a multi-resource
 bridge—and any stored-DCR bridge where prior-scope accumulation is
 possible—requires the additive `resourceBinding: 1` capability marker so an
@@ -267,7 +266,7 @@ does not re-check the stored ceiling against the current catalog: catalog
 narrowing is enforced when resolving the grant (§17.2), so a still-valid
 subset remains usable.
 
-**0.4.0 machine resource binding (PENDING — NOT ENFORCED at this commit).**
+**0.4.0 machine resource binding.**
 New active and disabled machine records carry one canonical `resource`.
 Provisioning dependencies add that resource beside the existing per-resource
 catalog; rotation and disable preserve it through the existing CAS operation.

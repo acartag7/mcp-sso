@@ -9,7 +9,7 @@
 import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { StorePort } from "./ports/store.ts";
-import type { BridgeConfig } from "./config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import type { ConsentRequestClaims } from "./crypto.ts";
 import { OAuthError, withRedirect } from "./errors.ts";
 import { writeAuthorizeFailure, writeAuthorizeSuccess } from "./authorize-audit.ts";

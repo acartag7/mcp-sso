@@ -30,10 +30,10 @@
 > 2026-07-28)"](verification.md#spec-release-re-verification-due-2026-07-28)
 > for the exact outcome.
 >
-> **PENDING 0.4.0 — NOT ENFORCED at this commit:** the numbered sections now
-> define a finite multi-resource catalog and one-resource grant lineage. The
-> runtime, frozen acceptance activation, migrations, adapters, examples, and
-> conformance matrix remain separate follow-up PRs.
+> **0.4.0 runtime active:** the finite multi-resource catalog, one-resource
+> grant lineage, metadata, PRM routes, resource-pinned challenges, migrations,
+> and all three framework adapters are enforced. Release activation still
+> requires the separate two-resource official-MCP-SDK live proof.
 >
 > The target deployment is one issuer protecting several independently
 > addressable MCP resources, such as `/grafana/mcp`, `/captatum/mcp`, and

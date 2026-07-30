@@ -16,8 +16,10 @@ import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
-import { AuthConfigError, originOf, pathAfterOrigin } from "../config.ts";
+import { AuthConfigError, originOf, pathAfterOrigin, type AnyBridgeConfig } from "../config.ts";
 import { OAuthError } from "../errors.ts";
+import { buildResourceCatalog } from "../resource.ts";
+import type { ResourceConfiguration } from "../resource.ts";
 import { assertOAuthRedirectEntry } from "../redirect.ts";
 import { pkceChallenge } from "../crypto.ts";
 import { queryString, type NormRequest, type NormResponse } from "./http.ts";
@@ -32,7 +34,7 @@ import {
 } from "./upstream-flow-internals.ts";
 
 export interface UpstreamFlowDeps {
-  bridge: Bridge;
+  bridge: Bridge<AnyBridgeConfig>;
   identity: RedirectIdentityPort;
   /** REQUIRED — the SAME StorePort the Bridge uses (flow JTIs share the consent-JTI registry). */
   store: StorePort;
@@ -67,13 +69,16 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
   const issuer = bridge.config.issuer;
   const secret = bridge.config.consentSigningSecret;
   const issuerOrigin = originOf(issuer);
-  const resourcePath = pathAfterOrigin(bridge.config.resource);
+  const resourcePaths = buildResourceCatalog(
+    bridge.config as ResourceConfiguration,
+    { allowInsecureLocalhost: bridge.config.dev?.allowInsecureLocalhost === true },
+  ).entries.map((entry) => pathAfterOrigin(entry.resource));
 
   // Boot validation (all AuthConfigError, fail-closed — §17.11).
   if (!Number.isInteger(flowTtlSeconds) || flowTtlSeconds <= 0 || flowTtlSeconds > 3600) {
     throw new AuthConfigError("flowTtlSeconds must be a positive integer <= 3600");
   }
-  assertCallbackPath(callbackPath, issuerOrigin, resourcePath);
+  assertCallbackPath(callbackPath, issuerOrigin, resourcePaths);
   if (identity.redirectUri.includes("?") || identity.redirectUri.includes("#")) {
     throw new AuthConfigError("identity.redirectUri must not contain a query or fragment");
   }

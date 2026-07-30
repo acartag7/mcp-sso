@@ -1187,7 +1187,7 @@ in this flow."* Decisions:
   `client_credentials` issuance remains stateless: it reads the record, signs a
   JWT with no server-side token write, and returns no refresh token.
 
-**0.4.0 multi-resource amendment (PENDING — NOT ENFORCED at this commit).**
+**0.4.0 multi-resource amendment.**
 `MachineClientDeps` adds required `resource: string` and optional
 `legacySingletonResource?: string`; its existing `catalog` must be that
 resource's catalog. New active and disabled records carry the canonical

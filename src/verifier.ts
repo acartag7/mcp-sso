@@ -4,7 +4,7 @@
 
 import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
-import { AuthConfigError, type BridgeConfig } from "./config.ts";
+import { AuthConfigError, type AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import type { AuthorizedSubject } from "./scopes.ts";
 import { requireScope } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";

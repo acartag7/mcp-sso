@@ -8,7 +8,7 @@ import { OAuthError } from "./errors.ts";
 import { isScopeToken } from "./scopes.ts";
 import { canonicalResource, snapshotOwn } from "./resource.ts";
 import type {
-  CanonicalResourceOptions, ResolvedResource, ResourceCatalog, ResourceConfiguration,
+  CanonicalResourceOptions, ResolvedResource, ResourceCatalog, ResourceConfiguration, ResourceDefinition,
 } from "./resource.ts";
 
 /** Accepted own keys on a ResourceDefinition (contracts §5.1). An extra string-
@@ -58,7 +58,7 @@ export function buildResourceCatalog(input: ResourceConfiguration, options: Cano
     const definitions = Array.from({ length }, (_, index) => (raw.resources as unknown[])[index]);
     const entries = definitions.map((def) => buildEntry(def, allowInsecureLocalhost));
     rejectDuplicateResources(entries);
-    return freezeCatalog(entries, allowInsecureLocalhost, undefined);
+    return freezeCatalog(entries, "multi", allowInsecureLocalhost, undefined);
   }
   if (!("resource" in raw) || !("scopeCatalog" in raw) || !("defaultScopes" in raw)) {
     throw new AuthConfigError("singleton form requires resource, scopeCatalog, and defaultScopes together");
@@ -78,7 +78,25 @@ export function buildResourceCatalog(input: ResourceConfiguration, options: Cano
     }
     legacy = legacyCanonical;
   }
-  return freezeCatalog([makeEntry(resource, scopeCatalog, defaultScopes)], allowInsecureLocalhost, legacy);
+  return freezeCatalog([makeEntry(resource, scopeCatalog, defaultScopes)], "singleton", allowInsecureLocalhost, legacy);
+}
+
+/** Rebuild the public resource branch from the exact immutable catalog that boot
+ *  validated. The singleton trio stays source-compatible; the multi branch
+ *  publishes only `resources`, including when it contains one entry. */
+export function resourceConfigurationFromCatalog(catalog: ResourceCatalog): ResourceConfiguration {
+  if (catalog.configurationKind === "multi") {
+    return { resources: Object.freeze([...catalog.entries]) as unknown as ResourceDefinition[] };
+  }
+  const only = catalog.entries[0];
+  if (only === undefined) throw new AuthConfigError("resource catalog must contain an entry");
+  return {
+    resource: only.resource,
+    scopeCatalog: only.scopeCatalog as string[],
+    defaultScopes: only.defaultScopes as string[],
+    ...(catalog.legacySingletonResource === undefined
+      ? {} : { legacySingletonResource: catalog.legacySingletonResource }),
+  };
 }
 
 /** Deterministic scope union (sorted, de-duplicated) across all catalog entries. */
@@ -110,10 +128,10 @@ export function resolveResource(catalog: ResourceCatalog, request: string | unde
   return entry;
 }
 
-function freezeCatalog(entries: ResolvedResource[], allowInsecureLocalhost: boolean, legacy: string | undefined): ResourceCatalog {
+function freezeCatalog(entries: ResolvedResource[], configurationKind: "singleton" | "multi", allowInsecureLocalhost: boolean, legacy: string | undefined): ResourceCatalog {
   return Object.freeze({
     entries: Object.freeze(entries) as readonly ResolvedResource[],
-    allowInsecureLocalhost,
+    configurationKind, allowInsecureLocalhost,
     legacySingletonResource: legacy,
     legacyBindingPermitted: legacy !== undefined,
   } as ResourceCatalog);

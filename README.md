@@ -92,6 +92,8 @@ guide](docs/client-registration.md).
   framework-free core.
 - **Stores:** `node:sqlite` (recommended, zero-ops), `mysql2`, in-memory — one
   shared conformance suite.
+- **Resources:** one issuer can protect a finite catalog of independently scoped
+  MCP resource URLs; every grant, token, PRM route, and challenge stays pinned to one.
 - **Grants:** authorization code (PKCE S256), refresh-token rotation with theft
   detection, `client_credentials` (M2M).
 - **Runtime dependency:** `jose` only.

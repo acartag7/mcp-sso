@@ -13,6 +13,7 @@
 // the synthetic request's `query` — bridge.handleAuthorize reads query, not body.
 
 import type { Bridge } from "./bridge.ts";
+import type { AnyBridgeConfig } from "../config.ts";
 import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
 import { formField, queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
@@ -45,7 +46,7 @@ const OAUTH_PARAM_KEYS = [
 ] as const;
 
 export interface PairingAuthorizeDeps {
-  bridge: Bridge;
+  bridge: Bridge<AnyBridgeConfig>;
   pairing: ConsolePairingIdentity;
 }
 

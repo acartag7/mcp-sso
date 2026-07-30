@@ -1,19 +1,23 @@
 // RFC 8414 AS metadata + RFC 9728 Protected Resource Metadata builders
-// (contracts §9.1). The PRM is served at BOTH the root and the path-inserted
-// well-known path (fix #2). The PRM does NOT carry jwks_uri — in RFC 9728 that
-// field is the resource server's own key set, not the AS's signing keys.
+// (contracts §9.1, §9.7). Each PRM is resource-specific and carries no jwks_uri:
+// in RFC 9728 that field is the resource server's own key set, not the AS's.
 
 import type { JWK } from "jose";
-import type { BridgeConfig } from "./config.ts";
-import { originOf, pathAfterOrigin } from "./config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "./config.ts";
+import { originOf } from "./config.ts";
 import { publicJwk } from "./crypto.ts";
+import { buildResourceCatalog, resolveResource, scopeUnion } from "./resource.ts";
+import type { ResourceConfiguration } from "./resource.ts";
 
-/** RFC 8414 authorization-server metadata. Includes RC item (a): the iss flag.
- *  The `client_credentials` grant and its confidential-client auth methods are
- *  advertised ONLY when `config.clientCredentials.enabled` (contracts §17.2) — a
- *  disabled grant is never advertised, so discovery can't steer a client to a
- *  surface the bridge would reject with `unsupported_grant_type`. `"none"` is
- *  always advertised: the user grants use PKCE public clients. */
+function catalog(config: BridgeConfig) {
+  return buildResourceCatalog(
+    config as ResourceConfiguration,
+    { allowInsecureLocalhost: config.dev?.allowInsecureLocalhost === true },
+  );
+}
+
+/** RFC 8414 authorization-server metadata. Resource scopes are the deterministic
+ *  issuer-wide union; resource documents below remain resource-specific. */
 export function authorizationServerMetadata(config: BridgeConfig): Record<string, unknown> {
   const ccEnabled = config.clientCredentials?.enabled === true;
   return {
@@ -31,29 +35,29 @@ export function authorizationServerMetadata(config: BridgeConfig): Record<string
     token_endpoint_auth_methods_supported: ccEnabled
       ? ["none", "client_secret_basic", "client_secret_post"]
       : ["none"],
-    scopes_supported: config.scopeCatalog,
+    scopes_supported: scopeUnion(catalog(config)),
     authorization_response_iss_parameter_supported: true,
-    // draft §5 MUST when supported. OMITTED entirely when CIMD is disabled —
-    // never `false` (§17.1 / verification row S6b.7).
     ...(config.cimd?.enabled === true ? { client_id_metadata_document_supported: true } : {}),
   };
 }
 
-/** RFC 9728 protected-resource metadata (identical JSON at both served paths). */
-export function protectedResourceMetadata(config: BridgeConfig): Record<string, unknown> {
+/** RFC 9728 metadata for exactly one configured resource. Omission is supported
+ *  only when the catalog contains one entry. */
+export function protectedResourceMetadata(config: BridgeConfig, resource?: string): Record<string, unknown> {
+  const resolved = resolveResource(catalog(config), resource);
   return {
-    resource: config.resource,
+    resource: resolved.resource,
     authorization_servers: [config.issuer],
-    scopes_supported: config.scopeCatalog,
+    scopes_supported: resolved.scopeCatalog,
   };
 }
 
-/** The two URLs at which the PRM is served (root + path-inserted). */
-export function protectedResourceMetadataUrls(config: BridgeConfig): { root: string; pathInserted: string } {
-  const origin = originOf(config.resource);
-  const path = pathAfterOrigin(config.resource).replace(/^\/+|\/+$/g, "");
-  const root = `${origin}/.well-known/oauth-protected-resource`;
-  return { root, pathInserted: path ? `${root}/${path}` : root };
+/** Root and canonical path-inserted PRM URLs for one resolved resource. */
+export function protectedResourceMetadataUrls(config: BridgeConfig, resource?: string): { root: string; pathInserted: string } {
+  const resolved = resolveResource(catalog(config), resource).resource;
+  const root = `${originOf(resolved)}/.well-known/oauth-protected-resource`;
+  const pathname = new URL(resolved).pathname;
+  return { root, pathInserted: pathname === "/" ? root : `${root}${pathname}` };
 }
 
 /** JWKS document for /oauth/jwks. */

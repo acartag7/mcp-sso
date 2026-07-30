@@ -6,7 +6,7 @@
 // runs at CONSTRUCTION time (Bridge + both use-cases), before any store write,
 // audit event, network operation, or route registration.
 
-import { AuthConfigError, type BridgeConfig } from "./config.ts";
+import { AuthConfigError, type AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import type { StorePort } from "./ports/store.ts";
 import { buildResourceCatalog } from "./resource.ts";
 import type { ResourceConfiguration } from "./resource.ts";

@@ -8,7 +8,7 @@
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { ApplicationType } from "./ports/client-store.ts";
-import type { BridgeConfig } from "./config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri, assertRegistrationRedirectPolicy } from "./redirect.ts";
 

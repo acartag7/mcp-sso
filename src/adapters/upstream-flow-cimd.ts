@@ -10,7 +10,7 @@
 //     matrix, run after the state match and BEFORE jti consumption, the
 //     exchange, and every redirect-channel branch.
 
-import type { BridgeConfig } from "../config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "../config.ts";
 import { OAuthError } from "../errors.ts";
 import type { CimdResolver } from "../cimd/resolve.ts";
 import { cimdGenericError, mapCimdError } from "../cimd/resolve.ts";

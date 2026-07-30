@@ -2,7 +2,7 @@
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { AuthCodeRecord, RefreshTokenRecord, StorePort } from "./ports/store.ts";
-import type { BridgeConfig } from "./config.ts";
+import type { AnyBridgeConfig as BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts"; import { assertOAuthRedirectEntry } from "./redirect.ts";
 import { expiresAtIso, generateRefreshToken, parseRefreshFamilyId, sha256Hex, signAccessToken, verifyPkceS256 } from "./crypto.ts";
 import { resolveClientCredentialsScope, scopeString, storedScopes } from "./scopes.ts";
@@ -236,10 +236,10 @@ export class OAuthTokenUseCase {
   private async auditToken(event: "oauth.token.authorization_code" | "oauth.token.refresh", status: "success", record: AuthCodeRecord | RefreshTokenRecord): Promise<void> {
     await writeTokenAudit(this.audit, {
       occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status,
-      clientId: record.clientId, subject: record.subject, resource: typeof record.resource === "string" ? record.resource : this.config.resource, scopes: record.scopes,
+      clientId: record.clientId, subject: record.subject, scopes: record.scopes,
+      resource: typeof record.resource === "string" ? record.resource : this.catalog.legacySingletonResource,
     });
   }
-
   private async auditFailure(event: "oauth.token.authorization_code" | "oauth.token.refresh", error: unknown, clientId?: string): Promise<void> {
     await writeTokenAudit(this.audit, {
       occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status: "failure",
