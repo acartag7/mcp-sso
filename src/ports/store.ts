@@ -180,8 +180,11 @@ export function grantGenerationForWrite(value: number | null | undefined): numbe
  *  corrupt. Idempotence is the whole test: canonicalResource emits canonical
  *  values, so a stored value is canonical exactly when parsing it returns itself.
  *
- *  The dev exception is accepted here because the STORE cannot know the boot
- *  flag; a loopback http resource is only reachable if boot already allowed it. */
+ *  `allowInsecureLocalhost: true` is DELIBERATE and asymmetric with boot: the
+ *  store cannot see the boot flag, and a row may predate a config change that
+ *  turned the dev exception off. Accepting loopback http here only means such a
+ *  row is judged well-formed rather than corrupt — using it still requires an
+ *  exact match against a currently configured resource, which boot validated. */
 export function isCanonicalStoredResource(value: string): boolean {
   try {
     return canonicalResource(value, { allowInsecureLocalhost: true }) === value;

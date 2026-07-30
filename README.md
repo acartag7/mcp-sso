@@ -122,10 +122,20 @@ malformed machine rows before verification, mutation, or token issuance.
 import { provisionMachineClient, noopAudit } from "mcp-sso";
 
 const { clientId, clientSecret } = await provisionMachineClient(
-  { store: clientStore, catalog: config.scopeCatalog, clock: { nowMs: () => Date.now() }, audit: noopAudit },
+  {
+    store: clientStore,          // must advertise `machineClientResourceBinding: 1`
+    config,                      // the bridge config: `resource` must be one of ITS resources
+    resource: config.resource,   // the ONE resource this credential may mint for
+    catalog: config.scopeCatalog, // that resource's own scope catalog, in full
+    clock: { nowMs: () => Date.now() }, audit: noopAudit,
+  },
   { name: "nightly-sync", allowedScopes: ["mcp:read"] }, // per-client scope ceiling, fixed at provisioning
 );
 // clientSecret (mcs_…) is returned ONCE — put it in your secret manager now; it cannot be retrieved again.
+// The credential is bound to `resource`: it cannot mint a token for any other
+// resource, even one sharing the same scopes. A custom ClientStore must set the
+// readonly `machineClientResourceBinding: 1` marker, which proves it persists
+// the resource field rather than silently discarding it.
 ```
 
 ```bash
