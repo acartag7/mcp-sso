@@ -102,7 +102,10 @@ local build:
    pre-0.4 token handlers, which ignore the new resource columns;
 3. start 0.4.0 against the same store and confirm: a new authorization completes,
    a pre-0.4 refresh token is refused with `invalid_grant`, and re-authorization
-   re-offers previously approved scopes rather than starting from nothing;
+   does NOT re-offer previously approved scopes (pre-0.4 rows carry no resource
+   and are skipped) — unless `legacySingletonResource` is configured, which is
+   the only setting under which those grants are honored. Verify BOTH legs:
+   default config drops them, the opt-in restores them;
 4. confirm rollback is only attempted from an isolated pre-cutover snapshot.
 
 ## Deliberate decisions recorded for the audit trail

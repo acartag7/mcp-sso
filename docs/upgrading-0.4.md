@@ -7,10 +7,15 @@ Interactive clients get `invalid_grant` and must run the authorization flow
 again; machine clients get `invalid_client` and must be re-provisioned. Access
 tokens already in flight keep working until they expire normally.
 
-Previously approved scopes are NOT lost. Prior-grant accumulation still reads
-pre-0.4 records on a single-resource deployment, so the re-authorization
-re-offers what the user already granted rather than starting from nothing. Only
-the tokens themselves are invalidated.
+**Previously approved scopes are not carried over by default.** Pre-0.4 rows
+carry no resource, and prior-grant accumulation skips them unless the deployment
+explicitly opts in with `legacySingletonResource` (see below). Without it, a
+re-authorization starts from the scopes the client requests plus your configured
+defaults — a user who had previously approved a non-default scope must approve it
+again, and a client that does not request it will not get it back.
+
+Set `legacySingletonResource` if you need those grants honored across the
+upgrade. That is the only configuration under which pre-0.4 records are read.
 
 Plan the upgrade as a re-authorization event. There is no configuration that
 makes it invisible.

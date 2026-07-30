@@ -1138,7 +1138,10 @@ in this flow."* Decisions:
   token for the embedded wrong client). The parser also enforces the `mcc_`
   prefix — the RS's machine-vs-user distinguishability signal (RFC 9700
   §4.15.1) — before the record reaches token signing.
-  `resource` if present MUST equal `config.resource` (`invalid_target`). Mint
+  `resource` if present MUST equal the resource bound to the machine credential
+  itself (`invalid_target`) — under 0.4.0 each machine client is provisioned for
+  exactly one configured resource, so the comparison is against that stored
+  binding, not a single global `config.resource`. Mint
   an access token with `sub = client_id`
   (RFC 9068 §2.2) and the existing `client_id` claim; **NO refresh token**
   (RFC 6749 §4.4.3 SHOULD NOT — the client holds a durable credential; a

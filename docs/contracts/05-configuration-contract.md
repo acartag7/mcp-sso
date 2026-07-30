@@ -153,10 +153,17 @@ or `%` not followed by two hexadecimal digits is rejected. The parser never
 trims or repairs raw syntax. URL parsing then lower-cases scheme/host, removes
 an ordinary default port, and resolves dot segments. An origin-only resource
 canonicalizes without a trailing slash; non-root paths retain their
-trailing-slash distinction. A resource identifier is capped at 2048 UTF-8 bytes,
-checked before the character scans and URL parsing — the same bound the sibling
-redirect-entry parser applies, and load-bearing here because this parser also
-canonicalizes request-supplied values. The canonical value is stored in grant
+trailing-slash distinction. **Two independent length bounds apply, both 2048.**
+The raw input is capped at 2048 UTF-8 bytes, checked before the character scans
+and URL parsing — the same bound the sibling redirect-entry parser applies, and
+load-bearing here because this parser also canonicalizes request-supplied values.
+The **canonical serialization** is then capped at 2048 characters, because WHATWG
+percent-encodes every non-ASCII byte: a raw value inside the first bound can
+expand past the second (roughly 3× for non-ASCII paths) and would otherwise boot
+successfully and then fail every store write against the `VARCHAR(2048)` resource
+columns. A resource that satisfies the grammar and the raw bound is therefore
+still rejected at boot if its canonical form exceeds 2048 characters — the
+persisted value is the one that must fit. The canonical value is stored in grant
 records and JWT `aud`. Duplicate canonical resources are a boot error.
 
 Canonicalization is deliberately *syntactic*, not a DNS or semantic equivalence:

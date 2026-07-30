@@ -110,9 +110,12 @@ client-controlled request input; when present, `prepare` uses it and does not fe
    a validated lowercase-`https://` CIMD id (from the carried `registration` or the
    §17.1.4 success cache/fetch); any other scheme-shaped value ⇒ direct
    `invalid_client` — else **direct** (pre-validation).
-3. *(redirect-eligible from here)* `response_type=code`; `resource` **defaults to
-   `config.resource` when omitted and MUST equal `config.resource` when present**
-   (else `invalid_target`); `scope` normalized per §11 (else `invalid_scope`);
+3. *(redirect-eligible from here)* `response_type=code`; `resource` **selects the
+   grant's resource from the configured catalog** — when omitted it defaults to
+   the sole configured resource (and is `invalid_target` when the catalog has
+   more than one, since there is no default to fall back on); when present it
+   MUST canonicalize to exactly one configured resource (else `invalid_target`).
+   In the singleton form this is the previous `config.resource` rule; `scope` normalized per §11 (else `invalid_scope`);
    PKCE `code_challenge_method=S256` + challenge present (else `invalid_request`).
 4. **Scope ceiling *(§17.4, shipped S2a).*** When the resolved identity supplied
    an `allowedScopes` ceiling, the requested scopes (and `defaultScopes`, when no

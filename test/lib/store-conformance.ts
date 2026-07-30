@@ -8,6 +8,11 @@
 // of shared parity source, but capability-gated: it is invoked only against stores
 // that advertise `resourceBinding: 1`. The SQL adapters gain that marker in their
 // own slice and then invoke this function; until then it runs against MemoryStore.
+//
+// EVERY test here MUST end with `await store.close()`. MemoryStore and SqliteStore
+// tolerate an omission, but MysqlStore holds a connection pool: an unclosed store
+// keeps the event loop alive and `node --test` HANGS with no failure output — and
+// CI does not catch it, since the MySQL suites skip when MYSQL_URL is unset.
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -293,6 +298,24 @@ export function runResourceBindingConformance(label: string, make: () => StorePo
 
   test(`${label}: advertises the resourceBinding capability marker`, () => {
     assert.equal(make().resourceBinding, 1);
+  });
+
+  test(`${label}: pre-0.4 grants are NOT re-offered unless the legacy attestation is on`, async () => {
+    // The upgrade guide's user-visible promise. A pre-0.4 refresh row carries no
+    // resource. Under the DEFAULT upgrade (allowLegacySingletonBinding: false)
+    // consent must NOT re-offer its scopes: the operator sees a fresh approval,
+    // not a silently inherited one. With the explicit opt-in, the same row IS
+    // read. Both legs are asserted so neither can drift into the other.
+    const store = make();
+    await store.saveRefreshToken(refresh("pg-legacy", "fam-pg", null, FUTURE));
+    assert.deepEqual(
+      await store.findGrantedScopes("subject-1", "client-1", NOW, undefined, expectA()),
+      [], "default upgrade must not inherit pre-0.4 scopes");
+    assert.deepEqual(
+      await store.findGrantedScopes("subject-1", "client-1", NOW, undefined,
+        { resource: RES_A, allowLegacySingletonBinding: true }),
+      ["mcp:read"], "legacySingletonResource opt-in restores them");
+    await store.close();
   });
 
   test(`${label}: replaying an OLDER consumed member of a bound legacy chain still revokes the family`, async () => {
