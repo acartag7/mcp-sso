@@ -93,13 +93,15 @@ only. Provider secrets and identifiers remained in private environment files.
 | Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ⬜ | 2026-07-26/27 | Observed on the patched, uncommitted `ee8994a`-based checkout, whose exact tree was not archived. This does not qualify as a verified row; clean-main browser completion is required. |
 | Entra ID (redirect flow, §17.11) | ChatGPT (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ⬜ | 2026-07-26/27 | Observed on the patched, uncommitted `ee8994a`-based checkout, whose exact tree was not archived. This does not qualify as a verified row; clean-main browser completion is required. |
 | Cloudflare Access | ChatGPT custom connector | consent + tool round-trip | ✅ | 2026-07-07 | ChatGPT completed register→authorize→consent→token→`/mcp` `ping` against the same sanitized Cloudflare Access deployment. |
-| Cloudflare Access (production identity leg) | Claude Code, claude.ai, ChatGPT | **two resources on one issuer**: per-resource PRM discovery → grant at A → tool call at A → **A's token refused at B** → refresh at A refused when it names B | ⬜ | — | 0.4.0 gate. Run `examples/fastify-multi-resource` (checklist E). Tests the one assumption static review cannot reach: whether real clients follow **path-inserted PRM URLs** for two sibling resources on one host. Recorded fallback if a client cannot: one resource per subdomain. |
+| Cloudflare Access (production identity leg) | Claude Code 2.1.220, ChatGPT connector, Codex CLI 0.147.0-alpha.1 | **two resources on one issuer** (`/grafana/mcp` + `/memory/mcp`, shared `mcp:read`): per-resource PRM discovery → grant → tool call → **A's token refused at B** | ✅ | 2026-07-30 | Public HTTPS via named tunnel. Claude Code and ChatGPT completed both resources under CIMD **and** DCR; Codex completed via DCR (no CIMD support — openai/codex#13200; its RFC 9207 `iss` regression is fixed in 0.147.0-alpha.1). Real clients DO follow path-inserted PRM URLs. Cross-resource rejection was proven at token level over the public origin: 200 at A, 401 at B with B's own challenge. Interactive consent leg driven by hand, not scripted. |
+| Cloudflare Access (production identity leg) | claude.ai connector | same two-resource flow | ❌ | 2026-07-30 | Rejects a multi-segment resource URL (`/grafana/mcp`) **before contacting the server** — the access log records zero inbound requests, and the UI reports a connection error. The identical server at `/mcp` connects and calls tools. Filed as anthropics/claude-ai-mcp#738. Workaround: one resource per subdomain, each mounted at `/mcp`. |
 | Cloudflare Access / Entra / Google | Claude Code 2.1.220 + **api-key-gateway example** | full CIMD proxied round trip: client → gateway → token-only backend | ✅ | 2026-07-28 | All three `status` calls returned the expected allowlisted response shape at exact runtime commit `af2a61f1aa772a7f3963acfa9dab15c47f676607`; retained client results and all three audit logs had zero backend-key matches. |
 
-**Current Codex CLI caveat (2026-07-28):** the installed 0.144.1 client showed
-an RFC 9207 `iss` callback regression. This does not invalidate the dated
-historical success row, but compatibility with that current client version is
-pending upstream resolution and retest.
+**Codex CLI `iss` regression — RESOLVED (2026-07-31).** 0.144.1 and 0.146.0 both
+dropped the RFC 9207 `iss` callback parameter (openai/codex#31573). Fixed in
+**0.147.0-alpha.1**, retested live 2026-07-30 against two resources: the callback
+completes and the grant succeeds. Codex still has no CIMD support
+(openai/codex#13200), so a CIMD-only deployment excludes it.
 
 ### † Dagger note (the four 2026-07-04 rows)
 

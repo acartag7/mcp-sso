@@ -51,9 +51,12 @@ nothing about what merges. Confirm the run's head SHA equals the PR head.
    shipped store implements `MachineClientStore` — machine clients are
    provisioned out of band by design — so resource binding for that path has
    never run against SQLite or MySQL.
-2. **No real-client interop.** The official SDK used as a library is not the
-   deployed client in Claude Code, claude.ai or ChatGPT. This is the largest
-   untested assumption in the release and the gate for tagging 0.4.0.
+2. **The interactive consent leg was driven by hand, not scripted.** The
+   2026-07-30 live run completed real grants through Claude Code, ChatGPT and
+   Codex against two resources on one public host, and cross-resource rejection
+   was proven at token level over that origin — but the browser steps were
+   manual, so the result is a dated observation rather than a repeatable check.
+   `scripts/live-multi-resource-check.mjs` automates everything up to the grant.
 
 ## 1. Re-dispatch CI and CodeQL on the final head
 
@@ -69,7 +72,17 @@ gh pr checks 151
 Confirm the run's head SHA matches the PR head before treating the result as
 evidence: a dispatch against a stale ref proves nothing about what merges.
 
-## 2. Real-client gate — required before tagging 0.4.0
+## 2. Real-client gate — PASSED 2026-07-30
+
+Recorded in [`live-verification.md`](live-verification.md): Claude Code 2.1.220,
+ChatGPT and Codex CLI 0.147.0-alpha.1 each completed a grant against two
+resources on one public host and called a tool; a token minted for one resource
+returned 401 at the other with that resource's own challenge. claude.ai cannot
+reach a multi-segment path and is recorded as a client limitation
+(anthropics/claude-ai-mcp#738). Re-run the procedure below after any change to
+discovery, challenge or consent.
+
+### Procedure (for re-runs)
 
 Static review cannot answer whether real clients follow **path-inserted PRM URLs**
 for two sibling resources on one host. That is the single largest untested
