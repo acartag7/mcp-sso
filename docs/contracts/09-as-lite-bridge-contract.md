@@ -328,8 +328,12 @@ the response. Wiring rules:
   scope string at A is not evidence at B. `IdentityPort.allowedScopes` remains
   a generic ceiling intersected with the selected resource catalog; no
   resource policy callback is added.
-- Authorization-server metadata publishes the sorted de-duplicated union of
-  all resource scope catalogs. It does not publish `protected_resources`:
+- Authorization-server metadata **omits `scopes_supported` whenever more than
+  one resource is configured** (§9.1): a cross-resource union is a scope set no
+  single resource honours, and a client that builds its request from it is
+  rejected `invalid_scope`. A singleton catalog keeps the field, where the union
+  is that resource's own set. The per-resource PRM is the authoritative source
+  either way. It does not publish `protected_resources`:
   that name is not standard MCP/OAuth metadata and no concrete consumer
   requires an mcp-sso-specific extension. One PRM document contains only its
   exact resource, issuer, and resource-owned scopes.
