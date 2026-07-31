@@ -189,22 +189,31 @@ each added only by the people who need it.
 - **Audience isolation.** Tokens are minted with `aud = resource` and verified
   fail-closed (§7.2), so a token stolen from the Splunk gateway is rejected
   outright by every other gateway.
-- **Path-mounting works; subdomains are the compatible default.** Since 0.4.0 a
-  path-mounted resource (`https://example.com/splunk/mcp`) serves its own
-  RFC 9728 path-inserted PRM route *and* its `WWW-Authenticate` challenge names
-  that per-resource route, so two resources under one origin each send clients to
-  the correct document. (Before 0.4.0 every challenge pointed at the origin-root
-  PRM URL, so a second resource under one origin sent clients to the wrong
-  issuer — that defect is fixed.)
+- **Prefer subdomains over path-mounting**, for two independent reasons.
 
-  The remaining reason to prefer subdomains is **client compatibility**, not
-  correctness: the claude.ai connector rejects a multi-segment resource URL
-  before it contacts the server
-  ([anthropics/claude-ai-mcp#738](https://github.com/anthropics/claude-ai-mcp/issues/738)).
-  Claude Code, ChatGPT and Codex CLI all handle path-mounted resources. If
-  claude.ai is in scope, serve one resource per subdomain, each at `/mcp`;
-  otherwise path-mounting is fully supported and needs no custom challenge
-  routing.
+  **1. This gateway architecture does not pin its challenges.** The pattern above
+  is one *singleton* bridge per backend, and the gateway examples call
+  `buildUnauthorizedChallenge(config, {...})` **without** `opts.resource`
+  ([`examples/api-key-gateway/app.ts:178`](../examples/api-key-gateway/app.ts)).
+  With the resource omitted, `challenge.ts` deliberately emits the legacy
+  origin-**root** PRM URL, and each singleton mount also registers its own root
+  PRM route. Two path-mounted gateways under one origin therefore compete for the
+  same root document and a client can discover the wrong resource. Single-origin
+  multi-gateway needs per-instance challenge and PRM routing you own.
+
+  *(A **multi-resource** bridge — one process, `resources: [...]`, §5.1 — does not
+  have this problem: it resolves a per-resource `RequestAuthorizer` and passes
+  `resource` into the challenge, so each endpoint advertises its own
+  path-inserted PRM route. See
+  [`examples/fastify-multi-resource`](../examples/fastify-multi-resource). That is
+  a different deployment shape from the per-backend gateways described here.)*
+
+  **2. Client compatibility.** The claude.ai connector rejects a multi-segment
+  resource URL before it contacts the server
+  ([anthropics/claude-ai-mcp#738](https://github.com/anthropics/claude-ai-mcp/issues/738)),
+  while Claude Code, ChatGPT and Codex CLI all handle path-mounted resources. If
+  claude.ai is in scope, one resource per subdomain — each at `/mcp` — is
+  required regardless of the routing above.
 - Adding backend N+1 is a config change, not a code change: same image, new
   hostname, new resource, new backend credential.
 

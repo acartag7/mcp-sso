@@ -26,7 +26,7 @@ import { expectedStoredDcrGrantGeneration, newGrantGeneration } from "./stored-d
 import {
   accumulationAllowed, assertApproveCimdGate, assertApproveOrigin, assertConsentResourceCurrent,
   authorizeBinding, cimdDisplay, dedupe, hostOf, initAuthorizeCatalog, redirectWithCode, requiredStr,
-  resolveAuthorizeClient, resolveResource, type CimdConsentDisplay, type ResourceCatalog,
+  accumulableScopes, resolveAuthorizeClient, resolveResource, type CimdConsentDisplay, type ResourceCatalog,
 } from "./authorize-internals.ts";
 export interface OAuthAuthorizationDeps {
   config: BridgeConfig;
@@ -173,8 +173,8 @@ export class OAuthAuthorizationUseCase {
       const rawPrior = accumulationAllowed(this.config, clientId)
         ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), authorizeBinding(this.catalog, claims.resource))
         : [];
-      // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
-      const priorScopes = claims.allowedScopes ? rawPrior.filter((s) => claims.allowedScopes!.includes(s)) : rawPrior;
+      // Display-only, and must match what approve() accumulates.
+      const priorScopes = accumulableScopes(this.catalog, claims.resource, rawPrior, claims.allowedScopes);
       const consentToken = await signConsentToken(claims, this.config, this.clock);
       await writeAuthorizeSuccess(this.audit, this.clock, AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject: input.subject });
       return {
@@ -221,8 +221,9 @@ export class OAuthAuthorizationUseCase {
       const priorScopes = accumulationAllowed(this.config, consent.clientId)
         ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), authorizeBinding(this.catalog, consent.resource))
         : [];
-      const union = dedupe([...consent.scopes, ...priorScopes]);
-      // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
+      // Catalog-filter accumulated scopes, then re-intersect the VERIFIED
+      // ceiling; prior grants cannot resurrect removed scopes (§17.4).
+      const union = accumulableScopes(this.catalog, consent.resource, dedupe([...consent.scopes, ...priorScopes]));
       const scopes = consent.allowedScopes ? union.filter((s) => consent.allowedScopes!.includes(s)) : union;
 
       const code = generateAuthorizationCode();

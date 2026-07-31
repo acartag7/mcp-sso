@@ -202,3 +202,19 @@ export function assertConsentResourceCurrent(catalog: ResourceCatalog, resource:
     }
   }
 }
+
+/** Scopes a prior grant may still contribute, for ONE resource. Prior grants are
+ *  historical: a scope dropped from the catalog since the grant was made must not
+ *  re-enter. Unfiltered, approve() unions it into the authorization code, approval
+ *  succeeds (burning the single-use consent JTI) and the exchange then dies in
+ *  storedScopes() as invalid_grant with the user unable to retry. The consent page
+ *  applies the same filter so what it shows matches the grant it produces. */
+export function accumulableScopes(
+  catalog: ResourceCatalog,
+  resource: string,
+  scopes: readonly string[],
+  ceiling?: readonly string[],
+): string[] {
+  const allowed = resolveResource(catalog, resource).scopeCatalog;
+  return scopes.filter((s) => allowed.includes(s) && (ceiling === undefined || ceiling.includes(s)));
+}
