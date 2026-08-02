@@ -70,23 +70,20 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 - `pnpm run build` — `rm -rf dist && tsc -p tsconfig.build.json`.
 - `npm pack --dry-run` — before any release: the tarball must contain **dist + docs + README + LICENSE only.**
 - **Release flow (immutable releases are ON):** `publish.yml` publishes to npm via OIDC Trusted Publishing **and** creates the GitHub Release. **Never pre-create the GitHub Release for a tag** before the workflow runs — under immutable releases, creating-then-deleting a release burns that tag permanently (`HTTP 422: tag_name was used by an immutable release`); the workflow's own release-create step then fails and no release page is recoverable for that tag. Correct flow: merge the version-bump PR → tag `vX.Y.Z` → the workflow publishes + creates the release (`--generate-notes`) → then edit the release with curated notes. To validate the tarball without publishing, use `npm pack --dry-run` or a `workflow_dispatch` dry run.
-- **Self-hosted workflows:** main runs automatically. For a feature branch,
-  review its workflow diff first, then dispatch CI and CodeQL against that exact
-  ref.
-  CI runs typecheck · `check:lines` · test · build · `process-guard` (artifact
-  chain: freeze-hash · mixed-diff · stage-artifact) in the Mac mini runner VM;
-  CodeQL uses its Mac mini host runner because its CLI does not support
-  Linux/ARM64. The guard compares the ref to `origin/main`. Direct pushes to
-  `main` remain blocked by branch protection.
-- **Required checks:** branch protection requires the CI verify and
-  `process-guard` contexts. CodeQL is a scheduled and maintainer-dispatched
-  analysis requirement, not a branch-protection status. For a manual dispatch,
-  `attest-dispatched-checks` publishes those two contexts only after both
-  enforcing jobs pass; it runs without a checkout on the CodeQL-only runner.
-- **Public-fork and automation boundary:** CI and CodeQL do not run on
-  `pull_request` or arbitrary branch pushes. Review a legitimate contribution
-  first, then mirror it to a maintainer-controlled branch and dispatch the
-  workflows. Never run unreviewed workflow code on the self-hosted runner.
+- **GitHub-hosted workflows:** CI and CodeQL run automatically on pull requests
+  to `main` and on `main` pushes; CodeQL also runs weekly. CI runs typecheck ·
+  `check:lines` · test · build for both events; pull requests additionally run
+  `process-guard` (freeze-hash · mixed-diff · stage-artifact). All jobs use
+  ephemeral `ubuntu-latest` runners. Direct pushes to `main` remain blocked by
+  branch protection.
+- **Required checks:** branch protection requires the exact CI contexts
+  `typecheck · lines · test · build` and `process-guard`; pull-request runs attach
+  them natively, so no manual dispatch or status-attestation job is part of the
+  merge path. CodeQL runs automatically on PRs but is not a required context.
+- **Public-fork boundary:** fork PR code runs only on ephemeral GitHub-hosted
+  runners with read-only workflow permissions and no persisted checkout
+  credential. Publishing remains isolated in `publish.yml` behind its tag-only
+  environment and no-checkout OIDC job.
 - **Local guard hook (one-time):** `git config core.hooksPath .githooks` wires
   `.githooks/pre-commit`, a local mirror of the CI `process-guard` check (it
   locates an `engineering-os` checkout via `$ENGINEERING_OS_DIR`, a sibling
