@@ -5,22 +5,23 @@
 > Every open design question is resolved to an explicit decision here; deferred
 > items are recorded as decisions too, with rationale. `docs/threat-model.md`
 > carries the attacker analysis; `docs/authorization.md` carries the
-> deployer-facing Gate 1/Gate 2 model. Spec facts below were verified against
-> primary sources on 2026-07-04 (IETF drafts/RFCs, IANA registries,
-> modelcontextprotocol.io, vendor docs).
+> deployer-facing Gate 1/Gate 2 model. The initial spec facts were verified
+> against primary sources on 2026-07-04 (IETF drafts/RFCs, IANA registries,
+> modelcontextprotocol.io, vendor docs); final MCP 2026-07-28 facts were
+> re-verified on 2026-08-02.
 
 ## 17.1 CIMD — Client ID Metadata Documents (the SSRF enforcement contract)
 
-**Conformance target: `draft-ietf-oauth-client-id-metadata-document-01`**
-(2026-03-02). The MCP 2025-11-25 spec normatively references draft **-00**, but
--01 is strictly stricter (MUST-level RFC 6890 SSRF rule, redirect prohibition,
-200-only rule) — we build to -01 deliberately. The MCP profile additionally
-requires the document to contain `client_id`, `client_name`, and
-`redirect_uris`.
+**Implementation hardening target: `draft-ietf-oauth-client-id-metadata-document-01`**
+(2026-03-02). MCP Authorization 2025-11-25 and the final stable 2026-07-28
+artifact both normatively reference draft **-00**. The implementation was built
+against -01's additional SSRF, redirect, and response constraints. The final MCP
+citation is `-00`; a complete normative `-00` requirement-to-source/test mapping
+is still required before claiming final CIMD draft conformance.
 
 > **Draft `-02` (2026-07-06) review — performed 2026-07-10, recorded here
-> 2026-07-16 (closes issue #58).** The conformance target deliberately
-> remains `-01`. Every normative change in `-02` is already satisfied by
+> 2026-07-16 (closes issue #58).** At that review, the implementation hardening
+> target remained `-01`. Every normative change in `-02` is already satisfied by
 > this contract **as written** — a property of the contract text, not of an
 > implementation (CIMD has no runtime path until the S6 sessions ship code
 > against this section): (1) `-02` §3's MUST — Client Identifier URLs
@@ -346,8 +347,10 @@ across Cloudflare Access, Entra, and Google, but its exact dirty tree was not
 archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 2.1.220 repeated CIMD authorization and protected tool calls through exact
 runtime commit `af2a61f` with all three providers. The implementation was
-reviewed against `2026-07-28-RC`; final-spec re-verification remains pending
-the official final artifact.
+reviewed against `2026-07-28-RC`; the official final artifact was then checked
+on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. The explicitly
+checked MCP-page requirements map to implementation and tests; complete draft
+`-00` requirement mapping remains pending.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048

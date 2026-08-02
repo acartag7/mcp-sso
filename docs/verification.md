@@ -374,51 +374,67 @@ Minimum evidence per live row:
    at authorize and does not call `/oauth/register`; only a DCR flow includes
    registration.
 
-## Spec-release re-verification (due 2026-07-28)
+## Spec-release re-verification (completed 2026-08-02)
 
-MANUAL maintainer checklist — not automated, not CI-enforced. Execute after the
-official MCP Authorization 2026-07-28 final artifact is published. The release
-candidate locked 2026-05-21, but as of this receipt only the
-`2026-07-28-RC` prerelease exists. This checklist BLOCKS any docs or marketing
-claim of conformance with the final text until every row below is checked off.
+MANUAL maintainer receipt — not automated and not CI-enforced. Checked against:
 
-- [ ] **(a) DCR deprecation wording.** Confirm that the published final spec
-  retains the Dynamic Client Registration deprecation language from the
-  pre-publication
-  changelog: "Deprecate the OAuth 2.0 Dynamic Client
-  Registration Protocol (RFC7591)... It remains available for backwards
-  compatibility with authorization servers that do not support Client ID
-  Metadata Documents." This wording entered after the RC lock (PR #2858,
-  merged 2026-06-04); confirm it against the final artifact.
-- [ ] **(b) CIMD normative level + draft revision.** Confirm whether Client ID
-  Metadata Documents remain a SHOULD and which draft the final spec cites. This repo's
-  §17.1 CONTRACT builds to the stricter `-01`, and `-02`
-  (published 2026-07-06) was reviewed 2026-07-10 — every `-02` normative
-  change is covered by §17.1 as written. The former caveat is resolved: the
-  §17.1 precision amendment (landed 2026-07-16, closing issue #58) pins the
-  fetch target / `client_id` comparison operand / cache key / stored
-  identifiers to the RAW presented `client_id` string (never a WHATWG
-  re-serialization) and records the `-02` section renumbering for the next
-  re-pin. NOTE: this is a
-  CONTRACT-conformance check only. The CIMD implementation HAS now shipped
-  (S6a primitives + S6b flow integration; the
-  [§16 matrix](contracts/16-spec-conformance-matrix.md) marks CIMD
-  implemented, both frozen acceptance suites active and green). That satisfies
-  the old "until the implementation ships" precondition — but it does NOT by
-  itself license a runtime-verification claim. The patched `ee8994a`-based
-  checkout produced historical observations, but its exact dirty tree was not
-  archived and therefore does not satisfy this file's evidence contract. The
-  replacement 2026-07-28 run satisfies it: Claude Code 2.1.220 completed CIMD
-  authorization and protected calls through exact runtime commit `af2a61f`
-  with Cloudflare Access, Entra, and Google.
-- [ ] **(c) RFC 9207 `iss` + `application_type`.** Confirm whether
-  authorization-server `iss` remains a SHOULD with a signposted future MUST
-  and whether MCP clients still MUST send
-  an appropriate `application_type` during DCR; `Bridge.handleRegister`
-  forwards it to `registerClient`, which accepts the supported `"native"` and
-  `"web"` values.
-- [ ] **(d) Record the outcome.** After the final artifact exists, update
-  `docs/contracts.md` and the §16 matrix with the exact result.
+- official stable release/tag
+  [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28),
+  commit `5f5440bb26a62e2cf3440b92da5a667efa03b267`;
+- dated [Authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization),
+  [Client Registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration),
+  and [Key Changes](https://modelcontextprotocol.io/specification/2026-07-28/changelog)
+  pages; and
+- the tagged source files under
+  `docs/specification/2026-07-28/basic/authorization/` in the official
+  `modelcontextprotocol/modelcontextprotocol` repository.
+
+- [x] **(a) DCR deprecation wording.** Final text retains DCR as an optional
+  `MAY` mechanism, marks it Deprecated, directs new implementations to CIMD,
+  and retains DCR for backwards compatibility with authorization servers that
+  do not support CIMD. The v0.3.2 shape — CIMD preferred, DCR retained for
+  compatibility — is accurate.
+- [x] **(b) CIMD normative level + draft revision.** Final text keeps CIMD at
+  `SHOULD` and cites `draft-ietf-oauth-client-id-metadata-document-00`. The
+  implementation was built against later hardening and proves the explicitly
+  checked MCP-page requirements through capability advertisement in
+  `src/metadata.ts`, exact document binding in `src/cimd/document.ts`, redirect
+  binding through `src/cimd/registration.ts`, and the frozen
+  `test/acceptance/cimd/` suites. A complete normative draft `-00`
+  requirement-to-source/test mapping remains open.
+- [x] **(c) RFC 9207 `iss` + `application_type`.** Final text keeps
+  authorization-server inclusion of `iss` at `SHOULD`, including error
+  responses, with a signposted future `MUST`; a server that includes it `MUST`
+  advertise `authorization_response_iss_parameter_supported: true`. MCP clients
+  still `MUST` send an appropriate DCR `application_type`. v0.3.2 validates
+  `"native"`/`"web"`, defaults omission to OIDC's `"web"`, and enforces stored
+  per-type redirect policy. It advertises RFC 9207 support and emits `iss` on
+  successful code responses, but `buildErrorRedirect` omits `iss` from
+  redirected errors.
+- [x] **(d) Record the outcome.** `docs/contracts.md`, normative references, the
+  §9 bridge contract, §16 matrix, §17 CIMD citation, this receipt, and the
+  contributor-facing status were updated.
+
+**Verdict:** final checked, but MCP Authorization 2026-07-28 conformance remains
+pending on three known items:
+
+1. **RFC 9207 error responses.** `src/challenge.ts` builds
+   `error`/`state`/`error_description` redirects without `iss`;
+   `src/authorize.ts`, `src/adapters/http.ts`, and
+   `src/adapters/upstream-flow-internals.ts` use that builder. Successful
+   responses add `iss` in `src/authorize-internals.ts`, while AS metadata
+   advertises support in `src/metadata.ts`.
+2. **Scope hierarchies.** The final Authorization text says servers `MUST`
+   account for hierarchies where a broader scope implies narrower scopes.
+   `src/scopes.ts` `requireScope` currently performs exact array membership and
+   has no hierarchy policy or proof.
+3. **CIMD draft mapping.** The final artifact normatively references CIMD draft
+   `-00`. The explicitly checked MCP-page requirements are enforced, but the
+   full draft still needs a requirement-by-requirement source/test mapping.
+
+These are separate contract/runtime follow-ups. The conformance target must not
+move from 2025-11-25 until all three are resolved and the resulting implementation
+passes the full release gates.
 
 ## Done rules
 
@@ -466,9 +482,10 @@ and all three audit logs contained zero backend-key matches.
 The packed-artifact pre-tag smoke passed at exact clean-main commit `e71a2bb`.
 The published `mcp-sso@0.3.0` artifact repeated the eight peer-free and all-13
 with-peers import smokes, produced both metadata documents, and carried verified
-registry signatures and attestations. The implementation is reviewed against
-`2026-07-28-RC`; the official final artifact and final-spec checklist remain
-pending, so the release targets MCP Authorization 2025-11-25.
+registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
+stable artifact was manually checked on 2026-08-02. The release still targets
+MCP Authorization 2025-11-25 because the completed receipt above records open
+RFC 9207 error-response, scope-hierarchy, and CIMD draft-mapping requirements.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
 compatibility awaits upstream resolution and retest.

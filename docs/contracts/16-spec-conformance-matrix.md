@@ -5,14 +5,14 @@
 | RFC 9728 PRM (root) | ✅ v0.1 | §9.1 |
 | RFC 9728 PRM (path-inserted) | ✅ v0.1 *(fix #2)* | §9.1 |
 | `WWW-Authenticate: … resource_metadata=…, scope=…` (401) | ✅ v0.1 *(fix #1)* | §8.2 |
-| `insufficient_scope` 403 step-up | ✅ v0.1 | §8.3 |
+| `insufficient_scope` 403 step-up | ✅ exact-scope check; ⚠️ MCP 2026-07-28 additionally requires servers to account for scope hierarchies, which the current flat `requireScope` helper does not model | §8.3, §11 |
 | RFC 8414 AS metadata | ✅ v0.1 | §9.1 |
-| RFC 7591 DCR (stateless) | ✅ v0.1 | §9.2 |
-| Stored-client DCR + `application_type` *(fix #4, RC b)* | ✅ implemented, including the §10.0 stored-state read guard | §9.2, §10.2 |
+| RFC 7591 DCR (stateless) | ✅ implemented as a deprecated compatibility path; MCP 2026-07-28 retains DCR as `MAY` | §9.2 |
+| Stored-client DCR + `application_type` | ✅ server behavior aligns: raw values are validated, omission defaults to `"web"`, and stored per-type redirect policy is enforced. The final MCP `MUST` to send an appropriate value applies to clients | §9.2, §10.2 |
 | Redirect-entry grammar §10.0 (ONE definition, all NINE consumers: boot · DCR write in both modes · stored read · CIMD doc · exported matcher `assertAllowedRedirectUri` · flow-cookie CIMD registration · flow-cookie opaque params · consent-token redirect at approve · authorization-code record at token exchange) | ✅ implemented — the nine-leg differential test passes across every consumer | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
-| RFC 9207 `iss` + `authorization_response_iss_parameter_supported` *(RC a)* | ✅ v0.1 | §9.1, §9.3 |
+| RFC 9207 `iss` + `authorization_response_iss_parameter_supported` | ⚠️ partial: metadata advertises support and successful code responses include `iss`; redirected authorization errors omit it, so MCP 2026-07-28 conformance remains blocked | §9.1, §9.3 |
 | Scope accumulation on step-up *(RC c)* — **stored-DCR opaque clients only** (CIMD clients stand alone; CIMD accumulation deferred — §17.1.6 dec 3) | ✅ v0.1 (core+store; delta UI Phase 3) | §9.3, §11, §17.1.6 |
 | Refresh rotation + family replay revocation | ✅ v0.1 | §7.4, §12 |
 | RFC 6749 §6 refresh client-binding | ✅ v0.1 | §7.4 |
@@ -22,7 +22,7 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny *(fix #5)* + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port *(fix #7)* — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (SSRF-guarded FetcherPort) | ✅ implemented — `createGuardedFetcher` + S6b flow integration (§17.1.5/§17.1.6), frozen acceptance suite active (`s6b-cimd-flow`), including §10.0 redirect-entry canonicality. Claude Code 2.1.220 completed CIMD authorization and protected tool calls through exact runtime commit `af2a61f` with Cloudflare Access, Entra, and Google on 2026-07-28. The final-spec checklist remains pending the official final artifact | §6.6, §17.1 |
+| CIMD (SSRF-guarded FetcherPort) | ⚠️ implemented and proven for the explicitly checked MCP-page requirements: capability advertisement, exact document `client_id`, required fields, redirect binding, and guarded retrieval. Final MCP 2026-07-28 keeps CIMD at `SHOULD` and references draft `-00`; a complete normative draft `-00` requirement-to-source/test mapping remains pending. Frozen acceptance suite `s6b-cimd-flow` is active. Claude Code 2.1.220 completed CIMD authorization and protected tool calls through exact runtime commit `af2a61f` with Cloudflare Access, Entra, and Google on 2026-07-28 | §6.6, §17.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP ext `io.modelcontextprotocol/oauth-client-credentials`) | ✅ v0.2 shipped (S3a provisioning/rotation + S3b grant: Basic+post auth, `MachineTokenResponse`, metadata-gated advertisement) | §17.2 |
@@ -34,7 +34,13 @@
 | Audit reference sinks + expanded events | ✅ v0.2 shipped (S1a) — JsonlFileAudit/WebhookAudit/combineAudit + 9 event names + `ip` | §13, §17.7 |
 | Quickstart secret persistence | ✅ v0.2 shipped (S1b) — `loadOrCreateQuickstartSecrets`, 0700/0600/O_EXCL + perm check, fail-closed | §17.8 |
 
-**Spec-final re-check:** pending the official 2026-07-28 final artifact. The
-`2026-07-28-RC` and later merged pre-publication changes were reviewed, and the
-backward-compatible authorization hardening is built in. See the blocking
-[`docs/verification.md` checklist](../verification.md#spec-release-re-verification-due-2026-07-28).
+**Spec-final re-check (2026-08-02):** completed against official stable tag
+[`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28),
+commit `5f5440bb26a62e2cf3440b92da5a667efa03b267`, and the dated Authorization
+pages. DCR deprecation and the client-side DCR `application_type` requirement
+do not block v0.3.2's single-resource AS scope. The target remains MCP
+Authorization 2025-11-25 because redirected authorization errors omit RFC 9207
+`iss`, the flat `requireScope` helper does not account for scope hierarchies,
+and the referenced CIMD draft `-00` still lacks a complete requirement mapping.
+See the completed
+[`docs/verification.md` receipt](../verification.md#spec-release-re-verification-completed-2026-08-02).
