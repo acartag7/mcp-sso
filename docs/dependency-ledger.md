@@ -88,8 +88,8 @@ workflow is written (Phase 2 scaffold) and recorded here. Intended actions (all
 pinned to a SHA whose tag is ≥15 days old at pin time):
 
 - `actions/checkout` — shallow checkout.
-- `actions/setup-node` — Node 24. The persistent self-hosted runner keeps pnpm's
-  content-addressed store locally; Actions cache export is intentionally disabled.
+- `actions/setup-node` — Node 24 with the pnpm cache enabled on ephemeral
+  GitHub-hosted CI runners.
 - `pnpm/action-setup` — pnpm via corepack (matches `packageManager`).
 - `actions/upload-artifact` / `actions/download-artifact` — transfer the single
   packed tarball from the read-only build job into the dry-run or isolated OIDC
@@ -179,41 +179,32 @@ upstream registries.
 ### CI integration containers (image tags)
 
 The `verify` job runs the `/store/mysql` and `/rate-limit/redis` integration tests
-against `mysql:8.4` and `redis:7-alpine` containers (pinned by **tag**, not
-digest). The isolated Linux runner VM on the Mac mini starts them through its
-Docker engine with `--pull=always`, waits for both health checks, publishes
-random loopback ports, and removes the containers and their anonymous volumes
-after the job. This is a deliberate, narrower trust boundary
-than the SHA-pinned Actions above: a service image is a *test fixture*, not a
-build input that executes in the published artifact. A tag rebuild that changed
-`sql_mode` defaults, the default authentication plugin, or timezone handling
-would be caught loudly rather than silently — `migrateMysqlStore` **fail-closed
-asserts** `STRICT_TRANS_TABLES` in `sql_mode` and `utf8mb4_bin` table collation
-at boot, so image drift that matters for correctness turns the CI red, not
+against `mysql:8.4` and `redis:7-alpine` GitHub Actions services (pinned by
+**tag**, not digest). The ephemeral `ubuntu-latest` runner waits for both service
+health checks and exposes their fixed loopback ports only for the duration of
+the job. This is a deliberate, narrower trust boundary than the SHA-pinned
+Actions above: a service image is a *test fixture*, not a build input that
+executes in the published artifact. A tag rebuild that changed `sql_mode`
+defaults, the default authentication plugin, or timezone handling would be
+caught loudly rather than silently — `migrateMysqlStore` **fail-closed asserts**
+`STRICT_TRANS_TABLES` in `sql_mode` and `utf8mb4_bin` table collation at boot,
+so image drift that matters for correctness turns the CI red, not
 green-with-wrong-results. (If a future change makes these assertions
 insufficient, promote both images to `@sha256:<digest>` pins recorded here with
 the same 15-day check.)
 
-CI verification and `process-guard` use the repo-scoped
-`[self-hosted, Linux, ARM64, mcp-sso]` runner in an isolated VM on the Mac mini.
-CodeQL uses a separate `[self-hosted, macOS, ARM64, mcp-sso-codeql]` runner on
-the same Mac mini because the CodeQL CLI does not support Linux/ARM64; that job
-only checks out source, provisions Node through the pinned setup action, and
-runs CodeQL in `build-mode: none`, with no dependency install or repository
-build command. Main runs automatically; feature refs run only through a
-maintainer-triggered `workflow_dispatch` after their workflow diff is reviewed.
-The workflows do not subscribe to `pull_request` or arbitrary branch pushes, so
-fork- and automation-controlled workflow changes cannot reach either runner
-before review. Release publishing remains on GitHub-hosted `ubuntu-latest` to
-preserve the OIDC trusted-publishing and provenance boundary.
+CI verification, `process-guard`, and CodeQL use ephemeral GitHub-hosted
+`ubuntu-latest` runners. CI and CodeQL subscribe to pull requests targeting
+`main` and to `main` pushes; CodeQL also runs weekly. Pull-request checks attach
+natively to the PR, so the self-hosted-era `workflow_dispatch` and required-
+status attestation machinery is removed. CI retains read-only workflow
+permissions and disables checkout credential persistence. CodeQL installs the
+frozen dependency graph before analysis for richer JavaScript/TypeScript module
+resolution.
 
-GitHub does not attach `workflow_dispatch` job checks to a pull request's
-required-check rollup. For a dispatched CI run, the workflow MUST publish the
-two required commit-status contexts only after both the verify and
-`process-guard` jobs succeed. That attestation runs on the CodeQL-only Mac
-runner, performs no checkout, and alone receives `statuses: write`; the Linux
-job that executes repository code retains read-only contents permission. If
-either enforcing job fails, no success status is published.
+Release publishing remains separately isolated in `publish.yml` on
+GitHub-hosted `ubuntu-latest` behind the tag-only `publish` environment and the
+no-checkout OIDC publishing job.
 
 ## Verification & change protocol
 
