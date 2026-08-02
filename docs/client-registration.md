@@ -51,7 +51,13 @@ and a non-root path:
 Use that exact URL as the OAuth `client_id`. The document's `client_id` must be
 an exact character-for-character match. `client_name` must be non-empty, and
 `redirect_uris` must contain 1–16 valid redirect URIs. HTTPS redirects match
-exactly; loopback HTTP redirects use the RFC 8252 any-port exception.
+exactly; loopback HTTP redirects currently use the RFC 8252 any-port exception.
+
+> **Known gap (D00-4.5.2).** RFC 9700 allows the loopback port to vary only for
+> **native** apps, but the shipped matcher applies it to every CIMD client — a
+> document declaring `application_type: "web"` still matches a different
+> loopback port. A follow-up release gates the exception on the declared type.
+> See the [conformance matrix](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix).
 
 The client-id URL cannot contain query, fragment, or userinfo. IP-literal,
 trailing-dot, and punycode (`xn--`) hosts are rejected. The bridge fetches the

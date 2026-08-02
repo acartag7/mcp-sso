@@ -16,8 +16,14 @@
 (2026-03-02). MCP Authorization 2025-11-25 and the final stable 2026-07-28
 artifact both normatively reference draft **-00**. The implementation was built
 against -01's additional SSRF, redirect, and response constraints. The final MCP
-citation is `-00`; a complete normative `-00` requirement-to-source/test mapping
-is still required before claiming final CIMD draft conformance.
+citation is `-00`; §16.1 now carries the complete 44-statement mapping. It found
+three confirmed runtime mismatches — the `+json` media-type check accepts
+essences outside the `application/` tree, the shared cache ignores
+`s-maxage`/`private`/`Date`, and the loopback port exception is applied without
+RFC 9700's native-app precondition — plus four unresolved test-evidence rows, so
+final CIMD draft conformance cannot yet be claimed. §16.2 additionally records a
+draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
+member.
 
 > **Draft `-02` (2026-07-06) review — performed 2026-07-10, recorded here
 > 2026-07-16 (closes issue #58).** At that review, the implementation hardening
@@ -217,8 +223,13 @@ decision. Everything else in the pipeline still runs under the flag.
   admitted raw `client_id` carrying an explicit `:443` or a mixed-case host
   is NOT spuriously rejected by either check.
 - **Response:** status 200 only (draft MUST); `Content-Type` must be
-  `application/json` or a `+json` suffix type (our hardening — the draft only
-  requires the body to be JSON); body read with a streaming hard cap of
+  `application/json` or an `application/<AS-defined>+json` suffix type — this is
+  the draft's own rule, not our hardening: `-00` §4.1 permits a more specific
+  content type "as long as the response is JSON **and conforms to
+  `application/<AS-defined>+json`**". **PENDING (D00-4.1.4, §16.1):** the shipped
+  `isJsonMediaType` accepts any essence ending in `+json`, including outside the
+  `application/` tree; the follow-up runtime PR narrows it to this rule. Body
+  read with a streaming hard cap of
   `maxDocumentBytes` — exceeding it REJECTS (never truncates: truncated JSON
   must never parse "successfully"); unknown `Content-Encoding` rejected and
   decompressed output counted against the same cap (decompression bombs).
@@ -270,7 +281,9 @@ decision. Everything else in the pipeline still runs under the flag.
   restatement, and not a per-site re-derivation: the CIMD matcher previously
   accepted `*`, `javascript:`, and non-canonical entries that §10.1 refused).
   https entries exact-match at authorize (draft §4.5 / RFC 9700); loopback http
-  matches RFC 8252 any-port (consistent with §10.2 native policy). If present:
+  matches RFC 8252 any-port **only for a document declaring
+  `application_type: "native"`** — see the §17.1.6 decision-1 shared matcher for
+  the canonical rule and its **PENDING (D00-4.5.2)** status. If present:
   `response_types` must include `"code"`; `grant_types` must be an array of
   non-empty strings that includes `"authorization_code"`. Additional grant
   declarations are accepted but do not enable any server grant handler.
@@ -298,7 +311,8 @@ decision. Everything else in the pipeline still runs under the flag.
   document (**SSRF oracle prevention**). The specific reason goes to audit
   only (`oauth.cimd.fetch`, failure, reason code).
 - The presented `redirect_uri` must exact-match a document entry (loopback
-  any-port exception). The consent page MUST present the client_id host and
+  any-port exception, native-declared documents only — §17.1.6 decision 1,
+  **PENDING (D00-4.5.2)**). The consent page MUST present the client_id host and
   redirect host before the cosmetic name as the primary identity anchors, and
   SHOULD warn when every registered redirect is loopback (the MCP localhost-
   impersonation consideration). `client_name` renders second as explicitly
@@ -312,8 +326,10 @@ decision. Everything else in the pipeline still runs under the flag.
   scope set up front, so the convenience is unused; a provenance-aware version is a
   future minor — §12 note.)
 - Token/refresh/revoke: NO re-fetch; binding is the existing auth-code-record
-  and refresh-record client checks (§9.4). Validated documents cache per RFC
-  9111 headers (freshness per §17.1.6 decision 4: `effectiveTtlSeconds =
+  and refresh-record client checks (§9.4). Validated documents cache per a
+  **subset** of RFC 9111 headers (**PENDING (D00-4.4.2)** — shared-cache
+  `s-maxage`/`private`/`Date` semantics are unmodelled; see rule 25)
+  (freshness per §17.1.6 decision 4: `effectiveTtlSeconds =
   min(valid max-age, cacheTtlCapSeconds) − Age − elapsedSeconds`; a valid
   `max-age` below 60 is non-cacheable, never clamped up), keyed by the
   RAW presented `client_id` string (raw-string identity rule —
@@ -348,9 +364,12 @@ archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 2.1.220 repeated CIMD authorization and protected tool calls through exact
 runtime commit `af2a61f` with all three providers. The implementation was
 reviewed against `2026-07-28-RC`; the official final artifact was then checked
-on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. The explicitly
-checked MCP-page requirements map to implementation and tests; complete draft
-`-00` requirement mapping remains pending.
+on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
+44 normative statements: 23 conformant (one carrying a disclosed caveat), two
+reasoned deviations, 12 not applicable to the implemented public-client profile,
+four with unresolved test evidence, and three confirmed runtime mismatches
+(D00-4.1.4 media type, D00-4.4.2 shared-cache directives, D00-4.5.2 native-app
+precondition).
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -475,7 +494,11 @@ checked MCP-page requirements map to implementation and tests; complete draft
 **E. Response handling (tightens 17.1.2 response; supersedes its gzip allowance).**
 15. A duplicate or multi-value `Content-Type` header rejects (an essence-ambiguous
     response is untrusted). Essence match is case-insensitive with parameters
-    allowed: media type `application/json` or any type ending in `+json`.
+    allowed: media type `application/json` or an `application/<AS-defined>+json`
+    type (draft `-00` §4.1). **PENDING (D00-4.1.4, §16.1):** the shipped check
+    accepts any essence ending in `+json`, including outside the `application/`
+    tree; the follow-up runtime PR narrows it to this rule. (The duplicate-header
+    and case-insensitivity clauses are implemented correctly.)
 16. **Content-Encoding: identity only (v0.2).** The request sends
     `Accept-Encoding: identity`; ANY present `Content-Encoding` response header
     rejects — **including a bare `identity`; ONLY an ABSENT `Content-Encoding` is
@@ -543,7 +566,15 @@ checked MCP-page requirements map to implementation and tests; complete draft
     canonical form;
     raw-equality against a non-canonical entry is what made the two matchers
     disagree. Only the
-    `http:` case is loopback. The authorize-time (S6b) loopback any-port match
+    `http:` case is loopback. **PENDING (D00-4.5.2, §16.1):** RFC 9700 — which
+    draft `-00` §4.5 delegates to — permits varying loopback ports only for
+    **native apps**, and `application_type` is in the IANA client-metadata
+    registry `-00` §4.1 imports, so the signal is available in a CIMD document.
+    The shipped matcher receives no client type and applies the exception to
+    every loopback registration, including one declaring `application_type:
+    "web"`; the follow-up runtime PR carries the declared type into the
+    projection and gates the exception on it.
+    The authorize-time (S6b) loopback any-port match
     reuses the existing runtime semantics of src/redirect.ts:95-103 — scheme,
     hostname, pathname, and search equal; port ignored; fragment already rejected
     at validation — resolving the looser "origin" wording elsewhere.
@@ -569,7 +600,8 @@ checked MCP-page requirements map to implementation and tests; complete draft
     disabled/absent, a `https://`-shaped `client_id` is likewise rejected
     `invalid_client`, never treated as a stateless-DCR client.
 23. For a CIMD `client_id`, `prepare`'s redirect validation is the document
-    exact-match (loopback any-port per rule 20), REPLACING §9.3 step 2's §10
+    exact-match (loopback any-port per rule 20, native-declared documents only —
+    §17.1.6 decision 1, **PENDING (D00-4.5.2)**), REPLACING §9.3 step 2's §10
     global-allowlist check for that client. Non-CIMD flows are unchanged.
 24. Single-flight/overload: coalesce concurrent fetches for the same RAW
     client_id; a coalesced follower does NOT consume an in-flight slot. When
@@ -589,7 +621,8 @@ checked MCP-page requirements map to implementation and tests; complete draft
     initiating resolution; the cap counts FOLLOWERS only). This does NOT reverse the
     no-slot rule above: a follower still consumes no FETCH slot, so one popular
     client_id can never starve distinct client_ids out of `maxInFlight`.
-25. Cache freshness (RFC 9111, in-memory per instance, keyed by raw client_id):
+25. Cache freshness (**partial RFC 9111 — see the PENDING note below**, in-memory
+    per instance, keyed by raw client_id):
     `no-store` or `no-cache` ⇒ do not cache; absent, malformed, duplicate, or
     conflicting `Cache-Control`/`max-age`, and a negative/non-integer/overflow
     `Age` or an `Age` ≥ the effective lifetime ⇒ no cache entry (fail toward
@@ -599,6 +632,14 @@ checked MCP-page requirements map to implementation and tests; complete draft
     min(valid max-age, cacheTtlCapSeconds) − Age − elapsedSeconds` and a non-positive
     `effectiveTtlSeconds` is not cached. A quoted `max-age` value is treated as
     malformed (no cache entry).
+    **PENDING (D00-4.4.2, §16.1):** the directives above are honoured correctly,
+    but this cache is SHARED (one instance per `Bridge`, keyed on `client_id`
+    with no user dimension), so RFC 9111's shared-cache rules also bind:
+    `s-maxage` overrides `max-age` (§5.2.2.10), a `private` response **MUST NOT**
+    be stored (§5.2.2.7), and apparent age must be derived from `Date` (§4.2.3).
+    None are modelled and all three were probed as stored. The follow-up runtime
+    PR implements them or refuses to cache when an unsupported directive is
+    present. Until then this rule is a subset of RFC 9111, not conformance to it.
 
 ## 17.1.6 S6b flow-integration amendments (decisions 1–6, 2026-07-23)
 
@@ -645,6 +686,15 @@ semantics of `src/redirect.ts:95-103` (scheme, host, path, and search equal; por
 ignored; fragment already rejected). It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and
 `prepare`'s re-check MUST call this SAME matcher.
+**PENDING (D00-4.5.2, §16.1) — this rule is the canonical definition the other
+any-port statements defer to, so the precondition is stated here once:** RFC 9700
+permits varying the loopback port **only for native apps**, and `application_type`
+is in the IANA client-metadata registry draft `-00` §4.1 imports. The any-port
+branch therefore applies only when the validated document declares
+`application_type: "native"`; a document declaring `"web"`, or omitting the
+property, gets exact raw-string matching (fail closed). The shipped matcher does
+not yet carry the type — follow-up runtime PR 2 threads it through the projection
+and gates the branch on it.
 
 *1a. Shape-first three-way dispatch; CIMD REPLACES §10 for CIMD ids.* Client_id
 shape is classified identically at BOTH the authorize resolve (`upstream-flow.ts:99`)
@@ -850,7 +900,9 @@ URL-keyed refresh row with a broader scope and prove a genuine CIMD authorizatio
 modes) reports `priorScopes = []` and mints only the requested, ceiling-bounded scopes; a
 control case proves an opaque stored-DCR client still accumulates.
 
-**Decision 4 — CimdFetchResult minimal cache view; RFC-9111-correct freshness (the
+**Decision 4 — CimdFetchResult minimal cache view; partial-RFC-9111 freshness
+(**PENDING (D00-4.4.2)**: shared-cache `s-maxage`/`private`/`Date` semantics are
+unmodelled — see rule 25 and §16.1) (the
 success cache serves BOTH modes).** The raw-client-id-keyed validated-success cache
 (§17.1.4) is used at **both** direct-mode `prepare` AND upstream-redirect authorize
 (1a) — NOT direct-mode-only. Redirect mode is the only mode that resolves
@@ -871,6 +923,12 @@ duplicate-aware cache view** — the `Cache-Control` directive occurrences and t
 the full header map (an unnecessary trust-boundary expansion). Error/invalid results
 carry no cache view and are never cached. SUPERSEDES rule 25's upward clamp, with
 pinned conservative arithmetic (all via `ClockPort`, no ambient `Date.now`):
+**PENDING (D00-4.4.2, §16.1):** this cache is SHARED (one instance per `Bridge`,
+keyed on `client_id` with no user dimension), so RFC 9111's shared-cache rules
+apply. The pinned view below models only `Cache-Control` and `Age`; `s-maxage`,
+`private`, and `Date`-derived apparent age are unmodelled and all three were
+probed as stored. The follow-up runtime PR implements those semantics or refuses
+to cache when an unsupported directive is present.
 `Cache-Control` directive names are ASCII case-insensitive; an **absent `Age` is 0**;
 `Age` is cacheable only as exactly one occurrence matching `^[0-9]+$` within the
 safe-integer bound (duplicate/list/signed/whitespaced ⇒ non-cacheable). All lifetime

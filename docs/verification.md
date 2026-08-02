@@ -250,10 +250,10 @@ its enforcement evidence.
 | S6b.2 | Happy path | URL-shaped `client_id` fetches the doc, validates; authorize→token→`/mcp` succeeds. |
 | S6b.3 | Generic client error | Every CIMD failure returns identical client-facing error text. |
 | S6b.4 | Audit detail | `oauth.cimd.fetch` records the specific reason without leaking the document body or secrets. |
-| S6b.5 | Redirect URI match | Exact match required; loopback any-port exception honored. |
+| S6b.5 | Redirect URI match | Exact match required; loopback any-port exception honored. **PENDING (D00-4.5.2):** the exception must additionally be gated on a document declaring `application_type: "native"`, with `"web"` and absent both matching exactly. |
 | S6b.6 | Scope accumulation (CIMD deferred) | CIMD ids do NOT accumulate: a genuine CIMD authorization reports `priorScopes = []` and mints only the requested (ceiling-bounded) scopes in BOTH DCR modes; seed an active legacy URL-keyed refresh row with a broader scope and prove it is never unioned. Control: an opaque stored-DCR client still accumulates. (§17.1.6 decision 3.) |
 | S6b.7 | Metadata flag | `client_id_metadata_document_supported` appears only when enabled. |
-| S6b.8 | Cache (freshness) | Cache HIT reuses the doc (no fetch). Freshness = `min(valid max-age, cacheTtlCapSeconds) − Age − elapsed`; **`max-age`<60 / `no-store` / `no-cache` / absent, duplicate, or quoted `Cache-Control`/`max-age` ⇒ NON-cacheable (re-fetch), never clamped up** (§17.1.6 decision 4); bounded LRU eviction; no error/invalid-doc cache; the SAME cache serves direct-mode `prepare` AND upstream-redirect authorize; single-flight keyed by the raw `client_id`; global in-flight cap (`overloaded` at the cap). |
+| S6b.8 | Cache (freshness) | Cache HIT reuses the doc (no fetch). Freshness = `min(valid max-age, cacheTtlCapSeconds) − Age − elapsed`; **`max-age`<60 / `no-store` / `no-cache` / absent, duplicate, or quoted `Cache-Control`/`max-age` ⇒ NON-cacheable (re-fetch), never clamped up** (§17.1.6 decision 4); bounded LRU eviction; no error/invalid-doc cache; the SAME cache serves direct-mode `prepare` AND upstream-redirect authorize; single-flight keyed by the raw `client_id`; global in-flight cap (`overloaded` at the cap). **PENDING (D00-4.4.2, [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)):** this row states only the `max-age`/`Age` algorithm. Because the cache is SHARED, the row must additionally require RFC 9111 shared-cache semantics — `s-maxage` overriding `max-age` (§5.2.2.10), `private` never stored (§5.2.2.7), and apparent age derived from `Date` (§4.2.3) — or a conservative refusal to cache when an unsupported directive is present. Satisfying the formula alone does **not** close D00-4.4.2. |
 | S6b.9 | SSRF negative suite | Encoded dot segments, IP-literal tricks, blocked DNS records, rebinding, redirect-to-blocked-host, over-cap body, slow endpoint, mismatched `client_id`, and `client_secret` doc all fail with identical client-facing text. |
 | S6b.10 | Upstream-redirect CIMD | Doc resolved + validated ONCE at authorize, carried in the signed `cimd` flow claim, consumed at callback with **NO re-fetch**: inject a fetcher whose `fetch()` THROWS at callback and prove the CIMD flow still completes (carry-forward). Three-way dispatch: `HTTPS://` / `http://` / `ftp://`, and lowercase-`https://` while `cimd` is disabled ⇒ direct `invalid_client` (never a stateless fallback, never an IdP hop). Callback claim/mode/redirect matrix (row 5a) rejects a mismatch as `flow_cookie_invalid`; approve-time scheme gate rejects a legacy URL-shaped stateless token as `invalid_consent`. |
 
@@ -400,8 +400,13 @@ MANUAL maintainer receipt — not automated and not CI-enforced. Checked against
   checked MCP-page requirements through capability advertisement in
   `src/metadata.ts`, exact document binding in `src/cimd/document.ts`, redirect
   binding through `src/cimd/registration.ts`, and the frozen
-  `test/acceptance/cimd/` suites. A complete normative draft `-00`
-  requirement-to-source/test mapping remains open.
+  `test/acceptance/cimd/` suites. The complete 44-statement draft `-00` mapping
+  is now in [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix).
+  It found three confirmed runtime mismatches — `isJsonMediaType` accepts
+  `+json` media types outside the `application/` tree; the shared CIMD cache
+  ignores `s-maxage`, stores `private` responses, and never derives apparent age
+  from `Date`; and the loopback port exception is applied without evaluating
+  RFC 9700's native-app precondition — plus four unresolved test-evidence rows.
 - [x] **(c) RFC 9207 `iss` + `application_type`.** Final text keeps
   authorization-server inclusion of `iss` at `SHOULD`, including error
   responses, with a signposted future `MUST`; a server that includes it `MUST`
@@ -428,13 +433,28 @@ pending on three known items:
    account for hierarchies where a broader scope implies narrower scopes.
    `src/scopes.ts` `requireScope` currently performs exact array membership and
    has no hierarchy policy or proof.
-3. **CIMD draft mapping.** The final artifact normatively references CIMD draft
-   `-00`. The explicitly checked MCP-page requirements are enforced, but the
-   full draft still needs a requirement-by-requirement source/test mapping.
+3. **CIMD draft `-00` conformance.** The final artifact normatively references
+   CIMD draft `-00`. The complete §16.1 mapping found **three confirmed runtime
+   mismatches**, each reproduced by probe: (a) D00-4.1.4 — `isJsonMediaType`
+   (`src/cimd/guarded-fetcher.ts:149-154`) accepts any essence ending in
+   `+json`, while §4.1 permits only `application/<AS-defined>+json`
+   (`text/vendor+json` accepted); (b) D00-4.4.2 — the shared CIMD cache
+   (`src/cimd/cache.ts:78-155`) ignores `s-maxage`, stores `private` responses,
+   and never derives apparent age from `Date`, contrary to RFC 9111 §§4.2.3,
+   5.2.2.7, 5.2.2.10; (c) D00-4.5.2 — `cimdRedirectMatches`
+   (`src/cimd/registration.ts:82-95`) applies RFC 9700's native-app-only
+   loopback port exception without evaluating the client type, so a document
+   declaring `application_type: "web"` still receives it.
+   Four rows also lack complete hostile or shipped-route evidence: symmetric
+   client-auth declarations (D00-4.1.5), adapter route parity (D00-4.1, D00-5.1),
+   and inert document-contained URLs (D00-6.5.2).
 
-These are separate contract/runtime follow-ups. The conformance target must not
-move from 2025-11-25 until all three are resolved and the resulting implementation
-passes the full release gates.
+These are separate contract/runtime follow-ups. Counted individually they are
+**five runtime defects** (RFC 9207 error responses, scope hierarchies, and the
+three CIMD mismatches: media type, shared-cache directives, and the native-app
+precondition) plus **four CIMD test-evidence rows**. The conformance target must
+not move from 2025-11-25 until every one of them is resolved and the resulting
+implementation passes the full release gates.
 
 ## Done rules
 
@@ -484,8 +504,11 @@ The published `mcp-sso@0.3.0` artifact repeated the eight peer-free and all-13
 with-peers import smokes, produced both metadata documents, and carried verified
 registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
 stable artifact was manually checked on 2026-08-02. The release still targets
-MCP Authorization 2025-11-25 because the completed receipt above records open
-RFC 9207 error-response, scope-hierarchy, and CIMD draft-mapping requirements.
+MCP Authorization 2025-11-25 because the completed receipt above records **five**
+open **runtime** requirements — RFC 9207 error responses, scope hierarchies, and
+three confirmed CIMD draft `-00` mismatches (D00-4.1.4 media type, D00-4.4.2
+shared-cache directives, D00-4.5.2 native-app precondition) — plus four
+unresolved CIMD test-evidence rows. The CIMD remainder is **not** test-only.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
 compatibility awaits upstream resolution and retest.
