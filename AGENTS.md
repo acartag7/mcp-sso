@@ -28,8 +28,8 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
   authorization errors omit RFC 9207 `iss`; `requireScope` implements exact
   membership rather than the final text's scope-hierarchy `MUST`; and a complete
   requirement mapping from the final artifact's referenced CIMD draft `-00` is
-  complete, but four test-evidence rows remain unresolved. See the completed
-  matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
+  complete, and it found one confirmed runtime mismatch (media-type acceptance)
+  plus four unresolved test-evidence rows. See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
   and the release checklist in
   [`docs/verification.md`](docs/verification.md#spec-release-re-verification-completed-2026-08-02)
   and the blocker in [`docs/contracts.md`](docs/contracts.md) §0 status.

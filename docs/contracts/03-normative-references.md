@@ -26,5 +26,6 @@
   appropriate DCR `application_type`; authorization servers `SHOULD` include
   RFC 9207 `iss` in success and error authorization responses; and servers
   `MUST` account for scope hierarchies when deciding token sufficiency. The
-  final target remains pending on those runtime gaps plus four unresolved
-  test-evidence rows in the complete CIMD draft `-00` mapping (§16.1).
+  final target remains pending on those runtime gaps plus, in the complete CIMD
+  draft `-00` mapping (§16.1), one confirmed media-type runtime mismatch and
+  four unresolved test-evidence rows.

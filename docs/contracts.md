@@ -30,8 +30,9 @@
 > redirected authorization errors omit RFC 9207 `iss` while metadata advertises
 > support; `requireScope` performs exact membership rather than accounting for
 > scope hierarchies; and the final artifact's referenced CIMD draft `-00` is now
-> completely mapped, with four unresolved test-evidence rows and no confirmed
-> runtime mismatch for the implemented public-client profile. See the matrix in
+> completely mapped, and that mapping found one confirmed runtime mismatch
+> (D00-4.1.4: `+json` media types outside the `application/` tree are accepted)
+> plus four unresolved test-evidence rows. See the matrix in
 > [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
 > and the completed release checklist in
 > [`docs/verification.md` — "Spec-release re-verification (completed

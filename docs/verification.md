@@ -401,8 +401,10 @@ MANUAL maintainer receipt — not automated and not CI-enforced. Checked against
   `src/metadata.ts`, exact document binding in `src/cimd/document.ts`, redirect
   binding through `src/cimd/registration.ts`, and the frozen
   `test/acceptance/cimd/` suites. The complete 44-statement draft `-00` mapping
-  is now in [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix):
-  no runtime mismatch was confirmed, but four test-evidence rows remain open.
+  is now in [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix).
+  It found one confirmed runtime mismatch — `isJsonMediaType` accepts `+json`
+  media types outside the `application/` tree — plus four unresolved
+  test-evidence rows.
 - [x] **(c) RFC 9207 `iss` + `application_type`.** Final text keeps
   authorization-server inclusion of `iss` at `SHOULD`, including error
   responses, with a signposted future `MUST`; a server that includes it `MUST`
@@ -429,11 +431,14 @@ pending on three known items:
    account for hierarchies where a broader scope implies narrower scopes.
    `src/scopes.ts` `requireScope` currently performs exact array membership and
    has no hierarchy policy or proof.
-3. **CIMD draft evidence.** The final artifact normatively references CIMD draft
-   `-00`. The complete §16.1 mapping found no runtime mismatch for the implemented
-   public-client profile, but four rows still lack complete hostile or shipped-route
-   test evidence: symmetric client-auth declarations, adapter route parity,
-   post-authorization no-re-fetch, and inert document-contained URLs.
+3. **CIMD draft `-00` conformance.** The final artifact normatively references
+   CIMD draft `-00`. The complete §16.1 mapping found **one confirmed runtime
+   mismatch**: `isJsonMediaType` (`src/cimd/guarded-fetcher.ts:149-154`) accepts
+   any essence ending in `+json`, while §4.1 permits only the
+   `application/<AS-defined>+json` form — probed, `text/vendor+json` is accepted.
+   Four rows also lack complete hostile or shipped-route evidence: symmetric
+   client-auth declarations (D00-4.1.5), adapter route parity (D00-4.1, D00-5.1),
+   and inert document-contained URLs (D00-6.5.2).
 
 These are separate contract/runtime follow-ups. The conformance target must not
 move from 2025-11-25 until all three are resolved and the resulting implementation

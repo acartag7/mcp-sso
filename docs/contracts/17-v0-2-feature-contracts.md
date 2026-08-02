@@ -17,9 +17,11 @@
 artifact both normatively reference draft **-00**. The implementation was built
 against -01's additional SSRF, redirect, and response constraints. The final MCP
 citation is `-00`; §16.1 now carries the complete 44-statement mapping. It found
-no runtime mismatch for the implemented public-client profile, but four
-test-evidence rows remain unresolved before final CIMD draft conformance can be
-claimed.
+one confirmed runtime mismatch — the `+json` media-type check accepts essences
+outside the `application/` tree — plus four unresolved test-evidence rows, so
+final CIMD draft conformance cannot yet be claimed. §16.2 additionally records a
+draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
+member.
 
 > **Draft `-02` (2026-07-06) review — performed 2026-07-10, recorded here
 > 2026-07-16 (closes issue #58).** At that review, the implementation hardening
@@ -351,9 +353,10 @@ archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 runtime commit `af2a61f` with all three providers. The implementation was
 reviewed against `2026-07-28-RC`; the official final artifact was then checked
 on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
-44 normative statements: 27 conformant, 13 not applicable to the implemented
-public-client profile, four with unresolved test evidence, and no confirmed
-runtime mismatch.
+44 normative statements: 25 conformant (two carrying a disclosed
+deviation/overlay), one reasoned `SHOULD` deviation, 13 not applicable to the
+implemented public-client profile, four with unresolved test evidence, and one
+confirmed runtime mismatch (D00-4.1.4, media-type acceptance).
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
