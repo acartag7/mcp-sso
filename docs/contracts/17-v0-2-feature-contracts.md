@@ -17,8 +17,10 @@
 artifact both normatively reference draft **-00**. The implementation was built
 against -01's additional SSRF, redirect, and response constraints. The final MCP
 citation is `-00`; §16.1 now carries the complete 44-statement mapping. It found
-one confirmed runtime mismatch — the `+json` media-type check accepts essences
-outside the `application/` tree — plus four unresolved test-evidence rows, so
+three confirmed runtime mismatches — the `+json` media-type check accepts
+essences outside the `application/` tree, the shared cache ignores
+`s-maxage`/`private`/`Date`, and the loopback port exception is applied without
+RFC 9700's native-app precondition — plus four unresolved test-evidence rows, so
 final CIMD draft conformance cannot yet be claimed. §16.2 additionally records a
 draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
 member.
@@ -221,8 +223,13 @@ decision. Everything else in the pipeline still runs under the flag.
   admitted raw `client_id` carrying an explicit `:443` or a mixed-case host
   is NOT spuriously rejected by either check.
 - **Response:** status 200 only (draft MUST); `Content-Type` must be
-  `application/json` or a `+json` suffix type (our hardening — the draft only
-  requires the body to be JSON); body read with a streaming hard cap of
+  `application/json` or an `application/<AS-defined>+json` suffix type — this is
+  the draft's own rule, not our hardening: `-00` §4.1 permits a more specific
+  content type "as long as the response is JSON **and conforms to
+  `application/<AS-defined>+json`**". **PENDING (D00-4.1.4, §16.1):** the shipped
+  `isJsonMediaType` accepts any essence ending in `+json`, including outside the
+  `application/` tree; the follow-up runtime PR narrows it to this rule. Body
+  read with a streaming hard cap of
   `maxDocumentBytes` — exceeding it REJECTS (never truncates: truncated JSON
   must never parse "successfully"); unknown `Content-Encoding` rejected and
   decompressed output counted against the same cap (decompression bombs).
@@ -353,10 +360,11 @@ archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 runtime commit `af2a61f` with all three providers. The implementation was
 reviewed against `2026-07-28-RC`; the official final artifact was then checked
 on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
-44 normative statements: 25 conformant (two carrying a disclosed
-deviation/overlay), one reasoned `SHOULD` deviation, 13 not applicable to the
-implemented public-client profile, four with unresolved test evidence, and one
-confirmed runtime mismatch (D00-4.1.4, media-type acceptance).
+44 normative statements: 23 conformant (one carrying a disclosed caveat), two
+reasoned deviations, 12 not applicable to the implemented public-client profile,
+four with unresolved test evidence, and three confirmed runtime mismatches
+(D00-4.1.4 media type, D00-4.4.2 shared-cache directives, D00-4.5.2 native-app
+precondition).
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -481,7 +489,11 @@ confirmed runtime mismatch (D00-4.1.4, media-type acceptance).
 **E. Response handling (tightens 17.1.2 response; supersedes its gzip allowance).**
 15. A duplicate or multi-value `Content-Type` header rejects (an essence-ambiguous
     response is untrusted). Essence match is case-insensitive with parameters
-    allowed: media type `application/json` or any type ending in `+json`.
+    allowed: media type `application/json` or an `application/<AS-defined>+json`
+    type (draft `-00` §4.1). **PENDING (D00-4.1.4, §16.1):** the shipped check
+    accepts any essence ending in `+json`, including outside the `application/`
+    tree; the follow-up runtime PR narrows it to this rule. (The duplicate-header
+    and case-insensitivity clauses are implemented correctly.)
 16. **Content-Encoding: identity only (v0.2).** The request sends
     `Accept-Encoding: identity`; ANY present `Content-Encoding` response header
     rejects — **including a bare `identity`; ONLY an ABSENT `Content-Encoding` is
@@ -549,7 +561,15 @@ confirmed runtime mismatch (D00-4.1.4, media-type acceptance).
     canonical form;
     raw-equality against a non-canonical entry is what made the two matchers
     disagree. Only the
-    `http:` case is loopback. The authorize-time (S6b) loopback any-port match
+    `http:` case is loopback. **PENDING (D00-4.5.2, §16.1):** RFC 9700 — which
+    draft `-00` §4.5 delegates to — permits varying loopback ports only for
+    **native apps**, and `application_type` is in the IANA client-metadata
+    registry `-00` §4.1 imports, so the signal is available in a CIMD document.
+    The shipped matcher receives no client type and applies the exception to
+    every loopback registration, including one declaring `application_type:
+    "web"`; the follow-up runtime PR carries the declared type into the
+    projection and gates the exception on it.
+    The authorize-time (S6b) loopback any-port match
     reuses the existing runtime semantics of src/redirect.ts:95-103 — scheme,
     hostname, pathname, and search equal; port ignored; fragment already rejected
     at validation — resolving the looser "origin" wording elsewhere.
@@ -877,6 +897,12 @@ duplicate-aware cache view** — the `Cache-Control` directive occurrences and t
 the full header map (an unnecessary trust-boundary expansion). Error/invalid results
 carry no cache view and are never cached. SUPERSEDES rule 25's upward clamp, with
 pinned conservative arithmetic (all via `ClockPort`, no ambient `Date.now`):
+**PENDING (D00-4.4.2, §16.1):** this cache is SHARED (one instance per `Bridge`,
+keyed on `client_id` with no user dimension), so RFC 9111's shared-cache rules
+apply. The pinned view below models only `Cache-Control` and `Age`; `s-maxage`,
+`private`, and `Date`-derived apparent age are unmodelled and all three were
+probed as stored. The follow-up runtime PR implements those semantics or refuses
+to cache when an unsupported directive is present.
 `Cache-Control` directive names are ASCII case-insensitive; an **absent `Age` is 0**;
 `Age` is cacheable only as exactly one occurrence matching `^[0-9]+$` within the
 safe-integer bound (duplicate/list/signed/whitespaced ⇒ non-cacheable). All lifetime

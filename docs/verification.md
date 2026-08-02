@@ -402,9 +402,11 @@ MANUAL maintainer receipt — not automated and not CI-enforced. Checked against
   binding through `src/cimd/registration.ts`, and the frozen
   `test/acceptance/cimd/` suites. The complete 44-statement draft `-00` mapping
   is now in [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix).
-  It found one confirmed runtime mismatch — `isJsonMediaType` accepts `+json`
-  media types outside the `application/` tree — plus four unresolved
-  test-evidence rows.
+  It found three confirmed runtime mismatches — `isJsonMediaType` accepts
+  `+json` media types outside the `application/` tree; the shared CIMD cache
+  ignores `s-maxage`, stores `private` responses, and never derives apparent age
+  from `Date`; and the loopback port exception is applied without evaluating
+  RFC 9700's native-app precondition — plus four unresolved test-evidence rows.
 - [x] **(c) RFC 9207 `iss` + `application_type`.** Final text keeps
   authorization-server inclusion of `iss` at `SHOULD`, including error
   responses, with a signposted future `MUST`; a server that includes it `MUST`
@@ -432,19 +434,27 @@ pending on three known items:
    `src/scopes.ts` `requireScope` currently performs exact array membership and
    has no hierarchy policy or proof.
 3. **CIMD draft `-00` conformance.** The final artifact normatively references
-   CIMD draft `-00`. The complete §16.1 mapping found **one confirmed runtime
-   mismatch**: `isJsonMediaType` (`src/cimd/guarded-fetcher.ts:149-154`) accepts
-   any essence ending in `+json`, while §4.1 permits only the
-   `application/<AS-defined>+json` form — probed, `text/vendor+json` is accepted.
+   CIMD draft `-00`. The complete §16.1 mapping found **three confirmed runtime
+   mismatches**, each reproduced by probe: (a) D00-4.1.4 — `isJsonMediaType`
+   (`src/cimd/guarded-fetcher.ts:149-154`) accepts any essence ending in
+   `+json`, while §4.1 permits only `application/<AS-defined>+json`
+   (`text/vendor+json` accepted); (b) D00-4.4.2 — the shared CIMD cache
+   (`src/cimd/cache.ts:78-155`) ignores `s-maxage`, stores `private` responses,
+   and never derives apparent age from `Date`, contrary to RFC 9111 §§4.2.3,
+   5.2.2.7, 5.2.2.10; (c) D00-4.5.2 — `cimdRedirectMatches`
+   (`src/cimd/registration.ts:82-95`) applies RFC 9700's native-app-only
+   loopback port exception without evaluating the client type, so a document
+   declaring `application_type: "web"` still receives it.
    Four rows also lack complete hostile or shipped-route evidence: symmetric
    client-auth declarations (D00-4.1.5), adapter route parity (D00-4.1, D00-5.1),
    and inert document-contained URLs (D00-6.5.2).
 
 These are separate contract/runtime follow-ups. Counted individually they are
-**three runtime defects** (RFC 9207 error responses, scope hierarchies, and the
-CIMD media-type mismatch) plus **four CIMD test-evidence rows**. The conformance
-target must not move from 2025-11-25 until every one of them is resolved and the
-resulting implementation passes the full release gates.
+**five runtime defects** (RFC 9207 error responses, scope hierarchies, and the
+three CIMD mismatches: media type, shared-cache directives, and the native-app
+precondition) plus **four CIMD test-evidence rows**. The conformance target must
+not move from 2025-11-25 until every one of them is resolved and the resulting
+implementation passes the full release gates.
 
 ## Done rules
 
@@ -494,11 +504,11 @@ The published `mcp-sso@0.3.0` artifact repeated the eight peer-free and all-13
 with-peers import smokes, produced both metadata documents, and carried verified
 registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
 stable artifact was manually checked on 2026-08-02. The release still targets
-MCP Authorization 2025-11-25 because the completed receipt above records three
+MCP Authorization 2025-11-25 because the completed receipt above records **five**
 open **runtime** requirements — RFC 9207 error responses, scope hierarchies, and
-the confirmed CIMD draft `-00` media-type mismatch (D00-4.1.4: `isJsonMediaType`
-accepts `+json` essences outside the `application/` tree) — plus four unresolved
-CIMD test-evidence rows. The CIMD remainder is **not** test-only.
+three confirmed CIMD draft `-00` mismatches (D00-4.1.4 media type, D00-4.4.2
+shared-cache directives, D00-4.5.2 native-app precondition) — plus four
+unresolved CIMD test-evidence rows. The CIMD remainder is **not** test-only.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
 compatibility awaits upstream resolution and retest.

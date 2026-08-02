@@ -22,7 +22,7 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 25 conformant (2 with a disclosed deviation/overlay), 1 reasoned `SHOULD` deviation, 4 unresolved test-evidence rows, **1 confirmed runtime mismatch (D00-4.1.4 media-type acceptance)**, 13 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
+| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 23 conformant (1 with a disclosed caveat), 2 reasoned deviations, 4 unresolved test-evidence rows, **3 confirmed runtime mismatches (D00-4.1.4 media type, D00-4.4.2 shared-cache directives, D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP extension) | ✅ v0.2 shipped | §17.2 |
@@ -48,20 +48,21 @@ than folded into a single "conformant" total:
 
 | Class | Count | Rows | Meaning |
 |---|---|---|---|
-| `C` conformant | 23 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
-| `C` with a disclosed caveat | 2 | D00-4.5.2, D00-6.5.1 | Conformant, with a precondition the implementation cannot evaluate (D00-4.5.2: RFC 9700 conditions its loopback-port exception on native-app clients, a signal CIMD `-00` does not define) or a narrower environment-scoped departure (D00-6.5.1: the dev-only loopback fetch). Stated in the row rather than absorbed into the total. |
-| Reasoned `SHOULD` deviation | 1 | D00-4.2.1 | The antecedent fires and the recommendation is deliberately not met; rationale recorded. |
+| `C` conformant | 22 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
+| `C` with a disclosed caveat | 1 | D00-6.5.1 | Conformant in production, with a narrower environment-scoped departure (the dev-only loopback fetch) stated in the row rather than absorbed into the total. |
+| Reasoned deviation | 2 | D00-4.2.1 (`SHOULD`), D00-4.2.2 (`RECOMMENDED`) | The obligation applies and is deliberately not met; rationale recorded. |
 | `U` unresolved evidence | 4 | D00-4.1, D00-4.1.5, D00-5.1, D00-6.5.2 | The enforcing source exists, but no test yet proves the complete hostile class or the shipped framework route. |
-| **Runtime mismatch** | **1** | **D00-4.1.4** | Implementation contradicts the statement. Confirmed by probe, not inferred. |
-| `N/A` not applicable | 13 | — | Excluded client-side duty, optional feature not implemented, or a conditional whose trigger provably never fires. |
+| **Runtime mismatch** | **3** | **D00-4.1.4, D00-4.4.2, D00-4.5.2** | Implementation contradicts the statement. Each reproduced by direct probe, not inferred. |
+| `N/A` not applicable | 12 | — | Excluded client-side duty, optional feature not implemented, or a conditional whose trigger provably never fires. |
 
-Applicable to the implemented public-client authorization-server profile: 31.
-The one runtime mismatch (D00-4.1.4, media-type acceptance) was found by the
-independent review, not by the original pass, and is reproduced by direct probe
-on this commit. Deviations and overlays are counted separately so no single
-"conformant" integer absorbs them. Every `N/A` row records the specific reason
-its obligation cannot apply, so the classification can be re-checked rather than
-taken on trust.
+Applicable to the implemented public-client authorization-server profile: 32.
+**All three runtime mismatches were found by independent review, not by the
+original pass** — media-type acceptance (D00-4.1.4), shared-cache directive
+handling (D00-4.4.2), and the unevaluated native-app precondition on the
+loopback port exception (D00-4.5.2). Each is reproduced by probe on this commit.
+Deviations are counted separately so no single "conformant" integer absorbs
+them. Every `N/A` row records the specific reason its obligation cannot apply,
+so the classification can be re-checked rather than taken on trust.
 
 | ID | Draft statement and applicability | Status | Enforcing source | Test evidence and mutation strength |
 |---|---|---|---|---|
@@ -83,17 +84,17 @@ taken on trust.
 | D00-4.1.6 | §4.1 `client_secret` and `client_secret_expires_at` **MUST NOT** be used. AS-applicable. | C | `src/cimd/document.ts:33-35` | Frozen `document.test.ts:96-99` and route-level anti-oracle `s6b-anti-oracle.test.ts:119-126,164-167`; removing either presence check fails. |
 | D00-4.1.7 | §4.1 other specs **MAY** impose stricter metadata restrictions. Profile-applicable: mcp-sso accepts public clients only. | C | `src/cimd/document.ts:31-38`; AS metadata `src/metadata.ts:31-38` | Frozen `document.test.ts:88-105` and `s6b-metadata.test.ts:35-45`; confidential declarations reject and `none` remains advertised. |
 | D00-4.2.1 | §4.2 if the AS "does place additional restrictions on the accepted `redirect_uris`" it **SHOULD** provide at least one exempt CIMD Metadata Document Service. Same-origin is only the draft's example, so the antecedent is broad and **does** fire. | Applicable — reasoned `SHOULD` deviation | Restrictions that trigger it: `src/cimd/document.ts:29,48` per-entry hygiene via the §10.0 grammar (scheme, query, fragment, canonical spelling) | mcp-sso is a library, not hosted infrastructure; it ships no CIMD Metadata Document Service, and operating one would be a separate abuse/retention/trust product a deployment must own. For local development it instead admits an explicitly dev-gated loopback document (`src/cimd/admission.ts:68-75`; `s6b-boot.test.ts:104-140`). Recorded as a deliberate BCP 14 `SHOULD` deviation, not conformance. |
-| D00-4.2.2 | §4.2 use of CIMD services is **RECOMMENDED** for development. Deployment-operator recommendation. | N/A | Not an AS runtime duty; mcp-sso is a library, not a hosted registration service | For local development the library instead admits an explicitly dev-gated loopback document (`src/cimd/admission.ts:68-75`), proven on and off by `s6b-boot.test.ts:104-140`. Operating a public CIMD service remains a deployment choice outside the library boundary. |
+| D00-4.2.2 | §4.2 "the usage of Client ID Metadata Document Services **by the authorization server** is **RECOMMENDED**." Addressed to the AS, so it is applicable — not a client or deployment-only duty. | Applicable — reasoned `RECOMMENDED` deviation | No such service ships | Same library boundary as D00-4.2.1: mcp-sso is a library, and operating a CIMD Metadata Document Service would be a separate hosted product with its own abuse, retention, and trust surface. For local development it instead admits an explicitly dev-gated loopback document (`src/cimd/admission.ts:68-75`), proven on and off by `s6b-boot.test.ts:104-140`. Recorded as a deliberate deviation rather than scored as inapplicable. *(Draft `-02` later moved this material to a non-normative appendix, which confirms it was normative in the `-00` text under audit.)* |
 | D00-4.2.3 | §4.2 a CIMD service **MAY** expire clients. Optional service not implemented. | N/A | — | No CIMD service exists in this project. |
 | D00-4.2.4 | §4.2 a CIMD service **MAY** require developer information. Optional service not implemented. | N/A | — | No CIMD service exists in this project. |
 | D00-4.3.1 | §4.3 failed fetch **SHOULD** abort authorization. AS-applicable; profile upgrades to fail-closed. | C | `src/cimd/resolve.ts:167-199`; generic map `src/cimd/anti-oracle.ts:25-48` | Frozen `s6b-anti-oracle.test.ts:109-181,208-264`; every failure aborts both boundaries with no redirect/IdP hop. |
 | D00-4.4.1 | §4.4 AS **MAY** cache discovered metadata. AS-applicable option exercised. | C | `src/cimd/cache.ts:45-75`; `src/cimd/resolve.ts:209-240` | Frozen `s6b-cache.test.ts:89-115,186-211`; positive hit and LRU rows fail if caching is removed or keyed by normalized URL. |
-| D00-4.4.2 | §4.4 caching **SHOULD** respect RFC 9111 headers. AS-applicable. | C | `src/cimd/cache.ts:78-155`; duplicate-aware view `src/cimd/guarded-fetcher.ts:110-119` | Frozen `s6b-cache.test.ts:96-165`; max-age, Age, no-store/no-cache, malformed and elapsed-time cases are mutation-sensitive. |
+| D00-4.4.2 | §4.4 caching **SHOULD** respect RFC 9111 headers. AS-applicable — and the CIMD cache is a **shared** cache: one `CimdSuccessCache` per `Bridge` (`src/adapters/bridge.ts:89`; `src/cimd/resolve.ts:90`) keyed on `client_id` alone (`resolve.ts:210,239`), with no user dimension. | **Runtime mismatch** | `src/cimd/cache.ts:78-155`; view limited to `Cache-Control` + `Age` at `src/cimd/guarded-fetcher.ts:110-119` | The directives that **are** modelled (`max-age`, `Age`, `no-store`, `no-cache`, malformed/duplicate/quoted forms, elapsed time) are correct and mutation-sensitive under frozen `s6b-cache.test.ts:96-165`. But three load-bearing shared-cache rules are unmodelled, probed on this commit as **stored**: `s-maxage=0` alongside `max-age=3600` (RFC 9111 §5.2.2.10 — `s-maxage` overrides `max-age` for shared caches), `private, max-age=3600` (§5.2.2.7 — a shared cache **MUST NOT** store it), and `Date`-derived apparent age is never computed (§4.2.3), so an already-stale response is treated as fresh. Fix in follow-up PR 3: implement these semantics, or conservatively refuse to cache when an unsupported directive is present. |
 | D00-4.4.3 | §4.4 AS **MAY** set upper/lower cache-lifetime bounds. Option exercised. | C | `src/cimd/options.ts:21-23,42-47`; `src/cimd/cache.ts:11,82-95` | Frozen `s6b-boot.test.ts:93-100` and `s6b-cache.test.ts:103-121`; cap and minimum-cacheable behavior are pinned. |
 | D00-4.4.4 | §4.4 AS **MUST NOT** cache error responses. AS-applicable. | C | Only `fetchAndCache` success reaches `cache.set`: `src/cimd/resolve.ts:232-240` | Frozen `s6b-cache.test.ts:167-184`; a failed first resolution is fetched again, then a valid success caches. |
 | D00-4.4.5 | §4.4 AS **MUST NOT** cache invalid/malformed documents. AS-applicable. | C | Validation precedes projection/cache: `src/cimd/guarded-fetcher.ts:104-108`; `src/cimd/resolve.ts:232-240` | Frozen `s6b-cache.test.ts:176-184`; mismatched documents are rejected and fetched on every attempt. |
 | D00-4.5.1 | §4.5 AS **MUST** require redirect registration; the validated document supplies it. AS-applicable. | C | `src/cimd/document.ts:25-29`; `src/cimd/registration.ts:82-95`; `src/cimd/resolve.ts:178-183` | Frozen `s6b-redirect.test.ts:177-217` and `s6b-cache.test.ts:279-322`; an absent/nonmatching URI fails on misses and hits. |
-| D00-4.5.2 | §4.5: "According to [RFC9700], the authorization server … **MUST** ensure that the redirect URI in a request is an exact match of a registered redirect URI." The rule is **delegated to RFC 9700**, so RFC 9700's scope — including its one exception — defines what "exact match" requires here. | C, with the native-app precondition unenforced (disclosed) | Document match: `src/cimd/registration.ts:82-95`, called at authorize (`src/authorize-internals.ts:63,68`) and callback (`src/adapters/upstream-flow-cimd.ts:80`) | Frozen `s6b-redirect.test.ts:177-217,299-308,363-385`. Probed on this commit: port varies **only** for `localhost`, `127.0.0.1`, `[::1]`; `https` stays port-exact, and a differing path or host rejects. **Why this is conformant rather than a mismatch:** `-00` §4.5 states no independent matching rule — it defers to RFC 9700, whose §2.1 requires "exact string matching **except for port numbers in localhost redirection URIs of native apps**" and whose §4.1.3 repeats "native apps using a **localhost** URI." RFC 9700 therefore words the carve-out in terms of `localhost`, and RFC 8252 §8.3 confirms `localhost` redirects "function similarly to" the §7.3 loopback-IP form (discouraging them **for clients**, not forbidding the server to accept them). Port-varying loopback matching is thus inside the delegated rule, not a departure from it. **Residual, disclosed:** RFC 9700 conditions the exception on the client being a native app, and CIMD `-00` defines no `application_type` (absent from the draft entirely) — `src/cimd/` never reads one — so mcp-sso cannot evaluate that precondition and applies the exception to every CIMD client. That unenforced precondition is the honest gap; narrowing it would need a client-type signal the draft does not define. The loopback branch omits `search`, but `src/redirect-entry.ts:46` rejects any raw `?` on both sides, so a differing query is unreachable rather than unchecked. **Not document enforcement:** `src/token.ts:207-218` binds the token request only to the stored authorization-code record. |
+| D00-4.5.2 | §4.5: "According to [RFC9700], the authorization server … **MUST** ensure that the redirect URI in a request is an exact match of a registered redirect URI." The rule is delegated to RFC 9700, whose sole exception is **native-app** loopback ports. | **Runtime mismatch** | `src/cimd/registration.ts:82-95` (matcher receives no client type); `src/cimd/document.ts:23-38` accepts `application_type` but `src/cimd/registration.ts:36-44` drops it | Probed on this commit: a document declaring **`application_type: "web"`** with registered `http://localhost:5000/cb` **matches** a presented `http://localhost:7000/cb`. RFC 9700 §2.1 permits varying "port numbers in localhost redirection URIs **of native apps**" and §4.1.3 repeats "**native apps** using a localhost URI"; the host wording does cover `localhost` (RFC 8252 §8.3: it "function[s] similarly to" the §7.3 form), **but the native-app precondition is never evaluated**. `-00` §4.1 imports the IANA OAuth client-metadata registry, which registers `application_type`, so the signal is available in a CIMD document — the validator simply accepts and discards it. Applying a native-only exception to a self-declared web client, and defaulting to it when no type is present, is a fail-open trust-boundary decision. Frozen `s6b-redirect.test.ts:177-217,299-308,363-385` covers only host/port/path shapes, never a declared type, so it stays green. Fix in follow-up PR 2. *(Unrelated and sound: the loopback branch omits `search`, but `src/redirect-entry.ts:46` rejects any raw `?` on both sides; and `src/token.ts:207-218` binds only the stored authorization-code record, so it is not document enforcement.)* |
 | D00-5.1 | §5 an AS publishing RFC 8414 metadata **MUST** include the CIMD support property. AS-applicable. | U | `src/metadata.ts:17-39`; Bridge route `src/adapters/bridge.ts:95-97`; all adapters mount that handler | Frozen `s6b-metadata.test.ts:35-45` proves the builder pair, and `test/bin-init.test.ts:229-235` asserts `true` over a real HTTP route on a spawned **Fastify** server. Express and Hono assert only the metadata route's issuer (`test/lib/adapter-flow.ts:73-75`), so the served flag is unproven on two of the three shipped adapters. |
 | D00-5.2 | §5 `client_id_metadata_document_supported` is an **OPTIONAL** registered field generally; supporting deployments publish `true`. AS-applicable. | C | `src/metadata.ts:36-39` | Frozen `s6b-metadata.test.ts:35-45`; enabled=`true`, disabled=absent, and `none` remains advertised. |
 | D00-6.1.1 | §6.1 AS **MAY** impose restrictions or relationships **between** `redirect_uris` and `client_id`/`client_uri` (e.g. same-origin). Optional policy **not** exercised. | N/A | No such comparison exists anywhere in `src/cimd/` | Verified by absence and by positive test: `document.test.ts:145-149` accepts `https://app.example.com/cb` for client id host `cdn.example.com`. The §10.0 per-entry hygiene mcp-sso does apply constrains each redirect URI on its own; it is **not** a relationship to the client identifier, and is scored under D00-4.2.1 instead. |
@@ -112,8 +113,8 @@ taken on trust.
 
 ### Audit blockers and follow-up graph
 
-One runtime change **is** required, plus three normative evidence PRs. Each is a
-separate reviewable concern; none should carry the independent RFC 9207
+**Three runtime changes** are required, plus three normative evidence PRs. Each
+is a separate reviewable concern; none should carry the independent RFC 9207
 error-response or scope-hierarchy work.
 
 1. **Runtime PR — media-type acceptance (closes the D00-4.1.4 mismatch, P1).**
@@ -125,13 +126,30 @@ error-response or scope-hierarchy work.
    hostile witnesses for at least `text/vendor+json` and `image/svg+json` through
    direct and upstream resolution. Until this lands the CIMD profile has a
    confirmed `-00` mismatch.
-2. **Test PR — symmetric client-auth declarations (closes D00-4.1.5, P2).** Of
+2. **Runtime PR — native-app precondition on the loopback port exception
+   (closes the D00-4.5.2 mismatch, P1).** RFC 9700 permits varying loopback
+   ports only for **native apps**; `cimdRedirectMatches` never sees a client
+   type, so a document declaring `application_type: "web"` still gets the
+   exception (probed). `-00` §4.1 imports the IANA client-metadata registry,
+   which registers `application_type`, so the signal exists — `document.ts`
+   accepts it and `registration.ts:36-44` drops it. Carry the declared type into
+   the projection and require exact matching unless it is `native`; decide
+   explicitly (and fail closed) when the type is absent. Regressions across
+   direct, upstream, callback, and prepare for `"web"`, `"native"`, and absent.
+3. **Runtime PR — shared-cache directive handling (closes the D00-4.4.2
+   mismatch, P1).** The CIMD cache is shared across users but ignores
+   `s-maxage`, stores `private` responses, and never computes `Date`-derived
+   apparent age (all three probed as stored). Implement the shared-cache
+   semantics of RFC 9111 §§4.2.3, 5.2.2.7 and 5.2.2.10, or refuse to cache when
+   an unsupported directive is present. Hostile tests must prove stale,
+   `private`, and `s-maxage`-limited responses are re-fetched.
+4. **Test PR — symmetric client-auth declarations (closes D00-4.1.5, P2).** Of
    the three methods §4.1 names, only `client_secret_basic` has a hostile witness
    (`document.test.ts:91`); `client_secret_post` and `client_secret_jwt` have
    none. The allowlist at `src/cimd/document.ts:31-32` admits only absent or
    `"none"`, so this is coverage rather than a hole — add the two missing
    witnesses plus one non-enumerated symmetric method, direct and upstream.
-3. **Test PR — shipped adapter parity (closes D00-4.1 and D00-5.1, P2).** No
+5. **Test PR — shipped adapter parity (closes D00-4.1 and D00-5.1, P2).** No
    adapter test drives a `https://` CIMD `client_id` through a shipped route:
    `test/lib/adapter-flow.ts:77-95` registers through DCR and authorizes with the
    returned opaque id. Scope is a **six-cell matrix** — direct and upstream CIMD
@@ -140,7 +158,7 @@ error-response or scope-hierarchy work.
    registers a callback route; the upstream cells must complete callback →
    consent. Separately, extend the served support-flag assertion to Express and
    Hono (Fastify is covered by `test/bin-init.test.ts:229-235`).
-4. **Test PR — document-contained URLs are inert (closes D00-6.5.2, P2).**
+6. **Test PR — document-contained URLs are inert (closes D00-6.5.2, P2).**
    Publish hostile `logo_uri`, `jwks_uri`, `policy_uri`, and `tos_uri` values and
    assert exactly one outbound request: the Client Identifier URL itself.
 
@@ -173,26 +191,28 @@ diff, and every cited source and test line. Their corrections are applied above:
   `client_id`/`client_uri`, which mcp-sso never compares: `N/A`.
 - **D00-6.5.1 split by environment**, so the dev-loopback fetch is disclosed as
   a `-00` deviation instead of hidden behind production-only evidence.
-- **D00-4.5.2 re-examined against the delegation chain, and kept conformant.**
-  A review round argued the loopback any-port branch is a second runtime
-  mismatch because RFC 8252 §7.3 speaks of loopback **IP literals** for native
-  apps while the matcher also accepts `localhost`. Re-read verbatim, `-00` §4.5
-  defines no independent rule — it says "According to [RFC9700]" and delegates.
-  RFC 9700 §2.1 words the exception as "port numbers in **localhost**
-  redirection URIs of native apps" and §4.1.3 as "native apps using a
-  **localhost** URI"; RFC 8252 §8.3 confirms `localhost` "function[s] similarly
-  to" the §7.3 form and is NOT RECOMMENDED **for clients**, not prohibited for
-  servers. Host coverage is therefore inside the delegated rule. What the
-  implementation genuinely cannot enforce is RFC 9700's *native-app*
-  precondition, because CIMD `-00` defines no `application_type` at all — that
-  unenforced precondition is now stated in the row instead of being framed as a
-  host-set problem. Independent corroboration from a different direction: the
-  stable MCP 2026-07-28 Client Registration page's own canonical CIMD example
-  document registers **both** `http://127.0.0.1:3000/callback` and
-  `http://localhost:3000/callback`, so an authorization server that refused
-  port-varying `localhost` would reject the specification's own example client.
-  That page also confirms `application_type` is a **DCR** parameter, which is
-  why no CIMD document carries one.
+- **D00-4.5.2 was wrongly defended twice before being classified correctly.**
+  The first pass scored it `C`. A review round called it a mismatch on the
+  grounds that RFC 8252 §7.3 names loopback **IP literals** while the matcher
+  also accepts `localhost`; that specific premise is wrong — RFC 9700 §2.1 and
+  §4.1.3, the rule `-00` §4.5 delegates to, both word the exception in terms of
+  `localhost`, and RFC 8252 §8.3 says `localhost` "function[s] similarly to" the
+  §7.3 form. On the strength of that I kept the row conformant and argued the
+  native-app precondition was unenforceable because CIMD defines no
+  `application_type`. **That was the error.** `-00` §4.1 imports the IANA OAuth
+  client-metadata registry, which registers `application_type`; the validator
+  accepts the property and the projection discards it. A probe then showed a
+  document declaring `application_type: "web"` still receiving the native-only
+  port exception — a fail-open trust-boundary decision. The row is now a runtime
+  mismatch, and the fix is follow-up PR 2. Recorded at length because the wrong
+  answer survived two rounds of reasoning that were each locally correct.
+- **D00-4.4.2 reclassified after probing shared-cache semantics.** The cache is
+  shared (one instance per `Bridge`, keyed on `client_id` with no user
+  dimension) yet stores `private` responses, ignores `s-maxage`, and never
+  derives apparent age from `Date`. All three probed as stored.
+- **D00-4.2.2 reclassified from `N/A` to a reasoned deviation.** §4.2 addresses
+  the recommendation to "the authorization server", so it applies; shipping no
+  such service is a deliberate deviation, not an inapplicable obligation.
 - **`src/token.ts` citation withdrawn** as document enforcement — it binds only
   the stored authorization-code record.
 - **Counts split by class** so no single "conformant" integer absorbs a
@@ -250,5 +270,7 @@ resolves to commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` and references
 CIMD draft `-00`. Completing this mapping does not change the project target:
 MCP Authorization 2025-11-25 remains current because redirected authorization
 errors still omit RFC 9207 `iss`, scope hierarchy handling is absent, and CIMD
-now carries one confirmed `-00` runtime mismatch (D00-4.1.4, media-type
-acceptance) plus three open evidence PRs.
+now carries **three** confirmed `-00` runtime mismatches (D00-4.1.4 media type,
+D00-4.4.2 shared-cache directives, D00-4.5.2 native-app precondition) plus three
+open evidence PRs. Counted individually the project has **five** open MCP-2026
+runtime defects.
