@@ -186,7 +186,13 @@ diff, and every cited source and test line. Their corrections are applied above:
   implementation genuinely cannot enforce is RFC 9700's *native-app*
   precondition, because CIMD `-00` defines no `application_type` at all — that
   unenforced precondition is now stated in the row instead of being framed as a
-  host-set problem.
+  host-set problem. Independent corroboration from a different direction: the
+  stable MCP 2026-07-28 Client Registration page's own canonical CIMD example
+  document registers **both** `http://127.0.0.1:3000/callback` and
+  `http://localhost:3000/callback`, so an authorization server that refused
+  port-varying `localhost` would reject the specification's own example client.
+  That page also confirms `application_type` is a **DCR** parameter, which is
+  why no CIMD document carries one.
 - **`src/token.ts` citation withdrawn** as document enforcement — it binds only
   the stored authorization-code record.
 - **Counts split by class** so no single "conformant" integer absorbs a
