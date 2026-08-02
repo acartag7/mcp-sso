@@ -440,9 +440,11 @@ pending on three known items:
    client-auth declarations (D00-4.1.5), adapter route parity (D00-4.1, D00-5.1),
    and inert document-contained URLs (D00-6.5.2).
 
-These are separate contract/runtime follow-ups. The conformance target must not
-move from 2025-11-25 until all three are resolved and the resulting implementation
-passes the full release gates.
+These are separate contract/runtime follow-ups. Counted individually they are
+**three runtime defects** (RFC 9207 error responses, scope hierarchies, and the
+CIMD media-type mismatch) plus **four CIMD test-evidence rows**. The conformance
+target must not move from 2025-11-25 until every one of them is resolved and the
+resulting implementation passes the full release gates.
 
 ## Done rules
 
@@ -492,9 +494,11 @@ The published `mcp-sso@0.3.0` artifact repeated the eight peer-free and all-13
 with-peers import smokes, produced both metadata documents, and carried verified
 registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
 stable artifact was manually checked on 2026-08-02. The release still targets
-MCP Authorization 2025-11-25 because the completed receipt above records open
-RFC 9207 error-response and scope-hierarchy runtime requirements plus four CIMD
-draft test-evidence requirements.
+MCP Authorization 2025-11-25 because the completed receipt above records three
+open **runtime** requirements — RFC 9207 error responses, scope hierarchies, and
+the confirmed CIMD draft `-00` media-type mismatch (D00-4.1.4: `isJsonMediaType`
+accepts `+json` essences outside the `application/` tree) — plus four unresolved
+CIMD test-evidence rows. The CIMD remainder is **not** test-only.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
 compatibility awaits upstream resolution and retest.
