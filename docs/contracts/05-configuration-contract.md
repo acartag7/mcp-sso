@@ -39,6 +39,10 @@ interface BridgeConfig {
   // --- local-dev escape hatch (see boot validation below) ---
   dev?: { allowInsecureLocalhost: boolean };
 
+  // --- machine-client grant (opt-in; see §17.2) ---
+  // enabled:true requires stored DCR so machine clients have a ClientStore.
+  clientCredentials?: { enabled: boolean };
+
   // --- CIMD (opt-in; Client ID Metadata Documents; see §17.1 + §17.1.5) ---
   cimd?: {
     enabled: true;
@@ -82,6 +86,11 @@ interface BridgeConfig {
 - `signingPrivateJwk` parses to an EC P-256 key with `d`, `x`, `y` present. (jose
   rejects zero-length keys; we validate shape explicitly so a misconfigured boot
   fails closed independent of jose upgrades.)
+- `scopeCatalog`, `defaultScopes`, `allowedOrigins`, and `redirectAllowlist` are
+  arrays of strings. A non-array or non-string entry is an `AuthConfigError` at
+  boot; a bare string is not treated as a one-element list. Every configuration
+  array, including `signingPrivateJwk.key_ops`, is capped at 4096 entries before
+  iteration so a hostile runtime `length` cannot make boot unbounded.
 - `defaultScopes ⊆ scopeCatalog` and `scopeCatalog` is non-empty. An empty
   catalog means the resource honors no scopes and every authorize fails closed —
   the deployer MUST declare scopes explicitly.
@@ -97,6 +106,17 @@ interface BridgeConfig {
   valid. The error **names the offending entry** and, for a non-canonical one,
   shows its canonical form — a deployer with several origins configured must not
   have to bisect.
+
+**Publication (what boot approves is what requests read).**
+`createBridgeConfig` publishes frozen snapshots of every caller-provided
+container it validates: `signingPrivateJwk`, `redirectAllowlist`,
+`scopeCatalog`, `defaultScopes`, `allowedOrigins`, `dcr`, `dev`,
+`clientCredentials`, and `cimd`. The published containers are never the
+caller's objects or arrays, so later caller mutation cannot change the validated
+configuration. Copies use explicit member allowlists and single reads. The
+`dcr` wrapper is copied and frozen, but a stored-mode wrapper retains the exact
+`ClientStore` object as a live port; the store implementation itself is neither
+cloned nor frozen.
 
 A config object is constructed via `createBridgeConfig(input)` (validates +
 freezes). The frozen object is the only thing passed to use-cases.

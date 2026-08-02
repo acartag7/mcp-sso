@@ -7,6 +7,11 @@ import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
 import { parseRedirectEntry, RedirectEntryError } from "./redirect-entry.ts";
+import {
+  configOwnKeys, configValue, isArrayValue, isEcP256PrivateJwk, snapshotArray,
+  snapshotClientCredentials, snapshotDcr, snapshotDev, snapshotJwk,
+  snapshotStringArray,
+} from "./config-snapshot.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
 
@@ -74,12 +79,16 @@ export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
  *  emits an advisory warning (see below). The returned object is the only thing
  *  use-cases accept. */
 export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
+  const makeError = (message: string): AuthConfigError => new AuthConfigError(message);
+  if (typeof input !== "object" || input === null
+    || isArrayValue(input, "BridgeConfig input", makeError)) {
+    throw new AuthConfigError("BridgeConfig input must be an object");
+  }
   // Fail-closed (contracts §5): reject unknown own keys FIRST. `Reflect.ownKeys`
-  // covers string AND symbol keys — the latter would survive the `{ ...input }`
-  // spread below, so a symbol-keyed secret would otherwise reach the frozen
-  // public object. The error names the offending key so a JS/cast-TS caller can
-  // fix the typo without guessing.
-  for (const key of Reflect.ownKeys(input)) {
+  // covers string AND symbol keys, so a symbol-keyed secret cannot reach the
+  // frozen public object. The error names the offending key so a JS/cast-TS
+  // caller can fix the typo without guessing.
+  for (const key of configOwnKeys(input, makeError)) {
     if (typeof key === "symbol" || !KNOWN_CONFIG_KEYS.has(key)) {
       throw new AuthConfigError(
         `unknown BridgeConfig key "${String(key)}": only the BridgeConfig fields are accepted (contracts §5). ` +
@@ -95,74 +104,70 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   // `ownKeys` trap could inject an unknown key via that spread. Pinning every
   // field to one read and building the output from named locals closes both
   // (contracts §5; the promise on KNOWN_CONFIG_KEYS above is then actually true).
-  // Nested object fields (dcr/clientCredentials) and the three non-redirect
-  // arrays remain the issue-#100 residual. redirectAllowlist is snapshotted here
-  // because §10.0 owns its validate-and-publish boundary.
-  const issuer = input.issuer;
-  const resource = input.resource;
-  const consentSigningSecret = input.consentSigningSecret;
-  const signingPrivateJwk = input.signingPrivateJwk;
-  const signingKeyId = input.signingKeyId;
-  const rawRedirectAllowlist = input.redirectAllowlist;
-  const redirectAllowlist = snapshotRedirectAllowlist(rawRedirectAllowlist);
-  const scopeCatalog = input.scopeCatalog;
-  const defaultScopes = input.defaultScopes;
-  const allowedOrigins = input.allowedOrigins;
-  const dcr = input.dcr;
-  const dcrMode = dcr.mode;
-  const rawDev = input.dev;
-  // Read ONCE. This boolean is what validateUrl() below checks, so publishing a
-  // frozen snapshot of it (rather than the caller's live `dev` object) closes
-  // the validation→construction window: a consumer reading config.dev later
-  // cannot observe a value boot never validated. See issue #100 for the
-  // remaining sibling blocks (dcr / clientCredentials) on main.
-  const allowInsecureLocalhost = rawDev?.allowInsecureLocalhost === true;
-  const dev = rawDev === undefined ? undefined : Object.freeze({ allowInsecureLocalhost });
-  const clientCredentials = input.clientCredentials;
-  const clientCredentialsEnabled = clientCredentials?.enabled;
-  let cimd = input.cimd;
-  const accessTokenTtlSeconds = input.accessTokenTtlSeconds;
-  const refreshTokenTtlSeconds = input.refreshTokenTtlSeconds;
-  const consentTokenTtlSeconds = input.consentTokenTtlSeconds;
-  const authorizationCodeTtlSeconds = input.authorizationCodeTtlSeconds;
-
+  // Every mutable container is snapshotted below before validation publishes it.
+  const issuer = configValue(input, "issuer", makeError);
+  const resource = configValue(input, "resource", makeError);
+  const consentSigningSecret = configValue(input, "consentSigningSecret", makeError);
+  const rawSigningPrivateJwk = configValue(input, "signingPrivateJwk", makeError);
+  const signingKeyId = configValue(input, "signingKeyId", makeError);
+  const rawRedirectAllowlist = configValue(input, "redirectAllowlist", makeError);
+  const redirectAllowlist = snapshotRedirectAllowlist(rawRedirectAllowlist, makeError);
+  const rawScopeCatalog = configValue(input, "scopeCatalog", makeError);
+  const rawDefaultScopes = configValue(input, "defaultScopes", makeError);
+  const rawAllowedOrigins = configValue(input, "allowedOrigins", makeError);
+  const rawDcr = configValue(input, "dcr", makeError);
+  const rawDev = configValue(input, "dev", makeError);
+  const rawClientCredentials = configValue(input, "clientCredentials", makeError);
+  let cimd = configValue(input, "cimd", makeError);
+  const accessTokenTtlSeconds = configValue(input, "accessTokenTtlSeconds", makeError);
+  const refreshTokenTtlSeconds = configValue(input, "refreshTokenTtlSeconds", makeError);
+  const consentTokenTtlSeconds = configValue(input, "consentTokenTtlSeconds", makeError);
+  const authorizationCodeTtlSeconds = configValue(input, "authorizationCodeTtlSeconds", makeError);
+  const dev = snapshotDev(rawDev, makeError);
+  const allowInsecureLocalhost = dev?.allowInsecureLocalhost === true;
   validateUrl(allowInsecureLocalhost, "issuer", issuer);
   validateUrl(allowInsecureLocalhost, "resource", resource);
-  if (consentSigningSecret.trim().length < 32) {
+  if (typeof consentSigningSecret !== "string" || consentSigningSecret.trim().length < 32) {
     throw new AuthConfigError("consentSigningSecret must be at least 32 characters");
   }
-  validateSigningKey(signingPrivateJwk);
-  if (!Array.isArray(scopeCatalog) || scopeCatalog.length === 0) {
+  if (signingKeyId !== undefined && typeof signingKeyId !== "string") {
+    throw new AuthConfigError("signingKeyId must be a string when present");
+  }
+  const signingPrivateJwk = snapshotJwk(rawSigningPrivateJwk, makeError);
+  if (!isEcP256PrivateJwk(signingPrivateJwk)) {
+    throw new AuthConfigError("signingPrivateJwk must be an EC P-256 key with d, x, y");
+  }
+  const scopeCatalog = snapshotStringArray("scopeCatalog", rawScopeCatalog, makeError);
+  if (scopeCatalog.length === 0) {
     throw new AuthConfigError("scopeCatalog must be a non-empty array");
   }
+  const defaultScopes = snapshotStringArray("defaultScopes", rawDefaultScopes, makeError);
   if (!defaultScopes.every((s) => scopeCatalog.includes(s))) {
     throw new AuthConfigError("defaultScopes must be a subset of scopeCatalog");
   }
+  const allowedOrigins = snapshotStringArray("allowedOrigins", rawAllowedOrigins, makeError);
   validateTtl(accessTokenTtlSeconds, "accessTokenTtlSeconds");
   validateTtl(refreshTokenTtlSeconds, "refreshTokenTtlSeconds");
   validateTtl(consentTokenTtlSeconds, "consentTokenTtlSeconds");
   validateTtl(authorizationCodeTtlSeconds, "authorizationCodeTtlSeconds");
-  if (dcrMode !== "stateless" && dcrMode !== "stored") {
-    throw new AuthConfigError("dcr.mode must be 'stateless' or 'stored'");
-  }
-  if (dcrMode === "stored" && !dcr.store) {
-    throw new AuthConfigError("dcr.mode 'stored' requires a ClientStore");
-  }
+  const dcr = snapshotDcr(rawDcr, makeError);
+  const clientCredentials = snapshotClientCredentials(rawClientCredentials, makeError);
   if (clientCredentials !== undefined) {
-    if (typeof clientCredentials !== "object" || clientCredentials === null
-      || typeof clientCredentialsEnabled !== "boolean") {
-      throw new AuthConfigError("clientCredentials must be { enabled: boolean }");
-    }
     // §17.2: machine clients are persisted into the ClientStore, so the grant
     // surface is meaningless (and dangerous to advertise) without stored DCR.
-    if (clientCredentialsEnabled && dcrMode !== "stored") {
+    if (clientCredentials.enabled && dcr.mode !== "stored") {
       throw new AuthConfigError("clientCredentials.enabled requires dcr.mode 'stored' (machine clients are provisioned into the ClientStore — §17.2)");
     }
   }
   if (cimd !== undefined) {
     // Snapshot-then-validate returns the frozen object it checked, so an
     // accessor-backed cap cannot pass validation and publish a different value.
-    const checked = cimdConfigProblem(cimd);
+    let checked: ReturnType<typeof cimdConfigProblem>;
+    try {
+      checked = cimdConfigProblem(cimd);
+    } catch {
+      throw new AuthConfigError("cimd could not be read");
+    }
     if ("problem" in checked) throw new AuthConfigError(checked.problem);
     cimd = checked.value;
   }
@@ -182,16 +187,8 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   });
 }
 
-function snapshotRedirectAllowlist(value: unknown): string[] {
-  if (!Array.isArray(value)) throw new AuthConfigError("redirectAllowlist must be an array");
-  // Capture length ONCE and read each selected index once. Boot allowlist has no
-  // entry-count cap (deployer-written), but still rejects a non-integer length so
-  // a Proxy cannot force an unbounded scan via shifting length.
-  const length = value.length;
-  if (!Number.isInteger(length) || length < 0) {
-    throw new AuthConfigError("redirectAllowlist must be an array with a non-negative integer length");
-  }
-  const snapshot = Array.from({ length }, (_, index) => value[index]);
+function snapshotRedirectAllowlist(value: unknown, makeError: (message: string) => Error): string[] {
+  const snapshot = snapshotArray("redirectAllowlist", value, makeError);
   for (const entry of snapshot) {
     try {
       parseRedirectEntry(entry, { allowOmittedRootSlash: true });
@@ -200,10 +197,11 @@ function snapshotRedirectAllowlist(value: unknown): string[] {
       throw new AuthConfigError(`redirectAllowlist ${message}`);
     }
   }
-  return Object.freeze(snapshot) as string[];
+  return snapshot as string[];
 }
 
-function validateUrl(allowInsecureLocalhost: boolean, label: string, value: string): void {
+function validateUrl(allowInsecureLocalhost: boolean, label: string, value: unknown): void {
+  if (typeof value !== "string") throw new AuthConfigError(`${label} must be an absolute URL`);
   let url: URL;
   try {
     url = new URL(value);
@@ -217,12 +215,6 @@ function validateUrl(allowInsecureLocalhost: boolean, label: string, value: stri
     // loopback: http or https both permitted
   } else if (url.protocol !== "https:") {
     throw new AuthConfigError(`${label} must be https:// (use dev.allowInsecureLocalhost for local http)`);
-  }
-}
-
-function validateSigningKey(jwk: JWK): void {
-  if (jwk.kty !== "EC" || jwk.crv !== "P-256" || !jwk.d || !jwk.x || !jwk.y) {
-    throw new AuthConfigError("signingPrivateJwk must be an EC P-256 key with d, x, y");
   }
 }
 
