@@ -26,9 +26,9 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
   deprecation and client-side DCR `application_type` requirement align with the
   v0.3.2 registration surface. Final conformance is still pending: redirected
   authorization errors omit RFC 9207 `iss`; `requireScope` implements exact
-  membership rather than the final text's scope-hierarchy `MUST`; and a complete
-  requirement mapping from the final artifact's referenced CIMD draft `-00` is
-  complete, and it found one confirmed runtime mismatch (media-type acceptance)
+  membership rather than the final text's scope-hierarchy `MUST`; and the
+  requirement mapping for the final artifact's referenced CIMD draft `-00` is now
+  complete, having found one confirmed runtime mismatch (media-type acceptance)
   plus four unresolved test-evidence rows. See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
   and the release checklist in
   [`docs/verification.md`](docs/verification.md#spec-release-re-verification-completed-2026-08-02)
