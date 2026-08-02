@@ -47,9 +47,15 @@ compile. Reference stores always project it explicitly; the use-cases treat
 construction rejects a store without the generation capability marker.
 
 ## 12.2 Invariants the suite asserts
-1. **Hashed, single-use auth codes:** `consumeAuthCode` deletes on read; a second
-   consume returns `null`; an expired code returns `null`; raw codes never appear
-   in storage. SQLite asserts the on-disk file contains no raw secret and has no
+1. **Hashed, single-use, resource-bound auth codes:**
+   `consumeAuthCode(codeHash, nowIso, expectedGeneration?, expectedResource?)`
+   deletes an otherwise-selected code on read; a second consume returns `null`;
+   an expired code returns `null`; raw codes never appear in storage. When
+   `expectedResource` is supplied, the store compares it by exact equality to
+   the stored canonical `resource` before deletion. A mismatch returns `null`
+   without consuming the code. Concurrent matching/mismatching attempts are one
+   atomic decision: only a correctly resource-bound call may consume and return
+   the record. SQLite asserts the on-disk file contains no raw secret and has no
    content/body/cache tables (state is OAuth-only).
 2. **Consent JTI single-use:** `consumeConsentJti` returns `true` once, `false` on
    replay (atomic insert-or-ignore). It also **rejects a `expiresAtIso` that is not
@@ -147,6 +153,18 @@ construction rejects a store without the generation capability marker.
     `AuthConfigError`, preventing a custom store that ignores the new optional
     parameters from failing open. A current-generation family survives ordinary
     process/store restarts.
+
+11. **Authorization-code resource predicate (patch-compatible extension):** the
+    optional trailing `expectedResource` argument is supplied by
+    `OAuthTokenUseCase` in every authorization-code exchange. Memory checks it in
+    the map critical section; SQLite checks it inside `BEGIN IMMEDIATE`; MySQL
+    checks it while holding the selected row `FOR UPDATE`. A mismatch commits no
+    delete. The use-case repeats exact equality against `BridgeConfig.resource`
+    after a record is returned, so a custom/defective store that ignores the
+    argument cannot cause a wrong-audience token, refresh write, or success
+    audit. The extension is source-compatible and needs no SQL migration because
+    every auth-code record already has a non-null `resource`; custom stores must
+    implement the predicate to satisfy conformance and preserve retry semantics.
 
 ## 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`) — in-process maps; dev/test only, labeled loud.

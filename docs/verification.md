@@ -193,6 +193,16 @@ Notes:
 | GG.5 | Legacy/non-current active refresh rows exist, including inside a current family | `findGrantedScopes` excludes their scopes. |
 | GG.6 | Store lacks the generation capability in stored-DCR mode | Construction fails closed with `AuthConfigError`; stateless-DCR operation remains unchanged. CIMD alongside stored DCR uses the same cutover generation without enabling accumulation. |
 
+### T1.RB — authorization-code resource binding
+
+| # | Scenario | Assert |
+|---|---|---|
+| RB.1 | Code created under resource A is redeemed through resource B sharing the store | `invalid_grant`; no access/refresh token, signing success, refresh write, or success audit. |
+| RB.2 | A redemption follows the rejected B attempt | A succeeds exactly once; replay through A fails. |
+| RB.3 | Shared StorePort conformance | Memory, SQLite, and MySQL reject B atomically without consuming A's code. |
+| RB.4 | Custom store ignores the resource predicate and returns A's record to B | The token use-case's returned-record check rejects before signing or other success side effects. |
+| RB.5 | Concurrent A/B redemption | Only the correctly bound A exchange may win; no B-audience token can be produced. |
+
 ### T1.S4a — Generic OIDC and Google preset
 
 | # | Scenario | Assert |

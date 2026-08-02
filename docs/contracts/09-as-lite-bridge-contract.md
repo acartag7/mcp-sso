@@ -210,13 +210,20 @@ client-controlled request input; when present, `prepare` uses it and does not fe
 (§17.2, shipped S3b) returns `MachineTokenResponse`: identical except it has NO
 `refresh_token` member at all — not an optional one.)*
 - **`exchangeAuthorizationCode`**: consumes the code (§7.3), verifies PKCE S256
-  and client/redirect binding, then `tokenResponse` parses the stored scopes and
+  and client/redirect/resource binding, then `tokenResponse` parses the stored scopes and
   constructs the signed access/refresh response before `saveRefreshToken`
   persists the new family. A preparation failure leaves no refresh row; the
   already-consumed authorization code stays burned. **0.3.2:** in
   stored-DCR mode, generation mismatch is the first stored-record
   validity check and is indistinguishable from any other `invalid_grant`; the
   new refresh family inherits the accepted code generation.
+  Resource equality is checked atomically by each reference store before
+  consumption and repeated by `OAuthTokenUseCase` on the returned record before
+  every success side effect. A mismatch is `invalid_grant` with the same message
+  as every other invalid authorization code; no token is signed or returned, no
+  refresh state is created, and no success audit is emitted. A custom store that
+  ignores the resource predicate remains unable to cause wrong-resource signing
+  because the use-case check is authoritative.
 - **`refresh`**: atomically rotates the refresh token (§7.4), preserving
   consumed-token replay detection and whole-family revocation; then enforces RFC
   6749 §6 client binding (mismatch ⇒ family revoked ⇒ `invalid_grant`) and mints

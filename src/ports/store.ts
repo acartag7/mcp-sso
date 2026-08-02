@@ -65,8 +65,14 @@ export interface StorePort {
   /** Required capability marker when BridgeConfig uses stored DCR. */
   readonly storedDcrGrantGeneration?: number;
   saveAuthCode(input: SaveAuthCodeInput): Promise<void>;
-  /** Single-use; removes on read. Returns null if missing/expired. */
-  consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number): Promise<AuthCodeRecord | null>;
+  /** Single-use; removes on read. Returns null if missing/expired. A supplied
+   *  expectedResource mismatch returns null without consuming the record. */
+  consumeAuthCode(
+    codeHash: string,
+    nowIso: string,
+    expectedGrantGeneration?: number,
+    expectedResource?: string,
+  ): Promise<AuthCodeRecord | null>;
   saveRefreshToken(input: SaveRefreshTokenInput): Promise<void>;
   /** Returns the consumed record (and rotates), or null if missing/expired/revoked. */
   rotateRefreshToken(

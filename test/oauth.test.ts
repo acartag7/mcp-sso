@@ -64,12 +64,12 @@ function testPrivateJwk(): JWK {
   return { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "test-key-1" } as JWK;
 }
 
-function makeConfig(opts: { redirectAllowlist?: string[]; scopeCatalog?: string[]; defaultScopes?: string[]; dcr?: BridgeConfig["dcr"]; dev?: boolean } = {}): BridgeConfig {
+function makeConfig(opts: { resource?: string; redirectAllowlist?: string[]; scopeCatalog?: string[]; defaultScopes?: string[]; dcr?: BridgeConfig["dcr"]; dev?: boolean; signingPrivateJwk?: JWK } = {}): BridgeConfig {
   return createBridgeConfig({
     issuer: "https://auth.test",
-    resource: "https://api.test/mcp",
+    resource: opts.resource ?? "https://api.test/mcp",
     consentSigningSecret: "test-consent-secret-with-enough-entropy",
-    signingPrivateJwk: testPrivateJwk(),
+    signingPrivateJwk: opts.signingPrivateJwk ?? testPrivateJwk(),
     signingKeyId: "test-key-1",
     redirectAllowlist: opts.redirectAllowlist ?? [REDIRECT],
     scopeCatalog: opts.scopeCatalog ?? ["mcp:read", "mcp:write"],
@@ -138,6 +138,12 @@ async function exchangeCode(ctx: Ctx, verifier: string, scope = "mcp:read mcp:wr
   return await ctx.token.exchangeAuthorizationCode({
     grantType: "authorization_code", code, redirectUri: REDIRECT, clientId, codeVerifier: verifier,
   });
+}
+
+function isInvalidAuthorizationCode(error: unknown): boolean {
+  return error instanceof OAuthError
+    && error.code === "invalid_grant"
+    && error.message === "Authorization code is invalid";
 }
 
 // --- the flow ---
@@ -230,6 +236,67 @@ test("expired auth code returns invalid_grant", async () => {
     (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant",
   );
   await ctx.store.close();
+});
+
+test("authorization code stays bound to its resource across token use-cases sharing a store", async () => {
+  const resourceA = "https://resource-a.test/mcp";
+  const resourceB = "https://resource-b.test/mcp";
+  const store = new MemoryStore();
+  const clock = new FakeClock(NOW_MS);
+  const audit = new MemoryAudit();
+  const configA = makeConfig({ resource: resourceA });
+  const configB = makeConfig({ resource: resourceB });
+  const tokenA = new OAuthTokenUseCase({ config: configA, store, clock, audit });
+  const tokenB = new OAuthTokenUseCase({ config: configB, store, clock, audit });
+  const verifier = "resource-binding-verifier-123456789012345678901234567";
+  const code = "resource-binding-code";
+  await store.saveAuthCode({
+    codeHash: sha256Hex(code), clientId: "client-1", subject: SUBJECT,
+    redirectUri: REDIRECT, resource: resourceA, scopes: ["mcp:read"],
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256",
+    expiresAt: "2026-07-03T13:00:00.000Z", grantGeneration: null,
+  });
+  const input = { grantType: "authorization_code", code, redirectUri: REDIRECT, clientId: "client-1", codeVerifier: verifier };
+  await assert.rejects(tokenB.exchangeAuthorizationCode(input), isInvalidAuthorizationCode);
+  assert.equal(audit.events.some((event) => event.event === "oauth.token.authorization_code" && event.status === "success"), false);
+  const issued = await tokenA.exchangeAuthorizationCode(input);
+  assert.equal((await verifyAccessToken(issued.access_token, configA, clock)).subject, SUBJECT);
+  await assert.rejects(tokenA.exchangeAuthorizationCode(input), isInvalidAuthorizationCode);
+  await store.close();
+});
+
+test("token use-case rejects a wrong-resource record returned by a custom store before signing or refresh persistence", async () => {
+  const resourceA = "https://resource-a.test/mcp";
+  const resourceB = "https://resource-b.test/mcp";
+  class IgnoringResourceStore extends MemoryStore {
+    override consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number): ReturnType<MemoryStore["consumeAuthCode"]> {
+      return super.consumeAuthCode(codeHash, nowIso, expectedGrantGeneration);
+    }
+  }
+  const store = new IgnoringResourceStore();
+  const clock = new FakeClock(NOW_MS);
+  const audit = new MemoryAudit();
+  const invalidSigningKey = { kty: "EC", crv: "P-256", x: "x", y: "y", d: "d", alg: "ES256", kid: "bad" } as JWK;
+  const configB = makeConfig({ resource: resourceB, signingPrivateJwk: invalidSigningKey });
+  const tokenB = new OAuthTokenUseCase({ config: configB, store, clock, audit });
+  const verifier = "custom-store-resource-verifier-12345678901234567890123";
+  const code = "custom-store-resource-code";
+  await store.saveAuthCode({
+    codeHash: sha256Hex(code), clientId: "client-1", subject: SUBJECT,
+    redirectUri: REDIRECT, resource: resourceA, scopes: ["mcp:read"],
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256",
+    expiresAt: "2026-07-03T13:00:00.000Z", grantGeneration: null,
+  });
+  let refreshWrites = 0;
+  const saveRefreshToken = store.saveRefreshToken.bind(store);
+  store.saveRefreshToken = async (input) => { refreshWrites += 1; await saveRefreshToken(input); };
+  await assert.rejects(
+    tokenB.exchangeAuthorizationCode({ grantType: "authorization_code", code, redirectUri: REDIRECT, clientId: "client-1", codeVerifier: verifier }),
+    isInvalidAuthorizationCode,
+  );
+  assert.equal(refreshWrites, 0, "no refresh state was created");
+  assert.equal(audit.events.some((event) => event.event === "oauth.token.authorization_code" && event.status === "success"), false);
+  await store.close();
 });
 
 test("refresh token rotates and replay revokes the family", async () => {
