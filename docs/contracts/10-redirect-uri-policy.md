@@ -807,7 +807,11 @@ selects the rule (every registered URI it reads is first re-validated against
   it elsewhere must agree with this one:** §10.1 widens only a PORTLESS
   LOOPBACK ORIGIN entry (any port on that origin); stored-`native` and the
   §17.1.6 CIMD loopback-`http` case compare scheme+host+path+search with the
-  port ignored; and every `https` comparison stays exact raw equality WITH
+  port ignored — **for CIMD, PENDING (D00-4.5.2, §16.1): only when the
+  validated document declares `application_type: "native"`; a `"web"` or
+  absent declaration matches exactly (fail closed). Stored-`native` already
+  carries its type, so only the CIMD leg is pending** —; and every `https`
+  comparison stays exact raw equality WITH
   the port included (§17.1.5 rule 20's "port included" applies to that case,
   not to loopback `http`). A reader who takes any one of those sentences as
   the general rule derives a different matcher — which is why they are
