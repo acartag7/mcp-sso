@@ -195,9 +195,11 @@ the same 15-day check.)
 
 CI verification, `process-guard`, and CodeQL use ephemeral GitHub-hosted
 `ubuntu-latest` runners. CI and CodeQL subscribe to pull requests targeting
-`main` and to `main` pushes; CodeQL also runs weekly. Pull-request checks attach
-natively to the PR, so the self-hosted-era `workflow_dispatch` and required-
-status attestation machinery is removed. CI retains read-only workflow
+`main` and to `main` pushes; CodeQL also runs weekly. The CI verify job runs on
+both events, while `process-guard` runs on pull requests where a base branch is
+available for its merge-base checks. Pull-request checks attach natively to the
+PR, so the self-hosted-era `workflow_dispatch` and required-status attestation
+machinery is removed. CI retains read-only workflow
 permissions and disables checkout credential persistence. CodeQL installs the
 frozen dependency graph before analysis for richer JavaScript/TypeScript module
 resolution.

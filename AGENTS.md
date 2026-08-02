@@ -69,10 +69,11 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 - `npm pack --dry-run` — before any release: the tarball must contain **dist + docs + README + LICENSE only.**
 - **Release flow (immutable releases are ON):** `publish.yml` publishes to npm via OIDC Trusted Publishing **and** creates the GitHub Release. **Never pre-create the GitHub Release for a tag** before the workflow runs — under immutable releases, creating-then-deleting a release burns that tag permanently (`HTTP 422: tag_name was used by an immutable release`); the workflow's own release-create step then fails and no release page is recoverable for that tag. Correct flow: merge the version-bump PR → tag `vX.Y.Z` → the workflow publishes + creates the release (`--generate-notes`) → then edit the release with curated notes. To validate the tarball without publishing, use `npm pack --dry-run` or a `workflow_dispatch` dry run.
 - **GitHub-hosted workflows:** CI and CodeQL run automatically on pull requests
-  to `main` and on `main` pushes; CodeQL also runs weekly. CI executes typecheck ·
-  `check:lines` · test · build plus `process-guard` (freeze-hash · mixed-diff ·
-  stage-artifact) on ephemeral `ubuntu-latest` runners. Direct pushes to `main`
-  remain blocked by branch protection.
+  to `main` and on `main` pushes; CodeQL also runs weekly. CI runs typecheck ·
+  `check:lines` · test · build for both events; pull requests additionally run
+  `process-guard` (freeze-hash · mixed-diff · stage-artifact). All jobs use
+  ephemeral `ubuntu-latest` runners. Direct pushes to `main` remain blocked by
+  branch protection.
 - **Required checks:** branch protection requires the exact CI contexts
   `typecheck · lines · test · build` and `process-guard`; pull-request runs attach
   them natively, so no manual dispatch or status-attestation job is part of the
