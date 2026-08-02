@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$repo_root"
+
+temp_base="${TMPDIR:-/tmp}"
+temp_base="${temp_base%/}"
+verify_tmp="$(mktemp -d "${temp_base}/mcp-sso-verify.XXXXXX")"
+cleanup() {
+  case "$verify_tmp" in
+    "${temp_base}"/mcp-sso-verify.*)
+      chmod -R u+w -- "$verify_tmp" 2>/dev/null || true
+      rm -rf -- "$verify_tmp"
+      ;;
+    *)
+      echo "verify: refusing to clean unexpected temporary path" >&2
+      return 1
+      ;;
+  esac
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+run_bounded() {
+  local timeout_ms="$1"
+  shift
+  VERIFY_COMMAND_TIMEOUT_MS="$timeout_ms" node --input-type=module -e '
+    import { spawn } from "node:child_process";
+    import { constants } from "node:os";
+    const [command, ...args] = process.argv.slice(1);
+    const timeoutMs = Number(process.env.VERIFY_COMMAND_TIMEOUT_MS);
+    if (!command || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) process.exit(2);
+    const grouped = process.platform !== "win32";
+    const child = spawn(command, args, { stdio: "inherit", detached: grouped });
+    let timedOut = false;
+    let killTimer;
+    let terminatingSignal;
+    const signal = (name) => {
+      try { grouped ? process.kill(-child.pid, name) : child.kill(name); } catch {}
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      signal("SIGTERM");
+      killTimer = setTimeout(() => signal("SIGKILL"), 5000);
+    }, timeoutMs);
+    for (const name of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+      process.on(name, () => {
+        if (terminatingSignal) {
+          signal("SIGKILL");
+          return;
+        }
+        terminatingSignal = name;
+        clearTimeout(timer);
+        signal(name);
+        killTimer = setTimeout(() => signal("SIGKILL"), 5000);
+      });
+    }
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      console.error(`verify: failed to start ${command}: ${error.message}`);
+      process.exit(1);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      if (terminatingSignal) {
+        process.exit(128 + constants.signals[terminatingSignal]);
+      }
+      if (timedOut) {
+        console.error(`verify: command exceeded ${timeoutMs}ms: ${command}`);
+        process.exit(124);
+      }
+      process.exit(code ?? 1);
+    });
+  ' "$@"
+}
+
+corepack pnpm run typecheck
+corepack pnpm run check:lines
+corepack pnpm run check:seams
+corepack pnpm run check:deps
+corepack pnpm test
+corepack pnpm run build
+
+# Run the configured real-entrypoint command literally, not only through pnpm test.
+node --test --test-reporter=spec test/bin-init.test.ts test/e2e-mcp-sdk.test.ts test/integration-spawn.test.ts
+
+pack_json="${verify_tmp}/npm-pack.json"
+npm pack --ignore-scripts --json --pack-destination "$verify_tmp" > "$pack_json"
+tarball_name="$(node -e '
+  const fs = require("node:fs");
+  const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (!Array.isArray(result) || result.length !== 1 || typeof result[0]?.filename !== "string") process.exit(1);
+  process.stdout.write(result[0].filename);
+' "$pack_json")"
+case "$tarball_name" in
+  mcp-sso-*.tgz) ;;
+  *) echo "verify: npm pack returned an unexpected filename" >&2; exit 1 ;;
+esac
+tarball="${verify_tmp}/${tarball_name}"
+test -f "$tarball"
+
+tar_manifest="${verify_tmp}/tar-manifest.txt"
+tar -tzf "$tarball" > "$tar_manifest"
+bad_entry=""
+while IFS= read -r entry; do
+  entry="${entry%/}"
+  case "$entry" in
+    package/*) relative_entry="${entry#package/}" ;;
+    *) bad_entry="$entry"; break ;;
+  esac
+  case "/${relative_entry}/" in
+    *"/../"*|*"/./"*) bad_entry="$entry"; break ;;
+  esac
+  case "$relative_entry" in
+    package.json|README.md|LICENSE|dist|dist/*|docs|docs/*) ;;
+    *) bad_entry="$entry"; break ;;
+  esac
+done < "$tar_manifest"
+if [ -n "$bad_entry" ]; then
+  echo "verify: tarball contains a file outside the allowed roots: $bad_entry" >&2
+  exit 1
+fi
+grep -Fxq "package/package.json" "$tar_manifest"
+grep -Fxq "package/dist/index.js" "$tar_manifest"
+grep -Fxq "package/dist/bin/init.js" "$tar_manifest"
+
+consumer="${verify_tmp}/consumer"
+mkdir "$consumer"
+printf '%s\n' '{"private":true,"type":"module"}' > "${consumer}/package.json"
+(
+  cd "$consumer"
+  run_bounded 120000 npm install --ignore-scripts --no-audit --no-fund --no-package-lock "$tarball"
+  run_bounded 30000 node --input-type=module -e '
+    const packageApi = await import("mcp-sso");
+    if (typeof packageApi.Bridge !== "function" || typeof packageApi.RequestAuthorizer !== "function") process.exit(1);
+  '
+  run_bounded 30000 "${consumer}/node_modules/.bin/mcp-sso" init "${consumer}/generated"
+)
+test -f "${consumer}/generated/package.json"
+test -f "${consumer}/generated/server.ts"
+
+echo "verify: all checks passed"

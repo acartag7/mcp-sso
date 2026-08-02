@@ -108,3 +108,72 @@ jobs:
             docs/contracts/16-spec-conformance-matrix.md,
             docs/contracts/17-v0-2-feature-contracts.md,
             docs/contracts/18-contract-change-protocol.md
+
+  engineering-os-verify:
+    name: verify
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: mcp_sso
+          MYSQL_USER: mcp
+          MYSQL_PASSWORD: mcppw
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u mcp -pmcppw --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=18
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=5
+
+    env:
+      RUN_INTEGRATION: "true"
+      MYSQL_URL: mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4
+      REDIS_URL: redis://127.0.0.1:6379
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (2026-06-18)
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (2026-06-15)
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0 (2026-04-20)
+        with:
+          node-version: "24"
+      - name: acquire pinned Engineering OS validator
+        env:
+          ENGINEERING_OS_REVISION: 181b10cbc755f6a8bba15b2a8f43f2801288a29c
+          ENGINEERING_OS_VALIDATOR_SHA256: 09264b8c1a6f6fe54c39089291e218a3de2f8f511bfd58582b66b3ef1d385144
+        run: |
+          set -euo pipefail
+          repository="${RUNNER_TEMP}/engineering-os-repository"
+          validator="${RUNNER_TEMP}/validate_config.mjs"
+          mkdir "${repository}"
+          git -C "${repository}" init --quiet
+          git -C "${repository}" remote add origin https://github.com/acartag7/engineering-os.git
+          git -C "${repository}" fetch --no-tags --depth=1 origin "${ENGINEERING_OS_REVISION}"
+          test "$(git -C "${repository}" rev-parse FETCH_HEAD^{commit})" = "${ENGINEERING_OS_REVISION}"
+          git -C "${repository}" show "${ENGINEERING_OS_REVISION}:skills/engineering-os/scripts/validate_config.mjs" > "${validator}"
+          printf '%s  %s\n' "${ENGINEERING_OS_VALIDATOR_SHA256}" "${validator}" | sha256sum --check --strict
+      - name: validate Engineering OS configuration
+        run: node "${RUNNER_TEMP}/validate_config.mjs" engineering-os.json
+      - name: enforce dependency policy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-dependency-policy.mjs --verify-remote
+      - run: pnpm install --frozen-lockfile
+      - name: assert integration env present
+        run: |
+          node -e "if(process.env.RUN_INTEGRATION!=='true'||!process.env.MYSQL_URL||!process.env.REDIS_URL){console.error('FATAL: RUN_INTEGRATION/MYSQL_URL/REDIS_URL missing — adapters would be silently skipped');process.exit(1)}else{console.log('RUN_INTEGRATION + MYSQL_URL + REDIS_URL present')}"
+      - run: ./scripts/verify

@@ -70,7 +70,7 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 - `pnpm run check:lines` — **250-line file limit**, enforced by `scripts/check-line-length.mjs`.
 - `pnpm test` — `node --test`.
 - `pnpm run build` — `rm -rf dist && tsc -p tsconfig.build.json`.
-- `npm pack --dry-run` — before any release: the tarball must contain **dist + docs + README + LICENSE only.**
+- `npm pack --dry-run` — before any release: the tarball must contain **dist + docs + README + LICENSE + package.json only.**
 - **Release flow (immutable releases are ON):** `publish.yml` publishes to npm via OIDC Trusted Publishing **and** creates the GitHub Release. **Never pre-create the GitHub Release for a tag** before the workflow runs — under immutable releases, creating-then-deleting a release burns that tag permanently (`HTTP 422: tag_name was used by an immutable release`); the workflow's own release-create step then fails and no release page is recoverable for that tag. Correct flow: merge the version-bump PR → tag `vX.Y.Z` → the workflow publishes + creates the release (`--generate-notes`) → then edit the release with curated notes. To validate the tarball without publishing, use `npm pack --dry-run` or a `workflow_dispatch` dry run.
 - **GitHub-hosted workflows:** CI and CodeQL run automatically on pull requests
   to `main` and on `main` pushes; CodeQL also runs weekly. CI runs typecheck ·
@@ -156,7 +156,7 @@ describes:
    regression tests must go red. COMMIT before running mutation reverts; never a
    bare `git checkout -- .` with uncommitted work in the tree.
 5. **Gates + release floor.** typecheck · `check:lines` · test · build on every
-   push; `npm pack --dry-run` (dist + docs + README + LICENSE only) before any
+   push; `npm pack --dry-run` (dist + docs + README + LICENSE + package.json only) before any
    release; the merge gate on reviewed PRs is the review bot's
    "Reviewed commit: \<head sha\>" marker — never a silence window.
 
@@ -176,14 +176,21 @@ source of truth.
 tier: S
 Reference: https://github.com/acartag7/engineering-os
 
+Accepted configurable defaults live in [`engineering-os.json`](engineering-os.json).
+Read [`BRIEF.md`](BRIEF.md) for fast project orientation, run `./scripts/verify`
+for the repository-owned verification path, and read
+[`ENGINEERING_OS_MIGRATION.md`](ENGINEERING_OS_MIGRATION.md) before
+changing old process machinery. Phase 1 keeps the old and new paths running
+together; it does not authorize Phase 2 cleanup.
+
 Non-negotiables — CI enforces these; this block just saves you a red build:
 
 - Acceptance tests under `test/acceptance/` are FROZEN. Editing any of them turns
   CI red (hash check). Turn finished phases on via `test/acceptance/phases.json`
   only. If a test looks wrong: STOP and report. That's a contract change, not a
-  patch. *(No acceptance suite exists yet — the repo carries a
-  `.process-guard-exempt` marker that suppresses only the stage-artifact check
-  until the first frozen suite lands; `freeze-hash` and `mixed-diff` run now.)*
+  patch. The suite currently contains 15 frozen test files, its committed manifest
+  is present, all current phase flags are active, and no `.process-guard-exempt`
+  marker exists. `freeze-hash`, `mixed-diff`, and `stage-artifact` remain active.
 - Contract first: the indexed contract set wins over the code and over your inference.
   Never implement while the contract has open decisions or points at files
   outside this repo.

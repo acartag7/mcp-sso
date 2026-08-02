@@ -27,14 +27,20 @@ the contract source of truth.
 tier: S
 Reference: https://github.com/acartag7/engineering-os
 
+Accepted configurable defaults live in [`engineering-os.json`](engineering-os.json).
+Read [`BRIEF.md`](BRIEF.md), run `./scripts/verify`, and read
+[`ENGINEERING_OS_MIGRATION.md`](ENGINEERING_OS_MIGRATION.md) before
+changing old process machinery. Phase 1 keeps the old and new paths running
+together; it does not authorize Phase 2 cleanup.
+
 Non-negotiables — CI enforces these; this block just saves you a red build:
 
 - Acceptance tests under `test/acceptance/` are FROZEN. Editing any of them turns
   CI red (hash check). Turn finished phases on via `test/acceptance/phases.json`
   only. If a test looks wrong: STOP and report. That's a contract change, not a
-  patch. *(No acceptance suite exists yet — the repo carries a
-  `.process-guard-exempt` marker that suppresses only the stage-artifact check
-  until the first frozen suite lands; `freeze-hash` and `mixed-diff` run now.)*
+  patch. The suite currently contains 15 frozen test files, its committed manifest
+  is present, all current phase flags are active, and no `.process-guard-exempt`
+  marker exists. `freeze-hash`, `mixed-diff`, and `stage-artifact` remain active.
 - Contract first: the indexed contract set wins over the code and over your inference.
   Never implement while the contract has open decisions or points at files
   outside this repo.

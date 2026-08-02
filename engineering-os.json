@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "project": {
+    "tier": "S",
+    "defaultBranch": "main",
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Shell",
+      "YAML"
+    ],
+    "ownership": "solo"
+  },
+  "commands": {
+    "verify": "./scripts/verify",
+    "entrypoint": "node --test --test-reporter=spec test/bin-init.test.ts test/e2e-mcp-sdk.test.ts test/integration-spawn.test.ts",
+    "entrypointReason": "Runs the built CLI and generated server, the spawned example processes, and an official MCP SDK call through the protected endpoint"
+  },
+  "workflow": {
+    "defaultProfile": "standard",
+    "critic": "multi-agent-seat",
+    "testAuthor": "multi-agent-seat",
+    "implementer": "current-session",
+    "reviewer": "multi-agent-seat",
+    "independentTests": "security-and-bug-fixes",
+    "maxReviewRounds": 3,
+    "maxActivePullRequests": 2
+  },
+  "optional": {
+    "processGuard": true
+  },
+  "decisions": {
+    "notApplicable": []
+  },
+  "exceptions": []
+}
