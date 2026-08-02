@@ -21,14 +21,19 @@
 > historical live verification; CIMD was live-verified through exact runtime
 > commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
 > A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
-> dedicated GitHub port in §17.6 remain contract-only. Spec conformance
-> target: **MCP Authorization 2025-11-25**. The backward-compatible
-> `2026-07-28-RC` hardening items (e.g. RFC 9207 `iss`) are built in. The
-> official final artifact is not yet published, so final-text re-verification
-> and any final conformance claim remain pending. See the blocking checklist in
-> [`docs/verification.md` — "Spec-release re-verification (due
-> 2026-07-28)"](verification.md#spec-release-re-verification-due-2026-07-28)
-> for the exact outcome.
+> dedicated GitHub port in §17.6 remain contract-only. Spec conformance target:
+> **MCP Authorization 2025-11-25**. The official stable
+> [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)
+> artifact was manually re-verified on 2026-08-02. Its DCR deprecation and
+> client-side DCR `application_type` requirement align with the v0.3.2
+> registration surface. Final conformance remains pending on three known items:
+> redirected authorization errors omit RFC 9207 `iss` while metadata advertises
+> support; `requireScope` performs exact membership rather than accounting for
+> scope hierarchies; and the final artifact's referenced CIMD draft `-00` still
+> needs a complete requirement-to-source/test mapping. See the completed evidence
+> checklist and follow-up in
+> [`docs/verification.md` — "Spec-release re-verification (completed
+> 2026-08-02)"](verification.md#spec-release-re-verification-completed-2026-08-02).
 
 ## Contents
 
