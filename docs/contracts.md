@@ -29,9 +29,11 @@
 > registration surface. Final conformance remains pending on three known items:
 > redirected authorization errors omit RFC 9207 `iss` while metadata advertises
 > support; `requireScope` performs exact membership rather than accounting for
-> scope hierarchies; and the final artifact's referenced CIMD draft `-00` still
-> needs a complete requirement-to-source/test mapping. See the completed evidence
-> checklist and follow-up in
+> scope hierarchies; and the final artifact's referenced CIMD draft `-00` is now
+> completely mapped, with four unresolved test-evidence rows and no confirmed
+> runtime mismatch for the implemented public-client profile. See the matrix in
+> [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
+> and the completed release checklist in
 > [`docs/verification.md` — "Spec-release re-verification (completed
 > 2026-08-02)"](verification.md#spec-release-re-verification-completed-2026-08-02).
 

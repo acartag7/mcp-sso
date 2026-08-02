@@ -16,8 +16,10 @@
 (2026-03-02). MCP Authorization 2025-11-25 and the final stable 2026-07-28
 artifact both normatively reference draft **-00**. The implementation was built
 against -01's additional SSRF, redirect, and response constraints. The final MCP
-citation is `-00`; a complete normative `-00` requirement-to-source/test mapping
-is still required before claiming final CIMD draft conformance.
+citation is `-00`; §16.1 now carries the complete 44-statement mapping. It found
+no runtime mismatch for the implemented public-client profile, but four
+test-evidence rows remain unresolved before final CIMD draft conformance can be
+claimed.
 
 > **Draft `-02` (2026-07-06) review — performed 2026-07-10, recorded here
 > 2026-07-16 (closes issue #58).** At that review, the implementation hardening
@@ -348,9 +350,10 @@ archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 2.1.220 repeated CIMD authorization and protected tool calls through exact
 runtime commit `af2a61f` with all three providers. The implementation was
 reviewed against `2026-07-28-RC`; the official final artifact was then checked
-on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. The explicitly
-checked MCP-page requirements map to implementation and tests; complete draft
-`-00` requirement mapping remains pending.
+on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
+44 normative statements: 27 conformant, 13 not applicable to the implemented
+public-client profile, four with unresolved test evidence, and no confirmed
+runtime mismatch.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048

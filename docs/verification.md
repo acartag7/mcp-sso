@@ -400,8 +400,9 @@ MANUAL maintainer receipt — not automated and not CI-enforced. Checked against
   checked MCP-page requirements through capability advertisement in
   `src/metadata.ts`, exact document binding in `src/cimd/document.ts`, redirect
   binding through `src/cimd/registration.ts`, and the frozen
-  `test/acceptance/cimd/` suites. A complete normative draft `-00`
-  requirement-to-source/test mapping remains open.
+  `test/acceptance/cimd/` suites. The complete 44-statement draft `-00` mapping
+  is now in [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix):
+  no runtime mismatch was confirmed, but four test-evidence rows remain open.
 - [x] **(c) RFC 9207 `iss` + `application_type`.** Final text keeps
   authorization-server inclusion of `iss` at `SHOULD`, including error
   responses, with a signposted future `MUST`; a server that includes it `MUST`
@@ -428,9 +429,11 @@ pending on three known items:
    account for hierarchies where a broader scope implies narrower scopes.
    `src/scopes.ts` `requireScope` currently performs exact array membership and
    has no hierarchy policy or proof.
-3. **CIMD draft mapping.** The final artifact normatively references CIMD draft
-   `-00`. The explicitly checked MCP-page requirements are enforced, but the
-   full draft still needs a requirement-by-requirement source/test mapping.
+3. **CIMD draft evidence.** The final artifact normatively references CIMD draft
+   `-00`. The complete §16.1 mapping found no runtime mismatch for the implemented
+   public-client profile, but four rows still lack complete hostile or shipped-route
+   test evidence: symmetric client-auth declarations, adapter route parity,
+   post-authorization no-re-fetch, and inert document-contained URLs.
 
 These are separate contract/runtime follow-ups. The conformance target must not
 move from 2025-11-25 until all three are resolved and the resulting implementation
@@ -485,7 +488,8 @@ with-peers import smokes, produced both metadata documents, and carried verified
 registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
 stable artifact was manually checked on 2026-08-02. The release still targets
 MCP Authorization 2025-11-25 because the completed receipt above records open
-RFC 9207 error-response, scope-hierarchy, and CIMD draft-mapping requirements.
+RFC 9207 error-response and scope-hierarchy runtime requirements plus four CIMD
+draft test-evidence requirements.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
 compatibility awaits upstream resolution and retest.
