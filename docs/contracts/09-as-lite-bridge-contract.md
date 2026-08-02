@@ -11,7 +11,9 @@ adapter (Phase 3) exposes them over HTTP.
   `grant_types_supported: ["authorization_code","refresh_token"]`,
   `code_challenge_methods_supported: ["S256"]`, `scopes_supported: catalog`,
   `token_endpoint_auth_methods_supported: ["none"]` (public clients + PKCE), and
-  **`authorization_response_iss_parameter_supported: true`** *(RC item (a))*.
+  **`authorization_response_iss_parameter_supported: true`**. The successful
+  authorization response carries RFC 9207 `iss`; the final-spec verification
+  found that redirected error responses do not yet carry it (§16 blocker).
 - **`protectedResourceMetadata(config)`** (RFC 9728), served at **both**:
   - `${resourceOrigin}/.well-known/oauth-protected-resource` (root), and
   - `${resourceOrigin}/.well-known/oauth-protected-resource${resourcePath}`
@@ -27,9 +29,12 @@ adapter (Phase 3) exposes them over HTTP.
 - **JWKS** at `${issuer}/oauth/jwks`: `{ keys: [publicJwk(config)] }` (ES256
   public key, with `cache-control: public, max-age=60`).
 
-## 9.2 DCR — `registerClient` (RFC 7591) *(fix #4; RC item (b))*
+## 9.2 DCR — `registerClient` (RFC 7591; deprecated compatibility path)
 `POST /oauth/register` with form fields `redirect_uris` (required, each validated)
-and optional `application_type` (`"native"` | `"web"`, default `"web"`).
+and optional `application_type` (`"native"` | `"web"`, default `"web"`). MCP
+Authorization 2026-07-28 places the `MUST` to send an appropriate
+`application_type` on MCP clients. The bridge remains tolerant of omission for
+backwards compatibility and applies the OIDC default of `"web"`.
 `redirect_uris` is client-supplied untrusted input and carries the same hard
 caps §10.0 states: **1..16 entries** (the same bound §17.1.5 rule 19 puts on a
 CIMD document's array, same rationale — it bounds the authorize-time
@@ -96,7 +101,9 @@ two error channels, split by whether the `redirect_uri` is trusted yet:
   the use-case tags these errors with the validated `redirectUri` + `state` so the
   adapter answers 302. (This is what lets claude.ai render "you declined" instead
   of a dead JSON page. The source never implemented error redirects; this completes
-  fix #5.)
+  fix #5.) **2026-08-02 final-spec finding:** these error redirects currently omit
+  RFC 9207 `iss`, even though AS metadata advertises support. They therefore do
+  not yet satisfy the 2026-07-28 authorization-response profile.
 
 **`prepare({ clientId, redirectUri, responseType, codeChallenge,
 codeChallengeMethod, resource?, scope?, state?, subject, allowedScopes?, registration? })`** → `PreparedConsent`:
@@ -175,7 +182,7 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   When the verified consent token carries an `allowedScopes` ceiling (§17.4), that
   union is **re-intersected against it** — accumulated prior grants cannot
   resurrect a scope a since-removed group granted. Then 302 to
-  `redirect_uri?code=…&iss=<issuer>[&state=…]` (RFC 9207 `iss`, RC item (a)).
+  `redirect_uri?code=…&iss=<issuer>[&state=…]` (RFC 9207 `iss`).
 
 ## 9.4 Token
 `POST /oauth/token`, `cache-control: no-store`. Response:

@@ -16,9 +16,15 @@
 - **RFC 8707** — Resource Indicators; **audience is fail-closed** (a token
   without a matching `aud` is rejected).
 - **RFC 8252** — Native apps; loopback redirect any-port rule (§7.3).
-- **RFC 9207** — `iss` parameter in the authorization response (RC: also
-  advertise `authorization_response_iss_parameter_supported: true`).
+- **RFC 9207** — `iss` parameter in authorization responses and
+  `authorization_response_iss_parameter_supported` metadata.
 - **MCP Authorization 2025-11-25** — the current conformance target.
-- **MCP Authorization 2026-07-28-RC** — reviewed and implemented where its
-  authorization changes are backward-compatible; final publication remains
-  pending.
+- **MCP Authorization 2026-07-28** — official stable artifact manually checked
+  on 2026-08-02. DCR is deprecated but remains a `MAY` compatibility mechanism;
+  CIMD remains a `SHOULD` and references
+  `draft-ietf-oauth-client-id-metadata-document-00`; MCP clients `MUST` send an
+  appropriate DCR `application_type`; authorization servers `SHOULD` include
+  RFC 9207 `iss` in success and error authorization responses; and servers
+  `MUST` account for scope hierarchies when deciding token sufficiency. The
+  final target remains pending on those runtime gaps plus a complete mapping of
+  the referenced CIMD draft `-00` requirements.

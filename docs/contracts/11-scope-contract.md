@@ -5,7 +5,11 @@
   catalog (unknown ⇒ `invalid_scope`), de-dupes, and falls back to
   `defaultScopes` when none requested. Returns the validated list.
 - `scopeString(scopes)` → sorted, space-joined (stable token `scope` values).
-- `requireScope(auth, required)` → 403 `insufficient_scope` step-up (§8.3).
+- `requireScope(auth, required)` → exact-membership 403 `insufficient_scope`
+  step-up (§8.3). **MCP 2026-07-28 gap:** the final text says servers `MUST`
+  account for scope hierarchies where a broader scope implies narrower scopes.
+  This flat helper has no hierarchy policy; resolving that requires a separate
+  contract-first runtime change.
 - **Accumulation *(RC item (c)) — stored-DCR opaque clients only.*** Re-authorization
   unions the requested scopes with those derived from this `(subject, clientId)`'s
   active refresh-token records (§9.3) — **no grant store**. In stateless mode, and for

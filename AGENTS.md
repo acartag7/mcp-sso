@@ -21,14 +21,16 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 
 ## 2. MCP specification compliance
 
-- **Spec target:** **MCP Authorization `2025-11-25`** — the stable published
-  spec clients implement. The `2026-07-28-RC` backward-compatible hardening
-  items (e.g. RFC 9207 `iss`) are built in, but the official final artifact is
-  not yet published. Before any release claims conformance with the final text,
-  complete the manual maintainer checklist in
-  [`docs/verification.md`](docs/verification.md#spec-release-re-verification-due-2026-07-28)
-  ("Spec-release re-verification"; see
-  [`docs/contracts.md`](docs/contracts.md) §0 status).
+- **Spec target:** **MCP Authorization `2025-11-25`**. The official stable
+  `2026-07-28` artifact was manually re-verified on 2026-08-02. Its DCR
+  deprecation and client-side DCR `application_type` requirement align with the
+  v0.3.2 registration surface. Final conformance is still pending: redirected
+  authorization errors omit RFC 9207 `iss`; `requireScope` implements exact
+  membership rather than the final text's scope-hierarchy `MUST`; and a complete
+  requirement mapping from the final artifact's referenced CIMD draft `-00` to
+  source and tests remains open. See the completed evidence checklist in
+  [`docs/verification.md`](docs/verification.md#spec-release-re-verification-completed-2026-08-02)
+  and the blocker in [`docs/contracts.md`](docs/contracts.md) §0 status.
 - **Governing RFCs:** [9728](https://datatracker.ietf.org/doc/html/rfc9728)
   (Protected Resource Metadata / PRM), [8707](https://datatracker.ietf.org/doc/html/rfc8707)
   (audience / resource parameter), [8414](https://datatracker.ietf.org/doc/html/rfc8414)
