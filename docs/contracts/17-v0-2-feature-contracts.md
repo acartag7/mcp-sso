@@ -16,12 +16,12 @@
 (2026-03-02). MCP Authorization 2025-11-25 and the final stable 2026-07-28
 artifact both normatively reference draft **-00**. The implementation was built
 against -01's additional SSRF, redirect, and response constraints. The final MCP
-citation is `-00`; §16.1 now carries the complete 44-statement mapping. It found
-three confirmed runtime mismatches — the `+json` media-type check accepts
-essences outside the `application/` tree, the shared cache ignores
-`s-maxage`/`private`/`Date`, and the loopback port exception is applied without
-RFC 9700's native-app precondition — plus four unresolved test-evidence rows, so
-final CIMD draft conformance cannot yet be claimed. §16.2 additionally records a
+citation is `-00`; §16.1 now carries the complete 44-statement mapping. The
+`+json` media-type mismatch is closed. Two confirmed runtime mismatches remain —
+the shared cache ignores `s-maxage`/`private`/`Date`, and the loopback port
+exception is applied without RFC 9700's native-app precondition — plus four
+unresolved test-evidence rows, so final CIMD draft conformance cannot yet be
+claimed. §16.2 additionally records a
 draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
 member.
 
@@ -226,10 +226,9 @@ decision. Everything else in the pipeline still runs under the flag.
   `application/json` or an `application/<AS-defined>+json` suffix type — this is
   the draft's own rule, not our hardening: `-00` §4.1 permits a more specific
   content type "as long as the response is JSON **and conforms to
-  `application/<AS-defined>+json`**". **PENDING (D00-4.1.4, §16.1):** the shipped
-  `isJsonMediaType` accepts any essence ending in `+json`, including outside the
-  `application/` tree; the follow-up runtime PR narrows it to this rule. Body
-  read with a streaming hard cap of
+  `application/<AS-defined>+json`**". D00-4.1.4 is enforced by requiring the
+  `application/` tree for every `+json` alternate. Body read with a streaming
+  hard cap of
   `maxDocumentBytes` — exceeding it REJECTS (never truncates: truncated JSON
   must never parse "successfully"); unknown `Content-Encoding` rejected and
   decompressed output counted against the same cap (decompression bombs).
@@ -365,11 +364,10 @@ archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 runtime commit `af2a61f` with all three providers. The implementation was
 reviewed against `2026-07-28-RC`; the official final artifact was then checked
 on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
-44 normative statements: 23 conformant (one carrying a disclosed caveat), two
+44 normative statements: 24 conformant (one carrying a disclosed caveat), two
 reasoned deviations, 12 not applicable to the implemented public-client profile,
-four with unresolved test evidence, and three confirmed runtime mismatches
-(D00-4.1.4 media type, D00-4.4.2 shared-cache directives, D00-4.5.2 native-app
-precondition).
+four with unresolved test evidence, and two confirmed runtime mismatches
+(D00-4.4.2 shared-cache directives and D00-4.5.2 native-app precondition).
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -495,10 +493,9 @@ precondition).
 15. A duplicate or multi-value `Content-Type` header rejects (an essence-ambiguous
     response is untrusted). Essence match is case-insensitive with parameters
     allowed: media type `application/json` or an `application/<AS-defined>+json`
-    type (draft `-00` §4.1). **PENDING (D00-4.1.4, §16.1):** the shipped check
-    accepts any essence ending in `+json`, including outside the `application/`
-    tree; the follow-up runtime PR narrows it to this rule. (The duplicate-header
-    and case-insensitivity clauses are implemented correctly.)
+    type (draft `-00` §4.1). D00-4.1.4 is enforced: non-`application` `+json`
+    media types reject. (The duplicate-header and case-insensitivity clauses are
+    implemented correctly.)
 16. **Content-Encoding: identity only (v0.2).** The request sends
     `Accept-Encoding: identity`; ANY present `Content-Encoding` response header
     rejects — **including a bare `identity`; ONLY an ABSENT `Content-Encoding` is

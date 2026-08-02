@@ -150,7 +150,8 @@ function isJsonMediaType(value: string): boolean {
   if (value.includes(",")) return false;
   const essence = value.split(";", 1)[0]!.trim().toLowerCase();
   if (!/^[!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+$/.test(essence)) return false;
-  return essence === "application/json" || essence.endsWith("+json");
+  return essence === "application/json"
+    || /^application\/[0-9a-z][!#$&^_.+0-9a-z-]*\+json$/.test(essence);
 }
 function sameSerializedUrl(finalUrl: unknown, requested: string): boolean {
   if (typeof finalUrl !== "string") return false;
