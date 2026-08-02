@@ -250,7 +250,7 @@ its enforcement evidence.
 | S6b.2 | Happy path | URL-shaped `client_id` fetches the doc, validates; authorize→token→`/mcp` succeeds. |
 | S6b.3 | Generic client error | Every CIMD failure returns identical client-facing error text. |
 | S6b.4 | Audit detail | `oauth.cimd.fetch` records the specific reason without leaking the document body or secrets. |
-| S6b.5 | Redirect URI match | Exact match required; loopback any-port exception honored. |
+| S6b.5 | Redirect URI match | Exact match required; loopback any-port exception honored. **PENDING (D00-4.5.2):** the exception must additionally be gated on a document declaring `application_type: "native"`, with `"web"` and absent both matching exactly. |
 | S6b.6 | Scope accumulation (CIMD deferred) | CIMD ids do NOT accumulate: a genuine CIMD authorization reports `priorScopes = []` and mints only the requested (ceiling-bounded) scopes in BOTH DCR modes; seed an active legacy URL-keyed refresh row with a broader scope and prove it is never unioned. Control: an opaque stored-DCR client still accumulates. (§17.1.6 decision 3.) |
 | S6b.7 | Metadata flag | `client_id_metadata_document_supported` appears only when enabled. |
 | S6b.8 | Cache (freshness) | Cache HIT reuses the doc (no fetch). Freshness = `min(valid max-age, cacheTtlCapSeconds) − Age − elapsed`; **`max-age`<60 / `no-store` / `no-cache` / absent, duplicate, or quoted `Cache-Control`/`max-age` ⇒ NON-cacheable (re-fetch), never clamped up** (§17.1.6 decision 4); bounded LRU eviction; no error/invalid-doc cache; the SAME cache serves direct-mode `prepare` AND upstream-redirect authorize; single-flight keyed by the raw `client_id`; global in-flight cap (`overloaded` at the cap). |

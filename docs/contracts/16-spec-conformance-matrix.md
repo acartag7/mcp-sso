@@ -260,9 +260,9 @@ so neither inventory absorbs the other.
 | **MUST** clearly display the redirect URI hostname | C | `src/authorize-internals.ts:114-115`; `src/adapters/consent-page.ts:26-28`; frozen `s6b-consent.test.ts:116-122` asserts both hosts render, and `test/consent-page.test.ts:26-48` pins host prominence over the self-reported name. |
 | **SHOULD** display an additional warning for localhost-only redirects | Implemented, unproven | `src/adapters/consent-page.ts:21-23` renders the warning when `allRedirectsLoopback`; `src/cimd/registration.ts:100-110` computes it. The frozen suite **deliberately declines** to assert it (`s6b-consent.test.ts:124-126`) because no warning marker was contracted. Follow-up: contract a stable marker, then assert it positively on direct and carried/upstream consent. |
 | **MUST** validate the fetched `client_id` matches the URL exactly | C | Same evidence as D00-4.1.2. |
-| **MUST** validate redirect URIs against the document | C | Same evidence as D00-4.5.1/4.5.2. |
+| **MUST** validate redirect URIs against the document | **Partial — carries the D00-4.5.2 mismatch** | Registration and membership are enforced (D00-4.5.1). But the loopback port exception is applied without RFC 9700's native-app precondition, so a document declaring `application_type: "web"` still matches a different loopback port (D00-4.5.2, probed). Closed by follow-up runtime PR 2. |
 | **MUST** validate document structure and required fields | C | Same evidence as D00-4.1.1 and the `client_name`/`redirect_uris` checks at `src/cimd/document.ts:26-29`. |
-| **SHOULD** cache respecting HTTP cache headers | C | Same evidence as D00-4.4.2. |
+| **SHOULD** cache respecting HTTP cache headers | **Mismatched — carries the D00-4.4.2 mismatch** | `max-age`, `Age`, `no-store`/`no-cache` and the malformed/duplicate/quoted forms are honoured correctly, but this is a **shared** cache that stores `private` responses, ignores `s-maxage`, and never derives apparent age from `Date` (all probed). Closed by follow-up runtime PR 3. |
 
 **MCP final-status boundary.** The stable MCP release/tag
 [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)

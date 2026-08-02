@@ -281,7 +281,9 @@ decision. Everything else in the pipeline still runs under the flag.
   restatement, and not a per-site re-derivation: the CIMD matcher previously
   accepted `*`, `javascript:`, and non-canonical entries that §10.1 refused).
   https entries exact-match at authorize (draft §4.5 / RFC 9700); loopback http
-  matches RFC 8252 any-port (consistent with §10.2 native policy). If present:
+  matches RFC 8252 any-port **only for a document declaring
+  `application_type: "native"`** — see the §17.1.6 decision-1 shared matcher for
+  the canonical rule and its **PENDING (D00-4.5.2)** status. If present:
   `response_types` must include `"code"`; `grant_types` must be an array of
   non-empty strings that includes `"authorization_code"`. Additional grant
   declarations are accepted but do not enable any server grant handler.
@@ -309,7 +311,8 @@ decision. Everything else in the pipeline still runs under the flag.
   document (**SSRF oracle prevention**). The specific reason goes to audit
   only (`oauth.cimd.fetch`, failure, reason code).
 - The presented `redirect_uri` must exact-match a document entry (loopback
-  any-port exception). The consent page MUST present the client_id host and
+  any-port exception, native-declared documents only — §17.1.6 decision 1,
+  **PENDING (D00-4.5.2)**). The consent page MUST present the client_id host and
   redirect host before the cosmetic name as the primary identity anchors, and
   SHOULD warn when every registered redirect is loopback (the MCP localhost-
   impersonation consideration). `client_name` renders second as explicitly
@@ -323,8 +326,10 @@ decision. Everything else in the pipeline still runs under the flag.
   scope set up front, so the convenience is unused; a provenance-aware version is a
   future minor — §12 note.)
 - Token/refresh/revoke: NO re-fetch; binding is the existing auth-code-record
-  and refresh-record client checks (§9.4). Validated documents cache per RFC
-  9111 headers (freshness per §17.1.6 decision 4: `effectiveTtlSeconds =
+  and refresh-record client checks (§9.4). Validated documents cache per a
+  **subset** of RFC 9111 headers (**PENDING (D00-4.4.2)** — shared-cache
+  `s-maxage`/`private`/`Date` semantics are unmodelled; see rule 25)
+  (freshness per §17.1.6 decision 4: `effectiveTtlSeconds =
   min(valid max-age, cacheTtlCapSeconds) − Age − elapsedSeconds`; a valid
   `max-age` below 60 is non-cacheable, never clamped up), keyed by the
   RAW presented `client_id` string (raw-string identity rule —
@@ -595,7 +600,8 @@ precondition).
     disabled/absent, a `https://`-shaped `client_id` is likewise rejected
     `invalid_client`, never treated as a stateless-DCR client.
 23. For a CIMD `client_id`, `prepare`'s redirect validation is the document
-    exact-match (loopback any-port per rule 20), REPLACING §9.3 step 2's §10
+    exact-match (loopback any-port per rule 20, native-declared documents only —
+    §17.1.6 decision 1, **PENDING (D00-4.5.2)**), REPLACING §9.3 step 2's §10
     global-allowlist check for that client. Non-CIMD flows are unchanged.
 24. Single-flight/overload: coalesce concurrent fetches for the same RAW
     client_id; a coalesced follower does NOT consume an in-flight slot. When
@@ -615,7 +621,8 @@ precondition).
     initiating resolution; the cap counts FOLLOWERS only). This does NOT reverse the
     no-slot rule above: a follower still consumes no FETCH slot, so one popular
     client_id can never starve distinct client_ids out of `maxInFlight`.
-25. Cache freshness (RFC 9111, in-memory per instance, keyed by raw client_id):
+25. Cache freshness (**partial RFC 9111 — see the PENDING note below**, in-memory
+    per instance, keyed by raw client_id):
     `no-store` or `no-cache` ⇒ do not cache; absent, malformed, duplicate, or
     conflicting `Cache-Control`/`max-age`, and a negative/non-integer/overflow
     `Age` or an `Age` ≥ the effective lifetime ⇒ no cache entry (fail toward
@@ -625,6 +632,14 @@ precondition).
     min(valid max-age, cacheTtlCapSeconds) − Age − elapsedSeconds` and a non-positive
     `effectiveTtlSeconds` is not cached. A quoted `max-age` value is treated as
     malformed (no cache entry).
+    **PENDING (D00-4.4.2, §16.1):** the directives above are honoured correctly,
+    but this cache is SHARED (one instance per `Bridge`, keyed on `client_id`
+    with no user dimension), so RFC 9111's shared-cache rules also bind:
+    `s-maxage` overrides `max-age` (§5.2.2.10), a `private` response **MUST NOT**
+    be stored (§5.2.2.7), and apparent age must be derived from `Date` (§4.2.3).
+    None are modelled and all three were probed as stored. The follow-up runtime
+    PR implements them or refuses to cache when an unsupported directive is
+    present. Until then this rule is a subset of RFC 9111, not conformance to it.
 
 ## 17.1.6 S6b flow-integration amendments (decisions 1–6, 2026-07-23)
 
@@ -671,6 +686,15 @@ semantics of `src/redirect.ts:95-103` (scheme, host, path, and search equal; por
 ignored; fragment already rejected). It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and
 `prepare`'s re-check MUST call this SAME matcher.
+**PENDING (D00-4.5.2, §16.1) — this rule is the canonical definition the other
+any-port statements defer to, so the precondition is stated here once:** RFC 9700
+permits varying the loopback port **only for native apps**, and `application_type`
+is in the IANA client-metadata registry draft `-00` §4.1 imports. The any-port
+branch therefore applies only when the validated document declares
+`application_type: "native"`; a document declaring `"web"`, or omitting the
+property, gets exact raw-string matching (fail closed). The shipped matcher does
+not yet carry the type — follow-up runtime PR 2 threads it through the projection
+and gates the branch on it.
 
 *1a. Shape-first three-way dispatch; CIMD REPLACES §10 for CIMD ids.* Client_id
 shape is classified identically at BOTH the authorize resolve (`upstream-flow.ts:99`)
@@ -876,7 +900,9 @@ URL-keyed refresh row with a broader scope and prove a genuine CIMD authorizatio
 modes) reports `priorScopes = []` and mints only the requested, ceiling-bounded scopes; a
 control case proves an opaque stored-DCR client still accumulates.
 
-**Decision 4 — CimdFetchResult minimal cache view; RFC-9111-correct freshness (the
+**Decision 4 — CimdFetchResult minimal cache view; partial-RFC-9111 freshness
+(**PENDING (D00-4.4.2)**: shared-cache `s-maxage`/`private`/`Date` semantics are
+unmodelled — see rule 25 and §16.1) (the
 success cache serves BOTH modes).** The raw-client-id-keyed validated-success cache
 (§17.1.4) is used at **both** direct-mode `prepare` AND upstream-redirect authorize
 (1a) — NOT direct-mode-only. Redirect mode is the only mode that resolves
