@@ -255,6 +255,39 @@ the response. Wiring rules:
   `prepare`. Limiter denial is a direct 429 with no redirect; limiter failure
   remains fail-open (§6.7). Upstream redirect, console pairing, and CIMD retain
   their independent budgets rather than receiving a second adapter-level check.
+- **Hono OAuth POST body bound:** before request-body parsing or any Bridge
+  invocation, the Hono adapter applies a fixed **131,072-byte (128 KiB)**
+  streaming cap to `/oauth/register`, `/oauth/authorize/approve`,
+  `/oauth/token`, and `/oauth/revoke`. This accommodates the largest accepted
+  registration (16 redirect URIs × 2,048 UTF-8 bytes) after worst-case form
+  percent-encoding plus ordinary JSON or multipart framing, without adding a
+  deployer-controlled security selector. A missing `Content-Length` and a
+  `Transfer-Encoding` body are stream-counted. A present `Content-Length` must
+  be one canonical decimal integer (`0` or a non-zero digit followed by digits),
+  must not coexist with `Transfer-Encoding`, and must not exceed the cap;
+  malformed, duplicate/coalesced, conflicting, unsafe-integer, and oversized
+  values fail closed. A valid declared length does not bypass streaming
+  accounting: the pinned `hono/body-limit` middleware still counts the actual
+  body bytes. JSON, URL-encoded, multipart, and unknown content types share the
+  same pre-parse bound. Aborted streams and below-cap parser failures retain the
+  existing fail-closed parser-error path. A caller that uses `skipAuthorize` to
+  mount a custom Hono POST authorize surface (including console pairing) MUST
+  mount the adapter-exported `honoOAuthBodyLimit` before its body parser; the
+  adapter's four built-in POST routes mount that same middleware automatically.
+- **Hono over-cap response and ordering:** a body-bound rejection is direct HTTP
+  **413** with the fixed plain-text body `Payload Too Large`; it contains no raw
+  request material, has no `Location`, and reveals nothing about token
+  existence. Rejection precedes body parsing, Bridge and `RateLimitPort` calls,
+  store writes, and success audits. The streaming implementation buffers at
+  most the cap and never keeps the transport chunk that crosses it. A Fetch
+  runtime may deliver that crossing chunk in a runtime-defined size (including
+  when a test constructs one already-materialized oversized chunk); the adapter
+  cannot retroactively bound a chunk allocated by the host, but it does not pass
+  or retain that chunk for parsing. The middleware stops pulling after the
+  crossing chunk; transport draining, cancellation, and upload timeouts remain
+  host-server responsibilities. When Hono reconstructs the raw `Request`, the
+  adapter preserves runtime-owned request extensions so a `clientIp` extractor
+  still sees connection metadata after the body guard.
 - **Error → response:** an `OAuthError` with `.redirect` ⇒ **302** to the tagged
   `redirect_uri?error=…`; otherwise direct — status `error.status`, body
   `oauthErrorBody(error)` (§9.5). On the protected `/mcp` surface, 401/403 set the

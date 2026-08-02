@@ -41,8 +41,11 @@ The console-pairing identity (§17.5) ships as the `./identity/console-pairing`
 subpath, parallel to the other identity ports; its framework-free authorize
 helpers (`handlePairingAuthorize`, `renderPairingPage`) are root-exported so a
 consumer can mount the pairing surface alongside the `skipAuthorize` adapter
-option (the in-repo example imports them from source; package consumers import
-them from the root entry). The framework-free `Bridge` class — the central object
+option. A Hono consumer also imports `honoOAuthBodyLimit` from `mcp-sso/hono`
+and mounts it before parsing the caller-owned pairing POST; the four built-in
+Hono OAuth POST routes apply it automatically. The in-repo example imports the
+framework-free helpers from source; package consumers import them from the root
+entry. The framework-free `Bridge` class — the central object
 a consumer constructs and passes to a framework adapter — is root-exported
 (`import { Bridge, RequestAuthorizer } from "mcp-sso"`). `isMcpPath(requestUrl)` —
 the `/mcp` Streamable-HTTP path check a consumer's `onRequest` Origin-gate hook uses
