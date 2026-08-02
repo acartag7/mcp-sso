@@ -30,10 +30,10 @@
 > redirected authorization errors omit RFC 9207 `iss` while metadata advertises
 > support; `requireScope` performs exact membership rather than accounting for
 > scope hierarchies; and the final artifact's referenced CIMD draft `-00` is now
-> completely mapped, and that mapping found three confirmed runtime mismatches
-> (D00-4.1.4 `+json` media types outside the `application/` tree; D00-4.4.2
-> shared-cache `s-maxage`/`private`/`Date` handling; D00-4.5.2 the native-app
-> precondition on the loopback port exception) plus four unresolved
+> completely mapped. D00-4.1.4 now restricts alternate JSON media types to the
+> `application/` tree; two confirmed runtime mismatches remain (D00-4.4.2
+> shared-cache `s-maxage`/`private`/`Date` handling and D00-4.5.2 the native-app
+> precondition on the loopback port exception), plus four unresolved
 > test-evidence rows. See the matrix in
 > [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
 > and the completed release checklist in

@@ -22,7 +22,7 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 23 conformant (1 with a disclosed caveat), 2 reasoned deviations, 4 unresolved test-evidence rows, **3 confirmed runtime mismatches (D00-4.1.4 media type, D00-4.4.2 shared-cache directives, D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
+| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 24 conformant (1 with a disclosed caveat), 2 reasoned deviations, 4 unresolved test-evidence rows, **2 confirmed runtime mismatches (D00-4.4.2 shared-cache directives, D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP extension) | ✅ v0.2 shipped | §17.2 |
@@ -48,18 +48,19 @@ than folded into a single "conformant" total:
 
 | Class | Count | Rows | Meaning |
 |---|---|---|---|
-| `C` conformant | 22 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
+| `C` conformant | 23 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
 | `C` with a disclosed caveat | 1 | D00-6.5.1 | Conformant in production, with a narrower environment-scoped departure (the dev-only loopback fetch) stated in the row rather than absorbed into the total. |
 | Reasoned deviation | 2 | D00-4.2.1 (`SHOULD`), D00-4.2.2 (`RECOMMENDED`) | The obligation applies and is deliberately not met; rationale recorded. |
 | `U` unresolved evidence | 4 | D00-4.1, D00-4.1.5, D00-5.1, D00-6.5.2 | The enforcing source exists, but no test yet proves the complete hostile class or the shipped framework route. |
-| **Runtime mismatch** | **3** | **D00-4.1.4, D00-4.4.2, D00-4.5.2** | Implementation contradicts the statement. Each reproduced by direct probe, not inferred. |
+| **Runtime mismatch** | **2** | **D00-4.4.2, D00-4.5.2** | Implementation contradicts the statement. Each reproduced by direct probe, not inferred. |
 | `N/A` not applicable | 12 | — | Excluded client-side duty, optional feature not implemented, or a conditional whose trigger provably never fires. |
 
 Applicable to the implemented public-client authorization-server profile: 32.
-**All three runtime mismatches were found by independent review, not by the
-original pass** — media-type acceptance (D00-4.1.4), shared-cache directive
-handling (D00-4.4.2), and the unevaluated native-app precondition on the
-loopback port exception (D00-4.5.2). Each is reproduced by probe on this commit.
+**All three runtime mismatches identified by the audit were found by independent
+review, not by the original pass** — media-type acceptance (D00-4.1.4),
+shared-cache directive handling (D00-4.4.2), and the unevaluated native-app
+precondition on the loopback port exception (D00-4.5.2). D00-4.1.4 is now closed;
+the other two remain reproduced by probe.
 Deviations are counted separately so no single "conformant" integer absorbs
 them. Every `N/A` row records the specific reason its obligation cannot apply,
 so the classification can be re-checked rather than taken on trust.
@@ -79,7 +80,7 @@ so the classification can be re-checked rather than taken on trust.
 | D00-4.1.1 | §4.1 document **MUST** contain `client_id`. AS-enforced. | C | `src/cimd/document.ts:13-28` | Frozen `document.test.ts:51-63`; absence and wrong JSON types fail. |
 | D00-4.1.2 | §4.1 document `client_id` **MUST** equal the URL by RFC 3986 simple string comparison. AS-applicable. | C | `src/cimd/document.ts:23-27`; raw fetch key `src/cimd/guarded-fetcher.ts:26-31,105-107` | Frozen `document.test.ts:44-49` and `guarded-fetcher.test.ts:268-296`; normalization or comparison removal makes explicit-port/case witnesses pass. |
 | D00-4.1.3 | §4.1 document **MAY** contain additional properties. AS-applicable extension tolerance. | C | Named reads `src/cimd/document.ts:23-38`; named projection `src/cimd/registration.ts:36-44` | Frozen `document.test.ts:130-133` and `s6b-redirect.test.ts:162-175,351-360`; unknown fields are accepted but cannot escape into signed state. |
-| D00-4.1.4 | §4.1 an alternate JSON media type is permitted only in the `application/<AS-defined>+json` form. AS-applicable. | **Runtime mismatch** | `src/cimd/guarded-fetcher.ts:149-154` | `isJsonMediaType` accepts **any** essence ending in `+json`, not only the `application/` tree. Probed on this commit: `text/vendor+json` and `image/svg+json` are **accepted** with an otherwise-valid document. Frozen `guarded-fetcher.test.ts:147-163,299-303` covers `application/scim+json`, `text/json`, and `application/json-seq` but never a non-`application` `+json` type, so it stays green through the defect. Fix and hostile tests are follow-up PR 1 below. |
+| D00-4.1.4 | §4.1 an alternate JSON media type is permitted only in the `application/<AS-defined>+json` form. AS-applicable. | C | `src/cimd/guarded-fetcher.ts:149-155` | Ordinary `test/cimd-json-media-types.test.ts` proves direct and upstream rejection of `text/vendor+json` and `image/svg+json`, while preserving parameterized `application/json` and `application/scim+json`. Restoring the old unrestricted `endsWith("+json")` condition makes both hostile resolution tests fail. |
 | D00-4.1.5 | §4.1 `token_endpoint_auth_method` **MUST NOT** use shared-symmetric-secret methods. AS-applicable; public-only profile rejects every value except absent/`none`. | U | `src/cimd/document.ts:31-34` | Frozen `document.test.ts:88-99` proves `client_secret_basic`, `private_key_jwt`, and secret fields, but lacks explicit `client_secret_post`, `client_secret_jwt`, and another symmetric-method witness. |
 | D00-4.1.6 | §4.1 `client_secret` and `client_secret_expires_at` **MUST NOT** be used. AS-applicable. | C | `src/cimd/document.ts:33-35` | Frozen `document.test.ts:96-99` and route-level anti-oracle `s6b-anti-oracle.test.ts:119-126,164-167`; removing either presence check fails. |
 | D00-4.1.7 | §4.1 other specs **MAY** impose stricter metadata restrictions. Profile-applicable: mcp-sso accepts public clients only. | C | `src/cimd/document.ts:31-38`; AS metadata `src/metadata.ts:31-38` | Frozen `document.test.ts:88-105` and `s6b-metadata.test.ts:35-45`; confidential declarations reject and `none` remains advertised. |
@@ -113,19 +114,16 @@ so the classification can be re-checked rather than taken on trust.
 
 ### Audit blockers and follow-up graph
 
-**Three runtime changes** are required, plus three normative evidence PRs. Each
-is a separate reviewable concern; none should carry the independent RFC 9207
-error-response or scope-hierarchy work.
+**Two runtime changes remain**, plus three normative evidence PRs. Each is a
+separate reviewable concern; none should carry the independent RFC 9207
+error-response or scope-hierarchy work. The media-type change is complete.
 
-1. **Runtime PR — media-type acceptance (closes the D00-4.1.4 mismatch, P1).**
-   `isJsonMediaType` (`src/cimd/guarded-fetcher.ts:149-154`) accepts any essence
-   ending in `+json`. Draft `-00` §4.1 permits the alternate form only as
-   `application/<AS-defined>+json`. Probed on this commit: `text/vendor+json` and
-   `image/svg+json` are accepted. Require exactly `application/json`, or an
-   essence that both starts with `application/` and ends with `+json`. Add
-   hostile witnesses for at least `text/vendor+json` and `image/svg+json` through
-   direct and upstream resolution. Until this lands the CIMD profile has a
-   confirmed `-00` mismatch.
+1. **Completed runtime PR — media-type acceptance (closed D00-4.1.4, P1).**
+   `isJsonMediaType` now accepts exactly `application/json`, or an essence that
+   both starts with `application/` and ends with `+json`. Ordinary hostile tests
+   reject `text/vendor+json` and `image/svg+json` through direct and upstream
+   resolution, while positive tests preserve parameters and
+   `application/scim+json`.
 2. **Runtime PR — native-app precondition on the loopback port exception
    (closes the D00-4.5.2 mismatch, P1).** RFC 9700 permits varying loopback
    ports only for **native apps**; `cimdRedirectMatches` never sees a client
@@ -179,10 +177,11 @@ deliberately *not* counted as draft or MCP conformance blockers:
 Two independent adversarial reviews ran over the complete `-00` text, the raw
 diff, and every cited source and test line. Their corrections are applied above:
 
-- **D00-4.1.4 reclassified to a runtime mismatch.** The original pass scored it
-  `C`; a review probe showed `text/vendor+json` is accepted. Reproduced here
-  before the row was changed. This is the finding that falsified the original
-  "zero mismatches" headline.
+- **D00-4.1.4 was reclassified to a runtime mismatch, then closed.** The original
+  pass scored it `C`; a review probe showed `text/vendor+json` was accepted. The
+  narrowed `application/` check and direct/upstream hostile regressions now make
+  the row conformant. This was the finding that falsified the original "zero
+  mismatches" headline.
 - **D00-4.2.1 and D00-6.1.1 were inversely classified, and are now swapped.**
   §4.2's antecedent is any "additional restrictions on the accepted
   `redirect_uris`" — same-origin is only its example — so mcp-sso's §10.0 entry
@@ -270,7 +269,6 @@ resolves to commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` and references
 CIMD draft `-00`. Completing this mapping does not change the project target:
 MCP Authorization 2025-11-25 remains current because redirected authorization
 errors still omit RFC 9207 `iss`, scope hierarchy handling is absent, and CIMD
-now carries **three** confirmed `-00` runtime mismatches (D00-4.1.4 media type,
-D00-4.4.2 shared-cache directives, D00-4.5.2 native-app precondition) plus three
-open evidence PRs. Counted individually the project has **five** open MCP-2026
-runtime defects.
+now carries **two** confirmed `-00` runtime mismatches (D00-4.4.2 shared-cache
+directives and D00-4.5.2 native-app precondition) plus three open evidence PRs.
+Counted individually the project has **four** open MCP-2026 runtime defects.
