@@ -1662,8 +1662,23 @@ gate replaces no-gate).
   implementations:
   - `JsonlFileAudit(filePath)` — one `JSON.stringify`d event per line
     (JSON encoding escapes newlines ⇒ log-injection-safe by construction),
-    `O_APPEND` writes, file created `0600`; NO rotation (logrotate is the
-    deployer's).
+    file created `0600`. On hosts exposing Node's `O_NOFOLLOW`, every append
+    opens the final path with `O_APPEND | O_CREAT | O_NONBLOCK | O_NOFOLLOW`,
+    checks `fstat().isFile()` on that descriptor, then writes the complete
+    encoded line through it. Concurrent calls to one sink instance are
+    serialized, so short OS writes cannot splice that instance's records.
+    Thus a live or dangling symlink, FIFO, socket,
+    device, and directory are rejected without writing through the configured
+    path; the sink reports a redacted failure and remains fail-open. It does not
+    rotate files itself, but opening per event preserves logrotate's
+    rename-and-recreate pattern. If `O_NOFOLLOW` is unavailable (notably on
+    Windows Node builds), the sink safely drops the event with a fixed diagnostic
+    instead of falling back to a raceable path check. Hard-linked regular files
+    are an explicit deployer/host hard-link-policy residual, not rejected by
+    this reference sink; changing that needs a separate contract decision.
+    Separate sink instances or processes writing one path are not coordinated:
+    deployments needing cross-process JSONL framing must designate one writer
+    or provide their own coordination.
   - `WebhookAudit(url, { timeoutMs = 5000, headers?, fetchImpl? })` — per-event
     POST, https required (raw prefix check), userinfo (`user:pass@`) rejected at
     construction (credentials belong in `headers`; a fetch error would otherwise
