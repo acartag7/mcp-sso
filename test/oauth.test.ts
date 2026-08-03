@@ -977,6 +977,9 @@ test("config fail-closed: https-only, secret length, key shape, catalog, default
   const dev = createBridgeConfig({ ...base, issuer: "http://localhost", resource: "http://localhost/mcp", dev: { allowInsecureLocalhost: true } });
   assert.equal(originOf(dev.resource), "http://localhost");
   assert.throws(() => createBridgeConfig({ ...base, issuer: "http://api.test", dev: { allowInsecureLocalhost: true } }), AuthConfigError); // non-loopback
+  // The local-dev escape hatch permits only HTTP, never another loopback scheme.
+  assert.throws(() => createBridgeConfig({ ...base, issuer: "ftp://localhost", resource: "http://localhost/mcp", dev: { allowInsecureLocalhost: true } }), AuthConfigError);
+  assert.throws(() => createBridgeConfig({ ...base, issuer: "http://localhost", resource: "ftp://localhost/mcp", dev: { allowInsecureLocalhost: true } }), AuthConfigError);
 });
 
 test("config fail-closed: unknown top-level keys rejected with the key named", () => {
