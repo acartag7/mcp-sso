@@ -3,7 +3,9 @@
   "permissions": {
     "deny": [
       "Edit(test/acceptance/**)",
+      "Write(test/acceptance/**)",
       "Edit(./test/acceptance/**)",
+      "Write(./test/acceptance/**)",
       "Bash(git push:* origin main*)",
       "Bash(git push origin main*)",
       "Bash(git push:* origin HEAD:main*)",

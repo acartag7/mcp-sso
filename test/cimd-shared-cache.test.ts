@@ -89,6 +89,10 @@ test("malformed runtime Vary and stale refetch failure never reuse CIMD metadata
   assert.equal((await malformed.bridge.handleAuthorize(request, { subject: "user" })).status, 200);
   assert.equal((await malformed.bridge.handleAuthorize(request, { subject: "user" })).status, 200);
   assert.equal(malformed.calls(), 2, "bare Vary is malformed and cannot be cached");
+  const emptyVary = bridgeFor({ "content-type": ["application/json"], "cache-control": ["max-age=3600"], vary: [] });
+  assert.equal((await emptyVary.bridge.handleAuthorize(request, { subject: "user" })).status, 200);
+  assert.equal((await emptyVary.bridge.handleAuthorize(request, { subject: "user" })).status, 200);
+  assert.equal(emptyVary.calls(), 2, "empty Vary is malformed and cannot be cached");
   const stale = bridgeFor({ "content-type": ["application/json"], "cache-control": ["max-age=60"] }, true);
   assert.equal((await stale.bridge.handleAuthorize(request, { subject: "user" })).status, 200);
   stale.clock.ms = 60_000;
