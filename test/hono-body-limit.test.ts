@@ -182,14 +182,17 @@ test("hono body cap: small JSON, form, and multipart bodies reach real routes", 
   assert.deepEqual(calls, ["register", "token", "register"]);
 });
 
-test("hono body cap: a fully JSON-escaped largest valid registration is admitted", async () => {
+test("hono body cap: a fully JSON-escaped largest recognized registration is admitted", async () => {
   const redirectUri = "https://client.test/" + "a".repeat(2048 - Buffer.byteLength("https://client.test/"));
-  const escapedUri = [...redirectUri]
+  const jsonEscaped = (value: string): string => [...value]
     .map((character) => `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`)
     .join("");
+  const escapedUri = jsonEscaped(redirectUri);
+  const grantType = "g".repeat(256);
+  const escapedGrantType = jsonEscaped(grantType);
   const redirectUris = Array(16).fill(redirectUri);
-  const body = `{"redirect_uris":[${Array(16).fill(`"${escapedUri}"`).join(",")}]}`;
-  assert.ok(Buffer.byteLength(body) > 128 * 1024);
+  const body = `{"redirect_uris":[${Array(16).fill(`"${escapedUri}"`).join(",")}],"grant_types":[${Array(32).fill(`"${escapedGrantType}"`).join(",")}]}`;
+  assert.equal(Buffer.byteLength(body), 245_939);
   assert.ok(Buffer.byteLength(body) <= LIMIT);
 
   const response = await realApp(["https://client.test"]).request("/oauth/register", {

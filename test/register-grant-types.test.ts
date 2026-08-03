@@ -43,9 +43,21 @@ function request(grantTypes: unknown) {
   };
 }
 
-test("DCR accepts grant_types beyond the redirect_uris cardinality cap", async () => {
-  const response = await bridge().handleRegister(request(Array(17).fill("authorization_code")));
+test("DCR accepts the bounded grant_types domain beyond the redirect_uris cardinality cap", async () => {
+  const response = await bridge().handleRegister(request(Array(32).fill("authorization_code")));
   assert.equal(response.status, 201);
+});
+
+test("DCR rejects grant_types beyond the cardinality and UTF-8 byte caps", async () => {
+  const overlongUtf8 = `${"é".repeat(128)}a`;
+  for (const [name, grantTypes] of [
+    ["33 entries", Array(33).fill("authorization_code")],
+    ["257 UTF-8 bytes in 129 code units", [overlongUtf8]],
+  ] as const) {
+    const response = await bridge().handleRegister(request(grantTypes));
+    assert.equal(response.status, 400, name);
+    assert.equal((response.body as { error: string }).error, "invalid_client_metadata", name);
+  }
 });
 
 test("DCR still rejects client_credentials beyond 16 grant_types entries", async () => {
@@ -82,11 +94,11 @@ test("DCR rejects non-integer and negative grant_types lengths", async () => {
 test("DCR snapshots grant_types length once and reads each selected index once", async () => {
   let lengthReads = 0;
   let indexReads = 0;
-  const grantTypes = new Proxy(Array(17).fill("authorization_code"), {
+  const grantTypes = new Proxy(Array(32).fill("authorization_code"), {
     get(target, key, receiver) {
       if (key === "length") {
         lengthReads++;
-        return lengthReads === 1 ? 17 : 100_000;
+        return lengthReads === 1 ? 32 : 100_000;
       }
       if (typeof key === "string" && /^\d+$/.test(key)) indexReads++;
       return Reflect.get(target, key, receiver);
@@ -95,5 +107,5 @@ test("DCR snapshots grant_types length once and reads each selected index once",
   const response = await bridge().handleRegister(request(grantTypes));
   assert.equal(response.status, 201);
   assert.equal(lengthReads, 1);
-  assert.equal(indexReads, 17);
+  assert.equal(indexReads, 32);
 });

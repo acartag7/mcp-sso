@@ -30,16 +30,24 @@ adapter (Phase 3) exposes them over HTTP.
   public key, with `cache-control: public, max-age=60`).
 
 ## 9.2 DCR — `registerClient` (RFC 7591; deprecated compatibility path)
-`POST /oauth/register` with form fields `redirect_uris` (required, each validated)
-and optional `application_type` (`"native"` | `"web"`, default `"web"`). MCP
-Authorization 2026-07-28 places the `MUST` to send an appropriate
-`application_type` on MCP clients. The bridge remains tolerant of omission for
-backwards compatibility and applies the OIDC default of `"web"`.
+`POST /oauth/register` understands `redirect_uris` (required, each validated),
+optional `application_type` (`"native"` | `"web"`, default `"web"`),
+`token_endpoint_auth_method`, and `grant_types`. MCP Authorization 2026-07-28
+places the `MUST` to send an appropriate `application_type` on MCP clients. The
+bridge remains tolerant of omission for backwards compatibility and applies the
+OIDC default of `"web"`. Other client metadata is ignored, as RFC 7591 §2
+requires; it is never persisted or reflected by this AS-lite endpoint.
 `redirect_uris` is client-supplied untrusted input and carries the same hard
 caps §10.0 states: **1..16 entries** (the same bound §17.1.5 rule 19 puts on a
 CIMD document's array, same rationale — it bounds the authorize-time
 exact-match scan) and **≤ 2048 UTF-8 bytes per entry, checked on the raw
 string before parsing**.
+When present, `grant_types` is an array of **0..32** non-empty primitive
+strings, each no more than **256 UTF-8 bytes**. The bridge only inspects that
+metadata to reject `client_credentials`; it does not persist or otherwise
+enable the declarations. These caps bound core work and ensure the largest
+request shape with metadata this bridge understands fits the Hono boundary in
+§9.6.
 - **Stateless mode (default):** any well-formed registration with allowlisted
   redirect URIs succeeds; the server mints an ephemeral `client_id`
   (`mcpdc_<random>`), returns `{ client_id, client_id_issued_at, redirect_uris,
@@ -258,11 +266,15 @@ the response. Wiring rules:
 - **Hono OAuth POST body bound:** before request-body parsing or any Bridge
   invocation, the Hono adapter applies a fixed **262,144-byte (256 KiB)**
   streaming cap to `/oauth/register`, `/oauth/authorize/approve`,
-  `/oauth/token`, and `/oauth/revoke`. This accommodates the largest accepted
-  registration (16 redirect URIs × 2,048 UTF-8 bytes) after every URI character
-  is legally serialized as a JSON `\uXXXX` escape (about 192 KiB), as well as
-  worst-case form percent-encoding and ordinary multipart framing, without adding a
-  deployer-controlled security selector. A missing `Content-Length` and a
+  `/oauth/token`, and `/oauth/revoke`. The fixed raw-byte budget admits a compact
+  JSON serialization with all recognized DCR field values at their maxima: 16 redirect URIs ×
+  2,048 UTF-8 bytes (about 192 KiB when every URI character is legally serialized
+  as a JSON `\uXXXX` escape), plus 32 `grant_types` entries × 256 UTF-8 bytes
+  (about 48 KiB with the same encoding). The combined regression witness is
+  245,939 bytes. This is not a semantic DCR size promise: JSON permits arbitrary
+  insignificant whitespace, and RFC 7591 requires unknown metadata to be ignored.
+  A Hono request whose raw representation exceeds this finite security budget is
+  rejected with 413 rather than passed to a parser. A missing `Content-Length` and a
   `Transfer-Encoding` body are stream-counted. A present `Content-Length` must
   be one canonical decimal integer (`0` or a non-zero digit followed by digits),
   must not coexist with `Transfer-Encoding`, and must not exceed the cap;
