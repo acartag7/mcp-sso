@@ -40,6 +40,10 @@ they carry no runtime dependency (`node:fs` is built-in; `fetch` is native to No
 `import { JsonlFileAudit } from "mcp-sso"` is the intended consumer shape.
 Quickstart secret persistence (`loadOrCreateQuickstartSecrets`, §17.8) is
 root-exported for the same reason (it depends only on `jose` + node builtins).
+The `./store/sqlite` subpath exports both `openSqliteStore(path)` and the
+`SqliteStore` constructor. Only `openSqliteStore` provides the §12.4 persistent
+filesystem-admission guarantee; `new SqliteStore(callerDatabaseSync)` deliberately
+leaves filesystem provenance, permissions, and directory trust with the caller.
 The console-pairing identity (§17.5) ships as the `./identity/console-pairing`
 subpath, parallel to the other identity ports; its framework-free authorize
 helpers (`handlePairingAuthorize`, `renderPairingPage`) are root-exported so a

@@ -1769,8 +1769,12 @@ gate replaces no-gate).
   into a dir we created, require exact in a pre-existing one).
 - **Parity rule:** EVERY code path that creates or reads the state dir —
   `loadOrCreateQuickstartSecrets`, the example's Cloudflare Access branch
-  (`ensureStateDir`), and the sqlite store (`openSqliteStore` chmod 0600) —
-  meets this bar. A control fixed in one path MUST be applied to every sibling
+  (`ensureStateDir`), and the sqlite store ([§12.4](12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission)) —
+  meets the applicable bar. SQLite additionally requires an already-existing,
+  private, effective-user-owned immediate directory; descriptor-first
+  exclusive/no-follow/nonblocking admission; regular-file, `0600`, ownership,
+  identity, and single-link checks before migration. A control fixed in one
+  path MUST be applied to every sibling
   that touches the same resource (the "sweep for sibling instances" discipline
   — global CLAUDE.md). `JsonlFileAudit` is an operator-configured audit
   destination, not state-dir storage; its deliberately narrower final-target

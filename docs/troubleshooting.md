@@ -5,6 +5,22 @@ kept here because they cost real time to work out and aren't obvious from
 `cloudflared --help`. The live client conformance results these relate to are
 in [`live-verification.md`](live-verification.md).
 
+## SQLite persistent-state boot rejection
+
+`openSqliteStore` accepts exact `:memory:` or an ordinary filesystem path. A
+`file:` URI is rejected deliberately; replace it with the underlying path and
+remove URI query options. The parent directory must already exist and be
+private. On POSIX, verify its provenance, then use owner-only permissions (for
+example `chmod 700 <state-directory>`); an existing database must be the
+service user's regular, single-link file with exact mode `0600` (for example
+`chmod 600 <database>` only after verifying that it is the intended file).
+
+The store never chmods, deletes, truncates, or migrates a rejected existing
+object. A symlink, hard link, FIFO, socket, device, directory, unsafe ancestor,
+or attacker-writable immediate directory must be replaced with a real private
+directory and regular owner-only file. On Windows, apply an equivalent private
+directory ACL; the library does not claim POSIX permission enforcement there.
+
 ## Codex CLI 0.144.1 callback regression
 
 On 2026-07-28 the installed Codex CLI 0.144.1 failed the OAuth callback when

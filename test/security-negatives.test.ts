@@ -92,7 +92,7 @@ test("security — openSqliteStore on a FIFO fails closed without hanging (threa
   // sibling was never swept. openSqliteStore is SYNC, so a hang would stall the event
   // loop — run it in a SUBPROCESS with a hard deadline so a regression is observable
   // + killable, not a frozen test run. The row-26 claim: opens O_RDWR (no block) and
-  // fails closed (SQLITE_IOERR) on a FIFO — the test proves BOTH throw AND promptness.
+  // rejects the non-regular path before SQLite — the test proves BOTH throw AND promptness.
   const dir = await mkdtemp(join(tmpdir(), "mcp-sso-fifo-sqlite-"));
   const fifo = join(dir, "auth.fifo");
   execSync(`mkfifo '${fifo}'`);
@@ -113,7 +113,11 @@ test("security — openSqliteStore on a FIFO fails closed without hanging (threa
   try {
     assert.notEqual(result, "HUNG", "openSqliteStore must NOT hang on a FIFO (row 26)");
     assert.equal(result, 1, "openSqliteStore must throw (fail closed) on a FIFO");
-    assert.match(stderr, /I\/O error|disk|unable to open/i, "a disk/IO error (fail-closed), not a silent open");
+    assert.match(
+      stderr,
+      /sqlite: unsafe persistent state: final path is not a regular file/,
+      "the admission layer rejects the FIFO before SQLite opens it",
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
