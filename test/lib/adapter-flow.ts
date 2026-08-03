@@ -123,6 +123,22 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
     }
   });
 
+  test(`${name} adapter: revoke limiter denies on the shipped route`, async () => {
+    const keys: string[] = [];
+    const audit = new MemoryAudit();
+    const bridge = makeBridge({ async check(key) { keys.push(key); return false; } }, audit);
+    const client = await mount(bridge, stubIdentity);
+    try {
+      const response = await client.postForm("/oauth/revoke", { token: "rt_not_processed" });
+      assert.equal(response.status, 429);
+      assert.equal(JSON.parse(response.body).error, "temporarily_unavailable");
+      assert.deepEqual(keys, [name === "hono" ? "revoke:unknown" : "revoke:127.0.0.1"]);
+      assert.equal(audit.events.length, 0, "denial reaches no revoke audit work");
+    } finally {
+      await client.close?.();
+    }
+  });
+
   test(`${name} adapter: rejected identity ⇒ direct 401 access_denied with §9.5 body`, async () => {
     // verification.md T1.HF.1: IdentityPort returns { ok: false }. Contracts §9.3:
     // identity not resolved/rejected is a DIRECT error (never a redirect — the

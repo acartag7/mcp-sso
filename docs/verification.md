@@ -87,6 +87,7 @@ Run before S2.
 | S0a.3 | Timestamp ordering through MySQL | 3-ms UTC timestamps preserve lexicographic ordering. |
 | S0a.4 | Two Redis limiter instances share a key/window | Second instance observes the first's increments. |
 | S0a.5 | Redis unavailable | Limiter fails open; auth flow continues. |
+| S0a.6 | `/oauth/revoke` admission limiting | After the Fastify, Express, or Hono body boundary, each adapter reaches the same `Bridge.handleRevoke` guard with exactly `revoke:<trusted adapter IP or unknown>`. A denial is 429 before Bridge body normalization, token hashing, use-case, store, revocation, or audit work; a limiter throw proceeds. Hono's over-cap path remains 413 before the limiter. Admitted unknown and already-revoked tokens remain RFC 7009 HTTP 200. |
 
 ### T1.S1a — audit sinks
 

@@ -231,10 +231,17 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   grant generation inside the atomic store operation. A valid present-day
   `ClientStore.find(clientId)` result is not grant provenance and is never used
   as a substitute.
-- **`revoke`** (RFC 7009): **always returns 200**; an unknown or already-revoked
-  token is a **no-op** (never 4xx — RFC 7009 §2.2 forbids leaking token existence
-  via the response). Looks up the family by hash and revokes it; a guessed family
-  id revokes nothing.
+- **`revoke`** (RFC 7009): after the adapter's request-body boundary but before
+  `Bridge.handleRevoke` normalizes the body or extracts a token,
+  `Bridge.handleRevoke` calls `RateLimitPort("revoke:<ip>")`. A `false` result
+  returns the existing direct 429 `temporarily_unavailable` response with no token
+  hashing, use-case, store, revocation, or audit work; a thrown limiter error is
+  fail-open under §6.7. The limiter is not an adapter body-parser gate: malformed
+  or over-cap input can return the adapter's fixed 400/413 response before this
+  call. Once admitted, revocation **always returns 200**; an unknown or
+  already-revoked token is a **no-op** (never 4xx — RFC 7009 §2.2 forbids leaking
+  token existence via the response). It looks up the family by hash and revokes
+  it; a guessed family id revokes nothing.
 - **Audit containment:** every `OAuthTokenUseCase` audit emission goes through
   `writeTokenAudit`. A synchronous throw or rejected promise from a nonconforming
   custom `AuditPort` is ignored, so it cannot replace an OAuth error, suppress a
@@ -266,7 +273,9 @@ the response. Wiring rules:
   §6.7); GET `/oauth/authorize` → resolve subject via `IdentityPort` → `prepare`,
   render the consent page; POST `/oauth/authorize/approve` → `approve`; POST
   `/oauth/token` → `exchangeAuthorizationCode`/`refresh` (behind `RateLimitPort`);
-  POST `/oauth/revoke` → `revoke` (always 200).
+  POST `/oauth/revoke` → adapter body boundary → `revoke` (behind
+  `RateLimitPort("revoke:<ip>")` before Bridge body normalization; after
+  admission it retains RFC 7009's always-200 behavior).
 - **Direct-authorize ordering:** the header-identity GET `/oauth/authorize`
   path calls `Bridge.resolveIdentity`, which checks
   `RateLimitPort("authorize:<ip>")` before `IdentityPort.verify`, its audit, or

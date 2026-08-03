@@ -309,6 +309,16 @@ test("hono body cap: over-cap registration has no limiter, store, or success-aud
   assert.deepEqual(effects, { limiter: 0, storeWrites: 0, successAudits: 0 });
 });
 
+test("hono body cap: over-cap revocation returns 413 before its limiter", async () => {
+  const { app, effects } = sideEffectHarness();
+  const response = await app.request("/oauth/revoke", {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: `token=${"x".repeat(LIMIT)}`,
+  });
+  assert.equal(response.status, 413);
+  assert.deepEqual(effects, { limiter: 0, storeWrites: 0, successAudits: 0 });
+});
+
 test("hono body cap: middleware stops pulling a demand-driven 2 MiB stream after the crossing chunk", async () => {
   const { app, calls } = harness();
   const hostile = streamRequest("/oauth/token", 2 * 1024 * 1024, 16 * 1024, {
