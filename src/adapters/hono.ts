@@ -39,7 +39,7 @@ export interface HonoAdapterOptions {
   clientIp?: (c: Context) => string | undefined;
 }
 
-const OAUTH_POST_BODY_MAX_BYTES = 128 * 1024;
+const OAUTH_POST_BODY_MAX_BYTES = 256 * 1024;
 const CONTENT_LENGTH = /^(?:0|[1-9][0-9]*)$/;
 
 function payloadTooLarge(): Response {

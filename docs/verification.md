@@ -67,9 +67,9 @@ Run before S2.
 
 | # | Scenario | Assert |
 |---|---|---|
-| HB.1 | Small real bodies | JSON, URL-encoded, and supported multipart bodies traverse a real Hono route unchanged. |
+| HB.1 | Valid real bodies | JSON, URL-encoded, and supported multipart bodies traverse a real Hono route unchanged; a real 16-by-2,048-byte DCR registration serialized entirely with JSON `\uXXXX` escapes is accepted. |
 | HB.2 | Header framing | Oversized, malformed, duplicate/coalesced, conflicting, or unsafe `Content-Length` returns fixed direct 413 before parsing; a valid small declared length cannot hide a larger body. |
-| HB.3 | Streaming boundary | Missing-length/chunked actual `Request` streams pass at exactly 128 KiB and return 413 at one byte over; middleware stops pulling a demand-driven hostile stream after its crossing chunk, while one already-materialized 2 MiB host chunk is rejected without reaching a parser. Transport cancellation/draining is not asserted. |
+| HB.3 | Streaming boundary | Missing-length/chunked actual `Request` streams pass at exactly 256 KiB and return 413 at one byte over; middleware stops pulling a demand-driven hostile stream after its crossing chunk, while one already-materialized 2 MiB host chunk is rejected without reaching a parser. Transport cancellation/draining is not asserted. |
 | HB.4 | Route parity | `/oauth/register`, `/oauth/authorize/approve`, `/oauth/token`, and `/oauth/revoke` all return 413 for applicable over-cap bodies. |
 | HB.5 | Side effects | An over-cap request makes zero Bridge-handler, limiter, store-write, and success-audit calls. |
 | HB.6 | Parser failure | A malformed below-cap body preserves the existing fail-closed adapter behavior. |

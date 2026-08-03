@@ -256,11 +256,12 @@ the response. Wiring rules:
   remains fail-open (§6.7). Upstream redirect, console pairing, and CIMD retain
   their independent budgets rather than receiving a second adapter-level check.
 - **Hono OAuth POST body bound:** before request-body parsing or any Bridge
-  invocation, the Hono adapter applies a fixed **131,072-byte (128 KiB)**
+  invocation, the Hono adapter applies a fixed **262,144-byte (256 KiB)**
   streaming cap to `/oauth/register`, `/oauth/authorize/approve`,
   `/oauth/token`, and `/oauth/revoke`. This accommodates the largest accepted
-  registration (16 redirect URIs × 2,048 UTF-8 bytes) after worst-case form
-  percent-encoding plus ordinary JSON or multipart framing, without adding a
+  registration (16 redirect URIs × 2,048 UTF-8 bytes) after every URI character
+  is legally serialized as a JSON `\uXXXX` escape (about 192 KiB), as well as
+  worst-case form percent-encoding and ordinary multipart framing, without adding a
   deployer-controlled security selector. A missing `Content-Length` and a
   `Transfer-Encoding` body are stream-counted. A present `Content-Length` must
   be one canonical decimal integer (`0` or a non-zero digit followed by digits),

@@ -10,7 +10,7 @@ import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
 import { createBridgeConfig } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
-const LIMIT = 128 * 1024;
+const LIMIT = 256 * 1024;
 const ROUTES = [
   "/oauth/register",
   "/oauth/authorize/approve",
@@ -46,7 +46,7 @@ function harness(clientIp?: Parameters<typeof createOAuthApp>[0]["clientIp"]): {
   return { app: createOAuthApp({ bridge, skipAuthorize: true, clientIp }), calls, requests };
 }
 
-function realApp(): ReturnType<typeof createOAuthApp> {
+function realApp(redirectAllowlist = ["https://client.test/callback"]): ReturnType<typeof createOAuthApp> {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const config = createBridgeConfig({
     issuer: "https://auth.test",
@@ -54,7 +54,7 @@ function realApp(): ReturnType<typeof createOAuthApp> {
     consentSigningSecret: "x".repeat(40),
     signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK,
     signingKeyId: "k",
-    redirectAllowlist: ["https://client.test/callback"],
+    redirectAllowlist,
     scopeCatalog: ["mcp:read"],
     defaultScopes: ["mcp:read"],
     allowedOrigins: ["https://auth.test"],
@@ -180,6 +180,25 @@ test("hono body cap: small JSON, form, and multipart bodies reach real routes", 
   assert.equal(multipart.status, 200);
   assert.equal((requests.at(-1)?.body as Record<string, unknown>).redirect_uris, "https://client.test/callback");
   assert.deepEqual(calls, ["register", "token", "register"]);
+});
+
+test("hono body cap: a fully JSON-escaped largest valid registration is admitted", async () => {
+  const redirectUri = "https://client.test/" + "a".repeat(2048 - Buffer.byteLength("https://client.test/"));
+  const escapedUri = [...redirectUri]
+    .map((character) => `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`)
+    .join("");
+  const redirectUris = Array(16).fill(redirectUri);
+  const body = `{"redirect_uris":[${Array(16).fill(`"${escapedUri}"`).join(",")}]}`;
+  assert.ok(Buffer.byteLength(body) > 128 * 1024);
+  assert.ok(Buffer.byteLength(body) <= LIMIT);
+
+  const response = await realApp(["https://client.test"]).request("/oauth/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+  assert.equal(response.status, 201);
+  assert.deepEqual((await response.json() as { redirect_uris: string[] }).redirect_uris, redirectUris);
 });
 
 test("hono body cap: exactly-at-cap passes and one byte over returns fixed 413", async () => {
