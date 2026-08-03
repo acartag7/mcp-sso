@@ -215,7 +215,7 @@ if (RUN) {
       });
       await store.saveRefreshToken({
         tokenHash: sha256Hex(rawRefresh), familyId: "famx", previousTokenHash: null,
-        clientId: "c", subject: "s", scopes: ["mcp:read"], expiresAt: FUTURE,
+        clientId: "c", subject: "s", resource: "https://api.test/mcp", scopes: ["mcp:read"], expiresAt: FUTURE,
       });
     } finally {
       await store.close();
@@ -274,7 +274,7 @@ if (RUN) {
 function refresh(rawToken: string, familyId: string, previousTokenHash: string | null, expiresAt: string) {
   return {
     tokenHash: sha256Hex(rawToken), familyId, previousTokenHash,
-    clientId: "client-1", subject: "subject-1", scopes: ["mcp:read"], expiresAt,
+    clientId: "client-1", subject: "subject-1", resource: "https://api.test/mcp", scopes: ["mcp:read"], expiresAt,
   };
 }
 

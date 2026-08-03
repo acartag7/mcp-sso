@@ -7,7 +7,7 @@ drives §8.3.
 |---|---|---|---|
 | `invalid_token` | 401 | `Bearer resource_metadata=…, scope=…, error="invalid_token"` | missing/bad/expired bearer; bad aud/iss/alg |
 | `invalid_request` | 400 | — | malformed/missing parameter |
-| `invalid_grant` | 400 | — | bad/expired/replayed code or refresh; PKCE fail; consent replay |
+| `invalid_grant` | 400 | — | bad/expired/replayed code or refresh, wrong refresh resource, legacy refresh row, PKCE fail; consent replay |
 | `invalid_scope` | 400 | — | unknown scope requested |
 | `invalid_redirect_uri` | 400 | — | redirect fails §10 |
 | `invalid_target` | 400 | — | `resource` ≠ configured resource |

@@ -8,11 +8,12 @@ import type {
 } from "../ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, StoreInputError, assertGrantGeneration,
-  assertSha256Hex, assertUtcIsoTimestamp, grantGenerationForWrite,
+  assertRefreshResource, assertSha256Hex, assertUtcIsoTimestamp, grantGenerationForWrite,
+  normalizeRefreshTokenWrite, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 
 type StoredRefresh = RefreshTokenRecord & { consumedAt: string | null };
-interface StoredFamily { revokedAt: string | null; grantGeneration: number | null }
+interface StoredFamily { revokedAt: string | null; grantGeneration: number | null; resource: string | null }
 
 export class MemoryStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
@@ -49,6 +50,7 @@ export class MemoryStore implements StorePort {
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
+    input = normalizeRefreshTokenWrite(input);
     validateRefreshToken(input);
     // §12.2 invariant 8: never silently overwrite — an overwrite would rebuild
     // the row with consumedAt:null, resurrecting a consumed token (parity with
@@ -56,13 +58,16 @@ export class MemoryStore implements StorePort {
     if (this.refreshTokens.has(input.tokenHash)) throw new StoreInputError("tokenHash already exists");
     const grantGeneration = grantGenerationForWrite(input.grantGeneration);
     const family = this.families.get(input.familyId);
-    if (family && family.grantGeneration !== grantGeneration) throw new StoreInputError("family grantGeneration mismatch");
-    if (!family) this.families.set(input.familyId, { revokedAt: null, grantGeneration });
+    if (family && (family.grantGeneration !== grantGeneration || family.resource !== input.resource)) {
+      throw new StoreInputError("family grantGeneration or resource mismatch");
+    }
+    if (!family) this.families.set(input.familyId, { revokedAt: null, grantGeneration, resource: input.resource });
     this.refreshTokens.set(input.tokenHash, { ...input, grantGeneration, consumedAt: null });
   }
 
-  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number): Promise<RefreshTokenRecord | null> {
+  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
+    next = normalizeRefreshTokenWrite(next);
     validateRotation(tokenHash, next, nowIso);
     const current = this.refreshTokens.get(tokenHash) ?? null;
     const family = current ? this.families.get(current.familyId) : undefined;
@@ -70,6 +75,9 @@ export class MemoryStore implements StorePort {
       || (expectedGrantGeneration !== undefined
         && (family.grantGeneration !== expectedGrantGeneration
           || current.grantGeneration !== expectedGrantGeneration))) return null;
+    if (current.resource === null || current.resource === UNBOUND_REFRESH_RESOURCE || family.resource === null
+      || current.resource !== family.resource
+      || (expectedResource !== undefined && current.resource !== expectedResource)) return null;
     if (current.consumedAt) {
       await this.revokeRefreshTokenFamily(current.familyId, nowIso);
       return null;
@@ -79,10 +87,10 @@ export class MemoryStore implements StorePort {
     // predecessor (mirrors sqlite's check-before-update / mysql's insert-first).
     if (this.refreshTokens.has(next.tokenHash)) return null;
     current.consumedAt = nowIso;
-    // Fix #3 backfill: successor takes clientId/subject/scopes from the consumed row.
+    // Backfill: successor takes identity and resource from the consumed row.
     await this.saveRefreshToken({
       ...next, clientId: current.clientId, subject: current.subject,
-      scopes: current.scopes, grantGeneration: current.grantGeneration,
+      resource: current.resource, scopes: current.scopes, grantGeneration: current.grantGeneration,
     });
     return toRecord(current);
   }
@@ -91,8 +99,7 @@ export class MemoryStore implements StorePort {
     this.ensureOpen();
     assertUtcIsoTimestamp(revokedAtIso, "revokedAtIso");
     const family = this.families.get(familyId);
-    if (!family) this.families.set(familyId, { revokedAt: revokedAtIso, grantGeneration: null });
-    else if (family.revokedAt === null) family.revokedAt = revokedAtIso;
+    if (family && family.revokedAt === null) family.revokedAt = revokedAtIso;
   }
 
   async findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {
@@ -150,7 +157,7 @@ export function createMemoryStore(): MemoryStore {
 function toRecord(stored: StoredRefresh): RefreshTokenRecord {
   return {
     tokenHash: stored.tokenHash, familyId: stored.familyId, previousTokenHash: stored.previousTokenHash,
-    clientId: stored.clientId, subject: stored.subject, scopes: stored.scopes,
+    clientId: stored.clientId, subject: stored.subject, resource: stored.resource, scopes: stored.scopes,
     expiresAt: stored.expiresAt, grantGeneration: stored.grantGeneration,
   };
 }
@@ -165,6 +172,7 @@ function validateAuthCode(input: SaveAuthCodeInput): void {
 function validateRefreshToken(input: SaveRefreshTokenInput): void {
   assertSha256Hex(input.tokenHash, "tokenHash");
   if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
+  assertRefreshResource(input.resource, "resource");
   assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
   assertGrantGeneration(input.grantGeneration, "grantGeneration");
 }

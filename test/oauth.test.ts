@@ -109,9 +109,13 @@ function setup(opts: {
     defaultScopes: opts.defaultScopes,
     dcr: opts.dcr ?? (clientStore ? { mode: "stored", store: clientStore } : undefined),
   });
+  return setupWithConfig(config);
+}
+
+function setupWithConfig(config: BridgeConfig, store = new MemoryStore(), audit = new MemoryAudit()): Ctx {
+  const clientStore = config.dcr.mode === "stored" && config.dcr.store instanceof InMemoryClientStore
+    ? config.dcr.store : undefined;
   const clock = new FakeClock(NOW_MS);
-  const store = new MemoryStore();
-  const audit = new MemoryAudit();
   return {
     config, clock, store, audit, clientStore,
     auth: new OAuthAuthorizationUseCase({ config, store, clock, audit }),
@@ -366,6 +370,89 @@ test("refresh with a mismatched client_id is rejected and revokes the family (RF
   await ctx.store.close();
 });
 
+test("refresh resource substitution is invalid_grant without mutation, then the bound resource rotates and replays normally", async () => {
+  const signingPrivateJwk = testPrivateJwk();
+  const resourceA = "https://api-a.test/mcp";
+  const resourceB = "https://api-b.test/mcp";
+  const configA = createBridgeConfig({ ...baseInput(), resource: resourceA, signingPrivateJwk });
+  const configB = createBridgeConfig({ ...baseInput(), resource: resourceB, signingPrivateJwk });
+  const store = new MemoryStore();
+  const auditA = new MemoryAudit();
+  const auditB = new MemoryAudit();
+  const ctxA = setupWithConfig(configA, store, auditA);
+  const ctxB = setupWithConfig(configB, store, auditB);
+  const initial = await exchangeCode(ctxA, "resource-binding-verifier-123456789012345678901234567890");
+
+  await assert.rejects(
+    ctxB.token.refresh({ grantType: "refresh_token", refreshToken: initial.refresh_token, clientId: "client-1" }),
+    (error: unknown) => error instanceof OAuthError
+      && error.code === "invalid_grant" && error.message === "Refresh token is invalid",
+  );
+  assert.equal(
+    auditB.events.some((event) => event.event === "oauth.token.refresh" && event.status === "success"),
+    false,
+    "resource B emits no refresh success audit",
+  );
+  assert.equal((await store.findRefreshToken(sha256Hex(initial.refresh_token)))?.resource, resourceA);
+
+  const rotated = await ctxA.token.refresh({
+    grantType: "refresh_token", refreshToken: initial.refresh_token, clientId: "client-1",
+  });
+  assert.notEqual(rotated.refresh_token, initial.refresh_token, "resource A still rotates once");
+  await assert.rejects(
+    ctxA.token.refresh({ grantType: "refresh_token", refreshToken: initial.refresh_token, clientId: "client-1" }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_grant",
+  );
+  await assert.rejects(
+    ctxA.token.refresh({ grantType: "refresh_token", refreshToken: rotated.refresh_token, clientId: "client-1" }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_grant",
+    "the correct-resource replay retains normal family revocation",
+  );
+  await store.close();
+});
+
+test("refresh rejects a hostile store's mismatched resource before signing or success audit", async () => {
+  const resourceA = "https://api-a.test/mcp";
+  const resourceB = "https://api-b.test/mcp";
+  const config = createBridgeConfig({
+    ...baseInput(), resource: resourceA,
+    // This shape passes configuration validation but causes signing to fail. An
+    // invalid_grant therefore proves the resource recheck happens before signing.
+    signingPrivateJwk: { kty: "EC", crv: "P-256", x: "x", y: "y", d: "d", alg: "ES256", kid: "bad" } as JWK,
+    signingKeyId: "bad",
+  });
+  const store = new MemoryStore();
+  const audit = new MemoryAudit();
+  const familyId = "hostileresource012345";
+  const raw = `rt.${familyId}.secret-1234567890`;
+  await store.saveRefreshToken({
+    tokenHash: sha256Hex(raw), familyId, previousTokenHash: null,
+    clientId: "client-1", subject: SUBJECT, resource: resourceB, scopes: ["mcp:read"],
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  });
+  const rotateIgnoringResource = store.rotateRefreshToken.bind(store);
+  store.rotateRefreshToken = async (tokenHash, next, nowIso, expectedGeneration, _expectedResource) =>
+    rotateIgnoringResource(tokenHash, next, nowIso, expectedGeneration);
+  const token = new OAuthTokenUseCase({ config, store, clock: new FakeClock(NOW_MS), audit });
+
+  await assert.rejects(
+    token.refresh({ grantType: "refresh_token", refreshToken: raw, clientId: "client-1" }),
+    (error: unknown) => error instanceof OAuthError
+      && error.code === "invalid_grant" && error.message === "Refresh token is invalid",
+  );
+  assert.equal(
+    audit.events.some((event) => event.event === "oauth.token.refresh" && event.status === "success"),
+    false,
+    "hostile result cannot emit success audit",
+  );
+  assert.deepEqual(
+    await store.findGrantedScopes(SUBJECT, "client-1", new Date(NOW_MS).toISOString()),
+    [],
+    "post-rotation compensation leaves no active unreturned hostile successor",
+  );
+  await store.close();
+});
+
 test("refresh signing failure compensates the committed rotation through Bridge.handleToken", async () => {
   const ctx = setup();
   const initial = await exchangeCode(ctx, "sign-failure-verifier-123456789012345678901234567890");
@@ -460,7 +547,7 @@ test("malformed stored scopes after rotation revoke the committed successor", as
   const rawRefresh = `rt.${familyId}.secret-1234567890`;
   await ctx.store.saveRefreshToken({
     tokenHash: sha256Hex(rawRefresh), familyId, previousTokenHash: null,
-    clientId: "client-1", subject: SUBJECT, scopes: ["not-in-catalog"],
+    clientId: "client-1", subject: SUBJECT, resource: ctx.config.resource, scopes: ["not-in-catalog"],
     expiresAt: "2099-01-01T00:00:00.000Z",
   });
   const revocations: Array<{ familyId: string; at: string }> = [];
@@ -751,7 +838,7 @@ test("token issuance rejects a LEGACY stored grant whose subject is in the reser
   const rawRefresh = `rt.${legacyFamily}.secret-1234567890`;
   await ctx.store.saveRefreshToken({
     tokenHash: sha256Hex(rawRefresh), familyId: legacyFamily, previousTokenHash: null,
-    clientId: "client-1", subject: "mcc_legacy", scopes: ["mcp:read"], expiresAt: "2099-01-01T00:00:00.000Z",
+    clientId: "client-1", subject: "mcc_legacy", resource: ctx.config.resource, scopes: ["mcp:read"], expiresAt: "2099-01-01T00:00:00.000Z",
   });
   await assert.rejects(
     ctx.token.refresh({ grantType: "refresh_token", refreshToken: rawRefresh, clientId: "client-1" }),

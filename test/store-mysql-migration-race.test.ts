@@ -67,3 +67,29 @@ test("MySQL migration propagates every non-duplicate ALTER failure", async () =>
   );
   assert.equal(raced.columnReads(), 1, "unrelated errors are not reclassified");
 });
+
+test("MySQL migration adds nullable resource columns to pre-resource refresh tables", async () => {
+  const alters: string[] = [];
+  const seen = new Set<string>();
+  const connection = {
+    query: async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) {
+        const key = `${values?.[0]}:${values?.[1]}`;
+        return [seen.has(key) ? [{ 1: 1 }] : [], []];
+      }
+      if (sql.startsWith("ALTER TABLE")) {
+        alters.push(sql);
+        const match = /^ALTER TABLE (\w+) ADD COLUMN (\w+)/.exec(sql);
+        assert.ok(match);
+        seen.add(`${match[1]}:${match[2]}`);
+        return [[], []];
+      }
+      if (sql.includes("COLLATION_NAME") || sql.includes("ENGINE")) return [[], []];
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await migrateMysqlStore(connection);
+  assert.ok(alters.includes("ALTER TABLE oauth_refresh_token_families ADD COLUMN resource VARCHAR(2048) NULL"));
+  assert.ok(alters.includes("ALTER TABLE oauth_refresh_tokens ADD COLUMN resource VARCHAR(2048) NULL"));
+});

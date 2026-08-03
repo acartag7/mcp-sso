@@ -22,6 +22,7 @@ const MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires_at ON oauth_auth_codes (expires_at)`,
   `CREATE TABLE IF NOT EXISTS oauth_refresh_token_families (
     family_id TEXT PRIMARY KEY NOT NULL,
+    resource TEXT NOT NULL,
     revoked_at TEXT,
     grant_generation INTEGER
   ) STRICT`,
@@ -31,6 +32,7 @@ const MIGRATIONS = [
     previous_token_hash TEXT,
     client_id TEXT NOT NULL,
     subject TEXT NOT NULL,
+    resource TEXT NOT NULL,
     scopes_json TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     consumed_at TEXT,
@@ -51,14 +53,16 @@ export function migrateSqliteStore(db: DatabaseSync): void {
   for (const migration of MIGRATIONS) {
     db.exec(migration);
   }
-  ensureColumn(db, "oauth_auth_codes", "grant_generation");
-  ensureColumn(db, "oauth_refresh_token_families", "grant_generation");
-  ensureColumn(db, "oauth_refresh_tokens", "grant_generation");
+  ensureColumn(db, "oauth_auth_codes", "grant_generation", "INTEGER");
+  ensureColumn(db, "oauth_refresh_token_families", "grant_generation", "INTEGER");
+  ensureColumn(db, "oauth_refresh_tokens", "grant_generation", "INTEGER");
+  ensureColumn(db, "oauth_refresh_token_families", "resource", "TEXT");
+  ensureColumn(db, "oauth_refresh_tokens", "resource", "TEXT");
 }
 
-function ensureColumn(db: DatabaseSync, table: string, column: string): void {
+function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (!rows.some((row) => row.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER`);
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 }

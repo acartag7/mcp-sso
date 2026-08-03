@@ -15,7 +15,8 @@ interface AuthCodeRecord {
 }
 interface RefreshTokenRecord {
   tokenHash: string; familyId: string; previousTokenHash: string | null;
-  clientId: string; subject: string; scopes: string[]; expiresAt: string;
+  clientId: string; subject: string; resource: string | null;
+  scopes: string[]; expiresAt: string;
   grantGeneration?: number | null;
 }
 interface SaveAuthCodeInput {
@@ -26,7 +27,8 @@ interface SaveAuthCodeInput {
 }
 interface SaveRefreshTokenInput {
   tokenHash: string; familyId: string; previousTokenHash: string | null;
-  clientId: string; subject: string; scopes: string[]; expiresAt: string;
+  clientId: string; subject: string; resource: string;
+  scopes: string[]; expiresAt: string;
   /* Same omission/null write semantics as SaveAuthCodeInput. */
   grantGeneration?: number | null;
 }
@@ -45,6 +47,17 @@ shapes so a patch upgrade does not make an existing custom store fail to
 compile. Reference stores always project it explicitly; the use-cases treat
 `undefined` on a returned record exactly like legacy `null`, and stored-DCR
 construction rejects a store without the generation capability marker.
+
+`resource` is the exact configured bridge resource string at authorization-code
+issuance. New writes require a non-empty string and persist it both on the
+family and on its token row. A returned `null` represents only an old durable
+row whose migration-added column is absent, `NULL`, malformed, or blank; it is
+never rebound from current configuration and fails refresh rotation closed.
+The typed write port rejects a missing resource. For an untyped pre-resource
+JavaScript call only, reference stores persist the reserved
+`mcp-sso:unbound-refresh-resource` marker instead of guessing a bridge resource;
+the marker is rejected by rotation before any mutation and cannot be supplied as
+a normal write value.
 
 ## 12.2 Invariants the suite asserts
 1. **Hashed, single-use, resource-bound auth codes:**
@@ -158,17 +171,31 @@ construction rejects a store without the generation capability marker.
     parameters from failing open. A current-generation family survives ordinary
     process/store restarts.
 
-11. **Authorization-code resource predicate (patch-compatible extension):** the
+11. **Resource predicates (patch-compatible extensions):** the
     optional trailing `expectedResource` argument is supplied by
-    `OAuthTokenUseCase` in every authorization-code exchange. Memory checks it in
-    the map critical section; SQLite checks it inside `BEGIN IMMEDIATE`; MySQL
-    checks it while holding the selected row `FOR UPDATE`. A mismatch commits no
-    delete. The use-case repeats exact equality against `BridgeConfig.resource`
-    after a record is returned, so a custom/defective store that ignores the
-    argument cannot cause a wrong-audience token, refresh write, or success
-    audit. The extension is source-compatible and needs no SQL migration because
-    every auth-code record already has a non-null `resource`; custom stores must
-    implement the predicate to satisfy conformance and preserve retry semantics.
+    `OAuthTokenUseCase` in every authorization-code exchange and refresh rotation.
+    For codes, Memory checks it in the map critical section, SQLite checks it
+    inside `BEGIN IMMEDIATE`, and MySQL checks it while holding the selected row
+    `FOR UPDATE`; a mismatch commits no delete. For refreshes, the reference
+    stores atomically reject a missing, malformed, or different family/token
+    resource before replay handling, predecessor consumption, successor insertion,
+    family revocation, signing, or success audit. A wrong-resource refresh returns
+    `null` without mutation; a correctly bound request can still rotate once;
+    replay still revokes the current family successor. The successor authoritative-
+    copies the selected row's exact resource, and `saveRefreshToken` rejects an
+    attempt to introduce a different or missing family resource.
+
+    SQLite and MySQL migrations add nullable `resource` columns to both
+    `oauth_refresh_token_families` and `oauth_refresh_tokens`; fresh schemas make
+    both columns non-null. The nullable migration deliberately leaves old rows
+    `NULL` rather than guessing from a current `BridgeConfig`. Thus a restart or
+    resource cutover cannot silently rebind a legacy refresh family.
+
+    The use-case repeats exact equality against `BridgeConfig.resource` after a
+    returned record, so a custom/defective store that ignores either argument
+    cannot cause a wrong-audience token, refresh write, or success audit. The
+    extensions are source-compatible; custom stores must implement the predicates
+    to satisfy conformance and preserve retry semantics.
 
     The shared conformance row proves that externally observable result across
     Memory, SQLite, and MySQL; it does not by itself prove every scheduler

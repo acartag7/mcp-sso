@@ -31,7 +31,7 @@ test("SqliteStore (file): persists no raw secrets and only OAuth tables", async 
   });
   await store.saveRefreshToken({
     tokenHash: sha256Hex(rawRefresh), familyId: "famx", previousTokenHash: null,
-    clientId: "c", subject: "s", scopes: ["mcp:read"], expiresAt,
+    clientId: "c", subject: "s", resource: "https://api.test/mcp", scopes: ["mcp:read"], expiresAt,
   });
   await store.close();
   if (process.platform !== "win32") {
@@ -73,7 +73,7 @@ test("SqliteStore: generation survives reopen and old-column inserts remain lega
     });
     await first.saveRefreshToken({
       tokenHash: sha256Hex("current-refresh"), familyId: "current-family",
-      previousTokenHash: null, clientId: "existing-client", subject: "s",
+      previousTokenHash: null, clientId: "existing-client", subject: "s", resource: "https://api.test/mcp",
       scopes: ["mcp:read"], expiresAt: "2026-07-03T13:00:00.000Z",
       grantGeneration: STORED_DCR_GRANT_GENERATION,
     });
@@ -88,22 +88,22 @@ test("SqliteStore: generation survives reopen and old-column inserts remain lega
       "https://api.test/mcp", '["mcp:read"]', "x", "S256", "2026-07-03T13:00:00.000Z",
     );
     oldBinary.prepare(
-      `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, NULL)`,
-    ).run("legacy-family");
+      `INSERT INTO oauth_refresh_token_families (family_id, resource, revoked_at) VALUES (?, ?, NULL)`,
+    ).run("legacy-family", "https://api.test/mcp");
     oldBinary.prepare(`INSERT INTO oauth_refresh_tokens (
-      token_hash, family_id, previous_token_hash, client_id, subject,
+      token_hash, family_id, previous_token_hash, client_id, subject, resource,
       scopes_json, expires_at, consumed_at
-    ) VALUES (?, ?, NULL, ?, ?, ?, ?, NULL)`).run(
+    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL)`).run(
       sha256Hex("legacy-refresh"), "legacy-family", "existing-client",
-      "s", '["mcp:write"]', "2026-07-03T13:00:00.000Z",
+      "s", "https://api.test/mcp", '["mcp:write"]', "2026-07-03T13:00:00.000Z",
     );
     oldBinary.prepare(`INSERT INTO oauth_refresh_tokens (
-      token_hash, family_id, previous_token_hash, client_id, subject,
+      token_hash, family_id, previous_token_hash, client_id, subject, resource,
       scopes_json, expires_at, consumed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`).run(
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`).run(
       sha256Hex("legacy-in-current-family"), "current-family",
       sha256Hex("current-refresh"), "existing-client", "s",
-      '["mcp:write"]', "2026-07-03T13:00:00.000Z",
+      "https://api.test/mcp", '["mcp:write"]', "2026-07-03T13:00:00.000Z",
     );
     oldBinary.close();
 
@@ -129,7 +129,7 @@ test("SqliteStore: generation survives reopen and old-column inserts remain lega
       {
         tokenHash: sha256Hex("current-successor"), familyId: "current-family",
         previousTokenHash: sha256Hex("current-refresh"), clientId: "ignored",
-        subject: "ignored", scopes: [], expiresAt: "2026-07-03T13:00:00.000Z",
+        subject: "ignored", resource: "https://api.test/mcp", scopes: [], expiresAt: "2026-07-03T13:00:00.000Z",
         grantGeneration: 2,
       },
       "2026-07-03T12:00:00.000Z",
@@ -140,7 +140,7 @@ test("SqliteStore: generation survives reopen and old-column inserts remain lega
       {
         tokenHash: sha256Hex("legacy-successor"), familyId: "legacy-family",
         previousTokenHash: sha256Hex("legacy-refresh"), clientId: "existing-client",
-        subject: "s", scopes: [], expiresAt: "2026-07-03T13:00:00.000Z",
+        subject: "s", resource: "https://api.test/mcp", scopes: [], expiresAt: "2026-07-03T13:00:00.000Z",
         grantGeneration: STORED_DCR_GRANT_GENERATION,
       },
       "2026-07-03T12:00:00.000Z",
@@ -152,7 +152,7 @@ test("SqliteStore: generation survives reopen and old-column inserts remain lega
       {
         tokenHash: sha256Hex("legacy-current-successor"), familyId: "current-family",
         previousTokenHash: sha256Hex("legacy-in-current-family"), clientId: "existing-client",
-        subject: "s", scopes: [], expiresAt: "2026-07-03T13:00:00.000Z",
+        subject: "s", resource: "https://api.test/mcp", scopes: [], expiresAt: "2026-07-03T13:00:00.000Z",
         grantGeneration: STORED_DCR_GRANT_GENERATION,
       },
       "2026-07-03T12:00:00.000Z",
@@ -167,6 +167,70 @@ test("SqliteStore: generation survives reopen and old-column inserts remain lega
       "old successor in a current family cannot contribute scopes",
     );
     await reopened.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SqliteStore: resource migration leaves legacy refresh rows unusable without rebinding", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-resource-migration-"));
+  const file = join(dir, "oauth.sqlite");
+  const resource = "https://api-a.test/mcp";
+  try {
+    // Simulate the deployed pre-resource schema. The migration must add nullable
+    // columns and preserve these rows as legacy rather than guessing the current
+    // bridge resource from this test's later store open.
+    const old = new DatabaseSync(file);
+    old.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE oauth_refresh_token_families (
+        family_id TEXT PRIMARY KEY NOT NULL,
+        revoked_at TEXT,
+        grant_generation INTEGER
+      ) STRICT;
+      CREATE TABLE oauth_refresh_tokens (
+        token_hash TEXT PRIMARY KEY NOT NULL,
+        family_id TEXT NOT NULL,
+        previous_token_hash TEXT,
+        client_id TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        scopes_json TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        grant_generation INTEGER,
+        FOREIGN KEY (family_id) REFERENCES oauth_refresh_token_families (family_id) ON DELETE CASCADE
+      ) STRICT;
+    `);
+    old.prepare(`INSERT INTO oauth_refresh_token_families (family_id, revoked_at, grant_generation) VALUES (?, NULL, ?)`)
+      .run("legacy-resource-family", STORED_DCR_GRANT_GENERATION);
+    old.prepare(`INSERT INTO oauth_refresh_tokens (
+      token_hash, family_id, previous_token_hash, client_id, subject, scopes_json,
+      expires_at, consumed_at, grant_generation
+    ) VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, ?)`)
+      .run(
+        sha256Hex("legacy-resource-token"), "legacy-resource-family", "client-1", "subject-1",
+        '["mcp:read"]', "2026-07-03T13:00:00.000Z", STORED_DCR_GRANT_GENERATION,
+      );
+    old.close();
+
+    const store = openSqliteStore(file);
+    assert.equal((await store.findRefreshToken(sha256Hex("legacy-resource-token")))?.resource, null);
+    const rotated = await store.rotateRefreshToken(
+      sha256Hex("legacy-resource-token"),
+      {
+        tokenHash: sha256Hex("legacy-resource-successor"), familyId: "legacy-resource-family",
+        previousTokenHash: sha256Hex("legacy-resource-token"), clientId: "client-1", subject: "subject-1",
+        resource, scopes: ["mcp:read"], expiresAt: "2026-07-03T13:00:00.000Z",
+        grantGeneration: STORED_DCR_GRANT_GENERATION,
+      },
+      "2026-07-03T12:00:00.000Z",
+      STORED_DCR_GRANT_GENERATION,
+      resource,
+    );
+    assert.equal(rotated, null, "legacy row fails closed instead of rebinding to resource A");
+    assert.ok(await store.findRefreshToken(sha256Hex("legacy-resource-token")), "legacy predecessor remains untouched");
+    assert.equal(await store.findRefreshToken(sha256Hex("legacy-resource-successor")), null, "no successor was persisted");
+    await store.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
