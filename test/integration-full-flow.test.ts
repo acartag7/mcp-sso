@@ -534,7 +534,7 @@ test("integration — sqlite FILE store: refresh stays bound across restart/reso
       //    approve) is STILL rejected on reopen — the consent-JTI ledger persisted.
       const consentReplay = await http.postForm(mount2.base, "/oauth/authorize/approve", { consent_token: artifacts.consentToken, approved: "true" }, { origin: STABLE_ISSUER });
       assert.equal(consentReplay.status, 400, "replayed consent JTI rejected after restart");
-      assert.equal((JSON.parse(consentReplay.body) as { error: string }).error, "invalid_grant");
+      assert.equal((JSON.parse(consentReplay.body) as { error: string }).error, "invalid_consent");
 
       // 4. The pre-restart CONSUMED refresh token (the original) is still dead.
       //    Done last: replaying a consumed token revokes the whole family.
