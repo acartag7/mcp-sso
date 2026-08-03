@@ -14,9 +14,9 @@ import { consentSecret, signKey, verifyKey } from "./crypto-keys.ts";
 
 const CONSENT_AUDIENCE = "mcp-sso/consent";
 const CONSENT_TYP = "mcp-sso-consent";
+export const MAX_CONSENT_TOKEN_BYTES = 192 * 1024;
 const CODE_PREFIX = "ac";
 const REFRESH_PREFIX = "rt";
-
 export interface ConsentRequestClaims {
   clientId: string;
   redirectUri: string;
@@ -38,13 +38,11 @@ export interface ConsentRequestClaims {
    *  `cimd_verified: false`. It is NEVER a scope-accumulation entitlement. */
   cimdVerified?: true;
 }
-
 export interface AccessTokenClaims {
   subject: string;
   clientId: string;
   scopes: string[]; machine?: boolean; // client_credentials grant ⇒ mints the gty marker claim (§17.2)
 }
-
 export interface VerifiedAccessToken {
   subject: string;
   clientId: string;
@@ -97,7 +95,7 @@ export function pkceChallenge(verifier: string): string {
 
 export async function signConsentToken(claims: ConsentRequestClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
   const now = nowSeconds(clock);
-  return await new SignJWT({
+  const token = await new SignJWT({
     typ: CONSENT_TYP,
     jti: generateConsentJti(),
     client_id: claims.clientId,
@@ -116,6 +114,10 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
     .setIssuedAt(now)
     .setExpirationTime(now + config.consentTokenTtlSeconds)
     .sign(consentSecret(config));
+  if (Buffer.byteLength(token, "utf8") > MAX_CONSENT_TOKEN_BYTES) {
+    throw new OAuthError("invalid_request", "Authorization request is too large");
+  }
+  return token;
 }
 
 export async function verifyConsentToken(token: string, config: BridgeConfig, clock: ClockPort): Promise<ConsentRequestClaims & { jti: string }> {

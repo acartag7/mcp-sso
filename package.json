@@ -100,7 +100,7 @@
   "peerDependencies": {
     "fastify": ">=5",
     "express": ">=5",
-    "hono": ">=4",
+    "hono": ">=4.12.27 <5",
     "mysql2": ">=3",
     "ioredis": ">=5"
   },

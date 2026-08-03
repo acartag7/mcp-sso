@@ -4,6 +4,8 @@
 
 import { Hono } from "hono";
 import type { Context } from "hono";
+import type { MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
@@ -30,9 +32,86 @@ export interface HonoAdapterOptions {
    *  runtime's connection info. Default: no IP — every request shares the one
    *  "unknown" rate-limit bucket (collectively throttled, never bypassable) and
    *  audit events omit `ip`. The adapter NEVER reads X-Forwarded-For on its
-   *  own: an attacker-chosen header must not select the rate-limit bucket. */
+   *  own: an attacker-chosen header must not select the rate-limit bucket.
+   *  Request own-property extensions survive POST body guarding. Extractors
+   *  needing prototype-only/private runtime state must use stable `Context`
+   *  environment data instead of relying on raw Request identity. */
   clientIp?: (c: Context) => string | undefined;
 }
+
+const OAUTH_POST_BODY_MAX_BYTES = 256 * 1024;
+const CONTENT_LENGTH = /^(?:0|[1-9][0-9]*)$/;
+
+function payloadTooLarge(): Response {
+  return new Response("Payload Too Large", { status: 413 });
+}
+
+function invalidRequest(): Response {
+  return new Response('{"error":"invalid_request","error_description":"Invalid request"}', {
+    status: 400,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
+function restoreRequestExtensions(original: Request, replacement: Request): void {
+  for (const key of Reflect.ownKeys(original)) {
+    if (Object.hasOwn(replacement, key)) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(original, key);
+    if (descriptor) Object.defineProperty(replacement, key, descriptor);
+  }
+}
+
+// Hono 4.12.27's bodyLimit uses parseInt(Content-Length) and trusts a declared
+// length that is within the cap. Validate the framing, reject CL+TE ambiguity,
+// then hide a valid declaration from bodyLimit so it counts the actual stream.
+const validateBodyFraming: MiddlewareHandler = async (c, next) => {
+  const raw = c.req.raw;
+  const contentLength = raw.headers.get("content-length");
+  const transferEncoding = raw.headers.get("transfer-encoding");
+  if (contentLength !== null) {
+    if (!CONTENT_LENGTH.test(contentLength) || transferEncoding !== null) return payloadTooLarge();
+    const declared = Number(contentLength);
+    if (!Number.isSafeInteger(declared) || declared > OAUTH_POST_BODY_MAX_BYTES) return payloadTooLarge();
+    if (raw.body !== null) {
+      const headers = new Headers(raw.headers);
+      headers.delete("content-length");
+      const init: RequestInit & { duplex: "half" } = { headers, body: raw.body, duplex: "half" };
+      c.req.raw = new Request(raw, init);
+    }
+  }
+  await next();
+};
+
+const limitOAuthBody = bodyLimit({
+  maxSize: OAUTH_POST_BODY_MAX_BYTES,
+  onError: payloadTooLarge,
+});
+
+/** Apply before body parsing on caller-owned Hono OAuth POST routes. */
+export const honoOAuthBodyLimit: MiddlewareHandler = async (c, next) => {
+  const original = c.req.raw;
+  const restore = (): void => {
+    if (c.req.raw !== original) restoreRequestExtensions(original, c.req.raw);
+  };
+  let downstream: Response | void = undefined;
+  let downstreamStarted = false;
+  try {
+    const framing = await validateBodyFraming(c, async () => {
+      restore();
+      downstream = await limitOAuthBody(c, async () => {
+        restore();
+        downstreamStarted = true;
+        await next();
+      });
+    });
+    restore();
+    return framing ?? downstream;
+  } catch (error) {
+    restore();
+    if (downstreamStarted) throw error;
+    return invalidRequest();
+  }
+};
 
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   const app = new Hono();
@@ -80,7 +159,7 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   app.get("/.well-known/oauth-protected-resource", async (c) => send(c, await bridge.handleProtectedResourceMetadata()));
   app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (c) => send(c, await bridge.handleProtectedResourceMetadata()));
   app.get("/oauth/jwks", async (c) => send(c, await bridge.handleJwks()));
-  app.post("/oauth/register", async (c) => send(c, await bridge.handleRegister(await toNorm(c))));
+  app.post("/oauth/register", honoOAuthBodyLimit, async (c) => send(c, await bridge.handleRegister(await toNorm(c))));
   if (upstream && (identity || skipAuthorize)) {
     throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
   }
@@ -106,8 +185,8 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       return send(c, await bridge.handleAuthorize(req, identityResolved));
     });
   }
-  app.post("/oauth/authorize/approve", async (c) => send(c, await bridge.handleApprove(await toNorm(c))));
-  app.post("/oauth/token", async (c) => send(c, await bridge.handleToken(await toNorm(c))));
-  app.post("/oauth/revoke", async (c) => send(c, await bridge.handleRevoke(await toNorm(c))));
+  app.post("/oauth/authorize/approve", honoOAuthBodyLimit, async (c) => send(c, await bridge.handleApprove(await toNorm(c))));
+  app.post("/oauth/token", honoOAuthBodyLimit, async (c) => send(c, await bridge.handleToken(await toNorm(c))));
+  app.post("/oauth/revoke", honoOAuthBodyLimit, async (c) => send(c, await bridge.handleRevoke(await toNorm(c))));
   return app;
 }

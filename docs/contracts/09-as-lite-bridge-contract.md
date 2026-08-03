@@ -30,16 +30,24 @@ adapter (Phase 3) exposes them over HTTP.
   public key, with `cache-control: public, max-age=60`).
 
 ## 9.2 DCR — `registerClient` (RFC 7591; deprecated compatibility path)
-`POST /oauth/register` with form fields `redirect_uris` (required, each validated)
-and optional `application_type` (`"native"` | `"web"`, default `"web"`). MCP
-Authorization 2026-07-28 places the `MUST` to send an appropriate
-`application_type` on MCP clients. The bridge remains tolerant of omission for
-backwards compatibility and applies the OIDC default of `"web"`.
+`POST /oauth/register` understands `redirect_uris` (required, each validated),
+optional `application_type` (`"native"` | `"web"`, default `"web"`),
+`token_endpoint_auth_method`, and `grant_types`. MCP Authorization 2026-07-28
+places the `MUST` to send an appropriate `application_type` on MCP clients. The
+bridge remains tolerant of omission for backwards compatibility and applies the
+OIDC default of `"web"`. Other client metadata is ignored, as RFC 7591 §2
+requires; it is never persisted or reflected by this AS-lite endpoint.
 `redirect_uris` is client-supplied untrusted input and carries the same hard
 caps §10.0 states: **1..16 entries** (the same bound §17.1.5 rule 19 puts on a
 CIMD document's array, same rationale — it bounds the authorize-time
 exact-match scan) and **≤ 2048 UTF-8 bytes per entry, checked on the raw
 string before parsing**.
+When present, `grant_types` is an array of **0..32** non-empty primitive
+strings, each no more than **256 UTF-8 bytes**. The bridge only inspects that
+metadata to reject `client_credentials`; it does not persist or otherwise
+enable the declarations. These caps bound core work and ensure the largest
+request shape with metadata this bridge understands fits the Hono boundary in
+§9.6.
 - **Stateless mode (default):** any well-formed registration with allowlisted
   redirect URIs succeeds; the server mints an ephemeral `client_id`
   (`mcpdc_<random>`), returns `{ client_id, client_id_issued_at, redirect_uris,
@@ -119,7 +127,8 @@ client-controlled request input; when present, `prepare` uses it and does not fe
    `invalid_client` — else **direct** (pre-validation).
 3. *(redirect-eligible from here)* `response_type=code`; `resource` **defaults to
    `config.resource` when omitted and MUST equal `config.resource` when present**
-   (else `invalid_target`); `scope` normalized per §11 (else `invalid_scope`);
+   (else `invalid_target`); `scope` normalized and bounded per §11 (else
+   `invalid_scope`);
    PKCE `code_challenge_method=S256` + challenge present (else `invalid_request`).
 4. **Scope ceiling *(§17.4, shipped S2a).*** When the resolved identity supplied
    an `allowedScopes` ceiling, the requested scopes (and `defaultScopes`, when no
@@ -137,7 +146,9 @@ client-controlled request input; when present, `prepare` uses it and does not fe
 6. Sign the consent token (§7.1), audit, and return
    `{ consentToken, …claims, priorScopes, requestedScopes }`. The consent page
    renders the **delta** = `requestedScopes − priorScopes` as "new" (rendering is
-   an adapter concern, Phase 3; the core supplies both sets).
+   an adapter concern, Phase 3; the core supplies both sets). The signer rejects
+   a consent token that exceeds its 192 KiB output budget, so the server never emits
+   a consent form that its 256 KiB Hono approval route will reject.
 
 **`approve({ consentToken, approved?, origin? })`** → `{ redirectTo, code?, state? }`:
 - **0.3.0 finite-clock gate:** before consent-token processing and before
@@ -172,6 +183,13 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   source's unreachable Deny path; the UI button is Phase 3. Hardened 2026-07-07:
   the original text keyed Deny on `approved === false`, which made the ABSENT
   case an approval — a fail-open default on the consent decision.)*
+- **Validate scope state before consuming consent:** on approval, the signed
+  consent `scope` claim and the loaded stored-DCR prior scopes must satisfy §11
+  and the current `scopeCatalog`; a carried `allowed_scopes` ceiling must also
+  satisfy §11's shape and size bound. A malformed, stale, or oversized consent
+  scope or stored grant is a direct `invalid_grant`; a malformed carried ceiling
+  is `access_denied`. Both failures occur before the consent JTI is consumed or
+  an authorization code is written.
 - On approval (the consent token was already verified above, before the scheme gate
   and Deny branch — `authorize.ts:142`), **consume its single-use `jti`** (replay ⇒
   `invalid_grant` **direct** — an integrity failure, not a user-facing denial).
@@ -255,6 +273,59 @@ the response. Wiring rules:
   `prepare`. Limiter denial is a direct 429 with no redirect; limiter failure
   remains fail-open (§6.7). Upstream redirect, console pairing, and CIMD retain
   their independent budgets rather than receiving a second adapter-level check.
+- **Hono and Express OAuth POST body bounds:** before request-body parsing or any Bridge
+  invocation, the Hono adapter applies a fixed **262,144-byte (256 KiB)**
+  streaming cap to `/oauth/register`, `/oauth/authorize/approve`,
+  `/oauth/token`, and `/oauth/revoke`. The fixed raw-byte budget admits a compact
+  JSON serialization with all recognized DCR field values at their maxima: 16 redirect URIs ×
+  2,048 UTF-8 bytes (about 192 KiB when every URI character is legally serialized
+  as a JSON `\uXXXX` escape), plus 32 `grant_types` entries × 256 UTF-8 bytes
+  (about 48 KiB with the same encoding). The combined regression witness is
+  245,939 bytes. This is not a semantic DCR size promise: JSON permits arbitrary
+  insignificant whitespace, and RFC 7591 requires unknown metadata to be ignored.
+  A Hono request whose raw representation exceeds this finite security budget is
+  rejected with 413 rather than passed to a parser. A missing `Content-Length` and a
+  `Transfer-Encoding` body are stream-counted. A present `Content-Length` must
+  be one canonical decimal integer (`0` or a non-zero digit followed by digits),
+  must not coexist with `Transfer-Encoding`, and must not exceed the cap;
+  malformed, duplicate/coalesced, conflicting, unsafe-integer, and oversized
+  values fail closed. A valid declared length does not bypass streaming
+  accounting: the pinned `hono/body-limit` middleware still counts the actual
+  body bytes. JSON, URL-encoded, multipart, and unknown content types share the
+  same pre-parse bound. A stream read/framing failure before downstream parsing
+  returns a fixed direct 400 `invalid_request` response without logging the raw
+  throwable or invoking downstream work. Below-cap parser failures retain the
+  existing fail-closed parser-error path. A caller that uses `skipAuthorize` to
+  mount a custom Hono POST authorize surface (including console pairing) MUST
+  mount the adapter-exported `honoOAuthBodyLimit` before its body parser; the
+  adapter's four built-in POST routes mount that same middleware automatically.
+- **Express OAuth POST body bound:** the returned Express router installs
+  `express.json` and `express.urlencoded` with the same fixed **262,144-byte
+  (256 KiB)** limit before its OAuth handlers. It therefore admits the bounded
+  core DCR domain and a consent form under the 192 KiB signer ceiling, while an
+  over-cap JSON or form body is rejected by Express before Bridge invocation with
+  direct 413 `{error:"invalid_request",error_description:"Request body is too large"}`.
+  Malformed JSON/form input is a direct sanitized 400 instead of Express's
+  default development stack response/logging path. An application that mounts a
+  different parser earlier on the same OAuth paths owns that parser's behavior;
+  parsers for unrelated routes should be path-scoped.
+- **Hono over-cap response and ordering:** a body-bound rejection is direct HTTP
+  **413** with the fixed plain-text body `Payload Too Large`; it contains no raw
+  request material, has no `Location`, and reveals nothing about token
+  existence. Rejection precedes body parsing, Bridge and `RateLimitPort` calls,
+  store writes, and success audits. The streaming implementation buffers at
+  most the cap and never keeps the transport chunk that crosses it. A Fetch
+  runtime may deliver that crossing chunk in a runtime-defined size (including
+  when a test constructs one already-materialized oversized chunk); the adapter
+  cannot retroactively bound a chunk allocated by the host, but it does not pass
+  or retain that chunk for parsing. The middleware stops pulling after the
+  crossing chunk; transport draining, cancellation, and upload timeouts remain
+  host-server responsibilities. When Hono reconstructs the raw `Request`, the
+  adapter preserves the original Request's own-property extensions. It does not
+  copy prototype chains, subclass behavior, getters inherited from a prototype,
+  or private runtime state. A `clientIp` implementation that needs such runtime
+  context MUST read stable Hono `Context`/environment data rather than assuming
+  raw Request identity survives body guarding.
 - **Error → response:** an `OAuthError` with `.redirect` ⇒ **302** to the tagged
   `redirect_uri?error=…`; otherwise direct — status `error.status`, body
   `oauthErrorBody(error)` (§9.5). On the protected `/mcp` surface, 401/403 set the

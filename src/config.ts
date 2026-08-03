@@ -7,6 +7,7 @@ import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
 import { parseRedirectEntry, RedirectEntryError } from "./redirect-entry.ts";
+import { scopeListProblem } from "./scopes.ts";
 import {
   configOwnKeys, configValue, isArrayValue, isEcP256PrivateJwk, snapshotArray,
   snapshotClientCredentials, snapshotDcr, snapshotDev, snapshotJwk,
@@ -141,7 +142,11 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   if (scopeCatalog.length === 0) {
     throw new AuthConfigError("scopeCatalog must be a non-empty array");
   }
+  const scopeCatalogProblem = scopeListProblem(scopeCatalog);
+  if (scopeCatalogProblem) throw new AuthConfigError(`scopeCatalog ${scopeCatalogProblem}`);
   const defaultScopes = snapshotStringArray("defaultScopes", rawDefaultScopes, makeError);
+  const defaultScopesProblem = scopeListProblem(defaultScopes);
+  if (defaultScopesProblem) throw new AuthConfigError(`defaultScopes ${defaultScopesProblem}`);
   if (!defaultScopes.every((s) => scopeCatalog.includes(s))) {
     throw new AuthConfigError("defaultScopes must be a subset of scopeCatalog");
   }

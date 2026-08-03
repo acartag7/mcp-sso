@@ -91,9 +91,13 @@ interface BridgeConfig {
   boot; a bare string is not treated as a one-element list. Every configuration
   array, including `signingPrivateJwk.key_ops`, is capped at 4096 entries before
   iteration so a hostile runtime `length` cannot make boot unbounded.
-- `defaultScopes ⊆ scopeCatalog` and `scopeCatalog` is non-empty. An empty
+- `scopeCatalog` and `defaultScopes` are additionally bounded scope lists:
+  **at most 128** RFC 6749 `scope-token` entries, each at most **256 UTF-8
+  bytes** (and therefore at most 32,895 UTF-8 bytes when space-joined).
+  `defaultScopes ⊆ scopeCatalog` and `scopeCatalog` is non-empty. An empty
   catalog means the resource honors no scopes and every authorize fails closed —
-  the deployer MUST declare scopes explicitly.
+  the deployer MUST declare scopes explicitly. These boot limits ensure a
+  server-generated consent token always fits the approval-form transport bound.
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
 - `redirectAllowlist` is an array, and **every entry satisfies the §10.0

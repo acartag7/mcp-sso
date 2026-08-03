@@ -3,18 +3,20 @@ import type { ActiveClientSecrets, ClientSecret } from "./ports/client-store.ts"
 import type { ClockPort } from "./ports/clock.ts";
 import { sha256Hex } from "./crypto.ts";
 import { OAuthError } from "./errors.ts";
-import { isScopeToken } from "./scopes.ts";
+import { isScopeToken, snapshotBoundedScopeList } from "./scopes.ts";
 
 const MAX_ACTIVE_SECRETS = 2;
 const ZERO_HASH = "0".repeat(64);
 
 export function validateAllowedScopes(input: unknown, catalog: readonly string[]): string[] {
-  if (!Array.isArray(input) || input.length === 0) {
-    throw new OAuthError("invalid_scope", "allowedScopes must be a non-empty array");
+  const snapshot = snapshotBoundedScopeList(input);
+  if ("problem" in snapshot) {
+    throw new OAuthError("invalid_scope", "allowedScopes must be a bounded RFC 6749 scope list");
   }
+  if (snapshot.scopes.length === 0) throw new OAuthError("invalid_scope", "allowedScopes must be a non-empty array");
   const allowed = new Set(catalog);
   const out: string[] = [];
-  for (const scope of input) {
+  for (const scope of snapshot.scopes) {
     if (typeof scope !== "string" || !isScopeToken(scope)) {
       throw new OAuthError("invalid_scope", "allowedScopes entries must be single RFC 6749 scope tokens");
     }

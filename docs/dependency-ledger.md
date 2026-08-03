@@ -69,7 +69,7 @@ the sole runtime dep.
 |---|---|---|
 | `fastify` | `>=5` | `/fastify` adapter (reference). |
 | `express` | `>=5` | `/express` adapter. |
-| `hono` | `>=4` | `/hono` adapter. |
+| `hono` | `>=4.12.27 <5` | `/hono` adapter; lower bound is the tested `bodyLimit` implementation, upper bound excludes an unverified major. |
 | `mysql2` | `>=3` | `/store/mysql` `StorePort` adapter (v0.1.2 Phase 5). Pooled; see contracts §12.3 async-tx hygiene. |
 | `ioredis` | `>=5` | `/rate-limit/redis` `RateLimitPort` adapter (v0.1.2 Phase 5). Fixed-window Lua script; see contracts §17.10. |
 

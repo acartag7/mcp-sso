@@ -648,7 +648,6 @@ test("adapter wiring + cookie delivery: all three adapters mount GET /oauth/auth
   {
     const { flow, bridge } = makeFlow(c, fakeIdentity(c));
     const app = express();
-    app.use(express.urlencoded({ extended: false }));
     app.use("/", createOAuthRouter({ bridge, upstream: flow }));
     const server = app.listen(0, "127.0.0.1");
     await new Promise<void>((r) => server.once("listening", r));

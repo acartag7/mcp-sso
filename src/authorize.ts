@@ -17,7 +17,7 @@ import {
   expiresAtIso, generateAuthorizationCode, sha256Hex,
   signConsentToken, verifyConsentToken,
 } from "./crypto.ts";
-import { assertAllowedScopesCeiling, normalizeScopes } from "./scopes.ts";
+import { assertAllowedScopesCeiling, normalizeScopes, storedScopes } from "./scopes.ts";
 import { buildErrorRedirect } from "./challenge.ts";
 import type { CimdResolver } from "./cimd/resolve.ts";
 import type { CimdRegistration } from "./cimd/registration.ts";
@@ -132,9 +132,9 @@ export class OAuthAuthorizationUseCase {
       // to the cookie-oversize guard, which does not exist on this path.
       await resolved.emitCimdSuccess();
       const state = input.state;
-
       // --- POST-VALIDATION: redirect-tagged errors ---
       let claims: ConsentRequestClaims;
+      let consentToken: string;
       try {
         if (input.responseType !== "code") {
           throw new OAuthError("unsupported_response_type", "Only response_type=code is supported");
@@ -162,6 +162,7 @@ export class OAuthAuthorizationUseCase {
           // CIMD registration — its own fetch/cache hit, or the carried one.
           ...(resolved.registration ? { cimdVerified: true as const } : {}),
         };
+        consentToken = await signConsentToken(claims, this.config, this.clock);
       } catch (error) {
         if (error instanceof OAuthError && !error.redirect) throw withRedirect(error, redirectUri, state);
         throw error;
@@ -173,11 +174,10 @@ export class OAuthAuthorizationUseCase {
         ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config))
         : [];
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
-      const priorScopes = claims.allowedScopes ? rawPrior.filter((s) => claims.allowedScopes!.includes(s)) : rawPrior;
-      const consentToken = await signConsentToken(claims, this.config, this.clock);
+      const priorScopes = storedScopes(rawPrior, this.config.scopeCatalog);
       await this.auditSuccess(AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject: input.subject });
       return {
-        consentToken, ...claims, priorScopes,
+        consentToken, ...claims, priorScopes: claims.allowedScopes ? priorScopes.filter((s) => claims.allowedScopes!.includes(s)) : priorScopes,
         ...(resolved.registration ? { cimd: cimdDisplay(resolved.registration, redirectUri) } : {}),
       };
     } catch (error) {
@@ -203,20 +203,18 @@ export class OAuthAuthorizationUseCase {
         await this.auditFailure(AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject, operationClock);
         return { redirectTo, state: consent.state };
       }
-
+      const consentScopes = storedScopes(consent.scopes, this.config.scopeCatalog);
+      const allowedScopes = assertAllowedScopesCeiling(consent.allowedScopes);
+      const priorScopes = storedScopes(accumulationAllowed(this.config, consent.clientId)
+        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config)) : [], this.config.scopeCatalog);
+      const union = dedupe([...consentScopes, ...priorScopes]);
+      // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
+      const scopes = allowedScopes ? union.filter((s) => allowedScopes.includes(s)) : union;
       // Single-use consent JTI; replay is an integrity failure (direct).
       const consentExpiresAt = expiresAtIso(operationClock, this.config.consentTokenTtlSeconds);
       if (!(await this.store.consumeConsentJti(consent.jti, consentExpiresAt))) {
         throw new OAuthError("invalid_grant", "Consent token has already been used");
       }
-
-      // Scope accumulation: stored-DCR OPAQUE clients only (§17.1.6 decision 3).
-      const priorScopes = accumulationAllowed(this.config, consent.clientId)
-        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config))
-        : [];
-      const union = dedupe([...consent.scopes, ...priorScopes]);
-      // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
-      const scopes = consent.allowedScopes ? union.filter((s) => consent.allowedScopes!.includes(s)) : union;
 
       const code = generateAuthorizationCode();
       await this.store.saveAuthCode({

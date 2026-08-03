@@ -12,6 +12,9 @@ import type { BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri, assertRegistrationRedirectPolicy } from "./redirect.ts";
 
+const MAX_GRANT_TYPES = 32;
+const MAX_GRANT_TYPE_BYTES = 256;
+
 export interface RegisterDeps {
   config: BridgeConfig;
   clock: ClockPort;
@@ -55,7 +58,7 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
         throw metadataError("token_endpoint_auth_method other than 'none' is not accepted via open registration (§17.2)");
       }
     }
-    const grantTypes = optionalStringArray(input.grantTypes, "grant_types");
+    const grantTypes = optionalGrantTypes(input.grantTypes);
     if (grantTypes?.includes("client_credentials")) {
       throw metadataError("grant_types containing client_credentials is not accepted via open registration (§17.2)");
     }
@@ -111,18 +114,21 @@ function requiredRedirectArray(value: unknown): unknown[] {
   return Array.from({ length }, (_, index) => value[index]);
 }
 
-function optionalStringArray(value: unknown, field: string): string[] | undefined {
+function optionalGrantTypes(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw metadataError(`${field} must be an array`);
+  if (!Array.isArray(value)) throw metadataError("grant_types must be an array");
   // Same read-once discipline as redirect_uris: one length, one read per index.
   const length = value.length;
-  if (!Number.isInteger(length) || length < 0) {
-    throw metadataError(`${field} must have a non-negative integer length`);
+  if (!Number.isInteger(length) || length < 0 || length > MAX_GRANT_TYPES) {
+    throw metadataError(`grant_types must contain 0..${MAX_GRANT_TYPES} entries`);
   }
   const snapshot = Array.from({ length }, (_, index) => value[index]);
   for (const entry of snapshot) {
     if (typeof entry !== "string" || entry.length === 0) {
-      throw metadataError(`${field} entries must be non-empty primitive strings`);
+      throw metadataError("grant_types entries must be non-empty primitive strings");
+    }
+    if (Buffer.byteLength(entry, "utf8") > MAX_GRANT_TYPE_BYTES) {
+      throw metadataError(`grant_types entries must not exceed ${MAX_GRANT_TYPE_BYTES} UTF-8 bytes`);
     }
   }
   return snapshot as string[];

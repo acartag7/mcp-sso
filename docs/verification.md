@@ -63,6 +63,21 @@ Run before S2.
 | HF.2 | `IdentityPort` throws `OAuthError("access_denied", 401)` | Same HTTP 401 body on Fastify, Express, and Hono. |
 | HF.3 | Non-OAuth error thrown inside a handler | 500 with a top-level string error body, never a framework-specific envelope. |
 
+### T1.HB — Hono OAuth request-body bound
+
+| # | Scenario | Assert |
+|---|---|---|
+| HB.1 | Valid real bodies | JSON, URL-encoded, and supported multipart bodies traverse a real Hono route unchanged; a compact real DCR registration with maximal recognized field values (16-by-2,048-byte redirects plus 32-by-256-byte `grant_types`) serialized entirely with JSON `\uXXXX` escapes is accepted. A consent form with maximum permitted default scopes and identity ceiling is generated and successfully posted through Hono. |
+| HB.2 | Header framing | Oversized, malformed, duplicate/coalesced, conflicting, or unsafe `Content-Length` returns fixed direct 413 before parsing; a valid small declared length cannot hide a larger body. |
+| HB.3 | Streaming boundary | Missing-length/chunked actual `Request` streams pass at exactly 256 KiB and return 413 at one byte over; middleware stops pulling a demand-driven hostile stream after its crossing chunk, while one already-materialized 2 MiB host chunk is rejected without reaching a parser. Transport cancellation/draining is not asserted. |
+| HB.4 | Route parity | `/oauth/register`, `/oauth/authorize/approve`, `/oauth/token`, and `/oauth/revoke` all return 413 for applicable over-cap bodies. |
+| HB.5 | Side effects | An over-cap request makes zero Bridge-handler, limiter, store-write, and success-audit calls. |
+| HB.6 | Parser failure | A malformed below-cap body preserves the existing fail-closed adapter behavior. |
+| HB.7 | Framework siblings | A real Fastify probe confirms its shipped 1 MiB parser cap rejects an oversized body before Bridge invocation. Real Express probes confirm the router-installed 256 KiB JSON and URL-encoded parsers admit the 245,939-byte core-bound DCR and a consent-sized form, then reject an over-cap body before Bridge invocation. |
+| HB.8 | Caller-owned pairing POST | A custom Hono `POST /oauth/authorize` mounts exported `honoOAuthBodyLimit`; an oversized form is rejected before `parseBody` or pairing verification. |
+| HB.9 | Runtime request metadata | For valid-length and missing-length streams, raw-Request own-property extensions survive Hono's reconstruction and remain visible to `clientIp`; no prototype/subclass/private-state preservation is claimed. |
+| HB.10 | Failed streams | Under-cap streams that error before parsing return one sanitized direct 400, emit no raw error log, and perform no parser, Bridge, limiter, store, or success-audit work. |
+
 ### T1.S0a — MySQL store and Redis/Valkey limiter
 
 | # | Scenario | Assert |
@@ -124,6 +139,7 @@ Notes:
 | S2a.3 | Empty intersection | `access_denied` over the redirect channel, after redirect validation. |
 | S2a.4 | Consent-token tampering | `approve` uses `allowed_scopes` from the verified consent token, never caller input. |
 | S2a.5 | Prior grants | Existing grants cannot resurrect scopes outside the current ceiling. |
+| S2a.5a | Corrupt or oversized prior grant | `approve` returns `invalid_grant` before consuming the consent JTI or writing an authorization code. |
 | S2a.6 | Adapter plumbing | Fastify, Express, and Hono all pass the identity object through the bridge. |
 
 ### T1.S2b — Entra group mapping
