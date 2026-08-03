@@ -29,12 +29,33 @@ const bridge = new Bridge({ config, store, clock, audit });
 const authorizer = new RequestAuthorizer({ config, clock, audit });
 ```
 
-The sink creates the file `0600` and appends one JSON line per event with
-`O_APPEND` (kernel-atomic for the small lines we emit). JSON encoding escapes
-`\n`/`\r`, so a hostile `reason` can never start a new line. The file is
-**log-injection-safe by construction**. The library does **not** rotate it —
-point your shipper at the file and let the shipper rotate. (Mechanism details:
+The sink creates the file `0600` and appends one JSON line per event. JSON
+encoding escapes `\n`/`\r`, so a hostile `reason` can never start a new line.
+The file is **log-injection-safe by construction**. On hosts exposing Node's
+`O_NOFOLLOW`, the sink opens the final path per event with no-follow and
+nonblocking flags, verifies that the opened descriptor is a regular file, and
+writes through that descriptor. A symlink (including a dangling or swapped
+path), FIFO, socket, device, or directory is dropped fail-open rather than
+receiving audit bytes. The library does **not** rotate the file itself, but its
+per-event open follows normal rename-and-recreate log rotation — point your
+shipper at the configured path and let the shipper rotate. (Mechanism details:
 [§17.7](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage).)
+Concurrent calls to one sink instance are serialized, so a rare short OS write
+cannot splice its records. This is not an interprocess lock: point only one
+`JsonlFileAudit` instance/process at a file when JSONL framing matters, or use
+your own cross-process coordination. If a short-write retry fails after a
+positive prefix, the sink rolls back only its verified descriptor tail; if it
+cannot verify that rollback, that instance drops later events instead of
+appending to the fragment.
+
+Do not put the configured audit filename in a directory writable by an
+untrusted local user. `O_NOFOLLOW` protects the final symlink component, but a
+hard link is still a regular file and is intentionally not rejected in this
+release; a hard-link policy needs a separate contract decision. On a Node host
+without `O_NOFOLLOW` support (notably Windows builds), `JsonlFileAudit` drops
+the event with a fixed redacted diagnostic instead of using an unsafe
+check-then-open fallback. Use a supported POSIX host for a file-backed audit
+trail.
 
 Shippers that work well with append-only JSONL:
 

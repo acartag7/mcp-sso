@@ -1662,8 +1662,26 @@ gate replaces no-gate).
   implementations:
   - `JsonlFileAudit(filePath)` — one `JSON.stringify`d event per line
     (JSON encoding escapes newlines ⇒ log-injection-safe by construction),
-    `O_APPEND` writes, file created `0600`; NO rotation (logrotate is the
-    deployer's).
+    file created `0600`. On hosts exposing Node's `O_NOFOLLOW`, every append
+    opens the final path with `O_APPEND | O_CREAT | O_NONBLOCK | O_NOFOLLOW`,
+    checks `fstat().isFile()` on that descriptor, then writes the complete
+    encoded line through it. Concurrent calls to one sink instance are
+    serialized, so short OS writes cannot splice that instance's records. A
+    retry failure after a positive prefix rolls back only a verified descriptor
+    tail; if that rollback cannot be verified, the instance drops later events
+    rather than append another record to the fragment.
+    Thus a live or dangling symlink, FIFO, socket,
+    device, and directory are rejected without writing through the configured
+    path; the sink reports a redacted failure and remains fail-open. It does not
+    rotate files itself, but opening per event preserves logrotate's
+    rename-and-recreate pattern. If `O_NOFOLLOW` is unavailable (notably on
+    Windows Node builds), the sink safely drops the event with a fixed diagnostic
+    instead of falling back to a raceable path check. Hard-linked regular files
+    are an explicit deployer/host hard-link-policy residual, not rejected by
+    this reference sink; changing that needs a separate contract decision.
+    Separate sink instances or processes writing one path are not coordinated:
+    deployments needing cross-process JSONL framing must designate one writer
+    or provide their own coordination.
   - `WebhookAudit(url, { timeoutMs = 5000, headers?, fetchImpl? })` — per-event
     POST, https required (raw prefix check), userinfo (`user:pass@`) rejected at
     construction (credentials belong in `headers`; a fetch error would otherwise
@@ -1733,10 +1751,12 @@ gate replaces no-gate).
   into a dir we created, require exact in a pre-existing one).
 - **Parity rule:** EVERY code path that creates or reads the state dir —
   `loadOrCreateQuickstartSecrets`, the example's Cloudflare Access branch
-  (`ensureStateDir`), the sqlite store (`openSqliteStore` chmod 0600), the audit
-  sink (`JsonlFileAudit` O_NONBLOCK) — meets this bar. A control fixed in one
-  path MUST be applied to every sibling that touches the same resource (the
-  "sweep for sibling instances" discipline — global CLAUDE.md).
+  (`ensureStateDir`), and the sqlite store (`openSqliteStore` chmod 0600) —
+  meets this bar. A control fixed in one path MUST be applied to every sibling
+  that touches the same resource (the "sweep for sibling instances" discipline
+  — global CLAUDE.md). `JsonlFileAudit` is an operator-configured audit
+  destination, not state-dir storage; its deliberately narrower final-target
+  control and parent-directory residual are §17.7 and threat-model row 24.
 
 ## 17.9 Worked-example design notes (v0.2 examples)
 

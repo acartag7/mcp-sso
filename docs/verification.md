@@ -99,7 +99,11 @@ Run before S2.
 | S1a.4 | `WebhookAudit` POST via injected transport stub | Body is the exact event JSON with merged headers; `redirect:"manual"`; a never-settling stub times out via `AbortSignal.timeout`; the sink never rejects and is at-most-once. |
 | S1a.5 | `WebhookAudit("http://...")` and userinfo URLs | Constructor rejects non-https config and URLs carrying `user:pass@` userinfo. |
 | S1a.6 | New v0.2 event names | Every new event name has a dedicated pure serialization test across both sinks. |
-| S1a.7 | Sink stderr never leaks secrets | An IO/transport error carrying a Bearer token, a long opaque run, a known header value, or a credential-bearing query string (`?access_token=…`) is redacted before reaching stderr; benign diagnostics are preserved. (`test/audit-util.test.ts` + jsonl/webhook stderr-capture tests) |
+| S1a.7 | Sink stderr never leaks secrets or breaks fail-open | An IO/transport error carrying a Bearer token, a long opaque run, a known header value, or a credential-bearing query string (`?access_token=…`) is redacted before reaching stderr; a throwing JSONL stderr transport still cannot reject the audit write. (`test/audit-util.test.ts` + jsonl/webhook stderr-capture tests) |
+| S1a.8 | JSONL final-path redirection and special files | On an `O_NOFOLLOW` host, a live/dangling/swap-to symlink writes zero bytes to its target; FIFO remains nonblocking; directory, socket, and device targets are rejected; the sink never rejects or logs the configured path/event payload. (`test/audit-jsonl-file.test.ts`, `test/audit-jsonl-file-security.test.ts`) |
+| S1a.9 | JSONL rotation and descriptor-bound append | Existing regular files append; a missing target is `0600`; a rename-and-recreate rotation directs the next complete JSONL line to the replacement file. (`test/audit-jsonl-file.test.ts`, `test/audit-jsonl-file-security.test.ts`) |
+| S1a.10 | JSONL mutation witnesses | Removing `O_NOFOLLOW` makes the symlink witness modify its victim; removing the descriptor regular-file check makes the device witness stop reporting a rejected target. |
+| S1a.11 | JSONL short-write framing | A controlled first short write holds its suffix while a second event starts; the same sink instance does not issue the second event's write until the first line completes, and the resulting file has two parseable lines in order. A retry failure after a positive prefix rolls the fragment back before a later event writes. (`test/audit-jsonl-file-security.test.ts`) |
 
 Notes:
 

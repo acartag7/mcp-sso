@@ -23,6 +23,34 @@ through `writeTokenAudit`, which contains both synchronous throws and rejected
 promises from a nonconforming custom `AuditPort`. This is a token-boundary
 guarantee, not a claim that every use-case repairs arbitrary custom ports.
 
+`JsonlFileAudit` is a filesystem boundary as well as an evidence sink. On a
+host where Node exposes `O_NOFOLLOW`, every event opens the configured final
+path with `O_APPEND | O_CREAT | O_NONBLOCK | O_NOFOLLOW`, validates the opened
+descriptor with `fstat().isFile()`, and writes the complete UTF-8 JSONL line
+through that same descriptor before closing it. A symlink (including a dangling
+one), FIFO, socket, device, or directory therefore receives no event bytes; a
+rename-and-recreate log rotation is picked up by the next event. The sink still
+fails open: a rejected target or failed write emits a redacted diagnostic and
+does not reject the authentication operation. Where `O_NOFOLLOW` is unavailable,
+the reference sink writes no event and emits a fixed diagnostic; it MUST NOT
+substitute an `lstat`-then-open sequence that could follow a swapped symlink.
+Concurrent calls to one `JsonlFileAudit` instance are serialized through that
+descriptor-bound operation, so a short OS write cannot splice two of that
+instance's JSONL records together. This is not an interprocess file lock:
+separate sink instances or processes writing the same path remain outside this
+reference sink's framing guarantee and require a deployer-selected single
+writer or coordination mechanism. If a retry fails after appending a positive
+prefix, the sink truncates only that verified descriptor tail; if the descriptor
+changed and rollback cannot be verified, it drops later events from that
+instance rather than append another record to the fragment.
+
+This contract deliberately does not reject hard-linked regular files. A hard
+link is indistinguishable from a normal regular audit file at this boundary, and
+a link-count policy would change rotation and existing-file compatibility. A
+deployer MUST keep the audit file's parent from untrusted writers and rely on
+the host's hard-link protections; a stronger hard-link policy needs a separate
+contract decision.
+
 Machine-client lifecycle success evidence is the exception to the general
 fail-open posture. `MachineClientStore.createMachineClient` and
 `compareAndSwapMachineClient` receive a metadata-only
