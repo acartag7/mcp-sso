@@ -289,8 +289,12 @@ const noopRateLimit: RateLimitPort = { async check(): Promise<boolean> { return 
 Optional DoS defense for unauthenticated registration, token exchange,
 revocation, and direct header-based identity verification (threat-model #8).
 `Bridge` calls `check("register:<ip>")` / `check("token:<ip>")` before those
-use-cases, `check("revoke:<ip>")` before `/oauth/revoke` body normalization,
-token hashing, store access or mutation, and audit work, and
+use-cases, and `check("revoke:<ip>")` at the start of `Bridge.handleRevoke`,
+before its `formObject` normalization, token hashing, store access or mutation,
+and audit work. Shipped adapters first apply their own request-body boundary and
+then call `Bridge`, so revocation admission is not an adapter body-parser gate:
+Hono's 256 KiB body cap remains earlier and an over-cap request returns 413
+without consuming a revocation-limit slot.
 `Bridge.resolveIdentity` calls `check("authorize:<ip>")` before
 `IdentityPort.verify`; `false` ⇒ **429 Too Many Requests**. A denied revocation
 does no token-use-case, store, or audit work; an admitted unknown or
