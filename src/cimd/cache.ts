@@ -11,6 +11,13 @@ import type { CimdCacheView } from "./transport.ts";
 const MIN_CACHEABLE_MAX_AGE = 60;
 const DEFAULT_MAX_ENTRIES = 256;
 const UNSIGNED_DECIMAL = /^[0-9]+$/;
+const MONTHS: Readonly<Record<string, number>> = Object.freeze({
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+});
+const IMF_FIXDATE = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), (\d{2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/i;
+const RFC850_DATE = /^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), (\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2}) (\d{2}):(\d{2}):(\d{2}) GMT$/i;
+const ASCTIME_DATE = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:([0-9]{2})| ([0-9])) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/i;
 /** RFC 9110 token — the only shape a Cache-Control directive name may take.
  *  Anchored, bounded character class, no backtracking (ReDoS-safe). */
 const DIRECTIVE_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
@@ -45,6 +52,7 @@ interface CacheEntry {
 export class CimdSuccessCache {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly maxEntries: number;
+  private lastObservedNowMs: number | undefined;
 
   constructor(maxEntries: number = DEFAULT_MAX_ENTRIES) {
     this.maxEntries = maxEntries;
@@ -53,6 +61,7 @@ export class CimdSuccessCache {
   /** A fresh hit; expired entries are evicted on read. LRU order is refreshed
    *  on every hit (re-insert moves the key to the tail). */
   get(key: string, nowMs: number): CimdRegistration | undefined {
+    if (!this.observe(nowMs)) return undefined;
     const entry = this.entries.get(key);
     if (entry === undefined) return undefined;
     if (!(nowMs < entry.expiresAtMs)) {
@@ -64,7 +73,8 @@ export class CimdSuccessCache {
     return entry.registration;
   }
 
-  set(key: string, registration: CimdRegistration, expiresAtMs: number): void {
+  set(key: string, registration: CimdRegistration, expiresAtMs: number, observedNowMs: number): void {
+    if (!this.observe(observedNowMs) || !Number.isFinite(expiresAtMs)) return;
     this.entries.delete(key);
     while (this.entries.size >= this.maxEntries) {
       const oldest = this.entries.keys().next();
@@ -73,26 +83,42 @@ export class CimdSuccessCache {
     }
     this.entries.set(key, { registration, expiresAtMs });
   }
+
+  /** A backward/non-finite injected clock reading invalidates temporal state.
+   *  Resetting the observation point avoids both stale resurrection and a
+   *  permanent high-water mark after a spurious future clock value. */
+  private observe(nowMs: number): boolean {
+    const prior = this.lastObservedNowMs;
+    this.lastObservedNowMs = Number.isFinite(nowMs) ? nowMs : undefined;
+    if (!Number.isFinite(nowMs) || (prior !== undefined && nowMs < prior)) {
+      this.entries.clear();
+      return false;
+    }
+    return true;
+  }
 }
 
-/** RFC-9111-correct freshness (§17.1.6 decision 4), fail-toward-re-fetch:
- *  `effectiveTtlSeconds = min(valid max-age, cap) − Age − elapsedSeconds`.
+/** RFC-9111 shared-cache freshness (§17.1.6 decision 4), fail-toward-re-fetch.
  *  Returns the absolute expiry in ms, or `null` when the response is NOT
  *  cacheable. A valid `max-age` below 60 is non-cacheable — never clamped up. */
 export function computeCacheExpiryMs(
   view: CimdCacheView | undefined, capSeconds: number, t0Ms: number, t1Ms: number,
 ): number | null {
-  if (view === undefined) return null;
+  if (view === undefined || view.valid !== true) return null;
   const maxAge = parseMaxAge(view.cacheControl);
-  if (maxAge === null || maxAge < MIN_CACHEABLE_MAX_AGE) return null;
+  if (maxAge === null || hasVaryStar(view.vary)) return null;
   const age = parseAge(view.age);
   if (age === null) return null;
   if (!Number.isFinite(t0Ms) || !Number.isFinite(t1Ms)) return null;
-  const elapsedSeconds = Math.floor((t1Ms - t0Ms) / 1000);
-  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) return null;
-  const ttlSeconds = Math.min(maxAge, capSeconds) - age - elapsedSeconds;
-  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) return null;
-  return t1Ms + ttlSeconds * 1000;
+  const responseDelay = t1Ms - t0Ms;
+  if (!Number.isFinite(responseDelay) || responseDelay < 0) return null;
+  const date = parseDate(view.date, t1Ms);
+  if (date === null) return null;
+  const apparentAge = date === undefined ? 0 : Math.max(0, t1Ms - date);
+  const correctedInitialAge = Math.max(apparentAge, age * 1000 + responseDelay);
+  const ttlMs = Math.min(maxAge, capSeconds) * 1000 - correctedInitialAge;
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) return null;
+  return t1Ms + ttlMs;
 }
 
 /** RFC 9111 `directive = token [ "=" ( token / quoted-string ) ]`. A bare token,
@@ -103,16 +129,15 @@ function isWellFormedDirectiveValue(value: string): boolean {
   return QUOTED_STRING.test(value);
 }
 
-/** Exactly one `Cache-Control` header occurrence carrying exactly one
- *  `max-age` directive with an unquoted unsigned-decimal safe-integer value,
- *  and no `no-store`/`no-cache`. Anything else ⇒ non-cacheable. Directive
+/** Exactly one `Cache-Control` header occurrence carrying valid shared-cache
+ *  freshness. Unsupported or restrictive storage directives refuse storage. Directive
  *  names are ASCII case-insensitive. */
 function parseMaxAge(values: readonly string[] | undefined): number | null {
   if (values === undefined || values.length !== 1) return null;
   const header = values[0];
   if (typeof header !== "string") return null;
-  let maxAge: number | null = null;
-  let occurrences = 0;
+  let maxAge: number | null = null, sMaxage: number | null = null;
+  let maxOccurrences = 0, sMaxOccurrences = 0;
   for (const raw of splitDirectives(header)) {
     const directive = raw.trim();
     if (directive === "") continue;
@@ -129,18 +154,60 @@ function parseMaxAge(values: readonly string[] | undefined): number | null {
     // headers, and rule 25 makes a malformed Cache-Control non-cacheable.
     // Ignoring only the name would cache on a header we could not fully parse.
     if (eq >= 0 && !isWellFormedDirectiveValue(directive.slice(eq + 1))) return null;
-    if (name === "no-store" || name === "no-cache") return null;
-    if (name !== "max-age") continue;
-    occurrences += 1;
-    if (occurrences > 1) return null;
+    if (name === "no-store" || name === "no-cache" || name === "private") return null;
+    if (name !== "max-age" && name !== "s-maxage") continue;
     if (eq < 0) return null;
     const value = directive.slice(eq + 1);
     if (!UNSIGNED_DECIMAL.test(value)) return null;
     const parsed = Number(value);
     if (!Number.isSafeInteger(parsed)) return null;
-    maxAge = parsed;
+    if (name === "max-age") { maxOccurrences += 1; if (maxOccurrences > 1) return null; maxAge = parsed; }
+    else { sMaxOccurrences += 1; if (sMaxOccurrences > 1) return null; sMaxage = parsed; }
   }
-  return occurrences === 1 ? maxAge : null;
+  const lifetime = sMaxage ?? maxAge;
+  return lifetime !== null && lifetime >= MIN_CACHEABLE_MAX_AGE ? lifetime : null;
+}
+
+/** RFC 9110 §5.6.7's three HTTP-date forms, case-insensitive for a cache
+ * recipient per RFC 9111 §4.2. Do not use Date.parse: it accepts non-HTTP
+ * formats that could make malformed cache metadata fresh. */
+function parseDate(values: readonly string[] | undefined, nowMs: number): number | undefined | null {
+  if (values === undefined) return undefined;
+  if (values.length !== 1 || typeof values[0] !== "string") return null;
+  const value = values[0];
+  let m = IMF_FIXDATE.exec(value);
+  if (m !== null) return dateMs(Number(m[3]), m[2]!, Number(m[1]), Number(m[4]), Number(m[5]), Number(m[6]));
+  m = RFC850_DATE.exec(value);
+  if (m !== null) {
+    const now = new Date(nowMs);
+    if (!Number.isFinite(now.getTime())) return null;
+    const year = Math.floor(now.getUTCFullYear() / 100) * 100 + Number(m[3]);
+    let parsed = dateMs(year, m[2]!, Number(m[1]), Number(m[4]), Number(m[5]), Number(m[6]));
+    const cutoff = new Date(nowMs);
+    cutoff.setUTCFullYear(cutoff.getUTCFullYear() + 50);
+    if (parsed !== null && Number.isFinite(cutoff.getTime()) && parsed > cutoff.getTime()) {
+      parsed = dateMs(year - 100, m[2]!, Number(m[1]), Number(m[4]), Number(m[5]), Number(m[6]));
+    }
+    return parsed;
+  }
+  m = ASCTIME_DATE.exec(value);
+  return m === null ? null : dateMs(Number(m[7]), m[1]!, Number((m[2] ?? m[3])!), Number(m[4]), Number(m[5]), Number(m[6]));
+}
+
+function dateMs(year: number, monthName: string, day: number, hour: number, minute: number, second: number): number | null {
+  const month = MONTHS[monthName.toLowerCase()];
+  if (month === undefined || day < 1 || hour > 23 || minute > 59 || second > 60 || second < 0) return null;
+  if (second === 60 && (hour !== 23 || minute !== 59)) return null;
+  const date = new Date(0);
+  date.setUTCFullYear(year, month, day);
+  date.setUTCHours(hour, minute, Math.min(second, 59), 0);
+  if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day || date.getUTCHours() !== hour || date.getUTCMinutes() !== minute) return null;
+  return date.getTime() + (second === 60 ? 1_000 : 0);
+}
+
+function hasVaryStar(values: readonly string[] | undefined): boolean {
+  if (values === undefined) return false;
+  return values.some((value) => value.split(",").some((part) => part.trim() === "*"));
 }
 
 /** An absent `Age` is 0. A present `Age` is usable only as exactly one

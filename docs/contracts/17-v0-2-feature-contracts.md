@@ -17,9 +17,9 @@
 artifact both normatively reference draft **-00**. The implementation was built
 against -01's additional SSRF, redirect, and response constraints. The final MCP
 citation is `-00`; §16.1 now carries the complete 44-statement mapping. The
-`+json` media-type mismatch is closed. Two confirmed runtime mismatches remain —
-the shared cache ignores `s-maxage`/`private`/`Date`, and the loopback port
-exception is applied without RFC 9700's native-app precondition — plus four
+`+json` media-type mismatch and shared-cache directive handling are closed. One
+confirmed runtime mismatch remains — the loopback port exception is applied
+without RFC 9700's native-app precondition — plus four
 unresolved test-evidence rows, so final CIMD draft conformance cannot yet be
 claimed. §16.2 additionally records a
 draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
@@ -325,12 +325,8 @@ decision. Everything else in the pipeline still runs under the flag.
   scope set up front, so the convenience is unused; a provenance-aware version is a
   future minor — §12 note.)
 - Token/refresh/revoke: NO re-fetch; binding is the existing auth-code-record
-  and refresh-record client checks (§9.4). Validated documents cache per a
-  **subset** of RFC 9111 headers (**PENDING (D00-4.4.2)** — shared-cache
-  `s-maxage`/`private`/`Date` semantics are unmodelled; see rule 25)
-  (freshness per §17.1.6 decision 4: `effectiveTtlSeconds =
-  min(valid max-age, cacheTtlCapSeconds) − Age − elapsedSeconds`; a valid
-  `max-age` below 60 is non-cacheable, never clamped up), keyed by the
+  and refresh-record client checks (§9.4). Validated documents cache per the
+  bounded shared-cache rules in rule 25 and §17.1.6 decision 4, keyed by the
   RAW presented `client_id` string (raw-string identity rule —
   `https://example.com/client` and `https://example.com:443/client` are
   distinct clients and distinct cache entries), in-memory per instance, bounded
@@ -364,10 +360,10 @@ archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 runtime commit `af2a61f` with all three providers. The implementation was
 reviewed against `2026-07-28-RC`; the official final artifact was then checked
 on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
-44 normative statements: 24 conformant (one carrying a disclosed caveat), two
-reasoned deviations, 12 not applicable to the implemented public-client profile,
-four with unresolved test evidence, and two confirmed runtime mismatches
-(D00-4.4.2 shared-cache directives and D00-4.5.2 native-app precondition).
+44 normative statements: 24 `C` conformant plus one conformant disclosed caveat,
+two reasoned deviations, 12 not applicable to the implemented public-client profile,
+four with unresolved test evidence, and one confirmed runtime mismatch
+(D00-4.5.2 native-app precondition).
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -618,25 +614,22 @@ four with unresolved test evidence, and two confirmed runtime mismatches
     initiating resolution; the cap counts FOLLOWERS only). This does NOT reverse the
     no-slot rule above: a follower still consumes no FETCH slot, so one popular
     client_id can never starve distinct client_ids out of `maxInFlight`.
-25. Cache freshness (**partial RFC 9111 — see the PENDING note below**, in-memory
-    per instance, keyed by raw client_id):
-    `no-store` or `no-cache` ⇒ do not cache; absent, malformed, duplicate, or
-    conflicting `Cache-Control`/`max-age`, and a negative/non-integer/overflow
-    `Age` or an `Age` ≥ the effective lifetime ⇒ no cache entry (fail toward
-    re-fetch, which the rate limiter bounds). A valid `max-age` **below 60 is
-    non-cacheable** (never honored, never clamped up — this REPLACES the earlier
-    clamp-to-60 behavior, per §17.1.6 decision 4); otherwise `effectiveTtlSeconds =
-    min(valid max-age, cacheTtlCapSeconds) − Age − elapsedSeconds` and a non-positive
-    `effectiveTtlSeconds` is not cached. A quoted `max-age` value is treated as
-    malformed (no cache entry).
-    **PENDING (D00-4.4.2, §16.1):** the directives above are honoured correctly,
-    but this cache is SHARED (one instance per `Bridge`, keyed on `client_id`
-    with no user dimension), so RFC 9111's shared-cache rules also bind:
-    `s-maxage` overrides `max-age` (§5.2.2.10), a `private` response **MUST NOT**
-    be stored (§5.2.2.7), and apparent age must be derived from `Date` (§4.2.3).
-    None are modelled and all three were probed as stored. The follow-up runtime
-    PR implements them or refuses to cache when an unsupported directive is
-    present. Until then this rule is a subset of RFC 9111, not conformance to it.
+25. Cache freshness (RFC 9111 shared-cache subset, in-memory per instance and
+    keyed by raw client_id): cache metadata is reusable only when every relevant
+    header has the expected runtime shape. `private`, `no-store`, `no-cache`, and
+    `Vary: *` prevent reuse; malformed, duplicate, quoted, or unusable
+    `Cache-Control`, `Age`, or `Date` values fail toward re-fetch. Valid
+    `s-maxage` takes precedence over `max-age`; the selected lifetime must be at
+    least 60 seconds and is bounded by `cacheTtlCapSeconds`. `Expires` is not a
+    CIMD freshness source, so it never grants reuse. All freshness arithmetic is
+    milliseconds: `apparentAge = max(0, responseTime − Date)`;
+    `correctedInitialAge = max(apparentAge, Age + responseDelay)`; and absolute
+    expiry is `responseTime + min(lifetime, cap) − correctedInitialAge`.
+    Comparing the injected clock to that absolute expiry represents resident
+    time without a second formula. A non-finite, backward, or otherwise invalid
+    clock observation clears the temporal cache state and resets the observation
+    point, so old entries cannot resurrect and later valid entries can cache.
+    A stale entry is removed before re-fetch; a failed re-fetch never serves it.
 
 ## 17.1.6 S6b flow-integration amendments (decisions 1–6, 2026-07-23)
 
@@ -897,9 +890,7 @@ URL-keyed refresh row with a broader scope and prove a genuine CIMD authorizatio
 modes) reports `priorScopes = []` and mints only the requested, ceiling-bounded scopes; a
 control case proves an opaque stored-DCR client still accumulates.
 
-**Decision 4 — CimdFetchResult minimal cache view; partial-RFC-9111 freshness
-(**PENDING (D00-4.4.2)**: shared-cache `s-maxage`/`private`/`Date` semantics are
-unmodelled — see rule 25 and §16.1) (the
+**Decision 4 — CimdFetchResult minimal cache view; shared-cache freshness (the
 success cache serves BOTH modes).** The raw-client-id-keyed validated-success cache
 (§17.1.4) is used at **both** direct-mode `prepare` AND upstream-redirect authorize
 (1a) — NOT direct-mode-only. Redirect mode is the only mode that resolves
@@ -909,43 +900,22 @@ would drive an unbounded series of outbound fetches (single-flight coalesces onl
 CONCURRENT requests; `maxInFlight` caps only concurrency; the rate limiter is optional
 + fail-open). Carrying the doc through one flow prevents a callback re-fetch; the
 cache collapses repeated same-id fetches to one per freshness window **for cacheable
-responses only** — a deliberately non-cacheable response (`no-store`, absent
-`Cache-Control`, or `max-age` below 60, all attacker-controllable) is re-fetched on
-each request and is bounded only by the optional `cimd:<ip>` limiter (documented
-residual, threat rows 25/35; a mandatory origin-independent success budget is the §18
-option, not built in v0.2). `CimdFetchResult`
-(guarded-fetcher.ts:8, `{ document }`) is extended additively with a **minimal
-duplicate-aware cache view** — the `Cache-Control` directive occurrences and the
-`Age` field occurrences ONLY (from the transport's `headersDistinct`, rule 14) — NOT
-the full header map (an unnecessary trust-boundary expansion). Error/invalid results
-carry no cache view and are never cached. SUPERSEDES rule 25's upward clamp, with
-pinned conservative arithmetic (all via `ClockPort`, no ambient `Date.now`):
-**PENDING (D00-4.4.2, §16.1):** this cache is SHARED (one instance per `Bridge`,
-keyed on `client_id` with no user dimension), so RFC 9111's shared-cache rules
-apply. The pinned view below models only `Cache-Control` and `Age`; `s-maxage`,
-`private`, and `Date`-derived apparent age are unmodelled and all three were
-probed as stored. The follow-up runtime PR implements those semantics or refuses
-to cache when an unsupported directive is present.
-`Cache-Control` directive names are ASCII case-insensitive; an **absent `Age` is 0**;
-`Age` is cacheable only as exactly one occurrence matching `^[0-9]+$` within the
-safe-integer bound (duplicate/list/signed/whitespaced ⇒ non-cacheable). All lifetime
-arithmetic is in **seconds**; timestamps are **milliseconds** via `ClockPort`. Capture
-`t0Ms = clock.nowMs()` before the fetch and **`t1Ms = clock.nowMs()` immediately after
-the guarded fetch completes** (including body validation — this is the observable seam;
-the guarded-fetcher returns only after the body is read, so a "last response header"
-instant is not available); `elapsedSeconds = floor((t1Ms − t0Ms)/1000)`, and a
-**negative or non-finite `elapsedSeconds` makes the response non-cacheable** (never
-extends lifetime across a clock step);
-`effectiveTtlSeconds = min(valid max-age, cacheTtlCapSeconds) − Age − elapsedSeconds`;
-a **non-positive `effectiveTtlSeconds` is not cached**; **absolute expiry (ms) =
-`t1Ms + effectiveTtlSeconds * 1000`** (unit-correct: seconds × 1000). A valid
-`max-age` **below 60 is treated as non-cacheable** (fail toward re-fetch, which the
-rate limiter bounds — one behavior, never clamped up). `no-store`/`no-cache`,
-duplicate/conflicting `Cache-Control`/`max-age`, or a quoted `max-age` ⇒ no cache
-entry. **The cache is bounded** to a finite entry ceiling (default 256 entries) with
-deterministic LRU eviction; at the ceiling a new entry evicts the least-recently-used
-one (never grows unbounded) — this caps the unauthenticated distinct-id memory
-footprint (threat rows 25/35).
+responses only** — a deliberately non-cacheable response (including `private`,
+`no-store`, `no-cache`, `Vary: *`, absent or malformed freshness metadata, old or
+skewed `Date`, and short/zero selected lifetime) is re-fetched on each request.
+The guarded fetcher's global in-flight cap, timeout, response-size cap, optional
+`cimd:<ip>` limiter, cache lifetime cap, and deployment egress policy bound but do
+not eliminate that residual. `CimdFetchResult` carries only an explicit-validity
+marker plus the `Cache-Control`, `Age`, `Date`, and `Vary` occurrences extracted
+from `headersDistinct`; `Expires` is intentionally not carried or honoured.
+Error/invalid results carry no cache view and are never cached. `t0Ms` is captured
+before guarded fetch and `t1Ms` after body validation; their millisecond difference
+is conservative response delay. The shared-cache rule is exact: `s-maxage` wins,
+`private`/`no-store`/`no-cache`/`Vary:*` refuse reuse, and corrected initial age is
+`max(max(0, t1Ms − Date), Age * 1000 + (t1Ms − t0Ms))`. Absolute expiry represents
+resident time at read. The cache clears entries and resets its observation point on
+a backward/non-finite injected-clock reading; this fails closed without retaining a
+spurious future timestamp. The cache remains bounded LRU (default 256 entries).
 
 **Decision 5 — loopback derives from the dev flag; the core owns fetcher
 construction (least machinery).** `allowLoopback` is **never a `cimd` config field**
