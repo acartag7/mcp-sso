@@ -21,7 +21,7 @@ const event: AuthAuditEvent = {
   clientId: "client-1",
 };
 
-type FileHandleWrite = (this: FileHandle, buffer: Uint8Array, offset?: number, length?: number, position?: number | null) => Promise<{ bytesWritten: number; buffer: Uint8Array }>;
+type FileHandleWrite = (this: FileHandle, data: Uint8Array | string, offset?: number, length?: number, position?: number | null) => Promise<{ bytesWritten: number; buffer: Uint8Array | string }>;
 
 function captureConsoleError(): { messages: string[]; restore: () => void } {
   const original = console.error;
@@ -213,6 +213,37 @@ test("JsonlFileAudit: a throwing stderr transport cannot break fail-open", async
       await assert.doesNotReject(() => new JsonlFileAudit(join(blocker, "audit.jsonl")).writeAuthEvent(event));
     } finally {
       console.error = original;
+    }
+  });
+});
+
+test("JsonlFileAudit: retries a controlled short write until one JSONL record is complete", async () => {
+  if (!hasNoFollow) return;
+  await withDir(async (dir) => {
+    const path = join(dir, "audit.jsonl");
+    await writeFile(path, "");
+    const probe = await open(path, "r");
+    const prototype = Object.getPrototypeOf(probe) as { write: FileHandleWrite };
+    await probe.close();
+    const original = prototype.write;
+    let writeCalls = 0;
+    prototype.write = async function (data, offset, length, position) {
+      writeCalls += 1;
+      if (writeCalls === 1) {
+        if (typeof data === "string") {
+          const firstByte = Buffer.from(data, "utf8").subarray(0, 1);
+          return original.call(this, firstByte, 0, firstByte.length, position);
+        }
+        return original.call(this, data, offset, 1, position);
+      }
+      return original.call(this, data, offset, length, position);
+    };
+    try {
+      await new JsonlFileAudit(path).writeAuthEvent(event);
+      assert.equal(writeCalls, 2, "a short write was not retried");
+      assert.deepEqual(JSON.parse(await readFile(path, "utf8")), event);
+    } finally {
+      prototype.write = original;
     }
   });
 });
