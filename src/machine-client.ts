@@ -204,7 +204,7 @@ function mutationAudit(
 }
 function requireMachineClientResource(resource: unknown): string {
   if (!isMachineClientResource(resource)) {
-    throw new OAuthError("invalid_request", "resource must be a non-blank absolute URL");
+    throw new OAuthError("invalid_request", "resource must be https:// or http:// loopback for development");
   }
   return resource;
 }

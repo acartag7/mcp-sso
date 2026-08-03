@@ -126,7 +126,9 @@ const { clientId, clientSecret } = await provisionMachineClient(
 ```
 
 `resource` is a required `MachineClientDeps` field. TypeScript callers upgrading
-from an earlier lifecycle API must pass the exact `config.resource` value.
+from an earlier lifecycle API must pass the exact `config.resource` value. It
+must be HTTPS, except a loopback HTTP resource (`localhost`, `127.0.0.1`, or
+`[::1]`) is valid for a matching `dev.allowInsecureLocalhost` bridge.
 
 ```bash
 curl -s https://auth.example.com/oauth/token -u "$CLIENT_ID:$CLIENT_SECRET" \

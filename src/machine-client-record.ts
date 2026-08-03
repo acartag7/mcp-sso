@@ -7,6 +7,7 @@ import { snapshotBoundedScopeList } from "./scopes.ts";
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const MAX_ACTIVE_SECRETS = 2;
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** A parsed legacy row can retain expired history until its first mutation.
  * New versioned writes use the stricter tuple from the public store contract. */
@@ -137,12 +138,13 @@ function parseAllowedScopes(value: unknown): string[] | null {
   return snapshot.scopes;
 }
 
-/** Validate a stored resource without normalizing the bytes that are bound. */
+/** Validate a BridgeConfig-eligible stored resource without normalizing its bytes. */
 export function isMachineClientResource(value: unknown): value is string {
   if (typeof value !== "string" || value.trim().length === 0) return false;
   try {
-    new URL(value);
-    return true;
+    const url = new URL(value);
+    return url.protocol === "https:"
+      || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname));
   } catch {
     return false;
   }

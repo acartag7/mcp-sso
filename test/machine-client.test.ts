@@ -223,6 +223,44 @@ test("provision: rejects a bad secretTtlSeconds and a non-string name", async ()
   });
 });
 
+test("resource: rejects an unusable remote http resource before every lifecycle side effect", async () => {
+  const h = harness();
+  const credential = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  const before = {
+    createCalls: h.store.createCalls,
+    casCalls: h.store.casCalls,
+    durableAudits: h.store.mutationAudits.length,
+    successAudits: h.audit.events.filter((event) => event.status === "success").length,
+  };
+  const remoteHttpDeps = { ...h.deps, resource: "http://remote.example/mcp" };
+  for (const action of [
+    () => provisionMachineClient(remoteHttpDeps, { allowedScopes: ["mcp:read"] }),
+    () => rotateMachineClientSecret(remoteHttpDeps, credential.clientId),
+    () => disableMachineClient(remoteHttpDeps, credential.clientId),
+  ]) {
+    await assert.rejects(action, (error: unknown) =>
+      error instanceof OAuthError && error.code === "invalid_request");
+  }
+  assert.deepEqual({
+    createCalls: h.store.createCalls,
+    casCalls: h.store.casCalls,
+    durableAudits: h.store.mutationAudits.length,
+    successAudits: h.audit.events.filter((event) => event.status === "success").length,
+  }, before);
+
+  for (const resource of [
+    "http://localhost:3000/mcp",
+    "http://127.0.0.1:3000/mcp",
+    "http://[::1]:3000/mcp",
+  ]) {
+    const loopback = await provisionMachineClient(
+      { ...h.deps, resource },
+      { allowedScopes: ["mcp:read"] },
+    );
+    assert.equal((await machineRecord(h.store, loopback.clientId)).resource, resource);
+  }
+});
+
 test("provision: rejects a TTL whose derived expiry is unsafe before save or success audit", async () => {
   const h = harness();
   await assert.rejects(
@@ -536,6 +574,7 @@ test("stored machine grammar: malformed or mis-keyed rows fail verification and 
     ["resource missing", { ...base, resource: undefined }],
     ["resource blank", { ...base, resource: "" }],
     ["resource malformed", { ...base, resource: "not a URL" }],
+    ["resource remote HTTP", { ...base, resource: "http://remote.example/mcp" }],
     ["status without version", { ...base, status: "active" }],
     ["version without status", { ...base, version: 1 }],
     ["unknown status", { ...base, status: "paused", version: 1 }],

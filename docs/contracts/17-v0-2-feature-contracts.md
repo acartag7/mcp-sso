@@ -1038,7 +1038,11 @@ in this flow."* Decisions:
   compatibility, `MachineClientDeps.store` remains typed as `ClientStore`; each
   lifecycle mutation requires the additive `MachineClientStore` methods at
   runtime and fails before credential generation or mutation when they are
-  absent.
+  absent. Its raw value is accepted only when it is eligible for
+  `BridgeConfig.resource`: HTTPS, or HTTP on `localhost`, `127.0.0.1`, or
+  `[::1]` for a matching `dev.allowInsecureLocalhost` bridge. A remote HTTP,
+  blank, or malformed value is `invalid_request` before secret generation,
+  mutation, or success audit.
   - `provisionMachineClient(deps, { name?, allowedScopes, secretTtlSeconds? })`
     → `{ clientId, clientSecret }`. `clientId` = `mcc_<random>` — the prefix is
     enforced, giving a namespace disjoint from human subjects and from `mcpdc_`

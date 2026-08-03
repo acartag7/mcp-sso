@@ -233,6 +233,12 @@ disable copy that stored value unchanged, including into the tombstone. A disabl
 writes a tombstone with no secret hashes. The durable mutation audit carries the
 same stored resource, so its row/audit evidence names one binding.
 
+The parser and lifecycle entry points accept that raw resource only when it is
+eligible for `BridgeConfig.resource`: HTTPS, or HTTP on `localhost`,
+`127.0.0.1`, or `[::1]` for a matching `dev.allowInsecureLocalhost` bridge.
+They reject remote HTTP, blank, and malformed values before mutation or success
+audit.
+
 `ClientStore.find` is also a runtime boundary: a persisted or migrated row is
 not trusted merely because the port has a TypeScript return type.
 `parseMachineClientRegistration(value, expectedClientId, nowEpoch)` accepts a
