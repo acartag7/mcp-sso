@@ -107,21 +107,20 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
     cacheView: cacheView(response.headersDistinct),
   };
 }
-/** §17.1.6 decision 4: the MINIMAL duplicate-aware cache view — the
- *  `Cache-Control` and `Age` occurrences ONLY, never the full header map. A
- *  malformed header map yields `[""]`, which every freshness rule rejects. */
+/** §17.1.6 decision 4: a minimal duplicate-aware cache view. Runtime-malformed
+ *  relevant headers have an explicit invalid marker, never an absent-field
+ *  sentinel that another directive could mistake for cacheable. */
 function cacheView(headers: unknown): CimdCacheView {
   const cacheControl = headerValues(headers, "cache-control");
   const age = headerValues(headers, "age");
   const date = headerValues(headers, "date");
-  const expires = headerValues(headers, "expires");
   const vary = headerValues(headers, "vary");
   return Object.freeze({
-    cacheControl: cacheControl === null ? [""] : cacheControl,
-    age: age === null ? [""] : age,
-    date: date === null ? [""] : date,
-    expires: expires === null ? [""] : expires,
-    vary: vary === null ? [""] : vary,
+    valid: cacheControl !== null && age !== null && date !== null && vary !== null,
+    cacheControl: cacheControl ?? undefined,
+    age: age ?? undefined,
+    date: date ?? undefined,
+    vary: vary ?? undefined,
   });
 }
 function validateAnswer(answer: unknown): ResolvedAddress[] {
@@ -147,7 +146,7 @@ function headerValues(headers: unknown, name: string): string[] | undefined | nu
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() !== name) continue;
     present = true;
-    if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null;
+    if (!Array.isArray(value) || value.length === 0 || !value.every((item) => typeof item === "string")) return null;
     values.push(...value);
   }
   return present ? values : undefined;

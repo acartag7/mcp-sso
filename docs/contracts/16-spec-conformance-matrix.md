@@ -48,7 +48,7 @@ than folded into a single "conformant" total:
 
 | Class | Count | Rows | Meaning |
 |---|---|---|---|
-| `C` conformant | 23 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
+| `C` conformant | 24 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
 | `C` with a disclosed caveat | 1 | D00-6.5.1 | Conformant in production, with a narrower environment-scoped departure (the dev-only loopback fetch) stated in the row rather than absorbed into the total. |
 | Reasoned deviation | 2 | D00-4.2.1 (`SHOULD`), D00-4.2.2 (`RECOMMENDED`) | The obligation applies and is deliberately not met; rationale recorded. |
 | `U` unresolved evidence | 4 | D00-4.1, D00-4.1.5, D00-5.1, D00-6.5.2 | The enforcing source exists, but no test yet proves the complete hostile class or the shipped framework route. |
@@ -59,8 +59,8 @@ Applicable to the implemented public-client authorization-server profile: 32.
 **All three runtime mismatches identified by the audit were found by independent
 review, not by the original pass** — media-type acceptance (D00-4.1.4),
 shared-cache directive handling (D00-4.4.2), and the unevaluated native-app
-precondition on the loopback port exception (D00-4.5.2). D00-4.1.4 is now closed;
-the other two remain reproduced by probe.
+precondition on the loopback port exception (D00-4.5.2). The first two are now
+closed; the native-app mismatch remains reproduced by probe.
 Deviations are counted separately so no single "conformant" integer absorbs
 them. Every `N/A` row records the specific reason its obligation cannot apply,
 so the classification can be re-checked rather than taken on trust.
@@ -89,9 +89,9 @@ so the classification can be re-checked rather than taken on trust.
 | D00-4.2.3 | §4.2 a CIMD service **MAY** expire clients. Optional service not implemented. | N/A | — | No CIMD service exists in this project. |
 | D00-4.2.4 | §4.2 a CIMD service **MAY** require developer information. Optional service not implemented. | N/A | — | No CIMD service exists in this project. |
 | D00-4.3.1 | §4.3 failed fetch **SHOULD** abort authorization. AS-applicable; profile upgrades to fail-closed. | C | `src/cimd/resolve.ts:167-199`; generic map `src/cimd/anti-oracle.ts:25-48` | Frozen `s6b-anti-oracle.test.ts:109-181,208-264`; every failure aborts both boundaries with no redirect/IdP hop. |
-| D00-4.4.1 | §4.4 AS **MAY** cache discovered metadata. AS-applicable option exercised. | C | `src/cimd/cache.ts:45-75`; `src/cimd/resolve.ts:209-240` | Frozen `s6b-cache.test.ts:89-115,186-211`; positive hit and LRU rows fail if caching is removed or keyed by normalized URL. |
-| D00-4.4.2 | §4.4 caching **SHOULD** respect RFC 9111 headers. AS-applicable — and the CIMD cache is a **shared** cache: one `CimdSuccessCache` per `Bridge`, keyed on `client_id` alone, with no user dimension. | C | `src/cimd/cache.ts`; cache view extraction in `src/cimd/guarded-fetcher.ts` | Non-frozen cache regressions prove private rejection, s-maxage precedence, Age and Date age calculation, Vary-star rejection, and raw-client-id separation; frozen S6b tests prove invalid/error re-fetch behavior. |
-| D00-4.4.3 | §4.4 AS **MAY** set upper/lower cache-lifetime bounds. Option exercised. | C | `src/cimd/options.ts:21-23,42-47`; `src/cimd/cache.ts:11,82-95` | Frozen `s6b-boot.test.ts:93-100` and `s6b-cache.test.ts:103-121`; cap and minimum-cacheable behavior are pinned. |
+| D00-4.4.1 | §4.4 AS **MAY** cache discovered metadata. AS-applicable option exercised. | C | `src/cimd/cache.ts:45-77`; `src/cimd/resolve.ts:209-240` | Frozen `s6b-cache.test.ts:89-115,186-211`; positive hit and LRU rows fail if caching is removed or keyed by normalized URL. |
+| D00-4.4.2 | §4.4 caching **SHOULD** respect RFC 9111 headers. AS-applicable — and the CIMD cache is a **shared** cache: one `CimdSuccessCache` per `Bridge`, keyed on `client_id` alone, with no user dimension. | C | `src/cimd/cache.ts:48-91,97-184`; `src/cimd/guarded-fetcher.ts:110-124,142-152`; `src/cimd/transport.ts:12-18`; `src/cimd/resolve.ts:209-240` | `test/cimd-shared-cache.test.ts:14-97` mutation-pins directives, Age/Date/delay, millisecond precision, `Expires` non-use, malformed runtime Vary, rollback recovery, and stale re-fetch failure; frozen `s6b-cache.test.ts:103-165,186-211` pins ordinary hit, raw `:443` key separation, and error/invalid re-fetch. |
+| D00-4.4.3 | §4.4 AS **MAY** set upper/lower cache-lifetime bounds. Option exercised. | C | `src/cimd/options.ts:21-23,42-47`; `src/cimd/cache.ts:11,94-115,128-161` | Frozen `s6b-boot.test.ts:93-100` and `s6b-cache.test.ts:103-121`; cap and minimum-cacheable behavior are pinned. |
 | D00-4.4.4 | §4.4 AS **MUST NOT** cache error responses. AS-applicable. | C | Only `fetchAndCache` success reaches `cache.set`: `src/cimd/resolve.ts:232-240` | Frozen `s6b-cache.test.ts:167-184`; a failed first resolution is fetched again, then a valid success caches. |
 | D00-4.4.5 | §4.4 AS **MUST NOT** cache invalid/malformed documents. AS-applicable. | C | Validation precedes projection/cache: `src/cimd/guarded-fetcher.ts:104-108`; `src/cimd/resolve.ts:232-240` | Frozen `s6b-cache.test.ts:176-184`; mismatched documents are rejected and fetched on every attempt. |
 | D00-4.5.1 | §4.5 AS **MUST** require redirect registration; the validated document supplies it. AS-applicable. | C | `src/cimd/document.ts:25-29`; `src/cimd/registration.ts:82-95`; `src/cimd/resolve.ts:178-183` | Frozen `s6b-redirect.test.ts:177-217` and `s6b-cache.test.ts:279-322`; an absent/nonmatching URI fails on misses and hits. |
@@ -198,10 +198,11 @@ diff, and every cited source and test line. Their corrections are applied above:
   port exception — a fail-open trust-boundary decision. The row is now a runtime
   mismatch, and the fix is follow-up PR 2. Recorded at length because the wrong
   answer survived two rounds of reasoning that were each locally correct.
-- **D00-4.4.2 reclassified after probing shared-cache semantics.** The cache is
-  shared (one instance per `Bridge`, keyed on `client_id` with no user
-  dimension) yet stores `private` responses, ignores `s-maxage`, and never
-  derives apparent age from `Date`. All three probed as stored.
+- **D00-4.4.2 was closed after implementing and mutation-testing shared-cache
+  semantics.** The cache now refuses private/no-cache/no-store/Vary-star and
+  malformed metadata, gives s-maxage precedence, accounts for Age/Date/delay in
+  millisecond arithmetic, clears state on clock rollback, and never serves stale
+  metadata after a failed re-fetch.
 - **D00-4.2.2 reclassified from `N/A` to a reasoned deviation.** §4.2 addresses
   the recommendation to "the authorization server", so it applies; shipping no
   such service is a deliberate deviation, not an inapplicable obligation.
@@ -262,6 +263,6 @@ resolves to commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` and references
 CIMD draft `-00`. Completing this mapping does not change the project target:
 MCP Authorization 2025-11-25 remains current because redirected authorization
 errors still omit RFC 9207 `iss`, scope hierarchy handling is absent, and CIMD
-now carries **two** confirmed `-00` runtime mismatches (D00-4.4.2 shared-cache
-directives and D00-4.5.2 native-app precondition) plus three open evidence PRs.
-Counted individually the project has **four** open MCP-2026 runtime defects.
+now carries **one** confirmed `-00` runtime mismatch (D00-4.5.2 native-app
+precondition) plus three open evidence PRs. Counted individually the project has
+**three** open MCP-2026 runtime defects.

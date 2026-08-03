@@ -403,10 +403,11 @@ MANUAL maintainer receipt — not automated and not CI-enforced. Checked against
   `test/acceptance/cimd/` suites. The complete 44-statement draft `-00` mapping
   is now in [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix).
   D00-4.1.4 now restricts alternate `+json` media types to the `application/`
-  tree. Two confirmed runtime mismatches remain — the shared CIMD cache ignores
-  `s-maxage`, stores `private` responses, and never derives apparent age from
-  `Date`; and the loopback port exception is applied without evaluating RFC
-  9700's native-app precondition — plus four unresolved test-evidence rows.
+  tree. The shared CIMD cache now observes the applicable shared-cache
+  directives, corrected `Age`/`Date` age, and bounded resident time. One
+  confirmed runtime mismatch remains: the loopback port exception is applied
+  without evaluating RFC 9700's native-app precondition — plus four unresolved
+  test-evidence rows.
 - [x] **(c) RFC 9207 `iss` + `application_type`.** Final text keeps
   authorization-server inclusion of `iss` at `SHOULD`, including error
   responses, with a signposted future `MUST`; a server that includes it `MUST`
@@ -434,7 +435,7 @@ pending on three known items:
    `src/scopes.ts` `requireScope` currently performs exact array membership and
    has no hierarchy policy or proof.
 3. **CIMD draft `-00` conformance.** The final artifact normatively references
-   CIMD draft `-00`. The complete §16.1 mapping has **two confirmed runtime
+   CIMD draft `-00`. The complete §16.1 mapping has **one confirmed runtime
    mismatch**, reproduced by probe: D00-4.5.2 — `cimdRedirectMatches`
    (`src/cimd/registration.ts:82-95`) applies RFC 9700's native-app-only
    loopback port exception without evaluating the client type, so a document
@@ -446,8 +447,8 @@ pending on three known items:
    and inert document-contained URLs (D00-6.5.2).
 
 These are separate contract/runtime follow-ups. Counted individually they are
-**four runtime defects** (RFC 9207 error responses, scope hierarchies, and the
-the CIMD native-app precondition)
+**three runtime defects** (RFC 9207 error responses, scope hierarchies, and the
+CIMD native-app precondition)
 plus **four CIMD test-evidence rows**. The conformance target must
 not move from 2025-11-25 until every one of them is resolved and the resulting
 implementation passes the full release gates.
@@ -500,7 +501,7 @@ The published `mcp-sso@0.3.0` artifact repeated the eight peer-free and all-13
 with-peers import smokes, produced both metadata documents, and carried verified
 registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
 stable artifact was manually checked on 2026-08-02. The release still targets
-MCP Authorization 2025-11-25 because the completed receipt above records **four**
+MCP Authorization 2025-11-25 because the completed receipt above records **three**
 open **runtime** requirements — RFC 9207 error responses, scope hierarchies, and
 one confirmed CIMD draft `-00` mismatch (D00-4.5.2 native-app precondition) — plus four
 unresolved CIMD test-evidence rows. The CIMD remainder is **not** test-only.

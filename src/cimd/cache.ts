@@ -45,7 +45,7 @@ interface CacheEntry {
 export class CimdSuccessCache {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly maxEntries: number;
-  private latestNowMs = Number.NEGATIVE_INFINITY;
+  private lastObservedNowMs: number | undefined;
 
   constructor(maxEntries: number = DEFAULT_MAX_ENTRIES) {
     this.maxEntries = maxEntries;
@@ -54,10 +54,10 @@ export class CimdSuccessCache {
   /** A fresh hit; expired entries are evicted on read. LRU order is refreshed
    *  on every hit (re-insert moves the key to the tail). */
   get(key: string, nowMs: number): CimdRegistration | undefined {
-    this.latestNowMs = Math.max(this.latestNowMs, nowMs);
+    if (!this.observe(nowMs)) return undefined;
     const entry = this.entries.get(key);
     if (entry === undefined) return undefined;
-    if (!(this.latestNowMs < entry.expiresAtMs)) {
+    if (!(nowMs < entry.expiresAtMs)) {
       this.entries.delete(key);
       return undefined;
     }
@@ -66,8 +66,8 @@ export class CimdSuccessCache {
     return entry.registration;
   }
 
-  set(key: string, registration: CimdRegistration, expiresAtMs: number, observedNowMs = Number.NEGATIVE_INFINITY): void {
-    this.latestNowMs = Math.max(this.latestNowMs, observedNowMs);
+  set(key: string, registration: CimdRegistration, expiresAtMs: number, observedNowMs: number): void {
+    if (!this.observe(observedNowMs) || !Number.isFinite(expiresAtMs)) return;
     this.entries.delete(key);
     while (this.entries.size >= this.maxEntries) {
       const oldest = this.entries.keys().next();
@@ -75,6 +75,19 @@ export class CimdSuccessCache {
       this.entries.delete(oldest.value);
     }
     this.entries.set(key, { registration, expiresAtMs });
+  }
+
+  /** A backward/non-finite injected clock reading invalidates temporal state.
+   *  Resetting the observation point avoids both stale resurrection and a
+   *  permanent high-water mark after a spurious future clock value. */
+  private observe(nowMs: number): boolean {
+    const prior = this.lastObservedNowMs;
+    this.lastObservedNowMs = Number.isFinite(nowMs) ? nowMs : undefined;
+    if (!Number.isFinite(nowMs) || (prior !== undefined && nowMs < prior)) {
+      this.entries.clear();
+      return false;
+    }
+    return true;
   }
 }
 
@@ -84,7 +97,7 @@ export class CimdSuccessCache {
 export function computeCacheExpiryMs(
   view: CimdCacheView | undefined, capSeconds: number, t0Ms: number, t1Ms: number,
 ): number | null {
-  if (view === undefined) return null;
+  if (view === undefined || view.valid !== true) return null;
   const maxAge = parseMaxAge(view.cacheControl);
   if (maxAge === null || hasVaryStar(view.vary)) return null;
   const age = parseAge(view.age);

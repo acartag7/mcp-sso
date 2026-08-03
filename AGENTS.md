@@ -28,8 +28,8 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
   authorization errors omit RFC 9207 `iss`; `requireScope` implements exact
   membership rather than the final text's scope-hierarchy `MUST`; and the
   requirement mapping for the final artifact's referenced CIMD draft `-00` is now
-  complete. D00-4.1.4 media-type acceptance is conformant; two confirmed runtime
-  mismatches remain (shared-cache directive handling and the unevaluated
+  complete. D00-4.1.4 media-type acceptance and D00-4.4.2 shared-cache handling
+  are conformant; one confirmed runtime mismatch remains (the unevaluated
   native-app precondition on the loopback port exception), plus four unresolved
   test-evidence rows. See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
   and the release checklist in
