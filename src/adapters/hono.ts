@@ -32,7 +32,10 @@ export interface HonoAdapterOptions {
    *  runtime's connection info. Default: no IP — every request shares the one
    *  "unknown" rate-limit bucket (collectively throttled, never bypassable) and
    *  audit events omit `ip`. The adapter NEVER reads X-Forwarded-For on its
-   *  own: an attacker-chosen header must not select the rate-limit bucket. */
+   *  own: an attacker-chosen header must not select the rate-limit bucket.
+   *  Request own-property extensions survive POST body guarding. Extractors
+   *  needing prototype-only/private runtime state must use stable `Context`
+   *  environment data instead of relying on raw Request identity. */
   clientIp?: (c: Context) => string | undefined;
 }
 
@@ -43,9 +46,16 @@ function payloadTooLarge(): Response {
   return new Response("Payload Too Large", { status: 413 });
 }
 
+function invalidRequest(): Response {
+  return new Response('{"error":"invalid_request","error_description":"Invalid request"}', {
+    status: 400,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
+
 function restoreRequestExtensions(original: Request, replacement: Request): void {
   for (const key of Reflect.ownKeys(original)) {
-    if (Reflect.has(replacement, key)) continue;
+    if (Object.hasOwn(replacement, key)) continue;
     const descriptor = Object.getOwnPropertyDescriptor(original, key);
     if (descriptor) Object.defineProperty(replacement, key, descriptor);
   }
@@ -84,15 +94,23 @@ export const honoOAuthBodyLimit: MiddlewareHandler = async (c, next) => {
     if (c.req.raw !== original) restoreRequestExtensions(original, c.req.raw);
   };
   let downstream: Response | void = undefined;
-  const framing = await validateBodyFraming(c, async () => {
-    restore();
-    downstream = await limitOAuthBody(c, async () => {
+  let downstreamStarted = false;
+  try {
+    const framing = await validateBodyFraming(c, async () => {
       restore();
-      await next();
+      downstream = await limitOAuthBody(c, async () => {
+        restore();
+        downstreamStarted = true;
+        await next();
+      });
     });
-  });
-  restore();
-  return framing ?? downstream;
+    restore();
+    return framing ?? downstream;
+  } catch (error) {
+    restore();
+    if (downstreamStarted) throw error;
+    return invalidRequest();
+  }
 };
 
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {

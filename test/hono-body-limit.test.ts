@@ -127,6 +127,34 @@ function streamRequest(
   return { request, produced: () => produced };
 }
 
+function failedStreamRequest(
+  path: string,
+  mode: "error" | "chunk-then-throw",
+  extraHeaders: Record<string, string> = {},
+): Request {
+  let pulls = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls += 1;
+      if (mode === "chunk-then-throw" && pulls === 1) {
+        controller.enqueue(new Uint8Array(32));
+        return;
+      }
+      if (mode === "error") {
+        controller.error(new Error());
+        return;
+      }
+      throw new Error();
+    },
+  }, { highWaterMark: 0 });
+  return new Request(`http://localhost${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...extraHeaders },
+    body,
+    duplex: "half",
+  });
+}
+
 test("hono body cap: small JSON, form, and multipart bodies reach real routes", async () => {
   const { app, calls, requests } = harness();
 
@@ -240,7 +268,7 @@ test("hono body cap: middleware stops pulling a demand-driven 2 MiB stream after
   assert.deepEqual(calls, []);
 });
 
-test("hono body cap: Request extensions remain visible to clientIp after reconstruction", async () => {
+test("hono body cap: Request own-property extensions remain visible to clientIp", async () => {
   type RuntimeRequest = Request & { runtimeIp?: string };
   const { app, requests } = harness((c) => (c.req.raw as RuntimeRequest).runtimeIp);
   for (const contentLength of [undefined, "1024"]) {
@@ -251,6 +279,78 @@ test("hono body cap: Request extensions remain visible to clientIp after reconst
     assert.equal(response.status, 200);
     assert.equal(requests.at(-1)?.ip, "203.0.113.41");
   }
+});
+
+test("hono body cap: failed under-cap streams are sanitized before all downstream work", async () => {
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args); };
+  try {
+    const custom = new Hono();
+    let parserCalls = 0;
+    custom.post("/oauth/authorize", honoOAuthBodyLimit, async (c) => {
+      parserCalls += 1;
+      await c.req.json();
+      return c.text("unreachable");
+    });
+    const errored = await custom.fetch(failedStreamRequest("/oauth/authorize", "error"));
+    assert.equal(errored.status, 400);
+    assert.deepEqual(await errored.json(), {
+      error: "invalid_request", error_description: "Invalid request",
+    });
+    assert.equal(errored.headers.get("location"), null);
+    assert.equal(parserCalls, 0);
+
+    const bridgeHarness = harness();
+    const thrown = await bridgeHarness.app.fetch(failedStreamRequest(
+      "/oauth/token", "chunk-then-throw", { "content-length": "64" },
+    ));
+    assert.equal(thrown.status, 400);
+    assert.deepEqual(bridgeHarness.calls, []);
+
+    const sideEffects = sideEffectHarness();
+    const failed = await sideEffects.app.fetch(failedStreamRequest("/oauth/register", "error"));
+    assert.equal(failed.status, 400);
+    assert.deepEqual(sideEffects.effects, { limiter: 0, storeWrites: 0, successAudits: 0 });
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(logged, []);
+});
+
+test("hono body cap: downstream failures keep the existing Hono error path", async () => {
+  const app = new Hono();
+  const nonErrorThrowable = { kind: "downstream-non-error" };
+  app.post("/oauth/token", honoOAuthBodyLimit, () => {
+    throw new Error("DOWNSTREAM_HANDLER_DETAIL");
+  });
+  app.post("/oauth/revoke", honoOAuthBodyLimit, () => {
+    throw nonErrorThrowable;
+  });
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => { logged.push(args); };
+  try {
+    const response = await app.request("/oauth/token", { method: "POST", body: "small" });
+    assert.equal(response.status, 500);
+    assert.equal(await response.text(), "Internal Server Error");
+    await assert.rejects(
+      async () => app.request("/oauth/revoke", { method: "POST", body: "small" }),
+      (error: unknown) => error === nonErrorThrowable,
+    );
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.ok(logged.length > 0, "Hono's existing downstream error path must run");
+});
+
+test("hono body cap: own extensions shadowing Request prototype keys survive", async () => {
+  const { app, requests } = harness((c) => Object.hasOwn(c.req.raw, "toString") ? "preserved" : undefined);
+  const streamed = streamRequest("/oauth/token", 1024, 256, { "content-length": "1024" });
+  Object.defineProperty(streamed.request, "toString", { value: () => "runtime-extension" });
+  const response = await app.fetch(streamed.request);
+  assert.equal(response.status, 200);
+  assert.equal(requests.at(-1)?.ip, "preserved");
 });
 
 test("hono body cap: caller-owned pairing POST can reuse the pre-parse guard", async () => {

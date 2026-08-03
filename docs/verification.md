@@ -75,7 +75,8 @@ Run before S2.
 | HB.6 | Parser failure | A malformed below-cap body preserves the existing fail-closed adapter behavior. |
 | HB.7 | Framework siblings | Real Fastify and Express probes confirm their shipped/default parsers reject oversized bodies before Bridge invocation; any unbounded shipped composition blocks this Hono-only fix. |
 | HB.8 | Caller-owned pairing POST | A custom Hono `POST /oauth/authorize` mounts exported `honoOAuthBodyLimit`; an oversized form is rejected before `parseBody` or pairing verification. |
-| HB.9 | Runtime request metadata | For valid-length and missing-length streams, raw-Request extensions survive Hono's reconstruction and remain visible to `clientIp`. |
+| HB.9 | Runtime request metadata | For valid-length and missing-length streams, raw-Request own-property extensions survive Hono's reconstruction and remain visible to `clientIp`; no prototype/subclass/private-state preservation is claimed. |
+| HB.10 | Failed streams | Under-cap streams that error before parsing return one sanitized direct 400, emit no raw error log, and perform no parser, Bridge, limiter, store, or success-audit work. |
 
 ### T1.S0a — MySQL store and Redis/Valkey limiter
 

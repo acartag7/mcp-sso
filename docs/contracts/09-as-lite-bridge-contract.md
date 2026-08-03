@@ -269,7 +269,9 @@ the response. Wiring rules:
   values fail closed. A valid declared length does not bypass streaming
   accounting: the pinned `hono/body-limit` middleware still counts the actual
   body bytes. JSON, URL-encoded, multipart, and unknown content types share the
-  same pre-parse bound. Aborted streams and below-cap parser failures retain the
+  same pre-parse bound. A stream read/framing failure before downstream parsing
+  returns a fixed direct 400 `invalid_request` response without logging the raw
+  throwable or invoking downstream work. Below-cap parser failures retain the
   existing fail-closed parser-error path. A caller that uses `skipAuthorize` to
   mount a custom Hono POST authorize surface (including console pairing) MUST
   mount the adapter-exported `honoOAuthBodyLimit` before its body parser; the
@@ -286,8 +288,11 @@ the response. Wiring rules:
   or retain that chunk for parsing. The middleware stops pulling after the
   crossing chunk; transport draining, cancellation, and upload timeouts remain
   host-server responsibilities. When Hono reconstructs the raw `Request`, the
-  adapter preserves runtime-owned request extensions so a `clientIp` extractor
-  still sees connection metadata after the body guard.
+  adapter preserves the original Request's own-property extensions. It does not
+  copy prototype chains, subclass behavior, getters inherited from a prototype,
+  or private runtime state. A `clientIp` implementation that needs such runtime
+  context MUST read stable Hono `Context`/environment data rather than assuming
+  raw Request identity survives body guarding.
 - **Error → response:** an `OAuthError` with `.redirect` ⇒ **302** to the tagged
   `redirect_uri?error=…`; otherwise direct — status `error.status`, body
   `oauthErrorBody(error)` (§9.5). On the protected `/mcp` surface, 401/403 set the
