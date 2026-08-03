@@ -214,8 +214,8 @@ export function openSqliteStore(filename: string): SqliteStore {
       throw new SqliteStateError("DatabaseSync could not open the admitted path");
     }
     verifySqlitePathIdentity(path, admission.identity);
-    closeSqliteAdmission(admission.fd);
     admissionOpen = false;
+    closeSqliteAdmission(admission.fd);
     migrateSqliteStore(db);
     return new SqliteStore(db);
   } catch (error) {

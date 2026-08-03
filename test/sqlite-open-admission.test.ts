@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
-  chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync,
-  readFileSync, renameSync, rmSync, symlinkSync, writeFileSync,
+  chmodSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync,
+  mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -33,6 +35,27 @@ test("SQLite admission accepts only exact :memory: or a valid persistent path", 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("SQLite admission maps an unavailable current directory to a fixed path error", {
+  skip: process.platform === "win32" ? "Windows does not permit removing a process's current directory" : false,
+}, () => {
+  const sqliteUrl = new URL("../src/store/sqlite.ts", import.meta.url).href;
+  const script = [
+    `import { mkdtempSync, rmSync } from "node:fs";`,
+    `import { tmpdir } from "node:os";`,
+    `import { join } from "node:path";`,
+    `import { openSqliteStore } from ${JSON.stringify(sqliteUrl)};`,
+    `const dir = mkdtempSync(join(tmpdir(), "mcp-sso-deleted-cwd-"));`,
+    `process.chdir(dir);`,
+    `rmSync(dir, { recursive: true });`,
+    `try { openSqliteStore("state.sqlite"); process.exit(0); }`,
+    `catch (error) { process.stderr.write(String(error?.message ?? error)); process.exit(1); }`,
+  ].join("\n");
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^sqlite: unsafe persistent state: cannot resolve the database path$/);
+  assert.doesNotMatch(result.stderr, /uv_cwd|ENOENT/);
 });
 
 test("SQLite admission creates 0600 state and reopens an existing private database", async () => {
@@ -81,11 +104,22 @@ test("SQLite admission rejects unsafe directories and existing 0644 state withou
     chmodSync(file, 0o644);
     const before = readFileSync(file);
     assert.throws(() => openSqliteStore(file), /existing database file must have mode 0600/);
+    assert.equal(openDescriptorCount(file), 0, "mode rejection closed the verification descriptor");
     assert.equal(lstatSync(file).mode & 0o777, 0o644, "the rejected file was not chmodded");
     assert.deepEqual(readFileSync(file), before, "the rejected file was not opened by SQLite");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("SQLite admission rejects a wrong-owner immediate directory before target creation", {
+  skip: process.platform === "win32" || process.geteuid?.() === 0
+    ? "requires a non-root POSIX service user so the root-owned directory has a different UID"
+    : false,
+}, () => {
+  const target = join("/", `.mcp-sso-owner-probe-${process.pid}.sqlite`);
+  assert.throws(() => openSqliteStore(target), /immediate database directory must be owned/);
+  assert.equal(existsSync(target), false);
 });
 
 test("SQLite admission rejects final symlinks, symlinked directories, directories, and hard links", (t) => {
@@ -175,16 +209,26 @@ test("SQLite initialization failure closes its connection and preserves fixed er
   const dir = privateDir("mcp-sso-sqlite-init-failure-");
   const file = join(dir, "invalid.sqlite");
   const moved = join(dir, "moved.sqlite");
+  const controlFile = join(dir, "control.sqlite");
   const bytes = Buffer.from("chosen non-SQLite bytes");
   try {
+    if (process.platform !== "win32") {
+      const control = new DatabaseSync(controlFile);
+      assert.ok(openDescriptorCount(controlFile) > 0, "the FD probe observes a live DatabaseSync control");
+      control.close();
+      assert.equal(openDescriptorCount(controlFile), 0, "the FD probe observes the control close");
+    }
     writeFileSync(file, bytes, { mode: 0o600 });
     assert.throws(
       () => openSqliteStore(file),
       /sqlite: unsafe persistent state: database initialization failed/,
     );
     assert.deepEqual(readFileSync(file), bytes, "failed initialization did not rewrite the admitted file");
+    if (process.platform !== "win32") {
+      assert.equal(openDescriptorCount(file), 0, "failed initialization closed DatabaseSync and admission descriptors");
+    }
     renameSync(file, moved);
-    assert.equal(existsSync(moved), true, "the failed DatabaseSync connection was closed");
+    assert.equal(existsSync(moved), true, "the failed path remains reusable");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -213,4 +257,18 @@ function privateDir(prefix: string): string {
 function hasCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error
     && (error as { code?: unknown }).code === code;
+}
+
+function openDescriptorCount(file: string): number {
+  const expected = lstatSync(file, { bigint: true });
+  let count = 0;
+  for (const entry of readdirSync("/dev/fd")) {
+    const fd = Number(entry);
+    if (!Number.isInteger(fd)) continue;
+    try {
+      const current = fstatSync(fd, { bigint: true });
+      if (current.dev === expected.dev && current.ino === expected.ino) count += 1;
+    } catch { /* a descriptor may close between directory read and fstat */ }
+  }
+  return count;
 }

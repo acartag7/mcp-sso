@@ -141,13 +141,13 @@ Notes:
 |---|---|---|
 | SQ.1 | `:memory:` and ordinary private-directory paths | `:memory:` performs no filesystem work; a new path is `0600`; an existing owner `0600` database reopens and migrates. |
 | SQ.2 | Runtime path grammar | Non-string, empty/blank, NUL, and case-insensitive `file:` inputs reject before any file/URI target is created or mutated. |
-| SQ.3 | Directory boundary | Missing, symlink/junction, wrong-owner, group/other-accessible, or unsafe-ancestry directories reject before database creation/migration; accepted system/sticky ancestry is covered. |
+| SQ.3 | Directory boundary | Missing, symlink/junction, group/other-accessible, and unsafe-ancestry directories reject before database creation/migration; accepted system/sticky ancestry is covered. A root-owned immediate-directory probe covers UID mismatch when the runner is a non-root POSIX user; file-UID mismatch needs a privileged fixture and remains manual. |
 | SQ.4 | Existing target boundary | `0644`, final/dangling symlink, directory, FIFO, socket/device where safe, and multi-link targets reject without chmod, byte, or schema mutation; FIFO proof runs in a bounded child process. |
-| SQ.5 | Descriptor/path identity | A deterministic descriptor-vs-replaced-path mismatch rejects; `DatabaseSync` and the verification descriptor close on every failure path. |
+| SQ.5 | Descriptor/path identity | A deterministic descriptor-vs-replaced-path mismatch rejects. POSIX `/dev/fd` probes pin descriptor cleanup after admission and initialization failures; cleanup is one bounded attempt and cannot guarantee success after an OS-level close error. |
 | SQ.6 | Preseeded OAuth state | A chosen valid refresh family/token in an unsafe directory fails store boot before use: no bridge access token, successor, or success audit, and the hostile bytes/schema remain unchanged. The same fixture in a trusted private directory is operator-owned state and may reopen. |
 | SQ.7 | Restart and store siblings | Existing SQLite authorization-code, refresh-family, stored-scope, replay, schema-migration, and restart rows remain green; Memory/MySQL behavior is unchanged. |
-| SQ.8 | Packed artifact | Installed `mcp-sso/store/sqlite` passes new-file, reopen, URI-rejection, and hostile-directory smokes. |
-| SQ.9 | Platform contract | POSIX tests assert no-follow/UID/`0600`/directory controls. Windows-specific skips name the unavailable primitive and retain final symlink/junction, regular-file, identity, exclusive-create, and private-directory deployment evidence without claiming ACL enforcement. |
+| SQ.8 | Packed artifact (manual release proof) | Produce/install the real tarball and run new-file, reopen, URI-rejection, and hostile-directory smokes through `mcp-sso/store/sqlite`; this is not a committed CI job. |
+| SQ.9 | Platform contract | Ubuntu CI proves POSIX no-follow/UID/`0600`/directory controls. Windows-specific skips name unavailable primitives, but no Windows CI runner exists; Windows ACL/private-directory guarantees remain deployer-owned and must not be reported as CI-proven. |
 
 ### T1.S2a — core `allowedScopes` ceiling
 

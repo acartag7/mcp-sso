@@ -37,7 +37,11 @@ export function sqlitePath(filename: unknown): ":memory:" | string {
   if (filename.trim().length === 0) fail("path must not be blank");
   if (filename.includes("\0")) fail("path must not contain NUL");
   if (/^file:/i.test(filename)) fail("file: URI names are not supported; use an ordinary filesystem path");
-  return resolve(filename);
+  try {
+    return resolve(filename);
+  } catch {
+    fail("cannot resolve the database path");
+  }
 }
 
 export function admitSqliteFile(path: string): AdmittedSqliteFile {

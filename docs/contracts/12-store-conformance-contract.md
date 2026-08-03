@@ -323,8 +323,10 @@ An identity mismatch closes both handles and fails boot. Node's `DatabaseSync`
 accepts a path rather than a caller-owned descriptor, so this comparison cannot
 make a same-account race impossible; the trusted-directory rule prevents a
 lower-privileged process from replacing the entry during the remaining window.
-All descriptors/connections created by the call are closed on every failure;
-rejected paths are never deleted.
+All ordinary failure paths issue one bounded close for each descriptor/connection
+created by the call; a cleanup error never replaces the fixed boot failure and
+is not retried against a descriptor number the OS might already have reused.
+Rejected paths are never deleted.
 
 On POSIX, no-follow, ownership, exact `0600`, and directory-mode guarantees are
 enforced. Node does not expose `O_NOFOLLOW`/`O_NONBLOCK` on Windows. There,
