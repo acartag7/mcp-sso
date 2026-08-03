@@ -43,7 +43,10 @@ shipper at the configured path and let the shipper rotate. (Mechanism details:
 Concurrent calls to one sink instance are serialized, so a rare short OS write
 cannot splice its records. This is not an interprocess lock: point only one
 `JsonlFileAudit` instance/process at a file when JSONL framing matters, or use
-your own cross-process coordination.
+your own cross-process coordination. If a short-write retry fails after a
+positive prefix, the sink rolls back only its verified descriptor tail; if it
+cannot verify that rollback, that instance drops later events instead of
+appending to the fragment.
 
 Do not put the configured audit filename in a directory writable by an
 untrusted local user. `O_NOFOLLOW` protects the final symlink component, but a

@@ -1666,7 +1666,10 @@ gate replaces no-gate).
     opens the final path with `O_APPEND | O_CREAT | O_NONBLOCK | O_NOFOLLOW`,
     checks `fstat().isFile()` on that descriptor, then writes the complete
     encoded line through it. Concurrent calls to one sink instance are
-    serialized, so short OS writes cannot splice that instance's records.
+    serialized, so short OS writes cannot splice that instance's records. A
+    retry failure after a positive prefix rolls back only a verified descriptor
+    tail; if that rollback cannot be verified, the instance drops later events
+    rather than append another record to the fragment.
     Thus a live or dangling symlink, FIFO, socket,
     device, and directory are rejected without writing through the configured
     path; the sink reports a redacted failure and remains fail-open. It does not

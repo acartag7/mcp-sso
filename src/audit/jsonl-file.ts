@@ -54,6 +54,7 @@ const SAFE_ERROR_CODES = new Set([
 export class JsonlFileAudit implements AuditPort {
   private readonly filePath: string;
   private appendTail: Promise<void> = Promise.resolve();
+  private appendDisabled = false;
 
   constructor(filePath: string) {
     if (!filePath || typeof filePath !== "string") {
@@ -73,6 +74,10 @@ export class JsonlFileAudit implements AuditPort {
   }
 
   private async appendEvent(event: AuthAuditEvent): Promise<void> {
+    if (this.appendDisabled) {
+      this.reportFailure(new Error("audit append disabled"));
+      return;
+    }
     try {
       // `undefined` fields are omitted by JSON.stringify; exactly one trailing
       // `\n` makes each event one line and the file parseable as JSONL. Built
@@ -88,7 +93,15 @@ export class JsonlFileAudit implements AuditPort {
       try {
         const st = await fh.stat();
         if (!st.isFile()) throw new Error("audit target is not a regular file");
-        await writeCompleteLine(fh, Buffer.from(line, "utf8"));
+        try {
+          await writeCompleteLine(fh, Buffer.from(line, "utf8"));
+        } catch (error) {
+          if (error instanceof PartialAuditWriteError
+            && !await rollbackPartialLine(fh, st.size, error.bytesWritten)) {
+            this.appendDisabled = true;
+          }
+          throw error;
+        }
       } finally {
         await fh.close();
       }
@@ -121,18 +134,42 @@ export class JsonlFileAudit implements AuditPort {
   }
 }
 
-/** Complete the exact encoded line or raise a fail-open diagnostic. Node permits
- *  short writes, so treating one write() resolution as a full event could leave a
- *  silently truncated JSONL line. The per-instance queue prevents a different
- *  event from interleaving while O_APPEND retries write successive chunks at EOF. */
+class PartialAuditWriteError extends Error {
+  readonly bytesWritten: number;
+
+  constructor(bytesWritten: number) {
+    super("partial audit JSONL write");
+    this.bytesWritten = bytesWritten;
+  }
+}
+
+/** Complete the exact encoded line or report how much of it was appended. */
 async function writeCompleteLine(fh: FileHandle, line: Buffer): Promise<void> {
   let offset = 0;
-  while (offset < line.length) {
-    const { bytesWritten } = await fh.write(line, offset, line.length - offset);
-    if (!Number.isSafeInteger(bytesWritten) || bytesWritten <= 0) {
-      throw new Error("incomplete audit JSONL write");
+  try {
+    while (offset < line.length) {
+      const { bytesWritten } = await fh.write(line, offset, line.length - offset);
+      if (!Number.isSafeInteger(bytesWritten) || bytesWritten <= 0) {
+        throw new Error("incomplete audit JSONL write");
+      }
+      offset += bytesWritten;
     }
-    offset += bytesWritten;
+  } catch (error) {
+    if (offset > 0) throw new PartialAuditWriteError(offset);
+    throw error;
+  }
+}
+
+/** Roll back only our verified tail. An uncoordinated writer makes that unsafe,
+ *  so stop this instance rather than risk joining a later record to a fragment. */
+async function rollbackPartialLine(fh: FileHandle, initialSize: number, bytesWritten: number): Promise<boolean> {
+  try {
+    const afterWrite = await fh.stat();
+    if (afterWrite.size !== initialSize + bytesWritten) return false;
+    await fh.truncate(initialSize);
+    return (await fh.stat()).size === initialSize;
+  } catch {
+    return false;
   }
 }
 

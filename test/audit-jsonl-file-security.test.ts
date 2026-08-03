@@ -22,6 +22,7 @@ const event: AuthAuditEvent = {
 };
 
 type FileHandleWrite = (this: FileHandle, data: Uint8Array | string, offset?: number, length?: number, position?: number | null) => Promise<{ bytesWritten: number; buffer: Uint8Array | string }>;
+type FileHandleStat = (this: FileHandle) => Promise<{ size: number }>;
 
 function captureConsoleError(): { messages: string[]; restore: () => void } {
   const original = console.error;
@@ -244,6 +245,77 @@ test("JsonlFileAudit: retries a controlled short write until one JSONL record is
       assert.deepEqual(JSON.parse(await readFile(path, "utf8")), event);
     } finally {
       prototype.write = original;
+    }
+  });
+});
+
+test("JsonlFileAudit: rolls back a partial line when its short-write retry fails", async () => {
+  if (!hasNoFollow) return;
+  await withDir(async (dir) => {
+    const path = join(dir, "audit.jsonl");
+    await writeFile(path, "");
+    const probe = await open(path, "r");
+    const prototype = Object.getPrototypeOf(probe) as { write: FileHandleWrite };
+    await probe.close();
+    const original = prototype.write;
+    let writeCalls = 0;
+    prototype.write = async function (data, offset, length, position) {
+      writeCalls += 1;
+      if (writeCalls === 1) return original.call(this, data, offset, 1, position);
+      if (writeCalls === 2) {
+        const error = Object.assign(new Error("retry failed"), { code: "ENOSPC" });
+        throw error;
+      }
+      return original.call(this, data, offset, length, position);
+    };
+    try {
+      const sink = new JsonlFileAudit(path);
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "partial" }));
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "complete" }));
+      const lines = (await readFile(path, "utf8")).trim().split("\n");
+      assert.equal(lines.length, 1, "the partial prefix was not rolled back");
+      assert.equal((JSON.parse(lines[0]!) as AuthAuditEvent).clientId, "complete");
+    } finally {
+      prototype.write = original;
+    }
+  });
+});
+
+test("JsonlFileAudit: drops later events when a partial-line rollback is unverified", async () => {
+  if (!hasNoFollow) return;
+  await withDir(async (dir) => {
+    const path = join(dir, "audit.jsonl");
+    await writeFile(path, "");
+    const probe = await open(path, "r");
+    const prototype = Object.getPrototypeOf(probe) as {
+      stat: FileHandleStat;
+      write: FileHandleWrite;
+    };
+    await probe.close();
+    const originalStat = prototype.stat;
+    const originalWrite = prototype.write;
+    let statCalls = 0;
+    let writeCalls = 0;
+    prototype.stat = async function () {
+      const result = await originalStat.call(this);
+      statCalls += 1;
+      return statCalls === 2 ? { ...result, size: result.size + 1 } as typeof result : result;
+    };
+    prototype.write = async function (data, offset, length, position) {
+      writeCalls += 1;
+      if (writeCalls === 1) return originalWrite.call(this, data, offset, 1, position);
+      if (writeCalls === 2) throw new Error("retry failed");
+      return originalWrite.call(this, data, offset, length, position);
+    };
+    try {
+      const sink = new JsonlFileAudit(path);
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "partial" }));
+      const afterPartial = await readFile(path, "utf8");
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "must-drop" }));
+      assert.equal(await readFile(path, "utf8"), afterPartial, "a later event extended the partial record");
+    } finally {
+      prototype.stat = originalStat;
+      prototype.write = originalWrite;
     }
   });
 });

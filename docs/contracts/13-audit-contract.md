@@ -39,7 +39,10 @@ descriptor-bound operation, so a short OS write cannot splice two of that
 instance's JSONL records together. This is not an interprocess file lock:
 separate sink instances or processes writing the same path remain outside this
 reference sink's framing guarantee and require a deployer-selected single
-writer or coordination mechanism.
+writer or coordination mechanism. If a retry fails after appending a positive
+prefix, the sink truncates only that verified descriptor tail; if the descriptor
+changed and rollback cannot be verified, it drops later events from that
+instance rather than append another record to the fragment.
 
 This contract deliberately does not reject hard-linked regular files. A hard
 link is indistinguishable from a normal regular audit file at this boundary, and
