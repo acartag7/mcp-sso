@@ -147,8 +147,8 @@ test("SQLite admission rejects final symlinks, symlinked directories, directorie
     }
     assert.equal(existsSync(join(dir, "absent.sqlite")), false, "a dangling symlink target was not created");
     assert.deepEqual(readFileSync(target), Buffer.from("target bytes"));
-    assert.throws(() => openSqliteStore(dir), /final path is not a regular file/);
     mkdirSync(realDirectory, { mode: 0o700 });
+    assert.throws(() => openSqliteStore(realDirectory), /final path is not a regular file/);
     try {
       symlinkSync(realDirectory, directoryLink, process.platform === "win32" ? "junction" : undefined);
     } catch (error) {
