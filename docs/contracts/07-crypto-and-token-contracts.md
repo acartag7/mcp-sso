@@ -46,7 +46,7 @@ Single-use: `consumeAuthCode` deletes on read; missing or expired → `invalid_g
 A failed PKCE or client/redirect mismatch **still consumes the code** (one-shot).
 
 The complete redemption binding is the stored code hash, `client_id`,
-`redirect_uri`, PKCE verifier/challenge, and canonical `resource`. The token
+`redirect_uri`, PKCE verifier/challenge, and stored `resource` string. The token
 use-case passes the exact current `BridgeConfig.resource` into atomic store
 consumption and independently requires the returned record's `resource` to equal
 that same value before redirect, client, PKCE, scope, signing, refresh-state, or

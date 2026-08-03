@@ -49,7 +49,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
-  test(`${label}: auth-code resource mismatch is atomic and does not consume the code`, async () => {
+  test(`${label}: auth-code resource mismatch returns null without consuming the code`, async () => {
     const store = make();
     const raw = "resource-bound-code";
     const resourceA = "https://resource-a.test/mcp";

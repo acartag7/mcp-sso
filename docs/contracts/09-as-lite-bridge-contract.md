@@ -169,8 +169,15 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   `headersDistinct`, preserving every on-wire occurrence. Fetch/Hono exposes
   duplicates comma-coalesced; `readHeader` treats a comma in a non-`Cookie`
   header as ambiguous before `Bridge.handleApprove` calls the core.
+- **Approve-time resource gate FIRST:** immediately after
+  `verifyConsentToken` and before CIMD/redirect processing, the Deny branch,
+  JTI consumption, scope lookup, code storage, audit success, or any redirect,
+  the verified consent token's `resource` string MUST exactly equal
+  `config.resource`. A mismatch is the existing direct, non-oracular
+  `invalid_consent` response. It does not consume the JTI or use the token's
+  redirect URI, so the bridge that prepared the token can still approve it once.
 - **Approve-time scheme gate FIRST (§17.1.6 decision 3):** immediately after
-  `verifyConsentToken` and BEFORE the Deny branch below — a lowercase-`https://`
+  the resource gate and BEFORE the Deny branch below — a lowercase-`https://`
   client_id is approvable only when `cimd_verified === true` AND `cimd` enabled;
   any other scheme-shaped client_id, or `cimd_verified:true` on a non-CIMD id,
   ⇒ direct `invalid_consent` (so a legacy URL-shaped token cannot even be
@@ -210,7 +217,8 @@ client-controlled request input; when present, `prepare` uses it and does not fe
 (§17.2, shipped S3b) returns `MachineTokenResponse`: identical except it has NO
 `refresh_token` member at all — not an optional one.)*
 - **`exchangeAuthorizationCode`**: consumes the code (§7.3), verifies PKCE S256
-  and client/redirect/resource binding, then `tokenResponse` parses the stored scopes and
+  and client/redirect/resource binding, then `tokenResponse` parses the stored
+  scopes and
   constructs the signed access/refresh response before `saveRefreshToken`
   persists the new family. A preparation failure leaves no refresh row; the
   already-consumed authorization code stays burned. **0.3.2:** in

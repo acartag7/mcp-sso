@@ -481,12 +481,15 @@ test("integration — sqlite FILE store: full round-trip survives restart (live 
   // must be stable so the pre-restart consent token still verifies on reopen.
   const signingPrivateJwk = ecJwk();
   const consentSigningSecret = "s".repeat(40);
+  // The socket port is test transport detail; issuer and logical resource remain
+  // the same deployment identifiers across the simulated process restart.
   const STABLE_ISSUER = "http://127.0.0.1";
+  const STABLE_RESOURCE = `${STABLE_ISSUER}/mcp`;
   try {
     // --- run 1: drive the flow through the first refresh, then close ---
     const port1 = await freePort();
     const base1 = `http://127.0.0.1:${port1}`;
-    const config1 = makeConfig({ resource: `${base1}/mcp`, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
+    const config1 = makeConfig({ resource: STABLE_RESOURCE, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
     const store1 = openSqliteStore(sqliteFile);
     const { bridge: bridge1, authorizer: authorizer1 } = deps(config1, store1);
     const mount1 = await mountExpress(bridge1, authorizer1, config1, port1);
@@ -501,7 +504,7 @@ test("integration — sqlite FILE store: full round-trip survives restart (live 
     // --- reopen run 2: SAME file + signing material + issuer (mirrors a restart) ---
     const port2 = await freePort();
     const base2 = `http://127.0.0.1:${port2}`;
-    const config2 = makeConfig({ resource: `${base2}/mcp`, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
+    const config2 = makeConfig({ resource: STABLE_RESOURCE, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
     const store2 = openSqliteStore(sqliteFile);
     const { bridge: bridge2, authorizer: authorizer2 } = deps(config2, store2);
     const mount2 = await mountExpress(bridge2, authorizer2, config2, port2);
