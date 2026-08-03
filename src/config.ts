@@ -213,6 +213,9 @@ function validateUrl(allowInsecureLocalhost: boolean, label: string, value: unkn
   } catch {
     throw new AuthConfigError(`${label} must be an absolute URL`);
   }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new AuthConfigError(`${label} must be https:// or http://`);
+  }
   if (allowInsecureLocalhost) {
     if (!LOOPBACK_HOSTS.has(url.hostname)) {
       throw new AuthConfigError(`dev.allowInsecureLocalhost requires a loopback origin for ${label}`);

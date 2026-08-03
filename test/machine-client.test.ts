@@ -14,6 +14,7 @@ import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type {
   ActiveMachineClientRegistration,
+  ClientSecret,
   ClientRegistration,
   ClientStore,
   LegacyMachineClientRegistration,
@@ -38,6 +39,7 @@ import { parseMachineClientRegistration } from "../src/machine-client-record.ts"
 
 const NOW_MS = Date.parse("2026-07-06T12:00:00.000Z");
 const CATALOG = ["mcp:read", "mcp:write", "mcp:admin"];
+const RESOURCE = "https://api.test/mcp";
 
 class FakeClock implements ClockPort {
   private ms: number;
@@ -112,14 +114,18 @@ function harness(catalog: readonly string[] = CATALOG): Harness {
   const store = new InMemoryClientStore();
   const clock = new FakeClock(NOW_MS);
   const audit = new MemoryAudit();
-  return { deps: { store, catalog, clock, audit }, store, clock, audit };
+  return { deps: { store, catalog, resource: RESOURCE, clock, audit }, store, clock, audit };
 }
 
-function storedMachineRecord(clientId: string, secret: string): LegacyMachineClientRegistration {
+type ResourceBoundUnversionedMachineClient = Omit<ActiveMachineClientRegistration, "status" | "version" | "secrets">
+  & { secrets: ClientSecret[] };
+
+function storedMachineRecord(clientId: string, secret: string): ResourceBoundUnversionedMachineClient {
   const epoch = Math.floor(NOW_MS / 1000);
   return {
     clientId, redirectUris: [], applicationType: "machine", issuedAtEpoch: epoch,
     name: "build agent", allowedScopes: ["mcp:read"],
+    resource: RESOURCE,
     secrets: [{ hash: sha256Hex(secret), createdAtEpoch: epoch }],
   };
 }
@@ -151,6 +157,7 @@ test("provision: returns mcc_ clientId + mcs_ secret once; stores hashes only", 
   assert.equal(record?.applicationType, "machine");
   assert.deepEqual(record?.redirectUris, []);
   assert.deepEqual(record?.allowedScopes, ["mcp:read", "mcp:write"]);
+  assert.equal(record?.resource, RESOURCE);
   assert.equal(record?.secrets.length, 1);
   assert.equal(record!.secrets[0]!.hash, sha256Hex(res.clientSecret));
   assert.equal(record!.secrets[0]!.expiresAtEpoch, undefined); // no TTL ⇒ live until rotated
@@ -168,7 +175,7 @@ test("provision: a v0.3.0 ClientStore fails closed without atomic mutation metho
     async save(): Promise<void> { saveCalls += 1; },
     async find(): Promise<ClientRegistration | null> { return null; },
   };
-  const deps: MachineClientDeps = { store, catalog: CATALOG, clock, audit };
+  const deps: MachineClientDeps = { store, catalog: CATALOG, resource: RESOURCE, clock, audit };
   await assert.rejects(
     provisionMachineClient(deps, { allowedScopes: ["mcp:read"] }),
     (error: unknown) => error instanceof OAuthError
@@ -214,6 +221,44 @@ test("provision: rejects a bad secretTtlSeconds and a non-string name", async ()
     assert.ok(e instanceof OAuthError && e.code === "invalid_request");
     return true;
   });
+});
+
+test("resource: rejects an unusable remote http resource before every lifecycle side effect", async () => {
+  const h = harness();
+  const credential = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  const before = {
+    createCalls: h.store.createCalls,
+    casCalls: h.store.casCalls,
+    durableAudits: h.store.mutationAudits.length,
+    successAudits: h.audit.events.filter((event) => event.status === "success").length,
+  };
+  const remoteHttpDeps = { ...h.deps, resource: "http://remote.example/mcp" };
+  for (const action of [
+    () => provisionMachineClient(remoteHttpDeps, { allowedScopes: ["mcp:read"] }),
+    () => rotateMachineClientSecret(remoteHttpDeps, credential.clientId),
+    () => disableMachineClient(remoteHttpDeps, credential.clientId),
+  ]) {
+    await assert.rejects(action, (error: unknown) =>
+      error instanceof OAuthError && error.code === "invalid_request");
+  }
+  assert.deepEqual({
+    createCalls: h.store.createCalls,
+    casCalls: h.store.casCalls,
+    durableAudits: h.store.mutationAudits.length,
+    successAudits: h.audit.events.filter((event) => event.status === "success").length,
+  }, before);
+
+  for (const resource of [
+    "http://localhost:3000/mcp",
+    "http://127.0.0.1:3000/mcp",
+    "http://[::1]:3000/mcp",
+  ]) {
+    const loopback = await provisionMachineClient(
+      { ...h.deps, resource },
+      { allowedScopes: ["mcp:read"] },
+    );
+    assert.equal((await machineRecord(h.store, loopback.clientId)).resource, resource);
+  }
 });
 
 test("provision: rejects a TTL whose derived expiry is unsafe before save or success audit", async () => {
@@ -366,7 +411,7 @@ test("rotation: rejects unknown / non-machine / malformed-record clientId with i
   });
   // A machine record whose secrets is not an array (a buggy/malicious custom
   // ClientStore) yields a CONTROLLED invalid_client, not a raw TypeError.
-  h.store.setAt("mcc_bad", { clientId: "mcc_bad", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1, allowedScopes: ["mcp:read"], secrets: undefined });
+  h.store.setAt("mcc_bad", { clientId: "mcc_bad", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1, allowedScopes: ["mcp:read"], resource: RESOURCE, secrets: undefined });
   await assert.rejects(() => rotateMachineClientSecret(h.deps, "mcc_bad"), (e: unknown) => {
     assert.ok(e instanceof OAuthError && e.code === "invalid_client", "malformed secrets ⇒ controlled invalid_client (no raw TypeError)");
     return true;
@@ -526,6 +571,10 @@ test("stored machine grammar: malformed or mis-keyed rows fail verification and 
     ["name", { ...base, name: "" }],
     ["name type", { ...base, name: 42 as unknown as string }],
     ["allowedScopes", { ...base, allowedScopes: "mcp:read" as unknown as string[] }],
+    ["resource missing", { ...base, resource: undefined }],
+    ["resource blank", { ...base, resource: "" }],
+    ["resource malformed", { ...base, resource: "not a URL" }],
+    ["resource remote HTTP", { ...base, resource: "http://remote.example/mcp" }],
     ["status without version", { ...base, status: "active" }],
     ["version without status", { ...base, version: 1 }],
     ["unknown status", { ...base, status: "paused", version: 1 }],
@@ -561,10 +610,15 @@ test("stored machine grammar: malformed or mis-keyed rows fail verification and 
       (error: unknown) => error instanceof OAuthError && error.code === "invalid_client" && error.status === 401,
       `${label}: rotation`,
     );
+    await assert.rejects(
+      disableMachineClient(h.deps, "mcc_lookup"),
+      (error: unknown) => error instanceof OAuthError && error.code === "invalid_client" && error.status === 401,
+      `${label}: disable`,
+    );
     assert.equal(h.store.casCalls, 0, `${label}: no CAS`);
-    assert.equal(h.audit.events.some((event) => event.event === "oauth.client.rotate_secret" && event.status === "success"), false);
+    assert.equal(h.audit.events.some((event) => event.status === "success"), false, `${label}: no durable success audit`);
     assert.deepEqual(h.audit.events.at(-1), {
-      occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.client.rotate_secret",
+      occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.client.disable",
       status: "failure", clientId: "mcc_lookup", reason: "invalid_client",
     });
   }
@@ -633,7 +687,7 @@ test("stored machine parser returns fresh known-field arrays and secret slots", 
   assert.deepEqual(parsed, { ...expected, status: "active", version: 0 });
 });
 
-test("legacy v0.3.0 row authenticates and migrates from version 0 on first rotation", async () => {
+test("resource-bound unversioned row authenticates and migrates from version 0 on first rotation", async () => {
   const h = harness();
   const clientId = "mcc_legacy_v030";
   const oldSecret = "mcs_" + "L".repeat(43);
@@ -645,11 +699,12 @@ test("legacy v0.3.0 row authenticates and migrates from version 0 on first rotat
   const saved = await machineRecord(h.store, clientId);
   assert.equal(saved.status, "active");
   assert.equal(saved.version, 1);
+  assert.equal(saved.resource, RESOURCE);
   assert.equal(await verifyMachineClientSecret(h.deps, clientId, rotated.clientSecret), true);
   assert.equal(h.store.mutationAudits.at(-1)?.event, "oauth.client.rotate_secret");
 });
 
-test("legacy v0.3.0 row can migrate directly to a version-1 disabled tombstone", async () => {
+test("resource-bound unversioned row can migrate directly to a version-1 disabled tombstone", async () => {
   const h = harness();
   const clientId = "mcc_legacy_disable";
   const secret = "mcs_" + "D".repeat(43);
@@ -659,7 +714,65 @@ test("legacy v0.3.0 row can migrate directly to a version-1 disabled tombstone",
   const stored = await machineRecord(h.store, clientId);
   assert.equal(stored.status, "disabled");
   assert.deepEqual(stored.secrets, []);
+  assert.equal(stored.resource, RESOURCE);
   assert.equal(await verifyMachineClientSecret(h.deps, clientId, secret), false);
+});
+
+test("legacy resource-less rows cannot authenticate, rotate, or disable", async () => {
+  const h = harness();
+  const clientId = "mcc_legacy_resource_less";
+  const secret = "mcs_" + "R".repeat(43);
+  const legacy: LegacyMachineClientRegistration = {
+    clientId, redirectUris: [], applicationType: "machine", issuedAtEpoch: Math.floor(NOW_MS / 1000),
+    allowedScopes: ["mcp:read"], secrets: [{ hash: sha256Hex(secret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
+  };
+  h.store.setAt(clientId, legacy);
+  assert.equal(await verifyMachineClientSecret(h.deps, clientId, secret), false);
+  for (const mutate of [
+    () => rotateMachineClientSecret(h.deps, clientId),
+    () => disableMachineClient(h.deps, clientId),
+  ]) {
+    await assert.rejects(mutate, (error: unknown) => error instanceof OAuthError && error.code === "invalid_client");
+  }
+  assert.equal(h.store.casCalls, 0);
+  assert.deepEqual(h.store.clients.get(clientId), legacy, "legacy row is not backfilled or mutated");
+});
+
+test("resource binding: wrong lifecycle resource fails before mutation; bound lifecycle preserves it", async () => {
+  const h = harness();
+  const client = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
+  const original = await machineRecord(h.store, client.clientId);
+  const wrongResourceDeps = { ...h.deps, resource: "https://other.test/mcp" };
+  for (const mutate of [
+    () => rotateMachineClientSecret(wrongResourceDeps, client.clientId),
+    () => disableMachineClient(wrongResourceDeps, client.clientId),
+  ]) {
+    await assert.rejects(mutate, (error: unknown) => error instanceof OAuthError && error.code === "invalid_client");
+  }
+  assert.equal(h.store.casCalls, 0, "wrong resource reaches no CAS");
+  assert.equal(h.store.mutationAudits.length, 1, "wrong resource writes no durable success audit");
+  assert.deepEqual(await machineRecord(h.store, client.clientId), original, "wrong resource preserves the row");
+  const rotated = await rotateMachineClientSecret(h.deps, client.clientId);
+  assert.equal((await machineRecord(h.store, client.clientId)).resource, RESOURCE);
+  assert.equal(h.store.mutationAudits.at(-1)?.resource, RESOURCE);
+  await disableMachineClient(h.deps, client.clientId);
+  assert.equal((await machineRecord(h.store, client.clientId)).resource, RESOURCE);
+  assert.equal(h.store.mutationAudits.at(-1)?.resource, RESOURCE);
+  assert.equal(await verifyMachineClientSecret(h.deps, client.clientId, rotated.clientSecret), false);
+});
+
+test("resource binding preserves raw strings instead of canonicalizing them", async () => {
+  const h = harness();
+  const rawResource = "https://api.test:443/mcp";
+  const rawDeps = { ...h.deps, resource: rawResource };
+  const client = await provisionMachineClient(rawDeps, { allowedScopes: ["mcp:read"] });
+  assert.equal((await machineRecord(h.store, client.clientId)).resource, rawResource);
+  assert.equal(await verifyMachineClientSecret(rawDeps, client.clientId, client.clientSecret), true);
+  assert.equal(await verifyMachineClientSecret(h.deps, client.clientId, client.clientSecret), false);
+  await assert.rejects(
+    rotateMachineClientSecret(h.deps, client.clientId),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_client",
+  );
 });
 
 test("rotation and disable reject version overflow before CAS", async () => {
@@ -698,7 +811,7 @@ test("verifyMachineClientSecret: a 64-char NON-ASCII hash (byte-length mismatch)
   // must NOT make timingSafeEqual throw ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH.
   const h = harness();
   h.store.setAt("mcc_m4", {
-    clientId: "mcc_m4", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1,
+    clientId: "mcc_m4", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1, resource: RESOURCE,
     allowedScopes: ["mcp:read"], secrets: [{ hash: "é".repeat(64), createdAtEpoch: 1 }],
   });
   assert.equal(await verifyMachineClientSecret(h.deps, "mcc_m4", "mcs_" + "A".repeat(43)), false);
@@ -717,8 +830,11 @@ test("audit: provision + rotate + disable emit metadata-only events (no secret, 
   const disableEvt = h.audit.events.find((e) => e.event === "oauth.client.disable" && e.status === "success");
   assert.deepEqual(provisionEvt?.scopes, ["mcp:read", "mcp:write"]);
   assert.equal(provisionEvt?.clientId, prov.clientId);
+  assert.equal(provisionEvt?.resource, RESOURCE);
   assert.equal(rotateEvt?.clientId, prov.clientId);
+  assert.equal(rotateEvt?.resource, RESOURCE);
   assert.equal(disableEvt?.clientId, prov.clientId);
+  assert.equal(disableEvt?.resource, RESOURCE);
   // No secret value, no secret hash, no secret prefix anywhere in the audit trail.
   for (const needle of [prov.clientSecret, rot.clientSecret, sha256Hex(prov.clientSecret), sha256Hex(rot.clientSecret), "mcs_", "hash"]) {
     assert.equal(dump.toLowerCase().includes(needle.toLowerCase()), false, `audit leaked '${needle}'`);

@@ -121,7 +121,7 @@ function setup(enabled: boolean): Ctx {
   return {
     bridge: new Bridge({ config, store, clock, audit }),
     config, clock, audit, clientStore,
-    machineDeps: { store: clientStore, catalog: [...CATALOG], clock, audit },
+    machineDeps: { store: clientStore, catalog: [...CATALOG], resource: RESOURCE, clock, audit },
   };
 }
 
@@ -170,6 +170,112 @@ test("client_credentials via client_secret_post: identical shape to Basic", asyn
   assert.deepEqual(Object.keys(res.body as Record<string, unknown>).sort(), ["access_token", "expires_in", "scope", "token_type"]);
   const verified = await verifyAccessToken((res.body as { access_token: string }).access_token, ctx.config, ctx.clock);
   assert.equal(verified.subject, c.clientId);
+});
+
+test("an A-bound credential cannot mint through B, with or without a requested resource", async () => {
+  const ctx = setup(true);
+  const credential = await provision(ctx, ["mcp:read"]);
+  const rowBefore = structuredClone(ctx.clientStore.clients.get(credential.clientId));
+  const bConfig = createBridgeConfig({
+    issuer: "https://auth.test", resource: "https://b.test/mcp",
+    consentSigningSecret: "x".repeat(40), signingPrivateJwk: jwk(), signingKeyId: "k1",
+    redirectAllowlist: ["https://client.test/callback"], scopeCatalog: [...CATALOG], defaultScopes: ["mcp:read"],
+    allowedOrigins: ["https://auth.test"], dcr: { mode: "stored", store: ctx.clientStore }, clientCredentials: { enabled: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  const bridgeB = new Bridge({ config: bConfig, store: new MemoryStore(), clock: ctx.clock, audit: ctx.audit });
+  for (const request of [
+    req({ headers: { authorization: basicHeader(credential.clientId, credential.clientSecret) }, body: grantBody({}) }),
+    req({ body: grantBody({ client_id: credential.clientId, client_secret: credential.clientSecret, resource: RESOURCE }) }),
+  ]) {
+    const res = await bridgeB.handleToken(request);
+    assert.equal(res.status, 401);
+    assert.equal((res.body as { error: string }).error, "invalid_client");
+    assert.equal("access_token" in (res.body as object), false);
+  }
+  assert.equal(ctx.audit.events.some((event) =>
+    event.event === "oauth.token.client_credentials" && event.status === "success" && event.resource === "https://b.test/mcp"), false,
+  "B writes no token-signing success audit");
+  assert.deepEqual(ctx.clientStore.clients.get(credential.clientId), rowBefore, "B does not mutate A's record");
+  const throughA = await ctx.bridge.handleToken(req({
+    headers: { authorization: basicHeader(credential.clientId, credential.clientSecret) }, body: grantBody({}),
+  }));
+  assert.equal(throughA.status, 200, "the A-bound credential still works through A");
+});
+
+test("stored resource failures are indistinguishable from invalid machine credentials", async () => {
+  const ctx = setup(true);
+  const credential = await provision(ctx, ["mcp:read"]);
+  const active = ctx.clientStore.clients.get(credential.clientId)!;
+  const { resource: _resource, ...legacy } = active as ActiveMachineClientRegistration;
+  for (const record of [
+    legacy,
+    { ...active, resource: "" },
+    { ...active, resource: "not a URL" },
+    { ...active, resource: "https://other.test/mcp" },
+  ]) {
+    ctx.clientStore.setAt(credential.clientId, record);
+    const res = await ctx.bridge.handleToken(req({
+      headers: { authorization: basicHeader(credential.clientId, credential.clientSecret) }, body: grantBody({}),
+    }));
+    assert.equal(res.status, 401);
+    assert.equal((res.body as { error: string }).error, "invalid_client");
+    assert.equal("access_token" in (res.body as object), false);
+  }
+});
+
+test("a throwing stored resource getter is indistinguishable from invalid machine credentials", async () => {
+  const ctx = setup(true);
+  const credential = await provision(ctx, ["mcp:read"]);
+  const poisoned = { ...(ctx.clientStore.clients.get(credential.clientId) as ActiveMachineClientRegistration) };
+  Object.defineProperty(poisoned, "resource", {
+    enumerable: true,
+    get(): never { throw new Error("custom-store poison"); },
+  });
+  ctx.clientStore.setAt(credential.clientId, poisoned);
+  for (const request of [
+    req({ headers: { authorization: basicHeader(credential.clientId, credential.clientSecret) }, body: grantBody({}) }),
+    req({ body: grantBody({ client_id: credential.clientId, client_secret: credential.clientSecret }) }),
+  ]) {
+    const res = await ctx.bridge.handleToken(request);
+    assert.equal(res.status, 401);
+    assert.equal((res.body as { error: string }).error, "invalid_client");
+    assert.equal("access_token" in (res.body as object), false);
+  }
+  const failures = ctx.audit.events.filter((event) => event.event === "oauth.token.client_credentials" && event.status === "failure");
+  assert.deepEqual(failures.map((event) => event.reason), ["invalid_client", "invalid_client"]);
+});
+
+test("a changing stored clientId getter cannot substitute another row's scope ceiling", async () => {
+  const ctx = setup(true);
+  const credential = await provision(ctx, ["mcp:read"]);
+  const poisoned = { ...(ctx.clientStore.clients.get(credential.clientId) as ActiveMachineClientRegistration) };
+  let clientIdReads = 0;
+  let projectedAsB = false;
+  Object.defineProperties(poisoned, {
+    clientId: {
+      enumerable: true,
+      get(): string {
+        clientIdReads += 1;
+        if (clientIdReads >= 4) projectedAsB = true;
+        return clientIdReads >= 4 ? "mcc_b" : credential.clientId;
+      },
+    },
+    allowedScopes: {
+      enumerable: true,
+      get(): string[] { return projectedAsB ? ["mcp:admin"] : ["mcp:read"]; },
+    },
+  });
+  ctx.clientStore.setAt(credential.clientId, poisoned);
+  const res = await ctx.bridge.handleToken(req({
+    headers: { authorization: basicHeader(credential.clientId, credential.clientSecret) }, body: grantBody({}),
+  }));
+  assert.equal(res.status, 200);
+  assert.equal((res.body as { scope: string }).scope, "mcp:read");
+  assert.equal(clientIdReads, 1, "the parser snapshots clientId before validating or projecting");
+  const verified = await verifyAccessToken((res.body as { access_token: string }).access_token, ctx.config, ctx.clock);
+  assert.equal(verified.clientId, credential.clientId);
+  assert.deepEqual(verified.scopes, ["mcp:read"]);
 });
 
 test("a throwing custom audit port cannot replace client_credentials outcomes", async () => {
@@ -227,7 +333,7 @@ test("expired secret history does not invalidate a live machine credential", asy
   const nowEpoch = Math.floor(NOW_MS / 1000);
   ctx.clientStore.setAt(clientId, {
     clientId, redirectUris: [], applicationType: "machine", issuedAtEpoch: nowEpoch,
-    allowedScopes: ["mcp:read"],
+    allowedScopes: ["mcp:read"], resource: RESOURCE,
     secrets: [
       { hash: "a".repeat(64), createdAtEpoch: 1, expiresAtEpoch: nowEpoch - 2 },
       { hash: "b".repeat(64), createdAtEpoch: 2, expiresAtEpoch: nowEpoch - 1 },
@@ -385,7 +491,7 @@ test("catalog drift (Codex P2): a ceiling scope removed from the live catalog is
   const driftedSecret = "mcs_" + "Z".repeat(43);
   ctx.clientStore.setAt("mcc_drifted", {
     clientId: "mcc_drifted", redirectUris: [], applicationType: "machine", issuedAtEpoch: Math.floor(NOW_MS / 1000),
-    allowedScopes: ["mcp:read", "mcp:legacy"], secrets: [{ hash: sha256Hex(driftedSecret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
+    allowedScopes: ["mcp:read", "mcp:legacy"], resource: RESOURCE, secrets: [{ hash: sha256Hex(driftedSecret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
   });
   // Omitted scope ⇒ the full ceiling, which includes the drifted mcp:legacy ⇒ invalid_scope.
   const omitted = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcc_drifted", driftedSecret) }, body: grantBody({}) }));
@@ -409,7 +515,7 @@ test("non-mcc machine clientId (Codex P2 #3): a machine record whose id lacks th
   const secret = "mcs_" + "N".repeat(43);
   ctx.clientStore.setAt("mcpdc_impostor", {
     clientId: "mcpdc_impostor", redirectUris: [], applicationType: "machine", issuedAtEpoch: Math.floor(NOW_MS / 1000),
-    allowedScopes: ["mcp:read"], secrets: [{ hash: sha256Hex(secret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
+    allowedScopes: ["mcp:read"], resource: RESOURCE, secrets: [{ hash: sha256Hex(secret), createdAtEpoch: Math.floor(NOW_MS / 1000) }],
   });
   const res = await ctx.bridge.handleToken(req({ headers: { authorization: basicHeader("mcpdc_impostor", secret) }, body: grantBody({}) }));
   assert.equal(res.status, 401);
@@ -425,9 +531,9 @@ test("poisoned allowedScopes ceiling (Codex P2 #2): malformed/empty/missing ⇒ 
   const secret = "mcs_" + "P".repeat(43);
   const hash = sha256Hex(secret);
   const epoch = Math.floor(NOW_MS / 1000);
-  const poisoned = (allowedScopes: unknown): ClientRegistration => ({
+  const poisoned = (allowedScopes: unknown): unknown => ({
     clientId: "mcc_poison", redirectUris: [], applicationType: "machine", issuedAtEpoch: epoch,
-    secrets: [{ hash, createdAtEpoch: epoch }], allowedScopes: allowedScopes as string[],
+    secrets: [{ hash, createdAtEpoch: epoch }], allowedScopes: allowedScopes as string[], resource: RESOURCE,
   });
   for (const bad of [undefined, [], "mcp:read", ["mcp:read", 123], [""]]) {
     ctx.clientStore.setAt("mcc_poison", poisoned(bad));

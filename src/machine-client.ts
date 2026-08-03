@@ -1,6 +1,5 @@
 // Machine-client lifecycle primitives (contracts §17.2). Library functions,
 // not endpoints: provisioning, rotation, and disable happen out of band.
-
 import type {
   ActiveMachineClientRegistration,
   ClientStore,
@@ -21,10 +20,9 @@ import {
   validateAllowedScopes,
 } from "./machine-client-secret.ts";
 import {
-  parseMachineClientRegistration,
+  isMachineClientResource, parseMachineClientRegistration,
   type ParsedActiveMachineClientRegistration,
 } from "./machine-client-record.ts";
-
 export const DEFAULT_ROTATION_GRACE_SECONDS = 86_400;
 export const MAX_ROTATION_GRACE_SECONDS = 86_400;
 export interface MachineClientDeps {
@@ -33,38 +31,34 @@ export interface MachineClientDeps {
   store: ClientStore;
   /** `config.scopeCatalog` — allowedScopes is validated against this. */
   catalog: readonly string[];
+  /** Exact `config.resource` binding for every machine credential. */
+  resource: string;
   clock: ClockPort;
   audit: AuditPort;
 }
-
 export interface ProvisionMachineClientInput {
   name?: string;
   allowedScopes: string[];
   secretTtlSeconds?: number;
 }
-
 export interface ProvisionedMachineClient {
   clientId: string;
   clientSecret: string;
 }
-
 export interface RotateSecretOptions {
   graceSeconds?: number;
 }
-
 export interface RotatedSecret {
   clientSecret: string;
 }
 export interface VersionedRotatedSecret extends RotatedSecret {
   version: number;
 }
-
 export interface DisabledMachineClient {
   clientId: string;
   disabledAtEpoch: number;
   version: number;
 }
-
 /** Create version 1 and its required durable audit in one store transaction. */
 export async function provisionMachineClient(
   deps: MachineClientDeps,
@@ -72,6 +66,7 @@ export async function provisionMachineClient(
 ): Promise<ProvisionedMachineClient> {
   let clientId: string | undefined;
   try {
+    const resource = requireMachineClientResource(deps.resource);
     const store = requireMachineClientStore(deps.store);
     const allowedScopes = validateAllowedScopes(input.allowedScopes, deps.catalog);
     if (input.name !== undefined && (typeof input.name !== "string" || input.name.length === 0)) {
@@ -93,6 +88,7 @@ export async function provisionMachineClient(
       issuedAtEpoch: now,
       ...(input.name === undefined ? {} : { name: input.name }),
       allowedScopes,
+      resource,
       status: "active",
       version: 1,
       secrets: [{
@@ -112,7 +108,6 @@ export async function provisionMachineClient(
     throw error;
   }
 }
-
 /** Rotate with one CAS winner. A conflict never returns the minted raw secret. */
 export async function rotateMachineClientSecret(
   deps: MachineClientDeps,
@@ -120,6 +115,7 @@ export async function rotateMachineClientSecret(
   opts?: RotateSecretOptions,
 ): Promise<VersionedRotatedSecret> {
   try {
+    const resource = requireMachineClientResource(deps.resource);
     const store = requireMachineClientStore(deps.store);
     const graceSeconds = opts?.graceSeconds ?? DEFAULT_ROTATION_GRACE_SECONDS;
     if (!isPositiveInteger(graceSeconds) || graceSeconds > MAX_ROTATION_GRACE_SECONDS) {
@@ -129,6 +125,7 @@ export async function rotateMachineClientSecret(
     validateExpiryOffset(now, graceSeconds, "graceSeconds");
     const current = requireMutableActive(
       parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+      resource,
     );
     const clientSecret = mintClientSecret();
     const next: ActiveMachineClientRegistration = {
@@ -152,17 +149,18 @@ export async function rotateMachineClientSecret(
     throw error;
   }
 }
-
 /** Atomically replace an active credential with a hash-free tombstone. */
 export async function disableMachineClient(
   deps: MachineClientDeps,
   clientId: string,
 ): Promise<DisabledMachineClient> {
   try {
+    const resource = requireMachineClientResource(deps.resource);
     const store = requireMachineClientStore(deps.store);
     const now = epochSeconds(deps.clock);
     const current = requireMutableActive(
       parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+      resource,
     );
     const next: VersionedMachineClientRegistration = {
       ...current,
@@ -182,16 +180,15 @@ export async function disableMachineClient(
     throw error;
   }
 }
-
 function requireMutableActive(
   client: ReturnType<typeof parseMachineClientRegistration>,
+  resource: string,
 ): ParsedActiveMachineClientRegistration {
-  if (client?.status !== "active" || client.version >= Number.MAX_SAFE_INTEGER) {
+  if (client?.status !== "active" || client.resource !== resource || client.version >= Number.MAX_SAFE_INTEGER) {
     throw new OAuthError("invalid_client", "Machine client record is invalid or inactive", 401);
   }
   return client;
 }
-
 function mutationAudit(
   clock: ClockPort,
   event: MachineClientMutationAudit["event"],
@@ -202,9 +199,15 @@ function mutationAudit(
     event,
     clientId: client.clientId,
     scopes: [...client.allowedScopes],
+    resource: client.resource,
   };
 }
-
+function requireMachineClientResource(resource: unknown): string {
+  if (!isMachineClientResource(resource)) {
+    throw new OAuthError("invalid_request", "resource must be https:// or http:// loopback for development");
+  }
+  return resource;
+}
 function requireMachineClientStore(store: ClientStore): MachineClientStore {
   const candidate = store as Partial<MachineClientStore>;
   if (typeof candidate.createMachineClient !== "function"
@@ -213,7 +216,6 @@ function requireMachineClientStore(store: ClientStore): MachineClientStore {
   }
   return candidate as MachineClientStore;
 }
-
 function failureAudit(
   clock: ClockPort,
   event: MachineClientMutationAudit["event"],
@@ -228,7 +230,6 @@ function failureAudit(
     reason: error instanceof OAuthError ? error.code : "internal_error",
   };
 }
-
 function safeAudit(audit: AuditPort, event: AuthAuditEvent): void {
   try {
     void Promise.resolve(audit.writeAuthEvent(event)).catch(() => {});
@@ -236,7 +237,6 @@ function safeAudit(audit: AuditPort, event: AuthAuditEvent): void {
     // A success already has durable store evidence; a failure committed no row.
   }
 }
-
 function validateExpiryOffset(now: number, seconds: number, field: string): number {
   const expiry = now + seconds;
   if (!Number.isSafeInteger(expiry) || expiry < 0) {

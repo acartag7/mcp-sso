@@ -290,20 +290,23 @@ nonce residual above.
   lookup latency implemented by a custom `ClientStore`.
 - **Stored-row binding.** `parseMachineClientRegistration` checks the complete
   persisted machine shape and requires the embedded `clientId` to equal the
-  requested lookup key. Its clock-relative active-secret cap permits expired
-  history for rotation cleanup but rejects more than two active slots.
-  Verification, rotation, and the grant's authenticated snapshot reject a malformed,
-  over-active, or differently keyed row before accepting a secret, mutating a
-  record, or signing a token. Provisioning and rotation also reject TTL/grace
+  requested lookup key. It preserves the stored resource string without
+  canonicalization, and authentication plus each lifecycle operation requires
+  exact equality with its configured resource. A resource-less legacy row,
+  blank/malformed resource, or cross-resource row is rejected before accepting
+  a secret, creating a secret, mutating a record, or signing a token; token
+  callers receive the same `invalid_client` result as an invalid secret. Its
+  clock-relative active-secret cap permits expired history for rotation cleanup
+  but rejects more than two active slots. Provisioning and rotation also reject TTL/grace
   values whose derived expiry is not a safe integer before secret generation,
   mutation, or a success audit.
 - **Atomic lifecycle.** `MachineClientStore.createMachineClient` and
   `compareAndSwapMachineClient` commit the versioned row and metadata-only
   lifecycle audit in one transaction or neither. Same-version rotations have
   one CAS winner, and a conflict returns no secret. Disable atomically replaces
-  the active row with a hash-free tombstone. Valid unversioned v0.3.0
+  the active row with a hash-free tombstone. Only resource-bearing unversioned
   rows normalize to active version 0 and move to version 1 on first mutation;
-  partial lifecycle markers fail closed.
+  resource-less legacy rows and partial lifecycle markers fail closed.
 - **Scope caps.** Scopes are capped by per-client `allowedScopes`, fixed ⊆
   catalog at provisioning. The grant validates the resolved scope against BOTH
   the ceiling AND the live `scopeCatalog`: `invalid_scope` on any over-ceiling

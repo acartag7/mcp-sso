@@ -75,7 +75,8 @@ interface BridgeConfig {
   `issuers` — would otherwise ship on that public object. Park secrets in your
   own closure; do not put them in the `createBridgeConfig` input.
 - `issuer` and `resource` are absolute `https://` URLs (the bridge does not run
-  over plain http in production). Their **origins** are computed once and reused.
+  over plain http in production); every other scheme is rejected at boot. Their
+  **origins** are computed once and reused.
   **Local-dev escape hatch:** `dev.allowInsecureLocalhost` permits `http://`
   `issuer`/`resource` **only on loopback** (`localhost`/`127.0.0.1`/`[::1]`); it is
   rejected at boot if either origin is not loopback and it emits a loud warning.

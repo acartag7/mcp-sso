@@ -164,7 +164,7 @@ export class OAuthTokenUseCase {
       const clientSecret = basic ? basic.clientSecret : input.clientSecret;
       if (!clientId || !clientSecret || !clientStore) throw new OAuthError("invalid_client", "Client authentication is required", 401);
       const client = await authenticateMachineClientSecret(
-        { store: clientStore, clock: this.clock },
+        { store: clientStore, clock: this.clock, resource: this.config.resource },
         clientId,
         clientSecret,
       );

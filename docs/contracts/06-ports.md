@@ -162,6 +162,7 @@ interface MachineClientBase {
   issuedAtEpoch: number;
   name?: string;
   allowedScopes: string[];
+  resource: string;             // exact BridgeConfig.resource at provisioning
   version: number;              // positive safe integer; incremented by mutation
 }
 interface ActiveMachineClientRegistration extends MachineClientBase {
@@ -197,6 +198,7 @@ interface MachineClientMutationAudit {
     | "oauth.client.disable";
   clientId: string;
   scopes: string[];
+  resource: string;
 }
 
 interface MachineClientStore extends ClientStore {
@@ -225,7 +227,17 @@ method is absent. Every new machine write uses that extension: create or
 compare-and-swap commits the versioned row and supplied metadata-only durable
 audit record in one backend transaction, or neither. `false` means collision,
 missing row, or version conflict; it MUST commit neither row nor audit. New
-rows start at version 1. A disable writes a tombstone with no secret hashes.
+rows start at version 1. A new versioned machine row stores the exact, uncanonicalized
+`BridgeConfig.resource` supplied as `MachineClientDeps.resource`; a rotation and
+disable copy that stored value unchanged, including into the tombstone. A disable
+writes a tombstone with no secret hashes. The durable mutation audit carries the
+same stored resource, so its row/audit evidence names one binding.
+
+The parser and lifecycle entry points accept that raw resource only when it is
+eligible for `BridgeConfig.resource`: HTTPS, or HTTP on `localhost`,
+`127.0.0.1`, or `[::1]` for a matching `dev.allowInsecureLocalhost` bridge.
+They reject remote HTTP, blank, and malformed values before mutation or success
+audit.
 
 `ClientStore.find` is also a runtime boundary: a persisted or migrated row is
 not trusted merely because the port has a TypeScript return type.
@@ -238,22 +250,36 @@ SHA-256 hashes, non-negative safe-integer timestamps, at most one slot without
 an expiry, and at most two active slots (`expiresAtEpoch` absent or
 `expiresAtEpoch > nowEpoch`). Structurally valid expired history is accepted;
 rotation drops it rather than making an otherwise valid migrated row
-unreadable. For upgrade compatibility, a complete v0.3.0 row with BOTH
-`status` and `version` absent is treated as active version 0; either field
-present without the other is malformed. A store CAS with `expectedVersion: 0`
-MUST match only such an unversioned row. Its first rotation or disable writes
-the version-1 shape atomically, so verification remains available while stores
-roll forward. New records and versioned records require the full lifecycle
-shape: positive safe-integer version, active with one or two secrets, or
-disabled with zero secrets and a non-negative safe-integer disable epoch. The
-parser returns a fresh known-field snapshot. Secret verification, rotation,
-disable, and the single authenticated `client_credentials` store snapshot use
-that parser with the current clock epoch; a
-malformed, over-active, or key-mismatched row fails closed before a secret is
-accepted, a record is mutated, or a token is minted. The parser deliberately
+unreadable. It also requires `resource` to be a non-blank absolute URL string,
+preserves its original bytes, and never canonicalizes it. A resource-less
+v0.3.0 `MachineClientRegistration` remains a public read-compatibility type,
+but its row is not a valid authentication or lifecycle input and requires
+reprovisioning. A resource-bearing unversioned row with BOTH `status` and
+`version` absent is treated as active version 0; either field present without
+the other is malformed. A store CAS with `expectedVersion: 0` MUST match only
+such an unversioned row. Its first rotation or disable writes the version-1
+shape atomically. New records and versioned records require the full lifecycle
+shape: exact resource string, positive safe-integer version, active with one
+or two secrets, or disabled with zero secrets and a non-negative safe-integer
+disable epoch. The parser returns a fresh known-field snapshot. Secret
+verification, rotation, disable, and the single authenticated
+`client_credentials` store snapshot use that parser with the current clock
+epoch and require its stored resource to be exactly equal to the configured
+resource; a malformed, legacy, mismatched, over-active, or key-mismatched row
+fails closed before a secret is accepted, a record is mutated, or a token is
+minted. The parser deliberately
 does not re-check the stored ceiling against the current catalog: catalog
 narrowing is enforced when resolving the grant (§17.2), so a still-valid
 subset remains usable.
+
+A thrown read of any stored-row member (including a getter or Proxy trap on
+`resource`) is treated as malformed input and returns no parsed row; it does
+not escape as a token-endpoint internal error. A rejection from
+`ClientStore.find` itself remains an infrastructure failure and propagates.
+Before validation, the parser reads each stored-row and nested-secret member
+once into a local snapshot and builds its projection only from that snapshot.
+A stateful getter therefore cannot validate one `clientId` and then project a
+different identity or scope ceiling.
 
 ## 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
 Resolves a **verified subject** from an inbound authorize request. The core's

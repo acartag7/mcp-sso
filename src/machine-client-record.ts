@@ -7,6 +7,7 @@ import { snapshotBoundedScopeList } from "./scopes.ts";
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const MAX_ACTIVE_SECRETS = 2;
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** A parsed legacy row can retain expired history until its first mutation.
  * New versioned writes use the stricter tuple from the public store contract. */
@@ -17,70 +18,140 @@ export type ParsedMachineClientRegistration =
   | ParsedActiveMachineClientRegistration
   | DisabledMachineClientRegistration;
 
+interface MachineClientRecordSnapshot {
+  clientId: unknown;
+  redirectUris: unknown;
+  applicationType: unknown;
+  issuedAtEpoch: unknown;
+  name: unknown;
+  allowedScopes: unknown;
+  resource: unknown;
+  secrets: unknown;
+  hasStatus: boolean;
+  status: unknown;
+  hasVersion: boolean;
+  version: unknown;
+  hasDisabledAtEpoch: boolean;
+  disabledAtEpoch: unknown;
+}
+
 /** Parse the persisted §17.2 machine-client shape and bind it to the lookup key.
- * A complete v0.3.0 row with no lifecycle markers normalizes to active version
- * 0. Returns a fresh known-field snapshot so custom-store data is not republished. */
+ * A resource-bound row with no lifecycle markers normalizes to active version 0.
+ * Returns a fresh known-field snapshot so custom-store data is not republished. */
 export function parseMachineClientRegistration(
   value: unknown,
   expectedClientId: string,
   nowEpoch: number,
 ): ParsedMachineClientRegistration | null {
-  if (value === null || value === undefined || !isEpoch(nowEpoch)) return null;
-  const record = value as Record<string, unknown>;
-  if (typeof record.clientId !== "string"
-    || record.clientId !== expectedClientId
-    || !record.clientId.startsWith("mcc_")
-    || record.applicationType !== "machine"
-    || !Array.isArray(record.redirectUris)
-    || record.redirectUris.length !== 0
-    || !isEpoch(record.issuedAtEpoch)
-    || (record.name !== undefined
-      && (typeof record.name !== "string" || record.name.length === 0))) return null;
+  try {
+    return parseMachineClientRegistrationRecord(value, expectedClientId, nowEpoch);
+  } catch {
+    return null;
+  }
+}
 
-  const allowedScopes = parseAllowedScopes(record.allowedScopes);
-  if (!allowedScopes) return null;
+function parseMachineClientRegistrationRecord(
+  value: unknown,
+  expectedClientId: string,
+  nowEpoch: number,
+): ParsedMachineClientRegistration | null {
+  if (value === null || typeof value !== "object" || !isEpoch(nowEpoch)) return null;
+  const {
+    clientId, redirectUris, applicationType, issuedAtEpoch, name, allowedScopes: rawAllowedScopes,
+    resource: rawResource, secrets: rawSecrets, hasStatus, status, hasVersion, version,
+    hasDisabledAtEpoch, disabledAtEpoch,
+  } = snapshotMachineClientRecord(value);
+  if (typeof clientId !== "string"
+    || clientId !== expectedClientId
+    || !clientId.startsWith("mcc_")
+    || applicationType !== "machine"
+    || !Array.isArray(redirectUris)
+    || redirectUris.length !== 0
+    || !isEpoch(issuedAtEpoch)
+    || (name !== undefined && (typeof name !== "string" || name.length === 0))) return null;
+
+  const allowedScopes = parseAllowedScopes(rawAllowedScopes);
+  const resource = parseMachineClientResource(rawResource);
+  if (!allowedScopes || !resource) return null;
   const base = {
-    clientId: record.clientId,
+    clientId,
     redirectUris: [] as [],
     applicationType: "machine" as const,
-    issuedAtEpoch: record.issuedAtEpoch,
-    ...(record.name === undefined ? {} : { name: record.name as string }),
+    issuedAtEpoch,
+    ...(name === undefined ? {} : { name: name as string }),
     allowedScopes,
+    resource,
   };
 
-  const hasStatus = Object.hasOwn(record, "status");
-  const hasVersion = Object.hasOwn(record, "version");
   if (!hasStatus && !hasVersion) {
-    const secrets = parseSecrets(record.secrets, nowEpoch);
+    const secrets = parseSecrets(rawSecrets, nowEpoch);
     return secrets ? { ...base, status: "active", version: 0, secrets } : null;
   }
-  if (!hasStatus || !hasVersion || !isVersion(record.version)) return null;
+  if (!hasStatus || !hasVersion || !isVersion(version)) return null;
 
-  if (record.status === "active") {
-    if (Object.hasOwn(record, "disabledAtEpoch")) return null;
-    const secrets = parseSecrets(record.secrets, nowEpoch);
+  if (status === "active") {
+    if (hasDisabledAtEpoch) return null;
+    const secrets = parseSecrets(rawSecrets, nowEpoch);
     if (!secrets || secrets.length < 1 || secrets.length > MAX_ACTIVE_SECRETS) return null;
-    return { ...base, status: "active", version: record.version, secrets };
+    return { ...base, status: "active", version, secrets };
   }
-  if (record.status === "disabled") {
-    if (!Array.isArray(record.secrets)
-      || record.secrets.length !== 0
-      || !isEpoch(record.disabledAtEpoch)) return null;
+  if (status === "disabled") {
+    if (!Array.isArray(rawSecrets)
+      || rawSecrets.length !== 0
+      || !isEpoch(disabledAtEpoch)) return null;
     return {
       ...base,
       status: "disabled",
-      version: record.version,
+      version,
       secrets: [],
-      disabledAtEpoch: record.disabledAtEpoch,
+      disabledAtEpoch,
     };
   }
   return null;
+}
+
+function snapshotMachineClientRecord(value: object): MachineClientRecordSnapshot {
+  const record = value as Record<string, unknown>;
+  const clientId = record.clientId;
+  const redirectUris = record.redirectUris;
+  const applicationType = record.applicationType;
+  const issuedAtEpoch = record.issuedAtEpoch;
+  const name = record.name;
+  const allowedScopes = record.allowedScopes;
+  const resource = record.resource;
+  const secrets = record.secrets;
+  const hasStatus = Object.hasOwn(record, "status");
+  const status = record.status;
+  const hasVersion = Object.hasOwn(record, "version");
+  const version = record.version;
+  const hasDisabledAtEpoch = Object.hasOwn(record, "disabledAtEpoch");
+  const disabledAtEpoch = record.disabledAtEpoch;
+  return {
+    clientId, redirectUris, applicationType, issuedAtEpoch, name, allowedScopes, resource,
+    secrets, hasStatus, status, hasVersion, version, hasDisabledAtEpoch, disabledAtEpoch,
+  };
 }
 
 function parseAllowedScopes(value: unknown): string[] | null {
   const snapshot = snapshotBoundedScopeList(value);
   if ("problem" in snapshot || snapshot.scopes.length === 0) return null;
   return snapshot.scopes;
+}
+
+/** Validate a BridgeConfig-eligible stored resource without normalizing its bytes. */
+export function isMachineClientResource(value: unknown): value is string {
+  if (typeof value !== "string" || value.trim().length === 0) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname));
+  } catch {
+    return false;
+  }
+}
+
+function parseMachineClientResource(value: unknown): string | null {
+  return isMachineClientResource(value) ? value : null;
 }
 
 function parseSecrets(value: unknown, nowEpoch: number): ClientSecret[] | null {
@@ -91,20 +162,23 @@ function parseSecrets(value: unknown, nowEpoch: number): ClientSecret[] | null {
   for (const candidate of value) {
     if (candidate === null || typeof candidate !== "object") return null;
     const secret = candidate as Record<string, unknown>;
-    if (typeof secret.hash !== "string" || !SHA256_HEX_RE.test(secret.hash)
-      || !isEpoch(secret.createdAtEpoch)
-      || (secret.expiresAtEpoch !== undefined && !isEpoch(secret.expiresAtEpoch))) return null;
-    if (secret.expiresAtEpoch === undefined) {
+    const hash = secret.hash;
+    const createdAtEpoch = secret.createdAtEpoch;
+    const expiresAtEpoch = secret.expiresAtEpoch;
+    if (typeof hash !== "string" || !SHA256_HEX_RE.test(hash)
+      || !isEpoch(createdAtEpoch)
+      || (expiresAtEpoch !== undefined && !isEpoch(expiresAtEpoch))) return null;
+    if (expiresAtEpoch === undefined) {
       if (++withoutExpiry > 1) return null;
       active += 1;
-    } else if (secret.expiresAtEpoch > nowEpoch) {
+    } else if (expiresAtEpoch > nowEpoch) {
       active += 1;
     }
     if (active > MAX_ACTIVE_SECRETS) return null;
     secrets.push({
-      hash: secret.hash,
-      createdAtEpoch: secret.createdAtEpoch,
-      ...(secret.expiresAtEpoch === undefined ? {} : { expiresAtEpoch: secret.expiresAtEpoch }),
+      hash,
+      createdAtEpoch,
+      ...(expiresAtEpoch === undefined ? {} : { expiresAtEpoch }),
     });
   }
   return secrets;

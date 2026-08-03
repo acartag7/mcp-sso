@@ -58,5 +58,7 @@ fail-open posture. `MachineClientStore.createMachineClient` and
 as the credential row, or commit neither (§6.4, §17.2). The ordinary
 `AuditPort` success event is a best-effort fan-out copy after that transaction;
 its failure cannot suppress a one-time secret that already has durable
-evidence. Failure events remain best-effort because no credential mutation was
-committed.
+evidence. Each lifecycle success record includes the exact stored machine-client
+`resource` as well as its scopes, so the durable row and audit evidence describe
+the same binding. Failure events remain best-effort because no credential
+mutation was committed.
