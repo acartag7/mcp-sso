@@ -205,8 +205,8 @@ async function mountExpress(bridge: Bridge, authorizer: RequestAuthorizer, confi
     }
     next();
   });
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: false }));
+  app.use("/mcp", express.json());
+  app.use("/mcp", express.urlencoded({ extended: false }));
   app.use("/", createOAuthRouter({ bridge, identity: stubIdentity }));
   app.post("/mcp", (req, res) => { void serveMcp(req as unknown as IncomingMessage, res as unknown as ServerResponse, req.body, authorizer, config); });
   const server = app.listen(port, "127.0.0.1");

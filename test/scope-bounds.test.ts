@@ -63,6 +63,30 @@ test("scope bounds: request, identity, stored, and machine-client scope carriers
   assert.throws(() => validateAllowedScopes(scopes, scopes), isOAuth("invalid_scope"));
 });
 
+test("scope bounds: identity ceilings snapshot their bounded entries without iterating twice", () => {
+  let lengthReads = 0;
+  let indexReads = 0;
+  let iteratorReads = 0;
+  const ceiling = new Proxy(["mcp:read"], {
+    get(target, key, receiver) {
+      if (key === "length") {
+        lengthReads += 1;
+        return lengthReads === 1 ? 1 : 129;
+      }
+      if (key === "0") indexReads += 1;
+      if (key === Symbol.iterator) {
+        iteratorReads += 1;
+        return function* () {
+          yield* iteratorReads === 1 ? target : Array(129).fill("mcp:read");
+        };
+      }
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  assert.deepEqual(assertAllowedScopesCeiling(ceiling), ["mcp:read"]);
+  assert.deepEqual({ lengthReads, indexReads, iteratorReads }, { lengthReads: 1, indexReads: 1, iteratorReads: 0 });
+});
+
 test("scope bounds: signer refuses a consent token that cannot fit the approval route", async () => {
   const checked = createBridgeConfig(config());
   await assert.rejects(

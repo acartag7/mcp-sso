@@ -1,14 +1,22 @@
 // Express adapter (contracts §9.6). Thin wiring over the framework-free Bridge.
-// Returns an Express Router the consumer mounts with `app.use(express.urlencoded(...))`
-// already enabled (form parsing). Maps NormResponse → Express.
+// The returned Router owns bounded OAuth JSON/form parsing. Maps NormResponse → Express.
 
-import { Router } from "express";
-import type { Request, Response } from "express";
+import { json, Router, urlencoded } from "express";
+import type { NextFunction, Request, Response } from "express";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+
+/** Raw JSON and form budget for the built-in OAuth POST routes (§9.6). */
+export const EXPRESS_OAUTH_BODY_MAX_BYTES = 256 * 1024;
+
+function parserErrorStatus(error: unknown): 400 | 413 | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return status === 400 || status === 413 ? status : undefined;
+}
 
 export interface ExpressAdapterOptions {
   bridge: Bridge;
@@ -27,6 +35,11 @@ export interface ExpressAdapterOptions {
 
 export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   const router = Router();
+  // Keep the framework parser boundary aligned with the core-supported OAuth
+  // request domain. This lives inside the returned router, so unrelated app
+  // routes do not inherit the OAuth limit.
+  router.use(json({ limit: EXPRESS_OAUTH_BODY_MAX_BYTES }));
+  router.use(urlencoded({ extended: false, limit: EXPRESS_OAUTH_BODY_MAX_BYTES }));
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
 
   const toNorm = (req: Request): NormRequest => ({
@@ -75,5 +88,17 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   router.post("/oauth/authorize/approve", wrap(async (req, res) => send(res, await bridge.handleApprove(toNorm(req)))));
   router.post("/oauth/token", wrap(async (req, res) => send(res, await bridge.handleToken(toNorm(req)))));
   router.post("/oauth/revoke", wrap(async (req, res) => send(res, await bridge.handleRevoke(toNorm(req)))));
+  // Body-parser errors bypass route wrappers. Keep malformed and over-cap OAuth
+  // requests on the adapter's direct error channel instead of Express's default
+  // development stack response/logging path.
+  router.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
+    const status = parserErrorStatus(error);
+    if (status === undefined) { next(error); return; }
+    send(res, {
+      status,
+      headers: {},
+      body: { error: "invalid_request", error_description: status === 413 ? "Request body is too large" : "Invalid request" },
+    });
+  });
   return router;
 }

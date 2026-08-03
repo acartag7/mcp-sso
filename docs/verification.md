@@ -73,7 +73,7 @@ Run before S2.
 | HB.4 | Route parity | `/oauth/register`, `/oauth/authorize/approve`, `/oauth/token`, and `/oauth/revoke` all return 413 for applicable over-cap bodies. |
 | HB.5 | Side effects | An over-cap request makes zero Bridge-handler, limiter, store-write, and success-audit calls. |
 | HB.6 | Parser failure | A malformed below-cap body preserves the existing fail-closed adapter behavior. |
-| HB.7 | Framework siblings | Real Fastify and Express probes confirm their shipped/default parsers reject oversized bodies before Bridge invocation; any unbounded shipped composition blocks this Hono-only fix. |
+| HB.7 | Framework siblings | A real Fastify probe confirms its shipped 1 MiB parser cap rejects an oversized body before Bridge invocation. Real Express probes confirm the router-installed 256 KiB JSON and URL-encoded parsers admit the 245,939-byte core-bound DCR and a consent-sized form, then reject an over-cap body before Bridge invocation. |
 | HB.8 | Caller-owned pairing POST | A custom Hono `POST /oauth/authorize` mounts exported `honoOAuthBodyLimit`; an oversized form is rejected before `parseBody` or pairing verification. |
 | HB.9 | Runtime request metadata | For valid-length and missing-length streams, raw-Request own-property extensions survive Hono's reconstruction and remain visible to `clientIp`; no prototype/subclass/private-state preservation is claimed. |
 | HB.10 | Failed streams | Under-cap streams that error before parsing return one sanitized direct 400, emit no raw error log, and perform no parser, Bridge, limiter, store, or success-audit work. |

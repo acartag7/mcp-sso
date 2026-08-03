@@ -7,7 +7,9 @@
   RFC 6749 `scope-token` no longer than **256 UTF-8 bytes**; the largest
   space-joined claim is therefore 32,895 bytes. Config rejects an invalid
   catalog/default list at boot; untrusted or persisted runtime lists fail closed
-  with their operation's typed OAuth error.
+  with their operation's typed OAuth error. Runtime lists are copied from one
+  length read and one selected-index read per entry before validation or reuse;
+  their iterator is never used to validate one view and publish another.
 - `normalizeScopes(scope?, catalog)` → validates each requested scope against the
   catalog (unknown or over-bound ⇒ `invalid_scope`), de-dupes, and falls back to
   `defaultScopes` when none requested. Returns the validated list.

@@ -3,7 +3,7 @@ import type {
   ClientSecret,
   DisabledMachineClientRegistration,
 } from "./ports/client-store.ts";
-import { scopeListProblem } from "./scopes.ts";
+import { snapshotBoundedScopeList } from "./scopes.ts";
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const MAX_ACTIVE_SECRETS = 2;
@@ -78,8 +78,9 @@ export function parseMachineClientRegistration(
 }
 
 function parseAllowedScopes(value: unknown): string[] | null {
-  if (!Array.isArray(value) || value.length === 0 || scopeListProblem(value)) return null;
-  return [...value] as string[];
+  const snapshot = snapshotBoundedScopeList(value);
+  if ("problem" in snapshot || snapshot.scopes.length === 0) return null;
+  return snapshot.scopes;
 }
 
 function parseSecrets(value: unknown, nowEpoch: number): ClientSecret[] | null {

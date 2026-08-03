@@ -6,8 +6,6 @@ import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 runAdapterFlow("express", async (bridge, identity) => {
   const app = express();
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: false }));
   app.use("/", createOAuthRouter({ bridge, identity }));
   const server = app.listen(0, "127.0.0.1"); // express app.listen returns a Server
   await new Promise<void>((resolve) => server.once("listening", resolve));

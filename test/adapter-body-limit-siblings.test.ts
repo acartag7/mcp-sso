@@ -7,10 +7,14 @@ import { createOAuthRouter } from "../src/adapters/express.ts";
 import { registerOAuthRoutes } from "../src/adapters/fastify.ts";
 import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
 
-function bridgeHarness(): { bridge: Bridge; calls: number[] } {
+const OAUTH_BODY_LIMIT = 256 * 1024;
+
+function bridgeHarness(): { bridge: Bridge; calls: number[]; requests: NormRequest[] } {
   const calls: number[] = [];
-  const receive = async (_request: NormRequest): Promise<NormResponse> => {
+  const requests: NormRequest[] = [];
+  const receive = async (request: NormRequest): Promise<NormResponse> => {
     calls.push(1);
+    requests.push(request);
     return { status: 200, headers: {}, body: { ok: true } };
   };
   const bridge = {
@@ -20,7 +24,21 @@ function bridgeHarness(): { bridge: Bridge; calls: number[] } {
     handleToken: receive,
     handleRevoke: receive,
   } as unknown as Bridge;
-  return { bridge, calls };
+  return { bridge, calls, requests };
+}
+
+function escapedMaximumRegistration(): { body: string; redirectUris: string[] } {
+  const redirectUri = "https://client.test/" + "a".repeat(2048 - Buffer.byteLength("https://client.test/"));
+  const jsonEscaped = (value: string): string => [...value]
+    .map((character) => `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`)
+    .join("");
+  const escapedUri = jsonEscaped(redirectUri);
+  const escapedGrantType = jsonEscaped("g".repeat(256));
+  const redirectUris = Array(16).fill(redirectUri);
+  return {
+    body: `{"redirect_uris":[${Array(16).fill(`"${escapedUri}"`).join(",")}],"grant_types":[${Array(32).fill(`"${escapedGrantType}"`).join(",")}]}`,
+    redirectUris,
+  };
 }
 
 test("fastify sibling: default one-megabyte parser cap rejects before Bridge", async () => {
@@ -41,11 +59,9 @@ test("fastify sibling: default one-megabyte parser cap rejects before Bridge", a
   }
 });
 
-test("express sibling: default JSON and URL-encoded parser caps reject before Bridge", async () => {
-  const { bridge, calls } = bridgeHarness();
+test("express OAuth router admits core-bound JSON and consent-sized forms, then rejects over-cap bodies", async () => {
+  const { bridge, calls, requests } = bridgeHarness();
   const app = express();
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: false }));
   app.use("/", createOAuthRouter({ bridge, skipAuthorize: true }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -53,20 +69,43 @@ test("express sibling: default JSON and URL-encoded parser caps reject before Br
   assert.ok(address && typeof address !== "string");
   const base = `http://127.0.0.1:${address.port}`;
   try {
+    const registration = escapedMaximumRegistration();
+    assert.equal(Buffer.byteLength(registration.body), 245_939);
     const json = await fetch(`${base}/oauth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ padding: "x".repeat(101 * 1024) }),
+      body: registration.body,
     });
-    assert.equal(json.status, 413);
+    assert.equal(json.status, 200);
+    assert.deepEqual((requests[0]!.body as { redirect_uris: string[] }).redirect_uris, registration.redirectUris);
 
+    const consentToken = "x".repeat(192 * 1024 - 1024);
+    const approvalBody = new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString();
+    assert.ok(Buffer.byteLength(approvalBody) <= OAUTH_BODY_LIMIT);
     const form = await fetch(`${base}/oauth/token`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: `padding=${"x".repeat(101 * 1024)}`,
+      body: approvalBody,
     });
-    assert.equal(form.status, 413);
-    assert.deepEqual(calls, []);
+    assert.equal(form.status, 200);
+    assert.equal((requests[1]!.body as { consent_token: string }).consent_token, consentToken);
+
+    const malformed = await fetch(`${base}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    assert.equal(malformed.status, 400);
+    assert.deepEqual(await malformed.json(), { error: "invalid_request", error_description: "Invalid request" });
+
+    const overCap = await fetch(`${base}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(OAUTH_BODY_LIMIT) }),
+    });
+    assert.equal(overCap.status, 413);
+    assert.deepEqual(await overCap.json(), { error: "invalid_request", error_description: "Request body is too large" });
+    assert.deepEqual(calls, [1, 1]);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

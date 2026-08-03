@@ -43,10 +43,11 @@ export function normalizeScopes(
 
 /** Validate stored grant scopes without applying request-time defaults. */
 export function storedScopes(value: unknown, catalog: readonly string[]): string[] {
-  if (scopeListProblem(value) || !Array.isArray(value) || !value.every((scope) => catalog.includes(scope))) {
+  const snapshot = snapshotBoundedScopeList(value);
+  if ("problem" in snapshot || !snapshot.scopes.every((scope) => catalog.includes(scope))) {
     throw new OAuthError("invalid_grant", "Stored grant scopes are malformed");
   }
-  return [...value] as string[];
+  return snapshot.scopes;
 }
 
 /** Stable scope string: sorted, space-joined. Used for token `scope` claims. */
@@ -75,23 +76,39 @@ export function isBoundedScopeToken(value: string): boolean {
   return isScopeToken(value) && Buffer.byteLength(value, "utf8") <= MAX_SCOPE_TOKEN_BYTES;
 }
 
-/** Describe a malformed or oversized scope list without choosing its OAuth error channel. */
-export function scopeListProblem(value: unknown): string | undefined {
+type BoundedScopeList = { scopes: string[] } | { problem: string };
+
+/** Read a scope list once, then validate and return that exact bounded snapshot.
+ *  This deliberately never calls an array iterator: a hostile Proxy could yield
+ *  a bounded list during validation and a larger list during a later spread. */
+export function snapshotBoundedScopeList(value: unknown): BoundedScopeList {
   try {
-    if (!Array.isArray(value)) return "must be an array";
-    if (value.length > MAX_SCOPE_ENTRIES) return `must contain at most ${MAX_SCOPE_ENTRIES} entries`;
-    let claimBytes = Math.max(0, value.length - 1);
-    for (const scope of value) {
+    if (!Array.isArray(value)) return { problem: "must be an array" };
+    const length = value.length;
+    if (!Number.isSafeInteger(length) || length < 0 || length > MAX_SCOPE_ENTRIES) {
+      return { problem: `must contain at most ${MAX_SCOPE_ENTRIES} entries` };
+    }
+    const scopes: string[] = [];
+    let claimBytes = Math.max(0, length - 1);
+    for (let index = 0; index < length; index++) {
+      const scope = value[index];
       if (typeof scope !== "string" || !isBoundedScopeToken(scope)) {
-        return `entries must be RFC 6749 scope tokens of at most ${MAX_SCOPE_TOKEN_BYTES} UTF-8 bytes`;
+        return { problem: `entries must be RFC 6749 scope tokens of at most ${MAX_SCOPE_TOKEN_BYTES} UTF-8 bytes` };
       }
       claimBytes += Buffer.byteLength(scope, "utf8");
-      if (claimBytes > MAX_SCOPE_CLAIM_BYTES) return "space-joined value is too large";
+      if (claimBytes > MAX_SCOPE_CLAIM_BYTES) return { problem: "space-joined value is too large" };
+      scopes.push(scope);
     }
-    return undefined;
+    return { scopes };
   } catch {
-    return "could not be read";
+    return { problem: "could not be read" };
   }
+}
+
+/** Describe a malformed or oversized scope list without choosing its OAuth error channel. */
+export function scopeListProblem(value: unknown): string | undefined {
+  const snapshot = snapshotBoundedScopeList(value);
+  return "problem" in snapshot ? snapshot.problem : undefined;
 }
 
 /** Validate an identity-port `allowedScopes` ceiling (contracts §17.4). Returns
@@ -109,7 +126,8 @@ export function scopeListProblem(value: unknown): string | undefined {
  *  cannot skip it. */
 export function assertAllowedScopesCeiling(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
-  if (scopeListProblem(value) === undefined && Array.isArray(value)) return [...value] as string[];
+  const snapshot = snapshotBoundedScopeList(value);
+  if ("scopes" in snapshot) return snapshot.scopes;
   throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
 }
 
@@ -124,15 +142,17 @@ export function assertAllowedScopesCeiling(value: unknown): string[] | undefined
  *  invalid_scope until the client is re-provisioned — the same discipline a
  *  drifted user refresh token imposes. De-dupes, preserves request order. */
 export function resolveClientCredentialsScope(requested: string | undefined, ceiling: readonly string[], catalog: readonly string[]): string[] {
-  if (scopeListProblem(ceiling)) {
+  const ceilingSnapshot = snapshotBoundedScopeList(ceiling);
+  if ("problem" in ceilingSnapshot) {
     throw new OAuthError("invalid_scope", "Client allowedScopes are malformed");
   }
-  const ceilingSet = new Set(ceiling);
+  const checkedCeiling = ceilingSnapshot.scopes;
+  const ceilingSet = new Set(checkedCeiling);
   const catalogSet = new Set(catalog);
   if (requested !== undefined && (typeof requested !== "string" || Buffer.byteLength(requested, "utf8") > MAX_SCOPE_CLAIM_BYTES)) {
     throw invalidScope();
   }
-  const requestedList = requested === undefined || requested.trim() === "" ? [...ceiling] : requested.split(/\s+/).filter(Boolean);
+  const requestedList = requested === undefined || requested.trim() === "" ? checkedCeiling : requested.split(/\s+/).filter(Boolean);
   if (requestedList.length > MAX_SCOPE_ENTRIES) throw invalidScope();
   const out: string[] = [];
   for (const token of requestedList) {
@@ -145,13 +165,27 @@ export function resolveClientCredentialsScope(requested: string | undefined, cei
 }
 
 function scopeItems(scope: string | string[] | undefined, defaults: readonly string[]): readonly unknown[] {
-  const raw = scope === undefined ? defaults : Array.isArray(scope)
-    ? scope
+  const raw = scope === undefined ? snapshotScopeItems(defaults) : Array.isArray(scope)
+    ? snapshotScopeItems(scope)
     : typeof scope === "string" && Buffer.byteLength(scope, "utf8") <= MAX_SCOPE_CLAIM_BYTES
       ? scope.split(/\s+/)
       : null;
   if (!raw || raw.length > MAX_SCOPE_ENTRIES) throw invalidScope();
   return raw;
+}
+
+/** Snapshot request/default entries without applying the stricter stored-list
+ *  token rule: request scope permits blank items which normalize away. */
+function snapshotScopeItems(value: readonly unknown[]): unknown[] {
+  try {
+    const length = value.length;
+    if (!Number.isSafeInteger(length) || length < 0 || length > MAX_SCOPE_ENTRIES) throw invalidScope();
+    const items: unknown[] = [];
+    for (let index = 0; index < length; index++) items.push(value[index]);
+    return items;
+  } catch {
+    throw invalidScope();
+  }
 }
 
 function invalidScope(): OAuthError {

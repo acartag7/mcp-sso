@@ -273,7 +273,7 @@ the response. Wiring rules:
   `prepare`. Limiter denial is a direct 429 with no redirect; limiter failure
   remains fail-open (§6.7). Upstream redirect, console pairing, and CIMD retain
   their independent budgets rather than receiving a second adapter-level check.
-- **Hono OAuth POST body bound:** before request-body parsing or any Bridge
+- **Hono and Express OAuth POST body bounds:** before request-body parsing or any Bridge
   invocation, the Hono adapter applies a fixed **262,144-byte (256 KiB)**
   streaming cap to `/oauth/register`, `/oauth/authorize/approve`,
   `/oauth/token`, and `/oauth/revoke`. The fixed raw-byte budget admits a compact
@@ -299,6 +299,16 @@ the response. Wiring rules:
   mount a custom Hono POST authorize surface (including console pairing) MUST
   mount the adapter-exported `honoOAuthBodyLimit` before its body parser; the
   adapter's four built-in POST routes mount that same middleware automatically.
+- **Express OAuth POST body bound:** the returned Express router installs
+  `express.json` and `express.urlencoded` with the same fixed **262,144-byte
+  (256 KiB)** limit before its OAuth handlers. It therefore admits the bounded
+  core DCR domain and a consent form under the 192 KiB signer ceiling, while an
+  over-cap JSON or form body is rejected by Express before Bridge invocation with
+  direct 413 `{error:"invalid_request",error_description:"Request body is too large"}`.
+  Malformed JSON/form input is a direct sanitized 400 instead of Express's
+  default development stack response/logging path. An application that mounts a
+  different parser earlier on the same OAuth paths owns that parser's behavior;
+  parsers for unrelated routes should be path-scoped.
 - **Hono over-cap response and ordering:** a body-bound rejection is direct HTTP
   **413** with the fixed plain-text body `Payload Too Large`; it contains no raw
   request material, has no `Location`, and reveals nothing about token
