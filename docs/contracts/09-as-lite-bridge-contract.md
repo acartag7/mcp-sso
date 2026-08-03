@@ -137,8 +137,10 @@ client-controlled request input; when present, `prepare` uses it and does not fe
    embedded in the consent-token claims (§7.1 `allowed_scopes`). Without a
    ceiling this step is a no-op (v0.1 behavior, including an empty requested set).
 5. **Scope accumulation *(RC item (c)) — stored-DCR opaque clients only.*** Load
-   `priorScopes = findGrantedScopes(subject, clientId, now)` ONLY for an opaque client
-   resolved through `ClientStore` in stored-DCR mode. For **every scheme-shaped
+   `priorScopes = findGrantedScopes(subject, clientId, now, generation, resource)` ONLY
+   for an opaque client resolved through `ClientStore` in stored-DCR mode. The lookup
+   returns only active rows whose token and family both have the exact configured
+   resource, so legacy and resource-A records cannot contribute to resource B. For **every scheme-shaped
    (`https://`/CIMD) client_id, and in stateless mode, `priorScopes = []`** — never
    keyed on `clientId.startsWith("https://")` and never on `cimd_verified` (§17.1.6
    decision 3; CIMD accumulation is deferred — refresh rows carry no provenance). Those

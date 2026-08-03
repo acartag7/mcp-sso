@@ -9,7 +9,7 @@ import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
@@ -22,6 +22,7 @@ import {
 
 export class SqliteStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
+  readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
   private closed = false;
   private readonly db: DatabaseSync;
 
@@ -132,20 +133,23 @@ export class SqliteStore implements StorePort {
     });
   }
 
-  async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number): Promise<string[]> {
+  async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<string[]> {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
     return this.transaction(() => {
       const generationClause = expectedGrantGeneration === undefined
         ? "" : " AND f.grant_generation = ? AND t.grant_generation = ?";
+      const resourceClause = expectedResource === undefined
+        ? "" : " AND f.resource = ? AND t.resource = ?";
+      const params: (string | number)[] = [subject, clientId, nowIso];
+      if (expectedGrantGeneration !== undefined) params.push(expectedGrantGeneration, expectedGrantGeneration);
+      if (expectedResource !== undefined) params.push(expectedResource, expectedResource);
       const rows = this.db.prepare(
         `SELECT t.scopes_json FROM oauth_refresh_tokens t
          JOIN oauth_refresh_token_families f ON f.family_id = t.family_id
          WHERE t.subject = ? AND t.client_id = ? AND t.consumed_at IS NULL
-         AND f.revoked_at IS NULL AND t.expires_at > ?${generationClause}`,
-      ).all(...(expectedGrantGeneration === undefined
-        ? [subject, clientId, nowIso]
-        : [subject, clientId, nowIso, expectedGrantGeneration, expectedGrantGeneration])) as { scopes_json: string }[];
+         AND f.revoked_at IS NULL AND t.expires_at > ?${generationClause}${resourceClause}`,
+      ).all(...params) as { scopes_json: string }[];
       const out: string[] = [];
       for (const row of rows) for (const s of parseScopes(row.scopes_json)) if (!out.includes(s)) out.push(s);
       return out;

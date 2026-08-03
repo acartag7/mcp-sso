@@ -101,7 +101,7 @@ a normal write value.
 6. **Idempotent close:** `close()` is callable more than once; any op after close
    throws `Store is closed`.
 7. **Granted-scope derivation *(RC item (c))*:** `findGrantedScopes(subject,
-   clientId, nowIso)` returns the union of `scopes` across refresh-token records
+   clientId, nowIso, expectedGeneration?, expectedResource?)` returns the union of `scopes` across refresh-token records
    for that `(subject, clientId)` that are unconsumed, in non-revoked families,
    and not expired at `nowIso`. It is a **read over existing records — there is no
    grant table**. Returns `[]` when no active token exists (a first authorization
@@ -159,17 +159,19 @@ a normal write value.
     compares both the family and token-row generations before replay handling,
     predecessor consumption, or successor insertion; rotation copies the stored
     token generation and ignores caller substitution.
-    `findGrantedScopes(subject, clientId, now, expectedGeneration?)` filters by
-    both generations. Thus an old binary
+    `findGrantedScopes(subject, clientId, now, expectedGeneration?, expectedResource?)`
+    filters by both generations and, when a resource is supplied, requires the
+    exact resource on both the token and family rows. Thus an old binary
     cannot write a post-purge grant that a re-upgraded binary accepts or
-    accumulates merely because the client ID currently exists.
+    accumulates merely because the client ID currently exists; nor can a
+    legacy or resource-A refresh row contribute scopes to resource B.
 
     The use-cases repeat returned-record equality before token preparation.
-    Stored-DCR mode requires the store capability marker
-    `storedDcrGrantGeneration: 1`; an absent/different marker is a boot
-    `AuthConfigError`, preventing a custom store that ignores the new optional
-    parameters from failing open. A current-generation family survives ordinary
-    process/store restarts.
+    Stored-DCR mode requires the store capability markers
+    `storedDcrGrantGeneration: 1` and `storedDcrResourceBinding: 1`; an
+    absent/different marker is a boot `AuthConfigError`, preventing a custom
+    store that ignores the new optional parameters from failing open. A
+    current-generation family survives ordinary process/store restarts.
 
 11. **Resource predicates (patch-compatible extensions):** the
     optional trailing `expectedResource` argument is supplied by
@@ -185,6 +187,8 @@ a normal write value.
     copies the selected row's exact resource, and `saveRefreshToken` rejects an
     attempt to introduce a different or missing family resource. Comparison is
     exact string equality over stored resource strings.
+    `findGrantedScopes` applies the same exact predicate to both active rows
+    before returning their scopes.
 
     SQLite and MySQL migrations add nullable `resource` columns to both
     `oauth_refresh_token_families` and `oauth_refresh_tokens`; fresh schemas make

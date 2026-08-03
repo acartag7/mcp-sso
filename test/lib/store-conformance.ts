@@ -8,7 +8,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import type { SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../../src/ports/store.ts";
-import { STORED_DCR_GRANT_GENERATION, StoreInputError, UNBOUND_REFRESH_RESOURCE } from "../../src/ports/store.ts";
+import {
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING,
+  StoreInputError, UNBOUND_REFRESH_RESOURCE,
+} from "../../src/ports/store.ts";
 
 const NOW = "2026-07-03T12:00:00.000Z";
 const LATER = "2026-07-03T12:05:00.000Z";
@@ -38,6 +41,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   test(`${label}: stored-DCR generation rejects and burns legacy auth codes`, async () => {
     const store = make();
     assert.equal(store.storedDcrGrantGeneration, STORED_DCR_GRANT_GENERATION);
+    assert.equal(store.storedDcrResourceBinding, STORED_DCR_RESOURCE_BINDING);
     await store.saveAuthCode(authCode("generation-current", FUTURE, STORED_DCR_GRANT_GENERATION));
     assert.equal(
       (await store.consumeAuthCode(sha256Hex("generation-current"), NOW, STORED_DCR_GRANT_GENERATION))?.grantGeneration,
@@ -397,6 +401,50 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
       (await store.findGrantedScopes("subject-1", "client-1", NOW)).sort(),
       ["mcp:admin", "mcp:read", "mcp:write"],
       "control: omission preserves stateless/non-cutover behavior",
+    );
+    await store.close();
+  });
+
+  test(`${label}: findGrantedScopes binds scope accumulation to the exact resource`, async () => {
+    const store = make();
+    await store.saveRefreshToken(refresh(
+      "scope-resource-a", "fam-scope-resource-a", null, FUTURE,
+      STORED_DCR_GRANT_GENERATION, RESOURCE_A,
+    ));
+    await store.saveRefreshToken({
+      ...refresh(
+        "scope-resource-b", "fam-scope-resource-b", null, FUTURE,
+        STORED_DCR_GRANT_GENERATION, RESOURCE_B,
+      ),
+      scopes: ["mcp:write"],
+    });
+    const unbound = refresh(
+      "scope-resource-unbound", "fam-scope-resource-unbound", null, FUTURE,
+      STORED_DCR_GRANT_GENERATION,
+    ) as { resource?: string } & Omit<SaveRefreshTokenInput, "resource">;
+    delete unbound.resource;
+    await store.saveRefreshToken({ ...unbound, scopes: ["mcp:admin"] } as SaveRefreshTokenInput);
+
+    assert.deepEqual(
+      await store.findGrantedScopes(
+        "subject-1", "client-1", NOW, STORED_DCR_GRANT_GENERATION, RESOURCE_A,
+      ),
+      ["mcp:read"],
+      "resource A excludes resource B and unbound legacy families",
+    );
+    assert.deepEqual(
+      await store.findGrantedScopes(
+        "subject-1", "client-1", NOW, STORED_DCR_GRANT_GENERATION, RESOURCE_B,
+      ),
+      ["mcp:write"],
+      "resource B excludes resource A and unbound legacy families",
+    );
+    assert.deepEqual(
+      await store.findGrantedScopes(
+        "subject-1", "client-1", NOW, STORED_DCR_GRANT_GENERATION, "https://api-c.test/mcp",
+      ),
+      [],
+      "an unrelated resource cannot inherit scopes",
     );
     await store.close();
   });

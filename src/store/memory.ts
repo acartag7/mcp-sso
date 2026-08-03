@@ -7,7 +7,7 @@ import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, StoreInputError, assertGrantGeneration,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertGrantGeneration,
   assertRefreshResource, assertSha256Hex, assertUtcIsoTimestamp, grantGenerationForWrite,
   normalizeRefreshTokenWrite, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
@@ -17,6 +17,7 @@ interface StoredFamily { revokedAt: string | null; grantGeneration: number | nul
 
 export class MemoryStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
+  readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
   private closed = false;
   private readonly authCodes = new Map<string, AuthCodeRecord>();
   private readonly refreshTokens = new Map<string, StoredRefresh>();
@@ -108,14 +109,17 @@ export class MemoryStore implements StorePort {
     return t ? toRecord(t) : null;
   }
 
-  async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number): Promise<string[]> {
+  async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<string[]> {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
     const out: string[] = [];
     for (const t of this.refreshTokens.values()) {
+      const family = this.families.get(t.familyId);
       if (t.subject === subject && t.clientId === clientId && !t.consumedAt
-        && t.expiresAt > nowIso && this.families.get(t.familyId)?.revokedAt === null
-        && (expectedGrantGeneration === undefined || t.grantGeneration === expectedGrantGeneration)) {
+        && t.expiresAt > nowIso && family?.revokedAt === null
+        && (expectedGrantGeneration === undefined || t.grantGeneration === expectedGrantGeneration)
+        && (expectedResource === undefined
+          || (t.resource === expectedResource && family.resource === expectedResource))) {
         for (const s of t.scopes) if (!out.includes(s)) out.push(s);
       }
     }

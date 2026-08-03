@@ -17,6 +17,7 @@ import { OAuthError } from "../src/errors.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
 import { OAuthTokenUseCase } from "../src/token.ts";
+import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
 
 const REDIRECT = "https://client.test/callback";
 const VERIFIER = "grant-generation-verifier-012345678901234567890";
@@ -85,6 +86,18 @@ test("stored-DCR use-cases reject a store without the generation capability", ()
       config: storedConfig(clients), store, clock: new SystemClock(), audit: noopAudit,
     }),
     (error: unknown) => error instanceof AuthConfigError && /storedDcrGrantGeneration 1/.test(error.message),
+  );
+});
+
+test("stored-DCR use-cases reject a store without the resource-binding capability", () => {
+  const clients = new TestClientStore();
+  const store = new MemoryStore();
+  Object.defineProperty(store, "storedDcrResourceBinding", { value: undefined });
+  assert.throws(
+    () => new OAuthAuthorizationUseCase({
+      config: storedConfig(clients), store, clock: new SystemClock(), audit: noopAudit,
+    }),
+    (error: unknown) => error instanceof AuthConfigError && /storedDcrResourceBinding 1/.test(error.message),
   );
 });
 

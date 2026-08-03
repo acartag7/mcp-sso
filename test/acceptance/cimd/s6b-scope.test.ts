@@ -66,8 +66,8 @@ if (phases["s6b-cimd-flow"] !== true) {
   function consentOf(html: string): string { const m = /name="consent_token" value="([^"]+)"/.exec(html); assert.ok(m?.[1], "consent token not found"); return m[1]!; }
   function scopeSet(accessToken: string): string[] { const s = jose.decodeJwt(accessToken).scope; return typeof s === "string" && s ? s.split(/\s+/).filter(Boolean).sort() : []; }
 
-  const seedGrant = (store: any, clientId: string, scopes: string[]): Promise<void> =>
-    store.saveRefreshToken({ tokenHash: "a".repeat(64), familyId: "legacy-" + clientId, previousTokenHash: null, clientId, subject: SUBJECT, scopes, expiresAt: FUTURE_ISO });
+  const seedGrant = (store: any, clientId: string, scopes: string[], resource?: string): Promise<void> =>
+    store.saveRefreshToken({ tokenHash: "a".repeat(64), familyId: "legacy-" + clientId, previousTokenHash: null, clientId, subject: SUBJECT, scopes, expiresAt: FUTURE_ISO, ...(resource === undefined ? {} : { resource }) });
 
   async function approveAndExchange(b: any, page: any, clientId: string): Promise<string[]> {
     const approve = await b.handleApprove(reqB({ consent_token: consentOf(String(page.body)), approved: "true" }, { origin: "https://auth.test" }));
@@ -136,7 +136,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     await clients.save({ clientId: OPAQUE_ID, redirectUris: [CIMD_REDIRECT], applicationType: "web" });
     const c = config("stored", clients);
     const store = new MemoryStore();
-    await seedGrant(store, OPAQUE_ID, ["mcp:admin"]);
+    await seedGrant(store, OPAQUE_ID, ["mcp:admin"], c.resource);
     let grantReads = 0;
     const original = store.findGrantedScopes.bind(store);
     store.findGrantedScopes = async (...args: any[]) => { grantReads++; return original(...args); };

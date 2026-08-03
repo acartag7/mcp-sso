@@ -849,7 +849,7 @@ establish the provenance of any existing refresh-token record, and is NEVER a
 scope-accumulation entitlement.**
 
 *Scope accumulation stays a stored-DCR opaque-client feature; every CIMD client stands
-alone in v0.2.* The core MAY call `findGrantedScopes(subject, clientId, now)` ONLY for
+alone in v0.2.* The core MAY call `findGrantedScopes(subject, clientId, now, generation, resource)` ONLY for
 an opaque client resolved through `ClientStore` in stored-DCR mode. For **every
 scheme-shaped (`https://`) `client_id`, in BOTH stateless and stored mode**,
 `priorScopes` MUST be `[]` and the code is minted from the current request's scopes
@@ -859,6 +859,9 @@ scheme-shaped(clientId)` (the same canonical classifier rule 22 uses), **NEVER k
 `clientId.startsWith("https://")` and NEVER on `cimd_verified`** — so a missing or
 mis-propagated `cimdVerified` value can never enable a grant-store read. Both sites:
 prepare-time (authorize.ts:124) and approve-time (authorize.ts:158).
+The stored-DCR lookup supplies the exact configured resource and only accepts rows
+whose token and family carry that same string, so pre-resource and cross-resource
+refresh records cannot become scope-accumulation entitlement.
 
 *Why deferred, not built (design-for-eventual-shape, build-minimal):* the current
 refresh records (§12) carry no registration provenance, so a CIMD authorization cannot

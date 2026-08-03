@@ -215,6 +215,14 @@ test("SqliteStore: resource migration leaves legacy refresh rows unusable withou
 
     const store = openSqliteStore(file);
     assert.equal((await store.findRefreshToken(sha256Hex("legacy-resource-token")))?.resource, null);
+    assert.deepEqual(
+      await store.findGrantedScopes(
+        "subject-1", "client-1", "2026-07-03T12:00:00.000Z",
+        STORED_DCR_GRANT_GENERATION, resource,
+      ),
+      [],
+      "a pre-resource row cannot contribute scopes after migration",
+    );
     const rotated = await store.rotateRefreshToken(
       sha256Hex("legacy-resource-token"),
       {

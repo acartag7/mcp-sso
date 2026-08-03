@@ -89,12 +89,15 @@ generation and are rejected with `invalid_grant`; affected users authenticate
 once again. Sessions created by 0.3.2 keep their generation across ordinary
 restarts.
 
-Custom `StorePort` implementations must persist `grantGeneration`, implement
-the expected-generation arguments on code consumption, refresh rotation, and
-scope reads, and advertise `storedDcrGrantGeneration: 1` before deploying
-0.3.2. `assertStoredDcrGenerationStore` rejects stored-DCR startup otherwise.
-During a rollback, an older binary can still write legacy rows, but 0.3.2 will
-reject those rows when it returns.
+Custom `StorePort` implementations must persist `grantGeneration` and the exact
+resource for every authorization code, refresh token, and refresh family. They
+must implement the expected-generation and `expectedResource` arguments on code
+consumption, refresh rotation, and scope reads. A scope read must return only
+active rows whose token and family resources both match the expected resource.
+Before deploying 0.3.2, advertise `storedDcrGrantGeneration: 1` and
+`storedDcrResourceBinding: 1`; `assertStoredDcrGenerationStore` rejects
+stored-DCR startup otherwise. During a rollback, an older binary can still
+write legacy rows, but 0.3.2 will reject those rows when it returns.
 
 See [configuration.md](configuration.md) for bridge and identity-provider
 environment variables. Client registration is independent of the upstream IdP:
