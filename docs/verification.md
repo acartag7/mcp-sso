@@ -67,7 +67,7 @@ Run before S2.
 
 | # | Scenario | Assert |
 |---|---|---|
-| HB.1 | Valid real bodies | JSON, URL-encoded, and supported multipart bodies traverse a real Hono route unchanged; a compact real DCR registration with maximal recognized field values (16-by-2,048-byte redirects plus 32-by-256-byte `grant_types`) serialized entirely with JSON `\uXXXX` escapes is accepted. |
+| HB.1 | Valid real bodies | JSON, URL-encoded, and supported multipart bodies traverse a real Hono route unchanged; a compact real DCR registration with maximal recognized field values (16-by-2,048-byte redirects plus 32-by-256-byte `grant_types`) serialized entirely with JSON `\uXXXX` escapes is accepted. A consent form with maximum permitted default scopes and identity ceiling is generated and successfully posted through Hono. |
 | HB.2 | Header framing | Oversized, malformed, duplicate/coalesced, conflicting, or unsafe `Content-Length` returns fixed direct 413 before parsing; a valid small declared length cannot hide a larger body. |
 | HB.3 | Streaming boundary | Missing-length/chunked actual `Request` streams pass at exactly 256 KiB and return 413 at one byte over; middleware stops pulling a demand-driven hostile stream after its crossing chunk, while one already-materialized 2 MiB host chunk is rejected without reaching a parser. Transport cancellation/draining is not asserted. |
 | HB.4 | Route parity | `/oauth/register`, `/oauth/authorize/approve`, `/oauth/token`, and `/oauth/revoke` all return 413 for applicable over-cap bodies. |

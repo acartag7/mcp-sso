@@ -13,6 +13,10 @@ export interface AuthorizedSubject {
   credentialKind: CredentialKind;
 }
 
+export const MAX_SCOPE_ENTRIES = 128;
+export const MAX_SCOPE_TOKEN_BYTES = 256;
+export const MAX_SCOPE_CLAIM_BYTES = MAX_SCOPE_ENTRIES * MAX_SCOPE_TOKEN_BYTES + MAX_SCOPE_ENTRIES - 1;
+
 /** Validate requested scopes against the configured catalog. Falls back to
  *  `defaults` when `scope` is absent/empty. De-dupes, preserves order. */
 export function normalizeScopes(
@@ -21,21 +25,25 @@ export function normalizeScopes(
   defaults: readonly string[],
 ): string[] {
   const allowed = new Set(catalog);
-  const raw = Array.isArray(scope) ? scope : (scope ?? defaults.join(" ")).split(/\s+/);
+  const raw = scopeItems(scope, defaults);
   const out: string[] = [];
-  for (const value of raw.map((item) => item.trim()).filter(Boolean)) {
+  for (const item of raw) {
+    if (typeof item !== "string") throw invalidScope();
+    const value = item.trim();
+    if (!value) continue;
+    if (!isBoundedScopeToken(value)) throw invalidScope();
     if (!allowed.has(value)) {
-      throw new OAuthError("invalid_scope", "Requested scope is not supported");
+      throw invalidScope();
     }
     if (!out.includes(value)) out.push(value);
   }
-  return out.length ? out : [...defaults];
+  if (out.length !== 0 || scope === undefined) return out;
+  return normalizeScopes(undefined, catalog, defaults);
 }
 
 /** Validate stored grant scopes without applying request-time defaults. */
 export function storedScopes(value: unknown, catalog: readonly string[]): string[] {
-  if (!Array.isArray(value) || !value.every((scope) =>
-    typeof scope === "string" && isScopeToken(scope) && catalog.includes(scope))) {
+  if (scopeListProblem(value) || !Array.isArray(value) || !value.every((scope) => catalog.includes(scope))) {
     throw new OAuthError("invalid_grant", "Stored grant scopes are malformed");
   }
   return [...value] as string[];
@@ -62,12 +70,36 @@ export function isScopeToken(value: string): boolean {
   return SCOPE_TOKEN_RE.test(value);
 }
 
+/** True only for the RFC 6749 token shape that can fit a bounded scope claim. */
+export function isBoundedScopeToken(value: string): boolean {
+  return isScopeToken(value) && Buffer.byteLength(value, "utf8") <= MAX_SCOPE_TOKEN_BYTES;
+}
+
+/** Describe a malformed or oversized scope list without choosing its OAuth error channel. */
+export function scopeListProblem(value: unknown): string | undefined {
+  try {
+    if (!Array.isArray(value)) return "must be an array";
+    if (value.length > MAX_SCOPE_ENTRIES) return `must contain at most ${MAX_SCOPE_ENTRIES} entries`;
+    let claimBytes = Math.max(0, value.length - 1);
+    for (const scope of value) {
+      if (typeof scope !== "string" || !isBoundedScopeToken(scope)) {
+        return `entries must be RFC 6749 scope tokens of at most ${MAX_SCOPE_TOKEN_BYTES} UTF-8 bytes`;
+      }
+      claimBytes += Buffer.byteLength(scope, "utf8");
+      if (claimBytes > MAX_SCOPE_CLAIM_BYTES) return "space-joined value is too large";
+    }
+    return undefined;
+  } catch {
+    return "could not be read";
+  }
+}
+
 /** Validate an identity-port `allowedScopes` ceiling (contracts §17.4). Returns
- *  the value unchanged when it is `undefined` (no ceiling — v0.1 behavior) or a
+ *  `undefined` unchanged (no ceiling — v0.1 behavior) or a fresh bounded
  *  `string[]` of single scope tokens (any array, including `[]` = "entitled to
  *  nothing"). Throws `access_denied` on a present-but-malformed value: a
- *  non-array, or any entry that is not a single RFC 6749 scope token (non-string,
- *  empty, or whitespace/control/quote-bearing). A whitespace-bearing entry would
+ *  non-array, over-bound list, or any entry that is not a single RFC 6749 scope
+ *  token (non-string, empty, or whitespace/control/quote-bearing). A whitespace-bearing entry would
  *  otherwise serialize into the space-delimited `allowed_scopes` claim and
  *  re-split into discrete scopes at `approve`, widening the ceiling there and
  *  letting a prior grant resurrect a scope the prepare-time ceiling never held
@@ -77,7 +109,7 @@ export function isScopeToken(value: string): boolean {
  *  cannot skip it. */
 export function assertAllowedScopesCeiling(value: unknown): string[] | undefined {
   if (value === undefined) return undefined;
-  if (Array.isArray(value) && value.every((s) => typeof s === "string" && isScopeToken(s))) return value;
+  if (scopeListProblem(value) === undefined && Array.isArray(value)) return [...value] as string[];
   throw new OAuthError("access_denied", "Identity port returned a malformed allowedScopes ceiling", 401);
 }
 
@@ -92,16 +124,38 @@ export function assertAllowedScopesCeiling(value: unknown): string[] | undefined
  *  invalid_scope until the client is re-provisioned — the same discipline a
  *  drifted user refresh token imposes. De-dupes, preserves request order. */
 export function resolveClientCredentialsScope(requested: string | undefined, ceiling: readonly string[], catalog: readonly string[]): string[] {
+  if (scopeListProblem(ceiling)) {
+    throw new OAuthError("invalid_scope", "Client allowedScopes are malformed");
+  }
   const ceilingSet = new Set(ceiling);
   const catalogSet = new Set(catalog);
+  if (requested !== undefined && (typeof requested !== "string" || Buffer.byteLength(requested, "utf8") > MAX_SCOPE_CLAIM_BYTES)) {
+    throw invalidScope();
+  }
   const requestedList = requested === undefined || requested.trim() === "" ? [...ceiling] : requested.split(/\s+/).filter(Boolean);
+  if (requestedList.length > MAX_SCOPE_ENTRIES) throw invalidScope();
   const out: string[] = [];
   for (const token of requestedList) {
+    if (!isBoundedScopeToken(token)) throw invalidScope();
     if (!ceilingSet.has(token)) throw new OAuthError("invalid_scope", "Requested scope exceeds the client's allowedScopes");
     if (!catalogSet.has(token)) throw new OAuthError("invalid_scope", "Requested scope is not in the current scopeCatalog");
     if (!out.includes(token)) out.push(token);
   }
   return out;
+}
+
+function scopeItems(scope: string | string[] | undefined, defaults: readonly string[]): readonly unknown[] {
+  const raw = scope === undefined ? defaults : Array.isArray(scope)
+    ? scope
+    : typeof scope === "string" && Buffer.byteLength(scope, "utf8") <= MAX_SCOPE_CLAIM_BYTES
+      ? scope.split(/\s+/)
+      : null;
+  if (!raw || raw.length > MAX_SCOPE_ENTRIES) throw invalidScope();
+  return raw;
+}
+
+function invalidScope(): OAuthError {
+  return new OAuthError("invalid_scope", "Requested scope is not supported");
 }
 
 /** 403 insufficient_scope step-up if the subject lacks `required`. */

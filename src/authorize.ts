@@ -132,9 +132,9 @@ export class OAuthAuthorizationUseCase {
       // to the cookie-oversize guard, which does not exist on this path.
       await resolved.emitCimdSuccess();
       const state = input.state;
-
       // --- POST-VALIDATION: redirect-tagged errors ---
       let claims: ConsentRequestClaims;
+      let consentToken: string;
       try {
         if (input.responseType !== "code") {
           throw new OAuthError("unsupported_response_type", "Only response_type=code is supported");
@@ -162,6 +162,7 @@ export class OAuthAuthorizationUseCase {
           // CIMD registration — its own fetch/cache hit, or the carried one.
           ...(resolved.registration ? { cimdVerified: true as const } : {}),
         };
+        consentToken = await signConsentToken(claims, this.config, this.clock);
       } catch (error) {
         if (error instanceof OAuthError && !error.redirect) throw withRedirect(error, redirectUri, state);
         throw error;
@@ -174,7 +175,6 @@ export class OAuthAuthorizationUseCase {
         : [];
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
       const priorScopes = claims.allowedScopes ? rawPrior.filter((s) => claims.allowedScopes!.includes(s)) : rawPrior;
-      const consentToken = await signConsentToken(claims, this.config, this.clock);
       await this.auditSuccess(AUDIT_PREPARE, { clientId, redirectUri, resource: claims.resource, scopes: claims.scopes, subject: input.subject });
       return {
         consentToken, ...claims, priorScopes,

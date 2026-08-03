@@ -154,7 +154,6 @@ export class Bridge {
       return oauthErrorResponse(asOAuth(error));
     }
   }
-
   /** Resolve a verified identity via the IdentityPort and emit the identity.verify
    *  audit event (§17.4 item 4 / §17.7). Fail-closed: { ok:false } ⇒ 401
    *  access_denied DIRECT (redirect_uri is untrusted pre-validation). A thrown
@@ -162,8 +161,9 @@ export class Bridge {
    *  redirect stripped, no internal leak) is unchanged. The port's `reason` is
    *  carried as the audit reason (Entra-specific reasons land in S2b). The
    *  console-pairing path does NOT use this — it emits oauth.pairing.attempt.
-   *  A present-but-malformed allowedScopes ceiling (non-array / non-string
-   *  elements — a port bug) fails CLOSED: it must never widen to full access
+   *  A present-but-malformed or over-bound allowedScopes ceiling (non-array /
+   *  non-string elements / more than 128 entries / an overlong token — a port
+   *  bug) fails CLOSED: it must never widen to full access
    *  (fail-closed house rule; threat-model row 22 ceiling-bypass class). An
    *  empty array is a valid "entitled to nothing" ceiling (prepare's empty
    *  intersection denies). undefined ⇒ no ceiling (v0.1 behavior). */

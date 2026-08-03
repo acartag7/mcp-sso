@@ -127,7 +127,8 @@ client-controlled request input; when present, `prepare` uses it and does not fe
    `invalid_client` — else **direct** (pre-validation).
 3. *(redirect-eligible from here)* `response_type=code`; `resource` **defaults to
    `config.resource` when omitted and MUST equal `config.resource` when present**
-   (else `invalid_target`); `scope` normalized per §11 (else `invalid_scope`);
+   (else `invalid_target`); `scope` normalized and bounded per §11 (else
+   `invalid_scope`);
    PKCE `code_challenge_method=S256` + challenge present (else `invalid_request`).
 4. **Scope ceiling *(§17.4, shipped S2a).*** When the resolved identity supplied
    an `allowedScopes` ceiling, the requested scopes (and `defaultScopes`, when no
@@ -145,7 +146,9 @@ client-controlled request input; when present, `prepare` uses it and does not fe
 6. Sign the consent token (§7.1), audit, and return
    `{ consentToken, …claims, priorScopes, requestedScopes }`. The consent page
    renders the **delta** = `requestedScopes − priorScopes` as "new" (rendering is
-   an adapter concern, Phase 3; the core supplies both sets).
+   an adapter concern, Phase 3; the core supplies both sets). The signer rejects
+   a consent token that exceeds its 192 KiB output budget, so the server never emits
+   a consent form that its 256 KiB Hono approval route will reject.
 
 **`approve({ consentToken, approved?, origin? })`** → `{ redirectTo, code?, state? }`:
 - **0.3.0 finite-clock gate:** before consent-token processing and before

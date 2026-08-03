@@ -8,6 +8,7 @@ import { Bridge as RealBridge } from "../src/adapters/bridge.ts";
 import { createOAuthApp, honoOAuthBodyLimit } from "../src/adapters/hono.ts";
 import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
 import { createBridgeConfig } from "../src/config.ts";
+import type { IdentityPort } from "../src/ports/identity.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
 const LIMIT = 256 * 1024;
@@ -46,7 +47,10 @@ function harness(clientIp?: Parameters<typeof createOAuthApp>[0]["clientIp"]): {
   return { app: createOAuthApp({ bridge, skipAuthorize: true, clientIp }), calls, requests };
 }
 
-function realApp(redirectAllowlist = ["https://client.test/callback"]): ReturnType<typeof createOAuthApp> {
+function realApp(
+  redirectAllowlist = ["https://client.test/callback"],
+  opts: { scopeCatalog?: string[]; defaultScopes?: string[]; identity?: IdentityPort } = {},
+): ReturnType<typeof createOAuthApp> {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const config = createBridgeConfig({
     issuer: "https://auth.test",
@@ -55,8 +59,8 @@ function realApp(redirectAllowlist = ["https://client.test/callback"]): ReturnTy
     signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK,
     signingKeyId: "k",
     redirectAllowlist,
-    scopeCatalog: ["mcp:read"],
-    defaultScopes: ["mcp:read"],
+    scopeCatalog: opts.scopeCatalog ?? ["mcp:read"],
+    defaultScopes: opts.defaultScopes ?? ["mcp:read"],
     allowedOrigins: ["https://auth.test"],
     dcr: { mode: "stateless" },
     accessTokenTtlSeconds: 600,
@@ -70,7 +74,11 @@ function realApp(redirectAllowlist = ["https://client.test/callback"]): ReturnTy
     clock: { nowMs: () => Date.parse("2026-08-03T12:00:00.000Z") },
     audit: { async writeAuthEvent() {} },
   });
-  return createOAuthApp({ bridge, skipAuthorize: true });
+  return opts.identity ? createOAuthApp({ bridge, identity: opts.identity }) : createOAuthApp({ bridge, skipAuthorize: true });
+}
+
+function maximumScopes(): string[] {
+  return Array.from({ length: 128 }, (_, index) => `s${index.toString(36).padStart(3, "0")}${"a".repeat(252)}`);
 }
 
 function sideEffectHarness(): {
@@ -202,6 +210,29 @@ test("hono body cap: a fully JSON-escaped largest recognized registration is adm
   });
   assert.equal(response.status, 201);
   assert.deepEqual((await response.json() as { redirect_uris: string[] }).redirect_uris, redirectUris);
+});
+
+test("hono body cap: a maximum server-generated consent form can be approved", async () => {
+  const scopes = maximumScopes();
+  const app = realApp(undefined, {
+    scopeCatalog: scopes,
+    defaultScopes: scopes,
+    identity: { async verify() { return { ok: true, identity: { subject: "user-1", allowedScopes: scopes } }; } },
+  });
+  const query = new URLSearchParams({
+    response_type: "code", client_id: "client-1", redirect_uri: "https://client.test/callback",
+    code_challenge: "a".repeat(43), code_challenge_method: "S256",
+  });
+  const page = await app.request(`/oauth/authorize?${query}`);
+  assert.equal(page.status, 200);
+  const consentToken = /name="consent_token" value="([^"]+)"/.exec(await page.text())?.[1];
+  assert.ok(consentToken, "consent token in generated form");
+  const body = new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString();
+  assert.ok(Buffer.byteLength(body, "utf8") <= LIMIT, "generated approval form fits Hono's body cap");
+  const approved = await app.request("/oauth/authorize/approve", {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://auth.test" }, body,
+  });
+  assert.equal(approved.status, 302);
 });
 
 test("hono body cap: exactly-at-cap passes and one byte over returns fixed 413", async () => {
