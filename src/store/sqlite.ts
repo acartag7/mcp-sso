@@ -41,13 +41,14 @@ export class SqliteStore implements StorePort {
     );
   }
 
-  async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number): Promise<AuthCodeRecord | null> {
+  async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<AuthCodeRecord | null> {
     this.ensureOpen();
     assertSha256Hex(codeHash, "codeHash");
     assertUtcIsoTimestamp(nowIso, "nowIso");
     return this.transaction(() => {
       const row = this.db.prepare(`SELECT * FROM oauth_auth_codes WHERE code_hash = ?`).get(codeHash) as AuthCodeRow | undefined;
       if (!row) return null;
+      if (expectedResource !== undefined && row.resource !== expectedResource) return null;
       this.db.prepare(`DELETE FROM oauth_auth_codes WHERE code_hash = ?`).run(codeHash);
       const record = authCodeFromRow(row);
       return row.expires_at > nowIso

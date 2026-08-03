@@ -194,6 +194,7 @@ export class OAuthAuthorizationUseCase {
       assertApproveOrigin(this.config, input.origin);
       const token = requiredStr(input.consentToken, "consent_token");
       const consent = await verifyConsentToken(token, this.config, operationClock);
+      if (consent.resource !== this.config.resource) throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
       // Scheme/claim gate runs before Deny, jti consume, or storage (§17.1.6 decision 3).
       assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
       assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard
@@ -236,7 +237,6 @@ export class OAuthAuthorizationUseCase {
       throw error;
     }
   }
-
   private auditSuccess(event: AuthorizeAuditEvent, r: AuthorizeAuditSuccess, clock: ClockPort = this.clock): Promise<void> {
     return writeAuthorizeSuccess(this.audit, clock, event, r);
   }

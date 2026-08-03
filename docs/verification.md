@@ -193,6 +193,17 @@ Notes:
 | GG.5 | Legacy/non-current active refresh rows exist, including inside a current family | `findGrantedScopes` excludes their scopes. |
 | GG.6 | Store lacks the generation capability in stored-DCR mode | Construction fails closed with `AuthConfigError`; stateless-DCR operation remains unchanged. CIMD alongside stored DCR uses the same cutover generation without enabling accumulation. |
 
+### T1.RB — authorization-code resource binding
+
+| # | Scenario | Assert |
+|---|---|---|
+| RB.1 | Code created under resource A is redeemed through resource B sharing the store | `invalid_grant`; no token response or success audit. |
+| RB.2 | A redemption follows the rejected B attempt | A succeeds exactly once; replay through A fails. |
+| RB.3 | Shared StorePort conformance | Memory, SQLite, and MySQL return `null` for B without consuming A's code; §12 records the implementation transaction/critical-section evidence. |
+| RB.4 | Custom store ignores the resource predicate and returns A's record to B | The token use-case's returned-record check yields `invalid_grant`, no token response, zero refresh writes, and zero success audits. |
+| RB.5 | Concurrently invoked A/B redemption | Shared observable behavior allows only the correctly bound A exchange to return the record; implementation inspection supplies the transaction/critical-section evidence rather than claiming the fixture proves every scheduler interleaving. |
+| RB.6 | A consent token is submitted to bridge B, for Approve and Deny | Both fail directly as `invalid_consent` before redirect processing, JTI consumption, code storage, or success audit; bridge A can still approve once and replay then fails. |
+
 ### T1.S4a — Generic OIDC and Google preset
 
 | # | Scenario | Assert |

@@ -82,6 +82,19 @@ stored-DCR mode is active carries the same deployment cutover generation, but
 remains excluded from scope accumulation under §17.1.6. Full record and legacy
 rules are in §12.
 
+**Authorization-code resource predicate.** `consumeAuthCode` accepts an
+optional trailing `expectedResource`. When supplied, a conforming store compares
+the stored `resource` string to the exact configured resource string inside the
+same atomic operation that would consume the code. A mismatch returns `null`
+without deleting the record. The token use-case repeats the resource comparison on every
+returned record; this is the security boundary for custom implementations that
+ignore an added runtime argument. Such an implementation cannot mint a token for
+the wrong resource, but it is nonconforming and may consume the legitimate code.
+The optional trailing parameter is a source-compatible StorePort extension for a
+patch security release: existing callers may omit it, existing schemas already
+store `resource`, and no migration is required. Custom stores must implement the
+predicate to retain wrong-resource retry semantics and pass §12 conformance.
+
 ## 6.4 `ClientStore` (stored-DCR mode only — fix #4)
 ```ts
 type ApplicationType = "native" | "web" | "machine";   // "machine" added §17.2

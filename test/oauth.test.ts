@@ -64,10 +64,10 @@ function testPrivateJwk(): JWK {
   return { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "test-key-1" } as JWK;
 }
 
-function makeConfig(opts: { redirectAllowlist?: string[]; scopeCatalog?: string[]; defaultScopes?: string[]; dcr?: BridgeConfig["dcr"]; dev?: boolean } = {}): BridgeConfig {
+function makeConfig(opts: { resource?: string; redirectAllowlist?: string[]; scopeCatalog?: string[]; defaultScopes?: string[]; dcr?: BridgeConfig["dcr"]; dev?: boolean } = {}): BridgeConfig {
   return createBridgeConfig({
     issuer: "https://auth.test",
-    resource: "https://api.test/mcp",
+    resource: opts.resource ?? "https://api.test/mcp",
     consentSigningSecret: "test-consent-secret-with-enough-entropy",
     signingPrivateJwk: testPrivateJwk(),
     signingKeyId: "test-key-1",
@@ -138,6 +138,12 @@ async function exchangeCode(ctx: Ctx, verifier: string, scope = "mcp:read mcp:wr
   return await ctx.token.exchangeAuthorizationCode({
     grantType: "authorization_code", code, redirectUri: REDIRECT, clientId, codeVerifier: verifier,
   });
+}
+
+function isInvalidAuthorizationCode(error: unknown): boolean {
+  return error instanceof OAuthError
+    && error.code === "invalid_grant"
+    && error.message === "Authorization code is invalid";
 }
 
 // --- the flow ---
@@ -230,6 +236,71 @@ test("expired auth code returns invalid_grant", async () => {
     (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant",
   );
   await ctx.store.close();
+});
+
+test("authorization code stays bound to its resource across token use-cases sharing a store", async () => {
+  const resourceA = "https://resource-a.test/mcp";
+  const resourceB = "https://resource-b.test/mcp";
+  const store = new MemoryStore();
+  const clock = new FakeClock(NOW_MS);
+  const audit = new MemoryAudit();
+  const configA = makeConfig({ resource: resourceA });
+  const configB = makeConfig({ resource: resourceB });
+  const tokenA = new OAuthTokenUseCase({ config: configA, store, clock, audit });
+  const tokenB = new OAuthTokenUseCase({ config: configB, store, clock, audit });
+  const verifier = "resource-binding-verifier-123456789012345678901234567";
+  const code = "resource-binding-code";
+  await store.saveAuthCode({
+    codeHash: sha256Hex(code), clientId: "client-1", subject: SUBJECT,
+    redirectUri: REDIRECT, resource: resourceA, scopes: ["mcp:read"],
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256",
+    expiresAt: "2026-07-03T13:00:00.000Z", grantGeneration: null,
+  });
+  const input = { grantType: "authorization_code", code, redirectUri: REDIRECT, clientId: "client-1", codeVerifier: verifier };
+  await assert.rejects(tokenB.exchangeAuthorizationCode(input), isInvalidAuthorizationCode);
+  assert.equal(audit.events.some((event) => event.event === "oauth.token.authorization_code" && event.status === "success"), false);
+  const issued = await tokenA.exchangeAuthorizationCode(input);
+  assert.equal((await verifyAccessToken(issued.access_token, configA, clock)).subject, SUBJECT);
+  await assert.rejects(tokenA.exchangeAuthorizationCode(input), isInvalidAuthorizationCode);
+  await store.close();
+});
+
+test("token use-case rejects a wrong-resource record returned by a custom store before signing or refresh persistence", async () => {
+  const resourceA = "https://resource-a.test/mcp";
+  const resourceB = "https://resource-b.test/mcp";
+  class IgnoringResourceStore extends MemoryStore {
+    override consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number): ReturnType<MemoryStore["consumeAuthCode"]> {
+      return super.consumeAuthCode(codeHash, nowIso, expectedGrantGeneration);
+    }
+  }
+  const store = new IgnoringResourceStore();
+  const clock = new FakeClock(NOW_MS);
+  const audit = new MemoryAudit();
+  const configB = makeConfig({ resource: resourceB });
+  const tokenB = new OAuthTokenUseCase({ config: configB, store, clock, audit });
+  const verifier = "custom-store-resource-verifier-12345678901234567890123";
+  const code = "custom-store-resource-code";
+  await store.saveAuthCode({
+    codeHash: sha256Hex(code), clientId: "client-1", subject: SUBJECT,
+    redirectUri: REDIRECT, resource: resourceA, scopes: ["mcp:read"],
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256",
+    expiresAt: "2026-07-03T13:00:00.000Z", grantGeneration: null,
+  });
+  let refreshWrites = 0;
+  const saveRefreshToken = store.saveRefreshToken.bind(store);
+  store.saveRefreshToken = async (input) => { refreshWrites += 1; await saveRefreshToken(input); };
+  let response: TokenResponse | undefined;
+  let error: unknown;
+  try {
+    response = await tokenB.exchangeAuthorizationCode({ grantType: "authorization_code", code, redirectUri: REDIRECT, clientId: "client-1", codeVerifier: verifier });
+  } catch (caught) { error = caught; }
+  assert.deepEqual({
+    invalidGrant: isInvalidAuthorizationCode(error),
+    tokenReturned: response !== undefined,
+    refreshWrites,
+    successAudits: audit.events.filter((event) => event.event === "oauth.token.authorization_code" && event.status === "success").length,
+  }, { invalidGrant: true, tokenReturned: false, refreshWrites: 0, successAudits: 0 });
+  await store.close();
 });
 
 test("refresh token rotates and replay revokes the family", async () => {
@@ -449,6 +520,63 @@ test("approve rejects a replayed consent token (single-use jti, direct)", async 
     (e: unknown) => e instanceof OAuthError && e.code === "invalid_grant" && !e.redirect,
   );
   await ctx.store.close();
+});
+
+async function assertCrossResourceConsentRejected(approved: boolean): Promise<void> {
+  const resourceA = "https://resource-a.test/mcp";
+  const resourceB = "https://resource-b.test/mcp";
+  const store = new MemoryStore();
+  const clock = new FakeClock(NOW_MS);
+  const auditA = new MemoryAudit();
+  const auditB = new MemoryAudit();
+  const authA = new OAuthAuthorizationUseCase({ config: makeConfig({ resource: resourceA }), store, clock, audit: auditA });
+  const authB = new OAuthAuthorizationUseCase({ config: makeConfig({ resource: resourceB }), store, clock, audit: auditB });
+  let codeWrites = 0;
+  let jtiConsumes = 0;
+  const saveAuthCode = store.saveAuthCode.bind(store);
+  const consumeConsentJti = store.consumeConsentJti.bind(store);
+  store.saveAuthCode = async (record) => { codeWrites += 1; await saveAuthCode(record); };
+  store.consumeConsentJti = async (jti, expiresAtIso) => {
+    jtiConsumes += 1;
+    return await consumeConsentJti(jti, expiresAtIso);
+  };
+  const prepared = await authA.prepare({
+    clientId: "client-1", redirectUri: REDIRECT, responseType: "code",
+    codeChallenge: pkceChallenge("cross-resource-consent-verifier-12345678901234567890"),
+    codeChallengeMethod: "S256", state: "resource-a-state", subject: SUBJECT,
+  });
+
+  await assert.rejects(
+    authB.approve({ consentToken: prepared.consentToken, approved, origin: "https://auth.test" }),
+    (error: unknown) => error instanceof OAuthError
+      && error.code === "invalid_consent"
+      && error.message === "Consent token is invalid or expired"
+      && !error.redirect,
+  );
+  assert.deepEqual({
+    codeWrites,
+    jtiConsumes,
+    successAudits: auditB.events.filter((event) => event.event === "oauth.authorize.approve" && event.status === "success").length,
+    redirectHosts: auditB.events.filter((event) => event.event === "oauth.authorize.approve").map((event) => event.redirectHost),
+  }, { codeWrites: 0, jtiConsumes: 0, successAudits: 0, redirectHosts: [undefined] });
+
+  const approvedAtA = await authA.approve({ consentToken: prepared.consentToken, approved: true, origin: "https://auth.test" });
+  assert.ok(approvedAtA.code);
+  assert.equal(new URL(approvedAtA.redirectTo).origin, new URL(REDIRECT).origin);
+  assert.deepEqual({ codeWrites, jtiConsumes }, { codeWrites: 1, jtiConsumes: 1 });
+  await assert.rejects(
+    authA.approve({ consentToken: prepared.consentToken, approved: true, origin: "https://auth.test" }),
+    (error: unknown) => error instanceof OAuthError && error.code === "invalid_grant" && !error.redirect,
+  );
+  await store.close();
+}
+
+test("approve rejects a consent token from another resource without consuming it", async () => {
+  await assertCrossResourceConsentRejected(true);
+});
+
+test("deny rejects a consent token from another resource without using its redirect", async () => {
+  await assertCrossResourceConsentRejected(false);
 });
 
 test("Deny redirects access_denied without consuming the consent jti (fix #5)", async () => {

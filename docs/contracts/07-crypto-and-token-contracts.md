@@ -45,6 +45,17 @@ Format `ac_<base64url(32 random bytes)>`. Stored only as `sha256(code)`.
 Single-use: `consumeAuthCode` deletes on read; missing or expired → `invalid_grant`.
 A failed PKCE or client/redirect mismatch **still consumes the code** (one-shot).
 
+The complete redemption binding is the stored code hash, `client_id`,
+`redirect_uri`, PKCE verifier/challenge, and stored `resource` string. The token
+use-case passes the exact current `BridgeConfig.resource` into atomic store
+consumption and independently requires the returned record's `resource` to equal
+that same value before redirect, client, PKCE, scope, signing, refresh-state, or
+success-audit work. Resource mismatch is the same non-oracular `invalid_grant`
+as an unknown, expired, client-mismatched, redirect-mismatched, or PKCE-invalid
+code. Reference stores do not consume a code on resource mismatch, so a failed
+B-side redemption leaves the A-bound code eligible for exactly one legitimate
+A-side redemption. Once A succeeds, replay remains rejected.
+
 **0.3.2 stored-DCR generation amendment.** An
 authorization code issued under `dcr.mode:"stored"` carries
 `grantGeneration = STORED_DCR_GRANT_GENERATION`. Code consumption supplies that

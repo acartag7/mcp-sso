@@ -47,9 +47,15 @@ compile. Reference stores always project it explicitly; the use-cases treat
 construction rejects a store without the generation capability marker.
 
 ## 12.2 Invariants the suite asserts
-1. **Hashed, single-use auth codes:** `consumeAuthCode` deletes on read; a second
-   consume returns `null`; an expired code returns `null`; raw codes never appear
-   in storage. SQLite asserts the on-disk file contains no raw secret and has no
+1. **Hashed, single-use, resource-bound auth codes:**
+   `consumeAuthCode(codeHash, nowIso, expectedGeneration?, expectedResource?)`
+   deletes an otherwise-selected code on read; a second consume returns `null`;
+   an expired code returns `null`; raw codes never appear in storage. When
+   `expectedResource` is supplied, the store compares it by exact equality to
+   the stored `resource` string before deletion. A mismatch returns `null`
+   without consuming the code. The shared suite asserts the observable behavior:
+   a wrong-resource call returns `null`, the matching resource can then consume
+   exactly once, and replay fails. SQLite asserts the on-disk file contains no raw secret and has no
    content/body/cache tables (state is OAuth-only).
 2. **Consent JTI single-use:** `consumeConsentJti` returns `true` once, `false` on
    replay (atomic insert-or-ignore). It also **rejects a `expiresAtIso` that is not
@@ -130,9 +136,13 @@ construction rejects a store without the generation capability marker.
     current family unambiguously legacy after a rollback. Reference row
     projection maps missing/malformed values to legacy `null`.
 
-    `consumeAuthCode(hash, now, expectedGeneration?)` always burns the selected
-    code, but returns it only when unexpired and its generation equals a supplied
-    expectation. `rotateRefreshToken(hash, next, now, expectedGeneration?)`
+    `consumeAuthCode(hash, now, expectedGeneration?, expectedResource?)` burns a selected code whose
+    resource predicate matched, but returns it only when unexpired and its
+    generation equals a supplied expectation. A resource mismatch follows
+    invariant 11 and does not consume; generation mismatch retains its burn
+    behavior. Client, redirect, and PKCE mismatches occur after a returned record
+    and therefore also retain their documented one-shot consumption behavior.
+    `rotateRefreshToken(hash, next, now, expectedGeneration?)`
     compares both the family and token-row generations before replay handling,
     predecessor consumption, or successor insertion; rotation copies the stored
     token generation and ignores caller substitution.
@@ -147,6 +157,25 @@ construction rejects a store without the generation capability marker.
     `AuthConfigError`, preventing a custom store that ignores the new optional
     parameters from failing open. A current-generation family survives ordinary
     process/store restarts.
+
+11. **Authorization-code resource predicate (patch-compatible extension):** the
+    optional trailing `expectedResource` argument is supplied by
+    `OAuthTokenUseCase` in every authorization-code exchange. Memory checks it in
+    the map critical section; SQLite checks it inside `BEGIN IMMEDIATE`; MySQL
+    checks it while holding the selected row `FOR UPDATE`. A mismatch commits no
+    delete. The use-case repeats exact equality against `BridgeConfig.resource`
+    after a record is returned, so a custom/defective store that ignores the
+    argument cannot cause a wrong-audience token, refresh write, or success
+    audit. The extension is source-compatible and needs no SQL migration because
+    every auth-code record already has a non-null `resource`; custom stores must
+    implement the predicate to satisfy conformance and preserve retry semantics.
+
+    The shared conformance row proves that externally observable result across
+    Memory, SQLite, and MySQL; it does not by itself prove every scheduler
+    interleaving. Atomicity evidence comes from the implementations: Memory runs
+    check and delete synchronously without an `await`, SQLite keeps both inside
+    one transaction, and MySQL keeps both under `SELECT ... FOR UPDATE` until the
+    transaction commits.
 
 ## 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`) — in-process maps; dev/test only, labeled loud.

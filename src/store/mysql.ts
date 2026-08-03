@@ -37,7 +37,7 @@ export class MysqlStore implements StorePort {
     );
   }
 
-  async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number): Promise<AuthCodeRecord | null> {
+  async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<AuthCodeRecord | null> {
     this.ensureOpen();
     assertSha256Hex(codeHash, "codeHash");
     assertUtcIsoTimestamp(nowIso, "nowIso");
@@ -45,6 +45,7 @@ export class MysqlStore implements StorePort {
       const [rows] = await conn.query<RowDataPacket[]>(`SELECT * FROM oauth_auth_codes WHERE code_hash = ? FOR UPDATE`, [codeHash]);
       const row = rows[0] as AuthCodeRow | undefined;
       if (!row) return null;
+      if (expectedResource !== undefined && row.resource !== expectedResource) return null;
       await conn.query(`DELETE FROM oauth_auth_codes WHERE code_hash = ?`, [codeHash]);
       const record = authCodeFromRow(row);
       return row.expires_at > nowIso

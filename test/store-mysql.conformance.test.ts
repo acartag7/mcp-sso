@@ -87,6 +87,32 @@ function make(): StorePort {
 if (RUN) {
   runStoreConformance("MysqlStore", make);
 
+  test("MysqlStore: two store instances serialize matching and mismatching resource consumes", async () => {
+    const wrongResourceStore = make();
+    const matchingResourceStore = make();
+    const rawCode = "two-store-resource-code";
+    const resourceA = "https://resource-a.test/mcp";
+    const resourceB = "https://resource-b.test/mcp";
+    try {
+      await matchingResourceStore.saveAuthCode({
+        codeHash: sha256Hex(rawCode), clientId: "client-1", subject: "subject-1",
+        redirectUri: "https://client.test/callback", resource: resourceA,
+        scopes: ["mcp:read"], codeChallenge: "challenge", codeChallengeMethod: "S256",
+        expiresAt: FUTURE,
+      });
+      const [wrong, matching] = await Promise.all([
+        wrongResourceStore.consumeAuthCode(sha256Hex(rawCode), NOW, undefined, resourceB),
+        matchingResourceStore.consumeAuthCode(sha256Hex(rawCode), NOW, undefined, resourceA),
+      ]);
+      assert.equal(wrong, null);
+      assert.equal(matching?.resource, resourceA);
+      assert.equal(await matchingResourceStore.consumeAuthCode(sha256Hex(rawCode), NOW, undefined, resourceA), null);
+    } finally {
+      await wrongResourceStore.close();
+      await matchingResourceStore.close();
+    }
+  });
+
   test("MysqlStore: concurrent rotation serializes (FOR UPDATE prevents double-spend) — review H3", async () => {
     const store = make();
     try {

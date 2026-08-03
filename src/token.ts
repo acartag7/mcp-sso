@@ -206,8 +206,9 @@ export class OAuthTokenUseCase {
 
   private async consumeValidCode(input: AuthorizationCodeGrantInput): Promise<AuthCodeRecord> {
     const code = requiredStr(input.code, "code"), expected = expectedStoredDcrGrantGeneration(this.config);
-    const record = await this.store.consumeAuthCode(sha256Hex(code), new Date(this.clock.nowMs()).toISOString(), expected);
-    if (!record || !hasExpectedGrantGeneration(record, expected)) throw new OAuthError("invalid_grant", "Authorization code is invalid"); const redirectUri = record.redirectUri;
+    const record = await this.store.consumeAuthCode(sha256Hex(code), new Date(this.clock.nowMs()).toISOString(), expected, this.config.resource);
+    if (!record || !hasExpectedGrantGeneration(record, expected) || record.resource !== this.config.resource) throw new OAuthError("invalid_grant", "Authorization code is invalid");
+    const redirectUri = record.redirectUri;
     try { assertOAuthRedirectEntry(redirectUri); } catch { throw new OAuthError("invalid_grant", "Authorization code is invalid"); }
     if (input.clientId !== record.clientId || input.redirectUri !== redirectUri) {
       throw new OAuthError("invalid_grant", "Authorization code is invalid");
@@ -217,7 +218,6 @@ export class OAuthTokenUseCase {
     }
     return record;
   }
-
   private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string): Promise<{ response: UserTokenResponse; scopes: string[] }> {
     const scopes = storedScopes(record.scopes, this.config.scopeCatalog);
     const accessToken = await signAccessToken({ subject: record.subject, clientId: record.clientId, scopes }, this.config, this.clock);

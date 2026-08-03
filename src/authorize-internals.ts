@@ -92,9 +92,9 @@ export function accumulationAllowed(config: BridgeConfig, clientId: string): boo
 }
 
 /** Approve-time scheme/claim consistency gate (§17.1.6 decision 3) — a validity
- *  check, NOT an accumulation decision. Runs immediately after
- *  `verifyConsentToken` and BEFORE the Deny branch, the jti consume, and any
- *  code storage, so a legacy URL-shaped token cannot even be Deny-redirected. */
+ *  check, NOT an accumulation decision. Runs after the consent-resource gate
+ *  and BEFORE the Deny branch, the jti consume, and any code storage, so a
+ *  legacy URL-shaped token cannot even be Deny-redirected. */
 export function assertApproveCimdGate(config: BridgeConfig, clientId: string, cimdVerified: true | undefined): void {
   const enabled = config.cimd?.enabled === true;
   if (isCimdClientId(clientId)) {

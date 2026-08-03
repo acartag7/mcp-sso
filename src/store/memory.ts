@@ -28,11 +28,12 @@ export class MemoryStore implements StorePort {
     this.authCodes.set(input.codeHash, { ...input, grantGeneration: grantGenerationForWrite(input.grantGeneration) });
   }
 
-  async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number): Promise<AuthCodeRecord | null> {
+  async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<AuthCodeRecord | null> {
     this.ensureOpen();
     assertSha256Hex(codeHash, "codeHash");
     assertUtcIsoTimestamp(nowIso, "nowIso");
     const record = this.authCodes.get(codeHash) ?? null;
+    if (record && expectedResource !== undefined && record.resource !== expectedResource) return null;
     this.authCodes.delete(codeHash);
     return record && record.expiresAt > nowIso
       && (expectedGrantGeneration === undefined || record.grantGeneration === expectedGrantGeneration) ? record : null;

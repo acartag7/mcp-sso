@@ -49,6 +49,42 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: auth-code resource mismatch returns null without consuming the code`, async () => {
+    const store = make();
+    const raw = "resource-bound-code";
+    const resourceA = "https://resource-a.test/mcp";
+    const resourceB = "https://resource-b.test/mcp";
+    await store.saveAuthCode({ ...authCode(raw, FUTURE), resource: resourceA });
+    assert.equal(
+      await store.consumeAuthCode(sha256Hex(raw), NOW, undefined, resourceB),
+      null,
+      "wrong resource is rejected",
+    );
+    assert.equal(
+      (await store.consumeAuthCode(sha256Hex(raw), NOW, undefined, resourceA))?.resource,
+      resourceA,
+      "the legitimate resource can still consume the code",
+    );
+    assert.equal(await store.consumeAuthCode(sha256Hex(raw), NOW, undefined, resourceA), null, "replay fails");
+    await store.close();
+  });
+
+  test(`${label}: concurrent matching and mismatching resource consumes allow only the matching call`, async () => {
+    const store = make();
+    const raw = "resource-race-code";
+    const resourceA = "https://resource-a.test/mcp";
+    const resourceB = "https://resource-b.test/mcp";
+    await store.saveAuthCode({ ...authCode(raw, FUTURE), resource: resourceA });
+    const [wrong, right] = await Promise.all([
+      store.consumeAuthCode(sha256Hex(raw), NOW, undefined, resourceB),
+      store.consumeAuthCode(sha256Hex(raw), NOW, undefined, resourceA),
+    ]);
+    assert.equal(wrong, null, "wrong resource never wins");
+    assert.equal(right?.resource, resourceA, "matching resource consumes exactly once");
+    assert.equal(await store.consumeAuthCode(sha256Hex(raw), NOW, undefined, resourceA), null, "winner consumed the code");
+    await store.close();
+  });
+
   test(`${label}: consent jti is single-use`, async () => {
     const store = make();
     assert.equal(await store.consumeConsentJti("jti-1", FUTURE), true);
