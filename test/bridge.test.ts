@@ -8,7 +8,7 @@ import type { RateLimitPort } from "../src/ports/rate-limit.ts";
 import type { NormRequest } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
-import { pkceChallenge } from "../src/crypto.ts";
+import { generateRefreshToken, parseRefreshFamilyId, pkceChallenge, sha256Hex } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
@@ -42,6 +42,17 @@ function extractConsentToken(html: string): string {
   const m = /name="consent_token" value="([^"]+)"/.exec(html);
   assert.ok(m?.[1], "consent_token not in page");
   return m[1];
+}
+async function saveRevocableToken(store: MemoryStore): Promise<string> {
+  const token = generateRefreshToken();
+  const familyId = parseRefreshFamilyId(token);
+  assert.ok(familyId, "generated refresh token has a family id");
+  await store.saveRefreshToken({
+    tokenHash: sha256Hex(token), familyId, previousTokenHash: null,
+    clientId: "client", subject: SUBJECT, scopes: ["mcp:read"],
+    expiresAt: "2026-08-03T12:00:00.000Z",
+  });
+  return token;
 }
 
 test("bridge: full OAuth flow (metadata -> register -> authorize -> approve -> token -> refresh -> revoke)", async () => {
@@ -102,6 +113,95 @@ test("bridge: handleRevoke maps an unexpected store throw to the §9.5 500 body 
   // RFC 7009 semantics unchanged by the catch: an unrecognized token is still 200.
   const unrecognized = await setup().bridge.handleRevoke(req({ body: { token: "rt_unknown" } }));
   assert.equal(unrecognized.status, 200);
+});
+
+test("bridge: revoke limiter denies before token extraction, use case, store, or audit work", async () => {
+  const keys: string[] = [];
+  const store = new MemoryStore();
+  const originalFind = store.findRefreshToken.bind(store);
+  let findCalls = 0;
+  store.findRefreshToken = async (hash) => { findCalls += 1; return originalFind(hash); };
+  const audit = new MemoryAudit();
+  const bridge = new Bridge({
+    config: config(), store, clock: new FakeClock(NOW_MS), audit,
+    rateLimit: { async check(key) { keys.push(key); return false; } },
+  });
+  let revokeUseCaseCalls = 0;
+  (bridge as unknown as { token: { revoke(token?: string): Promise<void> } }).token = {
+    async revoke() { revokeUseCaseCalls += 1; },
+  };
+  let tokenFieldReads = 0;
+  const body = new Proxy({ token: "rt_not_hashed" }, {
+    get(target, property, receiver) {
+      if (property === "token") tokenFieldReads += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  const response = await bridge.handleRevoke(req({ body, ip: "203.0.113.9" }));
+  assert.equal(response.status, 429);
+  assert.equal((response.body as { error: string }).error, "temporarily_unavailable");
+  assert.deepEqual(keys, ["revoke:203.0.113.9"]);
+  assert.equal(tokenFieldReads, 0, "denial precedes token extraction and hashing");
+  assert.equal(revokeUseCaseCalls, 0);
+  assert.equal(findCalls, 0);
+  assert.equal(audit.events.length, 0);
+});
+
+test("bridge: revoke limiter uses the shared unknown bucket when no adapter IP is available", async () => {
+  const keys: string[] = [];
+  const bridge = setup({ async check(key) { keys.push(key); return true; } }).bridge;
+  const response = await bridge.handleRevoke({ query: {}, headers: {}, body: {}, ip: undefined });
+  assert.equal(response.status, 200);
+  assert.deepEqual(keys, ["revoke:unknown"]);
+});
+
+test("bridge: admitted unknown and already-revoked tokens retain RFC 7009 HTTP 200", async () => {
+  const keys: string[] = [];
+  const store = new MemoryStore();
+  const token = await saveRevocableToken(store);
+  const originalRevoke = store.revokeRefreshTokenFamily.bind(store);
+  let revocationCalls = 0;
+  store.revokeRefreshTokenFamily = async (familyId, revokedAt) => {
+    revocationCalls += 1;
+    await originalRevoke(familyId, revokedAt);
+  };
+  const audit = new MemoryAudit();
+  const bridge = new Bridge({
+    config: config(), store, clock: new FakeClock(NOW_MS), audit,
+    rateLimit: { async check(key) { keys.push(key); return true; } },
+  });
+
+  const unknown = await bridge.handleRevoke(req({ body: { token: "rt_unknown" } }));
+  const first = await bridge.handleRevoke(req({ body: { token } }));
+  const alreadyRevoked = await bridge.handleRevoke(req({ body: { token } }));
+  assert.equal(unknown.status, 200);
+  assert.equal(first.status, 200);
+  assert.equal(alreadyRevoked.status, 200);
+  assert.deepEqual(keys, ["revoke:1.2.3.4", "revoke:1.2.3.4", "revoke:1.2.3.4"]);
+  assert.equal(revocationCalls, 2);
+  assert.equal(audit.events.filter((event) => event.event === "oauth.revoke").length, 3);
+});
+
+test("bridge: a throwing revoke limiter fails open and revocation proceeds", async () => {
+  const keys: string[] = [];
+  const store = new MemoryStore();
+  const token = await saveRevocableToken(store);
+  const originalRevoke = store.revokeRefreshTokenFamily.bind(store);
+  let revocationCalls = 0;
+  store.revokeRefreshTokenFamily = async (familyId, revokedAt) => {
+    revocationCalls += 1;
+    await originalRevoke(familyId, revokedAt);
+  };
+  const bridge = new Bridge({
+    config: config(), store, clock: new FakeClock(NOW_MS), audit: new MemoryAudit(),
+    rateLimit: { async check(key) { keys.push(key); throw new Error("redis unavailable"); } },
+  });
+
+  const response = await bridge.handleRevoke(req({ body: { token } }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(keys, ["revoke:1.2.3.4"]);
+  assert.equal(revocationCalls, 1);
 });
 
 test("bridge: pre-validation redirect error is a direct 400 (no Location)", async () => {

@@ -26,13 +26,12 @@ import {
   formField, formObject, headerString, oauthErrorResponse, queryString, readHeader,
   type NormRequest, type NormResponse,
 } from "./http.ts";
-
 export interface BridgeDeps {
   config: BridgeConfig;
   store: StorePort;
   clock: ClockPort;
   audit: AuditPort;
-  /** Optional register/token/direct-identity rate limiter (fix #7); defaults to no-op. */
+  /** Optional register/token/revoke/direct-identity rate limiter (fix #7); defaults to no-op. */
   rateLimit?: RateLimitPort;
   /** BELOW-GUARD CIMD test seams (§17.1.5 rule 14 / §17.1.6 decision 1e). They
    *  inject the low-level connect-to-validated-IP transport / DNS resolver; the
@@ -230,6 +229,7 @@ export class Bridge {
     // catch is for unexpected throws (e.g. store outage), which must map to the
     // §9.5 body like every other route — never a framework-shaped error.
     try {
+      await this.guard("revoke", req.ip);
       await this.token.revoke(formField(formObject(req.body), "token"));
       return { status: 200, headers: { "cache-control": "no-store" }, body: {} };
     } catch (error) {

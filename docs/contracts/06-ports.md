@@ -286,13 +286,17 @@ locked in **§17.1**.
 interface RateLimitPort { check(key: string): Promise<boolean>; }
 const noopRateLimit: RateLimitPort = { async check(): Promise<boolean> { return true; } };
 ```
-Optional DoS defense for unauthenticated registration, token exchange, and
-direct header-based identity verification (threat-model #8). `Bridge` calls
-`check("register:<ip>")` / `check("token:<ip>")` before those use-cases and
+Optional DoS defense for unauthenticated registration, token exchange,
+revocation, and direct header-based identity verification (threat-model #8).
+`Bridge` calls `check("register:<ip>")` / `check("token:<ip>")` before those
+use-cases, `check("revoke:<ip>")` before `/oauth/revoke` body normalization,
+token hashing, store access or mutation, and audit work, and
 `Bridge.resolveIdentity` calls `check("authorize:<ip>")` before
-`IdentityPort.verify`; `false` ⇒ **429 Too Many Requests** with no identity-port
-call or `identity.verify` audit. Upstream redirect, console pairing, and CIMD
-keep their separate `upstream:<ip>`, `pairing:<ip>`, and `cimd:<ip>` budgets.
+`IdentityPort.verify`; `false` ⇒ **429 Too Many Requests**. A denied revocation
+does no token-use-case, store, or audit work; an admitted unknown or
+already-revoked token retains RFC 7009's HTTP 200 existence-hiding behavior.
+Upstream redirect, console pairing, and CIMD keep their separate
+`upstream:<ip>`, `pairing:<ip>`, and `cimd:<ip>` budgets.
 The default `noopRateLimit` allows everything (rate-limiting is advisory, not a
 hard gate). A thrown error is treated as **fail-open** (allow) — a rate-limiter
 outage must not lock out all auth; this is defense-in-depth, not a security boundary.
