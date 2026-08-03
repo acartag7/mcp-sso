@@ -88,7 +88,7 @@ export class OAuthTokenUseCase {
       const prepared = await this.tokenResponse(record, refreshToken);
       await this.store.saveRefreshToken({
         tokenHash: sha256Hex(refreshToken), familyId, previousTokenHash: null,
-        clientId: record.clientId, subject: record.subject, scopes: prepared.scopes,
+        clientId: record.clientId, subject: record.subject, resource: record.resource, scopes: prepared.scopes,
         expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
         grantGeneration: record.grantGeneration,
       });
@@ -99,7 +99,6 @@ export class OAuthTokenUseCase {
       throw error;
     }
   }
-
   async refresh(input: RefreshGrantInput): Promise<UserTokenResponse> {
     try {
       if (input.grantType !== "refresh_token") {
@@ -115,15 +114,16 @@ export class OAuthTokenUseCase {
         previousHash,
         {
           tokenHash: sha256Hex(nextRaw), familyId, previousTokenHash: previousHash,
-          clientId: input.clientId ?? "", subject: "", scopes: [],
+          clientId: input.clientId ?? "", subject: "", resource: this.config.resource, scopes: [],
           expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
         },
         rotatedAtIso,
         expectedStoredDcrGrantGeneration(this.config),
+        this.config.resource,
       );
       if (!rotated) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       try {
-        if (!hasExpectedGrantGeneration(rotated, expectedStoredDcrGrantGeneration(this.config))) throw new OAuthError("invalid_grant", "Refresh token is invalid");
+        if (!hasExpectedGrantGeneration(rotated, expectedStoredDcrGrantGeneration(this.config)) || rotated.resource !== this.config.resource) throw new OAuthError("invalid_grant", "Refresh token is invalid");
         // The rotated record's stored client is authoritative (RFC 6749 §6).
         if (!input.clientId || input.clientId !== rotated.clientId) throw new OAuthError("invalid_grant", "Refresh token client binding is invalid");
         if (rotated.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");

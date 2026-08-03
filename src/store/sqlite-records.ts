@@ -4,7 +4,8 @@ import type {
 } from "../ports/store.ts";
 import {
   StoreInputError, assertGrantGeneration, assertSha256Hex,
-  assertUtcIsoTimestamp, grantGenerationForWrite, grantGenerationFromStored,
+  assertRefreshResource, assertUtcIsoTimestamp, grantGenerationForWrite,
+  grantGenerationFromStored, refreshResourceFromStored,
 } from "../ports/store.ts";
 
 export interface AuthCodeRow {
@@ -14,35 +15,36 @@ export interface AuthCodeRow {
 }
 export interface RefreshTokenRow {
   token_hash: string; family_id: string; previous_token_hash: string | null;
-  client_id: string; subject: string; scopes_json: string; expires_at: string;
+  client_id: string; subject: string; resource: unknown; scopes_json: string; expires_at: string;
   consumed_at: string | null; grant_generation: unknown; revoked_at: string | null;
-  f_grant_generation: unknown;
+  f_grant_generation: unknown; f_resource: unknown;
 }
 
 export function insertRefreshToken(db: DatabaseSync, input: SaveRefreshTokenInput): void {
   db.prepare(`INSERT INTO oauth_refresh_tokens (
-    token_hash, family_id, previous_token_hash, client_id, subject, scopes_json,
+    token_hash, family_id, previous_token_hash, client_id, subject, resource, scopes_json,
     expires_at, consumed_at, grant_generation
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)`).run(
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`).run(
     input.tokenHash, input.familyId, input.previousTokenHash, input.clientId, input.subject,
-    JSON.stringify(input.scopes), input.expiresAt,
+    input.resource, JSON.stringify(input.scopes), input.expiresAt,
     grantGenerationForWrite(input.grantGeneration),
   );
 }
 
 export function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow): SaveRefreshTokenInput {
+  const resource = refreshResourceFromStored(row.resource);
+  if (resource === null) throw new StoreInputError("stored refresh resource is invalid");
   return {
     ...input, clientId: row.client_id, subject: row.subject,
-    scopes: parseScopes(row.scopes_json),
+    resource, scopes: parseScopes(row.scopes_json),
     grantGeneration: grantGenerationFromStored(row.grant_generation),
   };
 }
 
 export function revokeFamily(db: DatabaseSync, familyId: string, revokedAtIso: string): void {
   db.prepare(
-    `INSERT INTO oauth_refresh_token_families (family_id, revoked_at) VALUES (?, ?)
-     ON CONFLICT(family_id) DO UPDATE SET revoked_at = COALESCE(oauth_refresh_token_families.revoked_at, excluded.revoked_at)`,
-  ).run(familyId, revokedAtIso);
+    `UPDATE oauth_refresh_token_families SET revoked_at = COALESCE(revoked_at, ?) WHERE family_id = ?`,
+  ).run(revokedAtIso, familyId);
 }
 
 export function validateAuthCode(input: SaveAuthCodeInput): void {
@@ -55,6 +57,7 @@ export function validateAuthCode(input: SaveAuthCodeInput): void {
 export function validateRefreshToken(input: SaveRefreshTokenInput): void {
   assertSha256Hex(input.tokenHash, "tokenHash");
   if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
+  assertRefreshResource(input.resource, "resource");
   assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
   assertGrantGeneration(input.grantGeneration, "grantGeneration");
 }
@@ -80,7 +83,7 @@ export function refreshTokenFromRow(row: RefreshTokenRow): RefreshTokenRecord {
   return {
     tokenHash: row.token_hash, familyId: row.family_id,
     previousTokenHash: row.previous_token_hash, clientId: row.client_id,
-    subject: row.subject, scopes: parseScopes(row.scopes_json),
+    subject: row.subject, resource: refreshResourceFromStored(row.resource), scopes: parseScopes(row.scopes_json),
     expiresAt: row.expires_at,
     grantGeneration: grantGenerationFromStored(row.grant_generation),
   };

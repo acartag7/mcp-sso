@@ -235,7 +235,15 @@ client-controlled request input; when present, `prepare` uses it and does not fe
 - **`refresh`**: atomically rotates the refresh token (§7.4), preserving
   consumed-token replay detection and whole-family revocation; then enforces RFC
   6749 §6 client binding (mismatch ⇒ family revoked ⇒ `invalid_grant`) and mints
-  a new access token carrying the rotated record's scopes. After a successful
+  a new access token carrying the rotated record's scopes. It supplies the
+  current `BridgeConfig.resource` to the atomic store operation. A missing or
+  different family/record resource is the uniform `invalid_grant` response, with
+  no reference-store rotation, consumption, revocation, replacement persistence,
+  signing, or success audit; the legitimate current token remains available to
+  its bound resource. `OAuthTokenUseCase` repeats the returned-record resource
+  check before every response-preparation side effect, so a custom store that
+  ignores the resource argument cannot cause a wrong-audience access token or
+  success audit. After a successful
   rotation, every remaining failure path attempts compensation by calling
   `revokeRefreshTokenFamily` once with the rotation timestamp before propagating
   the error, and returns no token. When that store call succeeds, a malformed

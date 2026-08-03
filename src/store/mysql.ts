@@ -6,7 +6,8 @@ import { createPool, type Pool, type PoolConnection, type PoolOptions, type Resu
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
-  grantGenerationForWrite, grantGenerationFromStored,
+  grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
+  refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
@@ -68,29 +69,34 @@ export class MysqlStore implements StorePort {
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
+    input = normalizeRefreshTokenWrite(input);
     validateRefreshToken(input);
     await this.transaction(async (conn) => {
       const generation = grantGenerationForWrite(input.grantGeneration);
       await conn.query(
-        `INSERT INTO oauth_refresh_token_families (family_id, revoked_at, grant_generation) VALUES (?, NULL, ?) ON DUPLICATE KEY UPDATE revoked_at = oauth_refresh_token_families.revoked_at`,
-        [input.familyId, generation],
+        `INSERT INTO oauth_refresh_token_families (family_id, resource, revoked_at, grant_generation) VALUES (?, ?, NULL, ?) ON DUPLICATE KEY UPDATE revoked_at = oauth_refresh_token_families.revoked_at`,
+        [input.familyId, input.resource, generation],
       );
       const [families] = await conn.query<RowDataPacket[]>(
-        `SELECT grant_generation FROM oauth_refresh_token_families WHERE family_id = ? FOR UPDATE`,
+        `SELECT resource, grant_generation FROM oauth_refresh_token_families WHERE family_id = ? FOR UPDATE`,
         [input.familyId],
       );
-      const family = families[0] as { grant_generation?: unknown } | undefined;
-      if (grantGenerationFromStored(family?.grant_generation) !== generation) throw new StoreInputError("family grantGeneration mismatch");
+      const family = families[0] as { resource?: unknown; grant_generation?: unknown } | undefined;
+      if (refreshResourceFromStored(family?.resource) !== input.resource
+        || grantGenerationFromStored(family?.grant_generation) !== generation) {
+        throw new StoreInputError("family grantGeneration or resource mismatch");
+      }
       await insertRefreshToken(conn, input);
     });
   }
 
-  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number): Promise<RefreshTokenRecord | null> {
+  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
+    next = normalizeRefreshTokenWrite(next);
     validateRotation(tokenHash, next, nowIso);
     return this.transaction(async (conn) => {
       const [rows] = await conn.query<RowDataPacket[]>(
-        `SELECT t.*, f.revoked_at AS f_revoked_at, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ? FOR UPDATE`,
+        `SELECT t.*, f.revoked_at AS f_revoked_at, f.resource AS f_resource, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ? FOR UPDATE`,
         [tokenHash],
       );
       const row = rows[0] as RefreshTokenRow | undefined;
@@ -98,12 +104,15 @@ export class MysqlStore implements StorePort {
       if (expectedGrantGeneration !== undefined
         && (grantGenerationFromStored(row.f_grant_generation) !== expectedGrantGeneration
           || grantGenerationFromStored(row.grant_generation) !== expectedGrantGeneration)) return null;
+      const resource = refreshResourceFromStored(row.resource);
+      if (resource === null || resource === UNBOUND_REFRESH_RESOURCE || resource !== refreshResourceFromStored(row.f_resource)
+        || (expectedResource !== undefined && resource !== expectedResource)) return null;
       if (row.consumed_at !== null) { await revokeFamily(conn, row.family_id, nowIso); return null; } // SAME conn — review B1
       if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
       // Insert successor BEFORE marking the predecessor consumed: a colliding successor
       // hash returns null WITHOUT consuming the predecessor (sqlite parity; Codex P2).
       try {
-        await insertRefreshToken(conn, nextFromRow(next, row)); // Fix #3 backfill from the consumed row
+        await insertRefreshToken(conn, nextFromRow(next, row)); // backfill from the consumed row
       } catch (error) {
         if (isDuplicateEntry(error)) return null;
         throw error;

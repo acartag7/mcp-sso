@@ -59,7 +59,7 @@ test("stored-DCR rollback grants fail for unknown and existing client IDs", asyn
     assert.ok(familyId);
     await store.saveRefreshToken({
       tokenHash: sha256Hex(rawRefresh), familyId, previousTokenHash: null,
-      clientId, subject: "subject", scopes: ["mcp:read"],
+      clientId, subject: "subject", resource: config.resource, scopes: ["mcp:read"],
       expiresAt: futureIso(), grantGeneration: null,
     });
     await assert.rejects(

@@ -29,6 +29,8 @@ export interface RefreshTokenRecord {
   previousTokenHash: string | null;
   clientId: string;
   subject: string;
+  /** Exact stored family resource string; null only projects a legacy durable row. */
+  resource: string | null;
   scopes: string[];
   expiresAt: string;
   /** Durable token/family generation; null means legacy/non-stored. */
@@ -55,10 +57,29 @@ export interface SaveRefreshTokenInput {
   previousTokenHash: string | null;
   clientId: string;
   subject: string;
+  /** Exact configured resource string persisted on every new family and token row. */
+  resource: string;
   scopes: string[];
   expiresAt: string;
   /** Omitted defaults to the current generation; null is legacy/non-stored. */
   grantGeneration?: number | null;
+}
+
+/** Reserved, unmatchable marker for an omitted member from pre-resource JS callers. */
+export const UNBOUND_REFRESH_RESOURCE = "mcp-sso:unbound-refresh-resource";
+
+/**
+ * Typed callers must provide an exact resource string. An old untyped caller that
+ * omits it is persisted as deliberately unbound, so it cannot refresh through
+ * any bridge instead of being inferred from current configuration.
+ */
+export function normalizeRefreshTokenWrite(input: SaveRefreshTokenInput): SaveRefreshTokenInput {
+  if (input.resource === undefined) return { ...input, resource: UNBOUND_REFRESH_RESOURCE };
+  assertRefreshResource(input.resource, "resource");
+  if (input.resource === UNBOUND_REFRESH_RESOURCE) {
+    throw new StoreInputError("resource is reserved for unbound legacy writes");
+  }
+  return input;
 }
 
 export interface StorePort {
@@ -74,12 +95,14 @@ export interface StorePort {
     expectedResource?: string,
   ): Promise<AuthCodeRecord | null>;
   saveRefreshToken(input: SaveRefreshTokenInput): Promise<void>;
-  /** Returns the consumed record (and rotates), or null if missing/expired/revoked. */
+  /** Returns the consumed record (and rotates), or null if missing/expired/revoked.
+   * A supplied expectedResource mismatch leaves the family untouched. */
   rotateRefreshToken(
     tokenHash: string,
     next: SaveRefreshTokenInput,
     nowIso: string,
     expectedGrantGeneration?: number,
+    expectedResource?: string,
   ): Promise<RefreshTokenRecord | null>;
   /** Revoke every token in the family. Replay-detection path. */
   revokeRefreshTokenFamily(familyId: string, revokedAtIso: string): Promise<void>;
@@ -124,6 +147,17 @@ export function assertGrantGeneration(value: unknown, label: string): void {
     && (!Number.isSafeInteger(value) || (value as number) <= 0)) {
     throw new StoreInputError(`${label} must be a positive safe integer or null`);
   }
+}
+
+export function assertRefreshResource(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new StoreInputError(`${label} must be a non-empty resource string`);
+  }
+}
+
+/** Stored rows without a non-blank resource are legacy and fail closed. */
+export function refreshResourceFromStored(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 /** Stored rows fail closed: malformed/missing values are legacy null. */

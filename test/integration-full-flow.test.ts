@@ -468,12 +468,13 @@ test("integration — /mcp Origin gate: foreign Origin ⇒ 403 before parsing/au
 
 // ---------------------------------------------------------------------------
 // Item 3: sqlite FILE store — the e2e suite only ever uses :memory:. Prove the
-// quickstart's persistence-across-restart promise: a live refresh token still
-// refreshes, a pre-restart-consumed token is still dead, and a pre-restart
-// consent-JTI replay is still rejected (all persisted in the file).
+// persistence-across-restart promise: a live refresh family survives a normal
+// restart at its original resource, rejects a resource cutover without mutation,
+// a pre-restart-consumed token is still dead, and a pre-restart consent-JTI replay
+// is still rejected (all persisted in the file).
 // ---------------------------------------------------------------------------
 
-test("integration — sqlite FILE store: full round-trip survives restart (live refresh, consumed-dead, consent-JTI replay rejected)", async () => {
+test("integration — sqlite FILE store: refresh stays bound across restart/resource cutover", async () => {
   if (process.platform === "win32") return; // node:sqlite file-lock/perm parity is POSIX-only
   const dir = await mkdtemp(join(tmpdir(), "mcp-sso-int-sqlite-file-"));
   const sqliteFile = join(dir, "auth.db");
@@ -481,15 +482,15 @@ test("integration — sqlite FILE store: full round-trip survives restart (live 
   // must be stable so the pre-restart consent token still verifies on reopen.
   const signingPrivateJwk = ecJwk();
   const consentSigningSecret = "s".repeat(40);
-  // The socket port is test transport detail; issuer and logical resource remain
-  // the same deployment identifiers across the simulated process restart.
+  // The issuer remains stable so consent verification is independent of the
+  // resource cutover exercised below.
   const STABLE_ISSUER = "http://127.0.0.1";
-  const STABLE_RESOURCE = `${STABLE_ISSUER}/mcp`;
   try {
     // --- run 1: drive the flow through the first refresh, then close ---
     const port1 = await freePort();
     const base1 = `http://127.0.0.1:${port1}`;
-    const config1 = makeConfig({ resource: STABLE_RESOURCE, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
+    const resourceA = `${base1}/mcp`;
+    const config1 = makeConfig({ resource: resourceA, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
     const store1 = openSqliteStore(sqliteFile);
     const { bridge: bridge1, authorizer: authorizer1 } = deps(config1, store1);
     const mount1 = await mountExpress(bridge1, authorizer1, config1, port1);
@@ -504,27 +505,54 @@ test("integration — sqlite FILE store: full round-trip survives restart (live 
     // --- reopen run 2: SAME file + signing material + issuer (mirrors a restart) ---
     const port2 = await freePort();
     const base2 = `http://127.0.0.1:${port2}`;
-    const config2 = makeConfig({ resource: STABLE_RESOURCE, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
+    const resourceB = `${base2}/mcp`;
+    const config2 = makeConfig({ resource: resourceB, issuer: STABLE_ISSUER, signingPrivateJwk, consentSigningSecret });
     const store2 = openSqliteStore(sqliteFile);
     const { bridge: bridge2, authorizer: authorizer2 } = deps(config2, store2);
     const mount2 = await mountExpress(bridge2, authorizer2, config2, port2);
     try {
-      // 1. The LIVE refresh token minted before restart (the rotated successor)
-      //    still refreshes — refresh-token state survived the file reopen.
-      const refresh = await http.postForm(mount2.base, "/oauth/token", { grant_type: "refresh_token", refresh_token: artifacts.newRefreshToken, client_id: artifacts.clientId });
-      assert.equal(refresh.status, 200, "live refresh token survived restart");
+      // 1. The LIVE A-bound refresh token must NOT refresh through B after the
+      //    durable store is reopened under a different configured resource.
+      const cutover = await http.postForm(mount2.base, "/oauth/token", { grant_type: "refresh_token", refresh_token: artifacts.newRefreshToken, client_id: artifacts.clientId });
+      assert.equal(cutover.status, 400, "resource-B refresh is rejected after restart");
+      assert.equal((JSON.parse(cutover.body) as { error: string }).error, "invalid_grant");
 
-      // 2. The pre-restart consent token (its JTI already consumed at the first
+      // 2. The exact same token remains usable once through resource A. This is
+      //    a second bridge over the reopened durable store, not a new in-memory
+      //    state instance.
+      const { bridge: bridgeA } = deps(config1, store2);
+      const refreshA = await bridgeA.handleToken({
+        query: {}, headers: {}, body: {
+          grant_type: "refresh_token", refresh_token: artifacts.newRefreshToken,
+          client_id: artifacts.clientId,
+        },
+      });
+      assert.equal(refreshA.status, 200, "A-bound refresh token survives restart at resource A");
+      const successorA = (refreshA.body as { refresh_token: string }).refresh_token;
+
+      // 3. The pre-restart consent token (its JTI already consumed at the first
       //    approve) is STILL rejected on reopen — the consent-JTI ledger persisted.
       const consentReplay = await http.postForm(mount2.base, "/oauth/authorize/approve", { consent_token: artifacts.consentToken, approved: "true" }, { origin: STABLE_ISSUER });
       assert.equal(consentReplay.status, 400, "replayed consent JTI rejected after restart");
-      assert.equal((JSON.parse(consentReplay.body) as { error: string }).error, "invalid_grant");
+      assert.equal((JSON.parse(consentReplay.body) as { error: string }).error, "invalid_consent");
 
-      // 3. The pre-restart CONSUMED refresh token (the original) is still dead.
+      // 4. The pre-restart CONSUMED refresh token (the original) is still dead.
       //    Done last: replaying a consumed token revokes the whole family.
-      const r1Replay = await http.postForm(mount2.base, "/oauth/token", { grant_type: "refresh_token", refresh_token: artifacts.refreshToken, client_id: artifacts.clientId });
+      const r1Replay = await bridgeA.handleToken({
+        query: {}, headers: {}, body: {
+          grant_type: "refresh_token", refresh_token: artifacts.refreshToken,
+          client_id: artifacts.clientId,
+        },
+      });
       assert.equal(r1Replay.status, 400, "pre-restart consumed refresh token still dead");
-      assert.equal((JSON.parse(r1Replay.body) as { error: string }).error, "invalid_grant");
+      assert.equal((r1Replay.body as { error: string }).error, "invalid_grant");
+      const afterReplay = await bridgeA.handleToken({
+        query: {}, headers: {}, body: {
+          grant_type: "refresh_token", refresh_token: successorA,
+          client_id: artifacts.clientId,
+        },
+      });
+      assert.equal(afterReplay.status, 400, "correct-resource replay still revokes the family");
     } finally {
       await mount2.close();
       await store2.close();

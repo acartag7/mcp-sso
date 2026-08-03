@@ -72,6 +72,17 @@ rotate without a lookup). Stored only as `sha256(token)`.
 - **Rotation:** `rotateRefreshToken(tokenHash, next, now)` marks the current
   token consumed, inserts the next, and returns the **consumed** record. Replay of
   an already-consumed token revokes the whole family.
+- **Resource binding:** every new refresh family and every member carries the
+  authorization code's exact resource string. The resource is fixed for the whole
+  family. `rotateRefreshToken` receives the bridge's expected resource and checks
+  the family and selected record before replay detection, consumption, successor
+  persistence, or any family mutation. A different resource is the same
+  `invalid_grant` as an unknown refresh token and commits no reference-store
+  mutation, so the correctly bound current token remains usable. Rows from an
+  older schema without a resource are legacy and fail closed; migration never
+  infers one from current bridge configuration. The token use-case rechecks the
+  returned record before signing or success audit work because custom stores are
+  a runtime boundary.
 - **0.3.2 stored-DCR generation:** a refresh family
   created from a stored-DCR-mode authorization code carries that code's
   current generation. Rotation takes the expected generation, compares it

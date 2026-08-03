@@ -95,6 +95,29 @@ patch security release: existing callers may omit it, existing schemas already
 store `resource`, and no migration is required. Custom stores must implement the
 predicate to retain wrong-resource retry semantics and pass §12 conformance.
 
+**Refresh-family resource predicate.** Every new `SaveRefreshTokenInput` carries
+the exact configured `resource` string from its authorization-code record. A family and
+each member persist that value; it is immutable for the family.
+`rotateRefreshToken` accepts an optional trailing `expectedResource`. A
+conforming store checks that both the selected token row and its family have a
+non-legacy resource exactly equal to that value inside the same atomic operation
+as rotation, before replay handling, predecessor consumption, successor insert,
+or family revocation. A missing, malformed, or mismatching resource returns
+`null` without a mutation. The successor's resource is authoritative-copied
+from the selected row, not from `next`. `OAuthTokenUseCase.refresh` supplies the
+current `BridgeConfig.resource` and independently repeats equality on the
+returned record before signing or success audit work, so a custom store that
+ignores the added argument cannot mint a wrong-resource token. The optional
+trailing argument preserves calls that do not yet supply a resource, but legacy
+durable rows without one still fail closed under §12.
+
+The TypeScript write shape requires an exact resource string. To keep an old
+untyped JavaScript caller from silently acquiring the current bridge resource,
+reference stores convert an omitted write member to the reserved unbound marker
+`mcp-sso:unbound-refresh-resource`. That marker is persisted rather than a
+`NULL`, copied only as stored state, and is rejected by every rotation before
+any mutation; callers cannot supply it explicitly.
+
 ## 6.4 `ClientStore` (stored-DCR mode only — fix #4)
 ```ts
 type ApplicationType = "native" | "web" | "machine";   // "machine" added §17.2

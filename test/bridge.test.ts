@@ -49,7 +49,7 @@ async function saveRevocableToken(store: MemoryStore): Promise<string> {
   assert.ok(familyId, "generated refresh token has a family id");
   await store.saveRefreshToken({
     tokenHash: sha256Hex(token), familyId, previousTokenHash: null,
-    clientId: "client", subject: SUBJECT, scopes: ["mcp:read"],
+    clientId: "client", subject: SUBJECT, resource: "https://api.test/mcp", scopes: ["mcp:read"],
     expiresAt: "2026-08-03T12:00:00.000Z",
   });
   return token;

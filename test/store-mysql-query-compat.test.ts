@@ -17,8 +17,8 @@ function recordingStore(): { readonly store: MysqlStore; readonly queries: Recor
   const connection = {
     query: async (sql: string, values?: unknown[]) => {
       queries.push({ sql, values });
-      if (sql.startsWith("SELECT grant_generation")) {
-        return [[{ grant_generation: STORED_DCR_GRANT_GENERATION }], []];
+      if (sql.startsWith("SELECT resource, grant_generation")) {
+        return [[{ resource: "https://api.test/mcp", grant_generation: STORED_DCR_GRANT_GENERATION }], []];
       }
       return [[], []];
     },
@@ -42,6 +42,7 @@ test("MysqlStore family upserts bind incoming values without row aliases", async
     previousTokenHash: null,
     clientId: "client",
     subject: "subject",
+    resource: "https://api.test/mcp",
     scopes: ["mcp:read"],
     expiresAt: FUTURE
   });
@@ -50,7 +51,7 @@ test("MysqlStore family upserts bind incoming values without row aliases", async
   );
   assert.ok(createQuery);
   assert.doesNotMatch(createQuery.sql, /VALUES\s*\([^)]*\)\s+AS\s+/iu);
-  assert.deepEqual(createQuery.values, ["family", STORED_DCR_GRANT_GENERATION]);
+  assert.deepEqual(createQuery.values, ["family", "https://api.test/mcp", STORED_DCR_GRANT_GENERATION]);
   const tokenQuery = created.queries.find(({ sql }) =>
     sql.startsWith("INSERT INTO oauth_refresh_tokens")
   );
@@ -60,9 +61,8 @@ test("MysqlStore family upserts bind incoming values without row aliases", async
   const revoked = recordingStore();
   await revoked.store.revokeRefreshTokenFamily("family", REVOKED);
   const revokeQuery = revoked.queries.find(({ sql }) =>
-    sql.startsWith("INSERT INTO oauth_refresh_token_families")
+    sql.startsWith("UPDATE oauth_refresh_token_families")
   );
   assert.ok(revokeQuery);
-  assert.doesNotMatch(revokeQuery.sql, /VALUES\s*\([^)]*\)\s+AS\s+/iu);
-  assert.deepEqual(revokeQuery.values, ["family", REVOKED, REVOKED]);
+  assert.deepEqual(revokeQuery.values, [REVOKED, "family"]);
 });

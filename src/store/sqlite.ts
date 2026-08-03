@@ -10,7 +10,8 @@ import type {
 } from "../ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
-  grantGenerationForWrite, grantGenerationFromStored,
+  grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
+  refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
 import {
@@ -67,34 +68,40 @@ export class SqliteStore implements StorePort {
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
+    input = normalizeRefreshTokenWrite(input);
     validateRefreshToken(input);
     this.transaction(() => {
       const generation = grantGenerationForWrite(input.grantGeneration);
       this.db.prepare(`INSERT INTO oauth_refresh_token_families (
-        family_id, revoked_at, grant_generation
-      ) VALUES (?, NULL, ?) ON CONFLICT(family_id) DO NOTHING`).run(input.familyId, generation);
+        family_id, resource, revoked_at, grant_generation
+      ) VALUES (?, ?, NULL, ?) ON CONFLICT(family_id) DO NOTHING`).run(input.familyId, input.resource, generation);
       const family = this.db.prepare(
-        `SELECT grant_generation FROM oauth_refresh_token_families WHERE family_id = ?`,
-      ).get(input.familyId) as { grant_generation: unknown };
-      if (grantGenerationFromStored(family.grant_generation) !== generation) {
-        throw new StoreInputError("family grantGeneration mismatch");
+        `SELECT resource, grant_generation FROM oauth_refresh_token_families WHERE family_id = ?`,
+      ).get(input.familyId) as { resource: unknown; grant_generation: unknown };
+      if (refreshResourceFromStored(family.resource) !== input.resource
+        || grantGenerationFromStored(family.grant_generation) !== generation) {
+        throw new StoreInputError("family grantGeneration or resource mismatch");
       }
       insertRefreshToken(this.db, input);
     });
   }
 
-  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number): Promise<RefreshTokenRecord | null> {
+  async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
+    next = normalizeRefreshTokenWrite(next);
     validateRotation(tokenHash, next, nowIso);
     return this.transaction(() => {
       const row = this.db.prepare(
-        `SELECT t.*, f.revoked_at, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t
+        `SELECT t.*, f.revoked_at, f.resource AS f_resource, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t
          JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ?`,
       ).get(tokenHash) as RefreshTokenRow | undefined;
       if (!row || row.revoked_at !== null) return null;
       if (expectedGrantGeneration !== undefined
         && (grantGenerationFromStored(row.f_grant_generation) !== expectedGrantGeneration
           || grantGenerationFromStored(row.grant_generation) !== expectedGrantGeneration)) return null;
+      const resource = refreshResourceFromStored(row.resource);
+      if (resource === null || resource === UNBOUND_REFRESH_RESOURCE || resource !== refreshResourceFromStored(row.f_resource)
+        || (expectedResource !== undefined && resource !== expectedResource)) return null;
       if (row.consumed_at !== null) {
         revokeFamily(this.db, row.family_id, nowIso);
         return null;
@@ -102,7 +109,7 @@ export class SqliteStore implements StorePort {
       if (row.expires_at <= nowIso || next.familyId !== row.family_id) return null;
       if (this.db.prepare(`SELECT token_hash FROM oauth_refresh_tokens WHERE token_hash = ?`).get(next.tokenHash)) return null;
       this.db.prepare(`UPDATE oauth_refresh_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL`).run(nowIso, tokenHash);
-      // Fix #3 backfill: successor takes clientId/subject/scopes from the consumed row.
+      // Backfill: successor takes identity and resource from the consumed row.
       insertRefreshToken(this.db, nextFromRow(next, row));
       return refreshTokenFromRow(row);
     });
