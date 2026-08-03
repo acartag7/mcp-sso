@@ -139,6 +139,7 @@ Notes:
 | S2a.3 | Empty intersection | `access_denied` over the redirect channel, after redirect validation. |
 | S2a.4 | Consent-token tampering | `approve` uses `allowed_scopes` from the verified consent token, never caller input. |
 | S2a.5 | Prior grants | Existing grants cannot resurrect scopes outside the current ceiling. |
+| S2a.5a | Corrupt or oversized prior grant | `approve` returns `invalid_grant` before consuming the consent JTI or writing an authorization code. |
 | S2a.6 | Adapter plumbing | Fastify, Express, and Hono all pass the identity object through the bridge. |
 
 ### T1.S2b — Entra group mapping

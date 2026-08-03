@@ -183,6 +183,13 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   source's unreachable Deny path; the UI button is Phase 3. Hardened 2026-07-07:
   the original text keyed Deny on `approved === false`, which made the ABSENT
   case an approval — a fail-open default on the consent decision.)*
+- **Validate scope state before consuming consent:** on approval, the signed
+  consent `scope` claim and the loaded stored-DCR prior scopes must satisfy §11
+  and the current `scopeCatalog`; a carried `allowed_scopes` ceiling must also
+  satisfy §11's shape and size bound. A malformed, stale, or oversized consent
+  scope or stored grant is a direct `invalid_grant`; a malformed carried ceiling
+  is `access_denied`. Both failures occur before the consent JTI is consumed or
+  an authorization code is written.
 - On approval (the consent token was already verified above, before the scheme gate
   and Deny branch — `authorize.ts:142`), **consume its single-use `jti`** (replay ⇒
   `invalid_grant` **direct** — an integrity failure, not a user-facing denial).

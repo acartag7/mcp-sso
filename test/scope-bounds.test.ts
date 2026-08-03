@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 import type { JWK } from "jose";
+import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
 import { createBridgeConfig, type BridgeConfig, AuthConfigError } from "../src/config.ts";
 import { MAX_CONSENT_TOKEN_BYTES, signConsentToken } from "../src/crypto.ts";
 import { OAuthError } from "../src/errors.ts";
@@ -9,6 +10,7 @@ import { validateAllowedScopes } from "../src/machine-client-secret.ts";
 import {
   assertAllowedScopesCeiling, normalizeScopes, resolveClientCredentialsScope, storedScopes,
 } from "../src/scopes.ts";
+import { MemoryStore } from "../src/store/memory.ts";
 
 function scope(index: number, bytes = 256): string {
   return `s${index.toString(36).padStart(3, "0")}${"a".repeat(bytes - 4)}`;
@@ -28,6 +30,22 @@ function config(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
 
 function isOAuth(code: string): (error: unknown) => boolean {
   return (error) => error instanceof OAuthError && error.code === code;
+}
+
+class CorruptPriorStore extends MemoryStore {
+  consumeCalls = 0;
+  codeWrites = 0;
+  override async consumeConsentJti(...args: Parameters<MemoryStore["consumeConsentJti"]>): Promise<boolean> {
+    this.consumeCalls += 1;
+    return await super.consumeConsentJti(...args);
+  }
+  override async saveAuthCode(...args: Parameters<MemoryStore["saveAuthCode"]>): Promise<void> {
+    this.codeWrites += 1;
+    await super.saveAuthCode(...args);
+  }
+  override async findGrantedScopes(): Promise<string[]> {
+    return Array(129).fill("mcp:read");
+  }
 }
 
 test("scope bounds: boot rejects overlong tokens and lists over 128 entries", () => {
@@ -55,4 +73,21 @@ test("scope bounds: signer refuses a consent token that cannot fit the approval 
     }, checked, { nowMs: () => Date.parse("2026-08-03T12:00:00.000Z") }),
     isOAuth("invalid_request"),
   );
+});
+
+test("scope bounds: corrupt stored scopes fail before consuming consent", async () => {
+  const store = new CorruptPriorStore();
+  const checked = createBridgeConfig(config({
+    dcr: { mode: "stored", store: { async save() {}, async find() { return null; } } },
+  }));
+  const auth = new OAuthAuthorizationUseCase({
+    config: checked, store, clock: { nowMs: () => Date.parse("2026-08-03T12:00:00.000Z") },
+    audit: { async writeAuthEvent() {} },
+  });
+  const consentToken = await signConsentToken({
+    clientId: "client-1", redirectUri: "https://client.test/callback", resource: checked.resource,
+    scopes: ["mcp:read"], codeChallenge: "a".repeat(43), codeChallengeMethod: "S256", subject: "user-1",
+  }, checked, { nowMs: () => Date.parse("2026-08-03T12:00:00.000Z") });
+  await assert.rejects(auth.approve({ consentToken, approved: true, origin: "https://auth.test" }), isOAuth("invalid_grant"));
+  assert.deepEqual({ consumeCalls: store.consumeCalls, codeWrites: store.codeWrites }, { consumeCalls: 0, codeWrites: 0 });
 });
