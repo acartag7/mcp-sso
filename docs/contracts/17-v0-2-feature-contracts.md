@@ -325,9 +325,8 @@ decision. Everything else in the pipeline still runs under the flag.
   scope set up front, so the convenience is unused; a provenance-aware version is a
   future minor — §12 note.)
 - Token/refresh/revoke: NO re-fetch; binding is the existing auth-code-record
-  and refresh-record client checks (§9.4). Validated documents cache per a
-  **subset** of RFC 9111 headers (**PENDING (D00-4.4.2)** — shared-cache
-  `s-maxage`/`private`/`Date` semantics are unmodelled; see rule 25)
+  and refresh-record client checks (§9.4). Validated documents cache per the
+  bounded shared-cache rules in rule 25
   (freshness per §17.1.6 decision 4: `effectiveTtlSeconds =
   min(valid max-age, cacheTtlCapSeconds) − Age − elapsedSeconds`; a valid
   `max-age` below 60 is non-cacheable, never clamped up), keyed by the
@@ -366,8 +365,8 @@ reviewed against `2026-07-28-RC`; the official final artifact was then checked
 on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
 44 normative statements: 24 conformant (one carrying a disclosed caveat), two
 reasoned deviations, 12 not applicable to the implemented public-client profile,
-four with unresolved test evidence, and two confirmed runtime mismatches
-(D00-4.4.2 shared-cache directives and D00-4.5.2 native-app precondition).
+four with unresolved test evidence, and one confirmed runtime mismatch
+(D00-4.5.2 native-app precondition).
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -618,7 +617,7 @@ four with unresolved test evidence, and two confirmed runtime mismatches
     initiating resolution; the cap counts FOLLOWERS only). This does NOT reverse the
     no-slot rule above: a follower still consumes no FETCH slot, so one popular
     client_id can never starve distinct client_ids out of `maxInFlight`.
-25. Cache freshness (**partial RFC 9111 — see the PENDING note below**, in-memory
+25. Cache freshness (RFC 9111 shared-cache subset, in-memory
     per instance, keyed by raw client_id):
     `no-store` or `no-cache` ⇒ do not cache; absent, malformed, duplicate, or
     conflicting `Cache-Control`/`max-age`, and a negative/non-integer/overflow
@@ -627,16 +626,12 @@ four with unresolved test evidence, and two confirmed runtime mismatches
     non-cacheable** (never honored, never clamped up — this REPLACES the earlier
     clamp-to-60 behavior, per §17.1.6 decision 4); otherwise `effectiveTtlSeconds =
     min(valid max-age, cacheTtlCapSeconds) − Age − elapsedSeconds` and a non-positive
-    `effectiveTtlSeconds` is not cached. A quoted `max-age` value is treated as
-    malformed (no cache entry).
-    **PENDING (D00-4.4.2, §16.1):** the directives above are honoured correctly,
-    but this cache is SHARED (one instance per `Bridge`, keyed on `client_id`
-    with no user dimension), so RFC 9111's shared-cache rules also bind:
-    `s-maxage` overrides `max-age` (§5.2.2.10), a `private` response **MUST NOT**
-    be stored (§5.2.2.7), and apparent age must be derived from `Date` (§4.2.3).
-    None are modelled and all three were probed as stored. The follow-up runtime
-    PR implements them or refuses to cache when an unsupported directive is
-    present. Until then this rule is a subset of RFC 9111, not conformance to it.
+    `effectiveTtlSeconds` is not cached. This shared cache uses valid `s-maxage`
+    before `max-age`; `private`, `no-store`, `no-cache`, and `Vary: *` are never
+    stored. Current age is `max(Age, apparentAgeFromDate) + responseDelay`.
+    A malformed or duplicate freshness header refuses storage. `Expires` is not
+    a supported lifetime source, so a response without valid max-age/s-maxage is
+    conservatively re-fetched. A quoted max-age/s-maxage is malformed.
 
 ## 17.1.6 S6b flow-integration amendments (decisions 1–6, 2026-07-23)
 
@@ -897,9 +892,7 @@ URL-keyed refresh row with a broader scope and prove a genuine CIMD authorizatio
 modes) reports `priorScopes = []` and mints only the requested, ceiling-bounded scopes; a
 control case proves an opaque stored-DCR client still accumulates.
 
-**Decision 4 — CimdFetchResult minimal cache view; partial-RFC-9111 freshness
-(**PENDING (D00-4.4.2)**: shared-cache `s-maxage`/`private`/`Date` semantics are
-unmodelled — see rule 25 and §16.1) (the
+**Decision 4 — CimdFetchResult minimal cache view; shared-cache freshness (the
 success cache serves BOTH modes).** The raw-client-id-keyed validated-success cache
 (§17.1.4) is used at **both** direct-mode `prepare` AND upstream-redirect authorize
 (1a) — NOT direct-mode-only. Redirect mode is the only mode that resolves
@@ -920,12 +913,6 @@ duplicate-aware cache view** — the `Cache-Control` directive occurrences and t
 the full header map (an unnecessary trust-boundary expansion). Error/invalid results
 carry no cache view and are never cached. SUPERSEDES rule 25's upward clamp, with
 pinned conservative arithmetic (all via `ClockPort`, no ambient `Date.now`):
-**PENDING (D00-4.4.2, §16.1):** this cache is SHARED (one instance per `Bridge`,
-keyed on `client_id` with no user dimension), so RFC 9111's shared-cache rules
-apply. The pinned view below models only `Cache-Control` and `Age`; `s-maxage`,
-`private`, and `Date`-derived apparent age are unmodelled and all three were
-probed as stored. The follow-up runtime PR implements those semantics or refuses
-to cache when an unsupported directive is present.
 `Cache-Control` directive names are ASCII case-insensitive; an **absent `Age` is 0**;
 `Age` is cacheable only as exactly one occurrence matching `^[0-9]+$` within the
 safe-integer bound (duplicate/list/signed/whitespaced ⇒ non-cacheable). All lifetime

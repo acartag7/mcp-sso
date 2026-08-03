@@ -22,7 +22,7 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 24 conformant (1 with a disclosed caveat), 2 reasoned deviations, 4 unresolved test-evidence rows, **2 confirmed runtime mismatches (D00-4.4.2 shared-cache directives, D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
+| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 25 conformant (1 with a disclosed caveat), 2 reasoned deviations, 4 unresolved test-evidence rows, **1 confirmed runtime mismatch (D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP extension) | ✅ v0.2 shipped | §17.2 |
@@ -52,7 +52,7 @@ than folded into a single "conformant" total:
 | `C` with a disclosed caveat | 1 | D00-6.5.1 | Conformant in production, with a narrower environment-scoped departure (the dev-only loopback fetch) stated in the row rather than absorbed into the total. |
 | Reasoned deviation | 2 | D00-4.2.1 (`SHOULD`), D00-4.2.2 (`RECOMMENDED`) | The obligation applies and is deliberately not met; rationale recorded. |
 | `U` unresolved evidence | 4 | D00-4.1, D00-4.1.5, D00-5.1, D00-6.5.2 | The enforcing source exists, but no test yet proves the complete hostile class or the shipped framework route. |
-| **Runtime mismatch** | **2** | **D00-4.4.2, D00-4.5.2** | Implementation contradicts the statement. Each reproduced by direct probe, not inferred. |
+| **Runtime mismatch** | **1** | **D00-4.5.2** | Implementation contradicts the statement. Reproduced by direct probe, not inferred. |
 | `N/A` not applicable | 12 | — | Excluded client-side duty, optional feature not implemented, or a conditional whose trigger provably never fires. |
 
 Applicable to the implemented public-client authorization-server profile: 32.
@@ -90,7 +90,7 @@ so the classification can be re-checked rather than taken on trust.
 | D00-4.2.4 | §4.2 a CIMD service **MAY** require developer information. Optional service not implemented. | N/A | — | No CIMD service exists in this project. |
 | D00-4.3.1 | §4.3 failed fetch **SHOULD** abort authorization. AS-applicable; profile upgrades to fail-closed. | C | `src/cimd/resolve.ts:167-199`; generic map `src/cimd/anti-oracle.ts:25-48` | Frozen `s6b-anti-oracle.test.ts:109-181,208-264`; every failure aborts both boundaries with no redirect/IdP hop. |
 | D00-4.4.1 | §4.4 AS **MAY** cache discovered metadata. AS-applicable option exercised. | C | `src/cimd/cache.ts:45-75`; `src/cimd/resolve.ts:209-240` | Frozen `s6b-cache.test.ts:89-115,186-211`; positive hit and LRU rows fail if caching is removed or keyed by normalized URL. |
-| D00-4.4.2 | §4.4 caching **SHOULD** respect RFC 9111 headers. AS-applicable — and the CIMD cache is a **shared** cache: one `CimdSuccessCache` per `Bridge` (`src/adapters/bridge.ts:89`; `src/cimd/resolve.ts:90`) keyed on `client_id` alone (`resolve.ts:210,239`), with no user dimension. | **Runtime mismatch** | `src/cimd/cache.ts:78-155`; view limited to `Cache-Control` + `Age` at `src/cimd/guarded-fetcher.ts:110-119` | The directives that **are** modelled (`max-age`, `Age`, `no-store`, `no-cache`, malformed/duplicate/quoted forms, elapsed time) are correct and mutation-sensitive under frozen `s6b-cache.test.ts:96-165`. But three load-bearing shared-cache rules are unmodelled, probed on this commit as **stored**: `s-maxage=0` alongside `max-age=3600` (RFC 9111 §5.2.2.10 — `s-maxage` overrides `max-age` for shared caches), `private, max-age=3600` (§5.2.2.7 — a shared cache **MUST NOT** store it), and `Date`-derived apparent age is never computed (§4.2.3), so an already-stale response is treated as fresh. Fix in follow-up PR 3: implement these semantics, or conservatively refuse to cache when an unsupported directive is present. |
+| D00-4.4.2 | §4.4 caching **SHOULD** respect RFC 9111 headers. AS-applicable — and the CIMD cache is a **shared** cache: one `CimdSuccessCache` per `Bridge`, keyed on `client_id` alone, with no user dimension. | C | `src/cimd/cache.ts`; cache view extraction in `src/cimd/guarded-fetcher.ts` | Non-frozen cache regressions prove private rejection, s-maxage precedence, Age and Date age calculation, Vary-star rejection, and raw-client-id separation; frozen S6b tests prove invalid/error re-fetch behavior. |
 | D00-4.4.3 | §4.4 AS **MAY** set upper/lower cache-lifetime bounds. Option exercised. | C | `src/cimd/options.ts:21-23,42-47`; `src/cimd/cache.ts:11,82-95` | Frozen `s6b-boot.test.ts:93-100` and `s6b-cache.test.ts:103-121`; cap and minimum-cacheable behavior are pinned. |
 | D00-4.4.4 | §4.4 AS **MUST NOT** cache error responses. AS-applicable. | C | Only `fetchAndCache` success reaches `cache.set`: `src/cimd/resolve.ts:232-240` | Frozen `s6b-cache.test.ts:167-184`; a failed first resolution is fetched again, then a valid success caches. |
 | D00-4.4.5 | §4.4 AS **MUST NOT** cache invalid/malformed documents. AS-applicable. | C | Validation precedes projection/cache: `src/cimd/guarded-fetcher.ts:104-108`; `src/cimd/resolve.ts:232-240` | Frozen `s6b-cache.test.ts:176-184`; mismatched documents are rejected and fetched on every attempt. |
@@ -134,13 +134,6 @@ error-response or scope-hierarchy work. The media-type change is complete.
    the projection and require exact matching unless it is `native`; decide
    explicitly (and fail closed) when the type is absent. Regressions across
    direct, upstream, callback, and prepare for `"web"`, `"native"`, and absent.
-3. **Runtime PR — shared-cache directive handling (closes the D00-4.4.2
-   mismatch, P1).** The CIMD cache is shared across users but ignores
-   `s-maxage`, stores `private` responses, and never computes `Date`-derived
-   apparent age (all three probed as stored). Implement the shared-cache
-   semantics of RFC 9111 §§4.2.3, 5.2.2.7 and 5.2.2.10, or refuse to cache when
-   an unsupported directive is present. Hostile tests must prove stale,
-   `private`, and `s-maxage`-limited responses are re-fetched.
 4. **Test PR — symmetric client-auth declarations (closes D00-4.1.5, P2).** Of
    the three methods §4.1 names, only `client_secret_basic` has a hostile witness
    (`document.test.ts:91`); `client_secret_post` and `client_secret_jwt` have
@@ -261,7 +254,7 @@ so neither inventory absorbs the other.
 | **MUST** validate the fetched `client_id` matches the URL exactly | C | Same evidence as D00-4.1.2. |
 | **MUST** validate redirect URIs against the document | **Partial — carries the D00-4.5.2 mismatch** | Registration and membership are enforced (D00-4.5.1). But the loopback port exception is applied without RFC 9700's native-app precondition, so a document declaring `application_type: "web"` still matches a different loopback port (D00-4.5.2, probed). Closed by follow-up runtime PR 2. |
 | **MUST** validate document structure and required fields | C | Same evidence as D00-4.1.1 and the `client_name`/`redirect_uris` checks at `src/cimd/document.ts:26-29`. |
-| **SHOULD** cache respecting HTTP cache headers | **Mismatched — carries the D00-4.4.2 mismatch** | `max-age`, `Age`, `no-store`/`no-cache` and the malformed/duplicate/quoted forms are honoured correctly, but this is a **shared** cache that stores `private` responses, ignores `s-maxage`, and never derives apparent age from `Date` (all probed). Closed by follow-up runtime PR 3. |
+| **SHOULD** cache respecting HTTP cache headers | C | The shared-cache rules in D00-4.4.2 are enforced and regression-tested; the remaining partial redirect-URI row is D00-4.5.2. |
 
 **MCP final-status boundary.** The stable MCP release/tag
 [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)

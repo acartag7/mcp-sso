@@ -6,13 +6,16 @@
 import type { CimdDocument } from "./document.ts";
 
 /** The minimal duplicate-aware cache view (§17.1.6 decision 4): the
- *  `Cache-Control` and `Age` header OCCURRENCES only — never the full header
+ *  cache-relevant header occurrences only — never the full header
  *  map (an unnecessary trust-boundary expansion). `undefined` means the header
  *  was absent; a present-but-malformed header map yields `[""]`, which no
  *  freshness rule accepts (fail toward re-fetch). */
 export interface CimdCacheView {
   readonly cacheControl: readonly string[] | undefined;
   readonly age: readonly string[] | undefined;
+  readonly date: readonly string[] | undefined;
+  readonly expires: readonly string[] | undefined;
+  readonly vary: readonly string[] | undefined;
 }
 
 export interface CimdFetchResult {

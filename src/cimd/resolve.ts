@@ -236,7 +236,7 @@ export class CimdResolver {
     // Project BEFORE caching: a raw CimdDocument is never cached or signed.
     const registration = projectCimdRegistration(result.document);
     const expiresAtMs = computeCacheExpiryMs(result.cacheView, this.cacheTtlCapSeconds, t0Ms, t1Ms);
-    if (expiresAtMs !== null) this.cache.set(rawClientId, registration, expiresAtMs);
+    if (expiresAtMs !== null) this.cache.set(rawClientId, registration, expiresAtMs, t1Ms);
     return registration;
   }
 

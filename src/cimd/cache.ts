@@ -45,6 +45,7 @@ interface CacheEntry {
 export class CimdSuccessCache {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly maxEntries: number;
+  private latestNowMs = Number.NEGATIVE_INFINITY;
 
   constructor(maxEntries: number = DEFAULT_MAX_ENTRIES) {
     this.maxEntries = maxEntries;
@@ -53,9 +54,10 @@ export class CimdSuccessCache {
   /** A fresh hit; expired entries are evicted on read. LRU order is refreshed
    *  on every hit (re-insert moves the key to the tail). */
   get(key: string, nowMs: number): CimdRegistration | undefined {
+    this.latestNowMs = Math.max(this.latestNowMs, nowMs);
     const entry = this.entries.get(key);
     if (entry === undefined) return undefined;
-    if (!(nowMs < entry.expiresAtMs)) {
+    if (!(this.latestNowMs < entry.expiresAtMs)) {
       this.entries.delete(key);
       return undefined;
     }
@@ -64,7 +66,8 @@ export class CimdSuccessCache {
     return entry.registration;
   }
 
-  set(key: string, registration: CimdRegistration, expiresAtMs: number): void {
+  set(key: string, registration: CimdRegistration, expiresAtMs: number, observedNowMs = Number.NEGATIVE_INFINITY): void {
+    this.latestNowMs = Math.max(this.latestNowMs, observedNowMs);
     this.entries.delete(key);
     while (this.entries.size >= this.maxEntries) {
       const oldest = this.entries.keys().next();
@@ -75,8 +78,7 @@ export class CimdSuccessCache {
   }
 }
 
-/** RFC-9111-correct freshness (§17.1.6 decision 4), fail-toward-re-fetch:
- *  `effectiveTtlSeconds = min(valid max-age, cap) − Age − elapsedSeconds`.
+/** RFC-9111 shared-cache freshness (§17.1.6 decision 4), fail-toward-re-fetch.
  *  Returns the absolute expiry in ms, or `null` when the response is NOT
  *  cacheable. A valid `max-age` below 60 is non-cacheable — never clamped up. */
 export function computeCacheExpiryMs(
@@ -84,15 +86,19 @@ export function computeCacheExpiryMs(
 ): number | null {
   if (view === undefined) return null;
   const maxAge = parseMaxAge(view.cacheControl);
-  if (maxAge === null || maxAge < MIN_CACHEABLE_MAX_AGE) return null;
+  if (maxAge === null || hasVaryStar(view.vary)) return null;
   const age = parseAge(view.age);
   if (age === null) return null;
   if (!Number.isFinite(t0Ms) || !Number.isFinite(t1Ms)) return null;
-  const elapsedSeconds = Math.floor((t1Ms - t0Ms) / 1000);
-  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) return null;
-  const ttlSeconds = Math.min(maxAge, capSeconds) - age - elapsedSeconds;
-  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) return null;
-  return t1Ms + ttlSeconds * 1000;
+  const responseDelay = t1Ms - t0Ms;
+  if (!Number.isFinite(responseDelay) || responseDelay < 0) return null;
+  const date = parseDate(view.date);
+  if (date === null) return null;
+  const apparentAge = date === undefined ? 0 : Math.max(0, t1Ms - date);
+  const correctedInitialAge = Math.max(apparentAge, age * 1000 + responseDelay);
+  const ttlMs = Math.min(maxAge, capSeconds) * 1000 - correctedInitialAge;
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) return null;
+  return t1Ms + ttlMs;
 }
 
 /** RFC 9111 `directive = token [ "=" ( token / quoted-string ) ]`. A bare token,
@@ -103,16 +109,15 @@ function isWellFormedDirectiveValue(value: string): boolean {
   return QUOTED_STRING.test(value);
 }
 
-/** Exactly one `Cache-Control` header occurrence carrying exactly one
- *  `max-age` directive with an unquoted unsigned-decimal safe-integer value,
- *  and no `no-store`/`no-cache`. Anything else ⇒ non-cacheable. Directive
+/** Exactly one `Cache-Control` header occurrence carrying valid shared-cache
+ *  freshness. Unsupported or restrictive storage directives refuse storage. Directive
  *  names are ASCII case-insensitive. */
 function parseMaxAge(values: readonly string[] | undefined): number | null {
   if (values === undefined || values.length !== 1) return null;
   const header = values[0];
   if (typeof header !== "string") return null;
-  let maxAge: number | null = null;
-  let occurrences = 0;
+  let maxAge: number | null = null, sMaxage: number | null = null;
+  let maxOccurrences = 0, sMaxOccurrences = 0;
   for (const raw of splitDirectives(header)) {
     const directive = raw.trim();
     if (directive === "") continue;
@@ -129,18 +134,30 @@ function parseMaxAge(values: readonly string[] | undefined): number | null {
     // headers, and rule 25 makes a malformed Cache-Control non-cacheable.
     // Ignoring only the name would cache on a header we could not fully parse.
     if (eq >= 0 && !isWellFormedDirectiveValue(directive.slice(eq + 1))) return null;
-    if (name === "no-store" || name === "no-cache") return null;
-    if (name !== "max-age") continue;
-    occurrences += 1;
-    if (occurrences > 1) return null;
+    if (name === "no-store" || name === "no-cache" || name === "private") return null;
+    if (name !== "max-age" && name !== "s-maxage") continue;
     if (eq < 0) return null;
     const value = directive.slice(eq + 1);
     if (!UNSIGNED_DECIMAL.test(value)) return null;
     const parsed = Number(value);
     if (!Number.isSafeInteger(parsed)) return null;
-    maxAge = parsed;
+    if (name === "max-age") { maxOccurrences += 1; if (maxOccurrences > 1) return null; maxAge = parsed; }
+    else { sMaxOccurrences += 1; if (sMaxOccurrences > 1) return null; sMaxage = parsed; }
   }
-  return occurrences === 1 ? maxAge : null;
+  const lifetime = sMaxage ?? maxAge;
+  return lifetime !== null && lifetime >= MIN_CACHEABLE_MAX_AGE ? lifetime : null;
+}
+
+function parseDate(values: readonly string[] | undefined): number | undefined | null {
+  if (values === undefined) return undefined;
+  if (values.length !== 1 || typeof values[0] !== "string") return null;
+  const parsed = Date.parse(values[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasVaryStar(values: readonly string[] | undefined): boolean {
+  if (values === undefined) return false;
+  return values.some((value) => value.split(",").some((part) => part.trim() === "*"));
 }
 
 /** An absent `Age` is 0. A present `Age` is usable only as exactly one

@@ -113,9 +113,15 @@ async function fetchOnce(admitted: AdmittedUrl, resolver: DnsResolver, transport
 function cacheView(headers: unknown): CimdCacheView {
   const cacheControl = headerValues(headers, "cache-control");
   const age = headerValues(headers, "age");
+  const date = headerValues(headers, "date");
+  const expires = headerValues(headers, "expires");
+  const vary = headerValues(headers, "vary");
   return Object.freeze({
     cacheControl: cacheControl === null ? [""] : cacheControl,
     age: age === null ? [""] : age,
+    date: date === null ? [""] : date,
+    expires: expires === null ? [""] : expires,
+    vary: vary === null ? [""] : vary,
   });
 }
 function validateAnswer(answer: unknown): ResolvedAddress[] {
