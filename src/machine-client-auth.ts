@@ -12,7 +12,7 @@ import {
 
 /** Read and authenticate one immutable machine-client snapshot. */
 export async function authenticateMachineClientSecret(
-  deps: { store: ClientStore; clock: ClockPort },
+  deps: { store: ClientStore; clock: ClockPort; resource: string },
   clientId: string,
   presentedSecret: string,
 ): Promise<ParsedActiveMachineClientRegistration | null> {
@@ -24,7 +24,8 @@ export async function authenticateMachineClientSecret(
     clientId,
     now,
   );
-  const activeClient = client?.status === "active" ? client : null;
+  const activeClient = client?.status === "active" && client.resource === deps.resource
+    ? client : null;
   const matched = verifyPresentedHash(
     presentedHash,
     activeClient?.secrets ?? [],

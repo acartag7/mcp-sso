@@ -38,8 +38,8 @@ export interface UserClientRegistration {
 }
 
 /** Machine row shape published by v0.3.0. It remains public for source
- * compatibility and is accepted as version-0 upgrade input. Atomic lifecycle
- * writes use the separately named versioned shapes below. */
+ * compatibility as read-only legacy input. Resource-less rows must be
+ * reprovisioned; atomic lifecycle writes use the versioned shapes below. */
 export interface MachineClientRegistration {
   clientId: string;
   redirectUris: string[];
@@ -57,6 +57,7 @@ interface MachineClientRegistrationBase {
   issuedAtEpoch: number;
   name?: string;
   allowedScopes: string[];
+  resource: string;
   version: number;
 }
 
@@ -97,6 +98,7 @@ export interface MachineClientMutationAudit {
   event: "oauth.client.provision" | "oauth.client.rotate_secret" | "oauth.client.disable";
   clientId: string;
   scopes: string[];
+  resource: string;
 }
 
 /** Mutation extension required only by the out-of-band machine lifecycle.

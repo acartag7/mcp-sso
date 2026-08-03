@@ -110,17 +110,23 @@ use versioned atomic mutations that commit the row with its durable audit. The
 secret is returned once and stored only as a SHA-256 hash. A custom
 `ClientStore.find(clientId)` must return the row whose embedded `clientId`
 matches that lookup key; `parseMachineClientRegistration` rejects mismatched or
-malformed machine rows before verification, mutation, or token issuance.
+malformed machine rows before verification, mutation, or token issuance. Each
+new machine credential is bound to the exact `config.resource` string; custom
+stores must preserve that field across rotation and disable. Old rows with no
+resource must be reprovisioned.
 
 ```ts
 import { provisionMachineClient, noopAudit } from "mcp-sso";
 
 const { clientId, clientSecret } = await provisionMachineClient(
-  { store: clientStore, catalog: config.scopeCatalog, clock: { nowMs: () => Date.now() }, audit: noopAudit },
+  { store: clientStore, catalog: config.scopeCatalog, resource: config.resource, clock: { nowMs: () => Date.now() }, audit: noopAudit },
   { name: "nightly-sync", allowedScopes: ["mcp:read"] }, // per-client scope ceiling, fixed at provisioning
 );
 // clientSecret (mcs_…) is returned ONCE — put it in your secret manager now; it cannot be retrieved again.
 ```
+
+`resource` is a required `MachineClientDeps` field. TypeScript callers upgrading
+from an earlier lifecycle API must pass the exact `config.resource` value.
 
 ```bash
 curl -s https://auth.example.com/oauth/token -u "$CLIENT_ID:$CLIENT_SECRET" \

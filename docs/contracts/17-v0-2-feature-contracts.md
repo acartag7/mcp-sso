@@ -1028,11 +1028,14 @@ in this flow."* Decisions:
   themselves a secret. Config: `clientCredentials?: { enabled: boolean }`;
   boot `AuthConfigError` if enabled with `dcr.mode !== "stored"`.
 - **Provisioning API (library functions, not endpoints).** The provisioning
-  use-cases take a deps object — `{ store, catalog, clock, audit }` — so they
+  use-cases take a deps object — `{ store, catalog, resource, clock, audit }` — so they
   can validate `allowedScopes` against `scopeCatalog` (item below), stamp
-  epochs, and emit audit without hidden globals (same deps-first shape as
-  `registerClient`). `catalog` is `config.scopeCatalog`. For patch
-  compatibility `MachineClientDeps.store` remains typed as `ClientStore`; each
+  epochs, bind a credential to the configured resource, and emit audit without
+  hidden globals (same deps-first shape as `registerClient`). `catalog` is
+  `config.scopeCatalog` and `resource` is the exact `config.resource` string.
+  `resource` is a newly required public `MachineClientDeps` property, so an
+  upgrading TypeScript lifecycle caller must add it. For the store API's patch
+  compatibility, `MachineClientDeps.store` remains typed as `ClientStore`; each
   lifecycle mutation requires the additive `MachineClientStore` methods at
   runtime and fails before credential generation or mutation when they are
   absent.
@@ -1077,7 +1080,8 @@ in this flow."* Decisions:
     first secret); omitted ⇒ the secret is live until rotated. A TTL whose
     derived expiry is not a non-negative safe integer is `invalid_request`
     before client-id/secret generation, `createMachineClient`, or a success
-    audit.
+    audit. A blank or malformed deps resource is `invalid_request` before a
+    credential is generated or a row/audit is written.
   - `rotateMachineClientSecret(deps, clientId, { graceSeconds = 86400 })` →
     `VersionedRotatedSecret { clientSecret, version }` (see Rotation below).
     The published v0.3.0 `RotatedSecret { clientSecret }` remains its base type
@@ -1090,10 +1094,12 @@ in this flow."* Decisions:
     the timing-safe comparison primitive the token endpoint (§9.4
     client_credentials grant, S3b) composes into client authentication. Finds
     and parses the machine client through
-    `parseMachineClientRegistration(value, clientId, nowEpoch)`, SHA-256s the presented
+    `parseMachineClientRegistration(value, clientId, nowEpoch)`, requires its
+    resource to be exactly equal to `deps.resource`, SHA-256s the presented
     secret, and constant-time compares it against each **unexpired** stored hash
     (expired entries skipped). Non-machine, unknown, malformed, or
-    lookup-key-mismatched records ⇒ `false` (the grant maps the boolean to
+    lookup-key-mismatched, resource-less, malformed-resource, or
+    wrong-resource records ⇒ `false` (the grant maps the boolean to
     `invalid_client`). A rejected `ClientStore.find` remains a store error; this
     function does not convert store I/O failure into an authentication result.
 - **`MachineClientStore` extension:** `applicationType` gains `"machine"`;
@@ -1102,9 +1108,11 @@ in this flow."* Decisions:
   source-compatible as legacy input. New writes use the separately named
   `VersionedMachineClientRegistration` union;
   active machine records carry `status: "active"`, a positive monotonic
-  `version`, `allowedScopes: string[]` (validated ⊆ `scopeCatalog` at wiring),
-  and one or two `{ hash, createdAtEpoch, expiresAtEpoch? }` secrets. Disabled
-  tombstones carry `status: "disabled"`, a disable epoch, and no secrets.
+  `version`, the exact uncanonicalized `resource` supplied at provisioning,
+  `allowedScopes: string[]` (validated ⊆ `scopeCatalog` at wiring), and one or
+  two `{ hash, createdAtEpoch, expiresAtEpoch? }` secrets. Disabled tombstones
+  preserve that `resource`, carry `status: "disabled"`, a disable epoch, and no
+  secrets.
   `redirectUris` MUST be `[]`; machine clients are rejected at
   `/oauth/authorize` and MUST be rejected at any future device endpoints
   (`invalid_client`). Lifecycle functions never write a machine row through
@@ -1113,10 +1121,12 @@ in this flow."* Decisions:
   `compareAndSwapMachineClient(expectedVersion, client, audit)` commit the row
   and durable metadata-only lifecycle audit in one backend transaction or
   commit neither; `false` is a no-write collision/conflict. New records start
-  at version 1. A complete legacy v0.3.0 record with no `status` or `version`
-  remains readable as active version 0; `expectedVersion: 0` matches only that
-  shape, and its first successful mutation writes version 1. A partial marker,
-  malformed full record, or version overflow fails closed before mutation.
+  at version 1. The public legacy v0.3.0 type remains source-compatible for
+  reads, but a resource-less row cannot authenticate, rotate, or disable and
+  requires reprovisioning. A resource-bearing row with no `status` or `version`
+  is active version 0; `expectedVersion: 0` matches only that shape, and its
+  first successful mutation writes version 1. A partial marker, malformed full
+  record, wrong resource, or version overflow fails closed before mutation.
 - **Secret contract:** `mcs_` + base64url(32 CSPRNG bytes) — 256-bit,
   clearing RFC 6749 §10.10 (≥2⁻¹²⁸ MUST) and RFC 6819 §5.1.4.2.2. Stored as
   **unsalted SHA-256 hex only**: RFC 6819 §5.1.4.1.3 conditions salting/work
@@ -1164,9 +1174,9 @@ in this flow."* Decisions:
   The stored ceiling is itself validated at grant time — a non-empty array of
   scope tokens. Authentication and scope resolution use one fresh snapshot
   returned by `parseMachineClientRegistration(value, clientId, nowEpoch)`, so
-  a custom/migrated store returning a malformed, over-active, or differently
-  keyed row fails closed as `invalid_client` (never an empty-scope token or a
-  token for the embedded wrong client). The parser also enforces the `mcc_`
+  a custom/migrated store returning a malformed, resource-less, wrong-resource,
+  over-active, or differently keyed row fails closed as `invalid_client` (never
+  an empty-scope token or a token for the embedded wrong client). The parser also enforces the `mcc_`
   prefix — the RS's machine-vs-user distinguishability signal (RFC 9700
   §4.15.1) — before the record reaches token signing.
   `resource` if present MUST equal `config.resource` (`invalid_target`). Mint
@@ -1198,11 +1208,12 @@ in this flow."* Decisions:
   a single-secret record yields `[{old, expiresAt=now+grace}, {new}]`; a
   second rotation before the first grace elapses supersedes the prior grace
   secret (its overlap is cut) to hold the two-active cap. The stored row is
-  parsed and bound to the requested key before secret generation or `save`;
-  unknown, non-machine, malformed, or key-mismatched records ⇒
-  `invalid_client`. Verification accepts any unexpired stored hash.
+  parsed and bound to the requested key and configured resource before secret
+  generation or `save`; unknown, non-machine, malformed, resource-less,
+  wrong-resource, or key-mismatched records ⇒ `invalid_client`. Verification
+  accepts any unexpired stored hash.
 - **Audit:** `oauth.token.client_credentials`, `oauth.client.provision`,
-  `oauth.client.rotate_secret`, `oauth.client.disable` — clientId/scopes
+  `oauth.client.rotate_secret`, `oauth.client.disable` — clientId/scopes/resource
   metadata only; never a secret or a secret hash. Each lifecycle success audit
   is durable in the same `MachineClientStore` transaction as its row mutation.
   The ordinary `AuditPort` copy is best-effort and cannot turn a committed,

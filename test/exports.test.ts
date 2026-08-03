@@ -92,6 +92,7 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   void verifyMachineClientSecret({
     store: legacyStore,
     catalog: ["mcp:read"],
+    resource: "https://api.test/mcp",
     clock: { nowMs: () => 1_000 },
     audit: { async writeAuthEvent(): Promise<void> {} },
   }, legacyMachine.clientId, "mcs_wrong");
