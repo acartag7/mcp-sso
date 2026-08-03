@@ -73,7 +73,7 @@ rotate without a lookup). Stored only as `sha256(token)`.
   token consumed, inserts the next, and returns the **consumed** record. Replay of
   an already-consumed token revokes the whole family.
 - **Resource binding:** every new refresh family and every member carries the
-  authorization code's canonical resource. The resource is fixed for the whole
+  authorization code's exact resource string. The resource is fixed for the whole
   family. `rotateRefreshToken` receives the bridge's expected resource and checks
   the family and selected record before replay detection, consumption, successor
   persistence, or any family mutation. A different resource is the same

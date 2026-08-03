@@ -29,7 +29,7 @@ export interface RefreshTokenRecord {
   previousTokenHash: string | null;
   clientId: string;
   subject: string;
-  /** Canonical family resource; null only projects a legacy durable row. */
+  /** Exact stored family resource string; null only projects a legacy durable row. */
   resource: string | null;
   scopes: string[];
   expiresAt: string;
@@ -57,7 +57,7 @@ export interface SaveRefreshTokenInput {
   previousTokenHash: string | null;
   clientId: string;
   subject: string;
-  /** Canonical resource persisted on every new family and token row. */
+  /** Exact configured resource string persisted on every new family and token row. */
   resource: string;
   scopes: string[];
   expiresAt: string;
@@ -69,7 +69,7 @@ export interface SaveRefreshTokenInput {
 export const UNBOUND_REFRESH_RESOURCE = "mcp-sso:unbound-refresh-resource";
 
 /**
- * Typed callers must provide a canonical resource. An old untyped caller that
+ * Typed callers must provide an exact resource string. An old untyped caller that
  * omits it is persisted as deliberately unbound, so it cannot refresh through
  * any bridge instead of being inferred from current configuration.
  */
@@ -151,7 +151,7 @@ export function assertGrantGeneration(value: unknown, label: string): void {
 
 export function assertRefreshResource(value: unknown, label: string): asserts value is string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new StoreInputError(`${label} must be a non-empty canonical resource string`);
+    throw new StoreInputError(`${label} must be a non-empty resource string`);
   }
 }
 

@@ -85,6 +85,49 @@ function make(): StorePort {
 }
 
 if (RUN) {
+  test("MysqlStore: fresh schema has non-null exact resource columns", async () => {
+    const [columns] = await admin!.query<RowDataPacket[]>(
+      `SELECT TABLE_NAME, IS_NULLABLE, COLUMN_TYPE, COLLATION_NAME
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'resource'
+         AND TABLE_NAME IN ('oauth_refresh_token_families', 'oauth_refresh_tokens')
+       ORDER BY TABLE_NAME`,
+    );
+    assert.deepEqual(
+      (columns as { TABLE_NAME: string; IS_NULLABLE: string; COLUMN_TYPE: string; COLLATION_NAME: string }[])
+        .map((column) => ({
+          table: column.TABLE_NAME,
+          nullable: column.IS_NULLABLE,
+          type: column.COLUMN_TYPE,
+          collation: column.COLLATION_NAME,
+        })),
+      [
+        { table: "oauth_refresh_token_families", nullable: "NO", type: "varchar(2048)", collation: "utf8mb4_bin" },
+        { table: "oauth_refresh_tokens", nullable: "NO", type: "varchar(2048)", collation: "utf8mb4_bin" },
+      ],
+    );
+    await assert.rejects(
+      admin!.query(
+        "INSERT INTO oauth_refresh_token_families (family_id, resource, revoked_at, grant_generation) VALUES (?, NULL, NULL, ?)",
+        ["fresh-null-resource-family", 1],
+      ),
+      (error: unknown) => (error as { code?: unknown }).code === "ER_BAD_NULL_ERROR",
+    );
+    await admin!.query(
+      "INSERT INTO oauth_refresh_token_families (family_id, resource, revoked_at, grant_generation) VALUES (?, ?, NULL, ?)",
+      ["fresh-null-resource-token-family", "https://api-a.test/mcp", 1],
+    );
+    await assert.rejects(
+      admin!.query(
+        `INSERT INTO oauth_refresh_tokens
+         (token_hash, family_id, previous_token_hash, client_id, subject, resource, scopes_json, expires_at, consumed_at, grant_generation)
+         VALUES (?, ?, NULL, ?, ?, NULL, ?, ?, NULL, ?)`,
+        [sha256Hex("fresh-null-resource-token"), "fresh-null-resource-token-family", "client-1", "subject-1", "[\"mcp:read\"]", FUTURE, 1],
+      ),
+      (error: unknown) => (error as { code?: unknown }).code === "ER_BAD_NULL_ERROR",
+    );
+  });
+
   runStoreConformance("MysqlStore", make);
 
   test("MysqlStore: two store instances serialize matching and mismatching resource consumes", async () => {
@@ -267,6 +310,97 @@ if (RUN) {
       await admin!.query("ALTER TABLE oauth_auth_codes ENGINE=InnoDB");
       const restore = await createMysqlStore(MYSQL_URL as string);
       await restore.close();
+    }
+  });
+
+  test("MysqlStore: actual pre-resource schema migrates legacy null rows that fail closed", async () => {
+    // This is the exact refresh-table shape at the parent of this change. It exercises
+    // the production ALTER path, rather than merely asserting the intended ALTER text.
+    await admin!.query("DROP TABLE IF EXISTS oauth_refresh_tokens");
+    await admin!.query("DROP TABLE IF EXISTS oauth_refresh_token_families");
+    await admin!.query(`CREATE TABLE oauth_refresh_token_families (
+      family_id VARCHAR(64) NOT NULL,
+      revoked_at VARCHAR(24),
+      grant_generation BIGINT UNSIGNED,
+      PRIMARY KEY (family_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    await admin!.query(`CREATE TABLE oauth_refresh_tokens (
+      token_hash VARCHAR(64) NOT NULL,
+      family_id VARCHAR(64) NOT NULL,
+      previous_token_hash VARCHAR(64),
+      client_id VARCHAR(255) NOT NULL,
+      subject VARCHAR(255) NOT NULL,
+      scopes_json TEXT NOT NULL,
+      expires_at VARCHAR(24) NOT NULL,
+      consumed_at VARCHAR(24),
+      grant_generation BIGINT UNSIGNED,
+      PRIMARY KEY (token_hash),
+      INDEX idx_oauth_refresh_tokens_family_id (family_id),
+      INDEX idx_oauth_refresh_tokens_expires_at (expires_at),
+      INDEX idx_oauth_refresh_tokens_subject_client (subject, client_id),
+      CONSTRAINT fk_oauth_refresh_tokens_family FOREIGN KEY (family_id)
+        REFERENCES oauth_refresh_token_families (family_id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    const familyId = "legacy-resource-family";
+    const tokenHash = sha256Hex("legacy-resource-token");
+    await admin!.query(
+      "INSERT INTO oauth_refresh_token_families (family_id, revoked_at, grant_generation) VALUES (?, NULL, ?)",
+      [familyId, 1],
+    );
+    await admin!.query(
+      `INSERT INTO oauth_refresh_tokens
+       (token_hash, family_id, previous_token_hash, client_id, subject, scopes_json, expires_at, consumed_at, grant_generation)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, ?)`,
+      [tokenHash, familyId, "client-1", "subject-1", "[\"mcp:read\"]", FUTURE, 1],
+    );
+
+    let migrated: MysqlStore | undefined;
+    try {
+      migrated = await createMysqlStore(MYSQL_URL as string);
+      const [columns] = await admin!.query<RowDataPacket[]>(
+        `SELECT TABLE_NAME, IS_NULLABLE FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'resource'
+           AND TABLE_NAME IN ('oauth_refresh_token_families', 'oauth_refresh_tokens')
+         ORDER BY TABLE_NAME`,
+      );
+      assert.deepEqual(
+        (columns as { TABLE_NAME: string; IS_NULLABLE: string }[]).map((column) => ({
+          table: column.TABLE_NAME, nullable: column.IS_NULLABLE,
+        })),
+        [
+          { table: "oauth_refresh_token_families", nullable: "YES" },
+          { table: "oauth_refresh_tokens", nullable: "YES" },
+        ],
+      );
+      assert.equal((await migrated.findRefreshToken(tokenHash))?.resource, null, "legacy NULL resource is projected as unbound");
+      assert.equal(
+        await migrated.rotateRefreshToken(
+          tokenHash,
+          refresh("legacy-resource-successor", familyId, tokenHash, FUTURE),
+          NOW,
+          undefined,
+          "https://api-b.test/mcp",
+        ),
+        null,
+        "legacy NULL resource fails closed as invalid_grant",
+      );
+      const [state] = await admin!.query<RowDataPacket[]>(
+        `SELECT t.consumed_at, f.revoked_at
+         FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id
+         WHERE t.token_hash = ?`,
+        [tokenHash],
+      );
+      assert.deepEqual(state[0], { consumed_at: null, revoked_at: null }, "rejected legacy rotation leaves state untouched");
+      assert.equal(await migrated.findRefreshToken(sha256Hex("legacy-resource-successor")), null, "no successor was inserted");
+    } finally {
+      try {
+        await migrated?.close();
+      } finally {
+        await admin!.query("DROP TABLE IF EXISTS oauth_refresh_tokens");
+        await admin!.query("DROP TABLE IF EXISTS oauth_refresh_token_families");
+        const restore = await createMysqlStore(MYSQL_URL as string);
+        await restore.close();
+      }
     }
   });
 }

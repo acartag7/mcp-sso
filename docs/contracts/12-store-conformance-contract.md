@@ -183,7 +183,8 @@ a normal write value.
     `null` without mutation; a correctly bound request can still rotate once;
     replay still revokes the current family successor. The successor authoritative-
     copies the selected row's exact resource, and `saveRefreshToken` rejects an
-    attempt to introduce a different or missing family resource.
+    attempt to introduce a different or missing family resource. Comparison is
+    exact string equality over stored resource strings.
 
     SQLite and MySQL migrations add nullable `resource` columns to both
     `oauth_refresh_token_families` and `oauth_refresh_tokens`; fresh schemas make

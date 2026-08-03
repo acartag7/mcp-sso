@@ -191,6 +191,33 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: family and token resource strings cannot diverge`, async () => {
+    const store = make();
+    await store.saveRefreshToken(refresh("resource-family-a", "fam-resource-invariant", null, FUTURE, undefined, RESOURCE_A));
+    await assert.rejects(
+      store.saveRefreshToken(refresh("resource-family-b", "fam-resource-invariant", null, FUTURE, undefined, RESOURCE_B)),
+      (error: unknown) => error instanceof StoreInputError,
+    );
+    assert.equal((await store.findRefreshToken(sha256Hex("resource-family-a")))?.resource, RESOURCE_A);
+    assert.equal(await store.findRefreshToken(sha256Hex("resource-family-b")), null, "divergent token row was not inserted");
+    await store.close();
+  });
+
+  test(`${label}: rotation copies the exact stored resource string over a successor input`, async () => {
+    const store = make();
+    await store.saveRefreshToken(refresh("resource-copy-source", "fam-resource-copy", null, FUTURE, undefined, RESOURCE_A));
+    const rotated = await store.rotateRefreshToken(
+      sha256Hex("resource-copy-source"),
+      refresh("resource-copy-successor", "fam-resource-copy", sha256Hex("resource-copy-source"), FUTURE, undefined, RESOURCE_B),
+      NOW,
+      undefined,
+      RESOURCE_A,
+    );
+    assert.equal(rotated?.resource, RESOURCE_A);
+    assert.equal((await store.findRefreshToken(sha256Hex("resource-copy-successor")))?.resource, RESOURCE_A);
+    await store.close();
+  });
+
   test(`${label}: concurrent resource A/B rotation permits only the bound resource`, async () => {
     const store = make();
     await store.saveRefreshToken(refresh("resource-race", "fam-resource-race", null, FUTURE, undefined, RESOURCE_A));
