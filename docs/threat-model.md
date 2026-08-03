@@ -361,10 +361,11 @@ integration round.
 The database file and its journal/WAL sidecars form one state boundary. File
 mode alone is insufficient: an attacker-writable immediate directory permits a
 preseed before boot and a replacement between a path check and SQLite's own
-open. `openSqliteStore` therefore admits the directory and an already-open file
-descriptor before constructing `DatabaseSync`, then compares the path identity
-before library migrations or SQL reads. It never repairs an untrusted existing
-object.
+open. An ancestor owned by another non-root account is also attacker-controlled
+because its owner can chmod it before replacing the next entry. `openSqliteStore`
+therefore admits the directory and an already-open file descriptor before
+constructing `DatabaseSync`, then compares the path identity before library
+migrations or SQL reads. It never repairs an untrusted existing object.
 
 The remaining same-account/root race is explicit. Node's SQLite API takes a
 path, not the verified descriptor, and Windows Node lacks POSIX no-follow and

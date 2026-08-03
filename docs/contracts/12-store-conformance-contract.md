@@ -292,9 +292,11 @@ already exist and MUST be a real directory, not a symlink or junction.
 `openSqliteStore` never creates directories. On POSIX, the immediate directory
 MUST be owned by the effective service user and have no group/other permission
 bits. This protects the main database plus SQLite journal/WAL sidecars. Path
-ancestry follows the existing scaffold trust model: a non-writable system
-ancestor is accepted; a group/other-writable ancestor is accepted only when it
-is sticky and the next path entry is owned by the effective user; a symlink
+ancestry follows a stricter form of the scaffold trust model: every ancestor
+directory owner MUST be either root or the effective service user (another
+owner can chmod and replace an entry even when its current mode is read-only).
+A trusted-owner group/other-writable ancestor is accepted only when it is
+sticky and the next path entry is owned by the effective user; a symlink
 ancestor is accepted only when its directory entry cannot be replaced by a
 lower-privileged user, and its resolved destination ancestry is checked by the
 same rule. The immediate database directory itself is never allowed to be a

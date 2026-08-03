@@ -3,13 +3,12 @@ import {
   openSync, realpathSync, statSync, type BigIntStats,
 } from "node:fs";
 import { dirname, join, parse, resolve, sep } from "node:path";
+import { isSqliteAncestorReplaceable } from "./sqlite-open-policy.ts";
 
 const ERROR_PREFIX = "sqlite: unsafe persistent state:";
 const FILE_MODE = 0o600n;
 const FILE_MODE_MASK = 0o7777n;
 const PRIVATE_MASK = 0o077n;
-const WRITE_MASK = 0o022n;
-const STICKY_BIT = 0o1000n;
 const O_NOFOLLOW = (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
 const O_NONBLOCK = (fsc as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
 
@@ -181,8 +180,12 @@ function assertAncestry(directory: string): void {
       if (entrySt.isSymbolicLink()) fail("database directory ancestry contains a symlink or junction");
       continue;
     }
-    if ((parentSt.mode & WRITE_MASK) === 0n) continue;
-    if ((parentSt.mode & STICKY_BIT) === 0n || entrySt.uid !== euid) {
+    if (isSqliteAncestorReplaceable({
+      parentUid: parentSt.uid,
+      parentMode: parentSt.mode,
+      entryUid: entrySt.uid,
+      effectiveUid: euid,
+    })) {
       fail("database directory ancestry is replaceable by another OS user");
     }
   }

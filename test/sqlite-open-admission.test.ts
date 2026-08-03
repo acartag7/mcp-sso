@@ -13,6 +13,7 @@ import { test } from "node:test";
 import {
   admitSqliteFile, closeSqliteAdmission, verifySqlitePathIdentity,
 } from "../src/store/sqlite-open.ts";
+import { isSqliteAncestorReplaceable } from "../src/store/sqlite-open-policy.ts";
 import { openSqliteStore, SqliteStore } from "../src/store/sqlite.ts";
 
 const UNSAFE = /sqlite: unsafe persistent state:/;
@@ -120,6 +121,21 @@ test("SQLite admission rejects a wrong-owner immediate directory before target c
   const target = join("/", `.mcp-sso-owner-probe-${process.pid}.sqlite`);
   assert.throws(() => openSqliteStore(target), /immediate database directory must be owned/);
   assert.equal(existsSync(target), false);
+});
+
+test("SQLite ancestry rejects an ancestor controlled by another non-root owner", () => {
+  const effectiveUid = 1000n;
+  const entryUid = effectiveUid;
+  const replaceable = (parentUid: bigint, parentMode: bigint, childUid = entryUid) =>
+    isSqliteAncestorReplaceable({ parentUid, parentMode, entryUid: childUid, effectiveUid });
+
+  assert.equal(replaceable(1001n, 0o755n), true, "another owner can replace through owner-write");
+  assert.equal(replaceable(1001n, 0o555n), true, "another owner can chmod then replace");
+  assert.equal(replaceable(0n, 0o755n), false, "root-owned system ancestry is trusted");
+  assert.equal(replaceable(effectiveUid, 0o700n), false, "service-owned private ancestry is trusted");
+  assert.equal(replaceable(0n, 0o1777n), false, "sticky ancestry protects a service-owned entry");
+  assert.equal(replaceable(0n, 0o1777n, 1001n), true, "sticky ancestry cannot protect another owner's entry");
+  assert.equal(replaceable(effectiveUid, 0o777n), true, "non-sticky public write permits replacement");
 });
 
 test("SQLite admission rejects final symlinks, symlinked directories, directories, and hard links", (t) => {
