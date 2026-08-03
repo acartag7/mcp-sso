@@ -171,7 +171,7 @@ export class OAuthAuthorizationUseCase {
       // §17.1.6 decision 3 (NEGATIVE class): accumulate iff stored-DCR AND NOT
       // scheme-shaped. Never keyed on cimd_verified.
       const rawPrior = accumulationAllowed(this.config, clientId)
-        ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config))
+        ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), this.config.resource)
         : [];
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
       const priorScopes = storedScopes(rawPrior, this.config.scopeCatalog);
@@ -207,7 +207,7 @@ export class OAuthAuthorizationUseCase {
       const consentScopes = storedScopes(consent.scopes, this.config.scopeCatalog);
       const allowedScopes = assertAllowedScopesCeiling(consent.allowedScopes);
       const priorScopes = storedScopes(accumulationAllowed(this.config, consent.clientId)
-        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config)) : [], this.config.scopeCatalog);
+        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), this.config.resource) : [], this.config.scopeCatalog);
       const union = dedupe([...consentScopes, ...priorScopes]);
       // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
       const scopes = allowedScopes ? union.filter((s) => allowedScopes.includes(s)) : union;

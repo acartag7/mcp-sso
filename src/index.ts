@@ -131,7 +131,7 @@ export { isMcpPath, type NormRequest, type NormResponse } from "./adapters/http.
 export {
   type StorePort, type AuthCodeRecord, type RefreshTokenRecord,
   type SaveAuthCodeInput, type SaveRefreshTokenInput,
-  STORED_DCR_GRANT_GENERATION, StoreInputError,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError,
   assertGrantGeneration, assertSha256Hex, assertUtcIsoTimestamp,
 } from "./ports/store.ts";
 export {

@@ -190,8 +190,8 @@ Notes:
 | GG.2 | Old binary writes a null/missing-generation code after cutover | Current binary burns it and returns `invalid_grant`, for both an unknown and an existing stored client ID. |
 | GG.3 | Old binary writes a null/missing-generation refresh family, or a successor inside an existing current family, after cutover | Current binary returns `invalid_grant` before consuming it or creating a successor. |
 | GG.4 | Rotation caller substitutes generation | All three stores preserve the family generation from durable state. |
-| GG.5 | Legacy/non-current active refresh rows exist, including inside a current family | `findGrantedScopes` excludes their scopes. |
-| GG.6 | Store lacks the generation capability in stored-DCR mode | Construction fails closed with `AuthConfigError`; stateless-DCR operation remains unchanged. CIMD alongside stored DCR uses the same cutover generation without enabling accumulation. |
+| GG.5 | Legacy/non-current or wrong-resource active refresh rows exist, including inside a current family | `findGrantedScopes` excludes their scopes. |
+| GG.6 | Store lacks the generation or resource-binding capability in stored-DCR mode | Construction fails closed with `AuthConfigError`; stateless-DCR operation remains unchanged. CIMD alongside stored DCR uses the same cutover generation without enabling accumulation. |
 
 ### T1.RB — authorization-code resource binding
 

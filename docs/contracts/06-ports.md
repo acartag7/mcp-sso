@@ -64,23 +64,25 @@ Methods: `saveAuthCode`, `consumeAuthCode`, `saveRefreshToken`, `rotateRefreshTo
 provenance. In stateless mode client_ids are ephemeral, so a grant keyed by
 `(subject, clientId)` is meaningless; those authorizations stand alone.)
 
-**0.3.2 stored-DCR generation capability.** The
-library-owned `STORED_DCR_GRANT_GENERATION` is currently `1`. A `StorePort`
-used with `dcr.mode:"stored"` MUST advertise
-`storedDcrGrantGeneration: 1`; `assertStoredDcrGenerationStore` makes
+**Stored-DCR capabilities.** The library-owned
+`STORED_DCR_GRANT_GENERATION` and `STORED_DCR_RESOURCE_BINDING` are both
+currently `1`. A `StorePort` used with `dcr.mode:"stored"` MUST advertise
+`storedDcrGrantGeneration: 1` and `storedDcrResourceBinding: 1`;
+`assertStoredDcrGenerationStore` makes
 `OAuthAuthorizationUseCase` and `OAuthTokenUseCase` construction fail closed
-when that capability is absent or different. This is an additive runtime
+when either capability is absent or different. This is an additive runtime
 capability check so an old custom store cannot silently ignore the generation
-argument and contribute a legacy grant.
+or resource argument and contribute a legacy or cross-resource grant.
 
 While stored-DCR mode is active, the use-cases pass generation `1` to
-`consumeAuthCode`, `rotateRefreshToken`, and `findGrantedScopes`. The reference
-stores check it inside the same transaction/critical section as consumption or
-rotation, and `findGrantedScopes` returns only matching rows. The optional
-method argument remains omitted in stateless-DCR mode. A CIMD grant issued while
-stored-DCR mode is active carries the same deployment cutover generation, but
-remains excluded from scope accumulation under §17.1.6. Full record and legacy
-rules are in §12.
+`consumeAuthCode`, `rotateRefreshToken`, and `findGrantedScopes`, plus the
+exact configured resource to `findGrantedScopes`. The reference stores check
+the generation and resource inside their transaction/critical section, and
+`findGrantedScopes` returns only rows whose token and family each match both.
+The optional method arguments remain omitted in stateless-DCR mode. A CIMD grant
+issued while stored-DCR mode is active carries the same deployment cutover
+generation, but remains excluded from scope accumulation under §17.1.6. Full
+record and legacy rules are in §12.
 
 **Authorization-code resource predicate.** `consumeAuthCode` accepts an
 optional trailing `expectedResource`. When supplied, a conforming store compares
@@ -117,6 +119,16 @@ reference stores convert an omitted write member to the reserved unbound marker
 `mcp-sso:unbound-refresh-resource`. That marker is persisted rather than a
 `NULL`, copied only as stored state, and is rejected by every rotation before
 any mutation; callers cannot supply it explicitly.
+
+**Granted-scope resource predicate.** `findGrantedScopes` accepts an optional
+trailing `expectedResource`. In stored-DCR mode the authorization use-case
+supplies `BridgeConfig.resource`; a conforming store returns scopes only when
+both the active token and its family persist that exact, non-legacy string.
+Thus a pre-resource row, an unbound compatibility write, or a refresh family
+issued by resource A cannot contribute scopes to a resource-B authorization
+code. A new `storedDcrResourceBinding: 1` capability makes older custom stores
+fail at construction rather than silently ignoring this argument. Stateless
+callers omit the argument and retain the prior read-only derivation behavior.
 
 ## 6.4 `ClientStore` (stored-DCR mode only — fix #4)
 ```ts

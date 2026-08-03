@@ -932,6 +932,39 @@ test("scope accumulation: re-authorize unions with active grants (stored mode, R
   await ctx.store.close();
 });
 
+test("scope accumulation excludes an active grant from another exact resource", async () => {
+  const clients = new InMemoryClientStore();
+  const clientId = "resource-bound-stored-client";
+  await clients.save({
+    clientId, redirectUris: [REDIRECT], applicationType: "web", issuedAtEpoch: 1,
+  });
+  const store = new MemoryStore();
+  await store.saveRefreshToken({
+    tokenHash: sha256Hex("resource-a-prior-grant"), familyId: "resource-a-prior-family",
+    previousTokenHash: null, clientId, subject: SUBJECT, resource: "https://api-a.test/mcp",
+    scopes: ["mcp:read"], expiresAt: "2026-07-03T13:00:00.000Z",
+  });
+  const ctx = setupWithConfig(makeConfig({
+    resource: "https://api-b.test/mcp", dcr: { mode: "stored", store: clients },
+  }), store);
+  const verifier = "resource-b-verifier-123456789012345678901234567890";
+  const prepared = await ctx.auth.prepare({
+    clientId, redirectUri: REDIRECT, responseType: "code",
+    codeChallenge: pkceChallenge(verifier), codeChallengeMethod: "S256",
+    scope: "mcp:write", subject: SUBJECT,
+  });
+  assert.deepEqual(prepared.priorScopes, [], "resource A cannot affect resource-B consent display");
+  const approved = await ctx.auth.approve({
+    consentToken: prepared.consentToken, approved: true, origin: "https://auth.test",
+  });
+  const response = await ctx.token.exchangeAuthorizationCode({
+    grantType: "authorization_code", code: approved.code, redirectUri: REDIRECT,
+    clientId, codeVerifier: verifier,
+  });
+  assert.equal(response.scope, "mcp:write", "resource A cannot affect resource-B authorization output");
+  await store.close();
+});
+
 test("config fail-closed: https-only, secret length, key shape, catalog, defaults-subset", () => {
   const base = baseInput();
   assert.throws(() => createBridgeConfig({ ...base, issuer: "http://auth.test" }), AuthConfigError); // not https

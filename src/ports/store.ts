@@ -83,8 +83,9 @@ export function normalizeRefreshTokenWrite(input: SaveRefreshTokenInput): SaveRe
 }
 
 export interface StorePort {
-  /** Required capability marker when BridgeConfig uses stored DCR. */
+  /** Required capability markers when BridgeConfig uses stored DCR. */
   readonly storedDcrGrantGeneration?: number;
+  readonly storedDcrResourceBinding?: number;
   saveAuthCode(input: SaveAuthCodeInput): Promise<void>;
   /** Single-use; removes on read. Returns null if missing/expired. A supplied
    *  expectedResource mismatch returns null without consuming the record. */
@@ -112,8 +113,15 @@ export interface StorePort {
   consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean>;
   /** Derive the union of granted scopes from this (subject, clientId)'s ACTIVE
    *  refresh tokens (unconsumed, unrevoked, unexpired). Read-only; no grant table.
-   *  Invoked only in stored-DCR mode (contracts §9.3). */
-  findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number): Promise<string[]>;
+   *  Invoked only in stored-DCR mode (contracts §9.3). A supplied resource
+   *  accepts only token/family rows bound to that exact resource. */
+  findGrantedScopes(
+    subject: string,
+    clientId: string,
+    nowIso: string,
+    expectedGrantGeneration?: number,
+    expectedResource?: string,
+  ): Promise<string[]>;
   /** Delete expired auth codes, JTIs, unconsumed expired refresh tokens, orphaned
    *  revoked families. */
   sweepExpired(nowIso: string): Promise<void>;
@@ -122,6 +130,8 @@ export interface StorePort {
 
 /** First library-owned opaque stored-DCR grant generation (0.3.2). */
 export const STORED_DCR_GRANT_GENERATION = 1 as const;
+/** First stored-DCR capability version that binds scope accumulation to resource. */
+export const STORED_DCR_RESOURCE_BINDING = 1 as const;
 
 export class StoreInputError extends Error {
   readonly code = "invalid_store_input";
