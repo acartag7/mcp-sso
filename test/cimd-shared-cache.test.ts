@@ -37,6 +37,21 @@ test("shared cache uses s-maxage and RFC 9111 corrected initial age while preser
   assert.equal(cache.get(one.client_id, 60_000), undefined);
 });
 
+test("Date accepts only HTTP-date formats", () => {
+  const responseTime = Date.UTC(1994, 10, 6, 8, 49, 37);
+  for (const date of [
+    "Sun, 06 Nov 1994 08:49:37 GMT",
+    "Sunday, 06-Nov-94 08:49:37 GMT",
+    "Sun Nov  6 08:49:37 1994",
+    "Sat, 31 Dec 2016 23:59:60 GMT",
+  ]) {
+    assert.notEqual(computeCacheExpiryMs(view("max-age=60", { date: [date] }), 3600, responseTime, responseTime), null);
+  }
+  for (const date of ["9999-12-31", "01/01/3000", "Sun, 06 Nov 1994 08:49:37 UTC"]) {
+    assert.equal(computeCacheExpiryMs(view("max-age=60", { date: [date] }), 3600, responseTime, responseTime), null);
+  }
+});
+
 test("clock rollback clears old entries and recovers from a spurious future reading", () => {
   const cache = new CimdSuccessCache();
   const old = { client_id: "https://old.example/cimd", client_name: "old", redirect_uris: ["https://old.example/cb"], allRedirectsLoopback: false };
