@@ -23,10 +23,10 @@
 //     is the deployer's responsibility, NOT fail-closed here; §17.7 specifies no
 //     boot perm check for the JSONL sink, unlike quickstart §17.8).
 //
-// Rotation: appendFile re-resolves the path on every write, so a deployer's
-// logrotate (rename + recreate, the default) is followed automatically — the
-// next write lands in the new file. A held file handle would keep writing the
-// renamed inode; this design does not.
+// Rotation: opening the final path on every write means a deployer's logrotate
+// (rename + recreate, the default) is followed automatically — the next write
+// lands in the new file. A held file handle would keep writing the renamed inode;
+// this design does not.
 
 import { open, constants as fsc, type FileHandle } from "node:fs/promises";
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
