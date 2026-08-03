@@ -37,6 +37,152 @@ Tier-1 tests must be deterministic:
 Tier-3 live checks are still required for provider/client claims. Live checks
 never replace CI security tests.
 
+## Complete shipped-feature release gate
+
+`pnpm run test:release` is the named composition gate for the final merged tree.
+Run `pnpm run build` first and provide `RUN_INTEGRATION=true`, `MYSQL_URL`, and
+`REDIS_URL`. The command runs the normal full suite, checks this inventory against
+the executable manifest, then prints one pass/fail receipt for every `RM.*` row.
+Missing service variables, missing evidence, a skipped selected test, an
+undocumented row, a removed export, or a removed shipped example makes the
+command nonzero. Tier-3 provider behavior is deliberately outside this
+deterministic gate.
+
+### Shipped-feature inventory
+
+The evidence classes are intentionally strict: unit evidence is not promoted to
+a complete protocol flow, and route evidence for one sibling is not evidence for
+the others. `test/release-matrix.json` is the small executable allowlist; the
+normal full suite remains part of the release gate and is not duplicated here.
+
+| Shipped feature | Current evidence class | Durable evidence |
+|---|---|---|
+| Protected-resource metadata and challenge | Complete protocol flow | `test/e2e-mcp-sdk.test.ts`; RM.10 |
+| Authorization-server metadata | Complete protocol flow | `test/integration-full-flow.test.ts`; RM.3/RM.4 |
+| Stateless DCR | Packed-artifact flow | RM.1 |
+| Stored DCR | Complete protocol flow | `test/authorize-ceiling.test.ts`; RM.2/RM.3 |
+| CIMD resolution and authorization | Route integration | RM.4/RM.6 |
+| PKCE S256 | Packed-artifact flow | RM.1 |
+| Consent approve and deny | Complete protocol flow | RM.1/RM.3 plus `test/bridge.test.ts` |
+| Authorization-code exchange | Packed-artifact flow | RM.1 |
+| Exact resource/audience binding | Complete protocol flow | RM.7/RM.8 |
+| Refresh rotation | Packed-artifact flow | RM.1 |
+| Replay-family revocation | Packed-artifact flow | RM.1 |
+| RFC 7009 revocation | Packed-artifact flow | RM.1 |
+| Stored scope accumulation | Complete protocol flow | `test/authorize-ceiling.test.ts`; RM.2 |
+| Scope ceilings | Complete protocol flow | `test/authorize-entra-ceiling.test.ts`; RM.2/RM.3 |
+| Machine `client_credentials` | Complete protocol flow | RM.7 |
+| Access-token verification and protected `/mcp` | Complete protocol flow | RM.1-RM.4, RM.7, RM.9 |
+| Fastify adapter | Complete protocol flow | RM.1/RM.2 |
+| Express adapter | Complete protocol flow | RM.3 |
+| Hono adapter and Request path | Complete protocol flow | RM.4 |
+| Origin gate | Route integration | RM.2/RM.9 |
+| Adapter request normalization | Route integration | `test/lib/adapter-header-flow.ts`; full suite |
+| Hono request-body and failed-stream bounds | Route integration | `test/hono-body-limit.test.ts`; RM.4 |
+| Direct/header identity | Route integration | RM.5 |
+| Cloudflare Access | Complete protocol flow | `test/integration-example.test.ts`; RM.2/RM.5 |
+| Entra header/group mapping | Route integration | RM.5 plus `test/authorize-entra-ceiling.test.ts` |
+| Entra redirect | Complete protocol flow | `test/integration-upstream-redirect.test.ts`; RM.3/RM.5 |
+| Google redirect | Complete protocol flow | `test/integration-upstream-redirect.test.ts`; RM.5 |
+| Generic OIDC redirect | Complete protocol flow | `test/integration-upstream-redirect.test.ts`; RM.4/RM.5 |
+| Console pairing | Packed-artifact flow | RM.1/RM.5 |
+| Memory store | Complete protocol flow | RM.4/RM.10 |
+| SQLite persistence, restart, migration, trusted opening | Packed-artifact flow | RM.1 plus `test/sqlite-open-admission.test.ts` |
+| MySQL real service, migration, and concurrency | Complete protocol flow | RM.3/RM.10 |
+| Redis real service, shared window, and outage behavior | Route integration | RM.2/RM.10 |
+| JSONL audit and no-secret evidence | Packed-artifact flow | RM.1 |
+| Webhook/combine audit behavior | Route integration | `test/audit-flow.test.ts`, `test/audit-webhook.test.ts`; full suite |
+| Configuration snapshots | Unit only | `test/config-snapshot.test.ts`; full suite |
+| Opaque stateless DCR | Packed-artifact flow | RM.1 |
+| Opaque stored DCR | Complete protocol flow | RM.2/RM.3 |
+| HTTPS-shaped CIMD `client_id` through routes | Route integration | RM.4/RM.6 |
+| Machine/predefined credentials | Complete protocol flow | RM.7 |
+| No silent CIMD/DCR fallback | Route integration | RM.4/RM.6 |
+| Generated `mcp-sso init` server | Packed-artifact flow | RM.1 |
+| Fastify-SQLite example | Complete protocol flow | RM.2 plus `test/integration-example.test.ts` |
+| API-key gateway example | Complete protocol flow | RM.9 |
+| Installed npm tarball and installed bin | Packed-artifact flow | RM.1 |
+| Official MCP SDK protected tool call with visible `pong` | Packed-artifact flow | RM.1 |
+| Published package exports | Packed-artifact flow | RM.1 plus the manifest integrity check |
+| Two single-resource bridges sharing state | Complete protocol flow | RM.8 |
+| Cross-resource consent/code/refresh/scope isolation | Complete protocol flow | RM.8 |
+| Cross-resource machine isolation | Complete protocol flow | RM.7 |
+| Wrong-resource rejection before success audit/state mutation | Complete protocol flow | RM.7/RM.8 |
+
+### RM.1 — Packed generated server
+
+An actual private-directory npm tarball is shape-checked, installed with scripts
+disabled, and invoked through its installed `.bin/mcp-sso`. The unchanged
+exact-pinned scaffold is installed, typechecked, booted, paired, and driven through
+stateless DCR, PKCE, approve and deny, token, official-SDK `ping`/visible `pong`, refresh,
+replay-family revocation, reauthorization, RFC 7009 revocation, SQLite restart,
+and JSONL no-secret checks. Every published export root is imported from the
+installed artifact and its only runtime dependency is `jose`.
+
+### RM.2 — Fastify production-style header flow
+
+A single real Fastify socket stack accepts a locally signed Cloudflare Access JWT
+through its controlled JWKS seam, persists OAuth state in SQLite, uses stored DCR,
+accumulates scopes across grants under the identity ceiling, enforces a real Redis
+denial, fails open on a real Redis WRONGTYPE error, completes a protected SDK call,
+rejects a foreign Origin, and refreshes after reopening SQLite.
+The separately shipped Fastify-SQLite example remains covered by the full suite.
+
+### RM.3 — Express redirect flow
+
+A single real Express socket stack uses MySQL 8.4, stored DCR, and the shipped Entra
+redirect port with deterministic local token/signature seams. It exercises the
+group-derived ceiling, consent deny and approve, protected SDK call, refresh,
+replay-family revocation, reauthorization, and RFC 7009 revocation.
+
+### RM.4 — Hono CIMD flow
+
+A single real Hono `Request` stack carries an HTTPS-shaped CIMD client through
+counted DNS resolution, guarded fetch, validation, redirect matching, deterministic
+generic-OIDC discovery/exchange/signature verification, authorization, protected
+SDK call, refresh, and revoke without a DCR write. A failed under-cap request stream
+is rejected on that same Hono app before Bridge work.
+
+### RM.5 — Identity sibling proof
+
+Direct identity, Cloudflare Access, Entra header, Entra redirect, Google, generic
+OIDC, and console pairing each reach a shipped authorization route. Deterministic
+local signing, discovery, token, and JWKS seams are used; real SaaS-account behavior
+remains Tier 3 and is not claimed here.
+
+### RM.6 — Three-adapter CIMD route parity
+
+The same HTTPS-shaped CIMD client is authorized through Fastify, Express, and
+Hono. Each route proves resolver invocation, redirect continuation, and zero DCR
+store writes; this is route parity rather than three redundant refresh lifecycles.
+
+### RM.7 — Machine credential lifecycle
+
+An A-bound credential uses `client_secret_basic` and `client_secret_post`, obtains
+tokens through the shipped route, calls protected `/mcp`, rotates through its grace
+window, and is disabled. Resource B shares the client store but cannot authenticate,
+rotate, disable, mutate the row, or emit a B-side success audit.
+
+### RM.8 — Cross-resource OAuth lifecycle
+
+Two Fastify route sets share durable OAuth state. B rejects A consent, code,
+refresh, and stored scopes without a success audit or state mutation; A retains the
+legitimate lifecycle, and replay at A revokes A's successor.
+
+### RM.9 — Gateway
+
+The real API-key-gateway example completes pairing, token issuance, and an
+official-SDK backend tool call. The backend credential remains server-side while
+Origin and absolute-target guards run; documented backend authorization statuses
+are relayed without exposing the credential.
+
+### RM.10 — Store and service parity
+
+Memory, persistent SQLite, and real MySQL each complete an OAuth lifecycle. The
+selected MySQL rows cover real migration and concurrent rotation, while real Redis
+covers a shared window and the error path consumed by the bridge's fail-open policy.
+The release command rejects absent MySQL or Redis configuration before running rows.
+
 ## Harness helpers
 
 The current shared helpers are:
