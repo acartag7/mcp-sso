@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -53,11 +53,18 @@ function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-test("SqliteStore: a file: URI filename is not chmod'd (URI string not passed to chmod)", async () => {
-  // chmod'ing the literal "file:..." URI string would throw ENOENT after the DB
-  // opened; URI names are detected and skipped so valid SQLite URIs work.
-  const store = openSqliteStore("file:mcp-sso-uri-test?mode=memory");
-  await store.close();
+test("SqliteStore: file: URI names are rejected before SQLite interprets them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-uri-rejection-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    assert.throws(
+      () => openSqliteStore(`FiLe:${file}?mode=rwc`),
+      /sqlite: unsafe persistent state: file: URI names are not supported/,
+    );
+    assert.equal(existsSync(file), false, "the URI's underlying file was not created");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("SqliteStore: generation survives reopen and old-column inserts remain legacy", async () => {
@@ -212,6 +219,7 @@ test("SqliteStore: resource migration leaves legacy refresh rows unusable withou
         '["mcp:read"]', "2026-07-03T13:00:00.000Z", STORED_DCR_GRANT_GENERATION,
       );
     old.close();
+    if (process.platform !== "win32") chmodSync(file, 0o600);
 
     const store = openSqliteStore(file);
     assert.equal((await store.findRefreshToken(sha256Hex("legacy-resource-token")))?.resource, null);

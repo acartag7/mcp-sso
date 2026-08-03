@@ -80,6 +80,12 @@
     cannot exhaust the pool into an auth outage.
   - `rotateRefreshToken` takes a `SELECT ... FOR UPDATE` row lock, so concurrent
     rotations of one token cannot double-spend the successor.
+  - A library-opened persistent SQLite file enters the boundary only through
+    [§12.4](./contracts/12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission):
+    trusted-directory admission, descriptor validation, and post-open identity
+    comparison all run before library migrations or SQL reads. A caller-supplied
+    `DatabaseSync` passed to `new SqliteStore(...)` is already inside the
+    caller's trust boundary and carries no library filesystem guarantee.
 - **Fetched metadata is untrusted data.** v0.1 does no outbound fetching. v0.2
   CIMD (Client ID Metadata Documents) fetches client-supplied URLs —
   attacker-controlled input driving a server-side fetch.
@@ -217,6 +223,7 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 39 | A broken custom `ClockPort` supplies a non-finite, fractional, or non-canonical UTC value, disabling access/consent JWT expiry, breaking approval store timestamps, or replacing the intended OAuth failure during audit formatting | Spoofing / Elevation | `finiteClockSnapshot` validates one underlying read against the canonical four-digit UTC range. `verifyAccessToken` / `verifyConsentToken` reject before `jwtVerify`; `RequestAuthorizer.authorize` / `OAuthAuthorizationUseCase.approve` reuse a fixed snapshot through verification and timestamped work. Approval also validates its larger TTL-derived future offset before token processing, preserving `invalid_token` / `invalid_consent` | This is hardening, not a normal remote clock-control path: exploitation requires a faulty/custom trusted port plus an expired but otherwise valid signed token. The clock remains trusted; a plausible but stale canonical value is not detectable. Invalid snapshots become a fail-closed authentication outage and emit no timestamped event because no honest `occurredAt` exists |
 | 40 | Stored-DCR cutover is followed by a rollback, pre-resource migration, or resource change; an old binary writes a new authorization code, refresh family, or successor, then the current binary accepts or accumulates it because the client ID still exists | Tampering / Elevation | **0.3.2:** `OAuthAuthorizationUseCase.approve` stamps library generation `1`; nullable SQL columns make old-binary inserts explicitly legacy; `consumeAuthCode` and `rotateRefreshToken` check generation inside their atomic operation; `OAuthTokenUseCase` rechecks returned records; `findGrantedScopes` filters both family/token generations and their exact resource; `assertStoredDcrGenerationStore` refuses stored mode without both capabilities | Realistic rolling/rollback or shared-store resource-change class demonstrated by a current→old→current application sequence. It requires write access through an older trusted binary or a deployment sharing its store across resources, not a remote attacker choosing a field. Existing access JWTs are stateless and remain valid only until their normal expiry; browser-held pre-cutover consent/flow state is a separate deployment cutover concern and is not claimed fixed by this row |
 | 41 | An unauthenticated caller exhausts Hono or Express memory/CPU by making an OAuth POST parser materialize an oversized JSON, URL-encoded, or multipart body before Bridge admission control, or a server-generated consent form exceeds the approval route's cap | DoS | The Hono adapter applies the tested `hono/body-limit` middleware with a fixed 256 KiB cap before all four built-in OAuth POST handlers. The returned Express OAuth router installs its JSON and URL-encoded parsers with the same 256 KiB limit. The core bounds the other recognized DCR array, `grant_types`, to 32 entries × 256 UTF-8 bytes, so a compact, fully JSON-escaped registration with 16 maximum redirects is 245,939 bytes and reaches both adapters. Every scope carrier that can enter a consent token is bounded to 128 entries × 256 UTF-8 bytes and is snapshotted before reuse; the signer refuses output over 192 KiB, leaving form-encoding headroom under the approval cap. RFC 7591-required unknown metadata and arbitrary JSON whitespace remain subject to the raw adapter cap. A grammar precheck rejects malformed, duplicate/coalesced, conflicting, unsafe, or oversized `Content-Length`; valid declared lengths are removed from the Hono middleware-visible request so actual bytes are still stream-counted. Missing-length and transfer-encoded streams therefore cannot bypass Hono's cap. HTTP 413 is fixed and precedes parser, Bridge, limiter, store, and success-audit work. Hono stream/framing failures return a fixed direct 400 without raw-throwable logging or downstream work. Caller-owned Hono POST authorize routes, including console pairing with `skipAuthorize`, reuse the exported `honoOAuthBodyLimit` before parsing. Own-property raw-Request extensions survive reconstruction | The Hono middleware buffers a legitimate body up to 256 KiB and may read one host-sized crossing chunk without retaining or parsing it; it stops pulling but does not guarantee transport cancellation. Upload draining/timeouts and any lower limit belong to the host or reverse proxy. Prototype-only/subclass/private Request context is not copied; `clientIp` needing it must use stable Hono Context/environment data. Fastify's shipped/default parser cap remains a composition-owned sibling control. An Express application that mounts a lower parser before the OAuth router owns that lower limit. |
+| 42 | A `file:` URI bypasses SQLite `0600` enforcement, or an attacker preseeds/replaces OAuth state before a custom persistent database path is opened | Tampering / Elevation / Info disclosure | `openSqliteStore` accepts only exact `:memory:` or an ordinary path; rejects non-string/blank/NUL/`file:` input; requires an existing effective-user-owned private immediate directory; opens the final path exclusively/no-follow/nonblocking where supported; validates regular-file type, UID, exact `0600`, and single link; holds the descriptor across `DatabaseSync` open; compares device/inode before any library migration/SQL read; and closes both handles on failure. SQLite sidecars inherit the private-directory boundary. [§12.4](./contracts/12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission) | Root or another process running as the same OS account remains inside the filesystem trust boundary and can race or read state. Node exposes no caller-owned descriptor constructor for `DatabaseSync`, so the private-directory rule closes the lower-privileged replacement window rather than claiming a race-free same-account open. Windows has no Node `O_NOFOLLOW`/POSIX UID-mode enforcement; deployers must use a private ACL-controlled directory. The direct `SqliteStore(DatabaseSync)` constructor is caller-owned and outside this admission guarantee. |
 
 ### Rows 5/9 — the redirect-entry grammar
 
@@ -346,6 +353,21 @@ mistakenly assumed to cover arbitrary audit destinations.
 Recurrence is process-disciplined, not mechanistically enforced — a future code
 path added without the sweep could diverge; caught by review + the dedicated
 integration round.
+
+### Row 42 — persistent SQLite state admission
+
+The database file and its journal/WAL sidecars form one state boundary. File
+mode alone is insufficient: an attacker-writable immediate directory permits a
+preseed before boot and a replacement between a path check and SQLite's own
+open. `openSqliteStore` therefore admits the directory and an already-open file
+descriptor before constructing `DatabaseSync`, then compares the path identity
+before library migrations or SQL reads. It never repairs an untrusted existing
+object.
+
+The remaining same-account/root race is explicit. Node's SQLite API takes a
+path, not the verified descriptor, and Windows Node lacks POSIX no-follow and
+UID/mode primitives. The contract does not turn those platform facts into a
+false guarantee.
 
 ## Implementation gates
 

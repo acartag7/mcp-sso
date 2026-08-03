@@ -66,7 +66,7 @@ for the fetch, redirect, and validation contract.
 | `OAUTH_DEFAULT_SCOPES` | optional | `mcp:read` | Scopes granted when none requested. |
 | `OAUTH_ALLOWED_ORIGINS` | optional | `OAUTH_ISSUER` | Comma-separated Origin allowlist used by the `/mcp` DNS-rebinding gate and consent-approval Origin/CSRF check (add your browser clients, e.g. `https://claude.ai`). |
 | `OAUTH_ALLOW_INSECURE_LOCALHOST` | optional 🔒 | `false` | `true` permits an `http://` loopback issuer — **dev only**, never in production. |
-| `OAUTH_SQLITE_FILE` | optional | `<MCP_SSO_DIR>/auth.db` | sqlite store path. |
+| `OAUTH_SQLITE_FILE` | optional | `<MCP_SSO_DIR>/auth.db` | Ordinary sqlite filesystem path. `file:` URI names are rejected. The immediate directory must already satisfy the private state-directory rules below. |
 
 > 🔒 = secret. Deliver via a secret manager or mounted file, never `docker run -e`
 > in shell history, and never commit a populated `.env`. The quickstart
@@ -130,6 +130,14 @@ See [`identity/generic-oidc.md`](identity/generic-oidc.md).
 | `MCP_SSO_DIR` | optional | `./.mcp-sso` | State directory (sqlite + audit + quickstart secrets). |
 | `PORT` | optional | `3000` | Listen port. |
 | `HOST` | optional | by mode | Console pairing binds loopback; a real identity binds `0.0.0.0`. Override here. |
+
+`openSqliteStore` does not create the `OAUTH_SQLITE_FILE` parent. The runnable
+examples create/validate `MCP_SSO_DIR` first; a custom composition root must do
+the same (for example with `ensureStateDir`). On POSIX the immediate directory
+must be owned by the service user with no group/other permissions, and an
+existing database must be owned by that user with exact mode `0600` and one
+link. On Windows, use a deployer-controlled private directory ACL; POSIX mode
+bits do not enforce Windows access control.
 
 ## api-key-gateway example (`BACKEND_*`)
 

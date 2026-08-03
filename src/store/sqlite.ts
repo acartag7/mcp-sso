@@ -4,7 +4,6 @@
 // findGrantedScopes (reads active refresh records — no grant table).
 
 import { DatabaseSync } from "node:sqlite";
-import { chmodSync } from "node:fs";
 import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
@@ -14,6 +13,10 @@ import {
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
+import {
+  admitSqliteFile, closeSqliteAdmission, sqlitePath, SqliteStateError,
+  verifySqlitePathIdentity,
+} from "./sqlite-open.ts";
 import {
   authCodeFromRow, insertRefreshToken, nextFromRow, parseScopes,
   refreshTokenFromRow, revokeFamily, validateAuthCode, validateRefreshToken,
@@ -199,19 +202,39 @@ export class SqliteStore implements StorePort {
 }
 
 export function openSqliteStore(filename: string): SqliteStore {
-  const db = new DatabaseSync(filename);
-  // node:sqlite creates the OAuth state file at the umask default (often 0644);
-  // lock it to 0600 (matches secrets.json/audit.jsonl). Idempotent. Fail-closed.
-  // Skipped for :memory:, Windows, and SQLite URI names (file:...) — chmod on a
-  // URI string fails; URI users manage their own path.
-  const isUri = filename.startsWith("file:");
-  if (filename !== ":memory:" && !isUri && process.platform !== "win32") {
+  const path = sqlitePath(filename);
+  if (path === ":memory:") return openAndMigrate(path);
+  const admission = admitSqliteFile(path);
+  let admissionOpen = true;
+  let db: DatabaseSync | undefined;
+  try {
     try {
-      chmodSync(filename, 0o600);
-    } catch (error) {
-      throw new Error(`sqlite: cannot lock ${filename} to 0600: ${(error as Error).message}`);
+      db = new DatabaseSync(path);
+    } catch {
+      throw new SqliteStateError("DatabaseSync could not open the admitted path");
     }
+    verifySqlitePathIdentity(path, admission.identity);
+    closeSqliteAdmission(admission.fd);
+    admissionOpen = false;
+    migrateSqliteStore(db);
+    return new SqliteStore(db);
+  } catch (error) {
+    try { db?.close(); } catch { /* preserve the boot failure */ }
+    if (admissionOpen) {
+      try { closeSqliteAdmission(admission.fd); } catch { /* preserve the original failure */ }
+    }
+    if (error instanceof SqliteStateError) throw error;
+    throw new SqliteStateError("database initialization failed");
   }
-  migrateSqliteStore(db);
-  return new SqliteStore(db);
+}
+
+function openAndMigrate(path: ":memory:"): SqliteStore {
+  const db = new DatabaseSync(path);
+  try {
+    migrateSqliteStore(db);
+    return new SqliteStore(db);
+  } catch (error) {
+    try { db.close(); } catch { /* preserve the migration failure */ }
+    throw error;
+  }
 }

@@ -270,3 +270,70 @@ assert strict mode (`STRICT_TRANS_TABLES` or `STRICT_ALL_TABLES` — either suff
 InnoDB) + binary column collations at boot. (The in-tree
 memory + sqlite adapters are synchronous, so this is forward guidance for async
 adapters.)
+
+## 12.4 Persistent SQLite filesystem admission
+
+`openSqliteStore(filename)` is the security boundary for a library-opened
+SQLite database. `new SqliteStore(callerDatabaseSync)` remains public and
+caller-owned: it wraps an already-open connection and makes no claim about the
+connection's filesystem provenance, permissions, directory trust, or sidecars.
+
+The exact string `:memory:` is accepted on every platform and performs no
+filesystem check or write. Every other value is a persistent path. At runtime a
+persistent path MUST be a primitive, non-blank string with no embedded NUL and
+MUST NOT begin with `file:` in any ASCII case. SQLite URI syntax is deliberately
+unsupported: `openSqliteStore` accepts ordinary filesystem path strings only,
+does not parse URI query parameters, and never reinterprets a rejected URI as a
+literal filename. This is a security-motivated compatibility change: the former
+`file:` exception bypassed the file-permission control.
+
+Before `DatabaseSync` is constructed, the immediate database directory MUST
+already exist and MUST be a real directory, not a symlink or junction.
+`openSqliteStore` never creates directories. On POSIX, the immediate directory
+MUST be owned by the effective service user and have no group/other permission
+bits. This protects the main database plus SQLite journal/WAL sidecars. Path
+ancestry follows the existing scaffold trust model: a non-writable system
+ancestor is accepted; a group/other-writable ancestor is accepted only when it
+is sticky and the next path entry is owned by the effective user; a symlink
+ancestor is accepted only when its directory entry cannot be replaced by a
+lower-privileged user, and its resolved destination ancestry is checked by the
+same rule. The immediate database directory itself is never allowed to be a
+symlink. This closes lower-privileged preseed and replacement, not attacks by
+root or another process running as the same OS account.
+
+Persistent-file admission is synchronous and precedes migrations or reads:
+
+- A missing file is created with `O_RDWR | O_CREAT | O_EXCL | O_NONBLOCK` and,
+  where available, `O_NOFOLLOW`, then set and verified as mode `0600`. A
+  competing creator, symlink, or existing name fails closed; no existing path
+  is truncated.
+- An existing file is opened `O_RDWR | O_NONBLOCK` and, where available,
+  `O_NOFOLLOW`. It is never chmodded. On POSIX it MUST be owned by the effective
+  service user and have exact mode `0600`; remediation is an operator-owned
+  `chmod 600` after verifying provenance.
+- The admitted descriptor MUST identify a regular file with link count exactly
+  one. A final symlink (including dangling), directory, FIFO, socket, device, or
+  hard-linked target is rejected without migration, chmod, truncation,
+  deletion, or other mutation.
+
+The verified descriptor remains open while `DatabaseSync` opens the same path.
+Before the descriptor is closed or any library migration/SQL read runs, a
+no-follow path stat MUST still identify the same device/inode and a regular single-link file.
+An identity mismatch closes both handles and fails boot. Node's `DatabaseSync`
+accepts a path rather than a caller-owned descriptor, so this comparison cannot
+make a same-account race impossible; the trusted-directory rule prevents a
+lower-privileged process from replacing the entry during the remaining window.
+All descriptors/connections created by the call are closed on every failure;
+rejected paths are never deleted.
+
+On POSIX, no-follow, ownership, exact `0600`, and directory-mode guarantees are
+enforced. Node does not expose `O_NOFOLLOW`/`O_NONBLOCK` on Windows. There,
+`openSqliteStore` uses no-follow `lstat` checks plus descriptor/path regular-file
+and identity checks, exclusive creation, and the single-link rule, but makes no
+claim that POSIX mode/UID checks enforce Windows ACL policy. The deployer MUST
+place SQLite state in a private, deployer-controlled directory whose ACL denies
+untrusted writers. No Windows ACL dependency is added.
+
+Admission failures use the fixed `sqlite: unsafe persistent state:` prefix and
+allowlisted reasons/remediation. They never include file contents, SQLite rows,
+token material, or arbitrary thrown error text.
