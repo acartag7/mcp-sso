@@ -71,6 +71,8 @@ jobs:
       - run: pnpm test
       - name: build smoke
         run: pnpm build
+      - name: complete shipped-feature release matrix
+        run: pnpm test:release
 
   process-guard:
     name: process-guard
