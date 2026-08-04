@@ -7,11 +7,13 @@
 > Update this file before any change to auth, tokens, redirect policy, the
 > store, identity, egress, or the publish pipeline.
 >
-> Status: **v0.3.2.** This release carries the v0.3.1 threat controls forward
-> and adds the stored-DCR grant-generation rollback defense in row 40. It also
-> retains post-rotation compensation in row 2, the atomic, auditable
-> machine-client lifecycle in row 18, and the public redirect-policy helper
-> exposing the existing §10 enforcement.
+> Status: **v0.3.3.** This release carries the v0.3.2 threat controls forward,
+> strengthens the cross-resource boundaries in rows 2, 6, 18, and 40, and adds the
+> Hono request-body bound in row 41 and persistent SQLite admission in row 42.
+> Revocation admission limiting and hardened JSONL audit-file handling are
+> recorded in rows 8 and 24. The existing CIMD controls now enforce corrected
+> JSON media-type and shared-cache behavior while retaining the final-spec
+> residuals recorded in rows 5 and 17.
 > Threats 17–25 cover the
 > [§17](./contracts/17-v0-2-feature-contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
 > contracts — most shipped in v0.2; CIMD (§17.1) ships in v0.3.0
