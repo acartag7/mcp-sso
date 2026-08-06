@@ -506,6 +506,24 @@ pass the same exact-head gates and review before merge. This receipt is not
 evidence of a `v0.3.2` tag or npm publication; the final versioned head,
 publish workflow, and installed registry-artifact smoke remain release gates.
 
+**v0.3.3 prepublication candidate input (2026-08-04).** The release-only
+candidate based on exact merged implementation commit
+`5725e77d26651f4c0a303554a3f0fd3bdf897df8` declares package version 0.3.3.
+The clean source-tree suite passed 1,012 tests with nine platform or
+release-selector skips and zero failures. The integration-enabled suite passed
+1,051 tests with nine release-selector skips and zero failures against
+disposable MySQL 8.4 and Redis 7.4 services; the executable release matrix then
+reported all ten required rows passing with no required row skipped. The
+210-file tarball contained only `dist/`, `docs/`, `README.md`, `LICENSE`, and
+`package.json`, and its package manifest retained `jose` as the sole runtime
+dependency. RM.1 installed that tarball and completed the generated-server
+lifecycle through the installed executable, including the official-SDK
+`ping`/`pong`, refresh rotation, replay-family rejection, and revocation. A
+separate temporary consumer imported the root, Fastify, Express, and Hono entry
+points and used the installed executable to scaffold the five documented
+project files. This is prepublication evidence, not evidence of a `v0.3.3` tag,
+npm publication, or GitHub Release.
+
 ### Release-authority gate
 
 Before tagging, verify the `publish` GitHub Environment through the repository
