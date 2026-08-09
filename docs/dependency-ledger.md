@@ -8,8 +8,8 @@
 > `docs/threat-model.md` ("Implementation gates").
 >
 > The enforcing check computes the cutoff from the current UTC date. At this
-> recheck (**2026-07-27**), a pin is acceptable only if published on or before
-> **2026-07-12** (≥15 days old).
+> recheck (**2026-08-09**), a pin is acceptable only if published on or before
+> **2026-07-25** (≥15 days old).
 
 ## The 15-day rule and `minimumReleaseAge`
 
