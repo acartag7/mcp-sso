@@ -6,6 +6,7 @@
 
 import type { BridgeConfig } from "./config.ts";
 import { originOf } from "./config.ts";
+import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "./redirect.ts";
 import type { CimdResolver } from "./cimd/resolve.ts";
@@ -126,6 +127,20 @@ export function assertApproveOrigin(config: BridgeConfig, origin: string | undef
   if (!origin || (!config.allowedOrigins.includes(origin) && origin !== issuerOrigin)) {
     throw new OAuthError("invalid_origin", "Origin not allowed", 403);
   }
+}
+
+export function approvalCommitClock(clock: ClockPort, codeTtlSeconds: number, initialNowMs: number): ClockPort {
+  try {
+    const commitNowMs = finiteClockSnapshot(clock, codeTtlSeconds * 1000);
+    if (commitNowMs < initialNowMs) throw new RangeError("approval clock moved backward");
+    return fixedClockSnapshot(commitNowMs);
+  } catch {
+    throw invalidConsent();
+  }
+}
+
+export function assertConsentUnexpiredAt(expiresAt: string, clock: ClockPort): void {
+  if (expiresAt <= new Date(clock.nowMs()).toISOString()) throw invalidConsent();
 }
 
 export function redirectWithCode(redirectUri: string, code: string, issuer: string, state?: string): string {

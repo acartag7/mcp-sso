@@ -1,16 +1,13 @@
-// Crypto & token contracts (§7). Algorithm pinning is non-negotiable: consent
-// tokens are HS256, access tokens are ES256 (EC P-256); verifiers pin the alg set.
-// Consent and access keys are separate. Fix #6: the imported verification/signing
-// key is memoized (the source re-imported per request).
+// Crypto and token contracts (§7): pinned algorithms, separate keys, cached imports.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { SignJWT, importJWK, jwtVerify } from "jose";
-import type { JWK, JWTPayload } from "jose";
+import { SignJWT, importJWK, jwtVerify, type JWK, type JWTPayload } from "jose";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { BridgeConfig } from "./config.ts";
 import { scopeString, type CredentialKind } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { consentSecret, signKey, verifyKey } from "./crypto-keys.ts";
+import { numericDateIso } from "./numeric-date.ts";
 
 const CONSENT_AUDIENCE = "mcp-sso/consent";
 const CONSENT_TYP = "mcp-sso-consent";
@@ -120,7 +117,7 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
   return token;
 }
 
-export async function verifyConsentToken(token: string, config: BridgeConfig, clock: ClockPort): Promise<ConsentRequestClaims & { jti: string }> {
+export async function verifyConsentToken(token: string, config: BridgeConfig, clock: ClockPort): Promise<ConsentRequestClaims & { jti: string; expiresAt: string }> {
   try {
     const nowMs = finiteClockSnapshot(clock);
     const { payload } = await jwtVerify(token, consentSecret(config), {
@@ -129,7 +126,11 @@ export async function verifyConsentToken(token: string, config: BridgeConfig, cl
       audience: CONSENT_AUDIENCE,
       currentDate: new Date(nowMs),
     });
-    return { ...consentClaims(payload), jti: requiredString(payload.jti, "jti") };
+    return {
+      ...consentClaims(payload),
+      jti: requiredString(payload.jti, "jti"),
+      expiresAt: numericDateIso(payload.exp, "exp"),
+    };
   } catch {
     throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
   }

@@ -99,6 +99,19 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: consent jti survives sweep through its supplied signed expiry`, async () => {
+    const store = make();
+    const expiresAt = "2026-07-03T12:30:00.000Z";
+    assert.equal(await store.consumeConsentJti("signed-exp-jti", expiresAt), true);
+    await store.sweepExpired("2026-07-03T12:29:59.999Z");
+    assert.equal(await store.consumeConsentJti("signed-exp-jti", expiresAt), false, "pre-expiry sweep retains replay signal");
+    await store.sweepExpired(expiresAt);
+    assert.equal(await store.consumeConsentJti("signed-exp-jti", expiresAt), false, "expiry-boundary sweep retains replay signal");
+    await store.sweepExpired("2026-07-03T12:30:00.001Z");
+    assert.equal(await store.consumeConsentJti("signed-exp-jti", FUTURE), true, "post-expiry sweep collected the tombstone");
+    await store.close();
+  });
+
   test(`${label}: rotates refresh tokens and replay revokes the family`, async () => {
     const store = make();
     await store.saveRefreshToken(refresh("one", "fam-1", null, FUTURE));
