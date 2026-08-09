@@ -275,8 +275,9 @@ test("Bridge.handleApprove reuses one snapshot on the Deny exit", async () => {
   }
 });
 
-test("Bridge.handleApprove reuses one snapshot on the Approve success exit", async () => {
-  const clock = new ScriptedClock([NOW_MS, Number.NaN]);
+test("Bridge.handleApprove uses a fresh commit snapshot on the Approve success exit", async () => {
+  const commitMs = NOW_MS + 500;
+  const clock = new ScriptedClock([NOW_MS, commitMs, Number.NaN]);
   const audit = new MemoryAudit();
   const store = new MemoryStore();
   const bridge = new Bridge({ config, clock, audit, store });
@@ -288,8 +289,8 @@ test("Bridge.handleApprove reuses one snapshot on the Approve success exit", asy
     });
     assert.equal(response.status, 302);
     assert.ok(new URL(response.redirect!).searchParams.get("code"));
-    assert.equal(clock.reads, 1);
-    assert.equal(audit.events[0]?.occurredAt, new Date(NOW_MS).toISOString());
+    assert.equal(clock.reads, 2);
+    assert.equal(audit.events[0]?.occurredAt, new Date(commitMs).toISOString());
     assert.equal(audit.events[0]?.status, "success");
     assert.equal(audit.events[0]?.event, "oauth.authorize.approve");
   } finally {
@@ -300,7 +301,7 @@ test("Bridge.handleApprove reuses one snapshot on the Approve success exit", asy
 test("Bridge.handleApprove accepts both canonical approval-clock boundaries", async () => {
   const boundaries = [MIN_CANONICAL_MS, MAX_CANONICAL_MS - APPROVAL_OFFSET_MS];
   for (const boundary of boundaries) {
-    const clock = new ScriptedClock([boundary, Number.NaN]);
+    const clock = new ScriptedClock([boundary, boundary, Number.NaN]);
     const audit = new MemoryAudit();
     const store = new MemoryStore();
     const bridge = new Bridge({ config, clock, audit, store });
@@ -312,7 +313,7 @@ test("Bridge.handleApprove accepts both canonical approval-clock boundaries", as
       });
       assert.equal(response.status, 302);
       assert.ok(new URL(response.redirect!).searchParams.get("code"));
-      assert.equal(clock.reads, 1);
+      assert.equal(clock.reads, 2);
       assert.equal(audit.events[0]?.occurredAt, new Date(boundary).toISOString());
       assert.equal(audit.events[0]?.status, "success");
     } finally {
@@ -321,21 +322,54 @@ test("Bridge.handleApprove accepts both canonical approval-clock boundaries", as
   }
 });
 
-test("Bridge.handleApprove rejects a clock whose approval TTL crosses the boundary", async () => {
-  const clock = new ScriptedClock([MAX_CANONICAL_MS - APPROVAL_OFFSET_MS + 1]);
+test("Bridge.handleApprove rejects a backward commit clock without audit and consumes the JTI", async () => {
+  const clock = new ScriptedClock([NOW_MS, NOW_MS - 1, NOW_MS]);
   const audit = new MemoryAudit();
   const store = new MemoryStore();
   const bridge = new Bridge({ config, clock, audit, store });
+  const consentToken = await validConsentToken();
+  try {
+    const response = await bridge.handleApprove({
+      query: {}, headers: { origin: "https://auth.test" },
+      body: { consent_token: consentToken, approved: "true" },
+    });
+    assert.equal(response.status, 400);
+    assert.equal((response.body as { error?: string }).error, "invalid_consent");
+    assert.deepEqual(audit.events, []);
+    const retry = await bridge.handleApprove({
+      query: {}, headers: { origin: "https://auth.test" },
+      body: { consent_token: consentToken, approved: "true" },
+    });
+    assert.equal((retry.body as { error?: string }).error, "invalid_grant");
+  } finally {
+    await store.close();
+  }
+});
+
+test("Bridge.handleApprove rejects a commit clock whose approval TTL crosses the boundary", async () => {
+  const invalidCommitMs = MAX_CANONICAL_MS - APPROVAL_OFFSET_MS + 1;
+  const clock = new ScriptedClock([NOW_MS, invalidCommitMs, NOW_MS]);
+  const audit = new MemoryAudit();
+  const store = new MemoryStore();
+  const bridge = new Bridge({ config, clock, audit, store });
+  const consentToken = await validConsentToken();
   try {
     const response = await bridge.handleApprove({
       query: {},
       headers: { origin: "https://auth.test" },
-      body: { consent_token: await validConsentToken(), approved: "true" },
+      body: { consent_token: consentToken, approved: "true" },
     });
     assert.equal(response.status, 400);
     assert.equal((response.body as { error?: string }).error, "invalid_consent");
-    assert.equal(clock.reads, 1);
+    assert.equal(clock.reads, 2);
     assert.deepEqual(audit.events, []);
+    const retry = await bridge.handleApprove({
+      query: {},
+      headers: { origin: "https://auth.test" },
+      body: { consent_token: consentToken, approved: "true" },
+    });
+    assert.equal(retry.status, 400);
+    assert.equal((retry.body as { error?: string }).error, "invalid_grant", "the invalid commit snapshot still consumed the JTI");
   } finally {
     await store.close();
   }

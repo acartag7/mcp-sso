@@ -50,26 +50,34 @@ and cannot preserve any tombstone across destruction of its owning process or
 across independent replicas.
 
 Replay rejection occurs before authorization-code generation/storage and before
-an `oauth.authorize.approve` success audit. It emits only the existing failure
-path. A first use that passes every earlier approval gate still stores one code
-and emits one success audit. Denial (`approved !== true`) remains unchanged and
-does not consume the JTI.
+an `oauth.authorize.approve` success audit. After a successful JTI consume,
+`approve` MUST take a fresh canonical commit snapshot, require it to be no
+earlier than the initial verification snapshot, validate the authorization-code
+TTL offset at that snapshot, and recheck the signed expiry
+before generating or storing a code. If `exp <= commit snapshot`, the operation
+fails with the existing direct `invalid_consent`; this closes an in-flight race
+where verification happened just before `exp`, an asynchronous store read or JTI
+consume paused, and a concurrent post-expiry sweep removed the old tombstone.
+The commit snapshot owns authorization-code expiry and every subsequent audit
+timestamp. A first use that reaches commit before signed expiry still stores one
+code and emits one success audit. Denial (`approved !== true`) remains unchanged
+and does not consume the JTI.
 
 | Behavior-table field | Binding rule and proof |
 | --- | --- |
 | Authority | The verified consent JWT's signed `exp`; never the approval-time `consentTokenTtlSeconds`, authorization-code TTL, sweep time, or adapter default. |
 | Capture point | `verifyConsentToken`, after signature/algorithm/issuer/audience/time verification, parses the same verified payload and returns one canonical signed-expiry string through an additive return-only intersection. `ConsentRequestClaims` remains the unchanged signing-input shape. No consumer reparses the raw JWT. |
 | Consumers | Direct consent approval passes the returned expiry to `StorePort.consumeConsentJti`. The upstream-flow sibling continues to pass its independently verified flow JWT `exp`; every `consumeConsentJti` production caller is covered. |
-| Side-effect order | Origin, JWT, resource, CIMD/redirect, approval, and scope gates precede JTI consumption. Successful JTI consumption precedes code generation, `saveAuthCode`, redirect construction, and success audit. A replay stops at JTI consumption. |
+| Side-effect order | Origin, JWT, resource, CIMD/redirect, approval, and scope gates precede JTI consumption. Successful JTI consumption is followed by a fresh commit snapshot and signed-expiry recheck; both precede code generation, `saveAuthCode`, redirect construction, and success audit. An extant-tombstone replay stops at JTI consumption. A sweep/consume race stops at the commit recheck. |
 | Lifecycle: same configuration | First valid approval succeeds once; immediate or later replay before signed `exp` fails. |
 | Lifecycle: shorter TTL after mint/restart | A token minted under a longer TTL retains its signed expiry. Approval under a shorter current TTL records the original signed expiry; sweeping at `approval time + shorter TTL` does not restore eligibility. |
 | Lifecycle: longer TTL after mint/restart | The tombstone is not extended to the new TTL. It remains only through the token's earlier signed expiry. |
-| Lifecycle: sweep boundary | Sweep before or exactly at signed expiry retains the JTI. Sweep after signed expiry may delete it; approval still fails at JWT verification, before JTI consumption. |
+| Lifecycle: sweep boundary | Sweep before or exactly at signed expiry retains the JTI. Sweep after signed expiry may delete it. A newly started approval then fails at JWT verification; an approval verified before expiry but delayed past it fails at the post-consume commit recheck. Neither path stores a code or emits success. |
 | Lifecycle: store adapters | Memory, SQLite, and MySQL have the same supplied-expiry and sweep semantics. Only persistent adapters claim process-restart durability; shared storage is required across replicas. |
 | Semantic behavior | First use returns an authorization code. Any second approval while the JWT is otherwise valid returns direct `invalid_grant` and cannot mint another code. At/after JWT expiry the existing direct `invalid_consent` path wins. |
-| Forbidden effects | Current TTL must not influence an already-signed token's tombstone. Replay must not generate/save a code, emit approval success, replace/extend the existing tombstone, or redirect success. |
+| Forbidden effects | Current TTL must not influence an already-signed token's tombstone. Replay must not generate/save a code, emit approval success, extend an existing tombstone, or redirect success. A sweep race may reinsert only the same signed expired timestamp before the commit recheck fails; it cannot make the approval successful. |
 | Positive proof | An adjacent valid first-use approval remains green and records the exact verified signed expiry. Shared conformance proves all stores retain that supplied expiry through sweep. JWT boundary tests preserve consent verification at the latest mint time whose signed `exp` remains canonical; the access-token upper-bound proof stays unchanged. |
-| Negative proof | Mint at 600 seconds, restart/approve under 60 seconds at +100, sweep at +161, and replay before +600: replay fails with zero additional code writes and zero additional approval-success audits. |
+| Negative proof | (1) Mint at 600 seconds, restart/approve under 60 seconds at +100, sweep at +161, and replay before +600: replay fails with zero additional code writes and success audits. (2) In stored-DCR mode, delay a replay after pre-expiry verification, sweep after `exp`, let `consumeConsentJti` reinsert, then resume: commit recheck returns `invalid_consent` with zero code writes and success audits. |
 | Semantic mutant | Restoring `approval snapshot + current consentTokenTtlSeconds` at the enforcement point makes the restart/sweep regression fail. |
 | Wiring mutant | Returning the correct expiry from verification but passing a current-TTL-derived value at the actual approval call site makes the same regression fail; helper-only tests are insufficient. |
 

@@ -20,24 +20,31 @@ supplied, the snapshot plus that offset MUST remain in the same range.
 existing `ClockPort` interface without reading the underlying port.
 
 The access/consent JWT operation owners named here MUST fail closed on an
-invalid snapshot before token processing or audit timestamp formatting.
+invalid initial snapshot before token processing or audit timestamp formatting.
 `verifyAccessToken` and `RequestAuthorizer.authorize` map it to the existing
 `invalid_token` 401; `verifyConsentToken` and
 `OAuthAuthorizationUseCase.approve` map it to the existing `invalid_consent`
-400. Clock validation is the first step in both operation owners; on `approve`,
-an invalid clock therefore takes precedence over the Origin check. The two
-operation owners MUST pass the fixed snapshot through verification
-and their remaining expiry/store/audit work so a stateful custom clock cannot
-give the decision and its audit event different times. When the initial
-snapshot is invalid, no timestamped audit event is emitted: neither ambient
-time nor a fabricated timestamp is an honest `occurredAt`.
-**0.3.3 correction.** `OAuthAuthorizationUseCase.approve` MUST validate
-the authorization-code TTL offset needed for its approval-time derived timestamp.
+400. Initial clock validation is the first step in both operation owners; on
+`approve`, it therefore takes precedence over the Origin check. Access-token
+operations and every approval exit before JTI consumption MUST pass that fixed
+initial snapshot through their remaining expiry/store/audit work. When the
+initial snapshot is invalid, no timestamped audit event is emitted: neither
+ambient time nor a fabricated timestamp is an honest `occurredAt`.
+**0.3.3 correction.** `OAuthAuthorizationUseCase.approve` takes an initial
+canonical snapshot for JWT verification and the pre-consume audit/error paths.
 It MUST NOT derive the consent-JTI timestamp from the current consent TTL. The
 JTI timestamp comes from `verifyConsentToken`'s independently validated signed
 `exp` under §7.1, so a TTL change cannot alter an already-signed token's replay
-window. This replaces the earlier requirement to supply the larger of the
-consent-JTI and authorization-code TTL offsets.
+window. After successful JTI consumption it takes a second, fresh canonical
+commit snapshot with the authorization-code TTL offset validated. The commit
+snapshot MUST be greater than or equal to the initial snapshot; a stateful or
+adjusted clock cannot move the authorization decision backward. That snapshot
+rechecks signed expiry and owns code expiry plus all later audit timestamps. If
+the commit snapshot is invalid or moves backward after JTI consumption, approval
+fails with no timestamped audit event; the JTI remains consumed. This replaces
+the earlier
+single snapshot that supplied the larger of the consent-JTI and authorization-
+code TTL offsets.
 
 This amendment is deliberately limited to the proven access/consent JWT class.
 Console-pairing expiry remains the separate §17.5/B2-F6 slice; unrelated clock

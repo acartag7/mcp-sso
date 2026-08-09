@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { pkceChallenge, verifyConsentToken } from "../src/crypto.ts";
 import { OAuthError } from "../src/errors.ts";
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
+import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { SaveAuthCodeInput } from "../src/ports/store.ts";
 import { openSqliteStore, type SqliteStore } from "../src/store/sqlite.ts";
@@ -19,7 +20,7 @@ const ISSUER = "https://auth.test";
 const RESOURCE = "https://api.test/mcp";
 const REDIRECT = "https://client.test/callback";
 const SUBJECT = "agent@test";
-const CONSENT_SECRET = "consent-replay-secret-with-enough-entropy";
+const CONSENT_SECRET = randomBytes(48).toString("base64url");
 const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 const SIGNING_JWK = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "consent-replay" } as JWK;
 
@@ -35,7 +36,19 @@ class MemoryAudit implements AuditPort {
   async writeAuthEvent(event: AuthAuditEvent): Promise<void> { this.events.push(event); }
 }
 
-function makeConfig(consentTokenTtlSeconds: number): BridgeConfig {
+class StaticClientStore implements ClientStore {
+  async save(): Promise<void> {}
+  async find(clientId: string): Promise<ClientRegistration | null> {
+    return {
+      clientId,
+      redirectUris: [REDIRECT],
+      applicationType: "web",
+      issuedAtEpoch: 0,
+    };
+  }
+}
+
+function makeConfig(consentTokenTtlSeconds: number, clientStore?: ClientStore): BridgeConfig {
   return createBridgeConfig({
     issuer: ISSUER,
     resource: RESOURCE,
@@ -46,7 +59,7 @@ function makeConfig(consentTokenTtlSeconds: number): BridgeConfig {
     scopeCatalog: ["mcp:read"],
     defaultScopes: ["mcp:read"],
     allowedOrigins: [ISSUER],
-    dcr: { mode: "stateless" },
+    dcr: clientStore ? { mode: "stored", store: clientStore } : { mode: "stateless" },
     accessTokenTtlSeconds: 600,
     refreshTokenTtlSeconds: 2_592_000,
     consentTokenTtlSeconds,
@@ -60,6 +73,12 @@ function instrumentCodeWrites(store: SqliteStore, onWrite: (input: SaveAuthCodeI
     onWrite(input);
     await saveAuthCode(input);
   };
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
 }
 
 async function prepareConsent(auth: OAuthAuthorizationUseCase): Promise<string> {
@@ -130,6 +149,66 @@ test("direct consent replay stays rejected through signed exp after shorter-TTL 
       );
     } finally {
       await replayStore.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("approval delayed across signed exp cannot race a sweep into a second code", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-consent-race-"));
+  const file = join(dir, "oauth.sqlite");
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  const clients = new StaticClientStore();
+  let codeWrites = 0;
+
+  try {
+    const mintStore = openSqliteStore(file);
+    let consentToken: string;
+    try {
+      const mintAuth = new OAuthAuthorizationUseCase({ config: makeConfig(600, clients), store: mintStore, clock, audit });
+      consentToken = await prepareConsent(mintAuth);
+      instrumentCodeWrites(mintStore, () => { codeWrites += 1; });
+      clock.set(START_MS + 100_000);
+      const firstUse = await mintAuth.approve({ consentToken, approved: true, origin: ISSUER });
+      assert.ok(firstUse.code);
+      assert.equal(codeWrites, 1);
+    } finally {
+      await mintStore.close();
+    }
+
+    clock.set(START_MS + 599_000);
+    const raceStore = openSqliteStore(file);
+    try {
+      instrumentCodeWrites(raceStore, () => { codeWrites += 1; });
+      const findStarted = deferred();
+      const resumeFind = deferred();
+      const findGrantedScopes = raceStore.findGrantedScopes.bind(raceStore);
+      raceStore.findGrantedScopes = async (...args) => {
+        findStarted.resolve();
+        await resumeFind.promise;
+        return await findGrantedScopes(...args);
+      };
+      const replayAuth = new OAuthAuthorizationUseCase({ config: makeConfig(600, clients), store: raceStore, clock, audit });
+      const replay = replayAuth.approve({ consentToken, approved: true, origin: ISSUER });
+      await findStarted.promise;
+      clock.set(START_MS + 601_000);
+      await raceStore.sweepExpired(new Date(clock.nowMs()).toISOString());
+      resumeFind.resolve();
+
+      await assert.rejects(
+        replay,
+        (error: unknown) => error instanceof OAuthError && error.code === "invalid_consent" && !error.redirect,
+      );
+      assert.equal(codeWrites, 1, "the delayed replay writes no second authorization code");
+      assert.equal(
+        audit.events.filter((event) => event.event === "oauth.authorize.approve" && event.status === "success").length,
+        1,
+        "the delayed replay emits no second approval-success audit",
+      );
+    } finally {
+      await raceStore.close();
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

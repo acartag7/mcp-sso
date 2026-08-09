@@ -14,8 +14,7 @@ import type { ConsentRequestClaims } from "./crypto.ts";
 import { OAuthError, withRedirect } from "./errors.ts";
 import { writeAuthorizeFailure, writeAuthorizeSuccess, type AuthorizeAuditEvent, type AuthorizeAuditSuccess } from "./authorize-audit.ts";
 import {
-  expiresAtIso, generateAuthorizationCode, sha256Hex,
-  signConsentToken, verifyConsentToken,
+  expiresAtIso, generateAuthorizationCode, sha256Hex, signConsentToken, verifyConsentToken,
 } from "./crypto.ts";
 import { assertAllowedScopesCeiling, normalizeScopes, storedScopes } from "./scopes.ts";
 import { buildErrorRedirect } from "./challenge.ts";
@@ -24,8 +23,9 @@ import type { CimdRegistration } from "./cimd/registration.ts";
 import { assertOAuthRedirectEntry } from "./redirect.ts";
 import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, newGrantGeneration } from "./stored-dcr-generation.ts";
 import {
-  accumulationAllowed, assertApproveCimdGate, assertApproveOrigin, cimdDisplay, dedupe, hostOf,
-  redirectWithCode, requiredStr, resolveAuthorizeClient,
+  accumulationAllowed, approvalCommitClock, assertApproveCimdGate, assertApproveOrigin,
+  assertConsentUnexpiredAt, cimdDisplay, dedupe, hostOf, redirectWithCode,
+  requiredStr, resolveAuthorizeClient,
   type CimdConsentDisplay,
 } from "./authorize-internals.ts";
 export interface OAuthAuthorizationDeps {
@@ -187,9 +187,9 @@ export class OAuthAuthorizationUseCase {
   }
   async approve(input: ApproveInput): Promise<ApproveResult> {
     let operationClock: ClockPort;
-    const maxFutureMs = this.config.authorizationCodeTtlSeconds * 1000;
-    try { operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock, maxFutureMs)); }
+    try { operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock)); }
     catch { throw new OAuthError("invalid_consent", "Consent token is invalid or expired"); }
+    let auditClock: ClockPort | undefined = operationClock;
     try {
       assertApproveOrigin(this.config, input.origin);
       const token = requiredStr(input.consentToken, "consent_token");
@@ -211,12 +211,15 @@ export class OAuthAuthorizationUseCase {
       const union = dedupe([...consentScopes, ...priorScopes]);
       // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
       const scopes = allowedScopes ? union.filter((s) => allowedScopes.includes(s)) : union;
-      // Single-use consent JTI; retain the replay signal through this verified
-      // JWT's signed expiry, independent of later consent-TTL configuration.
       if (!(await this.store.consumeConsentJti(consent.jti, consent.expiresAt))) {
         throw new OAuthError("invalid_grant", "Consent token has already been used");
       }
-
+      auditClock = undefined;
+      const commitClock = approvalCommitClock(
+        this.clock, this.config.authorizationCodeTtlSeconds, operationClock.nowMs(),
+      );
+      auditClock = commitClock;
+      assertConsentUnexpiredAt(consent.expiresAt, commitClock);
       const code = generateAuthorizationCode();
       await this.store.saveAuthCode({
         codeHash: sha256Hex(code),
@@ -227,20 +230,19 @@ export class OAuthAuthorizationUseCase {
         scopes,
         codeChallenge: consent.codeChallenge,
         codeChallengeMethod: "S256",
-        expiresAt: expiresAtIso(operationClock, this.config.authorizationCodeTtlSeconds),
+        expiresAt: expiresAtIso(commitClock, this.config.authorizationCodeTtlSeconds),
         grantGeneration: newGrantGeneration(this.config),
       });
-      await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject }, operationClock);
+      await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject }, commitClock);
       return { code, redirectTo: redirectWithCode(consent.redirectUri, code, this.config.issuer, consent.state), state: consent.state };
     } catch (error) {
-      await this.auditFailure(AUDIT_APPROVE, error, undefined, undefined, undefined, operationClock);
+      if (auditClock) await this.auditFailure(AUDIT_APPROVE, error, undefined, undefined, undefined, auditClock);
       throw error;
     }
   }
   private auditSuccess(event: AuthorizeAuditEvent, r: AuthorizeAuditSuccess, clock: ClockPort = this.clock): Promise<void> {
     return writeAuthorizeSuccess(this.audit, clock, event, r);
   }
-
   private auditFailure(event: AuthorizeAuditEvent, error: unknown, clientId?: string, redirectUri?: string, subject?: string, clock: ClockPort = this.clock): Promise<void> {
     return writeAuthorizeFailure(this.audit, clock, event, error, clientId, redirectUri, subject);
   }
