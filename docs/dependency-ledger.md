@@ -132,9 +132,9 @@ upstream registries.
   },
   "actions": {
     "actions/checkout": {
-      "sha": "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
-      "tag": "v7.0.0",
-      "published": "2026-06-18T13:53:05Z"
+      "sha": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "tag": "v7.0.1",
+      "published": "2026-07-20T15:10:05Z"
     },
     "actions/setup-node": {
       "sha": "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
@@ -152,9 +152,9 @@ upstream registries.
       "published": "2026-06-04T14:27:19Z"
     },
     "ossf/scorecard-action": {
-      "sha": "4eaacf0543bb3f2c246792bd56e8cdeffafb205a",
-      "tag": "v2.4.3",
-      "published": "2025-09-30T20:40:48Z"
+      "sha": "2d1146689b8cda280b9bc96326124645441f03bc",
+      "tag": "v2.4.4",
+      "published": "2026-07-23T21:12:46Z"
     },
     "actions/upload-artifact": {
       "sha": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
