@@ -10,8 +10,20 @@ import {
 } from "../scripts/check-dependency-policy.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-const NOW = new Date("2026-08-10T00:00:00Z");
+const DAY_MS = 86_400_000;
 const temporaryRoots = [];
+
+async function conformingNow(root = ROOT) {
+  const policy = await loadDependencyPolicy(root);
+  const ordinaryRecords = [
+    ...Object.values(policy.packages),
+    ...Object.values(policy.actions).filter((record) => record.firstPartyException !== true),
+  ];
+  const newestPublication = Math.max(...ordinaryRecords.map((record) => Date.parse(record.published)));
+  return new Date(newestPublication + (policy.minimumAgeDays + 1) * DAY_MS);
+}
+
+const NOW = await conformingNow();
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -54,8 +66,16 @@ test("CI and publish invoke the remote policy check with a GitHub token", async 
 test("package, action SHA, and action evidence drift each fail closed", async (t) => {
   await t.test("direct package pin", async () => {
     const root = await fixture();
-    await replace(join(root, "package.json"), '"hono": "4.12.27"', '"hono": "4.12.26"');
-    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /hono: package pin 4\.12\.26 != ledger 4\.12\.27/);
+    const policy = await loadDependencyPolicy(root);
+    await replace(
+      join(root, "package.json"),
+      `"hono": "${policy.packages.hono.version}"`,
+      '"hono": "0.0.0"',
+    );
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      new RegExp(`hono: package pin 0\\.0\\.0 != ledger ${policy.packages.hono.version.replaceAll(".", "\\.")}`),
+    );
   });
 
   await t.test("optional dependency pin", async () => {
@@ -69,29 +89,43 @@ test("package, action SHA, and action evidence drift each fail closed", async (t
 
   await t.test("workflow SHA", async () => {
     const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
     await replace(
       join(root, ".github/workflows/ci.yml"),
-      "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-      "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+      `actions/checkout@${policy.actions["actions/checkout"].sha}`,
+      `actions/checkout@${"0".repeat(40)}`,
     );
     await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /actions\/checkout pin does not match the ledger/);
   });
 
   await t.test("version/date comment", async () => {
     const root = await fixture();
-    await replace(join(root, ".github/workflows/codeql.yml"), "v6.4.0 (2026-04-20)", "v7.0.0 (2026-07-14)");
+    const policy = await loadDependencyPolicy(root);
+    const setupNode = policy.actions["actions/setup-node"];
+    await replace(
+      join(root, ".github/workflows/codeql.yml"),
+      `${setupNode.tag} (${setupNode.published.slice(0, 10)})`,
+      "bogus action evidence",
+    );
     await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /version\/date comment does not match the ledger/);
   });
 });
 
 test("third-party action quarantine rejects a ledger date younger than 15 days", async () => {
   const root = await fixture();
+  const policy = await loadDependencyPolicy(root);
+  const checkout = policy.actions["actions/checkout"];
+  const youngPublished = new Date(NOW.getTime() - DAY_MS).toISOString();
   await replace(
     join(root, "docs/dependency-ledger.md"),
-    '"tag": "v7.0.1",\n      "published": "2026-07-20T15:10:05Z"',
-    '"tag": "v7.0.1",\n      "published": "2026-08-09T15:10:05Z"',
+    `"tag": "${checkout.tag}",\n      "published": "${checkout.published}"`,
+    `"tag": "${checkout.tag}",\n      "published": "${youngPublished}"`,
   );
-  await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /actions\/checkout: 2026-08-09T15:10:05Z is younger than 15 days/);
+  await assert.rejects(
+    verifyLocalDependencyPolicy(root, NOW),
+    (error) => error instanceof Error
+      && error.message.includes(`actions/checkout: ${youngPublished} is younger than ${policy.minimumAgeDays} days`),
+  );
 });
 
 test("workspace and workflow pnpm settings cannot bypass the recorded pins", async (t) => {
@@ -106,10 +140,13 @@ test("workspace and workflow pnpm settings cannot bypass the recorded pins", asy
 
   await t.test("workflow version override", async () => {
     const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const pnpmSetup = policy.actions["pnpm/action-setup"];
+    const pin = `pnpm/action-setup@${pnpmSetup.sha} # ${pnpmSetup.tag} (${pnpmSetup.published.slice(0, 10)})`;
     await replace(
       join(root, ".github/workflows/ci.yml"),
-      "pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (2026-06-15)",
-      "pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (2026-06-15)\n        with:\n          version: 11.0.0",
+      pin,
+      `${pin}\n        with:\n          version: 11.0.0`,
     );
     await assert.rejects(
       verifyLocalDependencyPolicy(root, NOW),
@@ -156,6 +193,7 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
   };
   await assert.rejects(
     verifyRemoteDependencyPolicy(policy, { fetchImpl: badFetch }),
-    /actions\/checkout: v7\.0\.1 does not resolve to the ledger SHA/,
+    (error) => error instanceof Error
+      && error.message.includes(`actions/checkout: ${policy.actions["actions/checkout"].tag} does not resolve to the ledger SHA`),
   );
 });
