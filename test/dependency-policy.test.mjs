@@ -10,7 +10,7 @@ import {
 } from "../scripts/check-dependency-policy.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-const NOW = new Date("2026-07-27T12:00:00Z");
+const NOW = new Date("2026-08-10T00:00:00Z");
 const temporaryRoots = [];
 
 afterEach(async () => {
@@ -71,8 +71,8 @@ test("package, action SHA, and action evidence drift each fail closed", async (t
     const root = await fixture();
     await replace(
       join(root, ".github/workflows/ci.yml"),
-      "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
       "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
     );
     await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /actions\/checkout pin does not match the ledger/);
   });
@@ -88,10 +88,10 @@ test("third-party action quarantine rejects a ledger date younger than 15 days",
   const root = await fixture();
   await replace(
     join(root, "docs/dependency-ledger.md"),
-    '"tag": "v7.0.0",\n      "published": "2026-06-18T13:53:05Z"',
-    '"tag": "v7.0.0",\n      "published": "2026-07-20T13:53:05Z"',
+    '"tag": "v7.0.1",\n      "published": "2026-07-20T15:10:05Z"',
+    '"tag": "v7.0.1",\n      "published": "2026-08-09T15:10:05Z"',
   );
-  await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /actions\/checkout: 2026-07-20T13:53:05Z is younger than 15 days/);
+  await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /actions\/checkout: 2026-08-09T15:10:05Z is younger than 15 days/);
 });
 
 test("workspace and workflow pnpm settings cannot bypass the recorded pins", async (t) => {
@@ -156,6 +156,6 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
   };
   await assert.rejects(
     verifyRemoteDependencyPolicy(policy, { fetchImpl: badFetch }),
-    /actions\/checkout: v7\.0\.0 does not resolve to the ledger SHA/,
+    /actions\/checkout: v7\.0\.1 does not resolve to the ledger SHA/,
   );
 });
