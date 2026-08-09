@@ -1,0 +1,184 @@
+import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { SignJWT, type JWK, type JWTPayload } from "jose";
+import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
+import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
+import { pkceChallenge, verifyConsentToken } from "../src/crypto.ts";
+import { OAuthError } from "../src/errors.ts";
+import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
+import type { ClockPort } from "../src/ports/clock.ts";
+import type { SaveAuthCodeInput } from "../src/ports/store.ts";
+import { openSqliteStore, type SqliteStore } from "../src/store/sqlite.ts";
+
+const START_MS = Date.parse("2026-07-03T12:00:00.000Z");
+const ISSUER = "https://auth.test";
+const RESOURCE = "https://api.test/mcp";
+const REDIRECT = "https://client.test/callback";
+const SUBJECT = "agent@test";
+const CONSENT_SECRET = "consent-replay-secret-with-enough-entropy";
+const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const SIGNING_JWK = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "consent-replay" } as JWK;
+
+class FakeClock implements ClockPort {
+  private ms: number;
+  constructor(ms: number) { this.ms = ms; }
+  nowMs(): number { return this.ms; }
+  set(ms: number): void { this.ms = ms; }
+}
+
+class MemoryAudit implements AuditPort {
+  readonly events: AuthAuditEvent[] = [];
+  async writeAuthEvent(event: AuthAuditEvent): Promise<void> { this.events.push(event); }
+}
+
+function makeConfig(consentTokenTtlSeconds: number): BridgeConfig {
+  return createBridgeConfig({
+    issuer: ISSUER,
+    resource: RESOURCE,
+    consentSigningSecret: CONSENT_SECRET,
+    signingPrivateJwk: SIGNING_JWK,
+    signingKeyId: "consent-replay",
+    redirectAllowlist: [REDIRECT],
+    scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"],
+    allowedOrigins: [ISSUER],
+    dcr: { mode: "stateless" },
+    accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000,
+    consentTokenTtlSeconds,
+    authorizationCodeTtlSeconds: 300,
+  });
+}
+
+function instrumentCodeWrites(store: SqliteStore, onWrite: (input: SaveAuthCodeInput) => void): void {
+  const saveAuthCode = store.saveAuthCode.bind(store);
+  store.saveAuthCode = async (input) => {
+    onWrite(input);
+    await saveAuthCode(input);
+  };
+}
+
+async function prepareConsent(auth: OAuthAuthorizationUseCase): Promise<string> {
+  const prepared = await auth.prepare({
+    clientId: "client-1",
+    redirectUri: REDIRECT,
+    responseType: "code",
+    codeChallenge: pkceChallenge("consent-replay-verifier-123456789012345678901234"),
+    codeChallengeMethod: "S256",
+    scope: "mcp:read",
+    state: "consent-replay-state",
+    subject: SUBJECT,
+  });
+  return prepared.consentToken;
+}
+
+test("direct consent replay stays rejected through signed exp after shorter-TTL restart and sweep", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-consent-replay-"));
+  const file = join(dir, "oauth.sqlite");
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  let codeWrites = 0;
+  let recordedExpiry: string | undefined;
+  let consentToken: string;
+
+  try {
+    const mintStore = openSqliteStore(file);
+    try {
+      const mintAuth = new OAuthAuthorizationUseCase({ config: makeConfig(600), store: mintStore, clock, audit });
+      consentToken = await prepareConsent(mintAuth);
+    } finally {
+      await mintStore.close();
+    }
+
+    clock.set(START_MS + 100_000);
+    const firstUseStore = openSqliteStore(file);
+    try {
+      instrumentCodeWrites(firstUseStore, () => { codeWrites += 1; });
+      const consumeConsentJti = firstUseStore.consumeConsentJti.bind(firstUseStore);
+      firstUseStore.consumeConsentJti = async (jti, expiresAt) => {
+        recordedExpiry ??= expiresAt;
+        return await consumeConsentJti(jti, expiresAt);
+      };
+      const firstUseAuth = new OAuthAuthorizationUseCase({ config: makeConfig(60), store: firstUseStore, clock, audit });
+      const firstUse = await firstUseAuth.approve({ consentToken, approved: true, origin: ISSUER });
+      assert.ok(firstUse.code, "adjacent valid first use still mints one authorization code");
+      assert.equal(recordedExpiry, new Date(START_MS + 600_000).toISOString(), "tombstone uses the verified signed exp");
+      assert.equal(codeWrites, 1);
+    } finally {
+      await firstUseStore.close();
+    }
+
+    clock.set(START_MS + 161_000);
+    const replayStore = openSqliteStore(file);
+    try {
+      instrumentCodeWrites(replayStore, () => { codeWrites += 1; });
+      await replayStore.sweepExpired(new Date(clock.nowMs()).toISOString());
+      const replayAuth = new OAuthAuthorizationUseCase({ config: makeConfig(60), store: replayStore, clock, audit });
+      await assert.rejects(
+        replayAuth.approve({ consentToken, approved: true, origin: ISSUER }),
+        (error: unknown) => error instanceof OAuthError && error.code === "invalid_grant" && !error.redirect,
+      );
+      assert.equal(codeWrites, 1, "replay writes no second authorization code");
+      assert.equal(
+        audit.events.filter((event) => event.event === "oauth.authorize.approve" && event.status === "success").length,
+        1,
+        "replay emits no second approval-success audit",
+      );
+    } finally {
+      await replayStore.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("verifyConsentToken returns canonical signed expiry and rejects malformed expiry claims", async () => {
+  const config = makeConfig(600);
+  const clock = new FakeClock(START_MS);
+  const valid = await forgeConsentToken(config, Math.floor(START_MS / 1000) + 600);
+  assert.equal((await verifyConsentToken(valid, config, clock)).expiresAt, new Date(START_MS + 600_000).toISOString());
+
+  const minCanonicalMs = Date.parse("0000-01-01T00:00:00.000Z");
+  const yearZeroClock = new FakeClock(minCanonicalMs);
+  const yearZeroExpiry = Math.floor(minCanonicalMs / 1000) + 1;
+  assert.equal(
+    (await verifyConsentToken(await forgeConsentToken(config, yearZeroExpiry), config, yearZeroClock)).expiresAt,
+    "0000-01-01T00:00:01.000Z",
+    "a representable negative NumericDate remains valid at the canonical lower boundary",
+  );
+
+  const maxCanonicalSeconds = Math.floor(Date.parse("9999-12-31T23:59:59.999Z") / 1000);
+  const invalidExpiries: unknown[] = [undefined, "later", 1.5, Number.MAX_SAFE_INTEGER + 1, maxCanonicalSeconds + 1];
+  for (const expiry of invalidExpiries) {
+    await assert.rejects(
+      verifyConsentToken(await forgeConsentToken(config, expiry), config, clock),
+      (error: unknown) => error instanceof OAuthError && error.code === "invalid_consent",
+      `expiry ${String(expiry)} is rejected`,
+    );
+  }
+});
+
+async function forgeConsentToken(config: BridgeConfig, expiry: unknown): Promise<string> {
+  const payload: JWTPayload = {
+    typ: "mcp-sso-consent",
+    jti: "forged-consent-jti",
+    client_id: "client-1",
+    redirect_uri: REDIRECT,
+    resource: RESOURCE,
+    scope: "mcp:read",
+    code_challenge: "A".repeat(43),
+    code_challenge_method: "S256",
+  };
+  if (expiry !== undefined) payload.exp = expiry as number;
+  return await new SignJWT(payload)
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setIssuer(config.issuer)
+    .setAudience("mcp-sso/consent")
+    .setSubject(SUBJECT)
+    .setIssuedAt(Math.floor(START_MS / 1000))
+    .sign(new TextEncoder().encode(CONSENT_SECRET));
+}

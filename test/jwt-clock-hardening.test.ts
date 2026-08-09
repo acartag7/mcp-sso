@@ -165,11 +165,13 @@ test("JWT verifiers reject every non-finite or non-canonical snapshot", async ()
   }
 });
 
-test("JWT verifiers accept the inclusive canonical upper boundary", async () => {
+test("JWT verifiers accept their latest canonical upper-bound mint times", async () => {
+  const latestConsentMintMs = MAX_CANONICAL_MS - config.consentTokenTtlSeconds * 1000;
   const accessClock = new ScriptedClock([MAX_CANONICAL_MS]);
-  const consentClock = new ScriptedClock([MAX_CANONICAL_MS]);
+  const consentClock = new ScriptedClock([latestConsentMintMs]);
   await verifyAccessToken(await accessTokenAt(MAX_CANONICAL_MS), config, accessClock);
-  await verifyConsentToken(await consentTokenAt(MAX_CANONICAL_MS), config, consentClock);
+  const verifiedConsent = await verifyConsentToken(await consentTokenAt(latestConsentMintMs), config, consentClock);
+  assert.equal(verifiedConsent.expiresAt, "9999-12-31T23:59:59.000Z");
   assert.equal(accessClock.reads, 1);
   assert.equal(consentClock.reads, 1);
 });

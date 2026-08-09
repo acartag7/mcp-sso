@@ -70,10 +70,22 @@ a normal write value.
    a wrong-resource call returns `null`, the matching resource can then consume
    exactly once, and replay fails. SQLite asserts the on-disk file contains no raw secret and has no
    content/body/cache tables (state is OAuth-only).
-2. **Consent JTI single-use:** `consumeConsentJti` returns `true` once, `false` on
-   replay (atomic insert-or-ignore). It also **rejects a `expiresAtIso` that is not
-   a 3-ms UTC timestamp** (addendum 10 — the source left this unvalidated; the
-   library closes the gap).
+2. **Consent JTI single-use and signed-expiry retention (0.3.3 correction):**
+   `consumeConsentJti` returns `true` once and `false` on replay (atomic
+   insert-or-ignore), independent of a replay caller supplying
+   a different expiry. It rejects an `expiresAtIso` that is not a 3-ms UTC
+   timestamp. The caller supplies the already-validated signed JWT expiry under
+   §7.1; stores persist that exact value and do not derive or modify it.
+   `sweepExpired(now)` MUST retain a JTI whose `expires_at >= now` and MAY delete
+   it only when `expires_at < now`. The shared suite proves: consume with a
+   future signed expiry, sweep before and exactly at it, replay remains false;
+   sweep one millisecond after it permits a fresh insertion, directly proving
+   collection rather than merely observing an already-expired rejection. This
+   semantic rule is identical in Memory,
+   SQLite, and MySQL. It does not turn process-local `MemoryStore` into durable
+   storage: destroying that process or using an independent replica loses its
+   map, while SQLite/MySQL retain the row through process replacement when the
+   same persistent store is reopened.
 3. **Rotation + replay revokes the family:** rotating a token returns the consumed
    record; replaying it returns `null` and revokes the family; subsequent rotation
    of any token in that family returns `null`.

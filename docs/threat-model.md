@@ -131,10 +131,12 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 - **Finite JWT operation clocks**
   ([§6.1](./contracts/06-ports.md#61-clockport)): the access and consent
   production paths reuse one canonical four-digit UTC `ClockPort` snapshot for
-  JWT expiry and audit timestamps. Approval also proves its two TTL-derived
-  store timestamps remain canonical. Invalid snapshots preserve the
-  typed `invalid_token` / `invalid_consent` failure without fabricating an
-  audit time.
+  JWT expiry and audit timestamps. Under the 0.3.3 correction, approval
+  validates its authorization-code TTL-derived timestamp while the consent-JTI
+  timestamp comes from the independently validated signed JWT `exp`; current
+  consent TTL cannot rewrite an already-signed replay window. Invalid snapshots
+  preserve the typed `invalid_token` / `invalid_consent` failure without
+  fabricating an audit time.
 - **Hashed, single-use credentials** ([§7.3](./contracts/07-crypto-and-token-contracts.md#73-authorization-code-hashed-single-use),
   [§7.4](./contracts/07-crypto-and-token-contracts.md#74-refresh-token-family-rotation-replay-detection),
   [§12](./contracts/12-store-conformance-contract.md#12-store-conformance-contract)): auth codes and refresh
@@ -194,7 +196,7 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 8 | DCR / identity-verification / token/revocation flooding and audit spam | DoS | Stateless registrations are cheap; `Bridge.resolveIdentity` applies `authorize:<ip>` before direct `IdentityPort.verify`; register, token, and revoke have their own keys; after an adapter's request-body boundary, `Bridge.handleRevoke` applies `revoke:<ip>` before Bridge body normalization, token hashing, store access, revocation, or audit; audit is metadata-only; `RateLimitPort` hook exists (fix #7) | The hook defaults to no-op — `/oauth/register`, direct header-identity `/oauth/authorize`, `/oauth/token`, and `/oauth/revoke` can be hammered unless a deployer injects a real limiter or fronts the bridge with a rate-limiting proxy. Adapter body caps are a separate control; malformed or over-cap revocation input can reject before the limiter. |
 | 9 | Stored-mode client spoofing (claim another's redirect) | Spoofing / Elevation | Registration validates each `redirect_uri` via the global allowlist ([§10.1](./contracts/10-redirect-uri-policy.md#101-global-allowlist-stateless-dcr-mode--assertallowedredirecturi)); `application_type` per-type policy blocks a web client widening via native. Entry grammar: [row 5/9 note](#rows-59--the-redirect-entry-grammar) | None (only already-trusted URIs registerable) |
 | 10 | Scope escalation or token/form expansion through a scope list | Elevation / DoS | Every scope carrier that reaches a grant or token has the same 128-entry, 256-byte-token cap; `normalizeScopes` checks the catalog (unknown ⇒ reject); server-authoritative prior-scopes are derived, not client-claimed; approve validates both those stored scopes and the signed consent claims before consuming its JTI or writing a code; consent shows the delta; `requireScope` runs at the RS | Scope hierarchy remains the documented final-spec gap; this flat contract does not imply hierarchy semantics |
-| 11 | Consent replay | Tampering | Single-use consent JTI; atomic `consumeConsentJti` | None |
+| 11 | Consent replay | Tampering | **0.3.3:** verification returns the consent JWT's validated signed `exp`; first successful approval atomically records that exact expiry with the JTI before code storage or success audit; every store sweep retains the record while `expires_at >= now`, so restart/configuration changes cannot shorten the replay signal in a surviving store | `MemoryStore` remains process-local: process destruction or an independent replica loses its JTI map, so durable/multi-replica replay protection requires shared persistent storage. A tombstone already swept by pre-correction code cannot be reconstructed; affected upgrades rotate the consent signing secret to invalidate outstanding consent/flow JWTs |
 | 12 | Identity spoofing | Spoofing | `IdentityPort` verifies the upstream credential; no/failed identity ⇒ 401 fail-closed; no passthrough | Depends on the concrete port validating iss/aud/tid. Header mode (`identityHeader`) carries a nonce residual — [see below](#row-12--header-mode-nonce-residual). The §17.11 redirect orchestrator does not (it mints its own nonce, row 31) |
 | 13 | SSRF via CIMD (v0.2) | SSRF | `createGuardedFetcher` enforces the [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract) network boundary: URL admission (https-only, no userinfo/fragment/query/dot-segments/IP-literals/CRLF), complete IANA IPv4+IPv6 blocklists (binary compare; embedding prefixes blocked wholesale), all-records DNS validation + pinned connect (no re-resolve), redirects refused (draft -01 MUST NOT), 200-only, 5 KiB cap, and 5 s deadline. `CimdResolver.resolve` catches resolution failures and `mapCimdError` collapses them to one generic client-facing `invalid_client` | Timing side-channel could leak coarse network facts (fetch duration); accepted — response content/error shape leak nothing |
 | 14 | Secrets in logs/audit | Info disclosure | Metadata-only audit; tests assert no raw secrets leak | None |
@@ -447,8 +449,17 @@ deployer acts on.
   [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract)
   control set; `CimdResolver.resolve` and `mapCimdError` provide the anti-oracle
   boundary (row 13).
-- **Upstream-flow replay detection is store-scoped, and abandoned flows are
-  invisible.** The flow cookie's single-use `jti` is consumed through the store:
+- **Consent and upstream-flow replay detection are store-scoped.** Under the
+  0.3.3 consent correction, a surviving store retains a consent JTI
+  through the consent JWT's signed expiry even if the configured TTL is later
+  shortened. `MemoryStore` cannot carry that record through process destruction
+  or coordinate independent replicas; SQLite/MySQL or another conforming shared
+  persistent store is required for those deployment shapes. If vulnerable code
+  may already have swept a shortened consent tombstone, rotating the shared
+  consent signing secret invalidates outstanding consent JWTs and upstream flow
+  cookies; users restart those in-flight flows.
+
+  The upstream flow cookie's single-use `jti` is consumed through the store:
   behind multiple replicas with the per-process memory store, a callback replay
   is detected per instance only (the shared mysql store closes this — same class
   as consent JTIs). An initiated-but-abandoned flow leaves no server-side trace

@@ -23,6 +23,68 @@ Under the 0.3.0 §6.1 amendment, `verifyConsentToken` takes one
 canonical snapshot before `jwtVerify`; snapshot failure remains
 the existing `invalid_consent` error.
 
+### 0.3.3 consent-JTI lifetime correction
+
+The consent JWT's verified, signed `exp` is the sole authority for the
+single-use JTI tombstone expiry. `consentTokenTtlSeconds` determines `exp` only
+when a new consent JWT is signed; a later configuration value MUST NOT be used
+to recompute, shorten, or extend the tombstone for an already-signed token.
+`verifyConsentToken` MUST require the signed `exp`, validate it as a safe-integer
+NumericDate whose millisecond conversion falls within the repository's complete
+canonical UTC range (`0000-01-01T00:00:00.000Z` through
+`9999-12-31T23:59:59.999Z`), and return its canonical 3-ms UTC string in the
+function's additive return-only intersection. It MUST NOT add a required expiry
+member to the exported `ConsentRequestClaims` signing-input interface. Missing,
+non-number, non-finite, fractional, unsafe, or out-of-range `exp` maps to the
+existing direct `invalid_consent` error. Negative NumericDates are accepted when
+they represent canonical year-0000 timestamps; verification still rejects them
+as expired at any later current time. `OAuthAuthorizationUseCase.approve` MUST
+pass the returned canonical string unchanged to `consumeConsentJti`.
+
+A JTI accepted once MUST remain rejected in a surviving conforming store through
+the signed `exp`, including after a sweep whose `now` is before or exactly equal
+to that expiry. A sweep after the signed expiry MAY collect the tombstone because
+the JWT can no longer pass expiry verification. SQLite and MySQL preserve this
+state across process replacement; `MemoryStore` remains explicitly process-local
+and cannot preserve any tombstone across destruction of its owning process or
+across independent replicas.
+
+Replay rejection occurs before authorization-code generation/storage and before
+an `oauth.authorize.approve` success audit. It emits only the existing failure
+path. A first use that passes every earlier approval gate still stores one code
+and emits one success audit. Denial (`approved !== true`) remains unchanged and
+does not consume the JTI.
+
+| Behavior-table field | Binding rule and proof |
+| --- | --- |
+| Authority | The verified consent JWT's signed `exp`; never the approval-time `consentTokenTtlSeconds`, authorization-code TTL, sweep time, or adapter default. |
+| Capture point | `verifyConsentToken`, after signature/algorithm/issuer/audience/time verification, parses the same verified payload and returns one canonical signed-expiry string through an additive return-only intersection. `ConsentRequestClaims` remains the unchanged signing-input shape. No consumer reparses the raw JWT. |
+| Consumers | Direct consent approval passes the returned expiry to `StorePort.consumeConsentJti`. The upstream-flow sibling continues to pass its independently verified flow JWT `exp`; every `consumeConsentJti` production caller is covered. |
+| Side-effect order | Origin, JWT, resource, CIMD/redirect, approval, and scope gates precede JTI consumption. Successful JTI consumption precedes code generation, `saveAuthCode`, redirect construction, and success audit. A replay stops at JTI consumption. |
+| Lifecycle: same configuration | First valid approval succeeds once; immediate or later replay before signed `exp` fails. |
+| Lifecycle: shorter TTL after mint/restart | A token minted under a longer TTL retains its signed expiry. Approval under a shorter current TTL records the original signed expiry; sweeping at `approval time + shorter TTL` does not restore eligibility. |
+| Lifecycle: longer TTL after mint/restart | The tombstone is not extended to the new TTL. It remains only through the token's earlier signed expiry. |
+| Lifecycle: sweep boundary | Sweep before or exactly at signed expiry retains the JTI. Sweep after signed expiry may delete it; approval still fails at JWT verification, before JTI consumption. |
+| Lifecycle: store adapters | Memory, SQLite, and MySQL have the same supplied-expiry and sweep semantics. Only persistent adapters claim process-restart durability; shared storage is required across replicas. |
+| Semantic behavior | First use returns an authorization code. Any second approval while the JWT is otherwise valid returns direct `invalid_grant` and cannot mint another code. At/after JWT expiry the existing direct `invalid_consent` path wins. |
+| Forbidden effects | Current TTL must not influence an already-signed token's tombstone. Replay must not generate/save a code, emit approval success, replace/extend the existing tombstone, or redirect success. |
+| Positive proof | An adjacent valid first-use approval remains green and records the exact verified signed expiry. Shared conformance proves all stores retain that supplied expiry through sweep. JWT boundary tests preserve consent verification at the latest mint time whose signed `exp` remains canonical; the access-token upper-bound proof stays unchanged. |
+| Negative proof | Mint at 600 seconds, restart/approve under 60 seconds at +100, sweep at +161, and replay before +600: replay fails with zero additional code writes and zero additional approval-success audits. |
+| Semantic mutant | Restoring `approval snapshot + current consentTokenTtlSeconds` at the enforcement point makes the restart/sweep regression fail. |
+| Wiring mutant | Returning the correct expiry from verification but passing a current-TTL-derived value at the actual approval call site makes the same regression fail; helper-only tests are insufficient. |
+
+Compatibility and migration: the StorePort signature and SQL schemas are
+unchanged (`jti`, `expires_at` already exist). Existing correctly retained rows
+need no migration. A tombstone already swept by vulnerable code cannot be
+reconstructed because the store no longer has the original JWT. Operators that
+already shortened the consent TTL under vulnerable code, ran shared-store
+replicas with inconsistent consent TTLs, or cannot exclude an intervening sweep
+SHOULD rotate `consentSigningSecret` while upgrading. That invalidates outstanding
+consent JWTs and upstream flow cookies, requiring affected users to restart those
+in-flight flows; authorization codes, access tokens, refresh families, and grants
+are otherwise unchanged. Operators that have not shortened the TTL can deploy
+the correction before any later reduction without rotating the secret.
+
 ## 7.2 Access token (ES256, audience-bound, fail-closed)
 ```ts
 interface AccessTokenClaims { subject: string; clientId: string; scopes: string[]; }

@@ -31,9 +31,13 @@ and their remaining expiry/store/audit work so a stateful custom clock cannot
 give the decision and its audit event different times. When the initial
 snapshot is invalid, no timestamped audit event is emitted: neither ambient
 time nor a fabricated timestamp is an honest `occurredAt`.
-`OAuthAuthorizationUseCase.approve` supplies the larger of the consent-JTI and
-authorization-code TTL offsets, so both derived store timestamps are proven
-canonical before consent-token processing.
+**0.3.3 correction.** `OAuthAuthorizationUseCase.approve` MUST validate
+the authorization-code TTL offset needed for its approval-time derived timestamp.
+It MUST NOT derive the consent-JTI timestamp from the current consent TTL. The
+JTI timestamp comes from `verifyConsentToken`'s independently validated signed
+`exp` under §7.1, so a TTL change cannot alter an already-signed token's replay
+window. This replaces the earlier requirement to supply the larger of the
+consent-JTI and authorization-code TTL offsets.
 
 This amendment is deliberately limited to the proven access/consent JWT class.
 Console-pairing expiry remains the separate §17.5/B2-F6 slice; unrelated clock
@@ -58,6 +62,11 @@ table** (prior grants are derived from active refresh-token records — §9.3).
 Methods: `saveAuthCode`, `consumeAuthCode`, `saveRefreshToken`, `rotateRefreshToken`,
 `revokeRefreshTokenFamily`, `findRefreshToken`, `consumeConsentJti`,
 `findGrantedScopes`, `sweepExpired`, `close`. Full shapes in §12.
+Under the 0.3.3 consent correction,
+`consumeConsentJti(jti, expiresAtIso)` receives the canonical verified signed JWT
+expiry from the caller and MUST persist that exact expiry; `sweepExpired` retains
+the JTI while `expires_at >= now` (§7.1, §12.2). The port and SQL schema shapes
+are unchanged by the correction.
 (`findGrantedScopes` is invoked ONLY in **stored-DCR mode for opaque clients** — per
 §17.1.6 decision 3, every scheme-shaped (`https://`/CIMD) client_id stands alone
 (`priorScopes = []`) in both modes, because refresh rows carry no registration

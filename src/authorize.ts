@@ -187,7 +187,7 @@ export class OAuthAuthorizationUseCase {
   }
   async approve(input: ApproveInput): Promise<ApproveResult> {
     let operationClock: ClockPort;
-    const maxFutureMs = Math.max(this.config.consentTokenTtlSeconds, this.config.authorizationCodeTtlSeconds) * 1000;
+    const maxFutureMs = this.config.authorizationCodeTtlSeconds * 1000;
     try { operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock, maxFutureMs)); }
     catch { throw new OAuthError("invalid_consent", "Consent token is invalid or expired"); }
     try {
@@ -211,9 +211,9 @@ export class OAuthAuthorizationUseCase {
       const union = dedupe([...consentScopes, ...priorScopes]);
       // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
       const scopes = allowedScopes ? union.filter((s) => allowedScopes.includes(s)) : union;
-      // Single-use consent JTI; replay is an integrity failure (direct).
-      const consentExpiresAt = expiresAtIso(operationClock, this.config.consentTokenTtlSeconds);
-      if (!(await this.store.consumeConsentJti(consent.jti, consentExpiresAt))) {
+      // Single-use consent JTI; retain the replay signal through this verified
+      // JWT's signed expiry, independent of later consent-TTL configuration.
+      if (!(await this.store.consumeConsentJti(consent.jti, consent.expiresAt))) {
         throw new OAuthError("invalid_grant", "Consent token has already been used");
       }
 
