@@ -26,6 +26,22 @@ function validDateOnly(value) {
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+function parseStableVersion(value) {
+  if (typeof value !== "string") return null;
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value);
+  return match?.slice(1) ?? null;
+}
+
+function compareStableVersions(left, right) {
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index].length !== right[index].length) {
+      return left[index].length > right[index].length ? 1 : -1;
+    }
+    if (left[index] !== right[index]) return left[index] > right[index] ? 1 : -1;
+  }
+  return 0;
+}
+
 export function validateAdvisoryExceptionRecords(value) {
   const errors = [];
   const byPackage = new Map();
@@ -52,8 +68,8 @@ export function validateAdvisoryExceptionRecords(value) {
         ids.add(id);
       }
     }
-    if (typeof entry.adoptedVersion !== "string" || entry.adoptedVersion === "") {
-      errors.push(`${label}: adoptedVersion is invalid`);
+    if (parseStableVersion(entry.adoptedVersion) === null) {
+      errors.push(`${label}: adoptedVersion must be an exact stable semantic version`);
     }
     if (!validDateOnly(entry.adoptedAt)) errors.push(`${label}: adoptedAt must be a UTC date`);
     if (typeof entry.justification !== "string" || entry.justification.trim() === "") {
@@ -133,41 +149,75 @@ function advisoryMatchesId(advisory, id) {
 }
 
 export async function verifyAdvisoryExceptionEvidence(records, fetchJson, fetchImpl, token, errors) {
-  await Promise.all(records.flatMap((record) => record.advisoryIds.map(async (id) => {
-    try {
-      const url = id.startsWith("GHSA-")
-        ? `https://api.github.com/advisories/${encodeURIComponent(id)}`
-        : `https://api.github.com/advisories?cve_id=${encodeURIComponent(id)}`;
-      const response = await fetchJson(url, fetchImpl, token);
-      const candidates = Array.isArray(response) ? response : [response];
-      const advisory = candidates.find((candidate) => advisoryMatchesId(candidate, id));
-      if (!advisory) {
-        errors.push(`${record.package}: advisory ${id} was not found upstream`);
-        return;
-      }
-      if (!Array.isArray(advisory.vulnerabilities)) {
-        errors.push(`${record.package}: advisory ${id} has malformed vulnerability evidence`);
-        return;
-      }
-      const matching = advisory.vulnerabilities.filter((vulnerability) => vulnerability !== null
-        && typeof vulnerability === "object"
-        && !Array.isArray(vulnerability)
-        && vulnerability.package?.ecosystem === "npm"
-        && vulnerability.package?.name === record.package);
-      if (matching.length === 0) {
-        errors.push(`${record.package}: advisory ${id} does not name this npm package`);
-        return;
-      }
-      const mismatchedFix = matching.find(
-        (vulnerability) => vulnerability.first_patched_version !== record.adoptedVersion,
-      );
-      if (mismatchedFix) {
-        errors.push(
-          `${record.package}: advisory ${id} first patched version ${String(mismatchedFix.first_patched_version)} != adopted ${record.adoptedVersion}`,
+  await Promise.all(records.map(async (record) => {
+    const adoptedVersion = parseStableVersion(record.adoptedVersion);
+    const firstPatchedVersions = [];
+    let hasInvalidEvidence = adoptedVersion === null;
+    await Promise.all(record.advisoryIds.map(async (id) => {
+      try {
+        const url = id.startsWith("GHSA-")
+          ? `https://api.github.com/advisories/${encodeURIComponent(id)}`
+          : `https://api.github.com/advisories?cve_id=${encodeURIComponent(id)}`;
+        const response = await fetchJson(url, fetchImpl, token);
+        const candidates = Array.isArray(response) ? response : [response];
+        const advisory = candidates.find((candidate) => advisoryMatchesId(candidate, id));
+        if (!advisory) {
+          errors.push(`${record.package}: advisory ${id} was not found upstream`);
+          hasInvalidEvidence = true;
+          return;
+        }
+        if (!Array.isArray(advisory.vulnerabilities)) {
+          errors.push(`${record.package}: advisory ${id} has malformed vulnerability evidence`);
+          hasInvalidEvidence = true;
+          return;
+        }
+        const matching = advisory.vulnerabilities.filter((vulnerability) => vulnerability !== null
+          && typeof vulnerability === "object"
+          && !Array.isArray(vulnerability)
+          && vulnerability.package?.ecosystem === "npm"
+          && vulnerability.package?.name === record.package);
+        if (matching.length === 0) {
+          errors.push(`${record.package}: advisory ${id} does not name this npm package`);
+          hasInvalidEvidence = true;
+          return;
+        }
+        const unverifiedFix = matching.find(
+          (vulnerability) => parseStableVersion(vulnerability.first_patched_version) === null,
         );
+        if (adoptedVersion === null || unverifiedFix) {
+          errors.push(
+            `${record.package}: advisory ${id} has no stable first patched version for the adopted pin`,
+          );
+          hasInvalidEvidence = true;
+          return;
+        }
+        const parsedFixes = matching.map((vulnerability) => parseStableVersion(
+          vulnerability.first_patched_version,
+        ));
+        const newerFix = parsedFixes.find((fixedVersion) => (
+          compareStableVersions(fixedVersion, adoptedVersion) > 0
+        ));
+        if (newerFix) {
+          errors.push(
+            `${record.package}: advisory ${id} first patched version ${newerFix.join(".")} is newer than adopted ${record.adoptedVersion}`,
+          );
+          hasInvalidEvidence = true;
+          return;
+        }
+        firstPatchedVersions.push(...parsedFixes);
+      } catch (error) {
+        errors.push(`${record.package}: ${id}: ${error instanceof Error ? error.message : "remote verification failed"}`);
+        hasInvalidEvidence = true;
       }
-    } catch (error) {
-      errors.push(`${record.package}: ${id}: ${error instanceof Error ? error.message : "remote verification failed"}`);
+    }));
+    if (hasInvalidEvidence || firstPatchedVersions.length === 0) return;
+    const minimumFix = firstPatchedVersions.reduce((latest, fixedVersion) => (
+      compareStableVersions(fixedVersion, latest) > 0 ? fixedVersion : latest
+    ));
+    if (compareStableVersions(adoptedVersion, minimumFix) !== 0) {
+      errors.push(
+        `${record.package}: adopted ${record.adoptedVersion} is not the minimum version that fixes all advisories (${minimumFix.join(".")})`,
+      );
     }
-  })));
+  }));
 }

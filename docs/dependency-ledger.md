@@ -50,8 +50,8 @@ Each advisory-exception record contains:
 The dependency-policy gate requires a one-to-one match between exception
 records and `minimumReleaseAgeExclude`, binds every exception to the current
 direct pin and ledger version, and remotely confirms that every recorded
-advisory exists, names the recorded npm package, and reports the adopted version
-as its first patched version. An unrecorded exclusion, a record without an
+advisory exists, names the recorded npm package, and reports stable first
+patched versions whose latest value is the adopted version. An unrecorded exclusion, a record without an
 exclusion, a future pin change that leaves stale exception evidence, or an
 unknown field fails closed. The package-specific exclusion does not exempt any
 other dependency and does not weaken the global 15-day floor.

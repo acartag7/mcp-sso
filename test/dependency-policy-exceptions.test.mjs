@@ -99,19 +99,24 @@ test("workspace and ledger advisory-exception layers cannot diverge", async (t) 
 });
 
 function upstreamFetch(policy, {
-  advisoryId = "GHSA-54fx-42gc-7vw4",
   advisoryPackage = "hono",
   fixedVersion = policy.packages.hono.version,
+  fixedVersions = {},
 } = {}) {
   return async (input) => {
     const url = String(input);
     if (url.includes("api.github.com/advisories")) {
+      const parsed = new URL(url);
+      const advisoryId = parsed.pathname.startsWith("/advisories/")
+        ? decodeURIComponent(parsed.pathname.slice("/advisories/".length))
+        : parsed.searchParams.get("cve_id");
+      assert.ok(advisoryId, `advisory ID present: ${url}`);
       return Response.json({
         ghsa_id: advisoryId.startsWith("GHSA-") ? advisoryId : "GHSA-54fx-42gc-7vw4",
         cve_id: advisoryId.startsWith("CVE-") ? advisoryId : null,
         vulnerabilities: [{
           package: { ecosystem: "npm", name: advisoryPackage },
-          first_patched_version: fixedVersion,
+          first_patched_version: fixedVersions[advisoryId] ?? fixedVersion,
         }],
       });
     }
@@ -148,7 +153,26 @@ test("remote advisory evidence binds the package and first patched version", asy
     const cvePolicy = structuredClone(exceptionPolicy);
     cvePolicy.advisoryExceptions[0].advisoryIds = ["CVE-2026-71848"];
     await verifyRemoteDependencyPolicy(cvePolicy, {
-      fetchImpl: upstreamFetch(policy, { advisoryId: "CVE-2026-71848" }),
+      fetchImpl: upstreamFetch(policy),
+      token: "not-a-secret",
+    });
+  });
+
+  await t.test("later adopted version fixes every recorded advisory", async () => {
+    const combinedPolicy = structuredClone(exceptionPolicy);
+    combinedPolicy.packages.hono.version = "4.12.34";
+    combinedPolicy.advisoryExceptions[0].adoptedVersion = "4.12.34";
+    combinedPolicy.advisoryExceptions[0].advisoryIds = [
+      "GHSA-aaaa-bbbb-cccc",
+      "GHSA-dddd-eeee-ffff",
+    ];
+    await verifyRemoteDependencyPolicy(combinedPolicy, {
+      fetchImpl: upstreamFetch(combinedPolicy, {
+        fixedVersions: {
+          "GHSA-aaaa-bbbb-cccc": "4.12.33",
+          "GHSA-dddd-eeee-ffff": "4.12.34",
+        },
+      }),
       token: "not-a-secret",
     });
   });
@@ -165,9 +189,21 @@ test("remote advisory evidence binds the package and first patched version", asy
   await t.test("non-fixing adopted version", async () => {
     await assert.rejects(
       verifyRemoteDependencyPolicy(exceptionPolicy, {
-        fetchImpl: upstreamFetch(policy, { fixedVersion: "0.0.1" }),
+        fetchImpl: upstreamFetch(policy, { fixedVersion: "999.0.0" }),
       }),
-      /hono: advisory GHSA-54fx-42gc-7vw4 first patched version 0\.0\.1 != adopted/,
+      /hono: advisory GHSA-54fx-42gc-7vw4 first patched version 999\.0\.0 is newer than adopted/,
+    );
+  });
+
+  await t.test("adopted version must be the minimum that fixes all advisories", async () => {
+    const overAdoptedPolicy = structuredClone(exceptionPolicy);
+    overAdoptedPolicy.packages.hono.version = "4.12.35";
+    overAdoptedPolicy.advisoryExceptions[0].adoptedVersion = "4.12.35";
+    await assert.rejects(
+      verifyRemoteDependencyPolicy(overAdoptedPolicy, {
+        fetchImpl: upstreamFetch(overAdoptedPolicy, { fixedVersion: "4.12.34" }),
+      }),
+      /hono: adopted 4\.12\.35 is not the minimum version that fixes all advisories \(4\.12\.34\)/,
     );
   });
 });
