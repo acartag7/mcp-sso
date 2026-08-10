@@ -33,6 +33,13 @@ test("CI and publish invoke the remote policy check with a GitHub token", async 
   }
 });
 
+test("the Hono peer floor in the package contract matches the manifest", async () => {
+  const pkg = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"));
+  const contract = await readFile(join(ROOT, "docs/contracts/15-package-and-export-map.md"), "utf8");
+  const expected = "The optional Hono peer range is **`" + pkg.peerDependencies.hono + "`**";
+  assert.ok(contract.includes(expected), "package contract records the exact Hono peer floor");
+});
+
 test("package, action SHA, and action evidence drift each fail closed", async (t) => {
   await t.test("direct package pin", async () => {
     const root = await fixture();
