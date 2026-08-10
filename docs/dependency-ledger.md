@@ -8,8 +8,9 @@
 > `docs/threat-model.md` ("Implementation gates").
 >
 > The enforcing check computes the cutoff from the current UTC date. At this
-> recheck (**2026-08-09**), a pin is acceptable only if published on or before
-> **2026-07-25** (≥15 days old).
+> recheck (**2026-08-09**), an ordinary pin is acceptable only if published on
+> or before **2026-07-25** (≥15 days old). A published-advisory exception must
+> satisfy the separate two-rule policy below.
 
 ## The 15-day rule and `minimumReleaseAge`
 
@@ -21,13 +22,41 @@ to equal this ledger's machine-readable `minimumAgeDays * 1440`; it also treats
 `package.json#packageManager` as the single pnpm version source and rejects a
 workflow-level `pnpm/action-setup` version override.
 
-- **install-time** — pnpm refuses any version younger than 15 days (applies to
-  transitive deps too); and
-- **pin-time** — every direct pin below is chosen ≥15 days old and recorded here.
+- **install-time** — pnpm refuses any unexcluded version younger than 15 days
+  (including transitive deps); and
+- **pin-time** — every ordinary direct pin below is chosen ≥15 days old and
+  recorded here.
 
 This is the supply-chain posture: compromised/typosquat packages are usually
 yanked within hours-to-days; a 15-day buffer dramatically reduces exposure. Never
 weaken the rule to paper over a fresh-publish install problem.
+
+## Two-rule cooldown policy
+
+1. **Ordinary updates wait.** A package or third-party Action release must be at
+   least `minimumAgeDays` old. The global `minimumReleaseAge` and this ledger
+   remain the same floor; an exception never lowers either value.
+2. **Published-advisory fixes do not wait.** When a published GHSA or CVE affects
+   a directly pinned package, adopt the minimum version that fixes all recorded
+   advisories after inspecting the release. Add that exact package to
+   `minimumReleaseAgeExclude` and add one matching `advisoryExceptions` record.
+
+Each advisory-exception record contains:
+
+- `package` — the exact direct npm package name;
+- `advisoryIds` — one or more published `GHSA-…` or `CVE-…` identifiers;
+- `adoptedVersion` — the exact direct pin selected as the minimum fixing version;
+- `adoptedAt` — the UTC calendar date on which the exception was adopted; and
+- `justification` — why the cooldown was skipped and what release was inspected.
+
+The dependency-policy gate requires a one-to-one match between exception
+records and `minimumReleaseAgeExclude`, binds every exception to the current
+direct pin and ledger version, and remotely confirms that every recorded
+advisory exists, names the recorded npm package, and reports stable first
+patched versions whose latest value is the adopted version. An unrecorded exclusion, a record without an
+exclusion, a future pin change that leaves stale exception evidence, or an
+unknown field fails closed. The package-specific exclusion does not exempt any
+other dependency and does not weaken the global 15-day floor.
 
 ## Runtime dependencies (shipped to consumers)
 
@@ -117,6 +146,7 @@ upstream registries.
 ```json
 {
   "minimumAgeDays": 15,
+  "advisoryExceptions": [],
   "packages": {
     "@modelcontextprotocol/sdk": { "version": "1.29.0", "published": "2026-03-30T16:50:42.718Z" },
     "@types/express": { "version": "5.0.6", "published": "2025-12-01T20:35:51.488Z" },
@@ -211,8 +241,9 @@ no-checkout OIDC publishing job.
 ## Verification & change protocol
 
 1. **Before any install/bump:** `npm view <pkg> time --json` (or the registry API)
-   to confirm the candidate version's publish date; reject anything <15 days old.
-   Re-confirm every row above is still the chosen version.
+   to confirm the candidate version's publish date; reject anything <15 days old
+   unless a published GHSA/CVE qualifies for the verified per-package exception
+   above. Re-confirm every row above is still the chosen version.
 2. **Before publish:** this ledger is rechecked; `pnpm audit --prod` must be clean,
    or any finding is documented here with why no eligible patched version can be
    selected under the 15-day gate.

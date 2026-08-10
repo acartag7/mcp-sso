@@ -1,49 +1,19 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, test } from "node:test";
+import { test } from "node:test";
 import {
   loadDependencyPolicy,
   verifyLocalDependencyPolicy,
   verifyRemoteDependencyPolicy,
 } from "../scripts/check-dependency-policy.mjs";
-
-const ROOT = new URL("..", import.meta.url).pathname;
-const DAY_MS = 86_400_000;
-const temporaryRoots = [];
-
-async function conformingNow(root = ROOT) {
-  const policy = await loadDependencyPolicy(root);
-  const ordinaryRecords = [
-    ...Object.values(policy.packages),
-    ...Object.values(policy.actions).filter((record) => record.firstPartyException !== true),
-  ];
-  const newestPublication = Math.max(...ordinaryRecords.map((record) => Date.parse(record.published)));
-  return new Date(newestPublication + (policy.minimumAgeDays + 1) * DAY_MS);
-}
-
-const NOW = await conformingNow();
-
-afterEach(async () => {
-  await Promise.all(temporaryRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "mcp-sso-dependency-policy-"));
-  temporaryRoots.push(root);
-  await cp(join(ROOT, "docs"), join(root, "docs"), { recursive: true });
-  await cp(join(ROOT, ".github"), join(root, ".github"), { recursive: true });
-  await cp(join(ROOT, "package.json"), join(root, "package.json"));
-  await cp(join(ROOT, "pnpm-workspace.yaml"), join(root, "pnpm-workspace.yaml"));
-  return root;
-}
-
-async function replace(path, before, after) {
-  const source = await readFile(path, "utf8");
-  assert.ok(source.includes(before), `mutation source contains ${before}`);
-  await writeFile(path, source.replace(before, after));
-}
+import {
+  DAY_MS,
+  fixture,
+  NOW,
+  replace,
+  ROOT,
+} from "./dependency-policy-fixtures.mjs";
 
 test("repository dependency pins match the machine-readable ledger and age floor", async () => {
   await verifyLocalDependencyPolicy(ROOT, NOW);
@@ -196,4 +166,5 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
     (error) => error instanceof Error
       && error.message.includes(`actions/checkout: ${policy.actions["actions/checkout"].tag} does not resolve to the ledger SHA`),
   );
+
 });

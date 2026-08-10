@@ -405,4 +405,4 @@ the response. Wiring rules:
   exception or fallback is introduced.
 - Framework adapters are optional `peerDependencies` (`fastify`/`express`/`hono`);
   anything added to `devDependencies` for testing gets a `dependency-ledger` entry
-  with the 15-day check.
+  with the ordinary 15-day check or the verified published-advisory exception.

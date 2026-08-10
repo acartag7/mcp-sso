@@ -1,6 +1,12 @@
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  validateAdvisoryExceptionRecords,
+  validateExceptionBindings,
+  verifyAdvisoryExceptionEvidence,
+  workspaceCooldownConfig,
+} from "./dependency-policy-exceptions.mjs";
 
 const START = "<!-- dependency-policy:start -->";
 const END = "<!-- dependency-policy:end -->";
@@ -49,6 +55,8 @@ function validDate(date) {
 
 function assertRecordShape(policy) {
   const errors = [];
+  const exceptions = validateAdvisoryExceptionRecords(policy.advisoryExceptions);
+  errors.push(...exceptions.errors);
   for (const [name, recordValue] of Object.entries(policy.packages)) {
     const record = object(recordValue, `package ${name}`);
     if (typeof record.version !== "string" || record.version === "") errors.push(`${name}: version is invalid`);
@@ -69,6 +77,7 @@ function assertRecordShape(policy) {
     }
   }
   fail(errors);
+  return exceptions.byPackage;
 }
 
 function expectedActionComment(record) {
@@ -88,19 +97,6 @@ async function packagePins(root) {
   if (!manager) throw new Error("packageManager must be an exact pnpm@version pin");
   pins.pnpm = manager[1];
   return pins;
-}
-
-async function workspaceMinimumAgeMinutes(root) {
-  const source = await readFile(resolve(root, "pnpm-workspace.yaml"), "utf8");
-  const entries = source
-    .split(/\r?\n/)
-    .filter((line) => /^\s*minimumReleaseAge\s*:/.test(line));
-  if (entries.length !== 1) {
-    throw new Error("pnpm-workspace.yaml must contain exactly one minimumReleaseAge");
-  }
-  const match = /^\s*minimumReleaseAge:\s*(\d+)\s*(?:#.*)?$/.exec(entries[0]);
-  if (!match) throw new Error("pnpm-workspace.yaml minimumReleaseAge must be an integer");
-  return Number(match[1]);
 }
 
 async function workflowPins(root) {
@@ -141,20 +137,27 @@ function assertAge(name, published, minimumAgeDays, now, errors) {
 
 export async function verifyLocalDependencyPolicy(root = process.cwd(), now = new Date()) {
   const policy = await loadDependencyPolicy(root);
-  assertRecordShape(policy);
+  const exceptions = assertRecordShape(policy);
   const errors = [];
-  const workspaceAge = await workspaceMinimumAgeMinutes(root);
+  const workspace = await workspaceCooldownConfig(root);
   const expectedWorkspaceAge = policy.minimumAgeDays * 1440;
-  if (workspaceAge !== expectedWorkspaceAge) {
-    errors.push(`pnpm-workspace.yaml minimumReleaseAge ${workspaceAge} != ledger ${expectedWorkspaceAge}`);
+  if (workspace.minimumAgeMinutes !== expectedWorkspaceAge) {
+    errors.push(`pnpm-workspace.yaml minimumReleaseAge ${workspace.minimumAgeMinutes} != ledger ${expectedWorkspaceAge}`);
   }
   const pins = await packagePins(root);
+  errors.push(...validateExceptionBindings({
+    byPackage: exceptions,
+    excludedPackages: workspace.excludedPackages,
+    pins,
+    packages: policy.packages,
+    now,
+  }));
   const packageNames = new Set([...Object.keys(pins), ...Object.keys(policy.packages)]);
   for (const name of [...packageNames].sort()) {
     if (!(name in pins)) errors.push(`${name}: ledger package is not directly pinned`);
     else if (!(name in policy.packages)) errors.push(`${name}: direct package pin is missing from the ledger`);
     else if (pins[name] !== policy.packages[name].version) errors.push(`${name}: package pin ${pins[name]} != ledger ${policy.packages[name].version}`);
-    else assertAge(name, policy.packages[name].published, policy.minimumAgeDays, now, errors);
+    else if (!exceptions.has(name)) assertAge(name, policy.packages[name].published, policy.minimumAgeDays, now, errors);
   }
 
   const used = new Set();
@@ -216,6 +219,13 @@ export async function verifyRemoteDependencyPolicy(policy, options = {}) {
       errors.push(`${name}: ${error instanceof Error ? error.message : "remote verification failed"}`);
     }
   }));
+  await verifyAdvisoryExceptionEvidence(
+    policy.advisoryExceptions,
+    fetchJson,
+    fetchImpl,
+    token,
+    errors,
+  );
   fail(errors);
 }
 

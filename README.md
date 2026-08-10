@@ -182,9 +182,10 @@ full pattern, topology, and Kubernetes notes in
   must omit `form-action` so Chromium can follow the POST's 302 to the client
   callback. `assertApproveOrigin` keeps its exact issuer-or-allowlist check,
   with no automatic opaque-Origin fallback.
-- **`jose` is the only runtime dependency**; every pin is ≥15 days old before we
-  accept it; npm publishes run only through GitHub Actions with Sigstore
-  provenance, never from a local machine.
+- **`jose` is the only runtime dependency**; ordinary pins are ≥15 days old.
+  A direct package may be younger only for a published GHSA/CVE fix recorded in
+  the verified per-package exception ledger. npm publishes run only through
+  GitHub Actions with Sigstore provenance, never from a local machine.
 - **Token handling**: authorization codes and refresh tokens are hashed at rest
   and single-use (a replayed refresh token revokes its whole family); consent
   tokens are single-use. `OAuthTokenUseCase.exchangeAuthorizationCode` prepares
