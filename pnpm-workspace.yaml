@@ -4,4 +4,4 @@
 # same standard. Never weaken it to paper over a fresh-publish install problem —
 # use minimumReleaseAgeExclude for a specific justified package instead.
 minimumReleaseAge: 21600
-minimumReleaseAgeExclude: []
+minimumReleaseAgeExclude: ["hono"]

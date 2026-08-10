@@ -8,8 +8,8 @@
 > `docs/threat-model.md` ("Implementation gates").
 >
 > The enforcing check computes the cutoff from the current UTC date. At this
-> recheck (**2026-08-09**), an ordinary pin is acceptable only if published on
-> or before **2026-07-25** (≥15 days old). A published-advisory exception must
+> recheck (**2026-08-10**), an ordinary pin is acceptable only if published on
+> or before **2026-07-26** (≥15 days old). A published-advisory exception must
 > satisfy the separate two-rule policy below.
 
 ## The 15-day rule and `minimumReleaseAge`
@@ -78,7 +78,7 @@ optional peer that a consumer opts into.
 | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | ✅ | The official MCP SDK — used in tests/the Phase 4 example (the end-to-end verify client) AND as a runtime dep of every server scaffolded by `npx mcp-sso init` (§15), pinned there at this same version. Not a runtime dep of the mcp-sso package itself (jose-only). |
 | [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | ✅ | Reference framework adapter — dev/test + optional peer. |
 | [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | ✅ | Framework adapter — dev/test + optional peer. |
-| [`hono`](https://hono.dev/) | `4.12.27` | 2026-06-23 | ✅ | Framework adapter — dev/test + optional peer. |
+| [`hono`](https://hono.dev/) | `4.12.34` | 2026-08-03 | Advisory exception | Framework adapter — dev/test + optional peer; the minimum version fixing the recorded published advisories. |
 | [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | ✅ | Express typings (dev only). |
 | [`mysql2`](https://github.com/sidorares/node-mysql2) | `3.22.5` | 2026-06-06 | ✅ | The `/store/mysql` `StorePort` adapter — dev/test + optional peer. |
 | [`ioredis`](https://github.com/redis/ioredis) | `5.11.1` | 2026-06-04 | ✅ | The `/rate-limit/redis` `RateLimitPort` adapter — dev/test + optional peer. |
@@ -98,7 +98,7 @@ the sole runtime dep.
 |---|---|---|
 | `fastify` | `>=5` | `/fastify` adapter (reference). |
 | `express` | `>=5` | `/express` adapter. |
-| `hono` | `>=4.12.27 <5` | `/hono` adapter; lower bound is the tested `bodyLimit` implementation, upper bound excludes an unverified major. |
+| `hono` | `>=4.12.34 <5` | `/hono` adapter; lower bound is the tested advisory-fixed `bodyLimit` implementation, upper bound excludes an unverified major. |
 | `mysql2` | `>=3` | `/store/mysql` `StorePort` adapter (v0.1.2 Phase 5). Pooled; see contracts §12.3 async-tx hygiene. |
 | `ioredis` | `>=5` | `/rate-limit/redis` `RateLimitPort` adapter (v0.1.2 Phase 5). Fixed-window Lua script; see contracts §17.10. |
 
@@ -146,14 +146,27 @@ upstream registries.
 ```json
 {
   "minimumAgeDays": 15,
-  "advisoryExceptions": [],
+  "advisoryExceptions": [
+    {
+      "package": "hono",
+      "advisoryIds": [
+        "GHSA-54fx-42gc-7vw4",
+        "GHSA-79qm-7rj5-m7r9",
+        "GHSA-8j4g-w8fx-2239",
+        "GHSA-f23p-vx2j-j53r"
+      ],
+      "adoptedVersion": "4.12.34",
+      "adoptedAt": "2026-08-10",
+      "justification": "Inspected Hono v4.12.34 release; it is the minimum published fix for these advisories."
+    }
+  ],
   "packages": {
     "@modelcontextprotocol/sdk": { "version": "1.29.0", "published": "2026-03-30T16:50:42.718Z" },
     "@types/express": { "version": "5.0.6", "published": "2025-12-01T20:35:51.488Z" },
     "@types/node": { "version": "24.13.2", "published": "2026-06-10T22:15:29.361Z" },
     "express": { "version": "5.2.1", "published": "2025-12-01T20:49:43.268Z" },
     "fastify": { "version": "5.8.5", "published": "2026-04-14T12:07:12.232Z" },
-    "hono": { "version": "4.12.27", "published": "2026-06-23T02:48:48.822Z" },
+    "hono": { "version": "4.12.34", "published": "2026-08-03T02:36:40.543Z" },
     "ioredis": { "version": "5.11.1", "published": "2026-06-04T10:14:59.752Z" },
     "jose": { "version": "6.2.3", "published": "2026-04-27T15:23:35.019Z" },
     "mysql2": { "version": "3.22.5", "published": "2026-06-06T08:10:39.646Z" },

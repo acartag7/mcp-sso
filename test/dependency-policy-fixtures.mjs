@@ -48,32 +48,20 @@ export async function replace(path, before, after) {
   await writeFile(path, source.replace(before, after));
 }
 
-export async function addYoungHonoException(root, { includeWorkspaceExclusion = true } = {}) {
+export async function makeHonoExceptionYoung(root, { includeWorkspaceExclusion = true } = {}) {
   const policy = await loadDependencyPolicy(root);
   const hono = policy.packages.hono;
   const youngPublished = new Date(NOW.getTime() - DAY_MS).toISOString();
-  const record = {
-    package: "hono",
-    advisoryIds: ["GHSA-54fx-42gc-7vw4"],
-    adoptedVersion: hono.version,
-    adoptedAt: NOW.toISOString().slice(0, 10),
-    justification: "Published advisory fix; inspected the adopted Hono release.",
-  };
-  await replace(
-    join(root, "docs/dependency-ledger.md"),
-    '"advisoryExceptions": [],',
-    `"advisoryExceptions": ${JSON.stringify([record], null, 2)},`,
-  );
   await replace(
     join(root, "docs/dependency-ledger.md"),
     `"hono": { "version": "${hono.version}", "published": "${hono.published}" }`,
     `"hono": { "version": "${hono.version}", "published": "${youngPublished}" }`,
   );
-  if (includeWorkspaceExclusion) {
+  if (!includeWorkspaceExclusion) {
     await replace(
       join(root, "pnpm-workspace.yaml"),
-      "minimumReleaseAgeExclude: []",
       'minimumReleaseAgeExclude: ["hono"]',
+      "minimumReleaseAgeExclude: []",
     );
   }
   return { policy, youngPublished };

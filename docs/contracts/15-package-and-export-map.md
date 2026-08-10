@@ -5,8 +5,9 @@ identity ports, and the MySQL/Redis adapters are optional `peerDependencies`
 (the consumer installs only the ones it uses); `node:sqlite` is built-in (no
 dep). No postinstall, no bundler. Dev runs on **Node 24 native TS** (`.ts`
 imports, no build step); the published artifact is plain-`tsc` ESM + `.d.ts`.
-The optional Hono peer range is **`>=4.12.27 <5`**: `4.12.27` is the minimum
-version whose `bodyLimit` behavior this adapter verifies, and the next major is
+The optional Hono peer range is **`>=4.12.34 <5`**: `4.12.34` is the minimum
+version that fixes the published advisories recorded in the dependency ledger
+and whose `bodyLimit` behavior this adapter verifies; the next major is
 excluded until separately tested.
 
 Dev/test does **not** consume the package via its own exports: Node 24 native TS

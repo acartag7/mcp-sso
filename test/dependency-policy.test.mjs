@@ -33,6 +33,13 @@ test("CI and publish invoke the remote policy check with a GitHub token", async 
   }
 });
 
+test("the Hono peer floor in the package contract matches the manifest", async () => {
+  const pkg = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"));
+  const contract = await readFile(join(ROOT, "docs/contracts/15-package-and-export-map.md"), "utf8");
+  const expected = "The optional Hono peer range is **`" + pkg.peerDependencies.hono + "`**";
+  assert.ok(contract.includes(expected), "package contract records the exact Hono peer floor");
+});
+
 test("package, action SHA, and action evidence drift each fail closed", async (t) => {
   await t.test("direct package pin", async () => {
     const root = await fixture();
@@ -139,6 +146,23 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
   const policy = await loadDependencyPolicy(ROOT);
   const fetchImpl = async (input) => {
     const url = String(input);
+    if (url.includes("api.github.com/advisories")) {
+      const parsed = new URL(url);
+      const advisoryId = parsed.pathname.startsWith("/advisories/")
+        ? decodeURIComponent(parsed.pathname.slice("/advisories/".length))
+        : parsed.searchParams.get("cve_id");
+      const record = policy.advisoryExceptions
+        .find((exception) => exception.advisoryIds.includes(advisoryId));
+      assert.ok(record, `known advisory URL: ${url}`);
+      return Response.json({
+        ghsa_id: advisoryId.startsWith("GHSA-") ? advisoryId : null,
+        cve_id: advisoryId.startsWith("CVE-") ? advisoryId : null,
+        vulnerabilities: [{
+          package: { ecosystem: "npm", name: record.package },
+          first_patched_version: record.adoptedVersion,
+        }],
+      });
+    }
     if (url.includes("api.github.com/repos/")) {
       const action = Object.entries(policy.actions).find(([repo]) => url.includes(`/repos/${repo}/`));
       assert.ok(action, `known action URL: ${url}`);

@@ -61,7 +61,7 @@ function restoreRequestExtensions(original: Request, replacement: Request): void
   }
 }
 
-// Hono 4.12.27's bodyLimit uses parseInt(Content-Length) and trusts a declared
+// Hono 4.12.34's bodyLimit uses parseInt(Content-Length) and trusts a declared
 // length that is within the cap. Validate the framing, reject CL+TE ambiguity,
 // then hide a valid declaration from bodyLimit so it counts the actual stream.
 const validateBodyFraming: MiddlewareHandler = async (c, next) => {
