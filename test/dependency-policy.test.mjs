@@ -139,6 +139,23 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
   const policy = await loadDependencyPolicy(ROOT);
   const fetchImpl = async (input) => {
     const url = String(input);
+    if (url.includes("api.github.com/advisories")) {
+      const parsed = new URL(url);
+      const advisoryId = parsed.pathname.startsWith("/advisories/")
+        ? decodeURIComponent(parsed.pathname.slice("/advisories/".length))
+        : parsed.searchParams.get("cve_id");
+      const record = policy.advisoryExceptions
+        .find((exception) => exception.advisoryIds.includes(advisoryId));
+      assert.ok(record, `known advisory URL: ${url}`);
+      return Response.json({
+        ghsa_id: advisoryId.startsWith("GHSA-") ? advisoryId : null,
+        cve_id: advisoryId.startsWith("CVE-") ? advisoryId : null,
+        vulnerabilities: [{
+          package: { ecosystem: "npm", name: record.package },
+          first_patched_version: record.adoptedVersion,
+        }],
+      });
+    }
     if (url.includes("api.github.com/repos/")) {
       const action = Object.entries(policy.actions).find(([repo]) => url.includes(`/repos/${repo}/`));
       assert.ok(action, `known action URL: ${url}`);

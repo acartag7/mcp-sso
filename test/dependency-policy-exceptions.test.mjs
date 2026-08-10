@@ -7,7 +7,7 @@ import {
   verifyRemoteDependencyPolicy,
 } from "../scripts/check-dependency-policy.mjs";
 import {
-  addYoungHonoException,
+  makeHonoExceptionYoung,
   fixture,
   NOW,
   replace,
@@ -16,7 +16,7 @@ import {
 
 test("a recorded advisory exception bypasses the floor only for its exact package pin", async () => {
   const root = await fixture();
-  await addYoungHonoException(root);
+  await makeHonoExceptionYoung(root);
   await verifyLocalDependencyPolicy(root, NOW);
 });
 
@@ -25,18 +25,18 @@ test("workspace and ledger advisory-exception layers cannot diverge", async (t) 
     const root = await fixture();
     await replace(
       join(root, "pnpm-workspace.yaml"),
-      "minimumReleaseAgeExclude: []",
       'minimumReleaseAgeExclude: ["hono"]',
+      'minimumReleaseAgeExclude: ["hono", "express"]',
     );
     await assert.rejects(
       verifyLocalDependencyPolicy(root, NOW),
-      /hono: workspace age exclusion has no advisory exception record/,
+      /express: workspace age exclusion has no advisory exception record/,
     );
   });
 
   await t.test("record without workspace exclusion", async () => {
     const root = await fixture();
-    await addYoungHonoException(root, { includeWorkspaceExclusion: false });
+    await makeHonoExceptionYoung(root, { includeWorkspaceExclusion: false });
     await assert.rejects(
       verifyLocalDependencyPolicy(root, NOW),
       /hono: advisory exception is missing from minimumReleaseAgeExclude/,
@@ -45,7 +45,7 @@ test("workspace and ledger advisory-exception layers cannot diverge", async (t) 
 
   await t.test("record cannot survive a later pin change", async () => {
     const root = await fixture();
-    const { policy } = await addYoungHonoException(root);
+    const { policy } = await makeHonoExceptionYoung(root);
     await replace(
       join(root, "package.json"),
       `"hono": "${policy.packages.hono.version}"`,
@@ -69,13 +69,13 @@ test("workspace and ledger advisory-exception layers cannot diverge", async (t) 
     };
     await replace(
       join(root, "docs/dependency-ledger.md"),
-      '"advisoryExceptions": [],',
-      `"advisoryExceptions": ${JSON.stringify([record], null, 2)},`,
+      '"advisoryExceptions": [',
+      `"advisoryExceptions": [\n${JSON.stringify(record, null, 2).replaceAll("\n", "\n    ")},`,
     );
     await replace(
       join(root, "pnpm-workspace.yaml"),
-      "minimumReleaseAgeExclude: []",
-      'minimumReleaseAgeExclude: ["pnpm"]',
+      'minimumReleaseAgeExclude: ["hono"]',
+      'minimumReleaseAgeExclude: ["pnpm", "hono"]',
     );
     await assert.rejects(
       verifyLocalDependencyPolicy(root, NOW),
@@ -85,11 +85,13 @@ test("workspace and ledger advisory-exception layers cannot diverge", async (t) 
 
   await t.test("unknown record field", async () => {
     const root = await fixture();
-    await addYoungHonoException(root);
+    const policy = await loadDependencyPolicy(root);
+    const exception = policy.advisoryExceptions.find((record) => record.package === "hono");
+    assert.ok(exception, "Hono advisory exception is present in the repository fixture");
     await replace(
       join(root, "docs/dependency-ledger.md"),
-      '"justification": "Published advisory fix; inspected the adopted Hono release."\n  }',
-      '"justification": "Published advisory fix; inspected the adopted Hono release.",\n    "unexpected": true\n  }',
+      `"justification": "${exception.justification}"\n    }`,
+      `"justification": "${exception.justification}",\n      "unexpected": true\n    }`,
     );
     await assert.rejects(
       verifyLocalDependencyPolicy(root, NOW),
