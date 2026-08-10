@@ -29,6 +29,33 @@ This is the supply-chain posture: compromised/typosquat packages are usually
 yanked within hours-to-days; a 15-day buffer dramatically reduces exposure. Never
 weaken the rule to paper over a fresh-publish install problem.
 
+## Two-rule cooldown policy
+
+1. **Ordinary updates wait.** A package or third-party Action release must be at
+   least `minimumAgeDays` old. The global `minimumReleaseAge` and this ledger
+   remain the same floor; an exception never lowers either value.
+2. **Published-advisory fixes do not wait.** When a published GHSA or CVE affects
+   a directly pinned package, adopt the minimum version that fixes all recorded
+   advisories after inspecting the release. Add that exact package to
+   `minimumReleaseAgeExclude` and add one matching `advisoryExceptions` record.
+
+Each advisory-exception record contains:
+
+- `package` — the exact direct npm package name;
+- `advisoryIds` — one or more published `GHSA-…` or `CVE-…` identifiers;
+- `adoptedVersion` — the exact direct pin selected as the minimum fixing version;
+- `adoptedAt` — the UTC calendar date on which the exception was adopted; and
+- `justification` — why the cooldown was skipped and what release was inspected.
+
+The dependency-policy gate requires a one-to-one match between exception
+records and `minimumReleaseAgeExclude`, binds every exception to the current
+direct pin and ledger version, and remotely confirms that every recorded
+advisory exists, names the recorded npm package, and reports the adopted version
+as its first patched version. An unrecorded exclusion, a record without an
+exclusion, a future pin change that leaves stale exception evidence, or an
+unknown field fails closed. The package-specific exclusion does not exempt any
+other dependency and does not weaken the global 15-day floor.
+
 ## Runtime dependencies (shipped to consumers)
 
 | Package | Version | Published | 15-day check | Notes |
@@ -117,6 +144,7 @@ upstream registries.
 ```json
 {
   "minimumAgeDays": 15,
+  "advisoryExceptions": [],
   "packages": {
     "@modelcontextprotocol/sdk": { "version": "1.29.0", "published": "2026-03-30T16:50:42.718Z" },
     "@types/express": { "version": "5.0.6", "published": "2025-12-01T20:35:51.488Z" },

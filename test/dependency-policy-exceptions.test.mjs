@@ -1,0 +1,173 @@
+import assert from "node:assert/strict";
+import { join } from "node:path";
+import { test } from "node:test";
+import {
+  loadDependencyPolicy,
+  verifyLocalDependencyPolicy,
+  verifyRemoteDependencyPolicy,
+} from "../scripts/check-dependency-policy.mjs";
+import {
+  addYoungHonoException,
+  fixture,
+  NOW,
+  replace,
+  ROOT,
+} from "./dependency-policy-fixtures.mjs";
+
+test("a recorded advisory exception bypasses the floor only for its exact package pin", async () => {
+  const root = await fixture();
+  await addYoungHonoException(root);
+  await verifyLocalDependencyPolicy(root, NOW);
+});
+
+test("workspace and ledger advisory-exception layers cannot diverge", async (t) => {
+  await t.test("unrecorded workspace exclusion", async () => {
+    const root = await fixture();
+    await replace(
+      join(root, "pnpm-workspace.yaml"),
+      "minimumReleaseAgeExclude: []",
+      'minimumReleaseAgeExclude: ["hono"]',
+    );
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /hono: workspace age exclusion has no advisory exception record/,
+    );
+  });
+
+  await t.test("record without workspace exclusion", async () => {
+    const root = await fixture();
+    await addYoungHonoException(root, { includeWorkspaceExclusion: false });
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /hono: advisory exception is missing from minimumReleaseAgeExclude/,
+    );
+  });
+
+  await t.test("record cannot survive a later pin change", async () => {
+    const root = await fixture();
+    const { policy } = await addYoungHonoException(root);
+    await replace(
+      join(root, "package.json"),
+      `"hono": "${policy.packages.hono.version}"`,
+      '"hono": "0.0.0"',
+    );
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /hono: adopted version .* != package pin 0\.0\.0/,
+    );
+  });
+
+  await t.test("package-manager pseudo-pin", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const record = {
+      package: "pnpm",
+      advisoryIds: ["GHSA-54fx-42gc-7vw4"],
+      adoptedVersion: policy.packages.pnpm.version,
+      adoptedAt: NOW.toISOString().slice(0, 10),
+      justification: "Must not be accepted: pnpm is a manager pin, not an installable dependency.",
+    };
+    await replace(
+      join(root, "docs/dependency-ledger.md"),
+      '"advisoryExceptions": [],',
+      `"advisoryExceptions": ${JSON.stringify([record], null, 2)},`,
+    );
+    await replace(
+      join(root, "pnpm-workspace.yaml"),
+      "minimumReleaseAgeExclude: []",
+      'minimumReleaseAgeExclude: ["pnpm"]',
+    );
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /pnpm: package-manager pin is not eligible for a package advisory exception/,
+    );
+  });
+
+  await t.test("unknown record field", async () => {
+    const root = await fixture();
+    await addYoungHonoException(root);
+    await replace(
+      join(root, "docs/dependency-ledger.md"),
+      '"justification": "Published advisory fix; inspected the adopted Hono release."\n  }',
+      '"justification": "Published advisory fix; inspected the adopted Hono release.",\n    "unexpected": true\n  }',
+    );
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /advisoryExceptions\[0\]: unknown field unexpected/,
+    );
+  });
+});
+
+function upstreamFetch(policy, {
+  advisoryId = "GHSA-54fx-42gc-7vw4",
+  advisoryPackage = "hono",
+  fixedVersion = policy.packages.hono.version,
+} = {}) {
+  return async (input) => {
+    const url = String(input);
+    if (url.includes("api.github.com/advisories")) {
+      return Response.json({
+        ghsa_id: advisoryId.startsWith("GHSA-") ? advisoryId : "GHSA-54fx-42gc-7vw4",
+        cve_id: advisoryId.startsWith("CVE-") ? advisoryId : null,
+        vulnerabilities: [{
+          package: { ecosystem: "npm", name: advisoryPackage },
+          first_patched_version: fixedVersion,
+        }],
+      });
+    }
+    if (url.includes("api.github.com/repos/")) {
+      const action = Object.entries(policy.actions).find(([repo]) => url.includes(`/repos/${repo}/`));
+      assert.ok(action, `known action URL: ${url}`);
+      const [, record] = action;
+      if (url.includes("/releases/tags/")) return Response.json({ published_at: record.published });
+      return Response.json({ sha: record.sha, commit: { committer: { date: record.published } } });
+    }
+    const name = decodeURIComponent(new URL(url).pathname.slice(1));
+    const record = policy.packages[name];
+    assert.ok(record, `known package URL: ${url}`);
+    return Response.json({ time: { [record.version]: record.published } });
+  };
+}
+
+test("remote advisory evidence binds the package and first patched version", async (t) => {
+  const policy = await loadDependencyPolicy(ROOT);
+  const exceptionPolicy = structuredClone(policy);
+  exceptionPolicy.advisoryExceptions = [{
+    package: "hono",
+    advisoryIds: ["GHSA-54fx-42gc-7vw4"],
+    adoptedVersion: policy.packages.hono.version,
+    adoptedAt: NOW.toISOString().slice(0, 10),
+    justification: "Published advisory fix; inspected the adopted Hono release.",
+  }];
+  await verifyRemoteDependencyPolicy(exceptionPolicy, {
+    fetchImpl: upstreamFetch(policy),
+    token: "not-a-secret",
+  });
+
+  await t.test("CVE lookup", async () => {
+    const cvePolicy = structuredClone(exceptionPolicy);
+    cvePolicy.advisoryExceptions[0].advisoryIds = ["CVE-2026-71848"];
+    await verifyRemoteDependencyPolicy(cvePolicy, {
+      fetchImpl: upstreamFetch(policy, { advisoryId: "CVE-2026-71848" }),
+      token: "not-a-secret",
+    });
+  });
+
+  await t.test("wrong package", async () => {
+    await assert.rejects(
+      verifyRemoteDependencyPolicy(exceptionPolicy, {
+        fetchImpl: upstreamFetch(policy, { advisoryPackage: "express" }),
+      }),
+      /hono: advisory GHSA-54fx-42gc-7vw4 does not name this npm package/,
+    );
+  });
+
+  await t.test("non-fixing adopted version", async () => {
+    await assert.rejects(
+      verifyRemoteDependencyPolicy(exceptionPolicy, {
+        fetchImpl: upstreamFetch(policy, { fixedVersion: "0.0.1" }),
+      }),
+      /hono: advisory GHSA-54fx-42gc-7vw4 first patched version 0\.0\.1 != adopted/,
+    );
+  });
+});
