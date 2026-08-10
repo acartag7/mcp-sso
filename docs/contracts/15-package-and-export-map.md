@@ -155,7 +155,9 @@ would need a library secret-free `validateConfig` (deferred).
 `pnpm/action-setup` reads it and workflow steps MUST NOT override it with a
 second `with.version` value. `pnpm-workspace.yaml` sets
 `minimumReleaseAge: 21600` (**minutes** = 15 days — the install-time floor and
-the `docs/dependency-ledger.md` 15-day curation rule are the same standard);
+the `docs/dependency-ledger.md` ordinary-pin curation rule are the same
+standard). A published GHSA/CVE fix for a direct npm pin may use only the
+ledger's verified per-package exception; it does not lower the global floor;
 the dependency-policy gate requires that value to equal the machine-readable
 `minimumAgeDays * 1440`. CI actions are pinned by SHA; npm publish uses
 `--provenance` from GitHub Actions OIDC only (no local publishes). Every pin is

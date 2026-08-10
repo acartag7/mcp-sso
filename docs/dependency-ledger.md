@@ -8,8 +8,9 @@
 > `docs/threat-model.md` ("Implementation gates").
 >
 > The enforcing check computes the cutoff from the current UTC date. At this
-> recheck (**2026-08-09**), a pin is acceptable only if published on or before
-> **2026-07-25** (≥15 days old).
+> recheck (**2026-08-09**), an ordinary pin is acceptable only if published on
+> or before **2026-07-25** (≥15 days old). A published-advisory exception must
+> satisfy the separate two-rule policy below.
 
 ## The 15-day rule and `minimumReleaseAge`
 
@@ -21,9 +22,10 @@ to equal this ledger's machine-readable `minimumAgeDays * 1440`; it also treats
 `package.json#packageManager` as the single pnpm version source and rejects a
 workflow-level `pnpm/action-setup` version override.
 
-- **install-time** — pnpm refuses any version younger than 15 days (applies to
-  transitive deps too); and
-- **pin-time** — every direct pin below is chosen ≥15 days old and recorded here.
+- **install-time** — pnpm refuses any unexcluded version younger than 15 days
+  (including transitive deps); and
+- **pin-time** — every ordinary direct pin below is chosen ≥15 days old and
+  recorded here.
 
 This is the supply-chain posture: compromised/typosquat packages are usually
 yanked within hours-to-days; a 15-day buffer dramatically reduces exposure. Never
@@ -239,8 +241,9 @@ no-checkout OIDC publishing job.
 ## Verification & change protocol
 
 1. **Before any install/bump:** `npm view <pkg> time --json` (or the registry API)
-   to confirm the candidate version's publish date; reject anything <15 days old.
-   Re-confirm every row above is still the chosen version.
+   to confirm the candidate version's publish date; reject anything <15 days old
+   unless a published GHSA/CVE qualifies for the verified per-package exception
+   above. Re-confirm every row above is still the chosen version.
 2. **Before publish:** this ledger is rechecked; `pnpm audit --prod` must be clean,
    or any finding is documented here with why no eligible patched version can be
    selected under the 15-day gate.

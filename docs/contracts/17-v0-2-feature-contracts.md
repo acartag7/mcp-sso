@@ -1816,7 +1816,8 @@ both `windowSeconds` and `limit` as positive integers (fail-closed on misconfig)
 Keys are as in §6.7 (`register:<ip>` etc.). Failure semantics are UNCHANGED from
 §6.7: `check()` THROWS on Redis error, so the bridge `guard()` fails OPEN
 (availability over advisory defense). Client library enters as an optional peer
-dep through the §15 ledger process (15-day rule). The hot path runs the script via
+dep through the §15 ledger process (ordinary 15-day rule or verified published-
+advisory exception). The hot path runs the script via
 `EVALSHA` (Redis caches compiled scripts by SHA1 after the first call, so only the
 hash crosses the wire); on `NOSCRIPT` (Redis restart or `SCRIPT FLUSH`) it falls
 back to `EVAL`, which re-loads the script for next time. Atomicity and fail-open

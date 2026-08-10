@@ -172,9 +172,12 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
   canonicalized to host. The test suite asserts serialized audit output contains
   no raw codes/refresh/access tokens.
 - **Supply chain** ([§15](./contracts/15-package-and-export-map.md#15-package--export-map)): `jose` is the
-  only runtime dep. Every pin is ≥15 days old and recorded in
-  `docs/dependency-ledger.md`. CI actions are SHA-pinned. `check:deps` rejects
-  drift between the ledger, direct package pins, and
+  only runtime dep. Ordinary pins are ≥15 days old and recorded in
+  `docs/dependency-ledger.md`. A younger direct npm pin is permitted only for a
+  published GHSA/CVE fix with a one-to-one `advisoryExceptions` /
+  `minimumReleaseAgeExclude` record, current pin+ledger binding, and upstream
+  package/first-patched-version verification. CI actions are SHA-pinned.
+  `check:deps` rejects drift between the ledger, direct package pins, and
   workflow Action pins, and verifies third-party Action tag/date evidence
   upstream. npm publish is `--provenance` from GitHub Actions OIDC only — **no
   local publishes**. No postinstall scripts, no bundler.
@@ -201,7 +204,7 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 12 | Identity spoofing | Spoofing | `IdentityPort` verifies the upstream credential; no/failed identity ⇒ 401 fail-closed; no passthrough | Depends on the concrete port validating iss/aud/tid. Header mode (`identityHeader`) carries a nonce residual — [see below](#row-12--header-mode-nonce-residual). The §17.11 redirect orchestrator does not (it mints its own nonce, row 31) |
 | 13 | SSRF via CIMD (v0.2) | SSRF | `createGuardedFetcher` enforces the [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract) network boundary: URL admission (https-only, no userinfo/fragment/query/dot-segments/IP-literals/CRLF), complete IANA IPv4+IPv6 blocklists (binary compare; embedding prefixes blocked wholesale), all-records DNS validation + pinned connect (no re-resolve), redirects refused (draft -01 MUST NOT), 200-only, 5 KiB cap, and 5 s deadline. `CimdResolver.resolve` catches resolution failures and `mapCimdError` collapses them to one generic client-facing `invalid_client` | Timing side-channel could leak coarse network facts (fetch duration); accepted — response content/error shape leak nothing |
 | 14 | Secrets in logs/audit | Info disclosure | Metadata-only audit; tests assert no raw secrets leak | None |
-| 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day pins; SHA-pinned CI; provenance publish; no postinstall/bundler | A zero-day in jose itself — minimized by single-dep + pin + age |
+| 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day ordinary pins; SHA-pinned CI; provenance publish; no postinstall/bundler. A younger direct npm pin requires a published GHSA/CVE, an exact one-to-one workspace/ledger exception, current-pin binding, and upstream advisory package/first-patched-version verification | A zero-day in jose itself — minimized by single-dep + pin + age. An advisory fix can itself be compromised; review remains required, and the exception is package-specific rather than a global cooldown reduction |
 | 16 | Dev flag used to weaken a real host | Misconfiguration | `allowInsecureLocalhost` rejected unless loopback + loud warning | Someone tunnels a loopback dev instance out — dev-only, documented |
 | 17 | (v0.2) CIMD client impersonation via lookalike/localhost redirect (the MCP-documented attack: legit metadata URL + attacker's loopback redirect) | Spoofing | Exact `client_id` echo-match; redirect exact-match against the doc **except that the loopback port is currently allowed to vary — see the pending qualification opposite**; the consent page presents the client-ID and redirect hosts first as the decision anchors, warns on loopback-only redirects, and renders `client_name` second as self-reported, unverified text. **The page is frame-blocked (row 36)** — without that, the user judgment this row depends on can be bypassed by an overlay rather than deceived | Real and spec-acknowledged: user judgment on lookalike domains / loopback approval remains the last line — CIMD cannot fully close this by design. **PENDING (D00-4.5.2, [§16.1](./contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)) — a second, non-judgment residual:** the match is not port-exact for loopback, and RFC 9700's native-app precondition is not evaluated, so a document declaring `application_type: "web"` still matches any port on its registered loopback host and path. A different local process bound to that path on another port can therefore receive the code, which **no amount of user care at the consent page can detect** — the host and path shown are the legitimate ones. Bounded by the attacker needing local process execution and the document still having to register that host and path. Closed by the follow-up runtime PR |
 | 18 | (v0.2) Machine-client secret theft / misuse | Spoofing / Elevation | Out-of-band provisioning only; 256-bit secrets (`mcs_`+base64url(32)); SHA-256-only storage; shown once; stored rows parsed and key-bound by `parseMachineClientRegistration`; versioned create/CAS/disable commits each mutation with durable audit; concurrent rotation has one winner; disabled tombstones contain no hashes; `verifyMachineClientSecret` uses two digest comparisons and fails closed; scopes capped by per-client `allowedScopes` ⊆ catalog; no refresh tokens; rotation grace preserves the published 24-hour default and is hard-capped at 24 hours (≤2 active secrets); deployments can request a shorter overlap. [Enforcement detail below](#row-18--machine-client-secret-enforcement) | A stolen secret is valid until rotated or disabled — there is no theft *signal* (unlike refresh replay); already-issued access tokens remain valid until their ordinary expiry |
@@ -383,7 +386,8 @@ false guarantee.
   the publish pipeline without updating **this file and
   [contracts](./contracts.md)**.
 - No dependency install or bump without a `docs/dependency-ledger.md` recheck
-  (version + publish date, ≥15 days — the 15-day gate).
+  (version + publish date, ≥15 days for ordinary pins; a younger direct pin
+  requires the documented, verified published-advisory exception).
 - The [store-conformance suite](./contracts/12-store-conformance-contract.md#12-store-conformance-contract)
   MUST be green (memory + sqlite + mysql) before any correctness claim; any
   further downstream SQL adapter must pass the same suite.
