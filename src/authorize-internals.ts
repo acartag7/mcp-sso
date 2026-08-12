@@ -9,6 +9,7 @@ import { originOf } from "./config.ts";
 import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "./redirect.ts";
+import { parseAuthorizationClientRegistration } from "./client-registration.ts";
 import type { CimdResolver } from "./cimd/resolve.ts";
 import { cimdGenericError } from "./cimd/resolve.ts";
 import {
@@ -77,8 +78,10 @@ export async function resolveAuthorizeClient(args: {
  *  per-client policy (§10.2); stateless applies the global allowlist (§10.1). */
 export async function resolveOpaqueRedirect(config: BridgeConfig, clientId: string, redirectUri: string): Promise<string> {
   if (config.dcr.mode === "stored") {
-    const client = await config.dcr.store.find(clientId);
-    if (!client) throw new OAuthError("invalid_client", "Unknown client_id", 401);
+    const stored = await config.dcr.store.find(clientId);
+    if (!stored) throw new OAuthError("invalid_client", "Unknown client_id", 401);
+    const client = parseAuthorizationClientRegistration(stored, clientId);
+    if (!client) throw new OAuthError("invalid_client", "Malformed stored client registration", 401);
     return assertRedirectAllowedForClient(redirectUri, client);
   }
   return assertAllowedRedirectUri(redirectUri, config.redirectAllowlist);

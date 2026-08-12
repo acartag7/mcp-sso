@@ -24,6 +24,8 @@ import { queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { redactForStderr } from "../audit/util.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import { resolveUpstreamAuthorizeClient, assertCallbackCimdPolicy } from "./upstream-flow-cimd.ts";
+import { isSchemeShaped } from "../cimd/registration.ts";
+import { resolveOpaqueRedirect } from "../authorize-internals.ts";
 import {
   OAUTH_PARAM_KEYS, CALLBACK_DUP_KEYS_EXPORT, assertCallbackPath, resolveCookieProfile,
   setCookieValue, clearCookieValue, readFlowCookie, flowCookieOversized, signFlowToken,
@@ -173,6 +175,21 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       // internally-inconsistent signed cookie would 302 an OAuth error to an
       // unmatched params.redirect_uri.
       if (!assertCallbackCimdPolicy(bridge.config, claims)) { await emit("failure", "flow_cookie_invalid", clientId); return clear(directErrorResponse("invalid_request", "flow cookie invalid")); }
+      // Re-read opaque stored-DCR state at callback. The flow cookie proves the
+      // registration was valid at initiation, not that its persisted row is
+      // still well-formed now. Keep this before every remaining early return,
+      // JTI mutation, IdP exchange, consent signing, and callback success audit.
+      if (clientId !== undefined && !isSchemeShaped(clientId)) {
+        try { await resolveOpaqueRedirect(bridge.config, clientId, clientRedirectUri); }
+        catch (error) {
+          if (error instanceof OAuthError && (error.code === "invalid_client" || error.code === "invalid_redirect_uri")) {
+            await emit("failure", "flow_cookie_invalid", clientId);
+            return clear(directErrorResponse("invalid_request", "flow cookie invalid"));
+          }
+          await emit("failure", "internal_error", clientId);
+          return clear(directErrorResponse("internal_error", "OAuth request failed", 500));
+        }
+      }
       let firstUse: boolean; // row 6: single-use jti — consumed BEFORE the IdP-error branch and the exchange
       try { firstUse = await store.consumeConsentJti(claims.jti, new Date(claims.exp * 1000).toISOString()); } catch { await emit("failure", "internal_error", clientId); return clear(directErrorResponse("internal_error", "OAuth request failed", 500)); }
       if (!firstUse) { await emit("failure", "flow_replayed", clientId); return clear(directErrorResponse("invalid_request", "flow already used")); }
