@@ -2063,6 +2063,9 @@ attributes) on every callback response that had a readable cookie — success or
 failure. Every upstream response that sets or clears this credential-bearing
 flow cookie also carries `Cache-Control: no-store`; the framework-free response
 helpers add the directive before Fastify, Express, or Hono maps the response.
+Callback response construction and cookie clearing are authoritative over
+callback-owned audit writes: a custom `AuditPort` synchronous throw or
+asynchronous rejection cannot suppress or replace the response or its headers.
 One flow per browser: a second authorize overwrites the cookie
 (last-writer-wins); the superseded flow's callback then fails the state match
 (direct 400). If the serialized `Set-Cookie` value would exceed **4096 bytes**,
@@ -2127,6 +2130,10 @@ readable cookie — duplicate-parameter, invalid-cookie/expiry/state/CIMD policy
 replay/store, upstream denial/error, missing-code, exchange/identity, bridge,
 or unexpected callback failures, plus successful consent rendering — carries
 `Cache-Control: no-store` alongside the unchanged clearing `Set-Cookie` header.
+The initial-clock failure has no trustworthy timestamp and therefore emits no
+audit event, but it still returns that clear plus `no-store` when a cookie was
+readable. Missing-cookie behavior remains the intentional exception: row 2
+attempts its callback audit but sends no clearing cookie.
 
 The `jti` is consumed at step 6 — before the IdP `error` branch and before the
 exchange — so a callback URL is single-use as a whole and a replay can never
@@ -2189,12 +2196,13 @@ CIMD id, `registration` = the verified flow JWT's `cimd` claim (§17.1.6 decisio
 1c/1d), so `prepare` consumes it and does not re-fetch.
 
 **Audit.** One new event name: **`oauth.upstream.callback`** (added to §13 and
-`AuthAuditEventName` at implementation) — emitted on **every** callback outcome
+`AuthAuditEventName` at implementation) — best-effort submitted on **every**
+callback outcome for which the callback established a trustworthy timestamp,
 with `status` success/failure and `reason` from the fixed enum in the failure
 table; optional `clientId` (from `params`) and `ip`. `identity.verify` is
-emitted whenever an identity **decision was reached** — `ok: true` (success)
-and `kind: "identity_rejected"` (failure, with the port's reason) — with the
-same shape and semantics as `Bridge.resolveIdentity`'s emission (S2a);
+best-effort submitted whenever an identity **decision was reached** — `ok: true`
+(success) and `kind: "identity_rejected"` (failure, with the port's reason) —
+with the same event metadata as `Bridge.resolveIdentity`'s emission (S2a);
 `exchange_failed` reaches no identity decision, so it emits only the
 `oauth.upstream.callback` failure, never a spurious `identity.verify`. Whether
 the implementation routes through `resolveIdentity` internally or emits
@@ -2202,6 +2210,11 @@ directly is an implementation choice; the observable events are identical. The a
 (redirect-out) leg is deliberately not audited: it carries no identity, and the
 flow is evidenced at the callback (an abandoned flow is an expired cookie the
 server never sees — a documented, trivial blind spot of the cookie decision).
+Both callback-owned event types use one fail-open boundary. A working sink
+receives the complete event metadata described above; a custom sink that throws
+synchronously or rejects asynchronously loses evidence but cannot replace or
+reject the OAuth response, including its clearing
+`Set-Cookie` and `Cache-Control: no-store` headers.
 **Never logged or audited, anywhere:** `state`, `nonce`, `code`, id_tokens,
 upstream tokens, the PKCE verifiers, or the flow cookie value — audit carries
 enum reasons and metadata only (§13).
