@@ -1,7 +1,7 @@
 // Redirect-URI policy (contracts §10). Every configured, registered, stored, and
 // presented value first passes the one raw §10.0 grammar in redirect-entry.ts.
 
-import type { ClientRegistration } from "./ports/client-store.ts";
+import type { AuthorizationClientRegistration } from "./client-registration.ts";
 import { OAuthError } from "./errors.ts";
 import {
   isLoopbackRedirect, parseRedirectEntry, RedirectEntryError,
@@ -33,7 +33,7 @@ export function assertAllowedRedirectUri(value: unknown, allowlist: readonly unk
 /** Per-client policy (stored-DCR authorize-time, RC item (b)). Every registered
  *  entry is re-validated on read so legacy/out-of-band records cannot bypass the
  *  grammar after a rolling upgrade. */
-export function assertRedirectAllowedForClient(redirectUri: string, client: ClientRegistration): string {
+export function assertRedirectAllowedForClient(redirectUri: string, client: AuthorizationClientRegistration): string {
   if (client.applicationType === "machine") {
     throw new OAuthError("invalid_client", "Machine clients cannot use the authorization-code flow", 401);
   }
