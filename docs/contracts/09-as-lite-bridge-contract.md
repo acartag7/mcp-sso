@@ -90,7 +90,10 @@ request shape with metadata this bridge understands fits the Hono boundary in
 two error channels, split by whether the `redirect_uri` is trusted yet:
 
 - **Direct HTTP error (NEVER redirect)** — pre-validation failures where the
-  redirect destination is untrusted: identity not resolved/rejected (the resource
+  redirect destination is untrusted: an ambiguous authorize request (any of
+  `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
+  `code_challenge_method`, `resource`, `scope`, or `state` occurs more than once),
+  identity not resolved/rejected (the resource
   owner could not be authenticated), a subject in the reserved `mcc_` machine
   namespace (RFC 9700 §4.15.1 — user grants must never mint a `sub` an RS would
   classify as a machine token; enforced at `prepare`, the choke point every
@@ -119,6 +122,16 @@ codeChallengeMethod, resource?, scope?, state?, subject, allowedScopes?, registr
 *(`registration?: CimdRegistration` — §17.1.6 decision 1c; supplied ONLY by the
 upstream-redirect orchestrator for a carried CIMD registration, NEVER bound to
 client-controlled request input; when present, `prepare` uses it and does not fetch.)*
+Before building this input, `Bridge.handleAuthorize` applies the shared RFC 6749
+§3.1 occurrence guard to the canonical `OAUTH_PARAM_KEYS` set above. An
+array-valued member with more than one occurrence returns direct 400
+`invalid_request`, with no `Location`, before first/last-value selection,
+`prepare`, consent rendering, store access, or authorize success audit. A
+single-valued request follows the unchanged validation order below. The same
+pure helper and key definition govern the upstream and console-pairing authorize
+entry points; framework adapters must preserve repeated query members as arrays
+until this boundary.
+
 1. `subject` REQUIRED (the adapter/`IdentityPort` resolves it before calling
    `prepare`). No subject ⇒ `access_denied` 401 **direct**, never a placeholder.
 2. `client_id` present and `redirect_uri` **mode-appropriately validated** (§17.1.6
@@ -388,6 +401,12 @@ the response. Wiring rules:
   header except `Cookie`. Repeated `Cookie` fields remain one logical
   semicolon-joined cookie-string. The same normalized snapshot supplies custom
   `identityHeader`, approve `Origin`, and token `Authorization` reads.
+- **Authorize query occurrence snapshot:** Fastify, Express, and Hono preserve
+  repeated authorize query members as arrays in `NormRequest.query` and pass
+  them unchanged to their selected framework-free authorize entry point.
+  `Bridge.handleAuthorize`, `handlePairingAuthorize`, and the upstream redirect
+  flow use one shared pure duplicate check and one `OAUTH_PARAM_KEYS` definition;
+  no adapter may select a first or last occurrence before that check.
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src

@@ -226,6 +226,35 @@ test("S1b: a wrong pairing code re-renders the pairing page (not a 401, not the 
   }
 });
 
+test("pairing example rejects an ambiguous authorize query before printing a code", async () => {
+  const config = createBridgeConfig({
+    issuer: ISSUER, resource: RESOURCE, consentSigningSecret: "x".repeat(40), signingPrivateJwk: jwk(), signingKeyId: "k",
+    redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"], allowedOrigins: [ISSUER],
+    dcr: { mode: "stateless" }, dev: { allowInsecureLocalhost: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  const outputChunks: string[] = [];
+  const { app, store } = await buildApp({
+    config, pairing: { output: { write(s: string): boolean { outputChunks.push(s); return true; } } },
+  });
+  try {
+    const query = new URLSearchParams({
+      response_type: "code", client_id: "client", redirect_uri: REDIRECT,
+      code_challenge: pkceChallenge("v".repeat(43)), code_challenge_method: "S256", scope: "mcp:read",
+    });
+    query.append("redirect_uri", "https://other.test/callback");
+    const response = await app.inject({ method: "GET", url: `/oauth/authorize?${query}` });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.headers.location, undefined);
+    assert.equal(response.json<{ error: string }>().error, "invalid_request");
+    assert.equal(response.body.includes("other.test"), false);
+    assert.equal(outputChunks.length, 0, "duplicate rejection precedes pairing-code output");
+  } finally {
+    await app.close();
+    await store.close();
+  }
+});
+
 test("S1b (Codex round 4): header mode without identity rejects fast (no floating promise)", async () => {
   // `identity` is optional only for the pairing mode. In header mode without it,
   // registerOAuthRoutes' runtime guard rejects and buildApp must propagate that

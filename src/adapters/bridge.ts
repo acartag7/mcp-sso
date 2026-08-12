@@ -1,8 +1,6 @@
 // Bridge — framework-free wiring of the core use-cases to normalized HTTP
-// requests/responses (contracts §9.6). Each fastify/express/hono adapter is a
-// thin mapper around this; all OAuth logic stays in the core. The adapter resolves
-// the subject (via its IdentityPort) before calling handleAuthorize.
-
+// requests/responses (contracts §9.6). Each fastify/express/hono adapter is a thin
+// mapper; the adapter resolves the subject before calling handleAuthorize.
 import type { BridgeConfig } from "../config.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
@@ -17,6 +15,7 @@ import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "..
 import { OAuthError } from "../errors.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
 import { renderConsentPage } from "./consent-page.ts";
+import { OAUTH_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
 import { asOAuth, assertUnambiguousAuthorization, consentCookie, hasBasicAuthorization, parseApproved, resolveIdentityWithAudit } from "./bridge-internals.ts";
 export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
@@ -131,6 +130,7 @@ export class Bridge {
     identity: { subject: string; allowedScopes?: string[]; registration?: CimdRegistration },
   ): Promise<NormResponse> {
     try {
+      if (findDuplicatedKeys(req.query, OAUTH_PARAM_KEYS).length > 0) throw new OAuthError("invalid_request", "duplicate request parameters");
       const prepared: PreparedConsent = await this.auth.prepare({
         clientId: queryString(req.query, "client_id"),
         redirectUri: queryString(req.query, "redirect_uri"),

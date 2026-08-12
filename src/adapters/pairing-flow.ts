@@ -14,7 +14,9 @@
 
 import type { Bridge } from "./bridge.ts";
 import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
-import { formField, queryString, type NormRequest, type NormResponse } from "./http.ts";
+import { OAuthError } from "../errors.ts";
+import { OAUTH_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
+import { formField, oauthErrorResponse, queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
 
 // Pairing keeps its page-specific `form-action`: Continue terminates on this
@@ -38,12 +40,6 @@ const PAIRING_HEADERS: Record<string, string> = {
   "referrer-policy": "no-referrer",
 };
 
-// OAuth authorize params that round-trip through the pairing form's hidden fields.
-const OAUTH_PARAM_KEYS = [
-  "response_type", "client_id", "redirect_uri", "code_challenge",
-  "code_challenge_method", "resource", "scope", "state",
-] as const;
-
 export interface PairingAuthorizeDeps {
   bridge: Bridge;
   pairing: ConsolePairingIdentity;
@@ -55,6 +51,9 @@ export async function handlePairingAuthorize(
   req: NormRequest,
 ): Promise<NormResponse> {
   const { bridge, pairing } = deps;
+  if (findDuplicatedKeys(req.query, OAUTH_PARAM_KEYS).length > 0) {
+    return oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters"));
+  }
   const oauthParams = gatherOAuthParams(req);
   const submittedCode = method === "POST" ? formField(req.body, "pairing_code") : undefined;
 

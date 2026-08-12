@@ -1536,6 +1536,19 @@ gate replaces no-gate).
   resource + scopes at consent time. An attacker who triggers a code onto the
   operator's console gains nothing without the printed code; only the operator
   pasting it completes the flow.
+- **Authorize-parameter ambiguity:** `handlePairingAuthorize` applies the same
+  pure RFC 6749 §3.1 occurrence guard and canonical `OAUTH_PARAM_KEYS` definition
+  as `Bridge.handleAuthorize` and §17.11 upstream authorize. If any of
+  `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
+  `code_challenge_method`, `resource`, `scope`, or `state` has more than one
+  occurrence in the normalized authorize query, it returns direct 400 `invalid_request` with
+  no `Location`. This check runs before selecting any OAuth value and before
+  `beginSession`, pairing-code output, `verify`, hidden-field rendering,
+  `bridge.handleAuthorize`, consent preparation/rendering, store mutation, or
+  success audit. The generated pairing form round-trips one snapshotted value
+  per key; duplicate form-body handling remains an adapter-body contract, not a
+  guarantee of this query-occurrence guard. Single-valued GET and POST pairing
+  flows are unchanged.
 - **Rate limiting:** the attempt cap is built-in and in-process — it cannot be
   misconfigured away; the `RateLimitPort` hook (`pairing:<ip>`) adds
   defense-in-depth.
@@ -2091,6 +2104,11 @@ the decision-2 generic `invalid_client` so document size is not a content oracle
    cookie is set — RFC 6749 §3.1 forbids repeated request parameters, and
    silently picking first/last would make parameter-pollution behavior
    adapter-dependent.
+
+`OAUTH_PARAM_KEYS` and its pure duplicate-finding helper are shared with direct
+`Bridge.handleAuthorize` and `handlePairingAuthorize`; this upstream path keeps
+the same step-2 response and ordering while eliminating per-entry-point key-list
+drift.
 3. `client_id` present and `redirect_uri` **mode-appropriately validated**
    (§17.1.6 decision 1a): for a literal-lowercase-`https://` CIMD id with `cimd`
    enabled, the CIMD document match (shape-first, BEFORE any `store.find`);

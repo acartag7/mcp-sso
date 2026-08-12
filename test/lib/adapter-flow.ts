@@ -125,6 +125,28 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
     }
   });
 
+  test(`${name} adapter: duplicate authorize query values reach the shared rejection boundary`, async () => {
+    const audit = new MemoryAudit();
+    const client = await mount(makeBridge(undefined, audit), stubIdentity);
+    try {
+      const params = new URLSearchParams({
+        response_type: "code", client_id: "registered-looking-client", redirect_uri: REDIRECT,
+        code_challenge: pkceChallenge("correct-horse-battery-staple-0123"),
+        code_challenge_method: "S256", scope: "mcp:read", state: "s1",
+      });
+      params.append("redirect_uri", "https://attacker.test/callback");
+      const response = await client.get(`/oauth/authorize?${params}`, { [IDENTITY_HEADER]: STUB_TOKEN });
+      assert.equal(response.status, 400);
+      assert.equal(response.headers.location, undefined);
+      assert.equal(JSON.parse(response.body).error, "invalid_request");
+      assert.equal(response.body.includes("attacker.test"), false);
+      assert.equal(response.body.includes("consent_token"), false);
+      assert.equal(audit.events.some((event) => event.event === "oauth.authorize.prepare"), false);
+    } finally {
+      await client.close?.();
+    }
+  });
+
   test(`${name} adapter: revoke limiter denies on the shipped route`, async () => {
     const keys: string[] = [];
     const audit = new MemoryAudit();
