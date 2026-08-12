@@ -278,12 +278,18 @@ test("authorize: repeated RFC 8707 resource indicators are invalid_target, not R
 });
 
 test("authorize: valueless resource occurrences are omitted before the upstream flow cookie is minted", async () => {
-  for (const resource of ["", ["", ""], [RESOURCE, ""], ["", RESOURCE]]) {
+  const cases: { resource: string | string[]; expected: string | undefined }[] = [
+    { resource: "", expected: undefined },
+    { resource: ["", ""], expected: undefined },
+    { resource: [RESOURCE, ""], expected: RESOURCE },
+    { resource: ["", RESOURCE], expected: RESOURCE },
+  ];
+  for (const { resource, expected } of cases) {
     const c = config(); const { flow } = makeFlow(c, fakeIdentity(c));
     const { res, claims } = await initiate(c, flow, { ...authorizeQuery(), resource });
     assert.equal(res.status, 302);
     assert.equal(new URL(res.headers.location as string).origin, "https://idp.test");
-    assert.equal(claims.params.resource, Array.isArray(resource) && resource.includes(RESOURCE) ? RESOURCE : undefined);
+    assert.equal(claims.params.resource, expected);
   }
 });
 
