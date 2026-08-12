@@ -83,12 +83,14 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
         code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1",
       })}`, { [IDENTITY_HEADER]: STUB_TOKEN });
       assert.equal(authPage.status, 200);
+      assert.equal(authPage.headers["cache-control"], "no-store", `${name}: consent response preserves no-store`);
       assert.match(authPage.body, /Approve/);
       const consentToken = /name="consent_token" value="([^"]+)"/.exec(authPage.body)?.[1];
       assert.ok(consentToken, "consent token in page");
 
       const approve = await client.postForm("/oauth/authorize/approve", { consent_token: consentToken as string, approved: "true" }, { origin: "https://auth.test" });
       assert.equal(approve.status, 302);
+      assert.equal(approve.headers["cache-control"], "no-store", `${name}: code redirect preserves no-store`);
       const code = new URL(approve.headers.location as string).searchParams.get("code");
       assert.ok(code);
 

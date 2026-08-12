@@ -20,7 +20,7 @@ import { AuthConfigError, originOf, pathAfterOrigin } from "../config.ts";
 import { OAuthError } from "../errors.ts";
 import { assertOAuthRedirectEntry } from "../redirect.ts";
 import { pkceChallenge } from "../crypto.ts";
-import { queryString, type NormRequest, type NormResponse } from "./http.ts";
+import { noStoreHeaders, queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { redactForStderr } from "../audit/util.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import { resolveUpstreamAuthorizeClient, assertCallbackCimdPolicy } from "./upstream-flow-cimd.ts";
@@ -138,7 +138,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       }
       await resolved.emitSuccess(); // decision 1b: success only AFTER the oversize guard
       const location = identity.buildAuthorizationUrl({ state, nonce, codeChallenge: pkceChallenge(codeVerifier), codeChallengeMethod: "S256" });
-      return { status: 302, headers: { location, "set-cookie": setCookieValue(cookieProfile, flowJwt, flowTtlSeconds) }, redirect: location };
+      return { status: 302, headers: noStoreHeaders({ location, "set-cookie": setCookieValue(cookieProfile, flowJwt, flowTtlSeconds) }), redirect: location };
     } catch (error) {
       const mapped = error instanceof OAuthError ? error : new OAuthError("internal_error", "OAuth request failed", 500);
       return directErrorResponse(mapped.code, mapped.message, mapped.status);
@@ -150,7 +150,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
     const ip = req.ip;
     const cookieValue = readFlowCookie(req.headers, cookieProfile);
     const cookiePresent = cookieValue !== undefined;
-    const clear = (res: NormResponse): NormResponse => cookiePresent ? { ...res, headers: { ...res.headers, "set-cookie": clearCookieValue(cookieProfile) } } : res;
+    const clear = (res: NormResponse): NormResponse => cookiePresent ? { ...res, headers: noStoreHeaders({ ...res.headers, "set-cookie": clearCookieValue(cookieProfile) }) } : res;
     const emit = (status: AuthAuditStatus, reason: string | undefined, clientId?: string): Promise<void> =>
       audit.writeAuthEvent({ occurredAt: nowIso, event: "oauth.upstream.callback", status, reason, clientId, ip });
     try {

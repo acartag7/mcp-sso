@@ -29,6 +29,11 @@ export interface HeaderRead {
   ambiguous: boolean;
 }
 
+/** Add the cache directive shared by credential-bearing normalized responses. */
+export function noStoreHeaders(headers: Record<string, string>): Record<string, string> {
+  return { ...headers, "cache-control": "no-store" };
+}
+
 /** Preserve Node's occurrence metadata; repeated Cookie fields form one string.
  *  `normalized` supports framework injectors whose mock IncomingMessage omits
  *  `headersDistinct`; its arrays/case-variant keys remain ambiguous. */

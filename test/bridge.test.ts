@@ -71,6 +71,7 @@ test("bridge: full OAuth flow (metadata -> register -> authorize -> approve -> t
 
   const page = await b.handleAuthorize(req({ query: { response_type: "code", client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read mcp:write", state: "s1" } }), { subject: SUBJECT });
   assert.equal(page.status, 200);
+  assert.equal(page.headers["cache-control"], "no-store", "consent JWT response is not cacheable");
   assert.match(String(page.body), /<html/);
   assert.match(String(page.body), /Approve/);
   assert.match(String(page.body), /Deny/); // fix #5: both buttons present
@@ -78,6 +79,7 @@ test("bridge: full OAuth flow (metadata -> register -> authorize -> approve -> t
   const consentToken = extractConsentToken(String(page.body));
   const approve = await b.handleApprove(req({ body: { consent_token: consentToken, approved: "true" }, headers: { origin: "https://auth.test" } }));
   assert.equal(approve.status, 302);
+  assert.equal(approve.headers["cache-control"], "no-store", "code-bearing approval redirect is not cacheable");
   const code = new URL(approve.headers.location as string).searchParams.get("code");
   assert.ok(code);
 
@@ -246,6 +248,7 @@ test("bridge: Deny redirects access_denied (fix #5)", async () => {
   const consentToken = extractConsentToken(String(page.body));
   const res = await ctx.bridge.handleApprove(req({ body: { consent_token: consentToken, approved: "false" }, headers: { origin: "https://auth.test" } }));
   assert.equal(res.status, 302);
+  assert.equal(res.headers["cache-control"], undefined, "deny redirect is outside the credential-bearing response rule");
   const u = new URL(res.headers.location as string);
   assert.equal(u.searchParams.get("error"), "access_denied");
   assert.equal(u.searchParams.get("state"), "deny");

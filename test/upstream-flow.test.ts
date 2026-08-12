@@ -108,6 +108,10 @@ function req(query: NormRequest["query"], headers: Record<string, string> = {}, 
 // Typed header accessors (Record<string,string> + noUncheckedIndexedAccess ⇒ string | undefined).
 const hLoc = (res: NormResponse): string => res.headers.location ?? "";
 const hCookie = (res: NormResponse): string => res.headers["set-cookie"] ?? "";
+function assertCookieMutationNoStore(res: NormResponse, label: string): void {
+  assert.notEqual(res.headers["set-cookie"], undefined, `${label}: response mutates the flow cookie`);
+  assert.equal(res.headers["cache-control"], "no-store", `${label}: cookie mutation is not cacheable`);
+}
 
 type FlowClaims = Awaited<ReturnType<typeof verifyFlowToken>>;
 
@@ -115,6 +119,7 @@ type FlowClaims = Awaited<ReturnType<typeof verifyFlowToken>>;
 async function initiate(c: BridgeConfig, flow: ReturnType<typeof makeFlow>["flow"], query: NormRequest["query"] = authorizeQuery()): Promise<{ res: NormResponse; claims: FlowClaims; cookieValue: string }> {
   const res = await flow.handleAuthorize(req(query));
   const sc = res.headers["set-cookie"] ?? "";
+  assertCookieMutationNoStore(res, "authorize");
   const eq = sc.indexOf("="), semi = sc.indexOf(";");
   const cookieValue = sc.slice(eq + 1, semi);
   const claims = await verifyFlowToken(cookieValue, c.consentSigningSecret, c.issuer, flow.callbackPath);
@@ -212,12 +217,14 @@ test("cookie: clearing cookie uses identical attrs + Max-Age=0 (no Domain) — b
   const c = config(); const { flow } = makeFlow(c, fakeIdentity(c));
   const { claims, cookieValue } = await initiate(c, flow);
   const res = await flow.handleCallback(callbackReq(c, cookieValue, { state: "WRONG" }));
+  assertCookieMutationNoStore(res, "https callback clear");
   assert.match(res.headers["set-cookie"] ?? "", /^__Host-mcp-sso-upstream=; Path=\/; Secure; HttpOnly; SameSite=Lax; Max-Age=0$/, "exact https clear attrs");
   assert.doesNotMatch(res.headers["set-cookie"] ?? "", /Domain=/i);
   // loopback profile (no Secure/__Host-)
   const cl = config(true); const { flow: flowL } = makeFlow(cl, fakeIdentity(cl));
   const il = await initiate(cl, flowL);
   const resL = await flowL.handleCallback(callbackReq(cl, il.cookieValue, { state: "WRONG" }));
+  assertCookieMutationNoStore(resL, "loopback callback clear");
   assert.match(resL.headers["set-cookie"] ?? "", /^mcp-sso-upstream=; Path=\/; HttpOnly; SameSite=Lax; Max-Age=0$/, "exact loopback clear attrs");
   assert.doesNotMatch(resL.headers["set-cookie"] ?? "", /Secure/i);
   assert.doesNotMatch(resL.headers["set-cookie"] ?? "", /Domain=/i);
@@ -335,6 +342,8 @@ test("callback row 1: duplicate state/code/error/error_description => direct 400
   assert.equal(res.status, 400);
   assert.equal(audit.callback()[0]?.reason, "duplicate_params");
   assert.equal(res.headers["set-cookie"], undefined, "no cookie to clear (none was read)");
+  const withCookie = await flow.handleCallback(callbackReq(c, "readable", { state: ["a", "b"], code: "x" }));
+  assertCookieMutationNoStore(withCookie, "duplicate-parameter early return with cookie");
   // every contracted dup key triggers row 1 on its own.
   for (const key of ["state", "code", "error", "error_description"] as const) {
     const { flow: f, audit: a } = makeFlow(c, fakeIdentity(c));
@@ -358,6 +367,7 @@ test("callback row 3: flow JWT signature/iss/aud invalid => direct 400 flow_cook
   const res = await flow.handleCallback(callbackReq(c, "not-a-valid-jwt", { state: "x", code: "y" }));
   assert.equal(res.status, 400);
   assert.equal(audit.callback()[0]?.reason, "flow_cookie_invalid");
+  assertCookieMutationNoStore(res, "invalid-cookie early return");
   assert.match(res.headers["set-cookie"] ?? "", /Max-Age=0/);
 });
 
@@ -368,6 +378,7 @@ test("callback row 4 (direct mint): an expired-but-validly-signed flow => flow_e
   const expiredJwt = await signFlowToken({ secret: c.consentSigningSecret, issuer: c.issuer, callbackPath: flow.callbackPath, clock: { nowMs: () => NOW_MS - 10_000 }, jti: "upf_" + "e".repeat(40), state: "S", nonce: "N", codeVerifier: "V".repeat(43), params: authorizeQuery(), ttlSeconds: 1 });
   const res = await flow.handleCallback(callbackReq(c, expiredJwt, { state: "S", code: "y" }));
   assert.equal(res.status, 400);
+  assertCookieMutationNoStore(res, "expired-flow early return");
   assert.equal(audit.callback()[0]?.reason, "flow_expired");
   assert.notEqual(audit.callback()[0]?.reason, "flow_cookie_invalid");
 });
@@ -400,6 +411,7 @@ test("callback row 6 + replay: single-use jti — a replayed callback is 400 flo
   // Replay the same callback URL (same cookie + state + code): row 6 fires BEFORE the exchange.
   const r2 = await flow.handleCallback(callbackReq(c, cookieValue, q));
   assert.equal(r2.status, 400);
+  assertCookieMutationNoStore(r2, "replay early return");
   assert.equal((r2.body as { error: string }).error, "invalid_request");
   assert.equal(id.exchangeCalls(), 1, "NO second exchange on replay");
   assert.equal(audit.callback().at(-1)?.reason, "flow_replayed", "the row-6 enum reason is pinned");
@@ -415,6 +427,7 @@ test("callback row 7: IdP error in {access_denied,...} => 302 access_denied 'ups
     assert.match(hLoc(res), /error=access_denied/);
     assert.match(hLoc(res), /error_description=upstream\+identity\+provider\+denied\+the\+request/);
     assert.match(hLoc(res), /state=client-state/); // the CLIENT's state, not the upstream state
+    assertCookieMutationNoStore(res, `upstream denial ${err}`);
     assert.equal(audit.callback().at(-1)?.reason, "upstream_denied");
   }
 });
@@ -426,6 +439,7 @@ test("callback row 8: IdP error = anything else => 302 server_error 'upstream id
   assert.equal(res.status, 302);
   assert.match(hLoc(res), /error=server_error/);
   assert.match(hLoc(res), /error_description=upstream\+identity\+provider\+error/);
+  assertCookieMutationNoStore(res, "upstream error");
   assert.equal(audit.callback().at(-1)?.reason, "upstream_error");
 });
 
@@ -460,6 +474,7 @@ test("callback row 9: no code and no error => direct 400 missing_code", async ()
   const { claims, cookieValue } = await initiate(c, flow);
   const res = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state }));
   assert.equal(res.status, 400);
+  assertCookieMutationNoStore(res, "callback missing-code error");
   assert.equal(audit.callback().at(-1)?.reason, "missing_code");
 });
 
@@ -471,6 +486,7 @@ test("callback row 10: exchange_failed (non-200/timeout/missing id_token) => 302
   const i1 = await initiate(c, f1);
   const r1 = await f1.handleCallback(callbackReq(c, i1.cookieValue, { state: i1.claims.state, code: "c" }));
   assert.equal(r1.status, 302); assert.match(hLoc(r1), /error=server_error/);
+  assertCookieMutationNoStore(r1, "returned exchange error");
   assert.match(hLoc(r1), /error_description=upstream\+identity\+provider\+error/);
   assert.equal(a1.callback().at(-1)?.reason, "exchange_failed");
   assert.equal(a1.identity().length, 0, "no identity.verify on exchange_failed");
@@ -480,6 +496,7 @@ test("callback row 10: exchange_failed (non-200/timeout/missing id_token) => 302
   const i2 = await initiate(c, f2);
   const r2 = await f2.handleCallback(callbackReq(c, i2.cookieValue, { state: i2.claims.state, code: "c" }));
   assert.equal(r2.status, 302);
+  assertCookieMutationNoStore(r2, "thrown exchange error");
   assert.equal(a2.callback().at(-1)?.reason, "exchange_failed", "a throw is classified exchange_failed");
   assert.equal(a2.identity().length, 0, "a thrown exchange also reaches no identity decision — no identity.verify");
 });
@@ -493,6 +510,7 @@ test("callback row 11: identity_rejected => 302 access_denied + identity.verify 
   assert.equal(res.status, 302);
   assert.match(hLoc(res), /error=access_denied/);
   assert.match(hLoc(res), /error_description=upstream\+identity\+verification\+failed/);
+  assertCookieMutationNoStore(res, "identity denial");
   assert.equal(audit.callback().at(-1)?.reason, "identity_rejected");
   const idv = audit.identity().at(-1);
   assert.equal(idv?.status, "failure");
@@ -506,6 +524,7 @@ test("callback rows 12/13: success => 200 consent page + identity.verify success
   assert.equal(res.status, 200);
   assert.match(String(res.body), /Authorize access/, "the consent page is the direct callback response");
   assert.match(hCookie(res), /Max-Age=0/, "cookie cleared on success too");
+  assertCookieMutationNoStore(res, "callback success");
   assert.equal(audit.callback().at(-1)?.status, "success");
   assert.equal(audit.identity().at(-1)?.status, "success");
   assert.equal(audit.identity().at(-1)?.subject, "user-1");
@@ -521,6 +540,7 @@ test("callback row 12: bridge.handleAuthorize error (e.g. invalid_scope) travels
   assert.equal(res.status, 302, "invalid_scope is a redirect-channel error");
   assert.match(hLoc(res), /error=invalid_scope/);
   assert.match(hLoc(res), /state=client-state/);
+  assertCookieMutationNoStore(res, "bridge callback error");
   assert.equal(audit.callback().at(-1)?.reason, "bridge_error");
 });
 
@@ -572,9 +592,11 @@ test("callback: cookie cleared on every response that had a readable cookie (suc
   // state mismatch (row 5) clears.
   const r1 = await flow.handleCallback(callbackReq(c, cookieValue, { state: "WRONG", code: "c" }));
   assert.match(r1.headers["set-cookie"] ?? "", /Max-Age=0/);
+  assertCookieMutationNoStore(r1, "state-mismatch clear");
   // row 3 (invalid cookie) also clears (a cookie name WAS present).
   const r2 = await flow.handleCallback(callbackReq(c, "garbage.value", { state: "x", code: "c" }));
   assert.match(r2.headers["set-cookie"] ?? "", /Max-Age=0/);
+  assertCookieMutationNoStore(r2, "invalid-cookie clear");
   void claims;
 });
 
@@ -628,6 +650,7 @@ test("adapter wiring + cookie delivery: all three adapters mount GET /oauth/auth
       const auth = await app.inject({ method: "GET", url: authorizeUrl });
       assert.equal(auth.statusCode, 302, "fastify: /oauth/authorize -> handleAuthorize");
       assert.ok(String(auth.headers["set-cookie"] ?? "").startsWith("__Host-mcp-sso-upstream="), "fastify: Set-Cookie delivered");
+      assert.equal(auth.headers["cache-control"], "no-store", "fastify: no-store delivered with flow cookie");
       const cb = await app.inject({ method: "GET", url: "/oauth/callback" });
       assert.equal(cb.statusCode, 400, "fastify: callbackPath -> handleCallback (flow_cookie_missing)");
     } finally { await app.close(); }
@@ -640,6 +663,7 @@ test("adapter wiring + cookie delivery: all three adapters mount GET /oauth/auth
     const auth = await app.request(authorizeUrl, { method: "GET" });
     assert.equal(auth.status, 302, "hono: /oauth/authorize -> handleAuthorize");
     assert.ok((auth.headers.get("set-cookie") ?? "").startsWith("__Host-mcp-sso-upstream="), "hono: Set-Cookie delivered");
+    assert.equal(auth.headers.get("cache-control"), "no-store", "hono: no-store delivered with flow cookie");
     const cb = await app.request("/oauth/callback", { method: "GET" });
     assert.equal(cb.status, 400, "hono: callbackPath -> handleCallback");
   }
@@ -656,6 +680,7 @@ test("adapter wiring + cookie delivery: all three adapters mount GET /oauth/auth
       const auth = await fetch(base + authorizeUrl, { redirect: "manual" });
       assert.equal(auth.status, 302, "express: /oauth/authorize -> handleAuthorize");
       assert.ok((auth.headers.get("set-cookie") ?? "").startsWith("__Host-mcp-sso-upstream="), "express: Set-Cookie delivered");
+      assert.equal(auth.headers.get("cache-control"), "no-store", "express: no-store delivered with flow cookie");
       const cb = await fetch(base + "/oauth/callback", { redirect: "manual" });
       assert.equal(cb.status, 400, "express: callbackPath -> handleCallback");
     } finally { await new Promise<void>((r) => server.close(() => r())); }

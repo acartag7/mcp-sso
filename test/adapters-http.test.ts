@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { headerString, headersFromDistinct, isMcpPath, readHeader } from "../src/adapters/http.ts";
+import { headerString, headersFromDistinct, isMcpPath, noStoreHeaders, readHeader } from "../src/adapters/http.ts";
 
 test("headerString rejects normalized arrays and case-duplicate keys", () => {
   assert.equal(headerString({ Origin: "https://auth.test" }, "origin"), "https://auth.test");
@@ -47,6 +47,13 @@ test("headerString rejects comma-coalesced non-Cookie security headers", () => {
   assert.equal(headerString({ authorization: "Bearer attacker, Basic credentials" }, "authorization"), undefined);
   assert.equal(headerString({ origin: "https://auth.test, https://evil.test" }, "origin"), undefined);
   assert.equal(headerString({ cookie: "a=1,still-one-cookie-string" }, "cookie"), "a=1,still-one-cookie-string");
+});
+
+test("noStoreHeaders preserves existing response headers without mutating the input", () => {
+  const original = { location: "https://client.test/callback", "set-cookie": "flow=value; Path=/" };
+  const headers = noStoreHeaders(original);
+  assert.deepEqual(headers, { ...original, "cache-control": "no-store" });
+  assert.deepEqual(original, { location: "https://client.test/callback", "set-cookie": "flow=value; Path=/" });
 });
 
 // isMcpPath centralizes the /mcp request-target check the examples' Origin gate

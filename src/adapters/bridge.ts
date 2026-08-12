@@ -23,7 +23,7 @@ import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import {
-  formField, formObject, headerString, oauthErrorResponse, queryString, readHeader,
+  formField, formObject, headerString, noStoreHeaders, oauthErrorResponse, queryString, readHeader,
   type NormRequest, type NormResponse,
 } from "./http.ts";
 export interface BridgeDeps {
@@ -57,14 +57,14 @@ export interface BridgeDeps {
 // `default-src 'none'` alone does not frame-block; `x-frame-options` covers
 // pre-CSP3 agents. Consent omits `form-action`: Chromium applies it across the
 // POST redirect chain, so `'self'` blocks loopback callbacks; the literal action and exact Origin gate remain.
-const CONSENT_HEADERS = {
+const CONSENT_HEADERS = noStoreHeaders({
   "content-type": "text/html; charset=utf-8",
   "x-content-type-options": "nosniff",
   "content-security-policy":
     "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
   "x-frame-options": "DENY",
   "referrer-policy": "same-origin",
-};
+});
 
 export class Bridge {
   readonly config: BridgeConfig;
@@ -183,7 +183,7 @@ export class Bridge {
         approved: parseApproved(body.approved),
         origin: headerString(req.headers, "origin"),
       });
-      return { status: 302, headers: { location: result.redirectTo }, redirect: result.redirectTo };
+      return { status: 302, headers: result.code === undefined ? { location: result.redirectTo } : noStoreHeaders({ location: result.redirectTo }), redirect: result.redirectTo };
     } catch (error) {
       return oauthErrorResponse(asOAuth(error));
     }
