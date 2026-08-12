@@ -257,6 +257,26 @@ audit.
 
 `ClientStore.find` is also a runtime boundary: a persisted or migrated row is
 not trusted merely because the port has a TypeScript return type.
+For the authorization-code flow,
+`parseAuthorizationClientRegistration(value, expectedClientId)` accepts the
+stored `applicationType` discriminant only when it is exactly `"native"`,
+`"web"`, or `"machine"`. It also requires the embedded `clientId` to equal the
+requested lookup key, a non-negative safe-integer `issuedAtEpoch`, and the
+type-appropriate redirect container: 1..16 entries for `native`/`web`, or an
+empty array for `machine`. The parser reads every selected record member,
+array length, and array slot once and returns a fresh known-field snapshot;
+missing, undefined, null, blank, unknown, wrongly typed, or throwing values
+fail closed as a malformed stored client. A state-changing getter cannot
+validate one value and later project another because only the captured value is
+used. `machine` is a recognized stored type but remains ineligible for the
+authorization-code flow.
+Both direct authorize and the upstream redirect flow use this parsed snapshot.
+The upstream callback re-reads and parses an opaque stored client after its
+signed flow cookie and state are validated but before JTI consumption, IdP
+error handling, code exchange, consent signing, or callback success audit, so
+a row corrupted after flow initiation cannot survive through an early-return
+branch.
+
 `parseMachineClientRegistration(value, expectedClientId, nowEpoch)` accepts a
 stored machine row only when its embedded `clientId` is the requested `mcc_` key,
 `redirectUris` is empty, `applicationType` is `"machine"`, `issuedAtEpoch` is a

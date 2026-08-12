@@ -799,7 +799,22 @@ re-reads the registration — verified: `src/token.ts`'s only `clientStore.find`
 is on the `client_credentials` machine-client path, `token.ts:169`), the
 client's registered `applicationType`
 selects the rule (every registered URI it reads is first re-validated against
-§10.0 — the stored-state read guard, obligation 3 there):
+§10.0 — the stored-state read guard, obligation 3 there). The store's
+TypeScript return type is not trusted at runtime: the authorization boundary
+first snapshots the row through §6.4's
+`parseAuthorizationClientRegistration`, and only exact `native`/`web`/`machine`
+discriminants are recognized. A missing, undefined, null, blank, unknown, or
+wrongly typed discriminant is `invalid_client`, never the native loopback
+default. A recognized `machine` record is still rejected from this flow.
+
+The upstream redirect leg applies the same stored-client parse and redirect
+policy twice: before it creates the signed flow cookie, and again at callback
+after cookie/state validation but before JTI consumption, every IdP-error or
+missing-code early return, code exchange, consent signing, or callback success
+audit. Thus a corrupted or replaced registration cannot inherit the native
+loopback exception at initiation and cannot rely on a previously valid cookie
+after initiation. Each decision uses the parser's fresh read-once snapshot.
+
 - **`native`** → RFC 8252: the registered entry must be a §10.0-valid loopback
   URI (`localhost`/`127.0.0.1`/`[::1]`); the presented `redirect_uri` matches it
   on **scheme + hostname + pathname + search, with the port ignored** — never
