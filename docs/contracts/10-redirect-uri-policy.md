@@ -238,35 +238,33 @@
 >    additionally partitions by `applicationType`. A positive case asserted
 >    against the wrong consumer is a test that CANNOT pass without weakening a
 >    rule. **Every case states its SETUP**, because the built-in defaults are
->    exactly `https://claude.ai`, `https://chatgpt.com`, `http://localhost`,
->    `http://127.0.0.1` — `a.test` is NOT among them, and stored DCR validates
+>    exactly `https://claude.ai` and `https://chatgpt.com`; loopback is never
+>    implicit — `a.test` is NOT among them, and stored DCR validates
 >    registrations through the same global allowlist (§9.2), so any `a.test`
 >    positive requires `redirectAllowlist: ["https://a.test/", …]` in config.
 >    A positive case whose setup is unstated is not reproducible, and an
 >    implementer will read the failure as a rule to weaken.
->    - *`redirectAllowlist` (boot)* — the entries ARE the setup: all four built-in defaults; the
+>    - *`redirectAllowlist` (boot)* — the entries ARE the setup: both built-in defaults; the
 >      omitted-slash forms `https://a.test`, `https://xn--80a.test` (punycode
 >      — the ASCII form of the Cyrillic host above), `http://[::1]:9`; their
 >      canonical spellings; `https://a.test/cb%2F..%2Fadmin` (canonical,
->      inert); **and an EMPTY array** (the built-in defaults cover the common
+>      inert); **and an EMPTY array** (the hosted defaults cover the common
 >      case — §10.0's "empty is valid" rule lives here and only here).
 >    - *Stored DCR, `web`* (setup: `a.test` configured): `https://a.test/` and
 >      `https://a.test/cb%2F..%2Fadmin` — https, canonical, 1..16 entries.
 >      NOT `http://[::1]:9/` (web is https-only) and not an empty array.
 >      `https://claude.ai/cb` also passes with an empty config allowlist.
->    - *Stored DCR, `native`* (setup: empty config allowlist suffices —
->      `localhost` and `127.0.0.1` are built-in; `[::1]` is NOT, so
->      `http://[::1]:9/` needs it configured): `http://127.0.0.1/cb`,
+>    - *Stored DCR, `native`* (setup: each loopback host is explicitly configured): `http://127.0.0.1/cb`,
 >      `http://localhost/cb`, and `http://[::1]:9/` — loopback, canonical.
 >      NOT a non-loopback https entry (§10.2 native policy) and not an empty
 >      array.
 >    - *Stateless DCR*: the **§10.1 global-allowlist set — NOT the `web` set**.
 >      Stateless mode persists no `applicationType`, so §9.2's
->      loopback-for-everyone policy applies and the per-type partition above
+>      global policy applies and the per-type partition above
 >      does not exist here. Positives split by SETUP, because the built-in
->      defaults are `claude.ai`, `chatgpt.com`, `localhost`, `127.0.0.1` and
->      nothing else — `a.test` is not among them:
->      *with an EMPTY config allowlist*, `https://claude.ai/cb` plus the
+>      defaults are `claude.ai` and `chatgpt.com`; loopback requires explicit setup — `a.test` is not among them:
+>      *with an EMPTY config allowlist*, only `https://claude.ai/cb` passes;
+>      *with the corresponding loopback origins explicitly configured*, the
 >      canonical loopback paths `http://localhost/cb`,
 >      `http://localhost:54321/cb` (any port), `http://127.0.0.1:8080/cb` all
 >      pass; *with `redirectAllowlist: ["https://a.test/"]`*, `https://a.test/`
@@ -434,8 +432,8 @@ accepted for `https://a.test/`; nothing else is).
 
 **The exemption is scoped to the §10.1 allowlist — deployer config AND the
 built-in defaults — and to nothing else.** The built-ins are themselves
-omitted-slash entries (`https://claude.ai`, `https://chatgpt.com`,
-`http://localhost`, `http://127.0.0.1` — all four verified non-canonical: each
+omitted-slash entries (`https://claude.ai`, `https://chatgpt.com`) — both
+verified non-canonical: each
 gains a root slash under `new URL(entry).href`), so the exemption must cover
 them or obligation 1's "every built-in default is §10.0-valid" unit test
 cannot pass. They are left in that spelling deliberately: it is the form
@@ -710,7 +708,8 @@ to an entry the deployer *intended* differently is an undetectable widening. The
 error names the offending entry and shows its canonical form to paste back.
 
 **Empty is valid — for `redirectAllowlist` ONLY.** An empty `redirectAllowlist`
-is correct configuration (the built-in defaults below cover the common case);
+is correct configuration (the hosted defaults below cover the common case),
+while loopback redirects require an explicit entry;
 only *entries* can be invalid, never emptiness. This does NOT generalize: DCR
 `redirect_uris` and a CIMD document's array both require **1..16 entries**
 (§9.2 / §17.1.5 rule 19), so emptiness there is a rejection. The obligation-7
@@ -730,23 +729,18 @@ earlier "hash stripped" wording; a stripped-then-matched fragment is exactly
 the accept-what-was-never-registered behavior the exact-match rule exists to
 prevent. The §10.0 obligation list owes a rejection test for a presented
 `https://client.test/cb#frag` in both DCR modes. Shared
-built-in defaults for MCP clients (these ADD to any config allowlist; a config
-cannot remove them):
+built-in defaults for hosted MCP clients (these ADD to any config allowlist):
 
 ```
 https://claude.ai        // Claude (web) custom connectors
 https://chatgpt.com      // ChatGPT custom connectors
-http://localhost         // native MCP clients — any port (RFC 8252 §7.3)
-http://127.0.0.1         // numeric loopback variant
 ```
 
-Two properties of this default set worth stating rather than leaving to
-inference: **`http://[::1]` is deliberately NOT a default** — the §10.1 matcher
-recognizes all three loopback hosts (`localhost`/`127.0.0.1`/`[::1]`) as
-loopback, but an IPv6-literal callback only matches if the deployer adds
-`http://[::1]` to `redirectAllowlist` explicitly (an IPv6-only loopback client
-is rare enough that the default set stays minimal; the matcher capability is
-already there). And the defaults are themselves §10.0-governed entries: they
+Loopback is deliberately absent from the default set. The §10.1 matcher still
+recognizes all three loopback hosts (`localhost`/`127.0.0.1`/`[::1]`) and applies
+RFC 8252 any-port matching, but only after the deployer explicitly adds the
+corresponding origin to `redirectAllowlist`. The defaults are themselves
+§10.0-governed entries: they
 are compile-time constants today, so the implementation owes a **unit test
 asserting every `DEFAULT_ALLOWED_REDIRECT_ORIGINS` entry is §10.0-valid** —
 the guard against a future edit adding a non-canonical or non-grammar default
