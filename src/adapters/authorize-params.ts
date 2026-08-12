@@ -6,6 +6,10 @@ export const OAUTH_PARAM_KEYS = [
   "code_challenge_method", "resource", "scope", "state",
 ] as const;
 
+/** Authorize parameters that RFC 6749 requires to occur at most once. RFC 8707
+ * permits `resource` to repeat, so unsupported resource sets use invalid_target. */
+export const OAUTH_SINGLETON_PARAM_KEYS = OAUTH_PARAM_KEYS.filter((key) => key !== "resource");
+
 /** RFC 6749 §3.1 duplicate-param check: any key present more than once (array
  *  length > 1 in a normalized query/form record) is ambiguous. */
 export function findDuplicatedKeys(input: unknown, keys: readonly string[]): string[] {

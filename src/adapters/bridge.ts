@@ -15,14 +15,14 @@ import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "..
 import { OAuthError } from "../errors.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
 import { renderConsentPage } from "./consent-page.ts";
-import { OAUTH_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
+import { OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
 import { asOAuth, assertUnambiguousAuthorization, consentCookie, hasBasicAuthorization, parseApproved, resolveIdentityWithAudit } from "./bridge-internals.ts";
 export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
-import { formField, formObject, headerString, noStoreHeaders, oauthErrorResponse, queryString, readHeader,
+import { formField, formObject, headerString, noStoreHeaders, oauthErrorResponse, queryString, readHeader, resourceParam,
   type NormRequest, type NormResponse,
 } from "./http.ts";
 export interface BridgeDeps {
@@ -130,14 +130,14 @@ export class Bridge {
     identity: { subject: string; allowedScopes?: string[]; registration?: CimdRegistration },
   ): Promise<NormResponse> {
     try {
-      if (findDuplicatedKeys(req.query, OAUTH_PARAM_KEYS).length > 0) throw new OAuthError("invalid_request", "duplicate request parameters");
+      if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0) throw new OAuthError("invalid_request", "duplicate request parameters");
       const prepared: PreparedConsent = await this.auth.prepare({
         clientId: queryString(req.query, "client_id"),
         redirectUri: queryString(req.query, "redirect_uri"),
         responseType: queryString(req.query, "response_type"),
         codeChallenge: queryString(req.query, "code_challenge"),
         codeChallengeMethod: queryString(req.query, "code_challenge_method"),
-        resource: queryString(req.query, "resource"),
+        resource: resourceParam(req.query["resource"]),
         scope: queryString(req.query, "scope"),
         state: queryString(req.query, "state"),
         subject: identity.subject,

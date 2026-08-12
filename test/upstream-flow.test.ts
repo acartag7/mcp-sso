@@ -257,7 +257,7 @@ test("authorize: rate-limit key is upstream:<ip> (false => 429, throw => fail-op
   assert.equal(res2.status, 302, "fail-open: limiter outage does not lock out");
 });
 
-test("authorize: duplicate OAUTH_PARAM_KEYS => direct 400 invalid_request (RFC 6749 §3.1), no cookie set", async () => {
+test("authorize: duplicate singleton key => direct 400 invalid_request (RFC 6749 §3.1), no cookie set", async () => {
   const c = config(); const { flow } = makeFlow(c, fakeIdentity(c));
   const q = authorizeQuery(); (q as Record<string, unknown>).state = ["a", "b"];
   const res = await flow.handleAuthorize(req(q));
@@ -265,6 +265,16 @@ test("authorize: duplicate OAUTH_PARAM_KEYS => direct 400 invalid_request (RFC 6
   assert.equal((res.body as { error: string }).error, "invalid_request");
   assert.equal(res.headers["set-cookie"], undefined, "no cookie set on a direct authorize error");
   assert.equal(res.redirect, undefined);
+});
+
+test("authorize: repeated RFC 8707 resource indicators are invalid_target, not RFC 6749 duplicates", async () => {
+  const c = config(); const { flow } = makeFlow(c, fakeIdentity(c));
+  const q = authorizeQuery(); (q as Record<string, unknown>).resource = [c.resource, "https://other.test/mcp"];
+  const { claims, cookieValue } = await initiate(c, flow, q);
+  const res = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "code" }));
+  assert.equal(res.status, 302);
+  assert.equal(new URL(res.headers.location as string).searchParams.get("error"), "invalid_target");
+  assert.match(res.headers["set-cookie"] ?? "", /Max-Age=0/);
 });
 
 test("authorize: missing client_id => direct 400; bad redirect_uri => direct 4xx invalid_redirect_uri", async () => {

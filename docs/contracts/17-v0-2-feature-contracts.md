@@ -1537,10 +1537,10 @@ gate replaces no-gate).
   operator's console gains nothing without the printed code; only the operator
   pasting it completes the flow.
 - **Authorize-parameter ambiguity:** `handlePairingAuthorize` applies the same
-  pure RFC 6749 §3.1 occurrence guard and canonical `OAUTH_PARAM_KEYS` definition
+  pure RFC 6749 §3.1 occurrence guard and canonical singleton-key definition
   as `Bridge.handleAuthorize` and §17.11 upstream authorize. If any of
   `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
-  `code_challenge_method`, `resource`, `scope`, or `state` has more than one
+  `code_challenge_method`, `scope`, or `state` has more than one
   occurrence in the normalized authorize query, it returns direct 400 `invalid_request` with
   no `Location`. This check runs before selecting any OAuth value and before
   `beginSession`, pairing-code output, `verify`, hidden-field rendering,
@@ -2099,16 +2099,20 @@ the decision-2 generic `invalid_client` so document size is not a content oracle
    same advisory posture — `false` ⇒ 429, thrown ⇒ fail-open). Rationale: each
    initiated flow authorizes at most one outbound token-endpoint call at the
    callback, so limiting initiation bounds exchange amplification.
-2. Any `OAUTH_PARAM_KEYS` parameter present **more than once** (array-valued
+2. Any singleton authorize parameter present **more than once** (array-valued
    in `NormRequest.query`) ⇒ **direct 400 `invalid_request`** before any
    cookie is set — RFC 6749 §3.1 forbids repeated request parameters, and
    silently picking first/last would make parameter-pollution behavior
    adapter-dependent.
 
-`OAUTH_PARAM_KEYS` and its pure duplicate-finding helper are shared with direct
+The singleton-key set and its pure duplicate-finding helper are shared with direct
 `Bridge.handleAuthorize` and `handlePairingAuthorize`; this upstream path keeps
 the same step-2 response and ordering while eliminating per-entry-point key-list
 drift.
+RFC 8707 permits repeated `resource` indicators. This single-resource release
+preserves such a set as unsupported resource input, which reaches the existing
+post-validation `invalid_target` channel; it is not classified as an RFC 6749
+duplicate.
 3. `client_id` present and `redirect_uri` **mode-appropriately validated**
    (§17.1.6 decision 1a): for a literal-lowercase-`https://` CIMD id with `cimd`
    enabled, the CIMD document match (shape-first, BEFORE any `store.find`);

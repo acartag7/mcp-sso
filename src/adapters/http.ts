@@ -89,6 +89,14 @@ export function queryString(query: NormRequest["query"], name: string): string |
   return typeof value === "string" ? value : undefined;
 }
 
+/** Preserve RFC 8707 multiplicity as unsupported target input for this
+ * singleton AS instead of selecting the first occurrence. */
+export const INVALID_RESOURCE = " invalid-resource";
+export function resourceParam(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  return typeof value === "string" && value.length > 0 ? value : INVALID_RESOURCE;
+}
+
 export function formField(body: unknown, name: string): string | undefined {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
   const value = (body as Record<string, unknown>)[name];

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 import type { JWK } from "jose";
-import { OAUTH_PARAM_KEYS } from "../src/adapters/authorize-params.ts";
+import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS } from "../src/adapters/authorize-params.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import type { NormRequest } from "../src/adapters/http.ts";
 import { handlePairingAuthorize } from "../src/adapters/pairing-flow.ts";
@@ -117,8 +117,8 @@ function assertNoAuthorizeSideEffects(h: ReturnType<typeof harness>): void {
   assert.equal(h.audit.events.some((event) => event.event === "oauth.authorize.prepare"), false);
 }
 
-test("Bridge.handleAuthorize rejects every duplicated authorize key before selection or consent/store work", async (t) => {
-  for (const key of OAUTH_PARAM_KEYS) {
+test("Bridge.handleAuthorize rejects every duplicated singleton authorize key before selection or consent/store work", async (t) => {
+  for (const key of OAUTH_SINGLETON_PARAM_KEYS) {
     await t.test(key, async () => {
       const h = harness();
       const params = validParams();
@@ -130,6 +130,18 @@ test("Bridge.handleAuthorize rejects every duplicated authorize key before selec
   }
 });
 
+test("Bridge.handleAuthorize maps repeated RFC 8707 resource indicators to invalid_target", async () => {
+  const h = harness();
+  const params = validParams();
+  const response = await h.bridge.handleAuthorize(
+    request({ ...params, resource: [params.resource, "https://other.test/mcp"] }), { subject: "operator" },
+  );
+  assert.equal(response.status, 302);
+  assert.equal(new URL(response.headers.location as string).searchParams.get("error"), "invalid_target");
+  assert.equal(String(response.body).includes("consent_token"), false);
+  assert.equal(h.audit.events.some((event) => event.event === "oauth.authorize.prepare" && event.status === "success"), false);
+});
+
 test("Bridge.handleAuthorize preserves the adjacent valid single-value authorize flow", async () => {
   const h = harness();
   const response = await h.bridge.handleAuthorize(request(validParams()), { subject: "operator" });
@@ -139,8 +151,8 @@ test("Bridge.handleAuthorize preserves the adjacent valid single-value authorize
   assert.equal(h.audit.events.some((event) => event.event === "oauth.authorize.prepare" && event.status === "success"), true);
 });
 
-test("handlePairingAuthorize GET rejects every duplicated authorize key before session/output/rendering", async (t) => {
-  for (const key of OAUTH_PARAM_KEYS) {
+test("handlePairingAuthorize GET rejects every duplicated singleton authorize key before session/output/rendering", async (t) => {
+  for (const key of OAUTH_SINGLETON_PARAM_KEYS) {
     await t.test(key, async () => {
       const h = harness();
       const params = validParams();
@@ -153,6 +165,21 @@ test("handlePairingAuthorize GET rejects every duplicated authorize key before s
       assertNoAuthorizeSideEffects(h);
     });
   }
+});
+
+test("handlePairingAuthorize preserves repeated resource input for invalid_target after pairing", async () => {
+  const h = harness();
+  const params = validParams();
+  const response = await handlePairingAuthorize(
+    { bridge: h.bridge, pairing: h.pairing }, "POST",
+    request({ resource: [params.resource, "https://other.test/mcp"] }, {
+      ...params, resource: undefined, pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce",
+    }),
+  );
+  assert.equal(response.status, 302);
+  assert.equal(new URL(response.headers.location as string).searchParams.get("error"), "invalid_target");
+  assert.equal(h.pairing.verifyCalls, 1);
+  assert.equal(h.audit.events.some((event) => event.event === "oauth.authorize.prepare" && event.status === "success"), false);
 });
 
 test("handlePairingAuthorize preserves adjacent valid single-value GET and POST flows", async () => {

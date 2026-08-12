@@ -15,8 +15,8 @@
 import type { Bridge } from "./bridge.ts";
 import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
 import { OAuthError } from "../errors.ts";
-import { OAUTH_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
-import { formField, oauthErrorResponse, queryString, type NormRequest, type NormResponse } from "./http.ts";
+import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
+import { formField, oauthErrorResponse, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
 
 // Pairing keeps its page-specific `form-action`: Continue terminates on this
@@ -51,7 +51,7 @@ export async function handlePairingAuthorize(
   req: NormRequest,
 ): Promise<NormResponse> {
   const { bridge, pairing } = deps;
-  if (findDuplicatedKeys(req.query, OAUTH_PARAM_KEYS).length > 0) {
+  if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0) {
     return oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters"));
   }
   const oauthParams = gatherOAuthParams(req);
@@ -86,7 +86,9 @@ export async function handlePairingAuthorize(
 function gatherOAuthParams(req: NormRequest): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of OAUTH_PARAM_KEYS) {
-    const v = queryString(req.query, key) ?? formField(req.body, key);
+    const v = key === "resource"
+      ? resourceParam(req.query[key]) ?? formField(req.body, key)
+      : queryString(req.query, key) ?? formField(req.body, key);
     if (typeof v === "string") out[key] = v;
   }
   return out;

@@ -92,7 +92,7 @@ two error channels, split by whether the `redirect_uri` is trusted yet:
 - **Direct HTTP error (NEVER redirect)** — pre-validation failures where the
   redirect destination is untrusted: an ambiguous authorize request (any of
   `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
-  `code_challenge_method`, `resource`, `scope`, or `state` occurs more than once),
+  `code_challenge_method`, `scope`, or `state` occurs more than once),
   identity not resolved/rejected (the resource
   owner could not be authenticated), a subject in the reserved `mcc_` machine
   namespace (RFC 9700 §4.15.1 — user grants must never mint a `sub` an RS would
@@ -123,14 +123,17 @@ codeChallengeMethod, resource?, scope?, state?, subject, allowedScopes?, registr
 upstream-redirect orchestrator for a carried CIMD registration, NEVER bound to
 client-controlled request input; when present, `prepare` uses it and does not fetch.)*
 Before building this input, `Bridge.handleAuthorize` applies the shared RFC 6749
-§3.1 occurrence guard to the canonical `OAUTH_PARAM_KEYS` set above. An
+§3.1 occurrence guard to the canonical singleton parameter set above. An
 array-valued member with more than one occurrence returns direct 400
 `invalid_request`, with no `Location`, before first/last-value selection,
 `prepare`, consent rendering, store access, or authorize success audit. A
 single-valued request follows the unchanged validation order below. The same
 pure helper and key definition govern the upstream and console-pairing authorize
 entry points; framework adapters must preserve repeated query members as arrays
-until this boundary.
+until this boundary. RFC 8707 permits `resource` to repeat; because this release
+supports one resource per grant, a repeated resource set is preserved as
+unsupported input and follows the existing post-validation `invalid_target`
+channel instead of the RFC 6749 duplicate channel.
 
 1. `subject` REQUIRED (the adapter/`IdentityPort` resolves it before calling
    `prepare`). No subject ⇒ `access_denied` 401 **direct**, never a placeholder.
@@ -405,7 +408,7 @@ the response. Wiring rules:
   repeated authorize query members as arrays in `NormRequest.query` and pass
   them unchanged to their selected framework-free authorize entry point.
   `Bridge.handleAuthorize`, `handlePairingAuthorize`, and the upstream redirect
-  flow use one shared pure duplicate check and one `OAUTH_PARAM_KEYS` definition;
+  flow use one shared pure duplicate check and one singleton-key definition;
   no adapter may select a first or last occurrence before that check.
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core

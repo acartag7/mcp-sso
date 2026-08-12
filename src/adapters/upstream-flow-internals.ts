@@ -12,7 +12,7 @@ import { headerString, type NormRequest, type NormResponse } from "./http.ts";
 
 // Re-export the shared authorize occurrence boundary so existing internal
 // importers keep the same surface while direct and pairing use the same source.
-export { OAUTH_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
+export { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
 
 // The flow JWT moved to its own module (250-line limit); re-exported here so
 // every existing importer of these names keeps working unchanged.
