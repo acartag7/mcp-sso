@@ -261,10 +261,11 @@ For the authorization-code flow,
 `parseAuthorizationClientRegistration(value, expectedClientId)` accepts the
 stored `applicationType` discriminant only when it is exactly `"native"`,
 `"web"`, or `"machine"`. It also requires the embedded `clientId` to equal the
-requested lookup key, a non-negative safe-integer `issuedAtEpoch`, and the
-type-appropriate redirect container: 1..16 entries for `native`/`web`, or an
-empty array for `machine`. The parser reads every selected record member,
-array length, and array slot once and returns a fresh known-field snapshot;
+requested lookup key and the type-appropriate redirect container: 1..16 entries
+for `native`/`web`, or an empty array for `machine`. It snapshots only the fields
+the authorization redirect decision consumes; unrelated persistence metadata
+does not determine authorization validity. The parser reads every selected
+record member, array length, and array slot once and returns a fresh known-field snapshot;
 missing, undefined, null, blank, unknown, wrongly typed, or throwing values
 fail closed as a malformed stored client. A state-changing getter cannot
 validate one value and later project another because only the captured value is

@@ -7,7 +7,7 @@ export interface AuthorizationClientRegistration {
   readonly clientId: string;
   readonly redirectUris: readonly unknown[];
   readonly applicationType: ApplicationType;
-  readonly issuedAtEpoch: number;
+  readonly issuedAtEpoch?: number;
 }
 
 /** Parse one ClientStore lookup into a fresh read-once authorization snapshot.
@@ -22,10 +22,8 @@ export function parseAuthorizationClientRegistration(
     const clientId = record.clientId;
     const redirectUrisValue = record.redirectUris;
     const applicationType = record.applicationType;
-    const issuedAtEpoch = record.issuedAtEpoch;
     if (clientId !== expectedClientId
       || !isApplicationType(applicationType)
-      || !isEpoch(issuedAtEpoch)
       || !Array.isArray(redirectUrisValue)) return null;
 
     const length = redirectUrisValue.length;
@@ -37,7 +35,7 @@ export function parseAuthorizationClientRegistration(
       { length },
       (_, index) => redirectUrisValue[index],
     ));
-    return Object.freeze({ clientId, redirectUris, applicationType, issuedAtEpoch });
+    return Object.freeze({ clientId, redirectUris, applicationType });
   } catch {
     return null;
   }
@@ -45,8 +43,4 @@ export function parseAuthorizationClientRegistration(
 
 function isApplicationType(value: unknown): value is ApplicationType {
   return value === "native" || value === "web" || value === "machine";
-}
-
-function isEpoch(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }

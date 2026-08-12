@@ -130,8 +130,6 @@ test("direct stored authorize rejects every other malformed registration snapsho
   Object.defineProperty(throwing, "applicationType", { get() { throw new Error("poison getter"); } });
   const malformed: readonly [string, unknown][] = [
     ["mismatched clientId", { ...nativeRow(), clientId: "other-client" }],
-    ["missing epoch", { clientId: CLIENT_ID, redirectUris: [REGISTERED], applicationType: "native" }],
-    ["negative epoch", { ...nativeRow(), issuedAtEpoch: -1 }],
     ["non-array redirects", { ...nativeRow(), redirectUris: REGISTERED }],
     ["empty native redirects", { ...nativeRow(), redirectUris: [] }],
     ["too many native redirects", { ...nativeRow(), redirectUris: Array(17).fill(REGISTERED) }],
@@ -147,6 +145,12 @@ test("direct stored authorize rejects every other malformed registration snapsho
     assert.equal(h.codeWrites(), 0);
     assert.equal(h.audit.events.some((e) => e.status === "success"), false);
   });
+});
+
+test("authorization snapshot ignores persistence metadata it does not consume", async () => {
+  const h = harness({ clientId: CLIENT_ID, redirectUris: [REGISTERED], applicationType: "native" });
+  const response = await h.bridge.handleAuthorize(authorizeRequest(), { subject: "user-1" });
+  assert.equal(response.status, 200);
 });
 
 test("upstream initiation rejects malformed applicationType before state/cookie creation", async (t) => {
