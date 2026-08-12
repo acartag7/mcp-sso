@@ -12,6 +12,7 @@ import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { RedirectIdentityPort } from "../src/ports/identity.ts";
+import { assertRedirectAllowedForClient } from "../src/redirect.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
 const NOW = Date.parse("2026-08-12T12:00:00.000Z");
@@ -151,6 +152,13 @@ test("authorization snapshot ignores persistence metadata it does not consume", 
   const h = harness({ clientId: CLIENT_ID, redirectUris: [REGISTERED], applicationType: "native" });
   const response = await h.bridge.handleAuthorize(authorizeRequest(), { subject: "user-1" });
   assert.equal(response.status, 200);
+});
+
+test("public redirect helper remains source-compatible with a full inline machine row", () => {
+  assert.throws(() => assertRedirectAllowedForClient(PRESENTED, {
+    clientId: "mcc_client", redirectUris: [], applicationType: "machine", issuedAtEpoch: 1,
+    allowedScopes: ["mcp:read"], secrets: [{ hash: "a".repeat(64), createdAtEpoch: 1 }],
+  }), (error: unknown) => error instanceof Error && error.message.includes("Machine clients"));
 });
 
 test("upstream initiation rejects malformed applicationType before state/cookie creation", async (t) => {
