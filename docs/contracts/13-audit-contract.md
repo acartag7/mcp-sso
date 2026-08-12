@@ -20,7 +20,11 @@ The reference sinks satisfy the fail-open port contract: their
 `writeAuthEvent` methods do not reject, and `combineAudit` isolates sibling
 sinks. `OAuthTokenUseCase` additionally calls every token/revocation audit
 through `writeTokenAudit`, which contains both synchronous throws and rejected
-promises from a nonconforming custom `AuditPort`. This is a token-boundary
+promises from a nonconforming custom `AuditPort`. The upstream callback boundary
+likewise submits both `oauth.upstream.callback` and its callback-owned
+`identity.verify` copies through best-effort containment: neither a synchronous
+throw nor an asynchronous rejection can replace the authoritative callback
+response. This containment is a token- and upstream-callback-boundary
 guarantee, not a claim that every use-case repairs arbitrary custom ports.
 
 `JsonlFileAudit` is a filesystem boundary as well as an evidence sink. On a
