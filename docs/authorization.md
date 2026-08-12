@@ -49,10 +49,11 @@ Enforced **inside** the identity port, after the upstream credential verifies
 cryptographically — issuer, audience, tenant, expiry (contracts §6.5). Both
 allowlists are optional; an **empty allowlist delegates entirely to Gate 1**.
 
-- **Entra** — `subjectAllowlist` matches the **immutable `oid` claim** by
-  default. Matching mutable claims requires the explicit `allowMutableClaims`
-  opt-in (`preferred_username` / `email`); Microsoft warns against mutable
-  claims for authorization.
+- **Entra** — `subjectAllowlist` matches the selected immutable subject
+  byte-for-byte: **`oid`**, or accepted issuer + `"|"` + `sub` when `oid` is
+  unavailable. Matching mutable claims requires the explicit
+  `allowMutableClaims` opt-in (`preferred_username` / `email`); Microsoft warns
+  against mutable claims for authorization.
 - **Cloudflare Access** — `emailAllowlist` matches the verified email from the
   Access JWT.
 
@@ -162,7 +163,7 @@ checkout and remain pending verification as deny/ceiling rows.
 |---|---|
 | Restrict who can sign in at all | Gate 1 — Entra app assignment / Conditional Access, or the Cloudflare Access policy |
 | Enforce MFA / device posture / location | Gate 1 (IdP policy) — mcp-sso cannot see these signals |
-| Pin an exact permitted-user set in code review | Gate 2 — `subjectAllowlist` (Entra `oid`) / `emailAllowlist` (Cloudflare Access) |
+| Pin an exact permitted-user set in code review | Gate 2 — `subjectAllowlist` (Entra exact `oid` or accepted issuer + `"|"` + `sub`) / `emailAllowlist` (Cloudflare Access) |
 | Give different users different permission levels | Gate 2 — Entra group→scope mapping (contracts §17.4) |
 | Limit what a specific MCP client may do | Scope catalog + consent; `requireScope` at the resource |
 | Cut off a stolen refresh token | Revocation (RFC 7009) / family replay detection — not an identity gate |

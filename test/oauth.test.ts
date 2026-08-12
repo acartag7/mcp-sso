@@ -152,6 +152,31 @@ function isInvalidAuthorizationCode(error: unknown): boolean {
 
 // --- the flow ---
 
+test("Entra compatibility: rotating a legacy mutable-key family preserves its subject and renews its TTL", async () => {
+  const ctx = setup();
+  const familyId = "legacyentrasubject01";
+  const rawRefresh = `rt.${familyId}.secret-1234567890`;
+  const legacySubject = "reassigned@example.test";
+  await ctx.store.saveRefreshToken({
+    tokenHash: sha256Hex(rawRefresh), familyId, previousTokenHash: null,
+    clientId: "client-1", subject: legacySubject, resource: ctx.config.resource,
+    scopes: ["mcp:read"], expiresAt: new Date(NOW_MS + 60_000).toISOString(),
+  });
+  ctx.clock.advance(30_000);
+
+  const rotated = await ctx.token.refresh({
+    grantType: "refresh_token", refreshToken: rawRefresh, clientId: "client-1",
+  });
+  const successor = await ctx.store.findRefreshToken(sha256Hex(rotated.refresh_token));
+  assert.ok(successor);
+  assert.equal(successor.subject, legacySubject, "refresh does not re-run Entra identity or rewrite the legacy key");
+  assert.equal(
+    successor.expiresAt,
+    new Date(ctx.clock.nowMs() + ctx.config.refreshTokenTtlSeconds * 1000).toISOString(),
+    "rotation renews the TTL instead of inheriting the predecessor's near expiry",
+  );
+});
+
 test("PKCE S256 authorize/approve/token mints an ES256 access token + hashed refresh", async () => {
   const ctx = setup();
   const verifier = "correct-horse-battery-staple-0123456789abcdef0123";

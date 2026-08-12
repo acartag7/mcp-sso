@@ -1,7 +1,7 @@
 // EntraIdentity — the bridge acts as an OIDC client to Microsoft Entra ID v2.0:
 // it redirects the user to Entra (auth-code + PKCE), exchanges the code for an
-// id_token, validates iss/aud/tid, and maps oid/email → subject. The bridge then
-// issues its OWN audience-bound tokens (no Entra token passthrough).
+// id_token, validates iss/aud/tid, and maps oid or accepted issuer|sub → subject.
+// The bridge then issues its OWN audience-bound tokens (no Entra token passthrough).
 //
 // Entra's endpoints are always the well-known https login.microsoftonline.com URLs
 // (raw `^https://` asserted, addendum 11). Claim validation is exported and unit-
@@ -34,8 +34,8 @@ export interface EntraConfig {
   redirectUri: string;
   /** Allowed `tid` values; defaults to [tenantId]. */
   allowedTenantIds?: string[];
-  /** Optional defense-in-depth subject allowlist (case-insensitive). Matches the
-   *  immutable `oid` by default; set `allowMutableClaims` to also match the mutable
+  /** Optional defense-in-depth subject allowlist. Matches the selected immutable
+   *  subject byte-for-byte; set `allowMutableClaims` to also match normalized
    *  preferred_username/email (Microsoft warns against those for authorization). */
   subjectAllowlist?: string[];
   /** Opt-in: also match the allowlist against preferred_username/email. Default false. */
@@ -125,22 +125,25 @@ export async function exchangeCodeForToken(
  *  Entra multi-tenant issuer pattern). Single-tenant (unset): `iss` must equal
  *  `entraIssuer(config.tenantId)` exactly. */
 export function validateEntraIdToken(payload: EntraPayload, config: EntraConfig, expectedNonce?: string): { ok: true; identity: IdentityClaims } | { ok: false; reason: string } {
+  const acceptedIssuer = payload.iss;
   if (config.allowedTenantIds && config.allowedTenantIds.length > 0) {
     if (!payload.tid || !config.allowedTenantIds.includes(payload.tid)) return { ok: false, reason: "entra_bad_tid" };
-    if (payload.iss !== entraIssuer(payload.tid)) return { ok: false, reason: "entra_bad_iss" };
+    if (acceptedIssuer !== entraIssuer(payload.tid)) return { ok: false, reason: "entra_bad_iss" };
   } else {
-    if (payload.iss !== entraIssuer(config.tenantId)) return { ok: false, reason: "entra_bad_iss" };
+    if (acceptedIssuer !== entraIssuer(config.tenantId)) return { ok: false, reason: "entra_bad_iss" };
     if (payload.tid && payload.tid !== config.tenantId) return { ok: false, reason: "entra_bad_tid" };
   }
   if (payload.aud !== config.clientId) return { ok: false, reason: "entra_bad_aud" };
   if (expectedNonce !== undefined && payload.nonce !== expectedNonce) return { ok: false, reason: "entra_bad_nonce" };
   if (!payload.exp) return { ok: false, reason: "entra_missing_exp" };
-  const subject = payload.oid ?? payload.preferred_username ?? payload.email;
+  const oid = nonBlankString(payload.oid);
+  const sub = nonBlankString(payload.sub);
+  const subject = oid ?? (sub && acceptedIssuer ? `${acceptedIssuer}|${sub}` : undefined);
   if (!subject) return { ok: false, reason: "entra_no_subject" };
   if (config.subjectAllowlist && config.subjectAllowlist.length > 0 && !subjectAllowed(payload, config.subjectAllowlist, config.allowMutableClaims)) {
     return { ok: false, reason: "entra_subject_not_allowed" };
   }
-  const claims = { oid: payload.oid, email: payload.email ?? payload.preferred_username, tid: payload.tid, expiresAt: payload.exp };
+  const claims = { oid, email: payload.email ?? payload.preferred_username, tid: payload.tid, expiresAt: payload.exp };
   // §17.4: when group→scope mapping is configured, resolve the ceiling from the
   // VERIFIED payload (signature already checked by the caller). Unconfigured ⇒
   // unchanged v0.1 behavior (no ceiling). Overage/no-groups fail CLOSED here so
@@ -153,17 +156,21 @@ export function validateEntraIdToken(payload: EntraPayload, config: EntraConfig,
   return { ok: true, identity: { subject, claims } };
 }
 
-/** Case-insensitive allowlist match. Matches the immutable `oid` by default; only
- *  matches the mutable preferred_username/email when `allowMutable` is true
- *  (Microsoft warns against using those claims for authorization). */
+/** Matches the selected immutable subject (`oid`, otherwise issuer|sub); mutable
+ *  username/email candidates require the explicit opt-in. */
 export function subjectAllowed(payload: EntraPayload, allowlist: string[], allowMutable = false): boolean {
-  const candidates: string[] = [];
-  if (payload.oid) candidates.push(payload.oid);
-  if (allowMutable) {
-    if (payload.preferred_username) candidates.push(payload.preferred_username);
-    if (payload.email) candidates.push(payload.email);
-  }
-  return candidates.some((c) => allowlist.some((entry) => entry.trim().toLowerCase() === c.trim().toLowerCase()));
+  const oid = nonBlankString(payload.oid), sub = nonBlankString(payload.sub), issuer = nonBlankString(payload.iss);
+  const immutableSubject = oid ?? (sub && issuer ? `${issuer}|${sub}` : undefined);
+  if (immutableSubject && allowlist.some((entry) => entry === immutableSubject)) return true;
+  if (!allowMutable) return false;
+  const mutableCandidates = [nonBlankString(payload.preferred_username), nonBlankString(payload.email)]
+    .filter((candidate): candidate is string => candidate !== undefined);
+  return mutableCandidates.some((candidate) => allowlist.some((entry) =>
+    entry.trim().toLowerCase() === candidate.trim().toLowerCase()));
+}
+
+function nonBlankString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
 export type EntraVerifyKey = Awaited<ReturnType<typeof importJWK>>;

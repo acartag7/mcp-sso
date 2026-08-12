@@ -686,20 +686,26 @@ test("entra-redirect: exchange success + verify ok => {ok:true,identity}; verify
   const { privateKey, publicKey } = await generateKeyPair("RS256");
   const verifyKey = publicKey; // jose jwtVerify accepts the matching public CryptoKey directly
   const now = Math.floor(NOW_MS / 1000);
-  async function signIdToken(nonce: string): Promise<string> {
-    return await new SignJWT({ oid: "oid-1", tid: tenantId, nonce }).setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "k1" })
+  async function signIdToken(nonce: string, claims: Record<string, unknown> = {}): Promise<string> {
+    return await new SignJWT({ tid: tenantId, nonce, ...claims }).setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "k1" })
       .setIssuer(entraIssuer(tenantId)).setAudience(clientId).setIssuedAt(now).setExpirationTime(now + 3600).sign(privateKey);
   }
-  const goodTransport = { async postForm(): Promise<{ status: number; text(): Promise<string> }> { return { status: 200, text: async () => JSON.stringify({ id_token: await signIdToken("N1") }) }; } };
+  const goodTransport = { async postForm(): Promise<{ status: number; text(): Promise<string> }> { return { status: 200, text: async () => JSON.stringify({ id_token: await signIdToken("N1", { sub: "redirect-sub", preferred_username: "shared@example.test" }) }) }; } };
   const id = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport: goodTransport, verifyKey, currentDate: new Date(NOW_MS) });
   // success
   const ok = await id.exchangeAndVerify({ code: "c", codeVerifier: "v".repeat(43), nonce: "N1" });
   assert.equal(ok.ok, true);
+  assert.equal(ok.ok && ok.identity.subject, `${entraIssuer(tenantId)}|redirect-sub`, "RedirectIdentityPort receives the immutable no-oid subject");
   // nonce mismatch => identity_rejected
   const badNonceTransport = { async postForm(): Promise<{ status: number; text(): Promise<string> }> { return { status: 200, text: async () => JSON.stringify({ id_token: await signIdToken("DIFFERENT") }) }; } };
   const idBad = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport: badNonceTransport, verifyKey, currentDate: new Date(NOW_MS) });
   const rej = await idBad.exchangeAndVerify({ code: "c", codeVerifier: "v".repeat(43), nonce: "N1" });
   assert.equal(rej.ok, false); if (!rej.ok) assert.equal(rej.kind, "identity_rejected");
+  // mutable claims alone are never promoted to the RedirectIdentityPort subject
+  const mutableOnlyTransport = { async postForm(): Promise<{ status: number; text(): Promise<string> }> { return { status: 200, text: async () => JSON.stringify({ id_token: await signIdToken("N1", { preferred_username: "shared@example.test", email: "shared@example.test" }) }) }; } };
+  const mutableOnlyId = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport: mutableOnlyTransport, verifyKey, currentDate: new Date(NOW_MS) });
+  const mutableOnly = await mutableOnlyId.exchangeAndVerify({ code: "c", codeVerifier: "v".repeat(43), nonce: "N1" });
+  assert.ok(!mutableOnly.ok && mutableOnly.kind === "identity_rejected" && mutableOnly.reason === "entra_no_subject");
   // non-200 => exchange_failed
   const fail200Transport = { async postForm(): Promise<{ status: number; text(): Promise<string> }> { return { status: 500, text: async () => "boom" }; } };
   const idFail = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport: fail200Transport, verifyKey, currentDate: new Date(NOW_MS) });

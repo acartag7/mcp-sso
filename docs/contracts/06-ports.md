@@ -304,8 +304,13 @@ root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
 - **CloudflareAccessIdentity** — verifies `Cf-Access-Jwt-Assertion` (RS256 against
   CF JWKS, aud/iss checked), subject = the token's `sub` (a stable CF identity id; `email` the fallback — opaque-`sub`-first, matching the Entra `oid`-first sibling; CF carries the email in a separate claim, so do not key on email).
 - **EntraIdentity** — upstream OIDC auth-code+PKCE against Entra v2.0; ONE app
-  registration for the bridge; validate iss/aud/tid; map oid/email → subject. The
-  bridge then issues its OWN audience-bound tokens (no passthrough).
+  registration for the bridge; validate iss/aud/tid; subject = the exact non-blank
+  `oid` when present, otherwise the exact already-accepted issuer + `"|"` + the
+  exact non-blank signature-verified OIDC `sub`. A blank/wrong-type `oid` falls
+  back to `sub`; a blank/wrong-type `sub` with no usable `oid` fails closed with
+  `entra_no_subject`. `preferred_username` and `email` never select the stored
+  grant subject. The bridge then issues its OWN audience-bound tokens (no
+  passthrough).
 
 `GenericOidcIdentity` and the Google preset ship as `RedirectIdentityPort`s
 (S4a); the dedicated GitHub port and the console-pairing port are covered in
@@ -356,9 +361,27 @@ scope ceiling) is locked in §17.4.
   code exchange and verified the token before forwarding (Cloudflare Access's
   signed assertion is the model), never behind one that merely relays tokens it
   did not validate. Documented as the row-12 residual in the threat model.
-- **Entra subject allowlist.** Matches the immutable `oid` by default; matching the
+- **Entra subject allowlist.** Matches the exact selected immutable subject by
+  default: `oid`, otherwise the accepted issuer + `"|"` + `sub`. Raw `sub` is not a
+  candidate because it would discard issuer namespacing. The immutable candidate
+  is opaque and compared byte-for-byte, without trimming or case folding. Matching
   mutable preferred_username/email requires `allowMutableClaims` (Microsoft warns
-  against using those claims for authorization).
+  against using those claims for authorization); those mutable candidates alone
+  are trimmed and compared case-insensitively. This opt-in changes allowlist
+  candidates only; an allowlist match never selects or changes the stored grant
+  subject.
+
+**Entra no-`oid` compatibility amendment (2026-08-12).** No durable-state migration is
+performed because an old username/email key cannot be safely mapped to an
+immutable account from stored data alone. Existing no-`oid` grants remain stored
+under their old mutable keys; the next full login uses the new issuer-namespaced
+subject and may require reapproval. Existing access tokens, authorization codes,
+in-flight consent, and refresh-token families retain their already-issued subjects
+for their normal lifetimes; in particular, refresh does not re-run Entra identity
+verification or rewrite a family subject. Old and new subject keys may therefore
+coexist. An inactive legacy family expires after its current refresh TTL, but each
+successful rotation renews that TTL while preserving the old subject; deterministic
+cutoff requires explicit family revocation (or replay-family revocation).
 
 ## 6.6 `FetcherPort` (boundary now; CIMD impl v0.2)
 ```ts

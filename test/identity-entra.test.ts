@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { generateKeyPair, SignJWT } from "jose";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import {
   type EntraConfig, type EntraTokenTransport, createEntraIdentity, entraIssuer,
   exchangeCodeForToken, getAuthorizationUrl, subjectAllowed, validateEntraIdToken,
@@ -34,14 +34,36 @@ test("getAuthorizationUrl: PKCE S256 is enforced on the primitive (a non-S256 me
   assert.throws(() => getAuthorizationUrl(CONFIG, { state: "s1", codeChallenge: "c", codeChallengeMethod: "plain" } as never));
 });
 
-test("validateEntraIdToken: single-tenant iss/aud/tid/exp gates + subject extraction", () => {
+test("validateEntraIdToken: single-tenant iss/aud/tid/exp gates + oid subject", () => {
   assert.equal(validateEntraIdToken(payload() as never, CONFIG).ok, true);
   assert.equal(validateEntraIdToken(payload({ iss: "https://evil/v2.0" }) as never, CONFIG).ok, false); // bad iss
   assert.equal(validateEntraIdToken(payload({ aud: "other" }) as never, CONFIG).ok, false); // bad aud
   assert.equal(validateEntraIdToken(payload({ tid: OTHER_TENANT }) as never, CONFIG).ok, false); // foreign tid
   assert.equal(validateEntraIdToken(payload({ exp: undefined }) as never, CONFIG).ok, false); // no exp
-  const noOid = validateEntraIdToken(payload({ oid: undefined, preferred_username: "user@example.com" }) as never, CONFIG);
-  assert.equal(noOid.ok && noOid.identity.subject, "user@example.com"); // subject fallback (oid preferred)
+  const oid = validateEntraIdToken(payload({ oid: "oid-exact", sub: "sub-ignored" }) as never, CONFIG);
+  assert.equal(oid.ok && oid.identity.subject, "oid-exact");
+});
+
+test("validateEntraIdToken: no-oid subject is exact accepted issuer|sub and mutable claims never select it", () => {
+  const issuer = entraIssuer(TENANT);
+  for (const unusableOid of [undefined, "", "   ", 42, false, {}]) {
+    const result = validateEntraIdToken(payload({ oid: unusableOid, sub: "sub-exact", preferred_username: "shared@example.test", email: "shared@example.test" }) as never, CONFIG);
+    assert.equal(result.ok && result.identity.subject, `${issuer}|sub-exact`);
+  }
+  for (const unusableSub of [undefined, "", "   ", 42, false, {}]) {
+    const result = validateEntraIdToken(payload({ oid: undefined, sub: unusableSub, preferred_username: "shared@example.test", email: "shared@example.test" }) as never, CONFIG);
+    assert.deepEqual(result, { ok: false, reason: "entra_no_subject" });
+  }
+});
+
+test("validateEntraIdToken: equal sub values are namespaced by the exact already-accepted issuer", () => {
+  const mt: EntraConfig = { ...CONFIG, allowedTenantIds: [TENANT, OTHER_TENANT] };
+  const first = validateEntraIdToken(payload({ oid: undefined, sub: "same-sub" }) as never, mt);
+  const secondIssuer = entraIssuer(OTHER_TENANT);
+  const second = validateEntraIdToken(payload({ oid: undefined, sub: "same-sub", tid: OTHER_TENANT, iss: secondIssuer }) as never, mt);
+  assert.equal(first.ok && first.identity.subject, `${entraIssuer(TENANT)}|same-sub`);
+  assert.equal(second.ok && second.identity.subject, `${secondIssuer}|same-sub`);
+  assert.notEqual(first.ok && first.identity.subject, second.ok && second.identity.subject);
 });
 
 test("validateEntraIdToken: multi-tenant — tid allowlisted, iss follows the token's tid", () => {
@@ -61,13 +83,25 @@ test("validateEntraIdToken: nonce binding", () => {
 });
 
 test("subjectAllowed: oid-primary; mutable claims opt-in only", () => {
-  // oid matches by default
-  assert.equal(subjectAllowed({ oid: "OID-1" }, ["oid-1"]), true);
+  // Opaque immutable subjects match byte-for-byte.
+  assert.equal(subjectAllowed({ oid: "OID-1" }, ["OID-1"]), true);
+  assert.equal(subjectAllowed({ oid: "OID-1" }, ["oid-1"]), false);
+  assert.equal(subjectAllowed({ oid: "OID-1" }, [" OID-1 "]), false);
   // email/preferred_username do NOT match by default (mutable)
   assert.equal(subjectAllowed({ preferred_username: "u@x.test", email: "u@x.test" }, ["u@x.test"]), false);
   // opt-in -> mutable claims match (case-insensitive)
   assert.equal(subjectAllowed({ preferred_username: "U@X.test" }, ["u@x.test"], true), true);
   assert.equal(subjectAllowed({ email: "a@b.test" }, ["a@b.test"], true), true);
+});
+
+test("subjectAllowed: no-oid allowlist matches only the issuer-namespaced immutable subject by default", () => {
+  const issuer = entraIssuer(TENANT);
+  const noOid = payload({ oid: undefined, sub: "stable-sub", preferred_username: "mutable@example.test" });
+  assert.equal(subjectAllowed(noOid as never, [`${issuer}|stable-sub`]), true);
+  assert.equal(subjectAllowed(noOid as never, ["stable-sub"]), false, "raw sub cannot discard issuer namespacing");
+  assert.equal(subjectAllowed(noOid as never, [`${entraIssuer(OTHER_TENANT)}|stable-sub`]), false);
+  assert.equal(subjectAllowed(noOid as never, [`${issuer}|Stable-Sub`]), false, "opaque sub is case-sensitive");
+  assert.equal(subjectAllowed(noOid as never, [` ${issuer}|stable-sub `]), false, "opaque subject is not trimmed");
 });
 
 test("validateEntraIdToken: subjectAllowlist matches oid by default, mutable only when opted in", () => {
@@ -78,7 +112,12 @@ test("validateEntraIdToken: subjectAllowlist matches oid by default, mutable onl
   const allowEmail: EntraConfig = { ...CONFIG, subjectAllowlist: ["user@example.com"] };
   assert.equal(validateEntraIdToken(payload({ oid: undefined, preferred_username: "user@example.com" }) as never, allowEmail).ok, false);
   const allowEmailMutable: EntraConfig = { ...CONFIG, subjectAllowlist: ["user@example.com"], allowMutableClaims: true };
-  assert.equal(validateEntraIdToken(payload({ oid: undefined, preferred_username: "user@example.com" }) as never, allowEmailMutable).ok, true);
+  const mutableMatch = validateEntraIdToken(payload({ oid: undefined, sub: "stable-sub", preferred_username: "user@example.com" }) as never, allowEmailMutable);
+  assert.equal(mutableMatch.ok, true);
+  assert.equal(mutableMatch.ok && mutableMatch.identity.subject, `${entraIssuer(TENANT)}|stable-sub`);
+  const immutableFallback: EntraConfig = { ...CONFIG, subjectAllowlist: [`${entraIssuer(TENANT)}|stable-sub`] };
+  const fallbackMatch = validateEntraIdToken(payload({ oid: undefined, sub: "stable-sub", preferred_username: "ignored@example.test" }) as never, immutableFallback);
+  assert.equal(fallbackMatch.ok && fallbackMatch.identity.subject, `${entraIssuer(TENANT)}|stable-sub`);
 });
 
 test("verifyEntraIdToken: recorded fixture (known RS256 key, no JWKS fetch)", async () => {
@@ -90,6 +129,11 @@ test("verifyEntraIdToken: recorded fixture (known RS256 key, no JWKS fetch)", as
   const good = await verifyEntraIdToken(await sign(payload()), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) });
   assert.equal(good.ok, true);
   assert.equal(good.ok && good.identity.subject, "oid-abc");
+
+  const noOid = await verifyEntraIdToken(await sign(payload({ oid: undefined, sub: "verified-sub", preferred_username: "mutable@example.test" })), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) });
+  assert.equal(noOid.ok && noOid.identity.subject, `${entraIssuer(TENANT)}|verified-sub`);
+  const mutableOnly = await verifyEntraIdToken(await sign(payload({ oid: undefined, sub: undefined, preferred_username: "mutable@example.test", email: "mutable@example.test" })), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) });
+  assert.deepEqual(mutableOnly, { ok: false, reason: "entra_no_subject" });
 
   assert.equal((await verifyEntraIdToken(await sign(payload({ iss: entraIssuer(OTHER_TENANT), tid: OTHER_TENANT })), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) })).ok, false); // foreign tenant, single-tenant config
   assert.equal((await verifyEntraIdToken(await sign(payload(), { exp: NOW - 120 }), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) })).ok, false); // expired
@@ -125,4 +169,27 @@ test("createEntraIdentity: exposes the port; getAuthorizationUrl carries nonce; 
   const entra = createEntraIdentity(CONFIG);
   assert.match(entra.getAuthorizationUrl({ state: "s", codeChallenge: "c", nonce: "n" }), /nonce=n/);
   assert.equal((await entra.verify(undefined)).ok, false); // non-string id_token — no JWKS fetch
+});
+
+test("createEntraIdentity: remote-JWKS verification uses issuer|sub and rejects mutable-only identity", async () => {
+  const { publicKey, privateKey } = await generateKeyPair("RS256");
+  const publicJwk = { ...await exportJWK(publicKey), alg: "RS256", kid: "remote-k1", use: "sig" };
+  const now = Math.floor(Date.now() / 1000);
+  const sign = (claims: Record<string, unknown>) => new SignJWT(claims)
+    .setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "remote-k1" })
+    .setIssuer(entraIssuer(TENANT)).setAudience(CONFIG.clientId)
+    .setIssuedAt(now).setExpirationTime(now + 3600).sign(privateKey);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ keys: [publicJwk] }), {
+    status: 200, headers: { "content-type": "application/json" },
+  })) as typeof fetch;
+  try {
+    const identity = createEntraIdentity(CONFIG);
+    const noOid = await identity.verify(await sign({ tid: TENANT, sub: "factory-sub", preferred_username: "shared@example.test" }));
+    assert.equal(noOid.ok && noOid.identity.subject, `${entraIssuer(TENANT)}|factory-sub`);
+    const mutableOnly = await identity.verify(await sign({ tid: TENANT, preferred_username: "shared@example.test", email: "shared@example.test" }));
+    assert.deepEqual(mutableOnly, { ok: false, reason: "entra_no_subject" });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

@@ -14,7 +14,7 @@ const identity = createEntraRedirectIdentity({
   clientId:     process.env.ENTRA_CLIENT_ID!,
   clientSecret: process.env.ENTRA_CLIENT_SECRET, // omit for a public (PKCE-only) client
   redirectUri:  process.env.ENTRA_REDIRECT_URI!, // must equal issuerOrigin + callbackPath
-  subjectAllowlist: [],                          // optional defense-in-depth (matches immutable oid)
+  subjectAllowlist: [],                          // optional; matches oid or accepted issuer|sub
 }, { scopeCatalog: ["mcp:read", "mcp:write"] });
 ```
 
@@ -91,11 +91,17 @@ Library consumers may continue passing `groupAuthorization` directly in code.
 
 1. **Entra app assignment / Conditional Access is the primary gate** — enforced by
    Entra, outside mcp-sso.
-2. **`subjectAllowlist` is optional defense-in-depth.** It matches the **immutable
-   `oid`** by default (case-insensitive, trimmed). Matching the mutable
+2. **`subjectAllowlist` is optional defense-in-depth.** It matches the exact
+   selected immutable subject byte-for-byte by default: `oid`, or accepted issuer
+   + `"|"` + `sub` when no usable `oid` exists. The opaque immutable value is not
+   trimmed or case-folded. Raw `sub` does not match because it drops issuer
+   namespacing. Matching the mutable
    `preferred_username` / `email` requires `allowMutableClaims: true` — Microsoft
-   warns against using mutable claims for authorization. Subject is derived
-   `oid ?? preferred_username ?? email`.
+   warns against using mutable claims for authorization; only those mutable
+   candidates are trimmed and matched case-insensitively. That opt-in affects
+   allowlist matching only. The stored grant subject is the exact non-blank `oid`,
+   or, when no usable `oid` exists, the exact accepted issuer + `"|"` + the exact
+   non-blank signature-verified `sub`. Username and email never select it.
 3. **`groupAuthorization` (optional) maps Entra groups → a scope ceiling** (§17.4).
    Mapped/base scopes must be a subset of the `scopeCatalog`, validated at boot.
 
@@ -112,7 +118,7 @@ Verified-context rejections return `identity_rejected` (a 302 redirect with
 | `aud` != `clientId` | `entra_bad_aud` |
 | `nonce` mismatch | `entra_bad_nonce` |
 | No `exp` | `entra_missing_exp` |
-| No `oid`/`preferred_username`/`email` to key the subject | `entra_no_subject` |
+| Neither a usable non-blank string `oid` nor `sub` | `entra_no_subject` |
 | Subject not in `subjectAllowlist` | `entra_subject_not_allowed` |
 | >200 groups → overage marker present, groups omitted | `entra_groups_overage` |
 | No groups claim + empty `baseScopes` | `entra_no_groups` |
@@ -139,8 +145,17 @@ scope outside the catalog, or a non-array `baseScopes`.
   only) or reduce group sprawl.
 - **Group mapping keys must be GUIDs, not display names** (spoof vector; boot-
   rejected).
-- **`subjectAllowlist` matches the immutable `oid`** by default; matching mutable
-  claims requires `allowMutableClaims: true`.
+- **`subjectAllowlist` matches the selected immutable subject** (`oid`, otherwise
+  accepted issuer + `"|"` + `sub`) by default; matching mutable claims requires
+  `allowMutableClaims: true`. Mutable allowlist candidates never become the stored
+  grant subject.
+- **Existing no-`oid` deployments do not migrate mutable-key grants.** After the
+  next full login, the issuer-namespaced `sub` is a new subject and the user may
+  need to approve scopes again. Existing refresh families keep their old subject;
+  inactivity beyond the current refresh TTL expires them, but every successful
+  rotation renews that TTL. Revoke legacy families for deterministic cutoff (or
+  rely on replay-family revocation). Existing access tokens, codes, and in-flight
+  consent retain their issued subject for their normal short lifetimes.
 - **Refresh is not re-checked against the group ceiling** (there is no identity at
   refresh) — group/role revocation takes effect at the next full authorize. Shorten
   `refreshTokenTtlSeconds` or revoke the family for faster revocation.
