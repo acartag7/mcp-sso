@@ -14,6 +14,7 @@ import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { RedirectExchangeResult, RedirectIdentityPort } from "../src/ports/identity.ts";
 import type { ClientStore, ClientRegistration } from "../src/ports/client-store.ts";
+import type { StorePort } from "../src/ports/store.ts";
 import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { createUpstreamRedirectFlow } from "../src/adapters/upstream-flow.ts";
@@ -90,10 +91,10 @@ function fakeIdentity(c: BridgeConfig): FakeId {
   return { identity, exchangeCalls: () => calls, lastArgs: () => last, set: (r) => { result = r; } };
 }
 
-function makeFlow(c: BridgeConfig, id: FakeId, opts: { clock?: FakeClock; audit?: MemoryAudit; callbackPath?: string; flowTtlSeconds?: number; rateLimit?: { check(key: string): Promise<boolean> } } = {}) {
+function makeFlow(c: BridgeConfig, id: FakeId, opts: { clock?: FakeClock; audit?: MemoryAudit; store?: StorePort; callbackPath?: string; flowTtlSeconds?: number; rateLimit?: { check(key: string): Promise<boolean> } } = {}) {
   const clock = opts.clock ?? new FakeClock(NOW_MS);
   const audit = opts.audit ?? new MemoryAudit();
-  const store = new MemoryStore();
+  const store = opts.store ?? new MemoryStore();
   const bridge = new Bridge({ config: c, store, clock, audit });
   const flow = createUpstreamRedirectFlow({ bridge, identity: id.identity, store, clock, audit, callbackPath: opts.callbackPath ?? CALLBACK_PATH, flowTtlSeconds: opts.flowTtlSeconds, rateLimit: opts.rateLimit });
   return { flow, bridge, store, clock, audit };
@@ -400,6 +401,46 @@ test("callback row 5: state mismatch (and length mismatch) => direct 400 state_m
   assert.equal(audit.callback().at(-1)?.reason, "state_mismatch", "absent state => state_mismatch");
 });
 
+test("callback row 5a: CIMD policy rejection clears a readable cookie with no-store", async () => {
+  const c = createBridgeConfig({ ...config(), cimd: { enabled: true } });
+  const { flow, audit } = makeFlow(c, fakeIdentity(c));
+  const state = "verified-state";
+  const cookie = await signFlowToken({
+    secret: c.consentSigningSecret, issuer: c.issuer, callbackPath: flow.callbackPath,
+    clock: new FakeClock(NOW_MS), jti: "upf_" + "c".repeat(40), state,
+    nonce: "N".repeat(32), codeVerifier: "V".repeat(43), ttlSeconds: 300,
+    params: { ...authorizeQuery("https://meta.test/client"), redirect_uri: CLIENT_REDIRECT },
+  });
+  const res = await flow.handleCallback(callbackReq(c, cookie, { state, code: "unused" }));
+  assert.equal(res.status, 400);
+  assert.equal(audit.callback().at(-1)?.reason, "flow_cookie_invalid");
+  assertCookieMutationNoStore(res, "CIMD-policy early return");
+});
+
+test("callback row 6: consent-JTI store failure clears a readable cookie with no-store", async () => {
+  class ThrowingConsentStore extends MemoryStore {
+    override async consumeConsentJti(): Promise<boolean> { throw new Error("store unavailable"); }
+  }
+  const c = config(); const store = new ThrowingConsentStore();
+  const { flow, audit } = makeFlow(c, fakeIdentity(c), { store });
+  const { claims, cookieValue } = await initiate(c, flow);
+  const res = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "unused" }));
+  assert.equal(res.status, 500);
+  assert.equal(audit.callback().at(-1)?.reason, "internal_error");
+  assertCookieMutationNoStore(res, "store-failure early return");
+});
+
+test("callback: an unexpected in-handler throw clears a readable cookie with no-store", async () => {
+  const c = config(); const id = fakeIdentity(c);
+  id.set({ ok: true, identity: { get subject(): string { throw new Error("unexpected identity getter"); } } });
+  const { flow, audit } = makeFlow(c, id);
+  const { claims, cookieValue } = await initiate(c, flow);
+  const res = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "code" }));
+  assert.equal(res.status, 500);
+  assert.equal(audit.callback().at(-1)?.reason, "internal_error");
+  assertCookieMutationNoStore(res, "unexpected callback failure");
+});
+
 test("callback row 6 + replay: single-use jti — a replayed callback is 400 flow_replayed with NO second exchange", async () => {
   const c = config(); const id = fakeIdentity(c); const { flow, audit } = makeFlow(c, id);
   const { claims, cookieValue } = await initiate(c, flow);
@@ -651,8 +692,11 @@ test("adapter wiring + cookie delivery: all three adapters mount GET /oauth/auth
       assert.equal(auth.statusCode, 302, "fastify: /oauth/authorize -> handleAuthorize");
       assert.ok(String(auth.headers["set-cookie"] ?? "").startsWith("__Host-mcp-sso-upstream="), "fastify: Set-Cookie delivered");
       assert.equal(auth.headers["cache-control"], "no-store", "fastify: no-store delivered with flow cookie");
-      const cb = await app.inject({ method: "GET", url: "/oauth/callback" });
-      assert.equal(cb.statusCode, 400, "fastify: callbackPath -> handleCallback (flow_cookie_missing)");
+      const cookie = String(auth.headers["set-cookie"]).split(";", 1)[0] as string;
+      const cb = await app.inject({ method: "GET", url: "/oauth/callback?state=a&state=b&code=x", headers: { cookie } });
+      assert.equal(cb.statusCode, 400, "fastify: callbackPath -> handleCallback");
+      assert.match(String(cb.headers["set-cookie"]), /Max-Age=0/);
+      assert.equal(cb.headers["cache-control"], "no-store", "fastify: no-store delivered with cookie clear");
     } finally { await app.close(); }
   }
 
@@ -664,8 +708,11 @@ test("adapter wiring + cookie delivery: all three adapters mount GET /oauth/auth
     assert.equal(auth.status, 302, "hono: /oauth/authorize -> handleAuthorize");
     assert.ok((auth.headers.get("set-cookie") ?? "").startsWith("__Host-mcp-sso-upstream="), "hono: Set-Cookie delivered");
     assert.equal(auth.headers.get("cache-control"), "no-store", "hono: no-store delivered with flow cookie");
-    const cb = await app.request("/oauth/callback", { method: "GET" });
+    const cookie = (auth.headers.get("set-cookie") as string).split(";", 1)[0] as string;
+    const cb = await app.request("/oauth/callback?state=a&state=b&code=x", { method: "GET", headers: { cookie } });
     assert.equal(cb.status, 400, "hono: callbackPath -> handleCallback");
+    assert.match(cb.headers.get("set-cookie") ?? "", /Max-Age=0/);
+    assert.equal(cb.headers.get("cache-control"), "no-store", "hono: no-store delivered with cookie clear");
   }
 
   // express (real HTTP server, redirect:"manual" to capture the 302)
@@ -681,8 +728,11 @@ test("adapter wiring + cookie delivery: all three adapters mount GET /oauth/auth
       assert.equal(auth.status, 302, "express: /oauth/authorize -> handleAuthorize");
       assert.ok((auth.headers.get("set-cookie") ?? "").startsWith("__Host-mcp-sso-upstream="), "express: Set-Cookie delivered");
       assert.equal(auth.headers.get("cache-control"), "no-store", "express: no-store delivered with flow cookie");
-      const cb = await fetch(base + "/oauth/callback", { redirect: "manual" });
+      const cookie = (auth.headers.get("set-cookie") as string).split(";", 1)[0] as string;
+      const cb = await fetch(base + "/oauth/callback?state=a&state=b&code=x", { redirect: "manual", headers: { cookie } });
       assert.equal(cb.status, 400, "express: callbackPath -> handleCallback");
+      assert.match(cb.headers.get("set-cookie") ?? "", /Max-Age=0/);
+      assert.equal(cb.headers.get("cache-control"), "no-store", "express: no-store delivered with cookie clear");
     } finally { await new Promise<void>((r) => server.close(() => r())); }
   }
 });
