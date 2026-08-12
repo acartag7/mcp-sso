@@ -90,11 +90,17 @@ export function queryString(query: NormRequest["query"], name: string): string |
 }
 
 /** Preserve RFC 8707 multiplicity as unsupported target input for this
- * singleton AS instead of selecting the first occurrence. */
+ * singleton AS instead of selecting the first occurrence. RFC 6749 treats
+ * valueless parameters as omitted, so empty occurrences are discarded before
+ * deciding whether more than one requested resource remains. */
 export const INVALID_RESOURCE = " invalid-resource";
 export function resourceParam(value: unknown): string | undefined {
   if (value === undefined) return undefined;
-  return typeof value === "string" && value.length > 0 ? value : INVALID_RESOURCE;
+  if (typeof value === "string") return value.length > 0 ? value : undefined;
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) return INVALID_RESOURCE;
+  const resources = value.filter((entry) => entry.length > 0);
+  if (resources.length === 0) return undefined;
+  return resources.length === 1 ? resources[0] : INVALID_RESOURCE;
 }
 
 export function formField(body: unknown, name: string): string | undefined {

@@ -142,6 +142,17 @@ test("Bridge.handleAuthorize maps repeated RFC 8707 resource indicators to inval
   assert.equal(h.audit.events.some((event) => event.event === "oauth.authorize.prepare" && event.status === "success"), false);
 });
 
+test("Bridge.handleAuthorize treats valueless resource occurrences as omitted", async () => {
+  for (const resource of ["", ["", ""], [RESOURCE, ""], ["", RESOURCE]]) {
+    const h = harness();
+    const response = await h.bridge.handleAuthorize(
+      request({ ...validParams(), resource }), { subject: "operator" },
+    );
+    assert.equal(response.status, 200);
+    assert.match(String(response.body), /name="consent_token"/);
+  }
+});
+
 test("Bridge.handleAuthorize preserves the adjacent valid single-value authorize flow", async () => {
   const h = harness();
   const response = await h.bridge.handleAuthorize(request(validParams()), { subject: "operator" });
@@ -180,6 +191,20 @@ test("handlePairingAuthorize preserves repeated resource input for invalid_targe
   assert.equal(new URL(response.headers.location as string).searchParams.get("error"), "invalid_target");
   assert.equal(h.pairing.verifyCalls, 1);
   assert.equal(h.audit.events.some((event) => event.event === "oauth.authorize.prepare" && event.status === "success"), false);
+});
+
+test("handlePairingAuthorize treats valueless resource occurrences as omitted", async () => {
+  for (const resource of ["", ["", ""], [RESOURCE, ""], ["", RESOURCE]]) {
+    const h = harness();
+    const response = await handlePairingAuthorize(
+      { bridge: h.bridge, pairing: h.pairing }, "POST",
+      request({ resource }, {
+        ...validParams(), resource: undefined, pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce",
+      }),
+    );
+    assert.equal(response.status, 200);
+    assert.match(String(response.body), /name="consent_token"/);
+  }
 });
 
 test("handlePairingAuthorize preserves adjacent valid single-value GET and POST flows", async () => {

@@ -277,6 +277,16 @@ test("authorize: repeated RFC 8707 resource indicators are invalid_target, not R
   assert.match(res.headers["set-cookie"] ?? "", /Max-Age=0/);
 });
 
+test("authorize: valueless resource occurrences are omitted before the upstream flow cookie is minted", async () => {
+  for (const resource of ["", ["", ""], [RESOURCE, ""], ["", RESOURCE]]) {
+    const c = config(); const { flow } = makeFlow(c, fakeIdentity(c));
+    const { res, claims } = await initiate(c, flow, { ...authorizeQuery(), resource });
+    assert.equal(res.status, 302);
+    assert.equal(new URL(res.headers.location as string).origin, "https://idp.test");
+    assert.equal(claims.params.resource, Array.isArray(resource) && resource.includes(RESOURCE) ? RESOURCE : undefined);
+  }
+});
+
 test("authorize: missing client_id => direct 400; bad redirect_uri => direct 4xx invalid_redirect_uri", async () => {
   const c = config(); const { flow } = makeFlow(c, fakeIdentity(c));
   const q1 = authorizeQuery(); delete (q1 as Record<string, unknown>).client_id;
