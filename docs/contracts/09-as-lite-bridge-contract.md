@@ -150,7 +150,10 @@ client-controlled request input; when present, `prepare` uses it and does not fe
    renders the **delta** = `requestedScopes − priorScopes` as "new" (rendering is
    an adapter concern, Phase 3; the core supplies both sets). The signer rejects
    a consent token that exceeds its 192 KiB output budget, so the server never emits
-   a consent form that its 256 KiB Hono approval route will reject.
+   a consent form that its 256 KiB Hono approval route will reject. Because the
+   HTML carries that signed, subject-bound consent JWT, `Bridge.handleAuthorize`
+   returns it with `Cache-Control: no-store`; the shared normalized response is
+   relayed unchanged by Fastify, Express, and Hono.
 
 **`approve({ consentToken, approved?, origin? })`** → `{ redirectTo, code?, state? }`:
 - **Finite-clock gates (0.3.0; amended 0.3.3):** before consent-token
@@ -216,7 +219,9 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   When the verified consent token carries an `allowedScopes` ceiling (§17.4), that
   union is **re-intersected against it** — accumulated prior grants cannot
   resurrect a scope a since-removed group granted. Then 302 to
-  `redirect_uri?code=…&iss=<issuer>[&state=…]` (RFC 9207 `iss`).
+  `redirect_uri?code=…&iss=<issuer>[&state=…]` (RFC 9207 `iss`). This
+  code-bearing approval response carries `Cache-Control: no-store`. The Deny
+  redirect and generic sanitized error responses are not widened by this rule.
 
 ## 9.4 Token
 `POST /oauth/token`, `cache-control: no-store`. Response:
