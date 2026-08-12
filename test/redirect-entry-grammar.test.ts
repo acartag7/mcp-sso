@@ -372,7 +372,9 @@ test("positive round trips hold for stored web/native, stateless, and CIMD", asy
   };
 
   const clients = new Clients();
-  const stored = new Bridge({ config: config({ redirectAllowlist: ["https://a.test/", "http://[::1]:9", "https://localhost:444/cb"], dcr: { mode: "stored", store: clients } }), store: new MemoryStore(), clock: new Clock(), audit: new Audit() });
+  const stored = new Bridge({ config: config({ redirectAllowlist: [
+    "https://a.test/", "http://localhost", "http://127.0.0.1", "http://[::1]:9", "https://localhost:444/cb",
+  ], dcr: { mode: "stored", store: clients } }), store: new MemoryStore(), clock: new Clock(), audit: new Audit() });
   for (const redirectUri of ["https://a.test/", "https://a.test/cb%2F..%2Fadmin", "https://claude.ai/cb"]) {
     await authorizeRegistered(stored, redirectUri, "web");
   }
@@ -387,7 +389,9 @@ test("positive round trips hold for stored web/native, stateless, and CIMD", asy
   }), { subject: "user" });
   assert.equal(widenedHttps.status, 400);
 
-  const stateless = new Bridge({ config: config({ redirectAllowlist: ["https://a.test/"] }), store: new MemoryStore(), clock: new Clock(), audit: new Audit() });
+  const stateless = new Bridge({ config: config({
+    redirectAllowlist: ["https://a.test/", "http://localhost", "http://127.0.0.1"],
+  }), store: new MemoryStore(), clock: new Clock(), audit: new Audit() });
   for (const redirectUri of [
     "https://claude.ai/cb", "http://localhost/cb", "http://localhost:54321/cb",
     "http://127.0.0.1:8080/cb", "https://a.test/",

@@ -31,6 +31,13 @@ function cimdBlock(prepared: PreparedConsent): string {
 ${loopbackWarning}</div>`;
 }
 
+function redirectBlock(prepared: PreparedConsent): string {
+  return `<div class="redirect">
+<p class="client-label">Authorization code destination</p>
+<p class="redirect-uri"><code>${esc(prepared.redirectUri)}</code></p>
+</div>`;
+}
+
 export function renderConsentPage(_config: BridgeConfig, prepared: PreparedConsent): string {
   const scopeItems = [...prepared.scopes].map((s) => {
     const prior = prepared.priorScopes.includes(s);
@@ -39,11 +46,12 @@ export function renderConsentPage(_config: BridgeConfig, prepared: PreparedConse
   }).join("");
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize</title>
-<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:60px auto;padding:0 20px;color:#1a1a1a}h1{font-size:1.3rem}.scope{background:#f4f4f4;padding:8px 12px;border-radius:6px;font-family:monospace;font-size:.85rem;margin:4px 0}.tag{font-family:system-ui;font-size:.75rem;color:#666}.tag.new{color:#2563eb;font-weight:600}.client{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px}.client p{margin:4px 0}.client-label{color:#555;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.03em}.client p.client-host{font-size:1rem;font-weight:700;margin-bottom:10px}.client-name,.client-help{font-size:.85rem}.trust-note{color:#666}.client-help{color:#444}.warn{color:#b45309;font-size:.85rem;font-weight:600}form{margin-top:24px;display:flex;gap:12px}.approve{margin-left:auto}button{padding:10px 24px;font-size:1rem;border:none;border-radius:6px;cursor:pointer}.approve{background:#2563eb;color:#fff}.deny{background:#e5e7eb;color:#1a1a1a}</style>
+<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:60px auto;padding:0 20px;color:#1a1a1a}h1{font-size:1.3rem}.scope{background:#f4f4f4;padding:8px 12px;border-radius:6px;font-family:monospace;font-size:.85rem;margin:4px 0}.tag{font-family:system-ui;font-size:.75rem;color:#666}.tag.new{color:#2563eb;font-weight:600}.client,.redirect{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;margin:10px 0}.client p,.redirect p{margin:4px 0}.client-label{color:#555;font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.03em}.client p.client-host{font-size:1rem;font-weight:700;margin-bottom:10px}.redirect-uri{font-size:.9rem;font-weight:700;overflow-wrap:anywhere}.client-name,.client-help{font-size:.85rem}.trust-note{color:#666}.client-help{color:#444}.warn{color:#b45309;font-size:.85rem;font-weight:600}form{margin-top:24px;display:flex;gap:12px}.approve{margin-left:auto}button{padding:10px 24px;font-size:1rem;border:none;border-radius:6px;cursor:pointer}.approve{background:#2563eb;color:#fff}.deny{background:#e5e7eb;color:#1a1a1a}</style>
 </head><body>
 <h1>Authorize access</h1>
 <p>An application requests access to <strong>${esc(prepared.resource)}</strong>.</p>
 ${cimdBlock(prepared)}
+${redirectBlock(prepared)}
 <p>Requested scopes:</p>
 ${scopeItems}
 <form method="POST" action="/oauth/authorize/approve">
