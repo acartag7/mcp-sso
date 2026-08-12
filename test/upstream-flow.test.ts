@@ -441,6 +441,19 @@ test("callback: an unexpected in-handler throw clears a readable cookie with no-
   assertCookieMutationNoStore(res, "unexpected callback failure");
 });
 
+test("callback: clock failure before handler work still clears a readable cookie with no-store", async () => {
+  for (const nowMs of [() => { throw new Error("clock unavailable"); }, () => Number.NaN]) {
+    const c = config(); const clock = { nowMs } as ClockPort;
+    const store = new MemoryStore(); const audit = new MemoryAudit();
+    const bridge = new Bridge({ config: c, store, clock, audit });
+    const flow = createUpstreamRedirectFlow({ bridge, identity: fakeIdentity(c).identity, store, clock, audit });
+    const res = await flow.handleCallback(callbackReq(c, "readable", { state: "unused", code: "unused" }));
+    assert.equal(res.status, 500);
+    assertCookieMutationNoStore(res, "pre-handler clock failure");
+    assert.equal(audit.events.length, 0, "no audit event is fabricated without a valid timestamp");
+  }
+});
+
 test("callback row 6 + replay: single-use jti — a replayed callback is 400 flow_replayed with NO second exchange", async () => {
   const c = config(); const id = fakeIdentity(c); const { flow, audit } = makeFlow(c, id);
   const { claims, cookieValue } = await initiate(c, flow);

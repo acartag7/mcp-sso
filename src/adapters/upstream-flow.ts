@@ -146,11 +146,13 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
   };
 
   const handleCallback = async (req: NormRequest): Promise<NormResponse> => {
-    const nowIso = new Date(clock.nowMs()).toISOString();
     const ip = req.ip;
     const cookieValue = readFlowCookie(req.headers, cookieProfile);
     const cookiePresent = cookieValue !== undefined;
     const clear = (res: NormResponse): NormResponse => cookiePresent ? { ...res, headers: noStoreHeaders({ ...res.headers, "set-cookie": clearCookieValue(cookieProfile) }) } : res;
+    let nowIso: string;
+    try { nowIso = new Date(clock.nowMs()).toISOString(); }
+    catch { return clear(directErrorResponse("internal_error", "OAuth request failed", 500)); }
     const emit = (status: AuthAuditStatus, reason: string | undefined, clientId?: string): Promise<void> =>
       audit.writeAuthEvent({ occurredAt: nowIso, event: "oauth.upstream.callback", status, reason, clientId, ip });
     try {
