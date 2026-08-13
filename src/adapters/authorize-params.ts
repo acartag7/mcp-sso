@@ -35,7 +35,7 @@ export function hasDuplicatedAuthorizeParams(query: unknown): boolean {
 
 /** Reconstruct raw query occurrences independently of framework parser policy. */
 export function queryOccurrencesFromUrl(rawUrl: string): Record<string, string | string[]> {
-  const query: Record<string, string | string[]> = {};
+  const query = Object.create(null) as Record<string, string | string[]>;
   for (const [key, value] of new URL(rawUrl, "http://localhost").searchParams.entries()) {
     const existing = query[key];
     if (existing === undefined) query[key] = value;

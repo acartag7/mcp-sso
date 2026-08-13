@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 import type { JWK } from "jose";
-import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS } from "../src/adapters/authorize-params.ts";
+import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, queryOccurrencesFromUrl } from "../src/adapters/authorize-params.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import type { NormRequest } from "../src/adapters/http.ts";
 import { handlePairingAuthorize } from "../src/adapters/pairing-flow.ts";
@@ -128,6 +128,13 @@ test("Bridge.handleAuthorize rejects every duplicated singleton authorize key be
       assertNoAuthorizeSideEffects(h);
     });
   }
+});
+
+test("raw query snapshots keep inherited names as inert own data", () => {
+  const query = queryOccurrencesFromUrl("/oauth/authorize?__proto__=first&toString=second&__proto__=third");
+  assert.equal(Object.getPrototypeOf(query), null);
+  assert.deepEqual(query.__proto__, ["first", "third"]);
+  assert.equal(query.toString, "second");
 });
 
 test("Bridge.handleAuthorize maps repeated RFC 8707 resource indicators to invalid_target", async () => {

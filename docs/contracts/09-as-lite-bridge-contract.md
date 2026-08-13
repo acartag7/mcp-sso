@@ -92,7 +92,7 @@ two error channels, split by whether the `redirect_uri` is trusted yet:
 - **Direct HTTP error (NEVER redirect)** — pre-validation failures where the
   redirect destination is untrusted: an ambiguous authorize request (any of
   `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
-  `code_challenge_method`, `scope`, or `state` occurs more than once),
+  `code_challenge_method`, `scope`, or `state` has more than one nonempty occurrence),
   identity not resolved/rejected (the resource
   owner could not be authenticated), a subject in the reserved `mcc_` machine
   namespace (RFC 9700 §4.15.1 — user grants must never mint a `sub` an RS would
