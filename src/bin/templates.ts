@@ -94,7 +94,7 @@ async function main(): Promise<void> {
     issuer: ISSUER, resource: RESOURCE,
     consentSigningSecret: secrets.consentSigningSecret,
     signingPrivateJwk: secrets.signingPrivateJwk,
-    redirectAllowlist: list(process.env.OAUTH_REDIRECT_ALLOWLIST, ""),
+    redirectAllowlist: list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
     scopeCatalog: list(process.env.OAUTH_SCOPE_CATALOG, "mcp:read,mcp:write"),
     defaultScopes: list(process.env.OAUTH_DEFAULT_SCOPES, "mcp:read"),
     allowedOrigins: list(process.env.OAUTH_ALLOWED_ORIGINS, ISSUER),

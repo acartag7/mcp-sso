@@ -79,6 +79,10 @@ function storedConfig(store: ClientStore): BridgeConfig {
   });
 }
 
+function storedConfigWithoutRedirectTrust(store: ClientStore): BridgeConfig {
+  return createBridgeConfig({ ...storedConfig(store), redirectAllowlist: [], dcr: { mode: "stored", store } });
+}
+
 interface FakeId { identity: RedirectIdentityPort; exchangeCalls: () => number; lastArgs: () => { code: string; codeVerifier: string; nonce: string } | undefined; set: (r: RedirectExchangeResult | "throw") => void; }
 function fakeIdentity(c: BridgeConfig): FakeId {
   let calls = 0; let last: { code: string; codeVerifier: string; nonce: string } | undefined;
@@ -297,6 +301,24 @@ test("authorize (stored-DCR): step 3 validates redirect_uri PER-CLIENT (§10.2) 
   assert.equal((unk.body as { error: string }).error, "invalid_client");
   assert.equal(unk.status, 401);
   assert.equal(unk.headers["set-cookie"], undefined);
+});
+
+test("authorize (stored-DCR): legacy loopback rows need current global trust before the IdP hop", async () => {
+  const clients = new InMemoryClientStore();
+  await clients.save({
+    clientId: "legacy-native", redirectUris: ["http://127.0.0.1/callback"],
+    applicationType: "native", issuedAtEpoch: 1,
+  });
+  const c = storedConfigWithoutRedirectTrust(clients);
+  const id = fakeIdentity(c);
+  const { flow } = makeFlow(c, id);
+  const response = await flow.handleAuthorize(req({
+    ...authorizeQuery("legacy-native"), redirect_uri: "http://127.0.0.1:49152/callback",
+  }));
+  assert.equal(response.status, 400);
+  assert.equal((response.body as { error: string }).error, "invalid_redirect_uri");
+  assert.equal(response.headers.location, undefined);
+  assert.equal(id.exchangeCalls(), 0);
 });
 
 test("authorize: success => 302 to the IdP with Set-Cookie; nothing persisted server-side", async () => {

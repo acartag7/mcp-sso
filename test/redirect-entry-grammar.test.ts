@@ -359,6 +359,42 @@ test("presented redirects are rejected, never normalized, in stateless and store
   }
 });
 
+test("stored authorize revalidates legacy registrations against the current global allowlist", async () => {
+  const clients = new Clients();
+  clients.values.set("legacy-native", {
+    clientId: "legacy-native", redirectUris: ["http://127.0.0.1/callback"],
+    applicationType: "native", issuedAtEpoch: 1,
+  });
+  const bridge = new Bridge({
+    config: config({ redirectAllowlist: [], dcr: { mode: "stored", store: clients } }),
+    store: new MemoryStore(), clock: new Clock(), audit: new Audit(),
+  });
+  const response = await bridge.handleAuthorize(request(undefined, {
+    client_id: "legacy-native", redirect_uri: "http://127.0.0.1:49152/callback",
+    response_type: "code", code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+  }), { subject: "user" });
+  assert.equal(response.status, 400);
+  assert.equal(response.redirect, undefined);
+  assert.equal((response.body as { error: string }).error, "invalid_redirect_uri");
+});
+
+test("stored native authorization keeps any-port matching after registered-entry revalidation", async () => {
+  const clients = new Clients();
+  clients.values.set("native", {
+    clientId: "native", redirectUris: ["http://127.0.0.1:4000/callback"],
+    applicationType: "native", issuedAtEpoch: 1,
+  });
+  const bridge = new Bridge({
+    config: config({ redirectAllowlist: ["http://127.0.0.1:4000/callback"], dcr: { mode: "stored", store: clients } }),
+    store: new MemoryStore(), clock: new Clock(), audit: new Audit(),
+  });
+  const response = await bridge.handleAuthorize(request(undefined, {
+    client_id: "native", redirect_uri: "http://127.0.0.1:49152/callback",
+    response_type: "code", code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+  }), { subject: "user" });
+  assert.equal(response.status, 200);
+});
+
 test("positive round trips hold for stored web/native, stateless, and CIMD", async () => {
   const authorizeRegistered = async (bridge: Bridge, redirectUri: string, applicationType?: "web" | "native") => {
     const registration = await bridge.handleRegister(request({ redirect_uris: [redirectUri], ...(applicationType ? { application_type: applicationType } : {}) }));
@@ -372,7 +408,9 @@ test("positive round trips hold for stored web/native, stateless, and CIMD", asy
   };
 
   const clients = new Clients();
-  const stored = new Bridge({ config: config({ redirectAllowlist: ["https://a.test/", "http://[::1]:9", "https://localhost:444/cb"], dcr: { mode: "stored", store: clients } }), store: new MemoryStore(), clock: new Clock(), audit: new Audit() });
+  const stored = new Bridge({ config: config({ redirectAllowlist: [
+    "https://a.test/", "http://localhost", "http://127.0.0.1", "http://[::1]:9", "https://localhost:444/cb",
+  ], dcr: { mode: "stored", store: clients } }), store: new MemoryStore(), clock: new Clock(), audit: new Audit() });
   for (const redirectUri of ["https://a.test/", "https://a.test/cb%2F..%2Fadmin", "https://claude.ai/cb"]) {
     await authorizeRegistered(stored, redirectUri, "web");
   }
@@ -387,7 +425,9 @@ test("positive round trips hold for stored web/native, stateless, and CIMD", asy
   }), { subject: "user" });
   assert.equal(widenedHttps.status, 400);
 
-  const stateless = new Bridge({ config: config({ redirectAllowlist: ["https://a.test/"] }), store: new MemoryStore(), clock: new Clock(), audit: new Audit() });
+  const stateless = new Bridge({ config: config({
+    redirectAllowlist: ["https://a.test/", "http://localhost", "http://127.0.0.1"],
+  }), store: new MemoryStore(), clock: new Clock(), audit: new Audit() });
   for (const redirectUri of [
     "https://claude.ai/cb", "http://localhost/cb", "http://localhost:54321/cb",
     "http://127.0.0.1:8080/cb", "https://a.test/",

@@ -49,11 +49,12 @@ enable the declarations. These caps bound core work and ensure the largest
 request shape with metadata this bridge understands fits the Hono boundary in
 §9.6.
 - **Stateless mode (default):** any well-formed registration with allowlisted
-  redirect URIs succeeds; the server mints an ephemeral `client_id`
+  redirect URIs succeeds; loopback redirects require an explicit
+  `redirectAllowlist` entry. The server mints an ephemeral `client_id`
   (`mcpdc_<random>`), returns `{ client_id, client_id_issued_at, redirect_uris,
   token_endpoint_auth_method: "none" }`, and persists nothing. At authorize, any
   non-empty `client_id` is accepted (matches the source). **Redirect policy = the
-  global allowlist with the blanket loopback-for-everyone default, by design**
+  global allowlist with no implicit loopback trust**
   (§10.1) — stateless mode persists no client metadata, so per-client redirect
   policies cannot apply.
 - **Stored mode (opt-in):** at **registration time** each `redirect_uri` is
@@ -391,7 +392,10 @@ the response. Wiring rules:
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src
   'unsafe-inline'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`,
-  all values HTML-escaped. **0.3.0 amendment:** the consent CSP omits
+  all values HTML-escaped. The page always displays the exact bound
+  `redirect_uri`, including for opaque/stateless clients, before the decision
+  buttons. This is display-only defense in depth; §10 validation remains the
+  authorization control. **0.3.0 amendment:** the consent CSP omits
   `form-action`: Chromium applies that directive
   across the same-origin POST's redirect chain, so `'self'` blocks both the
   Approve and Deny 302 from reaching a validated loopback callback. The form

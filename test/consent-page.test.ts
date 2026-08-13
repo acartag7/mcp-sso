@@ -47,3 +47,18 @@ test("consent page makes host anchors primary and the self-reported name seconda
     "the self-reported name and guidance remain visually secondary",
   );
 });
+
+test("consent page always displays the exact bound redirect URI", () => {
+  const opaque = { ...prepared, cimdVerified: undefined, cimd: undefined };
+  const html = renderConsentPage({} as BridgeConfig, opaque);
+  assert.match(html, /Authorization code destination/);
+  assert.match(html, /https:\/\/callback\.example\.test\/oauth\/callback/);
+});
+
+test("consent page escapes the displayed redirect URI", () => {
+  const html = renderConsentPage({} as BridgeConfig, {
+    ...prepared, redirectUri: "https://callback.example.test/cb?<unsafe>&x=\"quoted\"",
+  });
+  assert.doesNotMatch(html, /<unsafe>/);
+  assert.match(html, /&lt;unsafe&gt;&amp;x=&quot;quoted&quot;/);
+});

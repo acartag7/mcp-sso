@@ -51,7 +51,7 @@ function config(clients: ClientStore): BridgeConfig {
     issuer: ISSUER, resource: RESOURCE,
     consentSigningSecret: "test-consent-secret-with-enough-entropy-0123456789",
     signingPrivateJwk: jwk(), signingKeyId: "k",
-    redirectAllowlist: [], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
+    redirectAllowlist: ["http://127.0.0.1", "https://client.test/cb"], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
     allowedOrigins: [ISSUER], dcr: { mode: "stored", store: clients },
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000,
     consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,

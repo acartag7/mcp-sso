@@ -9,14 +9,11 @@ import {
   type RedirectEntry,
 } from "./redirect-entry.ts";
 
-/** Built-in trusted redirect origins. Web origins match any callback path on
- *  that origin; loopback origins match any port (RFC 8252). A config allowlist
- *  ADDS to these; it cannot remove a default. */
+/** Built-in trusted hosted-client origins. Loopback trust is operator-owned:
+ *  add the needed origin to redirectAllowlist explicitly. */
 export const DEFAULT_ALLOWED_REDIRECT_ORIGINS = Object.freeze([
   "https://claude.ai",
   "https://chatgpt.com",
-  "http://localhost",
-  "http://127.0.0.1",
 ]);
 
 /** Validate a redirect_uri against the global allowlist (built-ins + config).

@@ -82,6 +82,9 @@ export async function resolveOpaqueRedirect(config: BridgeConfig, clientId: stri
     if (!stored) throw new OAuthError("invalid_client", "Unknown client_id", 401);
     const client = parseAuthorizationClientRegistration(stored, clientId);
     if (!client) throw new OAuthError("invalid_client", "Malformed stored client registration", 401);
+    for (const registeredRedirect of client.redirectUris) {
+      assertAllowedRedirectUri(registeredRedirect, config.redirectAllowlist);
+    }
     return assertRedirectAllowedForClient(redirectUri, client);
   }
   return assertAllowedRedirectUri(redirectUri, config.redirectAllowlist);

@@ -87,6 +87,7 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.doesNotMatch(server, /request\.headers\.origin/, "generated /mcp gate never selects a normalized Origin");
     assert.match(server, /cimd:\s*\{\s*enabled:\s*true\s*\}/, "generated server enables CIMD");
     assert.match(server, /dcr:\s*\{\s*mode:\s*"stateless"\s*\}/, "generated server retains DCR");
+    assert.match(server, /OAUTH_REDIRECT_ALLOWLIST, "http:\/\/localhost,http:\/\/127\.0\.0\.1"/, "generated local composition explicitly declares loopback callback origins");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

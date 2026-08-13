@@ -433,7 +433,8 @@ export async function buildExample(
     resource,
     consentSigningSecret: secrets.consentSigningSecret,
     signingPrivateJwk: secrets.signingPrivateJwk,
-    redirectAllowlist: listEnv(env, "OAUTH_REDIRECT_ALLOWLIST", ""),
+    // Explicit local-composition default; an explicitly empty env value removes it.
+    redirectAllowlist: listEnv(env, "OAUTH_REDIRECT_ALLOWLIST", "http://localhost,http://127.0.0.1"),
     scopeCatalog: listEnv(env, "OAUTH_SCOPE_CATALOG", "mcp:read,mcp:write"),
     defaultScopes: listEnv(env, "OAUTH_DEFAULT_SCOPES", "mcp:read"),
     allowedOrigins: listEnv(env, "OAUTH_ALLOWED_ORIGINS", issuer),
