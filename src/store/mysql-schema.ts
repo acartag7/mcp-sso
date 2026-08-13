@@ -16,6 +16,7 @@
 
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput } from "../ports/store.ts";
+import { assertConsentJtiUnique } from "./mysql-index-schema.ts";
 import {
   StoreInputError, assertGrantGeneration, assertSha256Hex,
   assertRefreshResource, assertUtcIsoTimestamp, grantGenerationForWrite,
@@ -79,6 +80,7 @@ const MIGRATIONS = [
  *  Call once before first use (createMysqlStore does this). */
 export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await assertStrictMode(conn);
+  if (await tableExists(conn, "oauth_consent_jtis")) await assertConsentJtiUnique(conn);
   for (const ddl of MIGRATIONS) await conn.query(ddl);
   await ensureColumn(conn, "oauth_auth_codes", "grant_generation", "BIGINT UNSIGNED NULL");
   await ensureColumn(conn, "oauth_refresh_token_families", "grant_generation", "BIGINT UNSIGNED NULL");
@@ -88,6 +90,15 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await migrateMysqlSubjectColumns(conn);
   await assertColumnCollations(conn);
   await assertInnoDBEngine(conn);
+  await assertConsentJtiUnique(conn);
+}
+
+async function tableExists(conn: PoolConnection, table: string): Promise<boolean> {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    "SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+    [table],
+  );
+  return rows.length > 0;
 }
 
 async function ensureColumn(conn: PoolConnection, table: string, column: string, definition: string): Promise<void> {

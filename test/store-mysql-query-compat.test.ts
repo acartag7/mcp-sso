@@ -34,6 +34,23 @@ function recordingStore(): { readonly store: MysqlStore; readonly queries: Recor
   return { store: new MysqlStore(pool), queries };
 }
 
+function consentStore(error?: unknown): MysqlStore {
+  const pool = {
+    query: async () => {
+      if (error !== undefined) throw error;
+      return [{ affectedRows: 1 }, []];
+    },
+  } as unknown as Pool;
+  return new MysqlStore(pool);
+}
+
+test("MysqlStore consent replay handles only duplicate-key errors", async () => {
+  assert.equal(await consentStore().consumeConsentJti("jti", FUTURE), true);
+  assert.equal(await consentStore({ code: "ER_DUP_ENTRY" }).consumeConsentJti("jti", FUTURE), false);
+  const partitionError = Object.assign(new Error("no partition"), { code: "ER_NO_PARTITION_FOR_GIVEN_VALUE" });
+  await assert.rejects(consentStore(partitionError).consumeConsentJti("jti", FUTURE), partitionError);
+});
+
 test("MysqlStore family upserts bind incoming values without row aliases", async () => {
   const created = recordingStore();
   await created.store.saveRefreshToken({

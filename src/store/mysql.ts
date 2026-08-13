@@ -1,6 +1,6 @@
 // MysqlStore — pooled persistent StorePort on mysql2. See contracts §12.3 for the
 // async/pooled pattern (begun-guard + release-in-finally, FOR UPDATE, READ COMMITTED,
-// two-step sweep, INSERT IGNORE, direct-value family upserts).
+// two-step sweep, duplicate-only consent handling, direct-value family upserts).
 
 import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
@@ -58,14 +58,16 @@ export class MysqlStore implements StorePort {
   async consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean> {
     this.ensureOpen();
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
-    // INSERT IGNORE: affectedRows is 1 on first INSERT, 0 on every replay, independent
-    // of the supplied timestamp (addendum 10). ODKU expires_at=expires_at reports 1 even
-    // on a no-op replay under MySQL 8.4, so it cannot distinguish first-use.
-    const [result] = await this.pool.query<ResultSetHeader>(
-      `INSERT IGNORE INTO oauth_consent_jtis (jti, expires_at) VALUES (?, ?)`,
-      [jti, expiresAtIso],
-    );
-    return result.affectedRows === 1;
+    try {
+      await this.pool.query<ResultSetHeader>(
+        `INSERT INTO oauth_consent_jtis (jti, expires_at) VALUES (?, ?)`,
+        [jti, expiresAtIso],
+      );
+      return true;
+    } catch (error) {
+      if (isDuplicateEntry(error)) return false;
+      throw error;
+    }
   }
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {

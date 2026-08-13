@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { before, after, beforeEach, test } from "node:test";
-import { createPool, type Pool, type PoolConnection, type RowDataPacket } from "mysql2/promise";
+import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import type { StorePort } from "../src/ports/store.ts";
 import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
@@ -377,6 +377,33 @@ if (RUN) {
       await assert.rejects(createMysqlStore(MYSQL_URL as string), /InnoDB/);
     } finally {
       await admin!.query("ALTER TABLE oauth_auth_codes ENGINE=InnoDB");
+      const restore = await createMysqlStore(MYSQL_URL as string);
+      await restore.close();
+    }
+  });
+
+  test("MysqlStore: migrate rejects a consent-JTI table without JTI-only uniqueness", async () => {
+    await admin!.query("DROP TABLE oauth_consent_jtis");
+    await admin!.query(`CREATE TABLE oauth_consent_jtis (
+      jti VARCHAR(255) NOT NULL,
+      expires_at VARCHAR(24) NOT NULL,
+      UNIQUE KEY uq_oauth_consent_jtis_jti_expiry (jti, expires_at),
+      INDEX idx_oauth_consent_jtis_expires_at (expires_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    try {
+      const [first] = await admin!.query<ResultSetHeader>(
+        "INSERT IGNORE INTO oauth_consent_jtis (jti, expires_at) VALUES (?, ?)",
+        ["malformed-schema-jti", FUTURE],
+      );
+      const [replay] = await admin!.query<ResultSetHeader>(
+        "INSERT IGNORE INTO oauth_consent_jtis (jti, expires_at) VALUES (?, ?)",
+        ["malformed-schema-jti", "2026-07-03T14:00:00.000Z"],
+      );
+      assert.equal(first.affectedRows, 1);
+      assert.equal(replay.affectedRows, 1, "malformed schema admits a replay with another expiry");
+      await assert.rejects(createMysqlStore(MYSQL_URL as string), /full-column JTI PRIMARY or UNIQUE index/);
+    } finally {
+      await admin!.query("DROP TABLE oauth_consent_jtis");
       const restore = await createMysqlStore(MYSQL_URL as string);
       await restore.close();
     }
