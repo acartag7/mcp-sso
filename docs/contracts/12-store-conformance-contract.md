@@ -264,6 +264,11 @@ other undersized shape fails boot rather than being silently reinterpreted.
   `ON DUPLICATE KEY UPDATE` without a row alias. The incoming revoke timestamp
   is repeated as a bound parameter rather than interpolated into SQL, while
   `COALESCE` preserves the first revocation timestamp.
+  At boot, `oauth_consent_jtis.jti` MUST have a single-column PRIMARY or UNIQUE
+  index. `CREATE TABLE IF NOT EXISTS` does not repair a pre-created table, and
+  `INSERT IGNORE` detects replay only when MySQL enforces uniqueness on the JTI
+  itself. A composite unique index such as `(jti, expires_at)` is insufficient:
+  it admits the same JTI with another expiry and therefore fails boot.
   Transactions run at **`READ COMMITTED`** (`SET TRANSACTION ISOLATION LEVEL
   READ COMMITTED` — the next-transaction form, before `BEGIN`): under InnoDB's
   default `REPEATABLE READ`, range scans (`sweepExpired`'s family DELETE, the
