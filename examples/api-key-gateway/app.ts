@@ -70,6 +70,8 @@ export interface GatewayOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer (+ pairing). Default noopAudit. */
   audit?: AuditPort;
+  /** Local starter only: explicitly acknowledge the unsafe default combination. */
+  acknowledgeUnsafeStatelessDefaults?: true;
 }
 
 // Request headers the transparent proxy forwards to the backend (allowlist — fails
@@ -94,7 +96,8 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
-  const bridge = new Bridge({ config: opts.config, store, clock, audit });
+  const bridge = new Bridge({ config: opts.config, store, clock, audit,
+    ...(opts.acknowledgeUnsafeStatelessDefaults ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
   const authorizer = new RequestAuthorizer({ config: opts.config, clock, audit });
 
   const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string }): NormRequest => ({
@@ -363,6 +366,8 @@ export async function buildGatewayExample(
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
-  const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile });
+  const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl,
+    getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile,
+    acknowledgeUnsafeStatelessDefaults: true });
   return { app, store, config, dir };
 }

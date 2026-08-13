@@ -107,7 +107,7 @@ async function main(): Promise<void> {
   const app = Fastify();
   const clock = new SystemClock();
   const store = openSqliteStore(\`\${DIR}/auth.db\`);
-  const bridge = new Bridge({ config, store, clock, audit });
+  const bridge = new Bridge({ config, store, clock, audit, acknowledgeUnsafeStatelessDefaults: true });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
   const toNorm = (req: FastifyRequest): NormRequest => ({
     query: req.query as NormRequest["query"], body: req.body, headers: req.headers as NormRequest["headers"], ip: req.ip,

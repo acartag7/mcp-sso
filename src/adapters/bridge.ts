@@ -4,7 +4,6 @@
 import type { BridgeConfig } from "../config.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
-import type { StorePort } from "../ports/store.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
@@ -20,27 +19,13 @@ import { asOAuth, assertUnambiguousAuthorization, consentCookie, hasBasicAuthori
 export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
-import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
+import { assertSafeDeploymentCombination } from "../deployment-guard.ts";
 import { formField, formObject, headerString, noStoreHeaders, oauthErrorResponse, queryString, readHeader, resourceParam,
   type NormRequest, type NormResponse,
 } from "./http.ts";
-export interface BridgeDeps {
-  config: BridgeConfig;
-  store: StorePort;
-  clock: ClockPort;
-  audit: AuditPort;
-  /** Optional register/token/revoke/direct-identity rate limiter (fix #7); defaults to no-op. */
-  rateLimit?: RateLimitPort;
-  /** BELOW-GUARD CIMD test seams (§17.1.5 rule 14 / §17.1.6 decision 1e). They
-   *  inject the low-level connect-to-validated-IP transport / DNS resolver; the
-   *  guard pipeline — URL admission, blocklists, DNS validation, redirect
-   *  refusal, caps — always runs AROUND them and cannot be skipped, and they
-   *  can never widen `allowLoopback` or the caps. Never a whole `GuardedFetcher`,
-   *  never a `BridgeConfig` field. */
-  cimdTransport?: CimdTransport;
-  cimdResolver?: DnsResolver;
-}
+import type { BridgeDeps } from "./bridge-deps.ts";
+export type { BridgeDeps } from "./bridge-deps.ts";
 
 // `referrer-policy: same-origin` preserves the scheme/host/port `Origin` on the
 // same-origin Approve POST, which the strict `assertApproveOrigin` gate needs.
@@ -80,6 +65,7 @@ export class Bridge {
   readonly cimd: CimdResolver;
 
   constructor(deps: BridgeDeps) {
+    assertSafeDeploymentCombination(deps);
     this.config = deps.config;
     this.clock = deps.clock;
     this.audit = deps.audit;

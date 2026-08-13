@@ -126,3 +126,15 @@ cloned nor frozen.
 
 A config object is constructed via `createBridgeConfig(input)` (validates +
 freezes). The frozen object is the only thing passed to use-cases.
+
+**Bridge composition boot guard.** `Bridge` rejects the combined deployment
+shape where all three conditions hold: DCR is stateless, no `RateLimitPort` was
+supplied, and `redirectAllowlist` adds no application-specific HTTPS redirect
+trust beyond the hosted defaults and the explicit loopback starter origins
+(`localhost`, `127.0.0.1`, `[::1]`). Each choice remains available separately;
+the unbounded, broadly reusable starter combination is not a valid composition.
+The check runs before the bridge constructs a CIMD resolver or any use-case.
+`acknowledgeUnsafeStatelessDefaults: true` on `BridgeDeps` is an explicit,
+temporary escape hatch for the localhost-only starter and emits a loud boot
+warning. Any other value is treated as absent. Internet-facing compositions do
+not set it.

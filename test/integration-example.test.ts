@@ -118,6 +118,7 @@ test("integration — Cloudflare Access branch: buildExample creates the state d
       OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
       OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(key),
       OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      OAUTH_REDIRECT_ALLOWLIST: "https://client.test/callback",
     });
     assert.equal(config.issuer, "http://localhost");
     assert.equal(config.cimd?.enabled, true, "production example advertises CIMD");
@@ -885,6 +886,7 @@ test("integration — runnable example rejects duplicate /mcp Origin occurrences
   const built = await buildApp({
     config,
     identity: { async verify() { return { ok: false, reason: "unused" }; } },
+    acknowledgeUnsafeStatelessDefaults: true,
   });
   await built.app.listen({ port: 0, host: "127.0.0.1" });
   const port = (built.app.server.address() as AddressInfo).port;
