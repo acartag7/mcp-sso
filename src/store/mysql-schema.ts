@@ -103,9 +103,9 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
 
 async function tableExists(conn: PoolConnection, table: string): Promise<boolean> {
   const [rows] = await conn.query<RowDataPacket[]>(
-    "SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
-    [table],
-  );
+    "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LOWER(TABLE_NAME) = LOWER(?)", [table]);
+  if (rows.some((row) => row.TABLE_NAME !== table))
+    throw new StoreInputError(`${table} must use its exact canonical table name`);
   return rows.length > 0;
 }
 

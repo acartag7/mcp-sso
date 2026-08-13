@@ -44,8 +44,8 @@ test("MySQL metadata preflight rejects foreign keys before unrelated DDL", async
   const connection = {
     query: async (sql: string, values?: unknown[]) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) {
-        return [values?.[0] === "oauth_store_metadata" ? [{ 1: 1 }] : [], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) {
+        return [values?.[0] === "oauth_store_metadata" ? [{ TABLE_NAME: "oauth_store_metadata" }] : [], []];
       }
       if (sql.includes("information_schema.TABLES") && sql.includes("ENGINE")) return [[{ ENGINE: "InnoDB" }], []];
       if (sql.includes("information_schema.COLUMNS") && sql.includes("oauth_store_metadata")) return [METADATA_COLUMNS, []];
@@ -61,6 +61,22 @@ test("MySQL metadata preflight rejects foreign keys before unrelated DDL", async
   assert.equal(unrelatedWrites, 0, "foreign-key rejection precedes every migration write");
 });
 
+test("MySQL metadata preflight rejects a case-variant name before any write", async () => {
+  let writes = 0;
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) {
+        return [[{ TABLE_NAME: "OAUTH_STORE_METADATA" }], []];
+      }
+      if (/^(CREATE|ALTER|INSERT)/u.test(sql)) writes += 1;
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /must use its exact canonical table name/);
+  assert.equal(writes, 0, "case-variant name rejects before every migration write");
+});
+
 for (const [label, tableRows, columnRows, expected] of [
   ["engine", [{ ENGINE: "MyISAM" }], METADATA_COLUMNS, /must use the InnoDB engine/],
   ["collation", [{ ENGINE: "InnoDB" }], [METADATA_COLUMNS[0], { ...METADATA_COLUMNS[1], COLLATION_NAME: "utf8mb4_0900_ai_ci" }], /columns are incompatible/],
@@ -70,7 +86,7 @@ for (const [label, tableRows, columnRows, expected] of [
     const connection = {
       query: async (sql: string, values?: unknown[]) => {
         if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
-        if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [values?.[0] === "oauth_store_metadata" ? [{ 1: 1 }] : [], []];
+        if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [values?.[0] === "oauth_store_metadata" ? [{ TABLE_NAME: "oauth_store_metadata" }] : [], []];
         if (sql.includes("information_schema.TABLES") && sql.includes("ENGINE")) return [tableRows, []];
         if (sql.includes("information_schema.COLUMNS") && sql.includes("oauth_store_metadata")) return [columnRows, []];
         if (/^(CREATE|ALTER|INSERT)/u.test(sql)) writes += 1;
@@ -96,7 +112,7 @@ function racingConnection(options: RaceOptions): {
       }
       if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) {
         if (values?.[0] === "oauth_auth_codes") {
           targetReads += 1;
@@ -162,8 +178,8 @@ test("MySQL migration initializes metadata before unrelated OAuth DDL", async ()
       if (sql.startsWith("SELECT @@session.sql_mode")) {
         return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       }
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) {
-        return [values?.[0] === "oauth_store_metadata" ? [{ 1: 1 }] : [], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) {
+        return [values?.[0] === "oauth_store_metadata" ? [{ TABLE_NAME: "oauth_store_metadata" }] : [], []];
       }
       if (sql.startsWith("INSERT IGNORE INTO oauth_store_metadata")) {
         writes.push(sql); initialized = true; return [{ affectedRows: 1 }, []];
@@ -199,7 +215,7 @@ test("MySQL migration adds nullable resource columns to pre-resource refresh tab
       if (sql.startsWith("SELECT instance_id FROM oauth_store_metadata")) return [STORE_INSTANCE_ROWS, []];
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) {
         const key = `${values?.[0]}:${values?.[1]}`;
         return [seen.has(key) ? [{ 1: 1 }] : [], []];
@@ -287,13 +303,13 @@ test("MySQL subject migration rejects an unexpected undersized shape", async () 
 test("MySQL migration preflights malformed consent uniqueness before any DDL", async () => {
   const writes: string[] = [];
   const connection = {
-    query: async (sql: string) => {
+    query: async (sql: string, values?: unknown[]) => {
       const metadata = metadataQuery(sql); if (metadata) return metadata;
       if (sql.startsWith("SELECT instance_id FROM oauth_store_metadata")) return [STORE_INSTANCE_ROWS, []];
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) return [[], []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [[{ TABLE_NAME: values?.[0] }], []];
       if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("information_schema.STATISTICS")) return [[{
         INDEX_NAME: "uq_prefix", NON_UNIQUE: "0", SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: 1,
@@ -309,11 +325,11 @@ test("MySQL migration preflights malformed consent uniqueness before any DDL", a
 test("MySQL migration rejects an extra required consent column before DDL", async () => {
   const writes: string[] = [];
   const connection = {
-    query: async (sql: string) => {
+    query: async (sql: string, values?: unknown[]) => {
       const metadata = metadataQuery(sql); if (metadata) return metadata;
       if (sql.startsWith("SELECT instance_id FROM oauth_store_metadata")) return [STORE_INSTANCE_ROWS, []];
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [[{ TABLE_NAME: values?.[0] }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) {
         return [[{
@@ -332,13 +348,13 @@ test("MySQL migration rejects an extra required consent column before DDL", asyn
 test("MySQL migration accepts string zero metadata for a full-column JTI key", async () => {
   let statisticsReads = 0;
   const connection = {
-    query: async (sql: string) => {
+    query: async (sql: string, values?: unknown[]) => {
       const metadata = metadataQuery(sql); if (metadata) return metadata;
       if (sql.startsWith("SELECT instance_id FROM oauth_store_metadata")) return [STORE_INSTANCE_ROWS, []];
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) return [[], []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [[{ TABLE_NAME: values?.[0] }], []];
       if (sql.includes("information_schema.STATISTICS")) {
         statisticsReads += 1;
         return [[{ INDEX_NAME: "PRIMARY", NON_UNIQUE: "0", SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null }], []];
@@ -356,13 +372,13 @@ test("MySQL migration accepts string zero metadata for a full-column JTI key", a
 
 test("MySQL uniqueness preflight counts functional parts and normalizes identifier case", async () => {
   const makeConnection = (rows: unknown[]) => ({
-    query: async (sql: string) => {
+    query: async (sql: string, values?: unknown[]) => {
       const metadata = metadataQuery(sql); if (metadata) return metadata;
       if (sql.startsWith("SELECT instance_id FROM oauth_store_metadata")) return [STORE_INSTANCE_ROWS, []];
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) return [[], []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [[{ TABLE_NAME: values?.[0] }], []];
       if (sql.includes("information_schema.STATISTICS")) return [rows, []];
       if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
         return [[{ data_type: "varchar", max_length: 384, is_nullable: "NO" }], []];
@@ -382,13 +398,13 @@ test("MySQL uniqueness preflight counts functional parts and normalizes identifi
 
 test("MySQL uniqueness preflight rejects an unrelated unique constraint", async () => {
   const connection = {
-    query: async (sql: string) => {
+    query: async (sql: string, values?: unknown[]) => {
       const metadata = metadataQuery(sql); if (metadata) return metadata;
       if (sql.startsWith("SELECT instance_id FROM oauth_store_metadata")) return [STORE_INSTANCE_ROWS, []];
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) return [[], []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [[{ TABLE_NAME: values?.[0] }], []];
       if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("information_schema.STATISTICS")) return [[
         { INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null },
@@ -402,12 +418,12 @@ test("MySQL uniqueness preflight rejects an unrelated unique constraint", async 
 
 test("MySQL uniqueness preflight accepts a secondary index containing the full JTI", async () => {
   const connection = {
-    query: async (sql: string) => {
+    query: async (sql: string, values?: unknown[]) => {
       const metadata = metadataQuery(sql); if (metadata) return metadata;
       if (sql.startsWith("SELECT instance_id FROM oauth_store_metadata")) return [STORE_INSTANCE_ROWS, []];
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [[{ TABLE_NAME: values?.[0] }], []];
       if (sql.includes("information_schema.STATISTICS")) return [[
         { INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, COLUMN_NAME: "jti", SUB_PART: null },
         { INDEX_NAME: "uq_jti_expiry", NON_UNIQUE: 0, COLUMN_NAME: "jti", SUB_PART: null },
@@ -425,11 +441,11 @@ test("MySQL uniqueness preflight accepts a secondary index containing the full J
 
 test("MySQL uniqueness preflight rejects undersized consent expiry storage", async () => {
   const connection = {
-    query: async (sql: string) => {
+    query: async (sql: string, values?: unknown[]) => {
       const metadata = metadataQuery(sql); if (metadata) return metadata;
       if (sql.startsWith("SELECT instance_id FROM oauth_store_metadata")) return [STORE_INSTANCE_ROWS, []];
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) return [[{ TABLE_NAME: values?.[0] }], []];
       if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [[
         CONSENT_COLUMNS[0], { ...CONSENT_COLUMNS[1], CHARACTER_MAXIMUM_LENGTH: 1 },

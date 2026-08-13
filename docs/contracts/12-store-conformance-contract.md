@@ -24,14 +24,14 @@ rotation; it does not rewrite authorization codes, access tokens, refresh-token
 families, or client grants. Replicas intentionally sharing one logical database
 also share one identifier and coordinate a single rotation instead of rotating
 once per process. A malformed persisted identifier rejects SQL-store migration.
-The SQL adapters admit only the required metadata table shape: one non-null
+The SQL adapters admit only the exact canonical metadata table name and required shape: one non-null
 singleton column uniquely keyed and constrained to the value `1`, plus one
 non-null unique instance identifier, with no triggers or foreign keys. They create and initialize that table in a
 concurrency-safe create-then-insert-if-absent sequence before migrating other
 OAuth state. SQLite re-admits a concurrently created file, waits up to five
 seconds for the migration writer, and runs schema admission, metadata insertion,
 and all OAuth DDL in one `BEGIN IMMEDIATE` transaction. An interrupted empty canonical initialization is completed;
-malformed pre-existing metadata rejects before migration writes.
+malformed or case-variant pre-existing metadata rejects before migration writes.
 
 ## 12.1 Records (secrets are SHA-256 hex digests; timestamps are UTC ISO 8601 with EXACTLY 3 ms digits)
 ```ts

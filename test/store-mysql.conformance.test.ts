@@ -188,6 +188,36 @@ if (RUN) {
     }
   });
 
+  test("MysqlStore: case-variant metadata rejects before lowercase DDL", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    await admin!.query(`CREATE TABLE OAUTH_STORE_METADATA (
+      singleton TINYINT UNSIGNED NOT NULL,
+      instance_id VARCHAR(128) NOT NULL,
+      PRIMARY KEY (singleton),
+      UNIQUE KEY uq_oauth_store_metadata_instance (instance_id),
+      CHECK (singleton = 1)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    try {
+      await assert.rejects(
+        createMysqlStore(MYSQL_URL as string),
+        /oauth_store_metadata must use its exact canonical table name/,
+      );
+      const [rows] = await admin!.query<RowDataPacket[]>(
+        `SELECT TABLE_NAME FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA = DATABASE() AND LOWER(TABLE_NAME) = 'oauth_store_metadata'`,
+      );
+      assert.deepEqual(
+        (rows as { TABLE_NAME: string }[]).map((row) => row.TABLE_NAME),
+        ["OAUTH_STORE_METADATA"],
+        "rejection leaves no lowercase metadata table behind",
+      );
+    } finally {
+      await admin!.query("DROP TABLE OAUTH_STORE_METADATA");
+      const restored = await createMysqlStore(MYSQL_URL as string);
+      await restored.close();
+    }
+  });
+
   test("MysqlStore/MySQL 8.4: migrates VARCHAR(255) subjects and persists max Entra authorization/refresh", async () => {
     await admin!.query("ALTER TABLE oauth_auth_codes MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
     await admin!.query("ALTER TABLE oauth_refresh_tokens MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
