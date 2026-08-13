@@ -249,6 +249,21 @@ test("WebhookAudit: a short configured secret cannot split a larger bearer crede
   assert.ok(stderr.includes("transport reflected"));
 });
 
+test("WebhookAudit: non-ASCII whitespace configured values remain secrets", async () => {
+  const secret = "\u00a0";
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    headers: { "X-Hook-Key": secret },
+    fetchImpl: (async () => { throw new Error(`transport reflected ${secret} value`); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  assert.equal(captured.messages.join("\n").includes(secret), false);
+});
+
 test("WebhookAudit: credential-bearing query string in the URL is scrubbed from stderr", async () => {
   // A query param can carry a credential (e.g. ?access_token=…). The regex
   // redactor does NOT catch `access_token=` (the `_` defeats the \b token
