@@ -60,6 +60,9 @@ import {
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
+import {
+  assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
+} from "../../src/deployment-guard.ts";
 
 export interface ExampleOptions {
   config: BridgeConfig;
@@ -78,16 +81,25 @@ export interface ExampleOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer + pairing. Default noopAudit. */
   audit?: AuditPort;
+  /** Local starter only: explicitly acknowledge the unsafe default combination. */
+  acknowledgeUnsafeStatelessDefaults?: true;
 }
 
 /** Build the example Fastify app: OAuth routes + a protected /mcp (MCP server). */
 export async function buildApp(opts: ExampleOptions) {
+  const config = opts.config;
+  const acknowledged = opts.acknowledgeUnsafeStatelessDefaults === true;
+  assertSafeDeploymentCombination({
+    config,
+    ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
+  }, { emitAcknowledgementWarning: false });
   const app = Fastify();
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
-  const bridge = new Bridge({ config: opts.config, store, clock, audit });
-  const authorizer = new RequestAuthorizer({ config: opts.config, clock, audit });
+  const bridge = new Bridge({ config, store, clock, audit,
+    ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
+  const authorizer = new RequestAuthorizer({ config, clock, audit });
 
   const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string }): NormRequest => ({
     query: req.query as NormRequest["query"],
@@ -153,8 +165,8 @@ export async function buildApp(opts: ExampleOptions) {
       "origin",
     );
     if (origin.ambiguous || (origin.value !== undefined
-      && !opts.config.allowedOrigins.includes(origin.value)
-      && origin.value !== originOf(opts.config.issuer))) {
+      && !config.allowedOrigins.includes(origin.value)
+      && origin.value !== originOf(config.issuer))) {
       reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
       return;
     }
@@ -167,7 +179,7 @@ export async function buildApp(opts: ExampleOptions) {
       auth = await authorizer.authorize({ authorization: request.headers.authorization });
     } catch (error) {
       const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
-      reply.header("www-authenticate", buildUnauthorizedChallenge(opts.config, { scope: opts.config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
+      reply.header("www-authenticate", buildUnauthorizedChallenge(config, { scope: config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
       reply.code(oe.status).send({ jsonrpc: "2.0", error: { code: -32001, message: `${oe.code}: ${oe.message}` }, id: null });
       return;
     }
@@ -391,6 +403,7 @@ export async function buildExample(
       groupAuthorization: entraGroupAuthorizationFromEnv(env),
     }, { scopeCatalog: config.scopeCatalog });
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildApp({ config, upstream: { identity, callbackPath }, audit, sqliteFile });
     return { app, store, config, dir };
@@ -406,6 +419,7 @@ export async function buildExample(
       issuer: mustEnv(env, "CF_ACCESS_ISSUER"),
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildApp({ config, identity, audit, sqliteFile });
     return { app, store, config, dir };
@@ -415,6 +429,7 @@ export async function buildExample(
     // configured redirect URI's pathname is the mounted callback route; the
     // orchestrator boot-asserts the full URI equals issuerOrigin + callbackPath.
     const config = configFromEnv(env);
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     const upstream = await createOidcUpstreamFromEnv(env, config, identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
     await ensureStateDir(dir);
@@ -424,10 +439,11 @@ export async function buildExample(
 
   // ZERO-SETUP: quickstart secrets (creates the dir, secrets, .gitignore) + console
   // pairing. buildApp takes pairing OPTIONS and wires `audit` into the identity.
-  const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const port = Number(env.PORT ?? 3000);
   const issuer = env.OAUTH_ISSUER ?? `http://localhost:${port}`;
   const resource = env.OAUTH_RESOURCE ?? `http://localhost:${port}/mcp`;
+  assertLoopbackStarterBeforeState(issuer, resource);
+  const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer,
     resource,
@@ -443,6 +459,7 @@ export async function buildExample(
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
-  const { app, store } = await buildApp({ config, pairing: {}, audit, sqliteFile });
+  const { app, store } = await buildApp({ config, pairing: {}, audit, sqliteFile,
+    acknowledgeUnsafeStatelessDefaults: true });
   return { app, store, config, dir };
 }

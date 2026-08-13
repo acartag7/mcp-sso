@@ -61,7 +61,7 @@ for the fetch, redirect, and validation contract.
 | `OAUTH_CONSENT_SIGNING_SECRET` | required 🔒 | — | HS256 secret for consent + upstream-flow tokens (≥32 chars). |
 | `OAUTH_SIGNING_PRIVATE_JWK` | required 🔒 | — | ES256 access-token signing key, as a JSON JWK. |
 | `OAUTH_SIGNING_KEY_ID` | optional | — | `kid` for the signing JWK. |
-| `OAUTH_REDIRECT_ALLOWLIST` | optional | empty | Comma-separated redirect origins or exact URIs for opaque DCR clients. Hosted Claude/ChatGPT origins are built in; loopback is not and must be listed explicitly (for example `http://localhost,http://127.0.0.1`). CIMD redirect URIs come from the fetched document. |
+| `OAUTH_REDIRECT_ALLOWLIST` | required by these stateless production examples | — | Comma-separated application-specific HTTPS redirect origins or exact URIs for opaque DCR clients (for example `https://client.example/callback`). CIMD redirect URIs come from the fetched document. |
 | `OAUTH_SCOPE_CATALOG` | optional | `mcp:read,mcp:write` | The scopes clients may request. |
 | `OAUTH_DEFAULT_SCOPES` | optional | `mcp:read` | Scopes granted when none requested. |
 | `OAUTH_ALLOWED_ORIGINS` | optional | `OAUTH_ISSUER` | Comma-separated Origin allowlist used by the `/mcp` DNS-rebinding gate and consent-approval Origin/CSRF check (add your browser clients, e.g. `https://claude.ai`). |
@@ -71,6 +71,14 @@ for the fetch, redirect, and validation contract.
 > 🔒 = secret. Deliver via a secret manager or mounted file, never `docker run -e`
 > in shell history, and never commit a populated `.env`. The quickstart
 > file-based secret helper is for local/console-pairing use, not production pods.
+
+The runnable production examples retain stateless DCR and do not wire a
+`RateLimitPort`, so they require at least one application-specific HTTPS
+callback in `OAUTH_REDIRECT_ALLOWLIST`. An empty value, a hosted-client default,
+or a generic loopback origin does not satisfy that boot guard. A custom
+composition root may instead use stored DCR or supply a real limiter. Do not
+add a placeholder callback: configure the exact callback used by your opaque
+DCR client.
 
 ## Cloudflare Access (`CF_ACCESS_*`)
 

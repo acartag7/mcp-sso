@@ -1,10 +1,10 @@
 # 5. Configuration contract
 
-All runtime behavior derives from a validated `BridgeConfig`. **Configuration is
-fail-closed**: ambiguous, incomplete, or insecure configuration is a boot
-`AuthConfigError`, never a degraded default. There is intentionally **no
-unauthenticated/local-bypass flavor** (Captatum's `local-binary` bypass is
-dropped — this is a library that enforces real auth everywhere it is used).
+`BridgeConfig` is the complete security configuration for one bridge. The
+library checks it when the bridge starts. Missing, malformed, ambiguous, or
+insecure values stop startup with `AuthConfigError`; they do not silently turn
+off authentication or another security gate. Local development still uses the
+same authenticated OAuth flow as an internet-facing deployment.
 
 ```ts
 interface BridgeConfig {
@@ -126,3 +126,35 @@ cloned nor frozen.
 
 A config object is constructed via `createBridgeConfig(input)` (validates +
 freezes). The frozen object is the only thing passed to use-cases.
+
+**Bridge composition boot guard.** `Bridge` rejects the combined deployment
+shape where all three conditions hold: DCR is stateless, no `RateLimitPort` was
+supplied, and `redirectAllowlist` adds no application-specific HTTPS redirect
+trust beyond the hosted defaults and the explicit loopback starter origins
+(`localhost`, `127.0.0.1`, `[::1]`). A bridge whose issuer and resource are both
+loopback URLs under `dev.allowInsecureLocalhost` is local-only and does not need
+that internet-facing mitigation. Each choice remains available separately;
+the unbounded, broadly reusable starter combination is not a valid composition.
+Adding an application callback does not mitigate a generic loopback origin that
+remains in the same additive allowlist; that mixed allowlist is still rejected.
+`Bridge` snapshots `config`, `rateLimit`, the acknowledgement, and its remaining
+dependencies once, then runs the check and constructs every use-case from that
+same snapshot. Accessor-backed input therefore cannot present one composition to
+the guard and another to runtime initialization. The validated limiter's `check`
+method is also read and bound once; request handling invokes that bound function
+rather than re-reading an accessor-backed method. The check runs before the
+bridge constructs a CIMD resolver or any use-case.
+`acknowledgeUnsafeStatelessDefaults: true` on `BridgeDeps` is an explicit,
+temporary escape hatch for the localhost-only starter and emits a loud boot
+warning. Any other value is treated as absent. Internet-facing compositions do
+not set it. The acknowledgement is accepted only when both `issuer` and
+`resource` are loopback URLs. A supplied limiter must expose a callable `check`
+method; malformed limiter values fail at boot rather than counting as a bound.
+Composition roots run this guard before creating a state directory, signing
+keys, audit file, state store, or starting OIDC discovery. The console-pairing branches perform their
+loopback-only preflight from issuer/resource strings before the signing-key
+helper needed to build a complete `BridgeConfig`. Exported factories snapshot
+their config and acknowledgement once and reuse those exact values after
+preflight, including for store and bridge construction.
+The generated starter additionally rejects non-loopback issuer or resource URLs
+before creating its state directory, signing keys, audit file, or SQLite database.

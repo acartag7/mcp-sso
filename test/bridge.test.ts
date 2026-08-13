@@ -256,7 +256,7 @@ test("bridge: Deny redirects access_denied (fix #5)", async () => {
 
 test("bridge: consent CSP permits both loopback callback redirects", async () => {
   for (const approved of ["true", "false"]) {
-    const ctx = setup(undefined, [REDIRECT, "http://127.0.0.1"]);
+    const ctx = setup({ async check() { return true; } }, [REDIRECT, "http://127.0.0.1"]);
     const verifier = "v-12345678901234567890123456789012345678";
     const page = await ctx.bridge.handleAuthorize(req({ query: {
       response_type: "code", client_id: "c", redirect_uri: LOOPBACK_REDIRECT,

@@ -37,6 +37,9 @@ import {
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
+import {
+  assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
+} from "../../src/deployment-guard.ts";
 // Reuse the fastify-sqlite example's env-wiring helpers rather than duplicate them
 // (configFromEnv / defaultListenHost / createOidcUpstreamFromEnv / assertUpstreamConfigBeforeState
 // are the same env switch). ensureStateDir — the security-critical state-dir bar
@@ -70,6 +73,8 @@ export interface GatewayOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer (+ pairing). Default noopAudit. */
   audit?: AuditPort;
+  /** Local starter only: explicitly acknowledge the unsafe default combination. */
+  acknowledgeUnsafeStatelessDefaults?: true;
 }
 
 // Request headers the transparent proxy forwards to the backend (allowlist — fails
@@ -90,12 +95,19 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   bridge: Bridge;
   close: () => Promise<void>;
 }> {
+  const config = opts.config;
+  const acknowledged = opts.acknowledgeUnsafeStatelessDefaults === true;
+  assertSafeDeploymentCombination({
+    config,
+    ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
+  }, { emitAcknowledgementWarning: false });
   const app = Fastify();
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
-  const bridge = new Bridge({ config: opts.config, store, clock, audit });
-  const authorizer = new RequestAuthorizer({ config: opts.config, clock, audit });
+  const bridge = new Bridge({ config, store, clock, audit,
+    ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
+  const authorizer = new RequestAuthorizer({ config, clock, audit });
 
   const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string }): NormRequest => ({
     query: req.query as NormRequest["query"], body: req.body, headers: req.headers as NormRequest["headers"], ip: req.ip,
@@ -158,8 +170,8 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
       "origin",
     );
     if (origin.ambiguous || (origin.value !== undefined
-      && !opts.config.allowedOrigins.includes(origin.value)
-      && origin.value !== originOf(opts.config.issuer))) {
+      && !config.allowedOrigins.includes(origin.value)
+      && origin.value !== originOf(config.issuer))) {
       reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
     }
   });
@@ -175,7 +187,7 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
       return await authorizer.authorize({ authorization: request.headers.authorization });
     } catch (error) {
       const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
-      reply.header("www-authenticate", buildUnauthorizedChallenge(opts.config, { scope: opts.config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
+      reply.header("www-authenticate", buildUnauthorizedChallenge(config, { scope: config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
       reply.code(oe.status).send({ jsonrpc: "2.0", error: { code: -32001, message: `${oe.code}: ${oe.message}` }, id: null });
       return null;
     }
@@ -316,6 +328,7 @@ export async function buildGatewayExample(
       groupAuthorization: entraGroupAuthorizationFromEnv(env),
     }, { scopeCatalog: config.scopeCatalog });
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, upstream: { identity, callbackPath }, audit, sqliteFile });
     return { app, store, config, dir };
@@ -328,12 +341,14 @@ export async function buildGatewayExample(
       issuer: mustEnv(env, "CF_ACCESS_ISSUER"),
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, identity, audit, sqliteFile });
     return { app, store, config, dir };
   }
   if (oidcProviderConfigured(env)) {
     const config = configFromEnv(env);
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     const upstream = await createOidcUpstreamFromEnv(env, config, deps.identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
     await ensureStateDir(dir);
@@ -345,10 +360,11 @@ export async function buildGatewayExample(
   }
 
   // ZERO-SETUP: quickstart secrets + console pairing.
-  const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const port = Number(env.PORT ?? 3000);
   const issuer = env.OAUTH_ISSUER ?? `http://localhost:${port}`;
   const resource = env.OAUTH_RESOURCE ?? `${issuer}/mcp`;
+  assertLoopbackStarterBeforeState(issuer, resource);
+  const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer, resource,
     consentSigningSecret: secrets.consentSigningSecret,
@@ -363,6 +379,8 @@ export async function buildGatewayExample(
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
-  const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile });
+  const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl,
+    getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile,
+    acknowledgeUnsafeStatelessDefaults: true });
   return { app, store, config, dir };
 }

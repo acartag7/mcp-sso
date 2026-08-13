@@ -436,6 +436,10 @@ does no token-use-case, store, or audit work; an admitted unknown or
 already-revoked token retains RFC 7009's HTTP 200 existence-hiding behavior.
 Upstream redirect, console pairing, and CIMD keep their separate
 `upstream:<ip>`, `pairing:<ip>`, and `cimd:<ip>` budgets.
+When the same port is supplied to both `Bridge` and an upstream redirect flow,
+the bound boot snapshot retains the source port's identity. The shared CIMD
+resolver therefore charges that counting port once for the request's
+`cimd:<ip>` key, while two genuinely distinct ports both apply.
 The default `noopRateLimit` allows everything (rate-limiting is advisory, not a
 hard gate). A thrown error is treated as **fail-open** (allow) — a rate-limiter
 outage must not lock out all auth; this is defense-in-depth, not a security boundary.
