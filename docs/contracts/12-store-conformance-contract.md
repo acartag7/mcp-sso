@@ -268,6 +268,9 @@ other undersized shape fails boot rather than being silently reinterpreted.
   `expires_at` MUST be a non-null `VARCHAR(24)` or wider, and JTI MUST have a
   full-column single-column PRIMARY or UNIQUE index. Every other unique index
   MUST also contain the full JTI column; otherwise `INSERT IGNORE` could mistake
+  an unrelated collision for replay. The table MUST have no foreign keys:
+  MySQL also downgrades a foreign-key violation under `INSERT IGNORE`, which
+  would make a first use indistinguishable from a duplicate JTI.
   an unrelated constraint collision for replay. `CREATE TABLE IF NOT EXISTS`
   does not repair a pre-created table, and
   `INSERT IGNORE` detects replay only when MySQL enforces uniqueness on the JTI

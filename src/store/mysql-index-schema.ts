@@ -2,6 +2,16 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { StoreInputError } from "../ports/store.ts";
 
 export async function assertConsentJtiUnique(conn: PoolConnection): Promise<void> {
+  const [foreignKeys] = await conn.query<RowDataPacket[]>(
+    `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_consent_jtis'
+       AND REFERENCED_TABLE_NAME IS NOT NULL`,
+  );
+  if (foreignKeys.length > 0) {
+    throw new StoreInputError(
+      "oauth_consent_jtis must not have foreign keys; INSERT IGNORE must mean duplicate JTI only.",
+    );
+  }
   const [columnRows] = await conn.query<RowDataPacket[]>(
     `SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE
      FROM information_schema.COLUMNS

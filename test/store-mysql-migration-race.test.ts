@@ -23,6 +23,7 @@ function racingConnection(options: RaceOptions): {
       if (sql.startsWith("SELECT @@session.sql_mode")) {
         return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       }
+      if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) {
@@ -176,6 +177,7 @@ test("MySQL migration preflights malformed consent uniqueness before any DDL", a
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("information_schema.STATISTICS")) return [[{
         INDEX_NAME: "uq_prefix", NON_UNIQUE: "0", SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: 1,
       }], []];
@@ -185,6 +187,23 @@ test("MySQL migration preflights malformed consent uniqueness before any DDL", a
   } as unknown as PoolConnection;
   await assert.rejects(migrateMysqlStore(connection), /full-column JTI PRIMARY or UNIQUE index/);
   assert.deepEqual(writes, [], "malformed existing schema rejects before CREATE or ALTER");
+});
+
+test("MySQL migration rejects consent foreign keys before any DDL", async () => {
+  const writes: string[] = [];
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("information_schema.KEY_COLUMN_USAGE")) {
+        return [[{ CONSTRAINT_NAME: "fk_consent_jti" }], []];
+      }
+      writes.push(sql);
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /must not have foreign keys/);
+  assert.deepEqual(writes, [], "foreign-key rejection precedes CREATE or ALTER");
 });
 
 test("MySQL migration accepts string zero metadata for a full-column JTI key", async () => {
@@ -238,6 +257,7 @@ test("MySQL uniqueness preflight rejects an unrelated unique constraint", async 
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("information_schema.STATISTICS")) return [[
         { INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null },
         { INDEX_NAME: "uq_expiry", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "expires_at", SUB_PART: null },
@@ -274,6 +294,7 @@ test("MySQL uniqueness preflight rejects undersized consent expiry storage", asy
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [[
         CONSENT_COLUMNS[0], { ...CONSENT_COLUMNS[1], CHARACTER_MAXIMUM_LENGTH: 1 },
       ], []];
