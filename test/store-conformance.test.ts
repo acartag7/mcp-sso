@@ -3,7 +3,7 @@
 // adapter must pass the same suite by importing runStoreConformance.
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,6 +62,38 @@ test("concurrent SQLite first boot shares one initialized binding", async () => 
         });
     })));
     assert.equal(new Set(bindings).size, 1, "every process observes one durable binding");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SQLite initialization waits for a concurrent migration writer", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-lock-"));
+  const file = join(dir, "oauth.sqlite");
+  const holderScript = `
+    import { DatabaseSync } from "node:sqlite";
+    const db = new DatabaseSync(process.argv[1]);
+    db.exec("BEGIN IMMEDIATE");
+    process.stdout.write("locked\\n");
+    setTimeout(() => { db.exec("COMMIT"); db.close(); }, 250);
+  `;
+  try {
+    const initialized = openSqliteStore(file);
+    await initialized.close();
+    const holder = spawn(process.execPath, ["--input-type=module", "--eval", holderScript, file], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await new Promise<void>((resolveP, reject) => {
+      let stderr = "";
+      holder.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+      holder.once("error", reject);
+      holder.once("exit", (code) => reject(new Error(`SQLite lock holder exited ${code}: ${stderr}`)));
+      holder.stdout.setEncoding("utf8").once("data", (chunk) => {
+        if (chunk === "locked\n") resolveP();
+        else reject(new Error(`unexpected SQLite lock-holder output: ${chunk}`));
+      });
+    });
+    const contender = openSqliteStore(file);
+    await contender.close();
+    assert.equal(await new Promise<number | null>((resolveP) => holder.once("exit", resolveP)), 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
