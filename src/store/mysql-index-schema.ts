@@ -2,6 +2,17 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { StoreInputError } from "../ports/store.ts";
 
 export async function assertConsentJtiUnique(conn: PoolConnection): Promise<void> {
+  const [columnRows] = await conn.query<RowDataPacket[]>(
+    `SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_consent_jtis'
+       AND COLUMN_NAME IN ('jti', 'expires_at')`,
+  );
+  const columns = new Map((columnRows as Array<Record<string, unknown>>).map((row) => [
+    String(row.COLUMN_NAME).toLowerCase(), row,
+  ]));
+  assertConsentColumn(columns.get("jti"), "jti", 255);
+  assertConsentColumn(columns.get("expires_at"), "expires_at", 24);
   const [rows] = await conn.query<RowDataPacket[]>(
     `SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, SUB_PART
      FROM information_schema.STATISTICS
@@ -32,5 +43,13 @@ export async function assertConsentJtiUnique(conn: PoolConnection): Promise<void
     throw new StoreInputError(
       "oauth_consent_jtis must have a full-column JTI PRIMARY or UNIQUE index and no competing unique constraint; consent replay detection requires conflicts to mean duplicate JTI.",
     );
+  }
+}
+
+function assertConsentColumn(row: Record<string, unknown> | undefined, name: string, minimum: number): void {
+  if (!row || String(row.DATA_TYPE).toLowerCase() !== "varchar" || row.IS_NULLABLE !== "NO"
+    || !Number.isSafeInteger(Number(row.CHARACTER_MAXIMUM_LENGTH))
+    || Number(row.CHARACTER_MAXIMUM_LENGTH) < minimum) {
+    throw new StoreInputError(`oauth_consent_jtis.${name} must be a non-null VARCHAR(${minimum}) or wider column`);
   }
 }

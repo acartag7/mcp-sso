@@ -8,6 +8,11 @@ interface RaceOptions {
   readonly materializes: boolean;
 }
 
+const CONSENT_COLUMNS = [
+  { COLUMN_NAME: "jti", DATA_TYPE: "varchar", CHARACTER_MAXIMUM_LENGTH: 255, IS_NULLABLE: "NO" },
+  { COLUMN_NAME: "expires_at", DATA_TYPE: "varchar", CHARACTER_MAXIMUM_LENGTH: 24, IS_NULLABLE: "NO" },
+];
+
 function racingConnection(options: RaceOptions): {
   readonly connection: PoolConnection;
   readonly columnReads: () => number;
@@ -18,6 +23,7 @@ function racingConnection(options: RaceOptions): {
       if (sql.startsWith("SELECT @@session.sql_mode")) {
         return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       }
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) {
         if (values?.[0] === "oauth_auth_codes") {
@@ -81,6 +87,7 @@ test("MySQL migration adds nullable resource columns to pre-resource refresh tab
   const connection = {
     query: async (sql: string, values?: unknown[]) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) {
         const key = `${values?.[0]}:${values?.[1]}`;
@@ -117,6 +124,7 @@ test("MySQL subject migration widens only both deployed VARCHAR(255) columns and
   const connection = {
     query: async (sql: string, values?: unknown[]) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
       if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
         return [[{ data_type: "varchar", max_length: widths.get(String(values?.[0])), is_nullable: "NO" }], []];
@@ -148,6 +156,7 @@ test("MySQL subject migration rejects an unexpected undersized shape", async () 
   const connection = {
     query: async (sql: string, values?: unknown[]) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
       if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
         return [[{ data_type: "varchar", max_length: values?.[0] === "oauth_auth_codes" ? 255 : 300, is_nullable: "NO" }], []];
@@ -165,6 +174,7 @@ test("MySQL migration preflights malformed consent uniqueness before any DDL", a
   const connection = {
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.STATISTICS")) return [[{
         INDEX_NAME: "uq_prefix", NON_UNIQUE: "0", SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: 1,
@@ -182,6 +192,7 @@ test("MySQL migration accepts string zero metadata for a full-column JTI key", a
   const connection = {
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.STATISTICS")) {
         statisticsReads += 1;
@@ -202,6 +213,7 @@ test("MySQL uniqueness preflight counts functional parts and normalizes identifi
   const makeConnection = (rows: unknown[]) => ({
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.STATISTICS")) return [rows, []];
       if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
@@ -224,6 +236,7 @@ test("MySQL uniqueness preflight rejects an unrelated unique constraint", async 
   const connection = {
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.STATISTICS")) return [[
         { INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null },
@@ -239,6 +252,7 @@ test("MySQL uniqueness preflight accepts a secondary index containing the full J
   const connection = {
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.STATISTICS")) return [[
         { INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, COLUMN_NAME: "jti", SUB_PART: null },
@@ -253,4 +267,18 @@ test("MySQL uniqueness preflight accepts a secondary index containing the full J
     },
   } as unknown as PoolConnection;
   await migrateMysqlStore(connection);
+});
+
+test("MySQL uniqueness preflight rejects undersized consent expiry storage", async () => {
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [[
+        CONSENT_COLUMNS[0], { ...CONSENT_COLUMNS[1], CHARACTER_MAXIMUM_LENGTH: 1 },
+      ], []];
+      throw new Error(`unexpected query after malformed consent-column preflight: ${sql}`);
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /expires_at must be a non-null VARCHAR\(24\) or wider/);
 });
