@@ -189,7 +189,7 @@ export interface EntraVerifyOptions {
  *  so the full path is testable with a known key — no JWKS fetch. */
 export async function verifyEntraIdToken(token: string, key: EntraVerifyKey, config: EntraConfig, options?: EntraVerifyOptions): Promise<IdentityResult> {
   try {
-    const { payload } = await jwtVerify<EntraPayload>(token, key, { algorithms: ["RS256"], requiredClaims: ["iat", "exp"], currentDate: options?.currentDate });
+    const { payload } = await jwtVerify<EntraPayload>(token, key, { algorithms: ["RS256"], requiredClaims: ["iat"], currentDate: options?.currentDate });
     return validateEntraIdToken(payload, config, options?.expectedNonce);
   } catch (error) {
     return { ok: false, reason: jwtErrorReason(error) };
@@ -224,7 +224,7 @@ export function createEntraIdentity(config: EntraConfig, opts?: { scopeCatalog?:
     async verify(input: unknown, options?: { expectedNonce?: string }): Promise<IdentityResult> {
       if (typeof input !== "string" || !input) return { ok: false, reason: "entra_id_token_missing" };
       try {
-        const { payload } = await jwtVerify<EntraPayload>(input, jwks, { algorithms: ["RS256"], requiredClaims: ["iat", "exp"] });
+        const { payload } = await jwtVerify<EntraPayload>(input, jwks, { algorithms: ["RS256"], requiredClaims: ["iat"] });
         return validateEntraIdToken(payload, config, options?.expectedNonce);
       } catch (error) {
         return { ok: false, reason: jwtErrorReason(error) };
