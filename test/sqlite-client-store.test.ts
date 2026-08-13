@@ -123,6 +123,13 @@ test("SqliteStore rejects user indexes and triggers attached to the client table
   }
 });
 
+test("SqliteStore rejects case-variant client schema collisions before migrations", () => {
+  assertRejectedSchemaIsUnchanged(`CREATE TABLE OAuth_Clients (
+    client_id TEXT PRIMARY KEY NOT NULL,
+    redirect_uris_json TEXT NOT NULL
+  ) STRICT`);
+});
+
 function assertRejectedSchemaIsUnchanged(clientSchema: string): void {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-client-hostile-schema-"));
   const file = join(dir, "oauth.sqlite");

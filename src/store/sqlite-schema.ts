@@ -75,7 +75,7 @@ export function migrateSqliteStore(db: DatabaseSync): void {
 }
 
 function clientSchemaObject(db: DatabaseSync): { type: unknown } | undefined {
-  return db.prepare("SELECT type FROM sqlite_schema WHERE name = 'oauth_clients'").get() as
+  return db.prepare("SELECT type FROM sqlite_schema WHERE name = 'oauth_clients' COLLATE NOCASE").get() as
     { type: unknown } | undefined;
 }
 
@@ -88,10 +88,11 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, definitio
 
 function assertClientTable(db: DatabaseSync): void {
   const row = db.prepare(
-    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_clients'",
+    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_clients' COLLATE NOCASE",
   ).get() as { sql: unknown } | undefined;
   if (row?.sql !== CLIENT_TABLE_SQL) throw new Error("oauth_clients schema is incompatible");
   const attached = db.prepare(`SELECT name FROM sqlite_schema
-    WHERE tbl_name = 'oauth_clients' AND name != 'oauth_clients' AND sql IS NOT NULL`).get();
+    WHERE tbl_name = 'oauth_clients' COLLATE NOCASE
+      AND name != 'oauth_clients' COLLATE NOCASE AND sql IS NOT NULL`).get();
   if (attached) throw new Error("oauth_clients schema is incompatible");
 }
