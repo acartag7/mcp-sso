@@ -297,13 +297,14 @@ decision. Everything else in the pipeline still runs under the flag.
   is NOT fetched and NOT displayed in v0.2 (the draft requires
   prefetch-and-cache IF displayed; we sidestep the second fetch surface).
 - **Named projection (§4.1, implementation pending):** the returned
-  `CimdDocument` exposes only `client_id`, `client_name`, and `redirect_uris`;
-  the parsed source object is not returned for a later spread or merge. Unknown
+  `CimdDocument` exposes only `client_id`, `client_name`, `redirect_uris`, and
+  optional exact `application_type` (`"native"` or `"web"`); the parsed source
+  object is not returned for a later spread or merge. Unknown
   members, including `__proto__` and `constructor`, remain ignored and cannot
   affect an output record's prototype. **Lifecycle note (§17.1.6 decision 1c):**
   the committed `CimdDocument` interface still exposes `raw` until the §4.1
   removal lands; until then S6b MUST project into the distinct `CimdRegistration`
-  named type (`{ client_id, client_name, redirect_uris }`) at the fetch boundary
+  named type (`{ client_id, client_name, redirect_uris, application_type? }`) at the fetch boundary
   **before** any caching or flow-cookie signing — a raw `CimdDocument` is never
   cached, signed, or passed as the `registration` option.
 
@@ -733,12 +734,14 @@ second store is added to enlarge the redirect-mode ceiling).
 
 *1c. Carry the validated registration forward under signature.* Define a distinct
 named projection type **`CimdRegistration = { client_id: string; client_name: string;
-redirect_uris: readonly string[] }`** — `client_name` REQUIRED and non-empty per
+redirect_uris: readonly string[]; application_type?: "native" | "web" }`** —
+`client_name` REQUIRED and non-empty per
 §17.1.3; constructed by explicit named-field projection at the fetch boundary and the
 flow-token-parse boundary; it is NOT the committed `CimdDocument` (which still exposes
 `raw`, `guarded-fetcher.ts`/`document.ts`) — signing `fetchResult.document` directly
 would leak attacker-controlled members into the cookie (§4.1). The flow JWT gains a
-`cimd` claim carrying exactly a `CimdRegistration` (no key material), covered by the
+`cimd` claim carrying exactly a `CimdRegistration` (no key material or unknown
+metadata), covered by the
 existing HS256 signature + single-use jti. At callback, after the flow JWT is
 verified, the orchestrator passes it as a **new named option
 `registration?: CimdRegistration`** on `bridge.handleAuthorize`, threaded
@@ -758,6 +761,8 @@ system).* Split across two seams (GLM): **(i)** `verifyFlowToken`
 `client_id` a primitive string raw-equal to `params.client_id`; `redirect_uris` an
 array length 1..16 of strings; `client_name` a **non-empty string ≤256** (matching
 §17.1.3 — an absent/empty name is a shape a validated document could never produce);
+optional `application_type`, when present, exact `"native"` or `"web"` (unknown,
+blank, null, and every other type reject rather than degrading to exact matching);
 projecting ONLY the named fields into a fresh `CimdRegistration` (never `Object.assign`
 / never reuse the lenient string-only `params` loop). A present-but-malformed claim
 fails cookie verification ⇒ **callback row 3** (`invalid_request`, audit
@@ -2029,7 +2034,7 @@ exactly the `OAUTH_PARAM_KEYS` set (`response_type`, `client_id`,
 `redirect_uri`, `code_challenge`, `code_challenge_method`, `resource`, `scope`,
 `state`; string values only, absent keys omitted), plus (§17.1.6 decision 1c) an
 optional **`cimd`** claim carrying exactly a `CimdRegistration`
-(`{ client_id, client_name, redirect_uris }`) — present ONLY for a CIMD-path
+(`{ client_id, client_name, redirect_uris, application_type? }`) — present ONLY for a CIMD-path
 authorize, absent for opaque clients, covered by the same HS256 signature and
 strict-parsed at callback row 3 (1d). Verified with
 `algorithms: ["HS256"]`, pinned `iss`+`aud`, clock from `ClockPort`.
