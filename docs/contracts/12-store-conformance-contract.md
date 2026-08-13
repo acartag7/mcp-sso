@@ -296,6 +296,18 @@ other undersized shape fails boot rather than being silently reinterpreted.
   Machine rows are rejected before SQL because machine lifecycle mutation and
   its durable audit require the separate atomic `MachineClientStore` contract.
 - `MysqlStore` (`/store/mysql`) — `mysql2` (optional peer dep; pooled). The first
+
+  **Reader map for the MySQL adapter:**
+
+  1. Transactions and row locks preserve single-use OAuth mutations.
+  2. Boot-time schema admission rejects shapes that would change those
+     semantics.
+  3. `READ COMMITTED` avoids the gap-lock pattern documented below.
+  4. Pool sizing and ownership stay with the deployer or caller as specified.
+  5. Subject-width migration preserves the maximum shipped identity key.
+
+  The detailed clauses below remain canonical.
+
   *async/pooled* reference adapter, so it is the binding example of addendum 13
   below: a pooled connection, `beginTransaction`/`commit`/`rollback` behind a
   begun-guard, `release()` in `finally` on every path. Timestamps are stored as

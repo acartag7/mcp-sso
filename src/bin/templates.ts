@@ -205,6 +205,7 @@ MCP server, zero-setup (console pairing: no identity provider, no keys to genera
 ## Run
 
 \`\`\`bash
+# LOCALHOST-ONLY. Do not expose this generated server to the internet.
 npm install
 
 # Terminal 1 — the server (stays foreground):
@@ -219,7 +220,9 @@ claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp
 exact (the versions mcp-sso is tested against); the lockfile fixes the transitive graph.
 
 The server binds loopback (127.0.0.1) by default — the printed pairing code is the
-identity gate, so it must not be exposed to the network. Override with HOST/PORT env.
+identity gate, so it must not be exposed to the network. You may change PORT or select
+another loopback HOST; the server rejects an internet-facing HOST, issuer, or resource
+before it creates persistent state.
 
 ## Production identity provider
 

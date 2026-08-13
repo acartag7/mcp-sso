@@ -10,7 +10,7 @@
 [![node](https://img.shields.io/node/v/mcp-sso)](package.json)
 [![runtime deps](https://img.shields.io/badge/runtime%20deps-1%20(jose)-blue)](docs/dependency-ledger.md)
 
-[Quickstart](#quickstart) · [Client registration](docs/client-registration.md) · [Configuration](docs/configuration.md) · [Machine-to-machine](#machine-to-machine-client_credentials) · [API-key gateway](#api-key-gateway-sso-in-front-of-a-token-only-backend) · [Security](#security) · [Alternatives](#alternatives) · [Roadmap](#roadmap) · [Threat model](docs/threat-model.md)
+[Choose a path](#choose-your-path) · [How it works](#how-mcp-sso-works) · [Client registration](docs/client-registration.md) · [Configuration](docs/configuration.md) · [Machine-to-machine](#machine-to-machine-client_credentials) · [Security](#security) · [Threat model](docs/threat-model.md)
 
 ## The problem
 
@@ -30,25 +30,17 @@ then speaks PKCE and consent to the MCP client while your IdP stays the identity
 source of truth. It mints its **own** audience-bound tokens (each valid only for
 your server). Upstream IdP tokens never pass through.
 
-```mermaid
-sequenceDiagram
-    participant C as MCP client
-    participant B as mcp-sso bridge
-    participant I as Your IdP (Entra / CF Access / OIDC)
-    C->>B: Identify through CIMD or register through DCR
-    C->>B: Start authorization with PKCE
-    B->>I: user signs in at the IdP
-    I-->>B: verified identity (id_token / signed assertion)
-    B-->>C: consent screen, then a bridge-minted token (audience-bound)
-    C->>B: /mcp calls with the bridge token
-    Note over B,I: upstream IdP tokens never pass through —<br/>the bridge mints its own
-```
+## Choose your path
 
-## Quickstart
+### One operator, on one machine
 
-The fastest installed start needs Node 24+, no IdP, and no keys to generate:
+Use this path to connect your own local MCP client to a server on the same
+computer. It uses console pairing and binds to loopback. The generated server
+refuses a non-loopback host, issuer, or resource before it creates persistent
+state.
 
 ```bash
+# LOCALHOST-ONLY. Do not expose this generated server to the internet.
 npx mcp-sso init my-mcp-server
 cd my-mcp-server
 npm install
@@ -58,11 +50,20 @@ claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp
 # → the server prints a one-time code; paste it into the browser, then approve.
 ```
 
-The generated server enables CIMD and persists opaque DCR registrations in its
-SQLite database; the client chooses which registration method it uses. The generated project is the
-zero-setup console-pairing path. To run the repository's
-real-identity-provider example instead, start from an **mcp-sso repository
-checkout** (not the generated `my-mcp-server` directory), copy
+This is the safe quickstart, not a production template. It enables CIMD,
+persists DCR registrations in SQLite, and adds loopback redirect trust
+explicitly instead of receiving it from library defaults. The pairing code is
+the identity check, so keep console output private.
+
+### Internet-facing, with real users
+
+Use a real identity provider, a persistent conforming store, and a real request
+budget. The repository example demonstrates identity-provider wiring; it is not
+a complete production topology because it uses local SQLite and does not wire a
+`RateLimitPort`.
+
+Start from an **mcp-sso repository checkout** (not the generated
+`my-mcp-server` directory), copy
 [`docs/.env.example`](docs/.env.example) to `.env`, configure one of Cloudflare
 Access, Entra ID, Google, or generic OIDC, and explicitly load it when starting
 the env-driven
@@ -79,7 +80,67 @@ node --env-file=.env examples/fastify-sqlite/index.ts
 The examples do not load `.env` implicitly. See the
 [configuration reference](docs/configuration.md), [identity-provider
 guides](docs/identity/README.md), and [client-registration
-guide](docs/client-registration.md).
+guide](docs/client-registration.md). Before exposing the service, follow the
+[deployment guide](docs/gateway-deployment.md), add the Redis rate-limit adapter
+or a trusted rate-limiting proxy, choose SQLite for one host or MySQL for shared
+replicas, and run the [live-verification checklist](docs/live-verification.md).
+
+## How mcp-sso works
+
+Imagine Alice connects an MCP client to `https://mcp.example/mcp`:
+
+1. **The client identifies itself.** It presents an HTTPS Client ID Metadata
+   Document (CIMD), or registers through DCR when it does not support CIMD.
+2. **Alice signs in.** The bridge sends her to the configured identity provider.
+   The provider proves who Alice is; its token stays between the provider and
+   the bridge.
+3. **Alice approves access.** The consent page shows the client, resource, and
+   requested scopes. Approval produces a short-lived, single-use authorization
+   code.
+4. **The client exchanges the code.** The bridge checks PKCE and mints its own
+   access and refresh tokens for exactly `https://mcp.example/mcp`.
+5. **Every MCP call is authenticated.** The resource server verifies the bridge
+   token and its audience. Your MCP handler calls `requireScope` for the scope a
+   tool needs. Refresh-token rotation detects reuse and revokes the token family.
+
+```mermaid
+sequenceDiagram
+    participant C as MCP client
+    participant B as mcp-sso bridge
+    participant I as Identity provider
+    participant S as MCP server
+    C->>B: CIMD identity or DCR registration
+    C->>B: Authorization request with PKCE
+    B->>I: Sign Alice in
+    I-->>B: Verified identity
+    B-->>C: Consent, then one-time code
+    C->>B: Code plus PKCE proof
+    B-->>C: Tokens for mcp.example/mcp
+    C->>S: MCP call with bridge token
+    S->>S: Verify audience and required scope
+```
+
+### What is signed, and what is stored?
+
+| Item | Signed or stored? | Why it exists |
+| --- | --- | --- |
+| Access token | Signed by the bridge; not looked up per call | Carries Alice's subject, scopes, and the one configured resource audience. |
+| Consent and upstream-flow tokens | Signed by the bridge; their one-time identifiers are stored | Carry one in-flight browser flow while the store prevents replay. |
+| Authorization codes and refresh tokens | Only hashes and lifecycle state are stored | A database read cannot reveal the bearer value; the store enforces single use and rotation. |
+| DCR clients | Stored in stored-DCR mode; self-contained in stateless mode | Bind a client identifier to its registered redirect URIs. The generated localhost server uses stored DCR. |
+| Audit events | Sent to the configured audit sink | Record metadata about outcomes, never bearer credentials. Audit delivery is evidence, not an authorization gate. |
+
+Identity answers “who is Alice?” Authorization answers “which scopes may she
+approve?” A **resource** is the exact MCP audience a token is valid for—for
+example, `https://mcp.example/mcp`. v0.3.x protects one resource per bridge;
+deploy separate bridge configurations for separate resources.
+
+Store choice changes deployment shape, not OAuth semantics: memory is for one
+process, SQLite is durable on one host, and MySQL is the shared-store option for
+multiple replicas. All three implement the same store contract. For the exact
+rules, follow [authorization](docs/authorization.md), the
+[store contract](docs/contracts/12-store-conformance-contract.md), and the
+[token contracts](docs/contracts/07-crypto-and-token-contracts.md).
 
 ## What it works with
 

@@ -334,6 +334,12 @@ A stateful getter therefore cannot validate one `clientId` and then project a
 different identity or scope ceiling.
 
 ## 6.5 `IdentityPort` (boundary defined at Phase 2; Cloudflare Access + Entra implementations shipped at Phase 3)
+
+**Reader map.** An identity adapter has three jobs: verify the upstream proof,
+choose one stable subject, and optionally return a scope ceiling. Browser
+redirect adapters additionally own the upstream redirect exchange. The exact
+per-provider requirements and header-mode residuals remain below.
+
 Resolves a **verified subject** from an inbound authorize request. The core's
 `authorize` use-case takes a required `subject: string`; the adapter/composition
 root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
