@@ -32,26 +32,22 @@ export function assertSafeDeploymentCombination(deps: {
   acknowledgeUnsafeStatelessDefaults?: true;
 }, options: { emitAcknowledgementWarning?: boolean } = {}): void {
   if (deps.rateLimit !== undefined) snapshotRateLimit(deps.rateLimit);
+  if (deps.acknowledgeUnsafeStatelessDefaults === true) {
+    if (!isLoopbackUrl(deps.config.issuer) || !isLoopbackUrl(deps.config.resource)) {
+      throw new AuthConfigError("acknowledgeUnsafeStatelessDefaults is restricted to loopback issuer and resource URLs");
+    }
+    if (options.emitAcknowledgementWarning !== false) warnAcknowledgement();
+  }
   const bounded = deps.rateLimit !== undefined && deps.rateLimit !== noopRateLimit;
   if (deps.config.dcr.mode !== "stateless" || bounded) return;
   const localOnly = deps.config.dev?.allowInsecureLocalhost === true
     && isLoopbackUrl(deps.config.issuer) && isLoopbackUrl(deps.config.resource);
-  if (localOnly) {
-    if (deps.acknowledgeUnsafeStatelessDefaults === true
-      && options.emitAcknowledgementWarning !== false) warnAcknowledgement();
-    return;
-  }
+  if (localOnly) return;
   const retainsGenericLoopback = deps.config.redirectAllowlist.some(isGenericLoopbackRedirect);
   const hasApplicationSpecificHttps = !retainsGenericLoopback
     && deps.config.redirectAllowlist.some(isApplicationSpecificHttpsRedirect);
   if (!hasApplicationSpecificHttps) {
     if (deps.acknowledgeUnsafeStatelessDefaults === true) {
-      if (!isLoopbackUrl(deps.config.issuer) || !isLoopbackUrl(deps.config.resource)) {
-        throw new AuthConfigError("acknowledgeUnsafeStatelessDefaults is restricted to loopback issuer and resource URLs");
-      }
-      if (options.emitAcknowledgementWarning !== false) {
-        warnAcknowledgement();
-      }
       return;
     }
     throw new AuthConfigError(

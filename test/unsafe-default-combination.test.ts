@@ -68,16 +68,24 @@ test("the explicit starter acknowledgement warns and permits boot", () => {
 });
 
 test("the starter acknowledgement is restricted to loopback issuer and resource", () => {
+  const clients = { async save() {}, async find() { return null; } };
   for (const overrides of [
     {},
     { issuer: "https://localhost" },
     { resource: "https://localhost/mcp" },
+    { dcr: { mode: "stored" as const, store: clients } },
+    { redirectAllowlist: ["https://client.test/callback"] },
   ]) {
     assert.throws(() => new Bridge({
       config: config(overrides), store: new MemoryStore(), clock, audit,
       acknowledgeUnsafeStatelessDefaults: true,
     }), /restricted to loopback issuer and resource/);
   }
+  assert.throws(() => new Bridge({
+    config: config(), store: new MemoryStore(), clock, audit,
+    rateLimit: { async check() { return true; } },
+    acknowledgeUnsafeStatelessDefaults: true,
+  }), /restricted to loopback issuer and resource/);
 });
 
 test("Bridge boot rejects stateless DCR plus starter-only redirect trust plus no limiter", () => {
