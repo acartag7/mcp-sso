@@ -9,6 +9,7 @@ import {
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
+import { readMysqlStoreInstanceId } from "./mysql-instance.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
   authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
@@ -28,6 +29,11 @@ export class MysqlStore implements StorePort {
   constructor(pool: Pool, ownsPool = false) {
     this.pool = pool;
     this.ownsPool = ownsPool;
+  }
+
+  async getStoreInstanceId(): Promise<string> {
+    this.ensureOpen();
+    return readMysqlStoreInstanceId(this.pool);
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {

@@ -21,6 +21,17 @@ const RESOURCE_A = "https://api-a.test/mcp";
 const RESOURCE_B = "https://api-b.test/mcp";
 
 export function runStoreConformance(label: string, make: () => StorePort): void {
+  test(`${label}: store instance binding is stable for one logical store`, async () => {
+    const store = make();
+    const getStoreInstanceId = store.getStoreInstanceId?.bind(store);
+    assert.ok(getStoreInstanceId);
+    const first = await getStoreInstanceId();
+    const second = await getStoreInstanceId();
+    assert.match(first, /^[A-Za-z0-9_-]{22,128}$/u);
+    assert.equal(second, first);
+    await store.close();
+  });
+
   test(`${label}: auth codes are hashed, single-use, expire`, async () => {
     const store = make();
     const raw = "raw-auth-code-secret";

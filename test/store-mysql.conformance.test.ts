@@ -87,6 +87,17 @@ function make(): StorePort {
 }
 
 if (RUN) {
+  test("MysqlStore: independent connections share one durable store binding", async () => {
+    const first = await createMysqlStore(MYSQL_URL as string);
+    const second = await createMysqlStore(MYSQL_URL as string);
+    try {
+      assert.equal(await first.getStoreInstanceId(), await second.getStoreInstanceId());
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
   test("MysqlStore/MySQL 8.4: migrates VARCHAR(255) subjects and persists max Entra authorization/refresh", async () => {
     await admin!.query("ALTER TABLE oauth_auth_codes MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
     await admin!.query("ALTER TABLE oauth_refresh_tokens MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");

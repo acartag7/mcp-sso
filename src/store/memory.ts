@@ -3,6 +3,7 @@
 // including the rotation backfill (fix #3) and findGrantedScopes derived from
 // active refresh records (no grant table).
 
+import { randomBytes } from "node:crypto";
 import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
@@ -23,6 +24,12 @@ export class MemoryStore implements StorePort {
   private readonly refreshTokens = new Map<string, StoredRefresh>();
   private readonly families = new Map<string, StoredFamily>();
   private readonly consentJtis = new Map<string, string>();
+  private readonly storeInstanceId = randomBytes(18).toString("base64url");
+
+  async getStoreInstanceId(): Promise<string> {
+    this.ensureOpen();
+    return this.storeInstanceId;
+  }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();

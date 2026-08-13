@@ -5,6 +5,16 @@ Every `StorePort` implementation MUST satisfy these invariants — the
 `SqliteStore`, and `MysqlStore`, and any further downstream SQL adapter must pass the same suite. **Fix #3**
 documents the one contract the source left implicit.
 
+Every store also exposes `getStoreInstanceId(): Promise<string>`. The value is
+an opaque base64url identifier with at least 128 bits of randomness. It is stable
+for the lifetime of a `MemoryStore`, across reopening one SQLite file, and across
+all connections/replicas using one MySQL database. Independently created stores
+have different values. Initialization is insert-if-absent and concurrency-safe;
+callers never configure or derive the value from issuer/signing material. A
+custom store without this capability is rejected when the authorization use-case
+is constructed. This binding prevents one consent token from being redeemed in
+two replicas that accidentally share issuer and signing secrets but not state.
+
 ## 12.1 Records (secrets are SHA-256 hex digests; timestamps are UTC ISO 8601 with EXACTLY 3 ms digits)
 ```ts
 interface AuthCodeRecord {

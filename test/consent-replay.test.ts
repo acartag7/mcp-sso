@@ -14,6 +14,7 @@ import type { ClientRegistration, ClientStore } from "../src/ports/client-store.
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { SaveAuthCodeInput } from "../src/ports/store.ts";
 import { openSqliteStore, type SqliteStore } from "../src/store/sqlite.ts";
+import { MemoryStore } from "../src/store/memory.ts";
 
 const START_MS = Date.parse("2026-07-03T12:00:00.000Z");
 const ISSUER = "https://auth.test";
@@ -153,6 +154,50 @@ test("direct consent replay stays rejected through signed exp after shorter-TTL 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("a consent token minted by one store cannot be redeemed by a split-brain replica", async () => {
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  const firstStore = new MemoryStore();
+  const secondStore = new MemoryStore();
+  try {
+    const first = new OAuthAuthorizationUseCase({ config: makeConfig(600), store: firstStore, clock, audit });
+    const second = new OAuthAuthorizationUseCase({ config: makeConfig(600), store: secondStore, clock, audit });
+    const consentToken = await prepareConsent(first);
+    const accepted = await first.approve({ consentToken, approved: true, origin: ISSUER });
+    assert.ok(accepted.code, "the minting store accepts the adjacent valid approval");
+    await assert.rejects(
+      second.approve({ consentToken, approved: true, origin: ISSUER }),
+      (error: unknown) => error instanceof OAuthError && error.code === "invalid_consent",
+    );
+    assert.equal(
+      audit.events.filter((event) => event.event === "oauth.authorize.approve" && event.status === "success").length,
+      1,
+      "the independent store emits no second success",
+    );
+  } finally {
+    await firstStore.close();
+    await secondStore.close();
+  }
+});
+
+test("authorization construction rejects stores without a valid instance binding", async () => {
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  const missingStore = new MemoryStore();
+  const missing = missingStore as unknown as Omit<MemoryStore, "getStoreInstanceId">;
+  Object.defineProperty(missing, "getStoreInstanceId", { value: undefined });
+  assert.throws(
+    () => new OAuthAuthorizationUseCase({ config: makeConfig(600), store: missing, clock, audit }),
+    /getStoreInstanceId is required/,
+  );
+  const malformed = new MemoryStore();
+  malformed.getStoreInstanceId = async () => "not base64url!";
+  const auth = new OAuthAuthorizationUseCase({ config: makeConfig(600), store: malformed, clock, audit });
+  await assert.rejects(prepareConsent(auth), /store instance id must be 22-128 base64url characters/);
+  await missingStore.close();
+  await malformed.close();
 });
 
 test("approval delayed across signed exp cannot race a sweep into a second code", async () => {

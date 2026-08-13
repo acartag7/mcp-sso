@@ -3,6 +3,7 @@
 // suite). All secrets are SHA-256 digests; there is NO grant table (findGrantedScopes
 // queries the refresh-token tables directly).
 
+import { randomBytes } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 const CLIENT_TABLE_SQL = `CREATE TABLE oauth_clients (
@@ -55,6 +56,10 @@ const MIGRATIONS = [
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS idx_oauth_consent_jtis_expires_at ON oauth_consent_jtis (expires_at)`,
   CLIENT_TABLE_SQL.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"),
+  `CREATE TABLE IF NOT EXISTS oauth_store_metadata (
+    singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+    instance_id TEXT UNIQUE NOT NULL
+  ) STRICT`,
 ];
 
 export function migrateSqliteStore(db: DatabaseSync): void {
@@ -66,6 +71,9 @@ export function migrateSqliteStore(db: DatabaseSync): void {
   for (const migration of MIGRATIONS) {
     db.exec(migration);
   }
+  db.prepare(`INSERT OR IGNORE INTO oauth_store_metadata (singleton, instance_id) VALUES (1, ?)`).run(
+    randomBytes(18).toString("base64url"),
+  );
   ensureColumn(db, "oauth_auth_codes", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_token_families", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_tokens", "grant_generation", "INTEGER");

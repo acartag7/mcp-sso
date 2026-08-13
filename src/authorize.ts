@@ -7,8 +7,10 @@
 // resolution boundaries (decision 2): it happens inside `prepare`'s
 // pre-validation, and every failure maps to the anti-oracle generic there.
 import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
-import type { AuditPort } from "./ports/audit.ts";
 import type { StorePort } from "./ports/store.ts";
+import type { AuditPort } from "./ports/audit.ts";
+import { assertStoreInstanceCapability, storeInstanceId } from "./store-instance.ts";
+import { bindConsentStore } from "./consent-store-binding.ts";
 import type { BridgeConfig } from "./config.ts";
 import type { ConsentRequestClaims } from "./crypto.ts";
 import { OAuthError, withRedirect } from "./errors.ts";
@@ -76,15 +78,10 @@ export interface PreparedConsent extends ConsentRequestClaims {
 export interface ApproveInput {
   consentToken?: string;
   approved?: boolean;
-  /** Required Origin for the CSRF check. */
-  origin?: string;
+  /** Required Origin for the CSRF check. */ origin?: string;
 }
 
-export interface ApproveResult {
-  redirectTo: string;
-  code?: string;
-  state?: string;
-}
+export interface ApproveResult { redirectTo: string; code?: string; state?: string; }
 
 const AUDIT_PREPARE = "oauth.authorize.prepare";
 const AUDIT_APPROVE = "oauth.authorize.approve";
@@ -102,6 +99,8 @@ export class OAuthAuthorizationUseCase {
     this.clock = deps.clock;
     this.audit = deps.audit;
     this.cimd = deps.cimd;
+    assertStoreInstanceCapability(this.store);
+    bindConsentStore(this.config, this.store);
     assertStoredDcrGenerationStore(this.config, this.store);
   }
 
@@ -158,6 +157,7 @@ export class OAuthAuthorizationUseCase {
         claims = {
           clientId, redirectUri, resource, scopes, codeChallenge, codeChallengeMethod: "S256",
           state, subject: input.subject, allowedScopes: ceiling,
+          storeInstanceId: await storeInstanceId(this.store),
           // Provenance for THIS flow only (decision 3): a genuinely-validated
           // CIMD registration — its own fetch/cache hit, or the carried one.
           ...(resolved.registration ? { cimdVerified: true as const } : {}),
@@ -195,6 +195,7 @@ export class OAuthAuthorizationUseCase {
       const token = requiredStr(input.consentToken, "consent_token");
       const consent = await verifyConsentToken(token, this.config, operationClock);
       if (consent.resource !== this.config.resource) throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
+      if (consent.storeInstanceId !== await storeInstanceId(this.store)) throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
       // Scheme/claim gate runs before Deny, jti consume, or storage (§17.1.6 decision 3).
       assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
       assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard

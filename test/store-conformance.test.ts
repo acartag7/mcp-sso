@@ -17,6 +17,38 @@ import { runStoreConformance } from "./lib/store-conformance.ts";
 runStoreConformance("MemoryStore", () => new MemoryStore());
 runStoreConformance("SqliteStore", () => openSqliteStore(":memory:"));
 
+test("independent MemoryStore instances have distinct consent bindings", async () => {
+  const first = new MemoryStore();
+  const second = new MemoryStore();
+  assert.notEqual(await first.getStoreInstanceId(), await second.getStoreInstanceId());
+  await first.close();
+  await second.close();
+});
+
+test("one SQLite file preserves its consent binding across reopen", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const first = openSqliteStore(file);
+    const binding = await first.getStoreInstanceId();
+    await first.close();
+    const reopened = openSqliteStore(file);
+    assert.equal(await reopened.getStoreInstanceId(), binding);
+    await reopened.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("independent SQLite files have distinct consent bindings", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-distinct-"));
+  try {
+    const first = openSqliteStore(join(dir, "first.sqlite"));
+    const second = openSqliteStore(join(dir, "second.sqlite"));
+    assert.notEqual(await first.getStoreInstanceId(), await second.getStoreInstanceId());
+    await first.close();
+    await second.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("SqliteStore (file): persists no raw secrets and only OAuth tables", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-idp-store-"));
   const file = join(dir, "oauth.sqlite");
@@ -44,7 +76,7 @@ test("SqliteStore (file): persists no raw secrets and only OAuth tables", async 
   const tables = db.prepare(`SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name`).all()
     .map((r) => String((r as { name: unknown }).name));
   db.close();
-  assert.deepEqual(tables, ["oauth_auth_codes", "oauth_clients", "oauth_consent_jtis", "oauth_refresh_token_families", "oauth_refresh_tokens"]);
+  assert.deepEqual(tables, ["oauth_auth_codes", "oauth_clients", "oauth_consent_jtis", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_store_metadata"]);
   assert.equal(tables.some((n) => /content|body|cache|page/i.test(n)), false);
   rmSync(dir, { recursive: true, force: true });
 });

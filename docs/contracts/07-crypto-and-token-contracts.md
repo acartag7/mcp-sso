@@ -16,12 +16,24 @@ identity ceiling — §17.4; present only when the resolved identity supplied an
 rather than client-resupplied input), `cimd_verified`? (§17.1.6 decision 3 —
 boolean `true` only, minted ONLY on genuine CIMD validation; OMITTED when
 absent/false; any present non-`true` value fails verification), `jti` (random,
-single-use), `iat`, `exp`. Verified with `algorithms: ["HS256"]`, pinned iss+aud, clock from
+single-use), `store_instance` (the opaque §12 store binding), `iat`, `exp`.
+Verified with `algorithms: ["HS256"]`, pinned iss+aud, clock from
 `ClockPort`. **Single-use:** the `jti` is consumed atomically on approve (§12
 `consumeConsentJti`); a replay is rejected with `invalid_grant`.
 Under the 0.3.0 §6.1 amendment, `verifyConsentToken` takes one
 canonical snapshot before `jwtVerify`; snapshot failure remains
 the existing `invalid_consent` error.
+
+**Replica/store binding.** Before signing a consent JWT, `prepare` reads the
+store's §12 opaque instance binding and includes it as `store_instance`.
+`approve` requires exact equality with a fresh read from its store before denial,
+JTI consumption, authorization-code generation/storage, or success audit. A
+consent token minted against an independent store therefore fails with direct
+`invalid_consent` even when issuer and signing secrets are shared. Replicas over
+the same MySQL database read the same durable binding and remain compatible.
+SQLite preserves the binding when the same file is reopened; `MemoryStore` keeps
+one binding only for that object/process lifetime. Existing consent tokens lack
+the claim and are invalidated on upgrade; users restart the authorization flow.
 
 ### 0.3.3 consent-JTI lifetime correction
 
@@ -66,7 +78,7 @@ and does not consume the JTI.
 | Behavior-table field | Binding rule and proof |
 | --- | --- |
 | Authority | The verified consent JWT's signed `exp`; never the approval-time `consentTokenTtlSeconds`, authorization-code TTL, sweep time, or adapter default. |
-| Capture point | `verifyConsentToken`, after signature/algorithm/issuer/audience/time verification, parses the same verified payload and returns one canonical signed-expiry string through an additive return-only intersection. `ConsentRequestClaims` remains the unchanged signing-input shape. No consumer reparses the raw JWT. |
+| Capture point | `verifyConsentToken`, after signature/algorithm/issuer/audience/time verification, parses the same verified payload and returns one canonical signed-expiry string through an additive return-only intersection. `ConsentRequestClaims` adds only the optional internal `storeInstanceId` signing input. No consumer reparses the raw JWT. |
 | Consumers | Direct consent approval passes the returned expiry to `StorePort.consumeConsentJti`. The upstream-flow sibling continues to pass its independently verified flow JWT `exp`; every `consumeConsentJti` production caller is covered. |
 | Side-effect order | Origin, JWT, resource, CIMD/redirect, approval, and scope gates precede JTI consumption. Successful JTI consumption is followed by a fresh commit snapshot and signed-expiry recheck; both precede code generation, `saveAuthCode`, redirect construction, and success audit. An extant-tombstone replay stops at JTI consumption. A sweep/consume race stops at the commit recheck. |
 | Lifecycle: same configuration | First valid approval succeeds once; immediate or later replay before signed `exp` fails. |
@@ -81,9 +93,11 @@ and does not consume the JTI.
 | Semantic mutant | Restoring `approval snapshot + current consentTokenTtlSeconds` at the enforcement point makes the restart/sweep regression fail. |
 | Wiring mutant | Returning the correct expiry from verification but passing a current-TTL-derived value at the actual approval call site makes the same regression fail; helper-only tests are insufficient. |
 
-Compatibility and migration: the StorePort signature and SQL schemas are
-unchanged (`jti`, `expires_at` already exist). Existing correctly retained rows
-need no migration. A tombstone already swept by vulnerable code cannot be
+Compatibility and migration: this release adds the optional TypeScript
+`getStoreInstanceId` capability and one metadata table to each SQL adapter;
+authorization construction requires the capability at runtime. Existing OAuth
+rows need no rewrite, but outstanding pre-upgrade consent JWTs lack the binding
+and are invalidated. A tombstone already swept by vulnerable code cannot be
 reconstructed because the store no longer has the original JWT. Operators that
 already shortened the consent TTL under vulnerable code, ran shared-store
 replicas with inconsistent consent TTLs, or cannot exclude an intervening sweep

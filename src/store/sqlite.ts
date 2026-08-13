@@ -6,7 +6,7 @@ import type {
 } from "../ports/store.ts";
 import type { ClientRegistration, ClientStore } from "../ports/client-store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
@@ -40,6 +40,13 @@ export class SqliteStore implements StorePort, ClientStore {
   async find(clientId: string): Promise<ClientRegistration | null> {
     this.ensureOpen();
     return findSqliteClient(this.db, clientId);
+  }
+
+  async getStoreInstanceId(): Promise<string> {
+    this.ensureOpen();
+    const row = this.db.prepare(`SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1`).get() as { instance_id?: unknown } | undefined;
+    assertStoreInstanceId(row?.instance_id);
+    return row.instance_id;
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {

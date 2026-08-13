@@ -1,5 +1,4 @@
 // Crypto and token contracts (§7): pinned algorithms, separate keys, cached imports.
-
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { SignJWT, importJWK, jwtVerify, type JWK, type JWTPayload } from "jose";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
@@ -7,7 +6,7 @@ import type { BridgeConfig } from "./config.ts";
 import { scopeString, type CredentialKind } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { consentSecret, signKey, verifyKey } from "./crypto-keys.ts";
-import { numericDateIso } from "./numeric-date.ts";
+import { numericDateIso } from "./numeric-date.ts"; import { consentStoreInstanceId } from "./consent-store-binding.ts";
 
 const CONSENT_AUDIENCE = "mcp-sso/consent";
 const CONSENT_TYP = "mcp-sso-consent";
@@ -22,8 +21,7 @@ export interface ConsentRequestClaims {
   codeChallenge: string;
   codeChallengeMethod: "S256";
   state?: string;
-  /** Verified subject (resolved by the IdentityPort before prepare()). */
-  subject: string;
+  /** Verified subject (resolved by the IdentityPort before prepare()). */ subject: string;
   /** Authorization ceiling (contracts §17.4). Carried in the consent JWT as the
    *  `allowed_scopes` claim so `approve` re-intersects from the VERIFIED token,
    *  not from client-resupplied input. Undefined when the identity port set no
@@ -34,15 +32,14 @@ export interface ConsentRequestClaims {
    *  genuine validation this flow. OMITTED when absent/false — never
    *  `cimd_verified: false`. It is NEVER a scope-accumulation entitlement. */
   cimdVerified?: true;
+  storeInstanceId?: string; // Opaque logical-store binding; authorization preparation supplies it.
 }
 export interface AccessTokenClaims {
-  subject: string;
-  clientId: string;
+  subject: string; clientId: string;
   scopes: string[]; machine?: boolean; // client_credentials grant ⇒ mints the gty marker claim (§17.2)
 }
 export interface VerifiedAccessToken {
-  subject: string;
-  clientId: string;
+  subject: string; clientId: string;
   scopes: string[];
   credentialKind: CredentialKind;
 }
@@ -92,6 +89,7 @@ export function pkceChallenge(verifier: string): string {
 
 export async function signConsentToken(claims: ConsentRequestClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
   const now = nowSeconds(clock);
+  const storeInstanceId = claims.storeInstanceId ?? await consentStoreInstanceId(config);
   const token = await new SignJWT({
     typ: CONSENT_TYP,
     jti: generateConsentJti(),
@@ -103,6 +101,7 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
     code_challenge_method: claims.codeChallengeMethod,
     state: claims.state,
     allowed_scopes: claims.allowedScopes === undefined ? undefined : scopeString(claims.allowedScopes),
+    store_instance: storeInstanceId,
     ...(claims.cimdVerified === true ? { cimd_verified: true } : {}),
   }).setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(config.issuer)
@@ -194,6 +193,7 @@ function consentClaims(payload: JWTPayload): ConsentRequestClaims {
     state: stringClaim(payload.state),
     subject: requiredString(payload.sub, "sub"),
     allowedScopes,
+    storeInstanceId: stringClaim(payload.store_instance),
     ...cimdVerifiedClaim(payload),
   };
 }
