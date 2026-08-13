@@ -106,6 +106,43 @@ test("MySQL migration propagates every non-duplicate ALTER failure", async () =>
   assert.equal(raced.columnReads(), 1, "unrelated errors are not reclassified");
 });
 
+test("MySQL migration initializes metadata before unrelated OAuth DDL", async () => {
+  const writes: string[] = [];
+  let initialized = false;
+  const connection = {
+    query: async (sql: string, values?: unknown[]) => {
+      const metadata = metadataQuery(sql); if (metadata) return metadata;
+      if (sql.startsWith("SELECT @@session.sql_mode")) {
+        return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      }
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) {
+        return [values?.[0] === "oauth_store_metadata" ? [{ 1: 1 }] : [], []];
+      }
+      if (sql.startsWith("INSERT IGNORE INTO oauth_store_metadata")) {
+        writes.push(sql); initialized = true; return [{ affectedRows: 1 }, []];
+      }
+      if (sql.startsWith("SELECT instance_id FROM oauth_store_metadata")) {
+        return [initialized ? STORE_INSTANCE_ROWS : [], []];
+      }
+      if (sql.startsWith("CREATE TABLE")) { writes.push(sql); return [[], []]; }
+      if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
+        return [[{ data_type: "varchar", max_length: 384, is_nullable: "NO" }], []];
+      }
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
+      if (sql.includes("information_schema.STATISTICS")) return [[{
+        INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null,
+      }], []];
+      if (sql.includes("COLLATION_NAME") || sql.includes("ENGINE")) return [[], []];
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await migrateMysqlStore(connection);
+  assert.ok(writes[0]?.includes("oauth_store_metadata"));
+  assert.ok(writes[1]?.startsWith("INSERT IGNORE INTO oauth_store_metadata"));
+  assert.ok(writes[2]?.startsWith("CREATE TABLE IF NOT EXISTS oauth_auth_codes"));
+});
+
 test("MySQL migration adds nullable resource columns to pre-resource refresh tables", async () => {
   const alters: string[] = [];
   const seen = new Set<string>();
