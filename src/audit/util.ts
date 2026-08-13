@@ -58,6 +58,73 @@ export function safeErrorMessage(error: unknown): string {
   }
 }
 
+/** Format a caught error for stderr while also scrubbing exact configured
+ *  secrets that may be too short or unusually shaped for SECRET_PATTERNS.
+ *  Exact redaction happens before the single-line length bound. NEVER throws. */
+export function safeErrorForStderr(error: unknown, exactSecrets: readonly string[]): string {
+  const secrets = [...new Set(exactSecrets.flatMap((value) => typeof value === "string"
+    ? [value, value.replace(STDERR_LINE_BREAKS, " ")] : []))]
+    .filter((value) => value.length > 0)
+    .sort((a, b) => b.length - a.length);
+  try {
+    const e = error as { message?: unknown; name?: unknown } | null;
+    let message = String(e?.message ?? error ?? "unknown error");
+    const name = typeof e?.name === "string" ? e.name : "";
+    if (name && name !== "Error" && !message.startsWith(name)) message = `${name}: ${message}`;
+    if (!message) message = "unknown error";
+    message = redactSecretsAndExact(message, secrets);
+    return removeExactSecrets(redactForStderr(message), secrets);
+  } catch {
+    return removeExactSecrets("diagnostic unavailable", secrets);
+  }
+}
+
+/** Remove the union of generic-secret and exact-secret spans from the original
+ *  string. Computing both classes before changing any bytes prevents a short
+ *  configured secret from splitting a larger credential before the generic
+ *  matcher can see it. */
+function redactSecretsAndExact(input: string, secrets: readonly string[]): string {
+  if (input.length > 8192) return "diagnostic unavailable";
+  const source = input.replace(STDERR_LINE_BREAKS, " ").slice(0, 8192);
+  const covered = new Uint8Array(source.length);
+  const cover = (start: number, end: number): void => {
+    covered.fill(1, start, Math.min(end, source.length));
+  };
+  for (const pattern of SECRET_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of source.matchAll(pattern)) {
+      const start = match.index;
+      cover(start, start + match[0].length);
+    }
+  }
+  for (const secret of secrets) {
+    let start = 0;
+    while ((start = source.indexOf(secret, start)) >= 0) {
+      cover(start, start + secret.length);
+      start += secret.length;
+    }
+    if (secret.length > source.length) {
+      for (let position = 0; position < Math.min(200, source.length); position += 1) {
+        if (input.startsWith(secret, position)) cover(position, source.length);
+      }
+    }
+  }
+  let output = "";
+  for (let index = 0; index < source.length; index += 1) {
+    if (covered[index] === 0) output += source[index];
+  }
+  return output;
+}
+
+function removeExactSecrets(input: string, secrets: readonly string[]): string {
+  let output = input;
+  while (true) {
+    const before = output;
+    for (const secret of secrets) output = output.split(secret).join("");
+    if (output === before) return output;
+  }
+}
+
 // Line-breaking + terminal-control chars stripped from stderr diagnostics so an
 // attacker-chosen client_id / provider text can't forge log lines or inject ANSI
 // escapes: C0 (\x00-\x1f), DEL+C1 (\x7f-\x9f), and the Unicode line/paragraph

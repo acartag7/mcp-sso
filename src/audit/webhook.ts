@@ -33,7 +33,7 @@
 // (the codebase injects Redis/Pool clients the same way), not test-only surface.
 
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
-import { safeErrorMessage } from "./util.ts";
+import { safeErrorForStderr } from "./util.ts";
 
 export interface WebhookAuditOptions {
   /** Per-request deadline. Default 5000 ms (§17.7). */
@@ -58,6 +58,7 @@ export class WebhookAudit implements AuditPort {
    *  `_` before `token` defeats the `\b` boundary), so the configured values are
    *  removed precisely here. (Userinfo is rejected outright at construction.) */
   private readonly querySecrets: string[];
+  private readonly configuredSecrets: string[];
 
   constructor(url: string, options: WebhookAuditOptions = {}) {
     // RAW prefix check FIRST — fail-closed before any URL parsing. Rejects
@@ -85,9 +86,25 @@ export class WebhookAudit implements AuditPort {
     }
     this.url = url;
     this.host = parsed.host;
-    this.querySecrets = collectQuerySecrets(parsed);
+    this.querySecrets = collectQuerySecrets(url, parsed);
     this.timeoutMs = options.timeoutMs ?? 5000;
-    this.headers = { "Content-Type": "application/json", ...options.headers };
+    if (options.headers !== undefined && (typeof options.headers !== "object" || options.headers === null || Array.isArray(options.headers)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(options.headers))
+      || Object.values(options.headers).some((value) => typeof value !== "string"))) {
+      throw new Error("WebhookAudit: headers must be a string-valued object");
+    }
+    const originalHeaderValues = Object.values(options.headers ?? {});
+    const normalizedHeaderValues = originalHeaderValues.flatMap((value) => {
+      const normalized = new Headers({ value }).get("value");
+      return normalized === null ? [] : [normalized];
+    });
+    this.headers = Object.fromEntries(new Headers({ "Content-Type": "application/json", ...options.headers }).entries());
+    this.configuredSecrets = [
+      ...originalHeaderValues,
+      ...normalizedHeaderValues,
+      ...Object.values(this.headers),
+      ...this.querySecrets,
+    ];
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
   }
 
@@ -103,16 +120,13 @@ export class WebhookAudit implements AuditPort {
       if (!response.ok) {
         // Non-2xx is a failed delivery — at-most-once means we do NOT retry.
         // Surface only the status + host; never the body or headers.
-        console.error(
-          `[mcp-sso] audit webhook non-2xx (${response.status}) from ${this.host}`,
-        );
+        this.writeDiagnostic(`[mcp-sso] audit webhook non-2xx (${response.status}) from ${this.host}`);
       }
     } catch (error) {
       // Timeout, DNS, connection refused, TLS — all fail-open. The error message
       // is redacted (and known header values scrubbed) before reaching stderr.
-      console.error(
-        `[mcp-sso] audit webhook write failed to ${this.host}: ${this.safeError(error)}`,
-      );
+      const errorDiagnostic = safeErrorForStderr(error, this.configuredSecrets);
+      this.writeDiagnostic(`[mcp-sso] audit webhook write failed to ${this.host}: ${errorDiagnostic}`);
     }
   }
 
@@ -120,32 +134,53 @@ export class WebhookAudit implements AuditPort {
    *  deployer's own header values (e.g. a SIEM bearer token) and configured
    *  query-string params in case the regex redactor missed a non-standard
    *  format. Never throws. */
-  private safeError(error: unknown): string {
-    let msg = safeErrorMessage(error);
-    for (const value of Object.values(this.headers)) {
-      if (typeof value === "string" && value.length >= 8) {
-        msg = msg.split(value).join("[redacted]");
-      }
-    }
-    for (const token of this.querySecrets) {
-      msg = msg.split(token).join("[redacted]");
-    }
-    return msg;
+  private writeDiagnostic(line: string): void {
+    console.error(safeErrorForStderr(line, this.configuredSecrets));
   }
 }
 
 /** Tokens scrubbed from transport diagnostics: the full query string, each
  *  `key=value` pair (handles a pair echoed without the leading `?`), and any
- *  non-trivial value (handles a value echoed alone). Short tokens (<4 chars)
- *  are skipped to avoid mangling diagnostics. */
-function collectQuerySecrets(url: URL): string[] {
+ *  non-empty value (handles a value echoed alone). Bare query components are
+ *  secrets too. Length never weakens exact configured-value redaction. */
+function collectQuerySecrets(rawUrl: string, url: URL): string[] {
   if (!url.search) return [];
-  const tokens: string[] = [url.search];
-  for (const [k, v] of url.searchParams.entries()) {
-    tokens.push(`${k}=${v}`);
-    if (v.length >= 8) tokens.push(v);
+  const rawQuery = rawUrl.includes("?") ? rawUrl.slice(rawUrl.indexOf("?")) : "";
+  const serialized = url.searchParams.toString();
+  const tokens: string[] = [
+    rawQuery, rawQuery.replace(/[\x00-\x1f\x7f-\x9f]/g, " "),
+    url.search, serialized, serialized ? `?${serialized}` : "",
+  ];
+  for (const component of rawQuery.slice(1).split("&")) {
+    if (component.length === 0) continue;
+    tokens.push(component, component.replace(/[\x00-\x1f\x7f-\x9f]/g, " "));
+    const separator = component.indexOf("=");
+    if (separator >= 0 && separator < component.length - 1) {
+      const value = component.slice(separator + 1);
+      tokens.push(value, value.replace(/[\x00-\x1f\x7f-\x9f]/g, " "));
+    }
   }
-  return tokens.filter((t) => t.length >= 4);
+  for (const component of url.search.slice(1).split("&")) {
+    if (component.length > 0) {
+      tokens.push(component);
+      const separator = component.indexOf("=");
+      if (separator >= 0 && separator < component.length - 1) tokens.push(component.slice(separator + 1));
+    }
+  }
+  for (const [k, v] of url.searchParams.entries()) {
+    const pair = new URLSearchParams([[k, v]]).toString();
+    const encodedValue = pair.slice(pair.indexOf("=") + 1);
+    tokens.push(
+      `${k}=${v}`,
+      pair,
+      `${encodeURIComponent(k)}=${encodeURIComponent(v)}`,
+      encodedValue,
+      encodeURIComponent(v),
+    );
+    if (v.length > 0) tokens.push(v);
+    else if (k.length > 0) tokens.push(k);
+  }
+  return [...new Set(tokens.filter((token) => token.length > 0))];
 }
 
 export function createWebhookAudit(url: string, options?: WebhookAuditOptions): WebhookAudit {

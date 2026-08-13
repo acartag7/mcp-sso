@@ -88,6 +88,78 @@ test("WebhookAudit: constructor rejects userinfo (user:pass@) — credentials be
   }
 });
 
+test("WebhookAudit: constructor rejects malformed header configuration", () => {
+  for (const headers of [null, [], { X: null }, { X: 1 }, "X: value", new Headers({ X: "value" }), new Map([["X", "value"]])]) {
+    assert.throws(
+      () => new WebhookAudit("https://siem.test/ingest", { headers: headers as never }),
+      /headers must be a string-valued object/,
+    );
+  }
+});
+
+test("WebhookAudit: decoded control-bearing query values redact after line normalization", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?sig=ab%0Acd", {
+    fetchImpl: (async () => { throw new Error("transport reflected ab\ncd"); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("ab cd"), false);
+  assert.equal(stderr.includes("ab"), false);
+  assert.equal(stderr.includes("cd"), false);
+});
+
+test("WebhookAudit: raw control-bearing query components redact before URL normalization", async () => {
+  const raw = "sig=ab\ncd";
+  const sink = new WebhookAudit(`https://siem.test/ingest?${raw}`, {
+    fetchImpl: (async () => { throw new Error(`transport reflected ${raw}`); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("ab cd"), false);
+  assert.equal(stderr.includes("abcd"), false);
+});
+
+test("WebhookAudit: serialized query parameter forms remain secrets", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?sig=ab%20cd", {
+    fetchImpl: (async (url) => {
+      throw new Error(`transport serialized ${new URL(String(url)).searchParams.toString()}`);
+    }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  assert.equal(captured.messages.join("\n").includes("sig=ab+cd"), false);
+});
+
+test("WebhookAudit: encodeURIComponent query forms remain secrets", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?sig=ab+cd", {
+    fetchImpl: (async (url) => {
+      const value = new URL(String(url)).searchParams.get("sig")!;
+      throw new Error(`transport encoded sig=${encodeURIComponent(value)}`);
+    }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  assert.equal(captured.messages.join("\n").includes("sig=ab%20cd"), false);
+});
+
 test("WebhookAudit: per-event POST is application/json with merged headers", async () => {
   const state = { calls: [] as Recorded[] };
   const sink = new WebhookAudit("https://siem.test/ingest", {
@@ -100,9 +172,9 @@ test("WebhookAudit: per-event POST is application/json with merged headers", asy
   const init = state.calls[0]!.init;
   assert.equal(init.method, "POST");
   assert.equal(init.redirect, "manual"); // §17.7: redirects not followed
-  const headers = init.headers as Record<string, string>;
-  assert.equal(headers["Content-Type"], "application/json");
-  assert.equal(headers["Authorization"], "Bearer siem-secret-token");
+  const headers = new Headers(init.headers);
+  assert.equal(headers.get("content-type"), "application/json");
+  assert.equal(headers.get("authorization"), "Bearer siem-secret-token");
   assert.deepEqual(JSON.parse(init.body as string), { ...baseEvent });
 });
 
@@ -224,6 +296,101 @@ test("WebhookAudit: a fetch error echoing secrets is redacted from stderr (diagn
   assert.ok(stderr.includes("upstream said"), "a benign diagnostic was preserved");
 });
 
+test("WebhookAudit: a short configured secret cannot split a larger bearer credential", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?padding=-", {
+    fetchImpl: (async () => { throw new Error("transport reflected Bearer abc-def details"); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("abc"), false);
+  assert.equal(stderr.includes("def"), false);
+  assert.ok(stderr.includes("transport reflected"));
+});
+
+test("WebhookAudit: non-ASCII whitespace configured values remain secrets", async () => {
+  const secret = "\u00a0";
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    headers: { "X-Hook-Key": secret },
+    fetchImpl: (async () => { throw new Error(`transport reflected ${secret} value`); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  assert.equal(captured.messages.join("\n").includes(secret), false);
+});
+
+test("WebhookAudit: case-duplicate header values remain individually secret", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    headers: { "X-Hook-Key": "short-one", "x-hook-key": "short-two" },
+    fetchImpl: (async () => { throw new Error("transport parsed short-one and short-two"); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("short-one"), false);
+  assert.equal(stderr.includes("short-two"), false);
+});
+
+test("WebhookAudit: case-duplicate headers retain each normalized transmitted secret", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    headers: { "X-Hook-Key": " short-one ", "x-hook-key": " short-two " },
+    fetchImpl: (async () => { throw new Error("transport parsed short-one,short-two"); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("short-one"), false);
+  assert.equal(stderr.includes("short-two"), false);
+});
+
+test("WebhookAudit: hostile large diagnostics fall back before exact-secret processing", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?padding=a", {
+    fetchImpl: (async () => { throw new Error("a".repeat(3_000_000)); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("a".repeat(100)), false);
+  assert.ok(stderr.length <= 200);
+});
+
+test("WebhookAudit: control normalization cannot expose a secret across the processing cap", async () => {
+  const secret = "!".repeat(300);
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    headers: { "X-Hook-Key": secret },
+    fetchImpl: (async () => { throw new Error(`${"\n".repeat(8_100)}${secret}`); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("!"), false);
+  assert.match(stderr, /diagnostic unavailable/);
+});
+
 test("WebhookAudit: credential-bearing query string in the URL is scrubbed from stderr", async () => {
   // A query param can carry a credential (e.g. ?access_token=…). The regex
   // redactor does NOT catch `access_token=` (the `_` defeats the \b token
@@ -246,6 +413,93 @@ test("WebhookAudit: credential-bearing query string in the URL is scrubbed from 
   assert.ok(stderr.length > 0, "the failure was still surfaced");
 });
 
+test("WebhookAudit: every configured secret is scrubbed regardless of length or query syntax", async () => {
+  const cases = [
+    { name: "short header in synchronous throw", url: "https://siem.test/ingest", headers: { "X-Hook-Key": "abc" }, secret: "abc", reflected: "header=abc", synchronous: true },
+    { name: "long header in rejected promise", url: "https://siem.test/ingest", headers: { "X-Hook-Key": "configured-long-webhook-secret" }, secret: "configured-long-webhook-secret", reflected: "header=configured-long-webhook-secret", synchronous: false },
+    { name: "short query value alone", url: "https://siem.test/ingest?k=xy", secret: "xy", reflected: "value xy", synchronous: false },
+    { name: "short key=value pair", url: "https://siem.test/ingest?k=xy", secret: "k=xy", reflected: "pair k=xy", synchronous: false },
+    { name: "short full query", url: "https://siem.test/ingest?k=xy", secret: "?k=xy", reflected: "query ?k=xy", synchronous: false },
+    { name: "bare query component", url: "https://siem.test/ingest?hooksecret", secret: "hooksecret", reflected: "bare hooksecret", synchronous: false },
+  ];
+  for (const item of cases) {
+    const failure = new Error(`transport reflected ${item.reflected}\nforged-line ${"x".repeat(240)}`);
+    const fetchImpl = item.synchronous
+      ? (() => { throw failure; }) as typeof fetch
+      : (() => Promise.reject(failure)) as typeof fetch;
+    const sink = new WebhookAudit(item.url, { headers: item.headers, fetchImpl });
+    const captured = captureConsoleError();
+    try {
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...baseEvent }), item.name);
+    } finally {
+      captured.restore();
+    }
+    const stderr = captured.messages.join("\n");
+    assert.equal(stderr.includes(item.secret), false, `${item.name}: configured secret leaked`);
+    assert.equal(stderr.includes("\n"), false, `${item.name}: reflected newline survived`);
+    assert.ok(stderr.length <= 280, `${item.name}: diagnostic was not bounded`);
+  }
+});
+
+test("WebhookAudit: transport mutation cannot erase configured secrets from redaction", async () => {
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest", {
+      headers: { "X-Hook-Key": "abc" },
+      fetchImpl: (async (_url, init) => {
+        (init?.headers as Record<string, string>)["X-Hook-Key"] = "changed";
+        throw new Error("transport reflected abc");
+      }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("abc"), false);
+  assert.match(stderr, /transport reflected/);
+});
+
+test("WebhookAudit: exact configured values redact before generic secret patterns", async () => {
+  const secret = "prefix-token=abc-suffix";
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest", {
+      headers: { "X-Hook-Key": secret },
+      fetchImpl: (async () => { throw new Error(`transport reflected ${secret}`); }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("prefix-"), false);
+  assert.match(stderr, /transport reflected/);
+});
+
+test("WebhookAudit: raw plus-bearing query values redact when reflected alone", async () => {
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest?sig=ab+c", {
+      fetchImpl: (async () => { throw new Error("transport reflected ab+c"); }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("ab+c"), false);
+  assert.match(stderr, /transport reflected/);
+});
+
+test("WebhookAudit: the diagnostic placeholder cannot reproduce a configured secret", async () => {
+  for (const secret of ["redacted", "[redacted]", "act"]) {
+    const captured = captureConsoleError();
+    try {
+      const sink = new WebhookAudit("https://siem.test/ingest", {
+        headers: { "X-Hook-Key": secret },
+        fetchImpl: (async () => { throw new Error(`transport reflected ${secret} token=value`); }) as typeof fetch,
+      });
+      await sink.writeAuthEvent({ ...baseEvent });
+    } finally { captured.restore(); }
+    assert.equal(captured.messages.join("\n").includes(secret), false, secret);
+  }
+});
+
 test("WebhookAudit: never rejects when the transport throws a hostile error (throwing message getter)", async () => {
   // The fail-open invariant must hold even when the caught value is hostile —
   // a .message getter that throws must not escape the catch via safeErrorMessage.
@@ -254,4 +508,64 @@ test("WebhookAudit: never rejects when the transport throws a hostile error (thr
     fetchImpl: (async () => { throw hostile; }) as typeof fetch,
   });
   await assert.doesNotReject(() => sink.writeAuthEvent({ ...baseEvent }));
+});
+
+test("WebhookAudit: hostile-error fallback cannot reproduce a configured secret", async () => {
+  for (const secret of ["diagnostic", "unavailable", "act"]) {
+    const captured = captureConsoleError();
+    try {
+      const hostile = { get message() { throw new Error("getter boom"); } };
+      const sink = new WebhookAudit("https://siem.test/ingest", {
+        headers: { "X-Hook-Key": secret },
+        fetchImpl: (async () => { throw hostile; }) as typeof fetch,
+      });
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...baseEvent }));
+    } finally { captured.restore(); }
+    assert.equal(captured.messages.join("\n").includes(secret), false, secret);
+  }
+});
+
+test("WebhookAudit: final redaction covers the fixed prefix and configured host", async () => {
+  for (const item of [
+    { url: "https://siem.test/ingest", secret: "siem" },
+    { url: "https://collector.test/ingest", secret: "audit" },
+  ]) {
+    const captured = captureConsoleError();
+    try {
+      const sink = new WebhookAudit(item.url, {
+        headers: { "X-Hook-Key": item.secret },
+        fetchImpl: (async () => { throw new Error("network down"); }) as typeof fetch,
+      });
+      await sink.writeAuthEvent({ ...baseEvent });
+    } finally { captured.restore(); }
+    assert.equal(captured.messages.join("\n").includes(item.secret), false, item.secret);
+  }
+});
+
+test("WebhookAudit: exact syntax secrets cannot disguise another credential", async () => {
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest?padding=+", {
+      fetchImpl: (async () => { throw new Error("transport reflected Bearer abc"); }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("abc"), false);
+  assert.equal(stderr.includes("Bearerabc"), false);
+});
+
+test("WebhookAudit: header secrets are snapshotted in their transmitted normalized form", async () => {
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest", {
+      headers: { "X-Hook-Key": " abc " },
+      fetchImpl: (async (_url, init) => {
+        const reflected = new Headers(init?.headers).get("x-hook-key");
+        throw new Error(`transport reflected ${reflected}`);
+      }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  assert.equal(captured.messages.join("\n").includes("abc"), false);
 });
