@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import type { JWK } from "jose";
 import {
@@ -7,6 +10,8 @@ import {
   noopRateLimit, type AuditPort, type BridgeConfig,
 } from "../src/index.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { buildApp } from "../examples/fastify-sqlite/app.ts";
+import { buildGateway } from "../examples/api-key-gateway/app.ts";
 
 const clock = { nowMs: () => Date.parse("2026-08-13T12:00:00Z") };
 const audit: AuditPort = { async writeAuthEvent() {} };
@@ -97,6 +102,30 @@ test("Bridge boot rejects stateless DCR plus starter-only redirect trust plus no
 test("Bridge boot accepts each adjacent composition when one unsafe-default condition changes", () => {
   assert.doesNotThrow(() => construct(config(), { async check() { return true; } }));
   assert.doesNotThrow(() => construct(config({ redirectAllowlist: ["https://client.test/callback"] })));
+  assert.doesNotThrow(() => construct(config({ redirectAllowlist: ["https://localhost/callback"] })));
   const clients = { async save() {}, async find() { return null; } };
   assert.doesNotThrow(() => construct(config({ dcr: { mode: "stored", store: clients } })));
+});
+
+test("example factories reject before opening SQLite and do not coerce malformed acknowledgements", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-unsafe-composition-"));
+  try {
+    const cases = [
+      { file: join(dir, "app.db"), run: () => buildApp({
+        config: config(), sqliteFile: join(dir, "app.db"),
+        acknowledgeUnsafeStatelessDefaults: "false" as never,
+      }) },
+      { file: join(dir, "gateway.db"), run: () => buildGateway({
+        config: config(), sqliteFile: join(dir, "gateway.db"),
+        backendUrl: "http://127.0.0.1:8788/mcp", getBackendCredential: () => "test",
+        acknowledgeUnsafeStatelessDefaults: "false" as never,
+      }) },
+    ];
+    for (const entry of cases) {
+      await assert.rejects(entry.run, /stateless DCR/);
+      assert.equal(existsSync(entry.file), false, "rejected composition created a SQLite file");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
