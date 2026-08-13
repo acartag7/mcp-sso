@@ -18,6 +18,7 @@ function racingConnection(options: RaceOptions): {
       if (sql.startsWith("SELECT @@session.sql_mode")) {
         return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       }
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) {
         if (values?.[0] === "oauth_auth_codes") {
           targetReads += 1;
@@ -80,6 +81,7 @@ test("MySQL migration adds nullable resource columns to pre-resource refresh tab
   const connection = {
     query: async (sql: string, values?: unknown[]) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) {
         const key = `${values?.[0]}:${values?.[1]}`;
         return [seen.has(key) ? [{ 1: 1 }] : [], []];
@@ -153,4 +155,39 @@ test("MySQL subject migration rejects an unexpected undersized shape", async () 
   } as unknown as PoolConnection;
   await assert.rejects(migrateMysqlStore(connection), /oauth_refresh_tokens\.subject has unsupported VARCHAR\(300\) width/);
   assert.equal(subjectAlters, 0, "both subject shapes are validated before either ALTER");
+});
+
+test("MySQL migration preflights malformed consent uniqueness before any DDL", async () => {
+  const writes: string[] = [];
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("information_schema.STATISTICS")) return [[{
+        INDEX_NAME: "uq_prefix", NON_UNIQUE: "0", SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: 1,
+      }], []];
+      writes.push(sql);
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /single-column PRIMARY or UNIQUE index/);
+  assert.deepEqual(writes, [], "malformed existing schema rejects before CREATE or ALTER");
+});
+
+test("MySQL migration accepts string zero metadata for a full-column JTI key", async () => {
+  let statisticsReads = 0;
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("information_schema.STATISTICS")) {
+        statisticsReads += 1;
+        return [[{ INDEX_NAME: "PRIMARY", NON_UNIQUE: "0", SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null }], []];
+      }
+      if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await migrateMysqlStore(connection);
+  assert.equal(statisticsReads, 2, "existing and post-migration checks both run");
 });
