@@ -86,7 +86,11 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.match(server, /origin\.includes\(","\)/, "generated /mcp gate rejects comma-coalesced Origin");
     assert.doesNotMatch(server, /request\.headers\.origin/, "generated /mcp gate never selects a normalized Origin");
     assert.match(server, /cimd:\s*\{\s*enabled:\s*true\s*\}/, "generated server enables CIMD");
-    assert.match(server, /dcr:\s*\{\s*mode:\s*"stateless"\s*\}/, "generated server retains DCR");
+    assert.match(
+      server,
+      /dcr:\s*\{\s*mode:\s*"stored",\s*store:\s*clientStore\s*\}/,
+      "generated server persists DCR through its SQLite-backed client store",
+    );
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST, "http:\/\/localhost,http:\/\/127\.0\.0\.1"/, "generated local composition explicitly declares loopback callback origins");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -172,11 +176,11 @@ test("bin init: the generated server.ts typechecks against the built package (ts
 
 // --- spawn layer (the done-bar) — gated on dist (the test gate runs before build) ---
 
-function freePort(): Promise<number> {
+function freePort(host = "127.0.0.1"): Promise<number> {
   return new Promise((resolveP, reject) => {
     const s = createServer();
     s.on("error", reject);
-    s.listen(0, "127.0.0.1", () => {
+    s.listen(0, host, () => {
       const addr = s.address();
       if (addr && typeof addr === "object") { const port = addr.port; s.close(() => resolveP(port)); }
       else { s.close(); reject(new Error("could not bind")); }
@@ -196,7 +200,7 @@ function waitFor(child: ChildProcess, regex: RegExp, timeoutMs: number): Promise
   });
 }
 
-test("bin init (spawn): full pairing round-trip — register → code → consent → token → SDK callTool", async () => {
+test("bin init (spawn): registration restart → pairing → token → SDK callTool", async () => {
   // The automated done-bar: a stranger's `npx mcp-sso init && npm install && npm start`
   // boots a server an operator pairs with via a console code, then an MCP client calls a
   // protected tool. Drives the WHOLE flow (not just the tokenless challenge) through the
@@ -212,13 +216,14 @@ test("bin init (spawn): full pairing round-trip — register → code → consen
   try {
     await spawnScaffold(proj);
     await linkDeps(proj);
-    const child = spawn("node", ["server.ts"], {
+    const first = spawn("node", ["server.ts"], {
       cwd: proj,
       // No OAUTH_ISSUER override: the default is http://127.0.0.1:PORT (matches the HOST
       // bind), so the test exercises the real default config, not a masked one.
       env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "127.0.0.1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    let child = first;
     let stderrBuf = "";
     child.stderr?.on("data", (c: Buffer) => { stderrBuf += c.toString(); });
     try {
@@ -236,17 +241,28 @@ test("bin init (spawn): full pairing round-trip — register → code → consen
       );
       const reg = await fetchBounded(`${origin}/oauth/register`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ redirect_uris: [redirect] }),
+        body: JSON.stringify({ redirect_uris: [redirect], application_type: "native" }),
       });
       assert.equal(reg.status, 201, "DCR register works");
       const clientId = (await reg.json() as { client_id: string }).client_id;
       assert.match(clientId, /^mcpdc_/, "real client_id");
 
+      child.kill("SIGTERM");
+      await new Promise<void>((resolveP) => child.once("close", () => resolveP()));
+      child = spawn("node", ["server.ts"], {
+        cwd: proj,
+        env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "127.0.0.1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      stderrBuf = "";
+      child.stderr?.on("data", (c: Buffer) => { stderrBuf += c.toString(); });
+      await waitFor(child, new RegExp(`mcp-sso listening on 127.0.0.1:${port}`), 15_000);
+
       // GET /oauth/authorize → the server prints the pairing code to stderr + returns the page
       const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
       const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirect, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
       const authPage = await fetchBounded(`${origin}/oauth/authorize?${q}`);
-      assert.equal(authPage.status, 200);
+      assert.equal(authPage.status, 200, "the registered client survives process restart");
       const authHtml = await authPage.text();
       const nonce = extractField(authHtml, "pairing_nonce");
       const code = extractCode(stderrBuf); // printed by the GET (lazy, on /oauth/authorize)
@@ -325,6 +341,37 @@ test("bin init (spawn): a blank HOST binds loopback (fail-closed on blank env �
   }
 });
 
+test("bin init (spawn): IPv6 loopback defaults discovery to the listening address family", { skip: process.platform === "win32" }, async (t) => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-ipv6-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  let port: number;
+  try { port = await freePort("::1"); }
+  catch (error) { t.skip(`IPv6 loopback unavailable on this host: ${String(error)}`); return; }
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "::1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    try {
+      await waitFor(child, new RegExp(`mcp-sso listening on ::1:${port}`), 15_000);
+      const prm = await fetchBounded(`http://[::1]:${port}/.well-known/oauth-protected-resource`);
+      assert.equal(prm.status, 200);
+      assert.equal((await prm.json() as { resource: string }).resource, `http://[::1]:${port}/mcp`);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test("bin init (spawn): PORT=0 fails closed at boot (not an unusable ephemeral bind)", async () => {
   await ensureDist();
   const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-port0-"));
@@ -348,28 +395,29 @@ test("bin init (spawn): PORT=0 fails closed at boot (not an unusable ephemeral b
   }
 });
 
-test("bin init (spawn): HOST off-loopback without OAUTH_ISSUER warns about the issuer mismatch", async () => {
+test("bin init (spawn): HOST off-loopback fails before persistent state is created", async () => {
   await ensureDist();
   const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-hostwarn-"));
   const proj = join(base, "proj");
   const stateDir = join(base, "state");
-  const port = await freePort();
   try {
     await spawnScaffold(proj);
     await linkDeps(proj);
     const child = spawn("node", ["server.ts"], {
       cwd: proj,
-      // HOST off loopback, OAUTH_ISSUER intentionally UNSET → the advertised issuer
-      // (127.0.0.1) won't match the host clients reach (RFC 9728 resource validation).
-      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "0.0.0.0" },
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "0.0.0.0" },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    try {
-      const stderr = await waitFor(child, /OAUTH_ISSUER is unset/, 15_000);
-      assert.match(stderr, /HOST=0\.0\.0\.0 but OAUTH_ISSUER is unset/, "off-loopback HOST without OAUTH_ISSUER warns about the mismatch");
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); }
-    }
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    const code = await Promise.race([
+      new Promise<number | null>((resolveP) => child.on("close", resolveP)),
+      new Promise<"still-running">((resolveP) => setTimeout(() => resolveP("still-running"), 2_000)),
+    ]);
+    if (code === "still-running") child.kill("SIGKILL");
+    assert.notEqual(code, 0, "an off-loopback bind fails closed");
+    assert.match(stderr, /HOST must be a loopback address/);
+    assert.equal(existsSync(stateDir), false, "no signing keys or persistent registration database were created");
   } finally {
     await rm(base, { recursive: true, force: true });
   }
@@ -510,6 +558,30 @@ test("bin init (spawn): an internet-facing starter fails BEFORE persistent state
     assert.notEqual(code, 0);
     assert.match(stderr, /generated starter is localhost-only/);
     assert.equal(existsSync(stateDir), false, "no keys, audit file, or SQLite database were created");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init (spawn): invalid scope config fails before SQLite creates auth.db", async () => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-badscope-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1", OAUTH_SCOPE_CATALOG: "" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    const code = await new Promise<number | null>((resolveP) => child.on("close", resolveP));
+    assert.notEqual(code, 0, "an empty scope catalog fails closed");
+    assert.match(stderr, /scopeCatalog must be a non-empty array/);
+    assert.equal(existsSync(join(stateDir, "auth.db")), false, "config validation ran before SQLite opened the database");
   } finally {
     await rm(base, { recursive: true, force: true });
   }

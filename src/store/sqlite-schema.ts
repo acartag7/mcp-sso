@@ -5,6 +5,13 @@
 
 import type { DatabaseSync } from "node:sqlite";
 
+const CLIENT_TABLE_SQL = `CREATE TABLE oauth_clients (
+    client_id TEXT PRIMARY KEY NOT NULL,
+    redirect_uris_json TEXT NOT NULL,
+    application_type TEXT NOT NULL CHECK (application_type IN ('native', 'web')),
+    issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
+  ) STRICT`;
+
 const MIGRATIONS = [
   `PRAGMA foreign_keys = ON`,
   `CREATE TABLE IF NOT EXISTS oauth_auth_codes (
@@ -47,9 +54,15 @@ const MIGRATIONS = [
     expires_at TEXT NOT NULL
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS idx_oauth_consent_jtis_expires_at ON oauth_consent_jtis (expires_at)`,
+  CLIENT_TABLE_SQL.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"),
 ];
 
 export function migrateSqliteStore(db: DatabaseSync): void {
+  const existingClientObject = clientSchemaObject(db);
+  if (existingClientObject && existingClientObject.type !== "table") {
+    throw new Error("oauth_clients schema is incompatible");
+  }
+  if (existingClientObject) assertClientTable(db);
   for (const migration of MIGRATIONS) {
     db.exec(migration);
   }
@@ -58,6 +71,12 @@ export function migrateSqliteStore(db: DatabaseSync): void {
   ensureColumn(db, "oauth_refresh_tokens", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_token_families", "resource", "TEXT");
   ensureColumn(db, "oauth_refresh_tokens", "resource", "TEXT");
+  assertClientTable(db);
+}
+
+function clientSchemaObject(db: DatabaseSync): { type: unknown } | undefined {
+  return db.prepare("SELECT type FROM sqlite_schema WHERE name = 'oauth_clients' COLLATE NOCASE").get() as
+    { type: unknown } | undefined;
 }
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
@@ -65,4 +84,15 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, definitio
   if (!rows.some((row) => row.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+function assertClientTable(db: DatabaseSync): void {
+  const row = db.prepare(
+    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_clients' COLLATE NOCASE",
+  ).get() as { sql: unknown } | undefined;
+  if (row?.sql !== CLIENT_TABLE_SQL) throw new Error("oauth_clients schema is incompatible");
+  const attached = db.prepare(`SELECT name FROM sqlite_schema
+    WHERE tbl_name = 'oauth_clients' COLLATE NOCASE
+      AND name != 'oauth_clients' COLLATE NOCASE AND sql IS NOT NULL`).get();
+  if (attached) throw new Error("oauth_clients schema is incompatible");
 }

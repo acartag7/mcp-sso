@@ -245,7 +245,16 @@ other undersized shape fails boot rather than being silently reinterpreted.
 - `SqliteStore` (`/store/sqlite`) — `node:sqlite` (built-in; no native dep),
   `:memory:` or file. STRICT tables, `BEGIN IMMEDIATE` transactions,
   `INSERT ... ON CONFLICT DO NOTHING` for consent JTIs. The schema migration is
-  idempotent.
+  idempotent. It also implements the §6.4 user-only `ClientStore` surface in the
+  same database and connection. The `oauth_clients` STRICT table persists the
+  generated client id, redirect array as JSON, exact `native`/`web`
+  discriminant, and issue epoch. The client id is unique; registration uses a
+  plain insert so a collision cannot replace an existing redirect binding.
+  Migration verifies at boot that this is a STRICT four-column table with the
+  documented types, required columns, and `client_id` primary key; an
+  incompatible pre-created table fails before the store is returned.
+  Machine rows are rejected before SQL because machine lifecycle mutation and
+  its durable audit require the separate atomic `MachineClientStore` contract.
 - `MysqlStore` (`/store/mysql`) — `mysql2` (optional peer dep; pooled). The first
   *async/pooled* reference adapter, so it is the binding example of addendum 13
   below: a pooled connection, `beginTransaction`/`commit`/`rollback` behind a

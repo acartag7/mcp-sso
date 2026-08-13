@@ -1,12 +1,10 @@
-// SqliteStore — reference persistent StorePort on node:sqlite (contracts §12.3).
-// STRICT tables, BEGIN IMMEDIATE transactions, INSERT...ON CONFLICT DO NOTHING for
-// single-use consent JTIs. Implements the rotation backfill (fix #3) and
-// findGrantedScopes (reads active refresh records — no grant table).
+// SqliteStore — persistent StorePort + user ClientStore (contracts §6.4, §12.3).
 
 import { DatabaseSync } from "node:sqlite";
 import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
+import type { ClientRegistration, ClientStore } from "../ports/client-store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
@@ -22,8 +20,9 @@ import {
   refreshTokenFromRow, revokeFamily, validateAuthCode, validateRefreshToken,
   validateRotation, type AuthCodeRow, type RefreshTokenRow,
 } from "./sqlite-records.ts";
+import { findSqliteClient, saveSqliteClient } from "./sqlite-clients.ts";
 
-export class SqliteStore implements StorePort {
+export class SqliteStore implements StorePort, ClientStore {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
   private closed = false;
@@ -31,6 +30,16 @@ export class SqliteStore implements StorePort {
 
   constructor(db: DatabaseSync) {
     this.db = db;
+  }
+
+  async save(client: ClientRegistration): Promise<void> {
+    this.ensureOpen();
+    saveSqliteClient(this.db, client);
+  }
+
+  async find(clientId: string): Promise<ClientRegistration | null> {
+    this.ensureOpen();
+    return findSqliteClient(this.db, clientId);
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {

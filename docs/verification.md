@@ -59,7 +59,7 @@ normal full suite remains part of the release gate and is not duplicated here.
 |---|---|---|
 | Protected-resource metadata and challenge | Complete protocol flow | `test/e2e-mcp-sdk.test.ts`; RM.10 |
 | Authorization-server metadata | Complete protocol flow | `test/integration-full-flow.test.ts`; RM.3/RM.4 |
-| Stateless DCR | Packed-artifact flow | RM.1 |
+| Stateless DCR | Complete protocol flow | `test/e2e-mcp-sdk.test.ts` |
 | Stored DCR | Complete protocol flow | `test/authorize-ceiling.test.ts`; RM.2/RM.3 |
 | CIMD resolution and authorization | Route integration | RM.4/RM.6 |
 | PKCE S256 | Packed-artifact flow | RM.1 |
@@ -93,7 +93,7 @@ normal full suite remains part of the release gate and is not duplicated here.
 | JSONL audit and no-secret evidence | Packed-artifact flow | RM.1 |
 | Webhook/combine audit behavior | Route integration | `test/audit-flow.test.ts`, `test/audit-webhook.test.ts`; full suite |
 | Configuration snapshots | Unit only | `test/config-snapshot.test.ts`; full suite |
-| Opaque stateless DCR | Packed-artifact flow | RM.1 |
+| Opaque stateless DCR | Complete protocol flow | `test/e2e-mcp-sdk.test.ts` |
 | Opaque stored DCR | Complete protocol flow | RM.2/RM.3 |
 | HTTPS-shaped CIMD `client_id` through routes | Route integration | RM.4/RM.6 |
 | Machine/predefined credentials | Complete protocol flow | RM.7 |
@@ -114,7 +114,8 @@ normal full suite remains part of the release gate and is not duplicated here.
 An actual private-directory npm tarball is shape-checked, installed with scripts
 disabled, and invoked through its installed `.bin/mcp-sso`. The unchanged
 exact-pinned scaffold is installed, typechecked, booted, paired, and driven through
-stateless DCR, PKCE, approve and deny, token, official-SDK `ping`/visible `pong`, refresh,
+stored DCR across a process restart, PKCE, approve and deny, token,
+official-SDK `ping`/visible `pong`, refresh,
 replay-family revocation, reauthorization, RFC 7009 revocation, SQLite restart,
 and JSONL no-secret checks. Every published export root is imported from the
 installed artifact and its only runtime dependency is `jose`.

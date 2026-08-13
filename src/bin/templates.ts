@@ -37,11 +37,11 @@ import {
   Bridge, RequestAuthorizer, createBridgeConfig, originOf, isMcpPath,
   loadOrCreateQuickstartSecrets, handlePairingAuthorize,
   SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
+  type ClientRegistration, type ClientStore,
 } from "mcp-sso";
 import { registerOAuthRoutes } from "mcp-sso/fastify";
 import { openSqliteStore } from "mcp-sso/store/sqlite";
 import { createConsolePairingIdentity } from "mcp-sso/identity/console-pairing";
-
 // The normalized request/response shapes the framework-free surface speaks. Inlined
 // here so this starter compiles standalone; they are also exported from "mcp-sso"
 // (NormRequest / NormResponse) — swap to those imports if you prefer.
@@ -62,8 +62,10 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
 }
 const HOST = env("HOST", "127.0.0.1"); // loopback default — the pairing code is the identity gate
 const DIR = env("MCP_SSO_DIR", "./.mcp-sso");
-// 127.0.0.1 (not localhost) matches the HOST bind — no IPv6/IPv4 address-family mismatch.
-let ISSUER = env("OAUTH_ISSUER", \`http://127.0.0.1:\${PORT}\`);
+// The advertised default uses the selected loopback bind, including IPv6 brackets, so
+// discovery never points at a different address family from the listening socket.
+const DEFAULT_LOOPBACK_HOST = HOST === "::1" ? "[::1]" : HOST;
+let ISSUER = env("OAUTH_ISSUER", \`http://\${DEFAULT_LOOPBACK_HOST}:\${PORT}\`);
 while (ISSUER.endsWith("/")) ISSUER = ISSUER.slice(0, -1); // trim a trailing / so the derived resource is /mcp, not //mcp
 const RESOURCE = env("OAUTH_RESOURCE", \`\${ISSUER}/mcp\`);
 const list = (v: string | undefined, def: string): string[] => (v ?? def).split(",").map((s) => s.trim()).filter(Boolean);
@@ -75,39 +77,40 @@ const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]); const isLoopback 
 const isHttpLoopback = (url: string): boolean => { try { const u = new URL(url); return u.protocol === "http:" && LOOPBACK.has(u.hostname); } catch { return false; } };
 
 async function main(): Promise<void> {
-  // Validate the env-sourced config BEFORE creating state (the validate-before-side-effects
-  // invariant): a malformed issuer/resource rejects here, not after loadOrCreateQuickstartSecrets
-  // writes the state dir + signing secrets.
-  // Validate: parseable URL, no userinfo, resource pathname /mcp (the server mounts /mcp). Errors don't echo the value (a malformed credential-bearing URL would leak).
+  // Validate URLs before state creation; errors never echo credential-bearing input.
   const requireUrl = (label: string, v: string): void => {
     let u: URL; try { u = new URL(v); } catch { throw new Error(\`\${label} is not a valid URL\`); }
     if (u.username || u.password) throw new Error(\`\${label} must not contain userinfo (user:password@) — use a plain URL\`);
   };
   requireUrl("OAUTH_ISSUER", ISSUER);
   requireUrl("OAUTH_RESOURCE", RESOURCE);
+  if (HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") throw new Error("The generated starter is localhost-only: HOST must be a loopback address. Use the production example with a real identity provider and rate limiter for an internet-facing deployment.");
   if (new URL(RESOURCE).pathname !== "/mcp") throw new Error("OAUTH_RESOURCE pathname must be /mcp (the server mounts /mcp); set OAUTH_RESOURCE to <issuer>/mcp or edit server.ts for a custom path."); if (!isLoopback(ISSUER) || !isLoopback(RESOURCE)) throw new Error("The generated starter is localhost-only: OAUTH_ISSUER and OAUTH_RESOURCE must use loopback hosts. Use the production example for an internet-facing deployment.");
-  // loadOrCreateQuickstartSecrets creates DIR (0o700) + the managed .gitignore +
-  // the signing material on first boot (the fs-trust bar + zero-setup keys).
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
-  const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
+  let store: ReturnType<typeof openSqliteStore> | undefined;
+  const clientStore: ClientStore = {
+    async save(client: ClientRegistration): Promise<void> { if (!store) throw new Error("mcp-sso: client store is not ready"); await store.save(client); },
+    async find(clientId: string): Promise<ClientRegistration | null> { if (!store) throw new Error("mcp-sso: client store is not ready"); return store.find(clientId); },
+  };
   const config = createBridgeConfig({
-    issuer: ISSUER, resource: RESOURCE,
-    consentSigningSecret: secrets.consentSigningSecret,
-    signingPrivateJwk: secrets.signingPrivateJwk,
-    redirectAllowlist: list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
-    scopeCatalog: list(process.env.OAUTH_SCOPE_CATALOG, "mcp:read,mcp:write"),
-    defaultScopes: list(process.env.OAUTH_DEFAULT_SCOPES, "mcp:read"),
-    allowedOrigins: list(process.env.OAUTH_ALLOWED_ORIGINS, ISSUER),
-    dev: isHttpLoopback(ISSUER) ? { allowInsecureLocalhost: true } : undefined,
-    cimd: { enabled: true },
-    dcr: { mode: "stateless" },
-    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
-  });
+      issuer: ISSUER, resource: RESOURCE, consentSigningSecret: secrets.consentSigningSecret,
+      signingPrivateJwk: secrets.signingPrivateJwk,
+      redirectAllowlist: list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
+      scopeCatalog: list(process.env.OAUTH_SCOPE_CATALOG, "mcp:read,mcp:write"),
+      defaultScopes: list(process.env.OAUTH_DEFAULT_SCOPES, "mcp:read"),
+      allowedOrigins: list(process.env.OAUTH_ALLOWED_ORIGINS, ISSUER),
+      dev: isHttpLoopback(ISSUER) ? { allowInsecureLocalhost: true } : undefined,
+      cimd: { enabled: true },
+      dcr: { mode: "stored", store: clientStore },
+      accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000,
+      consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    });
+  store = openSqliteStore(\`\${DIR}/auth.db\`);
+  const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
 
   const app = Fastify();
   const clock = new SystemClock();
-  const store = openSqliteStore(\`\${DIR}/auth.db\`);
-  const bridge = new Bridge({ config, store, clock, audit, acknowledgeUnsafeStatelessDefaults: true });
+  const bridge = new Bridge({ config, store, clock, audit });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
   const toNorm = (req: FastifyRequest): NormRequest => ({
     query: req.query as NormRequest["query"], body: req.body, headers: req.headers as NormRequest["headers"], ip: req.ip,
@@ -156,14 +159,6 @@ async function main(): Promise<void> {
     finally { await mcp.close(); }
   });
 
-  // Off-loopback warning: the pairing code is the identity gate — binding it to a non-loopback host exposes it to the network. Mirrors examples/fastify-sqlite/index.ts.
-  if (HOST !== "127.0.0.1" && HOST !== "localhost") {
-    console.error(\`[mcp-sso] WARNING: console pairing is bound to \${oneLine(HOST)} (non-loopback). The one-time code is the identity gate — anyone who can reach this port can attempt it. Pairing is for single-operator / private-console use only; use a real identity provider for a network-exposed server.\`);
-    // HOST off loopback: the issuer MUST be the publicly-reachable URL or discovery advertises 127.0.0.1 + RFC 9728 fails.
-    if (!(process.env.OAUTH_ISSUER && process.env.OAUTH_ISSUER.trim())) {
-      console.error(\`[mcp-sso] WARNING: HOST=\${oneLine(HOST)} but OAUTH_ISSUER is unset (defaults to http://127.0.0.1:\${PORT}). Set OAUTH_ISSUER to the URL clients actually reach.\`);
-    }
-  }
   await app.listen({ port: PORT, host: HOST });
   console.error(\`mcp-sso listening on \${oneLine(HOST)}:\${PORT}  (console pairing — paste the one-time code printed above)\`);
   console.error(\`  issuer=\${oneLine(config.issuer)}  resource=\${oneLine(config.resource)}\`);

@@ -229,8 +229,10 @@ interface MachineClientStore extends ClientStore {
   ): Promise<boolean>;
 }
 ```
-Required only when `dcr.mode === "stored"`. Reference: in-memory map (Phase 2);
-a persisted adapter is deployment-specific. The `applicationType` discriminant
+Required only when `dcr.mode === "stored"`. `SqliteStore` is the shipped
+single-process persistent implementation: its admitted SQLite database stores
+user registrations in the same file as authorization codes, refresh families,
+and consent JTIs. The `applicationType` discriminant
 selects the record shape and drives the per-client redirect policy (§10):
 `native`/`web` are user clients (§9.2 DCR, §10.2 redirect policy); `machine`
 records are provisioned out-of-band (§17.2). The v0.3.0
@@ -248,6 +250,19 @@ rows start at version 1. A new versioned machine row stores the exact, uncanonic
 disable copy that stored value unchanged, including into the tombstone. A disable
 writes a tombstone with no secret hashes. The durable mutation audit carries the
 same stored resource, so its row/audit evidence names one binding.
+
+`SqliteStore.save` accepts only the user-registration shapes produced by this
+library's DCR endpoint: a generated `mcpdc_` identifier, a non-negative
+safe-integer issue epoch, exact `native` or `web` type, and 1..16 redirect entries
+that each pass the matching §10.2 registration policy. It snapshots those input
+members before validation and performs no SQL write on rejection. A client-id
+collision fails rather than replacing the existing row. It rejects machine
+rows: SQLite does not implement `MachineClientStore`, and machine lifecycle
+state requires the atomic row-plus-audit methods above rather than the
+compatibility `save` method. `find` returns a fresh value decoded from the
+persisted redirect JSON; the authorization and token boundaries still apply
+their normal untrusted-store parsers before using it. Closing `SqliteStore`
+closes both port surfaces.
 
 The parser and lifecycle entry points accept that raw resource only when it is
 eligible for `BridgeConfig.resource`: HTTPS, or HTTP on `localhost`,
