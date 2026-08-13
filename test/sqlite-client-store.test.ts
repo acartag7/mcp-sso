@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { JWK } from "jose";
 import { Bridge } from "../src/adapters/bridge.ts";
@@ -37,6 +38,32 @@ test("SqliteStore persists DCR user registrations across process replacement", a
     const reopened = openSqliteStore(file);
     assert.deepEqual(await reopened.find(WEB.clientId), WEB);
     await reopened.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SqliteStore rejects an incompatible client table before any schema mutation", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-client-schema-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const seeded = new DatabaseSync(file);
+    seeded.exec("CREATE TABLE sentinel (value TEXT) STRICT");
+    seeded.exec("CREATE TABLE oauth_clients (client_id TEXT PRIMARY KEY) STRICT");
+    const before = seeded.prepare(
+      "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name",
+    ).all();
+    seeded.close();
+    chmodSync(file, 0o600);
+
+    assert.throws(() => openSqliteStore(file), /database initialization failed/);
+
+    const rejected = new DatabaseSync(file);
+    const after = rejected.prepare(
+      "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name",
+    ).all();
+    rejected.close();
+    assert.deepEqual(after, before, "rejection leaves the complete pre-existing schema unchanged");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

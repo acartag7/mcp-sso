@@ -56,6 +56,7 @@ const MIGRATIONS = [
 ];
 
 export function migrateSqliteStore(db: DatabaseSync): void {
+  if (clientTableExists(db)) assertClientTable(db);
   for (const migration of MIGRATIONS) {
     db.exec(migration);
   }
@@ -65,6 +66,12 @@ export function migrateSqliteStore(db: DatabaseSync): void {
   ensureColumn(db, "oauth_refresh_token_families", "resource", "TEXT");
   ensureColumn(db, "oauth_refresh_tokens", "resource", "TEXT");
   assertClientTable(db);
+}
+
+function clientTableExists(db: DatabaseSync): boolean {
+  return db.prepare(
+    "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_clients'",
+  ).get() !== undefined;
 }
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
