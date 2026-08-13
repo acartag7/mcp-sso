@@ -11,6 +11,19 @@ export interface RateLimitPort {
   check(key: string): Promise<boolean>;
 }
 
+// Bound boot snapshots must keep the identity of their source port: the shared
+// CIMD resolver uses identity to avoid charging one counting limiter twice when
+// a composition passes it to both Bridge and the upstream flow.
+const RATE_LIMIT_IDENTITIES = new WeakMap<RateLimitPort, RateLimitPort>();
+
+export function rateLimitIdentity(port: RateLimitPort): RateLimitPort {
+  return RATE_LIMIT_IDENTITIES.get(port) ?? port;
+}
+
+export function recordRateLimitSnapshot(snapshot: RateLimitPort, source: RateLimitPort): void {
+  RATE_LIMIT_IDENTITIES.set(snapshot, rateLimitIdentity(source));
+}
+
 /** Default no-op limiter: allows everything. Inject a real implementation
  *  (e.g. a per-IP token bucket) at the composition root. */
 export const noopRateLimit: RateLimitPort = {

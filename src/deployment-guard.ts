@@ -1,5 +1,7 @@
 import { AuthConfigError, type BridgeConfig } from "./config.ts";
-import { noopRateLimit, type RateLimitPort } from "./ports/rate-limit.ts";
+import {
+  noopRateLimit, rateLimitIdentity, recordRateLimitSnapshot, type RateLimitPort,
+} from "./ports/rate-limit.ts";
 import { DEFAULT_ALLOWED_REDIRECT_ORIGINS } from "./redirect.ts";
 
 const STARTER_REDIRECT_ORIGINS = new Set(DEFAULT_ALLOWED_REDIRECT_ORIGINS);
@@ -64,17 +66,20 @@ export function assertSafeDeploymentCombination(deps: {
  * boot validation and disappear when a request reaches the guard. */
 export function snapshotRateLimit(rateLimit: RateLimitPort | undefined): RateLimitPort | undefined {
   if (rateLimit === undefined || rateLimit === noopRateLimit) return rateLimit;
+  if (rateLimitIdentity(rateLimit) !== rateLimit) return rateLimit;
   let check: unknown;
   try { check = rateLimit.check; }
   catch { throw new AuthConfigError("rateLimit must implement an async check(key) method"); }
   if (typeof check !== "function") {
     throw new AuthConfigError("rateLimit must implement an async check(key) method");
   }
-  return Object.freeze({
+  const snapshot: RateLimitPort = {
     async check(key: string): Promise<boolean> {
       return await Reflect.apply(check, rateLimit, [key]) as boolean;
     },
-  });
+  };
+  recordRateLimitSnapshot(snapshot, rateLimit);
+  return Object.freeze(snapshot);
 }
 
 /** Reject the acknowledged console-pairing composition before its signing-key
