@@ -76,7 +76,7 @@ function harness(): { bridge: Bridge; clients: Clients; state: State; audit: Aud
   const config = createBridgeConfig({
     issuer: ISSUER, resource: RESOURCE,
     consentSigningSecret: "test-consent-secret-with-enough-entropy-0123456789",
-    signingPrivateJwk: KEY, signingKeyId: "k", redirectAllowlist: [],
+    signingPrivateJwk: KEY, signingKeyId: "k", redirectAllowlist: [ALLOWED_REDIRECT],
     scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"], allowedOrigins: [ISSUER],
     dcr: { mode: "stored", store: clients }, accessTokenTtlSeconds: 600,
     refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300,
