@@ -47,6 +47,7 @@ test("integration — zero-setup branch: buildExample creates a fresh state dir,
     assert.ok(existsSync(join(dir, ".gitignore")), "quickstart wrote .gitignore");
     assert.equal(config.cimd?.enabled, true, "zero-setup example advertises CIMD");
     assert.equal(config.dcr.mode, "stateless", "DCR remains available as a compatibility path");
+    assert.deepEqual(config.redirectAllowlist, ["http://localhost", "http://127.0.0.1"], "zero-setup composition explicitly declares loopback callback origins");
     // Pairing mode (NOT header-based): GET /oauth/authorize renders the pairing page.
     const page = await app.inject({ method: "GET", url: AUTHORIZE_QUERY });
     assert.equal(page.statusCode, 200);
@@ -68,8 +69,31 @@ test("integration — gateway zero-setup branch enables CIMD and retains DCR", a
     );
     assert.equal(config.cimd?.enabled, true, "gateway example advertises CIMD");
     assert.equal(config.dcr.mode, "stateless", "gateway keeps DCR as a compatibility path");
+    assert.deepEqual(config.redirectAllowlist, ["http://localhost", "http://127.0.0.1"], "zero-setup gateway explicitly declares loopback callback origins");
     await app.close();
     await store.close();
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — explicit empty redirect allowlist removes local composition defaults", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-zs-empty-redirects-"));
+  const appDir = join(base, "app");
+  const gatewayDir = join(base, "gateway");
+  try {
+    const appResult = await buildExample({ MCP_SSO_DIR: appDir, OAUTH_REDIRECT_ALLOWLIST: "" });
+    assert.deepEqual(appResult.config.redirectAllowlist, [], "example explicit empty value removes loopback trust");
+    await appResult.app.close();
+    await appResult.store.close();
+
+    const gatewayResult = await buildGatewayExample(
+      { MCP_SSO_DIR: gatewayDir, OAUTH_REDIRECT_ALLOWLIST: "" },
+      { backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused" },
+    );
+    assert.deepEqual(gatewayResult.config.redirectAllowlist, [], "gateway explicit empty value removes loopback trust");
+    await gatewayResult.app.close();
+    await gatewayResult.store.close();
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
