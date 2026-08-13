@@ -189,23 +189,6 @@ test("MySQL migration preflights malformed consent uniqueness before any DDL", a
   assert.deepEqual(writes, [], "malformed existing schema rejects before CREATE or ALTER");
 });
 
-test("MySQL migration rejects consent foreign keys before any DDL", async () => {
-  const writes: string[] = [];
-  const connection = {
-    query: async (sql: string) => {
-      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
-      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
-      if (sql.includes("information_schema.KEY_COLUMN_USAGE")) {
-        return [[{ CONSTRAINT_NAME: "fk_consent_jti" }], []];
-      }
-      writes.push(sql);
-      return [[], []];
-    },
-  } as unknown as PoolConnection;
-  await assert.rejects(migrateMysqlStore(connection), /must not have foreign keys/);
-  assert.deepEqual(writes, [], "foreign-key rejection precedes CREATE or ALTER");
-});
-
 test("MySQL migration accepts string zero metadata for a full-column JTI key", async () => {
   let statisticsReads = 0;
   const connection = {

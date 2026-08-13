@@ -257,23 +257,20 @@ other undersized shape fails boot rather than being silently reinterpreted.
   `rotateRefreshToken` takes a row lock via `SELECT ... FOR UPDATE` inside the
   transaction — without it, two concurrent rotations of the same token would both
   see `consumed_at IS NULL`, double-insert the successor, and break replay
-  detection (§12.2 invariant 3). `INSERT IGNORE` substitutes for SQLite
-  `ON CONFLICT DO NOTHING` on consent JTIs (the `ON DUPLICATE KEY UPDATE
-  expires_at = expires_at` form reports `affectedRows=1` even on a no-op replay
-  under MySQL 8.4, so it cannot distinguish first-use); family upserts use
+  detection (§12.2 invariant 3). Consent-JTI insertion uses plain `INSERT`:
+  only `ER_DUP_ENTRY` means replay, while every other database error propagates.
+  `INSERT IGNORE` is forbidden here because it also suppresses partition,
+  foreign-key, truncation, and other failures as zero affected rows. Family upserts use
   `ON DUPLICATE KEY UPDATE` without a row alias. The incoming revoke timestamp
   is repeated as a bound parameter rather than interpolated into SQL, while
   `COALESCE` preserves the first revocation timestamp.
   At boot, `oauth_consent_jtis.jti` MUST be a non-null `VARCHAR(255)` or wider,
   `expires_at` MUST be a non-null `VARCHAR(24)` or wider, and JTI MUST have a
   full-column single-column PRIMARY or UNIQUE index. Every other unique index
-  MUST also contain the full JTI column; otherwise `INSERT IGNORE` could mistake
-  an unrelated collision for replay. The table MUST have no foreign keys:
-  MySQL also downgrades a foreign-key violation under `INSERT IGNORE`, which
-  would make a first use indistinguishable from a duplicate JTI.
-  an unrelated constraint collision for replay. `CREATE TABLE IF NOT EXISTS`
+  MUST also contain the full JTI column; otherwise a duplicate-key error could
+  represent an unrelated constraint collision. `CREATE TABLE IF NOT EXISTS`
   does not repair a pre-created table, and
-  `INSERT IGNORE` detects replay only when MySQL enforces uniqueness on the JTI
+  the duplicate-key handler detects replay only when MySQL enforces uniqueness on the JTI
   itself. A composite unique index such as `(jti, expires_at)` is insufficient:
   it admits the same JTI with another expiry and therefore fails boot.
   Transactions run at **`READ COMMITTED`** (`SET TRANSACTION ISOLATION LEVEL
