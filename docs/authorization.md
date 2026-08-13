@@ -49,8 +49,8 @@ Enforced **inside** the identity port, after the upstream credential verifies
 cryptographically — issuer, audience, tenant, expiry (contracts §6.5). Both
 allowlists are optional; an **empty allowlist delegates entirely to Gate 1**.
 
-- **Entra** — `subjectAllowlist` matches the selected immutable subject
-  byte-for-byte: **`oid`**, or accepted issuer + `"|"` + `sub` when `oid` is
+- **Entra** — `subjectAllowlist` keeps trimmed, case-insensitive matching for
+  **`oid`**; accepted issuer + `"|"` + `sub` matches byte-for-byte when `oid` is
   unavailable. Matching mutable claims requires the explicit
   `allowMutableClaims` opt-in (`preferred_username` / `email`); only case is
   ignored for those mutable candidates, not whitespace. Microsoft warns against

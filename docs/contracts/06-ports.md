@@ -384,14 +384,13 @@ scope ceiling) is locked in §17.4.
   code exchange and verified the token before forwarding (Cloudflare Access's
   signed assertion is the model), never behind one that merely relays tokens it
   did not validate. Documented as the row-12 residual in the threat model.
-- **Entra subject allowlist.** Matches the exact selected immutable subject by
-  default: `oid`, otherwise the accepted issuer + `"|"` + `sub`. Raw `sub` is not a
-  candidate because it discards issuer namespacing. The immutable candidate is
-  opaque and compared byte-for-byte, without trimming or case folding. Matching
+- **Entra subject allowlist.** Keeps trimmed, case-insensitive matching for
+  `oid`. Otherwise it matches the accepted issuer + `"|"` + `sub` byte-for-byte.
+  Raw `sub` is not a candidate because it discards issuer namespacing. Matching
   mutable `preferred_username`/`email` requires `allowMutableClaims === true`
   (Microsoft warns against using those claims for authorization). Only those
-  mutable candidates are compared case-insensitively; no candidate or allowlist
-  entry is trimmed. This opt-in changes allowlist candidates only: an allowlist
+  mutable candidates are compared case-insensitively; no mutable candidate or
+  allowlist entry is trimmed. This opt-in changes allowlist candidates only: an allowlist
   match never selects or changes the stored grant subject.
 
 **Entra no-`oid` compatibility amendment (2026-08-13).** No durable-state migration

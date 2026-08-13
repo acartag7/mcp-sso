@@ -34,9 +34,8 @@ export interface EntraConfig {
   redirectUri: string;
   /** Allowed `tid` values; defaults to [tenantId]. */
   allowedTenantIds?: string[];
-  /** Optional defense-in-depth subject allowlist. Matches the selected immutable
-   *  subject byte-for-byte; set `allowMutableClaims` to also match mutable
-   *  preferred_username/email case-insensitively (without trimming). */
+  /** Optional subject allowlist: normalized `oid`, exact issuer-namespaced
+   *  `sub`; mutable username/email requires `allowMutableClaims`. */
   subjectAllowlist?: string[];
   /** Opt-in: also match the allowlist against preferred_username/email. Default false. */
   allowMutableClaims?: boolean;
@@ -166,7 +165,8 @@ export function subjectAllowed(payload: EntraPayload, allowlist: string[], allow
   const oid = usableString(payload.oid);
   const sub = usableString(payload.sub);
   const issuer = usableString(payload.iss);
-  const immutableSubject = oid ?? (sub && issuer ? `${issuer}|${sub}` : undefined);
+  if (oid && allowlist.some((entry) => typeof entry === "string" && entry.trim().toLowerCase() === oid.toLowerCase())) return true;
+  const immutableSubject = sub && issuer ? `${issuer}|${sub}` : undefined;
   if (immutableSubject && allowlist.some((entry) => entry === immutableSubject)) return true;
   if (allowMutable !== true) return false;
   const mutableCandidates = [usableString(payload.preferred_username), usableString(payload.email)]

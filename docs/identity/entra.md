@@ -91,10 +91,9 @@ Library consumers may continue passing `groupAuthorization` directly in code.
 
 1. **Entra app assignment / Conditional Access is the primary gate** — enforced by
    Entra, outside mcp-sso.
-2. **`subjectAllowlist` is optional defense-in-depth.** It matches the exact
-   selected immutable subject byte-for-byte by default: `oid`, or accepted issuer
-   + `"|"` + `sub` when no usable `oid` exists. The opaque immutable value is not
-   trimmed or case-folded. Raw `sub` does not match because it drops issuer
+2. **`subjectAllowlist` is optional defense-in-depth.** It keeps trimmed,
+   case-insensitive matching for `oid`. When no usable `oid` exists, accepted
+   issuer + `"|"` + `sub` matches byte-for-byte. Raw `sub` does not match because it drops issuer
    namespacing. Matching the mutable
    `preferred_username` / `email` requires `allowMutableClaims: true` — Microsoft
    warns against using mutable claims for authorization. Only those mutable
@@ -146,8 +145,8 @@ scope outside the catalog, or a non-array `baseScopes`.
   only) or reduce group sprawl.
 - **Group mapping keys must be GUIDs, not display names** (spoof vector; boot-
   rejected).
-- **`subjectAllowlist` matches the selected immutable subject** (`oid`, otherwise
-  accepted issuer + `"|"` + `sub`) byte-for-byte by default. Matching mutable
+- **`subjectAllowlist` keeps trimmed, case-insensitive `oid` matching.** Accepted
+  issuer + `"|"` + `sub` matches byte-for-byte. Matching mutable
   claims requires `allowMutableClaims: true`; only case is ignored, not whitespace.
   Mutable allowlist candidates never become the stored grant subject.
 - **Existing no-`oid` deployments do not migrate mutable-key grants.** After the

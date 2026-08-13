@@ -82,10 +82,10 @@ test("validateEntraIdToken: nonce binding", () => {
   assert.equal(validateEntraIdToken(payload({ nonce: "n-1" }) as never, CONFIG, "other").ok, false); // mismatch
 });
 
-test("subjectAllowed: oid is exact; mutable claims are explicit, case-insensitive, and not trimmed", () => {
+test("subjectAllowed: oid keeps legacy normalized matching; mutable claims are explicit and not trimmed", () => {
   assert.equal(subjectAllowed({ oid: "OID-1" }, ["OID-1"]), true);
-  assert.equal(subjectAllowed({ oid: "OID-1" }, ["oid-1"]), false);
-  assert.equal(subjectAllowed({ oid: "OID-1" }, [" OID-1 "]), false);
+  assert.equal(subjectAllowed({ oid: "OID-1" }, ["oid-1"]), true);
+  assert.equal(subjectAllowed({ oid: "OID-1" }, [" OID-1 "]), true);
   // email/preferred_username do NOT match by default (mutable)
   assert.equal(subjectAllowed({ preferred_username: "u@x.test", email: "u@x.test" }, ["u@x.test"]), false);
   // opt-in -> mutable claims match (case-insensitive)

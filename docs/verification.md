@@ -319,7 +319,7 @@ Notes:
 | S2b.5 | Existing Entra config without group auth | Behavior unchanged. |
 | S2b.6 | Full authorize flow | Entra-derived ceiling enforced by the S2a core flow. |
 | S2b.7 | Immutable Entra subject selection | The pure validator, explicit-key verifier, remote-JWKS factory, and redirect port all prefer exact usable `oid`, otherwise exact accepted `issuer|sub`; mutable-only identity is rejected. |
-| S2b.8 | Entra allowlist normalization boundary | Immutable subjects match byte-for-byte. Mutable username/email matches only when `allowMutableClaims === true`, case-insensitively but without whitespace trimming. |
+| S2b.8 | Entra allowlist normalization boundary | `oid` keeps trimmed, case-insensitive matching; issuer-namespaced `sub` matches byte-for-byte. Mutable username/email matches only when `allowMutableClaims === true`, case-insensitively but without whitespace trimming. |
 | S2b.9 | Stored-DCR and legacy refresh compatibility | Two no-`oid` identities sharing a mutable username do not share accumulated scopes. A pre-upgrade mutable-key refresh family preserves that subject and receives the current sliding TTL on rotation; no migration is inferred. |
 
 ### T1.S3a — machine client provisioning
