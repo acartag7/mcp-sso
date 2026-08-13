@@ -274,6 +274,51 @@ test("WebhookAudit: every configured secret is scrubbed regardless of length or 
   }
 });
 
+test("WebhookAudit: transport mutation cannot erase configured secrets from redaction", async () => {
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest", {
+      headers: { "X-Hook-Key": "abc" },
+      fetchImpl: (async (_url, init) => {
+        (init?.headers as Record<string, string>)["X-Hook-Key"] = "changed";
+        throw new Error("transport reflected abc");
+      }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("abc"), false);
+  assert.match(stderr, /transport reflected \[redacted\]/);
+});
+
+test("WebhookAudit: exact configured values redact before generic secret patterns", async () => {
+  const secret = "prefix-token=abc-suffix";
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest", {
+      headers: { "X-Hook-Key": secret },
+      fetchImpl: (async () => { throw new Error(`transport reflected ${secret}`); }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("prefix-"), false);
+  assert.match(stderr, /transport reflected \[redacted\]/);
+});
+
+test("WebhookAudit: raw plus-bearing query values redact when reflected alone", async () => {
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest?sig=ab+c", {
+      fetchImpl: (async () => { throw new Error("transport reflected ab+c"); }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("ab+c"), false);
+  assert.match(stderr, /transport reflected \[redacted\]/);
+});
+
 test("WebhookAudit: never rejects when the transport throws a hostile error (throwing message getter)", async () => {
   // The fail-open invariant must hold even when the caught value is hostile —
   // a .message getter that throws must not escape the catch via safeErrorMessage.

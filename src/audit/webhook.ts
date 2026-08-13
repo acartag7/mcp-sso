@@ -58,6 +58,7 @@ export class WebhookAudit implements AuditPort {
    *  `_` before `token` defeats the `\b` boundary), so the configured values are
    *  removed precisely here. (Userinfo is rejected outright at construction.) */
   private readonly querySecrets: string[];
+  private readonly configuredSecrets: string[];
 
   constructor(url: string, options: WebhookAuditOptions = {}) {
     // RAW prefix check FIRST — fail-closed before any URL parsing. Rejects
@@ -88,6 +89,7 @@ export class WebhookAudit implements AuditPort {
     this.querySecrets = collectQuerySecrets(parsed);
     this.timeoutMs = options.timeoutMs ?? 5000;
     this.headers = { "Content-Type": "application/json", ...options.headers };
+    this.configuredSecrets = [...Object.values(this.headers), ...this.querySecrets];
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
   }
 
@@ -121,7 +123,7 @@ export class WebhookAudit implements AuditPort {
    *  query-string params in case the regex redactor missed a non-standard
    *  format. Never throws. */
   private safeError(error: unknown): string {
-    return safeErrorForStderr(error, [...Object.values(this.headers), ...this.querySecrets]);
+    return safeErrorForStderr(error, this.configuredSecrets);
   }
 }
 
@@ -133,7 +135,11 @@ function collectQuerySecrets(url: URL): string[] {
   if (!url.search) return [];
   const tokens: string[] = [url.search];
   for (const component of url.search.slice(1).split("&")) {
-    if (component.length > 0) tokens.push(component);
+    if (component.length > 0) {
+      tokens.push(component);
+      const separator = component.indexOf("=");
+      if (separator >= 0 && separator < component.length - 1) tokens.push(component.slice(separator + 1));
+    }
   }
   for (const [k, v] of url.searchParams.entries()) {
     tokens.push(`${k}=${v}`);

@@ -63,7 +63,11 @@ export function safeErrorMessage(error: unknown): string {
  *  Exact redaction happens before the single-line length bound. NEVER throws. */
 export function safeErrorForStderr(error: unknown, exactSecrets: readonly string[]): string {
   try {
-    let message = safeErrorMessage(error);
+    const e = error as { message?: unknown; name?: unknown } | null;
+    let message = String(e?.message ?? error ?? "unknown error");
+    const name = typeof e?.name === "string" ? e.name : "";
+    if (name && name !== "Error" && !message.startsWith(name)) message = `${name}: ${message}`;
+    if (!message) message = "unknown error";
     for (const secret of [...exactSecrets].filter((value) => value.length > 0).sort((a, b) => b.length - a.length)) {
       message = message.split(secret).join("[redacted]");
     }
