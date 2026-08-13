@@ -9,12 +9,11 @@ import type { BridgeConfig } from "../config.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuditPort } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
-import { noopRateLimit } from "../ports/rate-limit.ts";
+import { noopRateLimit, rateLimitIdentity } from "../ports/rate-limit.ts";
 import { OAuthError } from "../errors.ts";
 import { AuthConfigError } from "../config.ts";
 import { CimdError } from "./errors.ts";
 import { CIMD_AUDIT_EVENT, auditReason, cimdGenericError, mapCimdError } from "./anti-oracle.ts";
-// Re-exported so existing importers keep one import site for the CIMD surface.
 export { CIMD_AUDIT_EVENT, cimdGenericError, mapCimdError } from "./anti-oracle.ts";
 import { createGuardedFetcher, type GuardedFetcher } from "./guarded-fetcher.ts";
 import type { CimdTransport, DnsResolver } from "./transport.ts";
@@ -155,7 +154,8 @@ export class CimdResolver {
     // side effect (RedisRateLimit does an atomic INCR), so charging the same
     // instance twice for one request halves the effective limit — and a limit
     // of 1 would reject the very first CIMD authorization.
-    const ports = limiter === undefined || limiter === this.#rateLimit
+    const ports = limiter === undefined
+      || rateLimitIdentity(limiter) === rateLimitIdentity(this.#rateLimit)
       ? [this.#rateLimit] : [this.#rateLimit, limiter];
     for (const port of ports) {
       let allowed = true;

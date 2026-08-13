@@ -99,6 +99,29 @@ test("integration — explicit empty redirect allowlist removes local compositio
   }
 });
 
+test("integration — unsupported loopback URL schemes fail before starter state creation", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-bad-loopback-scheme-"));
+  try {
+    for (const target of ["fastify", "gateway"] as const) {
+      const dir = join(base, target);
+      const env = {
+        MCP_SSO_DIR: dir,
+        OAUTH_ISSUER: "ftp://localhost:3000",
+        OAUTH_RESOURCE: "ftp://localhost:3000/mcp",
+      };
+      const boot = target === "fastify"
+        ? buildExample(env)
+        : buildGatewayExample(env, {
+          backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+        });
+      await assert.rejects(boot, /console-pairing starter requires loopback/);
+      assert.equal(existsSync(dir), false, `${target}: no signing state was created`);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("integration — Cloudflare Access branch: buildExample creates the state dir, opens auth.db, selects CF identity (NOT pairing)", async () => {
   // This is the regression class that shipped untested: the CF branch derives
   // auth.db/audit.jsonl under MCP_SSO_DIR but must also CREATE that dir, or
@@ -118,6 +141,7 @@ test("integration — Cloudflare Access branch: buildExample creates the state d
       OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
       OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(key),
       OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      OAUTH_REDIRECT_ALLOWLIST: "https://client.test/callback",
     });
     assert.equal(config.issuer, "http://localhost");
     assert.equal(config.cimd?.enabled, true, "production example advertises CIMD");
@@ -491,6 +515,63 @@ test("integration — invalid upstream callback config fails before state creati
   }
 });
 
+test("integration — unsafe OIDC deployment fails before provider discovery in both examples", async () => {
+  const providers = [
+    {
+      name: "Google",
+      env: {
+        GOOGLE_CLIENT_ID: "google-client",
+        GOOGLE_CLIENT_SECRET: "google-secret",
+        GOOGLE_REDIRECT_URI: "https://mcp.example/oauth/callback",
+      },
+      factoryKey: "google" as const,
+    },
+    {
+      name: "generic OIDC",
+      env: {
+        OIDC_ISSUER: "https://issuer.example",
+        OIDC_CLIENT_ID: "oidc-client",
+        OIDC_REDIRECT_URI: "https://mcp.example/oauth/callback",
+      },
+      factoryKey: "genericOidc" as const,
+    },
+  ];
+  for (const target of ["fastify", "gateway"] as const) {
+    for (const provider of providers) {
+      const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-${target}-guard-before-oidc-`));
+      const dir = join(base, "state");
+      let factoryCalls = 0;
+      const factory = async () => {
+        factoryCalls++;
+        throw new Error("provider discovery ran before deployment guard");
+      };
+      const identityFactories = { [provider.factoryKey]: factory };
+      const env = {
+        MCP_SSO_DIR: dir,
+        OAUTH_ISSUER: "https://mcp.example",
+        OAUTH_RESOURCE: "https://mcp.example/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_REDIRECT_ALLOWLIST: "",
+        ...provider.env,
+      };
+      try {
+        const boot = target === "fastify"
+          ? buildExample(env, identityFactories)
+          : buildGatewayExample(env, {
+            backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+            identityFactories,
+          });
+        await assert.rejects(boot, /stateless DCR/, `${target} ${provider.name}`);
+        assert.equal(factoryCalls, 0, `${target} ${provider.name}: discovery was not started`);
+        assert.equal(existsSync(dir), false, `${target} ${provider.name}: no state was created`);
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
 test("integration — Google/generic env wiring defaults to the shipped production factories (stubbed discovery, no network)", async () => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: URL | Request | string): Promise<Response> => {
@@ -737,6 +818,7 @@ test("integration — Cloudflare Access branch: full header flow through the ent
   const CERTS_URL = "https://cf.test/certs";
   const CF_ISSUER = "https://cf.test";
   const CF_AUDIENCE = "https://cf.test/aud";
+  const CALLBACK = "https://client.test/callback";
 
   // RSA keypair for the CF Access JWT: the public half is served as JWKS at the
   // https certsUrl (stubbed globalThis.fetch), the private half signs the assertion.
@@ -759,12 +841,12 @@ test("integration — Cloudflare Access branch: full header flow through the ent
       OAUTH_RESOURCE: `${ORIGIN}/mcp`,
       OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
       OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(signingKey),
-      OAUTH_REDIRECT_ALLOWLIST: FLOW_REDIRECT,
+      OAUTH_REDIRECT_ALLOWLIST: CALLBACK,
       OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
     });
     assert.equal(config.issuer, ORIGIN);
     try {
-      const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [FLOW_REDIRECT] }) });
+      const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [CALLBACK] }) });
       assert.equal(reg.statusCode, 201);
       const clientId = json<{ client_id: string }>(reg).client_id;
 
@@ -776,7 +858,7 @@ test("integration — Cloudflare Access branch: full header flow through the ent
         .setIssuer(CF_ISSUER).setAudience(CF_AUDIENCE).setIssuedAt(now).setExpirationTime(now + 3600)
         .sign(privateKey);
 
-      const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: FLOW_REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
+      const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: CALLBACK, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
       const authPage = await app.inject({ method: "GET", url: `/oauth/authorize?${q}`, headers: { "cf-access-jwt-assertion": cfJwt } });
       assert.equal(authPage.statusCode, 200, "CF identity accepted → consent page (NOT 401, NOT the pairing page)");
       assert.match(authPage.body, /Authorize access/);
@@ -787,7 +869,7 @@ test("integration — Cloudflare Access branch: full header flow through the ent
       const authCode = new URL(approve.headers.location as string).searchParams.get("code");
       assert.ok(authCode);
 
-      const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: FLOW_REDIRECT, client_id: clientId, code_verifier: verifier }).toString() });
+      const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: CALLBACK, client_id: clientId, code_verifier: verifier }).toString() });
       assert.equal(tokenResp.statusCode, 200);
       const { access_token: accessToken, refresh_token: refreshToken } = json<{ access_token: string; refresh_token: string }>(tokenResp);
 
@@ -885,6 +967,7 @@ test("integration — runnable example rejects duplicate /mcp Origin occurrences
   const built = await buildApp({
     config,
     identity: { async verify() { return { ok: false, reason: "unused" }; } },
+    acknowledgeUnsafeStatelessDefaults: true,
   });
   await built.app.listen({ port: 0, host: "127.0.0.1" });
   const port = (built.app.server.address() as AddressInfo).port;

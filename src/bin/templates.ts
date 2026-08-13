@@ -71,7 +71,7 @@ const list = (v: string | undefined, def: string): string[] => (v ?? def).split(
 const oneLine = (s: unknown): string => String(s).replace(/[\\x00-\\x1f\\x7f]/g, "");
 // allowInsecureLocalhost lets an http:// loopback issuer boot for local dev (the
 // bridge mints real tokens; never set this for a non-loopback / production issuer).
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]); const isLoopback = (url: string): boolean => { try { const u = new URL(url); return (u.protocol === "http:" || u.protocol === "https:") && LOOPBACK.has(u.hostname); } catch { return false; } };
 const isHttpLoopback = (url: string): boolean => { try { const u = new URL(url); return u.protocol === "http:" && LOOPBACK.has(u.hostname); } catch { return false; } };
 
 async function main(): Promise<void> {
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
   };
   requireUrl("OAUTH_ISSUER", ISSUER);
   requireUrl("OAUTH_RESOURCE", RESOURCE);
-  if (new URL(RESOURCE).pathname !== "/mcp") throw new Error("OAUTH_RESOURCE pathname must be /mcp (the server mounts /mcp); set OAUTH_RESOURCE to <issuer>/mcp or edit server.ts for a custom path.");
+  if (new URL(RESOURCE).pathname !== "/mcp") throw new Error("OAUTH_RESOURCE pathname must be /mcp (the server mounts /mcp); set OAUTH_RESOURCE to <issuer>/mcp or edit server.ts for a custom path."); if (!isLoopback(ISSUER) || !isLoopback(RESOURCE)) throw new Error("The generated starter is localhost-only: OAUTH_ISSUER and OAUTH_RESOURCE must use loopback hosts. Use the production example for an internet-facing deployment.");
   // loadOrCreateQuickstartSecrets creates DIR (0o700) + the managed .gitignore +
   // the signing material on first boot (the fs-trust bar + zero-setup keys).
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
   const app = Fastify();
   const clock = new SystemClock();
   const store = openSqliteStore(\`\${DIR}/auth.db\`);
-  const bridge = new Bridge({ config, store, clock, audit });
+  const bridge = new Bridge({ config, store, clock, audit, acknowledgeUnsafeStatelessDefaults: true });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
   const toNorm = (req: FastifyRequest): NormRequest => ({
     query: req.query as NormRequest["query"], body: req.body, headers: req.headers as NormRequest["headers"], ip: req.ip,

@@ -244,6 +244,7 @@ test("integration — gateway rejects duplicate /mcp Origin occurrences before a
     backendUrl: "http://127.0.0.1:9/mcp",
     getBackendCredential: () => BACKEND_KEY,
     identity: { async verify() { return { ok: false, reason: "unused" }; } },
+    acknowledgeUnsafeStatelessDefaults: true,
   });
   await built.app.listen({ port: 0, host: "127.0.0.1" });
   const port = (built.app.server.address() as AddressInfo).port;
