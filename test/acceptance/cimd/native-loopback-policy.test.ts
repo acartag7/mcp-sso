@@ -22,8 +22,13 @@ if (phases["cimd-native-loopback-policy"] !== true) {
 
   const NOW = Date.parse("2026-08-14T12:00:00.000Z");
   const CLIENT_ID = "https://cdn.example.com/client";
-  const REGISTERED = "http://127.0.0.1:5000/cb";
-  const DIFFERENT_PORT = "http://127.0.0.1:7000/cb";
+  const LOOPBACKS = [
+    { registered: "http://127.0.0.1:5000/cb", differentPort: "http://127.0.0.1:7000/cb" },
+    { registered: "http://localhost:5000/cb", differentPort: "http://localhost:7000/cb" },
+    { registered: "http://[::1]:5000/cb", differentPort: "http://[::1]:7000/cb" },
+  ] as const;
+  const REGISTERED = LOOPBACKS[0].registered;
+  const DIFFERENT_PORT = LOOPBACKS[0].differentPort;
   const VERIFIER = "correct-horse-battery-staple-0123456789abcdef0123";
   const OMIT = Symbol("omit");
   const enc = (value: string) => new TextEncoder().encode(value);
@@ -32,7 +37,7 @@ if (phases["cimd-native-loopback-policy"] !== true) {
   class Clock { nowMs() { return NOW; } }
   class Audit { events: any[] = []; async writeAuthEvent(event: any) { this.events.push(event); } }
 
-  function document(applicationType: unknown | typeof OMIT, redirect = REGISTERED): Record<string, unknown> {
+  function document(applicationType: unknown | typeof OMIT, redirect: string = REGISTERED): Record<string, unknown> {
     const value: Record<string, unknown> = {
       client_id: CLIENT_ID, client_name: "Native policy client", redirect_uris: [redirect],
     };
@@ -61,7 +66,10 @@ if (phases["cimd-native-loopback-policy"] !== true) {
         fetches += 1;
         return Promise.resolve({
           status: 200, redirected: false, finalUrl: CLIENT_ID,
-          headersDistinct: { "content-type": ["application/json"] },
+          headersDistinct: {
+            "content-type": ["application/json"],
+            "cache-control": ["public, max-age=600"],
+          },
           encodedBody: body(enc(JSON.stringify(doc))),
         });
       },
@@ -88,15 +96,20 @@ if (phases["cimd-native-loopback-policy"] !== true) {
   const errorCode = (response: any) => response.body && typeof response.body === "object" ? response.body.error : undefined;
 
   test("document path: only explicit native gets a different loopback port", async () => {
-    for (const [applicationType, redirect, expected] of [
-      ["native", DIFFERENT_PORT, 200], ["web", DIFFERENT_PORT, 401], [OMIT, DIFFERENT_PORT, 401],
-      ["web", REGISTERED, 200], [OMIT, REGISTERED, 200],
-    ] as const) {
-      const ctx = context(document(applicationType));
-      const response = await ctx.bridge.handleAuthorize(request(params(redirect)), { subject: "user-1" });
-      assert.equal(response.status, expected, `${String(applicationType)} at ${redirect}`);
-      assert.equal(ctx.fetches, 1, "each decision follows one validated document fetch");
-      if (expected === 401) assert.equal(errorCode(response), "invalid_client");
+    for (const loopback of LOOPBACKS) {
+      for (const [applicationType, redirect, expected] of [
+        ["native", loopback.differentPort, 200], ["web", loopback.differentPort, 401],
+        [OMIT, loopback.differentPort, 401], ["web", loopback.registered, 200],
+        [OMIT, loopback.registered, 200],
+      ] as const) {
+        const ctx = context(document(applicationType, loopback.registered));
+        for (const pass of ["miss", "hit"] as const) {
+          const response = await ctx.bridge.handleAuthorize(request(params(redirect)), { subject: "user-1" });
+          assert.equal(response.status, expected, `${String(applicationType)} ${pass} at ${redirect}`);
+          if (expected === 401) assert.equal(errorCode(response), "invalid_client");
+        }
+        assert.equal(ctx.fetches, 1, "the second type decision uses the cached named projection");
+      }
     }
 
     for (const malformed of ["mobile", "", null, 1, true, [], {}]) {
@@ -123,18 +136,29 @@ if (phases["cimd-native-loopback-policy"] !== true) {
   });
 
   test("prepare re-check requires explicit native for a different loopback port", async () => {
-    for (const [applicationType, expected] of [
-      ["native", 200], ["web", 401], [OMIT, 401], ["mobile", 401], [null, 401], [1, 401],
-    ] as const) {
+    for (const loopback of LOOPBACKS) {
+      for (const [applicationType, expected] of [["native", 200], ["web", 401], [OMIT, 401]] as const) {
+        const ctx = context(document(OMIT));
+        const registration: Record<string, unknown> = {
+          client_id: CLIENT_ID, client_name: "Carried", redirect_uris: [loopback.registered],
+        };
+        if (applicationType !== OMIT) registration.application_type = applicationType;
+        const response = await ctx.bridge.handleAuthorize(
+          request(params(loopback.differentPort)), { subject: "user-1", registration },
+        );
+        assert.equal(response.status, expected, `${String(applicationType)} at ${loopback.differentPort}`);
+        assert.equal(ctx.fetches, 0, "supplied registration never re-fetches");
+      }
+    }
+    for (const applicationType of ["mobile", null, 1]) {
       const ctx = context(document(OMIT));
       const registration: Record<string, unknown> = {
-        client_id: CLIENT_ID, client_name: "Carried", redirect_uris: [REGISTERED],
+        client_id: CLIENT_ID, client_name: "Carried", redirect_uris: [REGISTERED], application_type: applicationType,
       };
-      if (applicationType !== OMIT) registration.application_type = applicationType;
       const response = await ctx.bridge.handleAuthorize(
         request(params(DIFFERENT_PORT)), { subject: "user-1", registration },
       );
-      assert.equal(response.status, expected, String(applicationType));
+      assert.equal(response.status, 401, String(applicationType));
       assert.equal(ctx.fetches, 0, "supplied registration never re-fetches");
     }
   });
@@ -148,7 +172,7 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     const seed = await ctx.flow.handleAuthorize(request(params(REGISTERED)));
     const audience = jose.decodeJwt(cookieValue(seed.headers["set-cookie"])).aud;
 
-    async function forge(applicationType: unknown | typeof OMIT, redirect = DIFFERENT_PORT) {
+    async function forge(applicationType: unknown | typeof OMIT, redirect: string = DIFFERENT_PORT) {
       const cimd: Record<string, unknown> = {
         client_id: CLIENT_ID, client_name: "Carried", redirect_uris: [REGISTERED],
       };
@@ -167,6 +191,9 @@ if (phases["cimd-native-loopback-policy"] !== true) {
       ["web", DIFFERENT_PORT, 400, 0], [OMIT, DIFFERENT_PORT, 400, 0],
       ["mobile", DIFFERENT_PORT, 400, 0], ["", DIFFERENT_PORT, 400, 0],
       [null, DIFFERENT_PORT, 400, 0], [1, DIFFERENT_PORT, 400, 0],
+      ["mobile", REGISTERED, 400, 0], ["", REGISTERED, 400, 0],
+      [null, REGISTERED, 400, 0], [1, REGISTERED, 400, 0],
+      [true, REGISTERED, 400, 0], [[], REGISTERED, 400, 0], [{}, REGISTERED, 400, 0],
     ] as const) {
       const before = consumes;
       const token = await forge(applicationType, redirect);
