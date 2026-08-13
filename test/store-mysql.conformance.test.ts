@@ -275,6 +275,26 @@ if (RUN) {
     }
   });
 
+  test("MysqlStore: inbound metadata foreign keys reject before rotation can be blocked", async () => {
+    let unexpectedlyOpened: Awaited<ReturnType<typeof createMysqlStore>> | undefined;
+    await admin!.query(`CREATE TABLE oauth_store_metadata_ref (
+      instance_id VARCHAR(128) NOT NULL,
+      CONSTRAINT fk_metadata_ref FOREIGN KEY (instance_id)
+        REFERENCES oauth_store_metadata (instance_id) ON UPDATE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    await admin!.query(`INSERT INTO oauth_store_metadata_ref (instance_id)
+      SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1`);
+    try {
+      await assert.rejects(
+        async () => { unexpectedlyOpened = await createMysqlStore(MYSQL_URL as string); },
+        /oauth_store_metadata must not have foreign keys/,
+      );
+    } finally {
+      await unexpectedlyOpened?.close();
+      await admin!.query("DROP TABLE oauth_store_metadata_ref");
+    }
+  });
+
   test("MysqlStore/MySQL 8.4: migrates VARCHAR(255) subjects and persists max Entra authorization/refresh", async () => {
     await admin!.query("ALTER TABLE oauth_auth_codes MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
     await admin!.query("ALTER TABLE oauth_refresh_tokens MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");

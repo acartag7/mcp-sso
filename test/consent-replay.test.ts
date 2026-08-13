@@ -235,6 +235,25 @@ test("authorization construction rejects stores without a valid instance binding
   await malformed.close();
 });
 
+test("approval fails closed on an unexpected atomic-store result", async () => {
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  const store = new MemoryStore();
+  try {
+    const auth = new OAuthAuthorizationUseCase({ config: makeConfig(600), store, clock, audit });
+    const consentToken = await prepareConsent(auth);
+    store.commitConsentApproval = async () => undefined as never;
+    await assert.rejects(
+      auth.approve({ consentToken, approved: true, origin: ISSUER }),
+      (error: unknown) => error instanceof OAuthError && error.code === "server_error" && error.status === 500,
+    );
+    assert.equal(
+      audit.events.filter((event) => event.event === "oauth.authorize.approve" && event.status === "success").length,
+      0,
+    );
+  } finally { await store.close(); }
+});
+
 test("approval delayed across signed exp cannot race a sweep into a second code", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-consent-race-"));
   const file = join(dir, "oauth.sqlite");

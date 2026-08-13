@@ -61,6 +61,25 @@ test("MySQL metadata preflight rejects foreign keys before unrelated DDL", async
   assert.equal(unrelatedWrites, 0, "foreign-key rejection precedes every migration write");
 });
 
+test("MySQL metadata preflight rejects inbound foreign keys before unrelated DDL", async () => {
+  let writes = 0;
+  const connection = {
+    query: async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) {
+        return [values?.[0] === "oauth_store_metadata" ? [{ TABLE_NAME: "oauth_store_metadata" }] : [], []];
+      }
+      const metadata = metadataQuery(sql);
+      if (metadata && !sql.includes("REFERENTIAL_CONSTRAINTS")) return metadata;
+      if (sql.includes("REFERENTIAL_CONSTRAINTS")) return [[{ CONSTRAINT_NAME: "fk_inbound" }], []];
+      if (/^(CREATE|ALTER|INSERT)/u.test(sql)) writes += 1;
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /must not have foreign keys/);
+  assert.equal(writes, 0, "inbound foreign-key rejection precedes every migration write");
+});
+
 test("MySQL metadata preflight rejects a case-variant name before any write", async () => {
   let writes = 0;
   const connection = {

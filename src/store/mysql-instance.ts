@@ -65,7 +65,8 @@ export async function assertMysqlStoreInstanceSchema(conn: PoolConnection): Prom
   if (triggers.length > 0) throw new StoreInputError("oauth_store_metadata must not have triggers");
   const [foreignKeys] = await conn.query<RowDataPacket[]>(
     `SELECT CONSTRAINT_NAME FROM information_schema.REFERENTIAL_CONSTRAINTS
-     WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_store_metadata'`,
+     WHERE CONSTRAINT_SCHEMA = DATABASE()
+       AND (TABLE_NAME = 'oauth_store_metadata' OR REFERENCED_TABLE_NAME = 'oauth_store_metadata')`,
   );
   if (foreignKeys.length > 0) {
     throw new StoreInputError("oauth_store_metadata must not have foreign keys");

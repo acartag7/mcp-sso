@@ -18,8 +18,9 @@ two replicas that accidentally share issuer and signing secrets but not state.
 
 Every store also exposes `commitConsentApproval(expectedStoreInstanceId, jti,
 expiresAtIso, authCode)`. It validates the expected binding, consumes the JTI,
-and stores the authorization code as one atomic operation, returning
-`binding_mismatch`, `replayed`, or `stored`. Binding rotation serializes against
+and stores the authorization code as one atomic operation, returning exactly
+`binding_mismatch`, `replayed`, or `stored`; every other runtime value fails
+closed without success response or audit. Binding rotation serializes against
 that operation on the same store metadata lock. Therefore rotation either wins
 before approval and rejects the old consent token without consuming its JTI or
 wins after the completed approval; it cannot interleave between binding
@@ -36,7 +37,7 @@ also share one identifier and coordinate a single rotation instead of rotating
 once per process. A malformed persisted identifier rejects SQL-store migration.
 The SQL adapters admit only the exact canonical metadata table name and required shape: one non-null
 singleton column uniquely keyed and constrained to the value `1`, plus one
-non-null unique instance identifier, with no triggers or foreign keys. They create and initialize that table in a
+non-null unique instance identifier, with no triggers or inbound/outbound foreign keys. They create and initialize that table in a
 concurrency-safe create-then-insert-if-absent sequence before migrating other
 OAuth state. SQLite re-admits a concurrently created file, waits up to five
 seconds for the migration writer, and runs schema admission, metadata insertion,

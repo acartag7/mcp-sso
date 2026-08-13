@@ -232,6 +232,7 @@ export class OAuthAuthorizationUseCase {
       });
       if (commit === "binding_mismatch") throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
       if (commit === "replayed") throw new OAuthError("invalid_grant", "Consent token has already been used");
+      if (commit !== "stored") throw new OAuthError("server_error", "OAuth request failed", 500);
       await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject }, commitClock);
       return { code, redirectTo: redirectWithCode(consent.redirectUri, code, this.config.issuer, consent.state), state: consent.state };
     } catch (error) {
