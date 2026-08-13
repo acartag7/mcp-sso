@@ -19,8 +19,8 @@ against -01's additional SSRF, redirect, and response constraints. The final MCP
 citation is `-00`; §16.1 now carries the complete 44-statement mapping. The
 `+json` media-type mismatch and shared-cache directive handling are closed. One
 confirmed runtime mismatch remains — the loopback port exception is applied
-without RFC 9700's native-app precondition — plus three
-unresolved test-evidence rows, so final CIMD draft conformance cannot yet be
+without RFC 9700's native-app precondition — plus one
+unresolved test-evidence row, so final CIMD draft conformance cannot yet be
 claimed. §16.2 additionally records a
 draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
 member.
@@ -367,9 +367,9 @@ archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 runtime commit `af2a61f` with all three providers. The implementation was
 reviewed against `2026-07-28-RC`; the official final artifact was then checked
 on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
-44 normative statements: 25 `C` conformant plus one conformant disclosed caveat,
+44 normative statements: 27 `C` conformant plus one conformant disclosed caveat,
 two reasoned deviations, 12 not applicable to the implemented public-client profile,
-three with unresolved test evidence, and one confirmed runtime mismatch
+one with unresolved test evidence, and one confirmed runtime mismatch
 (D00-4.5.2 native-app precondition).
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
