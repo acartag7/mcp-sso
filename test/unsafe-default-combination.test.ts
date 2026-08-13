@@ -47,14 +47,32 @@ test("the explicit starter acknowledgement warns and permits boot", () => {
   console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
   try {
     assert.doesNotThrow(() => new Bridge({
-      config: config(), store: new MemoryStore(), clock, audit,
+      config: config({
+        issuer: "http://localhost:3000",
+        resource: "http://localhost:3000/mcp",
+        dev: { allowInsecureLocalhost: true },
+      }), store: new MemoryStore(), clock, audit,
       acknowledgeUnsafeStatelessDefaults: true,
     }));
   } finally {
     console.warn = original;
   }
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0]!, /acknowledgeUnsafeStatelessDefaults.*unsafe for internet-facing use/);
+  const acknowledgementWarnings = warnings.filter((warning) => warning.includes("acknowledgeUnsafeStatelessDefaults"));
+  assert.equal(acknowledgementWarnings.length, 1);
+  assert.match(acknowledgementWarnings[0]!, /unsafe for internet-facing use/);
+});
+
+test("the starter acknowledgement is restricted to loopback issuer and resource", () => {
+  for (const overrides of [
+    {},
+    { issuer: "https://localhost" },
+    { resource: "https://localhost/mcp" },
+  ]) {
+    assert.throws(() => new Bridge({
+      config: config(overrides), store: new MemoryStore(), clock, audit,
+      acknowledgeUnsafeStatelessDefaults: true,
+    }), /restricted to loopback issuer and resource/);
+  }
 });
 
 test("Bridge boot rejects stateless DCR plus starter-only redirect trust plus no limiter", () => {
@@ -62,6 +80,7 @@ test("Bridge boot rejects stateless DCR plus starter-only redirect trust plus no
     [],
     ["https://claude.ai", "https://chatgpt.com"],
     ["http://localhost", "http://127.0.0.1", "http://[::1]"],
+    ["https://localhost", "https://127.0.0.1", "https://[::1]"],
   ]) {
     assert.throws(
       () => construct(config({ redirectAllowlist })),
@@ -70,6 +89,9 @@ test("Bridge boot rejects stateless DCR plus starter-only redirect trust plus no
     );
   }
   assert.throws(() => construct(config(), noopRateLimit), AuthConfigError);
+  for (const rateLimit of [{}, { check: 1 }]) {
+    assert.throws(() => construct(config(), rateLimit as never), /rateLimit must implement/);
+  }
 });
 
 test("Bridge boot accepts each adjacent composition when one unsafe-default condition changes", () => {

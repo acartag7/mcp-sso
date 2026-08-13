@@ -60,6 +60,7 @@ import {
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
+import { assertSafeDeploymentCombination } from "../../src/deployment-guard.ts";
 
 export interface ExampleOptions {
   config: BridgeConfig;
@@ -84,12 +85,16 @@ export interface ExampleOptions {
 
 /** Build the example Fastify app: OAuth routes + a protected /mcp (MCP server). */
 export async function buildApp(opts: ExampleOptions) {
+  assertSafeDeploymentCombination({
+    config: opts.config,
+    ...(opts.acknowledgeUnsafeStatelessDefaults === true ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
+  }, { emitAcknowledgementWarning: false });
   const app = Fastify();
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
   const bridge = new Bridge({ config: opts.config, store, clock, audit,
-    ...(opts.acknowledgeUnsafeStatelessDefaults ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
+    ...(opts.acknowledgeUnsafeStatelessDefaults === true ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
   const authorizer = new RequestAuthorizer({ config: opts.config, clock, audit });
 
   const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string }): NormRequest => ({

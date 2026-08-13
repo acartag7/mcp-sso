@@ -137,4 +137,7 @@ The check runs before the bridge constructs a CIMD resolver or any use-case.
 `acknowledgeUnsafeStatelessDefaults: true` on `BridgeDeps` is an explicit,
 temporary escape hatch for the localhost-only starter and emits a loud boot
 warning. Any other value is treated as absent. Internet-facing compositions do
-not set it.
+not set it. The acknowledgement is accepted only when both `issuer` and
+`resource` are loopback URLs. A supplied limiter must expose a callable `check`
+method; malformed limiter values fail at boot rather than counting as a bound.
+Composition roots run this guard before opening state stores.

@@ -738,6 +738,7 @@ test("integration — Cloudflare Access branch: full header flow through the ent
   const CERTS_URL = "https://cf.test/certs";
   const CF_ISSUER = "https://cf.test";
   const CF_AUDIENCE = "https://cf.test/aud";
+  const CALLBACK = "https://client.test/callback";
 
   // RSA keypair for the CF Access JWT: the public half is served as JWKS at the
   // https certsUrl (stubbed globalThis.fetch), the private half signs the assertion.
@@ -760,12 +761,12 @@ test("integration — Cloudflare Access branch: full header flow through the ent
       OAUTH_RESOURCE: `${ORIGIN}/mcp`,
       OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
       OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(signingKey),
-      OAUTH_REDIRECT_ALLOWLIST: FLOW_REDIRECT,
+      OAUTH_REDIRECT_ALLOWLIST: CALLBACK,
       OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
     });
     assert.equal(config.issuer, ORIGIN);
     try {
-      const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [FLOW_REDIRECT] }) });
+      const reg = await app.inject({ method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" }, payload: JSON.stringify({ redirect_uris: [CALLBACK] }) });
       assert.equal(reg.statusCode, 201);
       const clientId = json<{ client_id: string }>(reg).client_id;
 
@@ -777,7 +778,7 @@ test("integration — Cloudflare Access branch: full header flow through the ent
         .setIssuer(CF_ISSUER).setAudience(CF_AUDIENCE).setIssuedAt(now).setExpirationTime(now + 3600)
         .sign(privateKey);
 
-      const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: FLOW_REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
+      const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: CALLBACK, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
       const authPage = await app.inject({ method: "GET", url: `/oauth/authorize?${q}`, headers: { "cf-access-jwt-assertion": cfJwt } });
       assert.equal(authPage.statusCode, 200, "CF identity accepted → consent page (NOT 401, NOT the pairing page)");
       assert.match(authPage.body, /Authorize access/);
@@ -788,7 +789,7 @@ test("integration — Cloudflare Access branch: full header flow through the ent
       const authCode = new URL(approve.headers.location as string).searchParams.get("code");
       assert.ok(authCode);
 
-      const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: FLOW_REDIRECT, client_id: clientId, code_verifier: verifier }).toString() });
+      const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: authCode as string, redirect_uri: CALLBACK, client_id: clientId, code_verifier: verifier }).toString() });
       assert.equal(tokenResp.statusCode, 200);
       const { access_token: accessToken, refresh_token: refreshToken } = json<{ access_token: string; refresh_token: string }>(tokenResp);
 
