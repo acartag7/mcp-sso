@@ -109,9 +109,9 @@ test("WebhookAudit: per-event POST is application/json with merged headers", asy
   const init = state.calls[0]!.init;
   assert.equal(init.method, "POST");
   assert.equal(init.redirect, "manual"); // §17.7: redirects not followed
-  const headers = init.headers as Record<string, string>;
-  assert.equal(headers["Content-Type"], "application/json");
-  assert.equal(headers["Authorization"], "Bearer siem-secret-token");
+  const headers = new Headers(init.headers);
+  assert.equal(headers.get("content-type"), "application/json");
+  assert.equal(headers.get("authorization"), "Bearer siem-secret-token");
   assert.deepEqual(JSON.parse(init.body as string), { ...baseEvent });
 });
 
@@ -382,4 +382,32 @@ test("WebhookAudit: final redaction covers the fixed prefix and configured host"
     } finally { captured.restore(); }
     assert.equal(captured.messages.join("\n").includes(item.secret), false, item.secret);
   }
+});
+
+test("WebhookAudit: exact syntax secrets cannot disguise another credential", async () => {
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest?padding=+", {
+      fetchImpl: (async () => { throw new Error("transport reflected Bearer abc"); }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("abc"), false);
+  assert.equal(stderr.includes("Bearerabc"), false);
+});
+
+test("WebhookAudit: header secrets are snapshotted in their transmitted normalized form", async () => {
+  const captured = captureConsoleError();
+  try {
+    const sink = new WebhookAudit("https://siem.test/ingest", {
+      headers: { "X-Hook-Key": " abc " },
+      fetchImpl: (async (_url, init) => {
+        const reflected = new Headers(init?.headers).get("x-hook-key");
+        throw new Error(`transport reflected ${reflected}`);
+      }) as typeof fetch,
+    });
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally { captured.restore(); }
+  assert.equal(captured.messages.join("\n").includes("abc"), false);
 });

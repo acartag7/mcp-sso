@@ -62,7 +62,7 @@ export function safeErrorMessage(error: unknown): string {
  *  secrets that may be too short or unusually shaped for SECRET_PATTERNS.
  *  Exact redaction happens before the single-line length bound. NEVER throws. */
 export function safeErrorForStderr(error: unknown, exactSecrets: readonly string[]): string {
-  const secrets = [...exactSecrets].filter((value): value is string => typeof value === "string" && value.length > 0)
+  const secrets = [...exactSecrets].filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .sort((a, b) => b.length - a.length);
   try {
     const e = error as { message?: unknown; name?: unknown } | null;
@@ -70,11 +70,17 @@ export function safeErrorForStderr(error: unknown, exactSecrets: readonly string
     const name = typeof e?.name === "string" ? e.name : "";
     if (name && name !== "Error" && !message.startsWith(name)) message = `${name}: ${message}`;
     if (!message) message = "unknown error";
-    message = removeExactSecrets(message, secrets);
+    message = replaceExactSecrets(message, secrets, " ");
     return removeExactSecrets(redactForStderr(message), secrets);
   } catch {
     return removeExactSecrets("diagnostic unavailable", secrets);
   }
+}
+
+function replaceExactSecrets(input: string, secrets: readonly string[], replacement: string): string {
+  let output = input;
+  for (const secret of secrets) output = output.split(secret).join(replacement);
+  return output;
 }
 
 function removeExactSecrets(input: string, secrets: readonly string[]): string {
