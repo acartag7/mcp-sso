@@ -58,6 +58,21 @@ export function safeErrorMessage(error: unknown): string {
   }
 }
 
+/** Format a caught error for stderr while also scrubbing exact configured
+ *  secrets that may be too short or unusually shaped for SECRET_PATTERNS.
+ *  Exact redaction happens before the single-line length bound. NEVER throws. */
+export function safeErrorForStderr(error: unknown, exactSecrets: readonly string[]): string {
+  try {
+    let message = safeErrorMessage(error);
+    for (const secret of [...exactSecrets].filter((value) => value.length > 0).sort((a, b) => b.length - a.length)) {
+      message = message.split(secret).join("[redacted]");
+    }
+    return redactForStderr(message);
+  } catch {
+    return "[redacted]";
+  }
+}
+
 // Line-breaking + terminal-control chars stripped from stderr diagnostics so an
 // attacker-chosen client_id / provider text can't forge log lines or inject ANSI
 // escapes: C0 (\x00-\x1f), DEL+C1 (\x7f-\x9f), and the Unicode line/paragraph

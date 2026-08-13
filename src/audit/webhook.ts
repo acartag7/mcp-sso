@@ -33,7 +33,7 @@
 // (the codebase injects Redis/Pool clients the same way), not test-only surface.
 
 import type { AuthAuditEvent, AuditPort } from "../ports/audit.ts";
-import { safeErrorMessage } from "./util.ts";
+import { safeErrorForStderr } from "./util.ts";
 
 export interface WebhookAuditOptions {
   /** Per-request deadline. Default 5000 ms (§17.7). */
@@ -121,31 +121,26 @@ export class WebhookAudit implements AuditPort {
    *  query-string params in case the regex redactor missed a non-standard
    *  format. Never throws. */
   private safeError(error: unknown): string {
-    let msg = safeErrorMessage(error);
-    for (const value of Object.values(this.headers)) {
-      if (typeof value === "string" && value.length >= 8) {
-        msg = msg.split(value).join("[redacted]");
-      }
-    }
-    for (const token of this.querySecrets) {
-      msg = msg.split(token).join("[redacted]");
-    }
-    return msg;
+    return safeErrorForStderr(error, [...Object.values(this.headers), ...this.querySecrets]);
   }
 }
 
 /** Tokens scrubbed from transport diagnostics: the full query string, each
  *  `key=value` pair (handles a pair echoed without the leading `?`), and any
- *  non-trivial value (handles a value echoed alone). Short tokens (<4 chars)
- *  are skipped to avoid mangling diagnostics. */
+ *  non-empty value (handles a value echoed alone). Bare query components are
+ *  secrets too. Length never weakens exact configured-value redaction. */
 function collectQuerySecrets(url: URL): string[] {
   if (!url.search) return [];
   const tokens: string[] = [url.search];
+  for (const component of url.search.slice(1).split("&")) {
+    if (component.length > 0) tokens.push(component);
+  }
   for (const [k, v] of url.searchParams.entries()) {
     tokens.push(`${k}=${v}`);
-    if (v.length >= 8) tokens.push(v);
+    if (v.length > 0) tokens.push(v);
+    else if (k.length > 0) tokens.push(k);
   }
-  return tokens.filter((t) => t.length >= 4);
+  return [...new Set(tokens.filter((token) => token.length > 0))];
 }
 
 export function createWebhookAudit(url: string, options?: WebhookAuditOptions): WebhookAudit {

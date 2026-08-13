@@ -246,6 +246,34 @@ test("WebhookAudit: credential-bearing query string in the URL is scrubbed from 
   assert.ok(stderr.length > 0, "the failure was still surfaced");
 });
 
+test("WebhookAudit: every configured secret is scrubbed regardless of length or query syntax", async () => {
+  const cases = [
+    { name: "short header in synchronous throw", url: "https://siem.test/ingest", headers: { "X-Hook-Key": "abc" }, secret: "abc", reflected: "header=abc", synchronous: true },
+    { name: "long header in rejected promise", url: "https://siem.test/ingest", headers: { "X-Hook-Key": "configured-long-webhook-secret" }, secret: "configured-long-webhook-secret", reflected: "header=configured-long-webhook-secret", synchronous: false },
+    { name: "short query value alone", url: "https://siem.test/ingest?k=xy", secret: "xy", reflected: "value xy", synchronous: false },
+    { name: "short key=value pair", url: "https://siem.test/ingest?k=xy", secret: "k=xy", reflected: "pair k=xy", synchronous: false },
+    { name: "short full query", url: "https://siem.test/ingest?k=xy", secret: "?k=xy", reflected: "query ?k=xy", synchronous: false },
+    { name: "bare query component", url: "https://siem.test/ingest?hooksecret", secret: "hooksecret", reflected: "bare hooksecret", synchronous: false },
+  ];
+  for (const item of cases) {
+    const failure = new Error(`transport reflected ${item.reflected}\nforged-line ${"x".repeat(240)}`);
+    const fetchImpl = item.synchronous
+      ? (() => { throw failure; }) as typeof fetch
+      : (() => Promise.reject(failure)) as typeof fetch;
+    const sink = new WebhookAudit(item.url, { headers: item.headers, fetchImpl });
+    const captured = captureConsoleError();
+    try {
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...baseEvent }), item.name);
+    } finally {
+      captured.restore();
+    }
+    const stderr = captured.messages.join("\n");
+    assert.equal(stderr.includes(item.secret), false, `${item.name}: configured secret leaked`);
+    assert.equal(stderr.includes("\n"), false, `${item.name}: reflected newline survived`);
+    assert.ok(stderr.length <= 280, `${item.name}: diagnostic was not bounded`);
+  }
+});
+
 test("WebhookAudit: never rejects when the transport throws a hostile error (throwing message getter)", async () => {
   // The fail-open invariant must hold even when the caught value is hostile —
   // a .message getter that throws must not escape the catch via safeErrorMessage.
