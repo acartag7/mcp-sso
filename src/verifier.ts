@@ -9,6 +9,7 @@ import type { AuthorizedSubject } from "./scopes.ts";
 import { requireScope } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { verifyAccessToken } from "./crypto.ts";
+import { writeAuditBestEffort } from "./audit/best-effort.ts";
 
 export interface RequestAuthDeps {
   config: BridgeConfig;
@@ -43,7 +44,7 @@ export class RequestAuthorizer {
       const token = bearerToken(input.authorization);
       const verified = await verifyAccessToken(token, this.config, operationClock);
       if (input.requiredScope) requireScope(verified, input.requiredScope);
-      await this.audit.writeAuthEvent({
+      await writeAuditBestEffort(this.audit, {
         occurredAt,
         event: "auth.request", status: "success",
         clientId: verified.clientId, subject: verified.subject, scopes: verified.scopes,
@@ -51,7 +52,7 @@ export class RequestAuthorizer {
       });
       return verified;
     } catch (error) {
-      await this.audit.writeAuthEvent({
+      await writeAuditBestEffort(this.audit, {
         occurredAt,
         event: "auth.request", status: "failure",
         reason: error instanceof OAuthError ? error.code : "invalid_token",

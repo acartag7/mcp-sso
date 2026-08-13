@@ -18,17 +18,13 @@ events through each sink; the v0.1 names additionally by the live OAuth flow).
 
 The reference sinks satisfy the fail-open port contract: their
 `writeAuthEvent` methods do not reject, and `combineAudit` isolates sibling
-sinks. `OAuthTokenUseCase` additionally calls every token/revocation audit
-through `writeTokenAudit`, which contains both synchronous throws and rejected
-promises from a nonconforming custom `AuditPort`. The upstream callback boundary
-likewise submits both `oauth.upstream.callback` and its callback-owned
-`identity.verify` copies through best-effort containment: neither a synchronous
-throw nor an asynchronous rejection can replace the authoritative callback
-response. This containment is a token- and upstream-callback-boundary
-  guarantee, not a claim that every use-case repairs arbitrary custom ports.
-  Approval failure evidence in the post-JTI commit-clock window also uses this
-  best-effort containment so sink failure cannot replace the authoritative
-  `invalid_consent` response after the artifact has already been consumed.
+sinks. Every non-transactional use-case audit passes through
+`writeAuditBestEffort` (directly or through a named wrapper), which contains
+both synchronous throws and rejected promises from a nonconforming custom
+`AuditPort`. Audit-sink failure therefore cannot replace an authoritative OAuth
+or resource-server outcome. Machine-client lifecycle success evidence remains
+the durable transactional exception described below; its ordinary `AuditPort`
+fan-out copy is still best effort.
 
 `JsonlFileAudit` is a filesystem boundary as well as an evidence sink. On a
 host where Node exposes `O_NOFOLLOW`, every event opens the configured final

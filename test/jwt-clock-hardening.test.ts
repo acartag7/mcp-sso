@@ -237,6 +237,30 @@ test("RequestAuthorizer reuses one snapshot on the success exit", async () => {
   }]);
 });
 
+test("RequestAuthorizer preserves valid and invalid bearer outcomes when a custom audit sink rejects", async () => {
+  const authorizer = new RequestAuthorizer({
+    config,
+    clock: { nowMs: () => NOW_MS },
+    audit: throwingAudit,
+  });
+  assert.deepEqual(
+    await authorizer.authorize({
+      authorization: `Bearer ${await validAccessToken()}`,
+      requiredScope: "mcp:read",
+    }),
+    {
+      subject: "operator",
+      clientId: "client-1",
+      scopes: ["mcp:read"],
+      credentialKind: "interactive",
+    },
+  );
+  await assert.rejects(
+    authorizer.authorize({ authorization: "Bearer malformed" }),
+    isOAuth("invalid_token", 401),
+  );
+});
+
 test("Bridge.handleApprove rejects an invalid initial snapshot without audit", async () => {
   const clock = new ScriptedClock([Number.NaN]);
   const audit = new MemoryAudit();

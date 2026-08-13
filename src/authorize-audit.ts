@@ -22,7 +22,7 @@ export interface AuthorizeAuditSuccess {
 export async function writeAuthorizeSuccess(
   audit: AuditPort, clock: ClockPort, event: AuthorizeAuditEvent, r: AuthorizeAuditSuccess,
 ): Promise<void> {
-  await audit.writeAuthEvent({
+  await writeAuditBestEffort(audit, {
     occurredAt: new Date(clock.nowMs()).toISOString(), event, status: "success",
     clientId: r.clientId, subject: r.subject, resource: r.resource, scopes: r.scopes,
     redirectHost: hostOf(r.redirectUri),

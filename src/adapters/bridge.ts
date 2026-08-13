@@ -22,8 +22,8 @@ export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
-import {
-  formField, formObject, headerString, noStoreHeaders, oauthErrorResponse, queryString, readHeader,
+import { writeAuditBestEffort } from "../audit/best-effort.ts";
+import { formField, formObject, headerString, noStoreHeaders, oauthErrorResponse, queryString, readHeader,
   type NormRequest, type NormResponse,
 } from "./http.ts";
 export interface BridgeDeps {
@@ -171,7 +171,7 @@ export class Bridge {
     return resolveIdentityWithAudit(identity, input, ip, (status, reason, subject, at) => this.emitIdentityVerify(status, reason, subject, at));
   }
   private async emitIdentityVerify(status: AuthAuditStatus, reason: string | undefined, subject: string | undefined, ip: string | undefined): Promise<void> {
-    await this.audit.writeAuthEvent({ occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "identity.verify", status, subject, reason, ip });
+    await writeAuditBestEffort(this.audit, { occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "identity.verify", status, subject, reason, ip });
   }
 
   async handleApprove(req: NormRequest): Promise<NormResponse> {

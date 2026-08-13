@@ -10,6 +10,7 @@ import type {
 import type { ClockPort } from "./ports/clock.ts";
 import type { AuditPort, AuthAuditEvent } from "./ports/audit.ts";
 import { OAuthError } from "./errors.ts";
+import { writeAuditBestEffort } from "./audit/best-effort.ts";
 import {
   epochSeconds,
   hashMachineClientSecret,
@@ -231,11 +232,7 @@ function failureAudit(
   };
 }
 function safeAudit(audit: AuditPort, event: AuthAuditEvent): void {
-  try {
-    void Promise.resolve(audit.writeAuthEvent(event)).catch(() => {});
-  } catch {
-    // A success already has durable store evidence; a failure committed no row.
-  }
+  void writeAuditBestEffort(audit, event);
 }
 function validateExpiryOffset(now: number, seconds: number, field: string): number {
   const expiry = now + seconds;

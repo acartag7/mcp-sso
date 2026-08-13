@@ -147,3 +147,16 @@ test("S1a.3: combineAudit(throwingSink, fileSink) during a flow — flow succeed
     assert.equal(raw.includes("LEAKED_ATTEMPT"), false);
   });
 });
+
+test("authorize, approve, token, and refresh preserve their outcomes with a directly rejecting custom sink", async () => {
+  const ctx = flowWith({
+    async writeAuthEvent(): Promise<void> { throw new Error("custom sink unavailable"); },
+  });
+  const { code, tokens } = await authorizeAndExchange(ctx);
+  assert.ok(code);
+  assert.ok(tokens.access_token);
+  const refreshed = await ctx.token.refresh({
+    grantType: "refresh_token", refreshToken: tokens.refresh_token, clientId: "client-1",
+  });
+  assert.ok(refreshed.access_token);
+});

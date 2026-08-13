@@ -21,6 +21,7 @@ import { noopAudit } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
 import type { IdentityClaims, IdentityPort, IdentityResult } from "../ports/identity.ts";
+import { writeAuditBestEffort } from "../audit/best-effort.ts";
 
 // RFC 8628 §6.1 unambiguous base-20 alphabet (no vowels, no Y, no digits).
 const CHARSET = "BCDFGHJKLMNPQRSTVWXZ";
@@ -188,18 +189,14 @@ export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): 
   // Audit `oauth.pairing.attempt` — reason is ALWAYS an enum literal (never code/nonce);
   // fail-open (never rejects, §17.7); awaited so the event orders with the response.
   async function emit(status: "success" | "failure", reason: string | undefined, subj: string | undefined, ip?: string): Promise<void> {
-    try {
-      await audit.writeAuthEvent({
-        occurredAt: new Date(clock.nowMs()).toISOString(),
-        event: "oauth.pairing.attempt",
-        status,
-        subject: subj,
-        ip,
-        reason,
-      });
-    } catch {
-      // a sink failure must never block pairing (§17.7 fail-open)
-    }
+    await writeAuditBestEffort(audit, {
+      occurredAt: new Date(clock.nowMs()).toISOString(),
+      event: "oauth.pairing.attempt",
+      status,
+      subject: subj,
+      ip,
+      reason,
+    });
   }
 
   return identity;
