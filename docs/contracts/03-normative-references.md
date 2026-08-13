@@ -25,8 +25,8 @@
   `draft-ietf-oauth-client-id-metadata-document-00`; MCP clients `MUST` send an
   appropriate DCR `application_type`; authorization servers `SHOULD` include
   RFC 9207 `iss` in success and error authorization responses; and servers
-  `MUST` account for scope hierarchies when deciding token sufficiency. The
-  final target remains pending on those runtime gaps plus, in the complete CIMD
-  draft `-00` mapping (§16.1), one confirmed runtime mismatch (the native-app
-  precondition) and four unresolved test-evidence
-  rows. The media-type mismatch is closed.
+  `MUST` account for scope hierarchies when deciding token sufficiency. This
+  source branch closes the RFC 9207 response gap. The final target remains
+  pending on scope-hierarchy handling plus, in the complete CIMD draft `-00`
+  mapping (§16.1), one confirmed runtime mismatch (the native-app precondition)
+  and four unresolved test-evidence rows. The media-type mismatch is closed.
