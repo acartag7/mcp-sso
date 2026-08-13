@@ -66,14 +66,18 @@ export interface EntraRedirectOptions {
   scopeCatalog?: readonly string[];
 }
 
-/** Default token-endpoint transport: global fetch, 10 s hard deadline, against
- *  the URL `exchangeCodeForToken` supplies (always the hardcoded Entra endpoint). */
+/** Default token-endpoint transport: global fetch, redirects REFUSED, and a
+ *  10 s hard deadline against the URL `exchangeCodeForToken` supplies (always
+ *  the hardcoded Entra endpoint). The POST body carries the authorization code,
+ *  PKCE verifier, and optional client secret, so following a redirect would
+ *  disclose credentials to the redirect target. */
 const defaultTransport: EntraTokenTransport = {
   async postForm(url, body) {
     const resp = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: body.toString(),
+      redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
     return { status: resp.status, text: () => resp.text() };

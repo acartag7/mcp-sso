@@ -4,7 +4,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import {
   type EntraConfig, type EntraTokenTransport, createEntraIdentity, entraIssuer,
   exchangeCodeForToken, getAuthorizationUrl, subjectAllowed, validateEntraIdToken,
-  verifyEntraIdToken,
+  verifyEntraIdToken, createEntraRedirectIdentity,
 } from "../src/identity/entra.ts";
 
 const TENANT = "11111111-2222-3333-4444-555555555555";
@@ -172,6 +172,25 @@ test("exchangeCodeForToken: posts to the token endpoint and returns the id_token
   assert.equal(idToken, fakeIdToken);
   const failing: EntraTokenTransport = { async postForm() { return { status: 400, async text() { return "{}"; } }; } };
   await assert.rejects(exchangeCodeForToken(CONFIG, { code: "c", codeVerifier: "v" }, failing));
+});
+
+test("createEntraRedirectIdentity: a token-endpoint 307 fails without forwarding credentials", async () => {
+  const realFetch = globalThis.fetch;
+  let forwardedBody: string | undefined;
+  globalThis.fetch = (async (_input, init) => {
+    if (init?.redirect === "error") throw new TypeError("redirect refused");
+    // Model fetch's default 307 behavior: preserve and forward the POST body.
+    forwardedBody = String(init?.body);
+    return new Response("upstream redirect followed", { status: 502 });
+  }) as typeof fetch;
+  try {
+    const identity = createEntraRedirectIdentity({ ...CONFIG, clientSecret: "client-secret" });
+    const result = await identity.exchangeAndVerify({ code: "authorization-code", codeVerifier: "pkce-verifier", nonce: "nonce" });
+    assert.ok(!result.ok && result.kind === "exchange_failed");
+    assert.equal(forwardedBody, undefined, "307 redirected the secret-bearing token request body");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test("createEntraIdentity: fails closed on blank tenantId/clientId (empty == missing config)", () => {
