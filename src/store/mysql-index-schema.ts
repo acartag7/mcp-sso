@@ -8,11 +8,29 @@ export async function assertConsentJtiUnique(conn: PoolConnection): Promise<void
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_consent_jtis'
        AND COLUMN_NAME IN ('jti', 'expires_at')`,
   );
-  const columns = new Map((columnRows as Array<Record<string, unknown>>).map((row) => [
+  const columnRecords = columnRows as Array<Record<string, unknown>>;
+  const columns = new Map(columnRecords.map((row) => [
     String(row.COLUMN_NAME).toLowerCase(), row,
   ]));
   assertConsentColumn(columns.get("jti"), "jti", 255);
   assertConsentColumn(columns.get("expires_at"), "expires_at", 24);
+  const [extraRows] = await conn.query<RowDataPacket[]>(
+    `SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, EXTRA
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_consent_jtis'
+       AND COLUMN_NAME NOT IN ('jti', 'expires_at')`,
+  );
+  for (const row of extraRows as Array<Record<string, unknown>>) {
+    const name = String(row.COLUMN_NAME).toLowerCase();
+    const optional = row.IS_NULLABLE === "YES" || row.COLUMN_DEFAULT !== null
+      || String(row.EXTRA).toLowerCase().includes("auto_increment")
+      || String(row.EXTRA).toLowerCase().includes("default_generated");
+    if (!optional) {
+      throw new StoreInputError(
+        `oauth_consent_jtis.${name} is an unsupported required column; consent inserts provide only jti and expires_at`,
+      );
+    }
+  }
   const [rows] = await conn.query<RowDataPacket[]>(
     `SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, SUB_PART
      FROM information_schema.STATISTICS

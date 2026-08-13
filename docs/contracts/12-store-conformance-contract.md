@@ -266,7 +266,10 @@ other undersized shape fails boot rather than being silently reinterpreted.
   `COALESCE` preserves the first revocation timestamp.
   At boot, `oauth_consent_jtis.jti` MUST be a non-null `VARCHAR(255)` or wider,
   `expires_at` MUST be a non-null `VARCHAR(24)` or wider, and JTI MUST have a
-  full-column single-column PRIMARY or UNIQUE index. Every other unique index
+  full-column single-column PRIMARY or UNIQUE index. Any extra column MUST be
+  nullable, defaulted, or database-generated; an additional required column
+  fails boot because consent inserts intentionally provide only JTI and expiry.
+  Every other unique index
   MUST also contain the full JTI column; otherwise a duplicate-key error could
   represent an unrelated constraint collision. `CREATE TABLE IF NOT EXISTS`
   does not repair a pre-created table, and

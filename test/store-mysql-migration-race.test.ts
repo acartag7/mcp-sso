@@ -9,8 +9,8 @@ interface RaceOptions {
 }
 
 const CONSENT_COLUMNS = [
-  { COLUMN_NAME: "jti", DATA_TYPE: "varchar", CHARACTER_MAXIMUM_LENGTH: 255, IS_NULLABLE: "NO" },
-  { COLUMN_NAME: "expires_at", DATA_TYPE: "varchar", CHARACTER_MAXIMUM_LENGTH: 24, IS_NULLABLE: "NO" },
+  { COLUMN_NAME: "jti", DATA_TYPE: "varchar", CHARACTER_MAXIMUM_LENGTH: 255, IS_NULLABLE: "NO", COLUMN_DEFAULT: null, EXTRA: "" },
+  { COLUMN_NAME: "expires_at", DATA_TYPE: "varchar", CHARACTER_MAXIMUM_LENGTH: 24, IS_NULLABLE: "NO", COLUMN_DEFAULT: null, EXTRA: "" },
 ];
 
 function racingConnection(options: RaceOptions): {
@@ -176,6 +176,7 @@ test("MySQL migration preflights malformed consent uniqueness before any DDL", a
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
+      if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("information_schema.STATISTICS")) return [[{
@@ -189,12 +190,34 @@ test("MySQL migration preflights malformed consent uniqueness before any DDL", a
   assert.deepEqual(writes, [], "malformed existing schema rejects before CREATE or ALTER");
 });
 
+test("MySQL migration rejects an extra required consent column before DDL", async () => {
+  const writes: string[] = [];
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
+      if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) {
+        return [[{
+          COLUMN_NAME: "tenant_id", DATA_TYPE: "varchar", CHARACTER_MAXIMUM_LENGTH: 64,
+          IS_NULLABLE: "NO", COLUMN_DEFAULT: null, EXTRA: "",
+        }], []];
+      }
+      writes.push(sql);
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /unsupported required column/);
+  assert.deepEqual(writes, [], "required-column rejection precedes CREATE or ALTER");
+});
+
 test("MySQL migration accepts string zero metadata for a full-column JTI key", async () => {
   let statisticsReads = 0;
   const connection = {
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
+      if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.STATISTICS")) {
         statisticsReads += 1;
@@ -216,6 +239,7 @@ test("MySQL uniqueness preflight counts functional parts and normalizes identifi
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
+      if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.STATISTICS")) return [rows, []];
       if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
@@ -239,6 +263,7 @@ test("MySQL uniqueness preflight rejects an unrelated unique constraint", async 
     query: async (sql: string) => {
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.includes("COLUMN_NAME IN ('jti', 'expires_at')")) return [CONSENT_COLUMNS, []];
+      if (sql.includes("COLUMN_NAME NOT IN ('jti', 'expires_at')")) return [[], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.KEY_COLUMN_USAGE")) return [[], []];
       if (sql.includes("information_schema.STATISTICS")) return [[
