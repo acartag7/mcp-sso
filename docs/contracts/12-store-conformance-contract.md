@@ -15,6 +15,15 @@ custom store without this capability is rejected when the authorization use-case
 is constructed. This binding prevents one consent token from being redeemed in
 two replicas that accidentally share issuer and signing secrets but not state.
 
+A filesystem copy, database snapshot, or restore copies this identifier too.
+Before an independent deployment serves traffic from a copied store, the
+operator calls `rotateStoreInstanceId()` on that copy. The operation atomically
+replaces the identifier and invalidates consent tokens minted before the
+rotation; it does not rewrite authorization codes, access tokens, refresh-token
+families, or client grants. Replicas intentionally sharing one logical database
+also share one identifier and coordinate a single rotation instead of rotating
+once per process. A malformed persisted identifier rejects SQL-store migration.
+
 ## 12.1 Records (secrets are SHA-256 hex digests; timestamps are UTC ISO 8601 with EXACTLY 3 ms digits)
 ```ts
 interface AuthCodeRecord {

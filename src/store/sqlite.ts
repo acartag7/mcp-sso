@@ -6,11 +6,12 @@ import type {
 } from "../ports/store.ts";
 import type { ClientRegistration, ClientStore } from "../ports/client-store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
+import { readSqliteStoreInstanceId, rotateSqliteStoreInstanceId } from "./sqlite-instance.ts";
 import {
   admitSqliteFile, closeSqliteAdmission, sqlitePath, SqliteStateError,
   verifySqlitePathIdentity,
@@ -44,9 +45,12 @@ export class SqliteStore implements StorePort, ClientStore {
 
   async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
-    const row = this.db.prepare(`SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1`).get() as { instance_id?: unknown } | undefined;
-    assertStoreInstanceId(row?.instance_id);
-    return row.instance_id;
+    return readSqliteStoreInstanceId(this.db);
+  }
+
+  async rotateStoreInstanceId(): Promise<string> {
+    this.ensureOpen();
+    return rotateSqliteStoreInstanceId(this.db);
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {

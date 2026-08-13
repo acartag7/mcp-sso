@@ -7,6 +7,14 @@ export async function ensureMysqlStoreInstance(conn: PoolConnection): Promise<vo
     "INSERT IGNORE INTO oauth_store_metadata (singleton, instance_id) VALUES (1, ?)",
     [randomBytes(18).toString("base64url")],
   );
+  await assertMysqlStoreInstance(conn);
+}
+
+export async function assertMysqlStoreInstance(conn: PoolConnection): Promise<void> {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    "SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1",
+  );
+  assertStoreInstanceId((rows[0] as { instance_id?: unknown } | undefined)?.instance_id);
 }
 
 export async function readMysqlStoreInstanceId(pool: Pool): Promise<string> {
@@ -15,5 +23,16 @@ export async function readMysqlStoreInstanceId(pool: Pool): Promise<string> {
   );
   const value = (rows[0] as { instance_id?: unknown } | undefined)?.instance_id;
   assertStoreInstanceId(value);
+  return value;
+}
+
+export async function rotateMysqlStoreInstanceId(pool: Pool): Promise<string> {
+  const value = randomBytes(18).toString("base64url");
+  const [result] = await pool.query(
+    "UPDATE oauth_store_metadata SET instance_id = ? WHERE singleton = 1",
+    [value],
+  );
+  const changed = (result as { affectedRows?: unknown }).affectedRows;
+  if (changed !== 1) throw new Error("oauth_store_metadata singleton is missing");
   return value;
 }

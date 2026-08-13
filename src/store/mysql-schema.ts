@@ -23,7 +23,7 @@ import {
   grantGenerationFromStored, refreshResourceFromStored,
 } from "../ports/store.ts";
 import { migrateMysqlSubjectColumns } from "./mysql-subject-schema.ts";
-import { ensureMysqlStoreInstance } from "./mysql-instance.ts";
+import { assertMysqlStoreInstance, ensureMysqlStoreInstance } from "./mysql-instance.ts";
 
 export const MYSQL_OAUTH_TABLES = [
   "oauth_auth_codes", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_consent_jtis", "oauth_store_metadata",
@@ -84,11 +84,11 @@ const MIGRATIONS = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 ];
 
-/** Run idempotent migrations + boot-time config assertions on a connection.
- *  Call once before first use (createMysqlStore does this). */
+/** Run idempotent migrations and boot assertions before first use. */
 export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await assertStrictMode(conn);
   if (await tableExists(conn, "oauth_consent_jtis")) await assertConsentJtiUnique(conn);
+  if (await tableExists(conn, "oauth_store_metadata")) await assertMysqlStoreInstance(conn);
   for (const ddl of MIGRATIONS) await conn.query(ddl);
   await ensureMysqlStoreInstance(conn);
   await ensureColumn(conn, "oauth_auth_codes", "grant_generation", "BIGINT UNSIGNED NULL");

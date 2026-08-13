@@ -1,6 +1,4 @@
-// MysqlStore — pooled persistent StorePort on mysql2. See contracts §12.3 for the
-// async/pooled pattern (begun-guard + release-in-finally, FOR UPDATE, READ COMMITTED,
-// two-step sweep, duplicate-only consent handling, direct-value family upserts).
+// MysqlStore — pooled persistent StorePort on mysql2. See contracts §12.3.
 
 import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
@@ -9,7 +7,7 @@ import {
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
-import { readMysqlStoreInstanceId } from "./mysql-instance.ts";
+import { readMysqlStoreInstanceId, rotateMysqlStoreInstanceId } from "./mysql-instance.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
   authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
@@ -22,10 +20,7 @@ export class MysqlStore implements StorePort {
   private closed = false;
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
-  /** @param ownsPool when true, `close()` ends the pool. `createMysqlStore` sets this
-   *  for the pool it creates; a caller-supplied shared pool (`new MysqlStore(appPool)`)
-   *  defaults to false so closing the store does not tear down pools other components
-   *  still use (Codex P2). */
+  /** `ownsPool` makes `close()` end the pool; caller-supplied pools stay open. */
   constructor(pool: Pool, ownsPool = false) {
     this.pool = pool;
     this.ownsPool = ownsPool;
@@ -34,6 +29,11 @@ export class MysqlStore implements StorePort {
   async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
     return readMysqlStoreInstanceId(this.pool);
+  }
+
+  async rotateStoreInstanceId(): Promise<string> {
+    this.ensureOpen();
+    return rotateMysqlStoreInstanceId(this.pool);
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {

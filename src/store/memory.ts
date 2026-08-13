@@ -24,10 +24,16 @@ export class MemoryStore implements StorePort {
   private readonly refreshTokens = new Map<string, StoredRefresh>();
   private readonly families = new Map<string, StoredFamily>();
   private readonly consentJtis = new Map<string, string>();
-  private readonly storeInstanceId = randomBytes(18).toString("base64url");
+  private storeInstanceId = randomBytes(18).toString("base64url");
 
   async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
+    return this.storeInstanceId;
+  }
+
+  async rotateStoreInstanceId(): Promise<string> {
+    this.ensureOpen();
+    this.storeInstanceId = randomBytes(18).toString("base64url");
     return this.storeInstanceId;
   }
 

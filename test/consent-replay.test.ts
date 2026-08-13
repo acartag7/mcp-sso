@@ -182,6 +182,26 @@ test("a consent token minted by one store cannot be redeemed by a split-brain re
   }
 });
 
+test("rotating a store binding invalidates old consent and permits a new flow", async () => {
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  const store = new MemoryStore();
+  try {
+    const auth = new OAuthAuthorizationUseCase({ config: makeConfig(600), store, clock, audit });
+    const oldConsent = await prepareConsent(auth);
+    await store.rotateStoreInstanceId();
+    await assert.rejects(
+      auth.approve({ consentToken: oldConsent, approved: true, origin: ISSUER }),
+      (error: unknown) => error instanceof OAuthError && error.code === "invalid_consent",
+    );
+    const newConsent = await prepareConsent(auth);
+    const accepted = await auth.approve({ consentToken: newConsent, approved: true, origin: ISSUER });
+    assert.ok(accepted.code, "a flow minted after rotation succeeds");
+  } finally {
+    await store.close();
+  }
+});
+
 test("authorization construction rejects stores without a valid instance binding", async () => {
   const clock = new FakeClock(START_MS);
   const audit = new MemoryAudit();

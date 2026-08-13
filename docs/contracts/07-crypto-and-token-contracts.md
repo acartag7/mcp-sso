@@ -97,7 +97,11 @@ Compatibility and migration: this release adds the optional TypeScript
 `getStoreInstanceId` capability and one metadata table to each SQL adapter;
 authorization construction requires the capability at runtime. Existing OAuth
 rows need no rewrite, but outstanding pre-upgrade consent JWTs lack the binding
-and are invalidated. A tombstone already swept by vulnerable code cannot be
+and are invalidated. Cloning or restoring a store into an independent deployment
+requires one `rotateStoreInstanceId()` call on the copy before it serves traffic;
+that rotation invalidates outstanding consent JWTs for the copied deployment.
+Replicas sharing one logical database keep the same binding. A tombstone already
+swept by vulnerable code cannot be
 reconstructed because the store no longer has the original JWT. Operators that
 already shortened the consent TTL under vulnerable code, ran shared-store
 replicas with inconsistent consent TTLs, or cannot exclude an intervening sweep

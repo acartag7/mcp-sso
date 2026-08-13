@@ -32,6 +32,20 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: store instance binding rotation is atomic and durable`, async () => {
+    const store = make();
+    const get = store.getStoreInstanceId?.bind(store);
+    const rotate = store.rotateStoreInstanceId?.bind(store);
+    assert.ok(get);
+    assert.ok(rotate);
+    const before = await get();
+    const rotated = await rotate();
+    assert.match(rotated, /^[A-Za-z0-9_-]{22,128}$/u);
+    assert.notEqual(rotated, before);
+    assert.equal(await get(), rotated);
+    await store.close();
+  });
+
   test(`${label}: auth codes are hashed, single-use, expire`, async () => {
     const store = make();
     const raw = "raw-auth-code-secret";

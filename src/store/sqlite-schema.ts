@@ -5,6 +5,7 @@
 
 import { randomBytes } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { assertStoreInstanceId } from "../ports/store.ts";
 
 const CLIENT_TABLE_SQL = `CREATE TABLE oauth_clients (
     client_id TEXT PRIMARY KEY NOT NULL,
@@ -68,12 +69,17 @@ export function migrateSqliteStore(db: DatabaseSync): void {
     throw new Error("oauth_clients schema is incompatible");
   }
   if (existingClientObject) assertClientTable(db);
+  const hasMetadata = db.prepare(
+    "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_store_metadata'",
+  ).get();
+  if (hasMetadata) assertPersistedStoreInstance(db);
   for (const migration of MIGRATIONS) {
     db.exec(migration);
   }
   db.prepare(`INSERT OR IGNORE INTO oauth_store_metadata (singleton, instance_id) VALUES (1, ?)`).run(
     randomBytes(18).toString("base64url"),
   );
+  assertPersistedStoreInstance(db);
   ensureColumn(db, "oauth_auth_codes", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_token_families", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_tokens", "grant_generation", "INTEGER");
@@ -85,6 +91,13 @@ export function migrateSqliteStore(db: DatabaseSync): void {
 function clientSchemaObject(db: DatabaseSync): { type: unknown } | undefined {
   return db.prepare("SELECT type FROM sqlite_schema WHERE name = 'oauth_clients' COLLATE NOCASE").get() as
     { type: unknown } | undefined;
+}
+
+function assertPersistedStoreInstance(db: DatabaseSync): void {
+  const metadata = db.prepare(
+    "SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1",
+  ).get() as { instance_id?: unknown } | undefined;
+  assertStoreInstanceId(metadata?.instance_id);
 }
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {

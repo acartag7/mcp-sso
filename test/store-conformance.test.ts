@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -46,6 +46,49 @@ test("independent SQLite files have distinct consent bindings", async () => {
     assert.notEqual(await first.getStoreInstanceId(), await second.getStoreInstanceId());
     await first.close();
     await second.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a cloned SQLite store requires explicit binding rotation", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-clone-"));
+  const source = join(dir, "source.sqlite");
+  const clone = join(dir, "clone.sqlite");
+  try {
+    const original = openSqliteStore(source);
+    const sourceBinding = await original.getStoreInstanceId();
+    await original.close();
+    copyFileSync(source, clone);
+    const restored = openSqliteStore(clone);
+    assert.equal(await restored.getStoreInstanceId(), sourceBinding);
+    const rotated = await restored.rotateStoreInstanceId();
+    assert.notEqual(rotated, sourceBinding);
+    await restored.close();
+    const reopened = openSqliteStore(clone);
+    assert.equal(await reopened.getStoreInstanceId(), rotated);
+    await reopened.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SqliteStore rejects a malformed persisted binding during boot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-binding-corrupt-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const store = openSqliteStore(file);
+    await store.close();
+    const db = new DatabaseSync(file);
+    db.exec("DROP INDEX idx_oauth_auth_codes_expires_at");
+    db.prepare("UPDATE oauth_store_metadata SET instance_id = ? WHERE singleton = 1").run("malformed!");
+    db.close();
+    assert.throws(
+      () => openSqliteStore(file),
+      /sqlite: unsafe persistent state: database initialization failed/,
+    );
+    const inspect = new DatabaseSync(file);
+    const recreated = inspect.prepare(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'idx_oauth_auth_codes_expires_at'",
+    ).get();
+    inspect.close();
+    assert.equal(recreated, undefined, "malformed binding rejected before migration side effects");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -87,6 +87,9 @@ export interface StorePort {
    * shape for patch-level source compatibility; authorization construction
    * rejects implementations that omit it. */
   getStoreInstanceId?(): Promise<string>;
+  /** Atomically replace the binding after cloning/restoring a store into an
+   * independent deployment. Invalidates outstanding consent tokens. */
+  rotateStoreInstanceId?(): Promise<string>;
   /** Required capability markers when BridgeConfig uses stored DCR. */
   readonly storedDcrGrantGeneration?: number;
   readonly storedDcrResourceBinding?: number;

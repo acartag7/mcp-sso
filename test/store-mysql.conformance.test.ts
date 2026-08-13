@@ -98,6 +98,42 @@ if (RUN) {
     }
   });
 
+  test("MysqlStore: rotation is visible to every connection", async () => {
+    const first = await createMysqlStore(MYSQL_URL as string);
+    const second = await createMysqlStore(MYSQL_URL as string);
+    try {
+      const before = await first.getStoreInstanceId();
+      const rotated = await first.rotateStoreInstanceId();
+      assert.notEqual(rotated, before);
+      assert.equal(await second.getStoreInstanceId(), rotated);
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
+  test("MysqlStore: malformed persisted binding fails migration", async () => {
+    const [rows] = await admin!.query<RowDataPacket[]>(
+      "SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1",
+    );
+    const valid = (rows[0] as { instance_id: string }).instance_id;
+    try {
+      await admin!.query(
+        "UPDATE oauth_store_metadata SET instance_id = ? WHERE singleton = 1",
+        ["malformed!"],
+      );
+      await assert.rejects(
+        createMysqlStore(MYSQL_URL as string),
+        /store instance id must be 22-128 base64url characters/,
+      );
+    } finally {
+      await admin!.query(
+        "UPDATE oauth_store_metadata SET instance_id = ? WHERE singleton = 1",
+        [valid],
+      );
+    }
+  });
+
   test("MysqlStore/MySQL 8.4: migrates VARCHAR(255) subjects and persists max Entra authorization/refresh", async () => {
     await admin!.query("ALTER TABLE oauth_auth_codes MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
     await admin!.query("ALTER TABLE oauth_refresh_tokens MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
