@@ -4,7 +4,6 @@ import { DatabaseSync } from "node:sqlite";
 import type {
   AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
-import type { ClientRegistration, ClientStore } from "../ports/client-store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
@@ -21,26 +20,13 @@ import {
   refreshTokenFromRow, revokeFamily, validateAuthCode, validateRefreshToken,
   validateRotation, type AuthCodeRow, type RefreshTokenRow,
 } from "./sqlite-records.ts";
-import { findSqliteClient, saveSqliteClient } from "./sqlite-clients.ts";
+import { SqliteClientStoreBase } from "./sqlite-clients.ts";
 
-export class SqliteStore implements StorePort, ClientStore {
+export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
-  private closed = false;
-  private readonly db: DatabaseSync;
-
   constructor(db: DatabaseSync) {
-    this.db = db;
-  }
-
-  async save(client: ClientRegistration): Promise<void> {
-    this.ensureOpen();
-    saveSqliteClient(this.db, client);
-  }
-
-  async find(clientId: string): Promise<ClientRegistration | null> {
-    this.ensureOpen();
-    return findSqliteClient(this.db, clientId);
+    super(db);
   }
 
   async getStoreInstanceId(): Promise<string> {
@@ -197,13 +183,6 @@ export class SqliteStore implements StorePort, ClientStore {
     });
   }
 
-  async close(): Promise<void> {
-    if (!this.closed) {
-      this.db.close();
-      this.closed = true;
-    }
-  }
-
   private transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -216,9 +195,6 @@ export class SqliteStore implements StorePort, ClientStore {
     }
   }
 
-  private ensureOpen(): void {
-    if (this.closed) throw new Error("Store is closed");
-  }
 }
 
 export function openSqliteStore(filename: string): SqliteStore {

@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { ClientRegistration, UserClientRegistration } from "../ports/client-store.ts";
+import type { ClientRegistration, ClientStore, UserClientRegistration } from "../ports/client-store.ts";
 import { StoreInputError } from "../ports/store.ts";
 import { assertRegistrationRedirectPolicy } from "../redirect.ts";
 
@@ -11,6 +11,34 @@ interface ClientRow {
   redirect_uris_json: unknown;
   application_type: unknown;
   issued_at_epoch: unknown;
+}
+
+export class SqliteClientStoreBase implements ClientStore {
+  protected closed = false;
+  protected readonly db: DatabaseSync;
+
+  constructor(db: DatabaseSync) { this.db = db; }
+
+  async save(client: ClientRegistration): Promise<void> {
+    this.ensureOpen();
+    saveSqliteClient(this.db, client);
+  }
+
+  async find(clientId: string): Promise<ClientRegistration | null> {
+    this.ensureOpen();
+    return findSqliteClient(this.db, clientId);
+  }
+
+  async close(): Promise<void> {
+    if (!this.closed) {
+      this.db.close();
+      this.closed = true;
+    }
+  }
+
+  protected ensureOpen(): void {
+    if (this.closed) throw new Error("Store is closed");
+  }
 }
 
 export function saveSqliteClient(db: DatabaseSync, value: ClientRegistration): void {
