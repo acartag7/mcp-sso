@@ -4,6 +4,7 @@ import { StoreInputError } from "../ports/store.ts";
 import { assertRegistrationRedirectPolicy } from "../redirect.ts";
 
 const GENERATED_CLIENT_ID = /^mcpdc_[0-9a-f]{32}$/u;
+const MAX_REDIRECT_JSON_BYTES = 1 + 16 * (2048 + 3);
 
 interface ClientRow {
   client_id: unknown;
@@ -76,6 +77,9 @@ function snapshotUserClient(value: unknown): UserClientRegistration {
 }
 
 function parseRedirectJson(value: string): unknown {
+  if (Buffer.byteLength(value, "utf8") > MAX_REDIRECT_JSON_BYTES) {
+    throw new Error("Stored client redirect URIs are invalid");
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);

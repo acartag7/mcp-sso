@@ -3,7 +3,14 @@
 // suite). All secrets are SHA-256 digests; there is NO grant table (findGrantedScopes
 // queries the refresh-token tables directly).
 
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
+
+const CLIENT_TABLE_SQL = `CREATE TABLE oauth_clients (
+    client_id TEXT PRIMARY KEY NOT NULL,
+    redirect_uris_json TEXT NOT NULL,
+    application_type TEXT NOT NULL CHECK (application_type IN ('native', 'web')),
+    issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
+  ) STRICT`;
 
 const MIGRATIONS = [
   `PRAGMA foreign_keys = ON`,
@@ -47,12 +54,7 @@ const MIGRATIONS = [
     expires_at TEXT NOT NULL
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS idx_oauth_consent_jtis_expires_at ON oauth_consent_jtis (expires_at)`,
-  `CREATE TABLE IF NOT EXISTS oauth_clients (
-    client_id TEXT PRIMARY KEY NOT NULL,
-    redirect_uris_json TEXT NOT NULL,
-    application_type TEXT NOT NULL CHECK (application_type IN ('native', 'web')),
-    issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
-  ) STRICT`,
+  CLIENT_TABLE_SQL.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"),
 ];
 
 export function migrateSqliteStore(db: DatabaseSync): void {
@@ -85,53 +87,11 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, definitio
 }
 
 function assertClientTable(db: DatabaseSync): void {
-  const columns = db.prepare("PRAGMA table_info(oauth_clients)").all() as Array<{
-    name: unknown; type: unknown; notnull: unknown; pk: unknown;
-  }>;
-  const expected = [
-    ["client_id", "TEXT", 1, 1],
-    ["redirect_uris_json", "TEXT", 1, 0],
-    ["application_type", "TEXT", 1, 0],
-    ["issued_at_epoch", "INTEGER", 1, 0],
-  ] as const;
-  if (columns.length !== expected.length || columns.some((column, index) => {
-    const wanted = expected[index];
-    return !wanted || column.name !== wanted[0] || column.type !== wanted[1]
-      || column.notnull !== wanted[2] || column.pk !== wanted[3];
-  })) throw new Error("oauth_clients schema is incompatible");
-  const table = db.prepare(
-    "SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = 'oauth_clients'",
-  ).get() as { strict: unknown } | undefined;
-  if (table?.strict !== 1) throw new Error("oauth_clients schema is incompatible");
-  assertClientConstraints(db);
-}
-
-function assertClientConstraints(db: DatabaseSync): void {
   const row = db.prepare(
     "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_clients'",
   ).get() as { sql: unknown } | undefined;
-  if (typeof row?.sql !== "string" || !row.sql) throw new Error("oauth_clients schema is incompatible");
-  const probe = new DatabaseSync(":memory:");
-  try {
-    probe.exec(row.sql);
-    const insert = probe.prepare(`INSERT INTO oauth_clients (
-      client_id, redirect_uris_json, application_type, issued_at_epoch
-    ) VALUES (?, '["https://client.example/callback"]', ?, ?)`);
-    insert.run("probe-native", "native", 0);
-    insert.run("probe-web", "web", 0);
-    if (!insertRejected(insert, "probe-kind", "machine", 0)
-      || !insertRejected(insert, "probe-epoch", "native", -1)) {
-      throw new Error("oauth_clients schema is incompatible");
-    }
-  } catch {
-    throw new Error("oauth_clients schema is incompatible");
-  } finally {
-    probe.close();
-  }
-}
-
-function insertRejected(
-  insert: ReturnType<DatabaseSync["prepare"]>, clientId: string, applicationType: string, issuedAt: number,
-): boolean {
-  try { insert.run(clientId, applicationType, issuedAt); return false; } catch { return true; }
+  if (row?.sql !== CLIENT_TABLE_SQL) throw new Error("oauth_clients schema is incompatible");
+  const attached = db.prepare(`SELECT name FROM sqlite_schema
+    WHERE tbl_name = 'oauth_clients' AND name != 'oauth_clients' AND sql IS NOT NULL`).get();
+  if (attached) throw new Error("oauth_clients schema is incompatible");
 }

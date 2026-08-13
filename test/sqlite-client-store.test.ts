@@ -43,6 +43,27 @@ test("SqliteStore persists DCR user registrations across process replacement", a
   }
 });
 
+test("SqliteStore bounds stored redirect JSON before parsing", async () => {
+  const store = openSqliteStore(":memory:");
+  const db = (store as unknown as { db: DatabaseSync }).db;
+  db.prepare(`INSERT INTO oauth_clients (
+    client_id, redirect_uris_json, application_type, issued_at_epoch
+  ) VALUES (?, ?, 'web', 1)`).run(WEB.clientId, "[" + " ".repeat(40_000) + "]");
+  const originalParse = JSON.parse;
+  let parsed = false;
+  JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+    parsed = true;
+    return originalParse(...args);
+  }) as typeof JSON.parse;
+  try {
+    await assert.rejects(store.find(WEB.clientId), /Stored client redirect URIs are invalid/);
+    assert.equal(parsed, false, "over-cap stored JSON rejects before JSON.parse");
+  } finally {
+    JSON.parse = originalParse;
+    await store.close();
+  }
+});
+
 test("SqliteStore rejects an incompatible client table before any schema mutation", () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-client-schema-"));
   const file = join(dir, "oauth.sqlite");
@@ -85,15 +106,36 @@ test("SqliteStore rejects hostile client constraints before any migration", () =
     application_type TEXT NOT NULL CHECK (application_type = 'machine'),
     issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
   ) STRICT`);
+  assertRejectedSchemaIsUnchanged(`CREATE TABLE oauth_clients (
+    client_id TEXT PRIMARY KEY NOT NULL CHECK (client_id LIKE 'probe-%'),
+    redirect_uris_json TEXT NOT NULL,
+    application_type TEXT NOT NULL CHECK (application_type IN ('native', 'web')),
+    issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0 AND issued_at_epoch < 2)
+  ) STRICT`);
 });
 
-function assertRejectedSchemaIsUnchanged(clientSchema: string): void {
+test("SqliteStore rejects user indexes and triggers attached to the client table", () => {
+  for (const auxiliary of [
+    "CREATE UNIQUE INDEX hostile_client_kind ON oauth_clients(application_type)",
+    "CREATE TRIGGER hostile_client_insert AFTER INSERT ON oauth_clients BEGIN DELETE FROM sentinel; END",
+  ]) {
+    assertRejectedSchemaIsUnchanged(undefined, auxiliary);
+  }
+});
+
+function assertRejectedSchemaIsUnchanged(clientSchema?: string, auxiliary?: string): void {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-client-hostile-schema-"));
   const file = join(dir, "oauth.sqlite");
   try {
     const seeded = new DatabaseSync(file);
     seeded.exec("CREATE TABLE sentinel (value TEXT) STRICT");
-    seeded.exec(clientSchema);
+    seeded.exec(clientSchema ?? `CREATE TABLE oauth_clients (
+      client_id TEXT PRIMARY KEY NOT NULL,
+      redirect_uris_json TEXT NOT NULL,
+      application_type TEXT NOT NULL CHECK (application_type IN ('native', 'web')),
+      issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
+    ) STRICT`);
+    if (auxiliary) seeded.exec(auxiliary);
     const query = "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name";
     const before = seeded.prepare(query).all();
     seeded.close();
