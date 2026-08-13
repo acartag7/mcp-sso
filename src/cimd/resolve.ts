@@ -58,41 +58,39 @@ export interface CimdResolution {
 
 export class CimdResolver {
   readonly enabled: boolean;
-  private readonly config: BridgeConfig;
-  private readonly clock: ClockPort;
-  private readonly audit: AuditPort;
-  private readonly rateLimit: RateLimitPort;
-  private readonly cache: CimdSuccessCache;
-  private readonly inFlight = new Map<string, Promise<CimdRegistration>>();
-  private readonly maxInFlight: number;
-  private readonly maxWaitersPerFetch: number;
-  private readonly waiters = new WaiterCounts();
-  private readonly cacheTtlCapSeconds: number;
-  private defaultFetcher: GuardedFetcher | undefined;
-  private readonly seams: { transport?: CimdTransport; resolver?: DnsResolver };
+  readonly #clock: ClockPort;
+  readonly #audit: AuditPort;
+  readonly #rateLimit: RateLimitPort;
+  readonly #cache: CimdSuccessCache;
+  readonly #inFlight = new Map<string, Promise<CimdRegistration>>();
+  readonly #maxInFlight: number;
+  readonly #maxWaitersPerFetch: number;
+  readonly #waiters = new WaiterCounts();
+  readonly #cacheTtlCapSeconds: number;
+  #defaultFetcher: GuardedFetcher | undefined;
+  readonly #seams: { transport?: CimdTransport; resolver?: DnsResolver };
   /** Captured ONCE at construction (read-once rule): reading `config.dev`
    *  lazily would let a post-boot `allowInsecureLocalhost = true` widen
    *  loopback after boot validated it disabled. */
-  private readonly allowLoopback: boolean;
-  private readonly maxDocumentBytes: number;
-  private readonly fetchTimeoutMs: number;
+  readonly #allowLoopback: boolean;
+  readonly #maxDocumentBytes: number;
+  readonly #fetchTimeoutMs: number;
 
   constructor(deps: CimdResolverDeps) {
-    this.config = deps.config;
-    this.clock = deps.clock;
-    this.audit = deps.audit;
-    this.rateLimit = deps.rateLimit ?? noopRateLimit;
+    this.#clock = deps.clock;
+    this.#audit = deps.audit;
+    this.#rateLimit = deps.rateLimit ?? noopRateLimit;
     const cimd = deps.config.cimd;
     this.enabled = cimd?.enabled === true;
-    this.maxInFlight = cimd?.maxInFlight ?? 8;
-    this.maxWaitersPerFetch = cimd?.maxWaitersPerFetch ?? 256;
-    this.cacheTtlCapSeconds = cimd?.cacheTtlCapSeconds ?? 3600;
-    this.cache = new CimdSuccessCache();
-    this.seams = { transport: deps.cimdTransport, resolver: deps.cimdResolver };
+    this.#maxInFlight = cimd?.maxInFlight ?? 8;
+    this.#maxWaitersPerFetch = cimd?.maxWaitersPerFetch ?? 256;
+    this.#cacheTtlCapSeconds = cimd?.cacheTtlCapSeconds ?? 3600;
+    this.#cache = new CimdSuccessCache();
+    this.#seams = { transport: deps.cimdTransport, resolver: deps.cimdResolver };
     // Read-once: capture every fetcher-profile value at construction.
-    this.allowLoopback = deps.config.dev?.allowInsecureLocalhost === true;
-    this.maxDocumentBytes = cimd?.maxDocumentBytes ?? 5120;
-    this.fetchTimeoutMs = cimd?.fetchTimeoutMs ?? 5000;
+    this.#allowLoopback = deps.config.dev?.allowInsecureLocalhost === true;
+    this.#maxDocumentBytes = cimd?.maxDocumentBytes ?? 5120;
+    this.#fetchTimeoutMs = cimd?.fetchTimeoutMs ?? 5000;
   }
 
   /** Boot-time validation of the cap profile. Constructs and DISCARDS a fetcher
@@ -117,9 +115,9 @@ export class CimdResolver {
       return createGuardedFetcher({
         ...(transport === undefined ? {} : { transport }),
         ...(resolver === undefined ? {} : { resolver }),
-        allowLoopback: this.allowLoopback,
-        maxDocumentBytes: this.maxDocumentBytes,
-        fetchTimeoutMs: this.fetchTimeoutMs,
+        allowLoopback: this.#allowLoopback,
+        maxDocumentBytes: this.#maxDocumentBytes,
+        fetchTimeoutMs: this.#fetchTimeoutMs,
       });
     } catch (error) {
       throw error instanceof AuthConfigError ? error
@@ -127,15 +125,15 @@ export class CimdResolver {
     }
   }
 
-  private fetcher(): GuardedFetcher {
-    this.defaultFetcher ??= this.#createFetcher(this.seams.transport, this.seams.resolver);
-    return this.defaultFetcher;
+  #fetcher(): GuardedFetcher {
+    this.#defaultFetcher ??= this.#createFetcher(this.#seams.transport, this.#seams.resolver);
+    return this.#defaultFetcher;
   }
 
   /** Per-call below-guard seams (decision 1e) still yield a fetcher built from
    *  the validated profile — only the transport/resolver differ. */
-  private fetcherFor(seams?: { readonly transport?: CimdTransport; readonly resolver?: DnsResolver }): GuardedFetcher {
-    if (seams?.transport === undefined && seams?.resolver === undefined) return this.fetcher();
+  #fetcherFor(seams?: { readonly transport?: CimdTransport; readonly resolver?: DnsResolver }): GuardedFetcher {
+    if (seams?.transport === undefined && seams?.resolver === undefined) return this.#fetcher();
     return this.#createFetcher(seams.transport, seams.resolver);
   }
 
@@ -143,7 +141,7 @@ export class CimdResolver {
    *  anti-oracle map: a direct 429 `temporarily_unavailable`, no DNS, no
    *  connect, no `oauth.cimd.fetch` audit). Fail-open on a limiter outage,
    *  mirroring the existing register/token/upstream guards. */
-  private async rateGuard(ip: string | undefined, limiter?: RateLimitPort): Promise<void> {
+  async #rateGuard(ip: string | undefined, limiter?: RateLimitPort): Promise<void> {
     // BOTH limiters apply — never replace. `UpstreamFlowDeps.rateLimit` is
     // independent of `BridgeDeps.rateLimit` and the upstream flow shares this
     // resolver, so a limiter wired only there would otherwise never run; but a
@@ -155,8 +153,8 @@ export class CimdResolver {
     // side effect (RedisRateLimit does an atomic INCR), so charging the same
     // instance twice for one request halves the effective limit — and a limit
     // of 1 would reject the very first CIMD authorization.
-    const ports = limiter === undefined || limiter === this.rateLimit
-      ? [this.rateLimit] : [this.rateLimit, limiter];
+    const ports = limiter === undefined || limiter === this.#rateLimit
+      ? [this.#rateLimit] : [this.#rateLimit, limiter];
     for (const port of ports) {
       let allowed = true;
       try { allowed = await port.check(key); } catch { allowed = true; } // fail-open on a limiter outage
@@ -170,12 +168,12 @@ export class CimdResolver {
     // activity on a deployment that never enabled CIMD. Before the rate guard and
     // before any fetch — a rejection must cause no side effect.
     if (!this.enabled) throw cimdGenericError();
-    await this.rateGuard(input.ip, input.rateLimit);
+    await this.#rateGuard(input.ip, input.rateLimit);
     try {
       // The fetcher is ALWAYS built here from this resolver's validated caps
       // and config-derived `allowLoopback`; a caller may substitute only the
       // below-guard transport/resolver seams, never the guard itself.
-      const outcome = await this.registrationFor(input.clientId, this.fetcherFor(input.seams));
+      const outcome = await this.#registrationFor(input.clientId, this.#fetcherFor(input.seams));
       // A cache HIT reuses the fetched DOCUMENT, never the authorization
       // decision: the shared matcher re-runs on EVERY request.
       if (!cimdRedirectMatches(input.redirectUri, outcome.registration.redirect_uris)) {
@@ -190,11 +188,11 @@ export class CimdResolver {
       // request" row still holds: this closure runs only on the success path,
       // after the matcher passed.
       const emitSuccess = (): Promise<void> =>
-        this.emit("success", undefined, input.clientId, input.ip);
+        this.#emit("success", undefined, input.clientId, input.ip);
       return { registration: outcome.registration, emitSuccess };
     } catch (error) {
       if (error instanceof OAuthError) throw error; // the rate-limit channel is not a resolution outcome
-      await this.emit("failure", auditReason(error), input.clientId, input.ip);
+      await this.#emit("failure", auditReason(error), input.clientId, input.ip);
       throw mapCimdError(error);
     }
   }
@@ -202,47 +200,47 @@ export class CimdResolver {
   /** Audit a redirect-mode-only failure (e.g. the cookie-oversize residual)
    *  with a fixed allowlisted reason, then map to the decision-2 generic. */
   async rejectAfterResolve(reason: "oversize", clientId: string, ip?: string): Promise<OAuthError> {
-    await this.emit("failure", reason, clientId, ip);
+    await this.#emit("failure", reason, clientId, ip);
     return cimdGenericError();
   }
 
-  private async registrationFor(rawClientId: string, fetcher: GuardedFetcher): Promise<{ registration: CimdRegistration; fetched: boolean }> {
-    const hit = this.cache.get(rawClientId, this.clock.nowMs());
+  async #registrationFor(rawClientId: string, fetcher: GuardedFetcher): Promise<{ registration: CimdRegistration; fetched: boolean }> {
+    const hit = this.#cache.get(rawClientId, this.#clock.nowMs());
     if (hit !== undefined) return { registration: hit, fetched: false };
-    const existing = this.inFlight.get(rawClientId);
+    const existing = this.#inFlight.get(rawClientId);
     // A coalesced follower consumes no FETCH slot (rule 24) but IS bounded
     // (decision 7 — rationale in waiters.ts). The rejection reuses the EXISTING
     // `overloaded` reason, so it stays byte-identical to every other resolution
     // failure (decision 2).
     if (existing !== undefined) {
-      if (!this.waiters.tryAcquire(rawClientId, this.maxWaitersPerFetch)) throw new CimdError("overloaded");
+      if (!this.#waiters.tryAcquire(rawClientId, this.#maxWaitersPerFetch)) throw new CimdError("overloaded");
       try { return { registration: await existing, fetched: false }; }
-      finally { this.waiters.release(rawClientId); }
+      finally { this.#waiters.release(rawClientId); }
     }
-    if (this.inFlight.size >= this.maxInFlight) throw new CimdError("overloaded");
-    const pending = this.fetchAndCache(rawClientId, fetcher);
-    this.inFlight.set(rawClientId, pending);
+    if (this.#inFlight.size >= this.#maxInFlight) throw new CimdError("overloaded");
+    const pending = this.#fetchAndCache(rawClientId, fetcher);
+    this.#inFlight.set(rawClientId, pending);
     try {
       return { registration: await pending, fetched: true };
     } finally {
-      this.inFlight.delete(rawClientId); // removed on settle: success, error, or timeout
+      this.#inFlight.delete(rawClientId); // removed on settle: success, error, or timeout
     }
   }
 
-  private async fetchAndCache(rawClientId: string, fetcher: GuardedFetcher): Promise<CimdRegistration> {
-    const t0Ms = this.clock.nowMs();
+  async #fetchAndCache(rawClientId: string, fetcher: GuardedFetcher): Promise<CimdRegistration> {
+    const t0Ms = this.#clock.nowMs();
     const result = await fetcher.fetch(rawClientId);
-    const t1Ms = this.clock.nowMs();
+    const t1Ms = this.#clock.nowMs();
     // Project BEFORE caching: a raw CimdDocument is never cached or signed.
     const registration = projectCimdRegistration(result.document);
-    const expiresAtMs = computeCacheExpiryMs(result.cacheView, this.cacheTtlCapSeconds, t0Ms, t1Ms);
-    if (expiresAtMs !== null) this.cache.set(rawClientId, registration, expiresAtMs, t1Ms);
+    const expiresAtMs = computeCacheExpiryMs(result.cacheView, this.#cacheTtlCapSeconds, t0Ms, t1Ms);
+    if (expiresAtMs !== null) this.#cache.set(rawClientId, registration, expiresAtMs, t1Ms);
     return registration;
   }
 
-  private async emit(status: "success" | "failure", reason: string | undefined, clientId: string, ip?: string): Promise<void> {
-    await writeAuditBestEffort(this.audit, {
-      occurredAt: new Date(this.clock.nowMs()).toISOString(),
+  async #emit(status: "success" | "failure", reason: string | undefined, clientId: string, ip?: string): Promise<void> {
+    await writeAuditBestEffort(this.#audit, {
+      occurredAt: new Date(this.#clock.nowMs()).toISOString(),
       event: "oauth.cimd.fetch", status, reason, clientId, ip,
     });
   }
