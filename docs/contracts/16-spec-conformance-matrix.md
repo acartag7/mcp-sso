@@ -51,7 +51,7 @@ than folded into a single "conformant" total:
 | `C` conformant | 24 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
 | `C` with a disclosed caveat | 1 | D00-6.5.1 | Conformant in production, with a narrower environment-scoped departure (the dev-only loopback fetch) stated in the row rather than absorbed into the total. |
 | Reasoned deviation | 2 | D00-4.2.1 (`SHOULD`), D00-4.2.2 (`RECOMMENDED`) | The obligation applies and is deliberately not met; rationale recorded. |
-| `U` unresolved evidence | 4 | D00-4.1, D00-4.1.5, D00-5.1, D00-6.5.2 | The enforcing source exists, but no test yet proves the complete hostile class or the shipped framework route. |
+| `U` unresolved evidence | 3 | D00-4.1, D00-5.1, D00-6.5.2 | The enforcing source exists, but no test yet proves the complete hostile class or the shipped framework route. |
 | **Runtime mismatch** | **1** | **D00-4.5.2** | Implementation contradicts the statement. Reproduced by direct probe, not inferred. |
 | `N/A` not applicable | 12 | — | Excluded client-side duty, optional feature not implemented, or a conditional whose trigger provably never fires. |
 
@@ -81,7 +81,7 @@ so the classification can be re-checked rather than taken on trust.
 | D00-4.1.2 | §4.1 document `client_id` **MUST** equal the URL by RFC 3986 simple string comparison. AS-applicable. | C | `src/cimd/document.ts:23-27`; raw fetch key `src/cimd/guarded-fetcher.ts:26-31,105-107` | Frozen `document.test.ts:44-49` and `guarded-fetcher.test.ts:268-296`; normalization or comparison removal makes explicit-port/case witnesses pass. |
 | D00-4.1.3 | §4.1 document **MAY** contain additional properties. AS-applicable extension tolerance. | C | Named reads `src/cimd/document.ts:23-38`; named projection `src/cimd/registration.ts:36-44` | Frozen `document.test.ts:130-133` and `s6b-redirect.test.ts:162-175,351-360`; unknown fields are accepted but cannot escape into signed state. |
 | D00-4.1.4 | §4.1 an alternate JSON media type is permitted only in the `application/<AS-defined>+json` form. AS-applicable. | C | `src/cimd/guarded-fetcher.ts:149-155` | Ordinary `test/cimd-json-media-types.test.ts` proves direct and upstream rejection of `text/vendor+json` and `image/svg+json`, while preserving parameterized `application/json` and `application/scim+json`. Restoring the old unrestricted `endsWith("+json")` condition makes both hostile resolution tests fail. |
-| D00-4.1.5 | §4.1 `token_endpoint_auth_method` **MUST NOT** use shared-symmetric-secret methods. AS-applicable; public-only profile rejects every value except absent/`none`. | U | `src/cimd/document.ts:31-34` | Frozen `document.test.ts:88-99` proves `client_secret_basic`, `private_key_jwt`, and secret fields, but lacks explicit `client_secret_post`, `client_secret_jwt`, and another symmetric-method witness. |
+| D00-4.1.5 | §4.1 `token_endpoint_auth_method` **MUST NOT** use shared-symmetric-secret methods. AS-applicable; public-only profile rejects every value except absent/`none`. | C | `src/cimd/document.ts:31-34` | `test/cimd-client-auth-methods.test.ts:104-163` proves `client_secret_basic`, `client_secret_post`, `client_secret_jwt`, and a non-enumerated shared-secret declaration fail through both direct and upstream resolution before redirect/IdP side effects; absent and `none` remain green. |
 | D00-4.1.6 | §4.1 `client_secret` and `client_secret_expires_at` **MUST NOT** be used. AS-applicable. | C | `src/cimd/document.ts:33-35` | Frozen `document.test.ts:96-99` and route-level anti-oracle `s6b-anti-oracle.test.ts:119-126,164-167`; removing either presence check fails. |
 | D00-4.1.7 | §4.1 other specs **MAY** impose stricter metadata restrictions. Profile-applicable: mcp-sso accepts public clients only. | C | `src/cimd/document.ts:31-38`; AS metadata `src/metadata.ts:31-38` | Frozen `document.test.ts:88-105` and `s6b-metadata.test.ts:35-45`; confidential declarations reject and `none` remains advertised. |
 | D00-4.2.1 | §4.2 if the AS "does place additional restrictions on the accepted `redirect_uris`" it **SHOULD** provide at least one exempt CIMD Metadata Document Service. Same-origin is only the draft's example, so the antecedent is broad and **does** fire. | Applicable — reasoned `SHOULD` deviation | Restrictions that trigger it: `src/cimd/document.ts:29,48` per-entry hygiene via the §10.0 grammar (scheme, query, fragment, canonical spelling) | mcp-sso is a library, not hosted infrastructure; it ships no CIMD Metadata Document Service, and operating one would be a separate abuse/retention/trust product a deployment must own. For local development it instead admits an explicitly dev-gated loopback document (`src/cimd/admission.ts:68-75`; `s6b-boot.test.ts:104-140`). Recorded as a deliberate BCP 14 `SHOULD` deviation, not conformance. |
@@ -114,7 +114,7 @@ so the classification can be re-checked rather than taken on trust.
 
 ### Audit blockers and follow-up graph
 
-**Two runtime changes remain**, plus three normative evidence PRs. Each is a
+**Two runtime changes remain**, plus two normative evidence PRs. Each is a
 separate reviewable concern; none should carry the independent RFC 9207
 error-response or scope-hierarchy work. The media-type change is complete.
 
@@ -134,12 +134,12 @@ error-response or scope-hierarchy work. The media-type change is complete.
    the projection and require exact matching unless it is `native`; decide
    explicitly (and fail closed) when the type is absent. Regressions across
    direct, upstream, callback, and prepare for `"web"`, `"native"`, and absent.
-4. **Test PR — symmetric client-auth declarations (closes D00-4.1.5, P2).** Of
-   the three methods §4.1 names, only `client_secret_basic` has a hostile witness
-   (`document.test.ts:91`); `client_secret_post` and `client_secret_jwt` have
-   none. The allowlist at `src/cimd/document.ts:31-32` admits only absent or
-   `"none"`, so this is coverage rather than a hole — add the two missing
-   witnesses plus one non-enumerated symmetric method, direct and upstream.
+4. **Completed test PR — symmetric client-auth declarations (closed
+   D00-4.1.5, P2).** `test/cimd-client-auth-methods.test.ts` rejects
+   `client_secret_basic`, `client_secret_post`, `client_secret_jwt`, and a
+   non-enumerated shared-secret declaration through direct and upstream
+   resolution before redirect/IdP side effects. Adjacent absent and `none`
+   declarations remain accepted through both boundaries.
 5. **Test PR — shipped adapter parity (closes D00-4.1 and D00-5.1, P2).** No
    adapter test drives a `https://` CIMD `client_id` through a shipped route:
    `test/lib/adapter-flow.ts:77-95` registers through DCR and authorizes with the
