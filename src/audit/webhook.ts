@@ -93,9 +93,15 @@ export class WebhookAudit implements AuditPort {
       || Object.values(options.headers).some((value) => typeof value !== "string"))) {
       throw new Error("WebhookAudit: headers must be a string-valued object");
     }
+    const originalHeaderValues = Object.values(options.headers ?? {});
+    const normalizedHeaderValues = originalHeaderValues.flatMap((value) => {
+      const normalized = new Headers({ value }).get("value");
+      return normalized === null ? [] : [normalized];
+    });
     this.headers = Object.fromEntries(new Headers({ "Content-Type": "application/json", ...options.headers }).entries());
     this.configuredSecrets = [
-      ...Object.values(options.headers ?? {}),
+      ...originalHeaderValues,
+      ...normalizedHeaderValues,
       ...Object.values(this.headers),
       ...this.querySecrets,
     ];

@@ -296,6 +296,22 @@ test("WebhookAudit: case-duplicate header values remain individually secret", as
   assert.equal(stderr.includes("short-two"), false);
 });
 
+test("WebhookAudit: case-duplicate headers retain each normalized transmitted secret", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    headers: { "X-Hook-Key": " short-one ", "x-hook-key": " short-two " },
+    fetchImpl: (async () => { throw new Error("transport parsed short-one,short-two"); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("short-one"), false);
+  assert.equal(stderr.includes("short-two"), false);
+});
+
 test("WebhookAudit: hostile large diagnostics fall back before exact-secret processing", async () => {
   const sink = new WebhookAudit("https://siem.test/ingest?padding=a", {
     fetchImpl: (async () => { throw new Error("a".repeat(3_000_000)); }) as typeof fetch,
