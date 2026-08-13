@@ -8,7 +8,7 @@ import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
-import { hasDuplicatedAuthorizeParams } from "./authorize-params.ts";
+import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import { OAuthError } from "../errors.ts";
 
 /** Raw JSON and form budget for the built-in OAuth POST routes (§9.6). */
@@ -45,7 +45,7 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
 
   const toNorm = (req: Request): NormRequest => ({
-    query: req.query as NormRequest["query"],
+    query: queryOccurrencesFromUrl(req.originalUrl),
     body: req.body,
     headers: headersFromDistinct(req.headersDistinct, req.headers as NormRequest["headers"]),
     ip: req.ip,

@@ -32,3 +32,15 @@ export function findRepeatedKeys(input: unknown, keys: readonly string[]): strin
 export function hasDuplicatedAuthorizeParams(query: unknown): boolean {
   return findDuplicatedKeys(query, OAUTH_SINGLETON_PARAM_KEYS).length > 0;
 }
+
+/** Reconstruct raw query occurrences independently of framework parser policy. */
+export function queryOccurrencesFromUrl(rawUrl: string): Record<string, string | string[]> {
+  const query: Record<string, string | string[]> = {};
+  for (const [key, value] of new URL(rawUrl, "http://localhost").searchParams.entries()) {
+    const existing = query[key];
+    if (existing === undefined) query[key] = value;
+    else if (Array.isArray(existing)) existing.push(value);
+    else query[key] = [existing, value];
+  }
+  return query;
+}

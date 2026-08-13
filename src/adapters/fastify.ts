@@ -10,7 +10,7 @@ import { OAuthError } from "../errors.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
-import { hasDuplicatedAuthorizeParams } from "./authorize-params.ts";
+import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 
 export interface FastifyAdapterOptions {
   bridge: Bridge;
@@ -37,7 +37,7 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
   });
 
   const toNorm = (req: FastifyRequest): NormRequest => ({
-    query: req.query as NormRequest["query"],
+    query: queryOccurrencesFromUrl(req.raw.url ?? ""),
     body: req.body,
     headers: headersFromDistinct(req.raw.headersDistinct, req.headers as NormRequest["headers"]),
     ip: req.ip,

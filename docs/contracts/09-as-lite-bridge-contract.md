@@ -129,8 +129,9 @@ array-valued member with more than one nonempty occurrence returns direct 400
 `prepare`, consent rendering, store access, or authorize success audit. A
 single-valued request follows the unchanged validation order below. The same
 pure helper and key definition govern the upstream and console-pairing authorize
-entry points; framework adapters must preserve repeated query members as arrays
-until this boundary. The direct header-identity routes run the same guard before
+entry points; framework adapters reconstruct repeated query members from the raw
+request URL, independent of configurable framework query parsers. The direct
+header-identity routes run the same guard before
 `IdentityPort.verify`; `Bridge.handleAuthorize` repeats it as defense in depth.
 RFC 6749 treats valueless occurrences as omitted. RFC 8707
 permits `resource` to repeat; identical nonempty resource indicators collapse to

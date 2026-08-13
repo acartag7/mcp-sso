@@ -4,7 +4,9 @@ import { runAdapterFlow, type AdapterClient, type AdapterResp } from "./lib/adap
 import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 runAdapterFlow("fastify", async (bridge, identity) => {
-  const app = Fastify();
+  const app = Fastify({ routerOptions: {
+    querystringParser: (source) => Object.fromEntries(new URLSearchParams(source)),
+  } });
   await registerOAuthRoutes(app, { bridge, identity });
   await app.listen({ host: "127.0.0.1", port: 0 });
   const address = app.server.address();
