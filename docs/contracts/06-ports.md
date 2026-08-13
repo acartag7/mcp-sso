@@ -369,9 +369,11 @@ scope ceiling) is locked in §17.4.
   on return (OIDC request binding) — recommended. The §17.11 redirect orchestrator
   always does this (orchestrator-minted CSPRNG nonce, threat-model row 31).
 - **Entra token times.** A verified id_token requires both `iat` and `exp` as
-  finite NumericDate numbers. The signed-token wrappers require both claims at
-  `jwtVerify`, and the pure claim validator repeats their type/finite checks so
-  an already-verified payload cannot bypass the same identity decision.
+  finite NumericDate numbers. The signed-token wrappers require `iat` at
+  `jwtVerify`; the pure claim validator requires and type-checks `exp` and
+  repeats the `iat` type/finite check so an already-verified payload cannot
+  bypass the same identity decision. This preserves `entra_bad_claim` for a
+  signed token missing `iat` and `entra_missing_exp` for one missing `exp`.
   **Header-driven mode (`identityHeader`) residual:** when a fronting proxy
   delivers a raw Entra id_token in a header, mcp-sso never minted the nonce, so
   the port's verifying wrapper (`createEntraIdentity().verify` /
