@@ -151,7 +151,7 @@ not set it. The acknowledgement is accepted only when both `issuer` and
 `resource` are loopback URLs. A supplied limiter must expose a callable `check`
 method; malformed limiter values fail at boot rather than counting as a bound.
 Composition roots run this guard before creating a state directory, signing
-keys, audit file, or state store. The console-pairing branches perform their
+keys, audit file, state store, or starting OIDC discovery. The console-pairing branches perform their
 loopback-only preflight from issuer/resource strings before the signing-key
 helper needed to build a complete `BridgeConfig`. Exported factories snapshot
 their config and acknowledgement once and reuse those exact values after

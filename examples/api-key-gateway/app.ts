@@ -348,9 +348,9 @@ export async function buildGatewayExample(
   }
   if (oidcProviderConfigured(env)) {
     const config = configFromEnv(env);
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     const upstream = await createOidcUpstreamFromEnv(env, config, deps.identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
-    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildGateway({
       config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential,

@@ -429,9 +429,9 @@ export async function buildExample(
     // configured redirect URI's pathname is the mounted callback route; the
     // orchestrator boot-asserts the full URI equals issuerOrigin + callbackPath.
     const config = configFromEnv(env);
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     const upstream = await createOidcUpstreamFromEnv(env, config, identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
-    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildApp({ config, upstream, audit, sqliteFile });
     return { app, store, config, dir };

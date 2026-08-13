@@ -492,6 +492,63 @@ test("integration — invalid upstream callback config fails before state creati
   }
 });
 
+test("integration — unsafe OIDC deployment fails before provider discovery in both examples", async () => {
+  const providers = [
+    {
+      name: "Google",
+      env: {
+        GOOGLE_CLIENT_ID: "google-client",
+        GOOGLE_CLIENT_SECRET: "google-secret",
+        GOOGLE_REDIRECT_URI: "https://mcp.example/oauth/callback",
+      },
+      factoryKey: "google" as const,
+    },
+    {
+      name: "generic OIDC",
+      env: {
+        OIDC_ISSUER: "https://issuer.example",
+        OIDC_CLIENT_ID: "oidc-client",
+        OIDC_REDIRECT_URI: "https://mcp.example/oauth/callback",
+      },
+      factoryKey: "genericOidc" as const,
+    },
+  ];
+  for (const target of ["fastify", "gateway"] as const) {
+    for (const provider of providers) {
+      const base = mkdtempSync(join(tmpdir(), `mcp-sso-int-${target}-guard-before-oidc-`));
+      const dir = join(base, "state");
+      let factoryCalls = 0;
+      const factory = async () => {
+        factoryCalls++;
+        throw new Error("provider discovery ran before deployment guard");
+      };
+      const identityFactories = { [provider.factoryKey]: factory };
+      const env = {
+        MCP_SSO_DIR: dir,
+        OAUTH_ISSUER: "https://mcp.example",
+        OAUTH_RESOURCE: "https://mcp.example/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_REDIRECT_ALLOWLIST: "",
+        ...provider.env,
+      };
+      try {
+        const boot = target === "fastify"
+          ? buildExample(env, identityFactories)
+          : buildGatewayExample(env, {
+            backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+            identityFactories,
+          });
+        await assert.rejects(boot, /stateless DCR/, `${target} ${provider.name}`);
+        assert.equal(factoryCalls, 0, `${target} ${provider.name}: discovery was not started`);
+        assert.equal(existsSync(dir), false, `${target} ${provider.name}: no state was created`);
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
 test("integration — Google/generic env wiring defaults to the shipped production factories (stubbed discovery, no network)", async () => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: URL | Request | string): Promise<Response> => {
