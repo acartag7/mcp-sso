@@ -60,7 +60,9 @@ import {
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
-import { assertSafeDeploymentCombination } from "../../src/deployment-guard.ts";
+import {
+  assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
+} from "../../src/deployment-guard.ts";
 
 export interface ExampleOptions {
   config: BridgeConfig;
@@ -399,6 +401,7 @@ export async function buildExample(
       groupAuthorization: entraGroupAuthorizationFromEnv(env),
     }, { scopeCatalog: config.scopeCatalog });
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildApp({ config, upstream: { identity, callbackPath }, audit, sqliteFile });
     return { app, store, config, dir };
@@ -414,6 +417,7 @@ export async function buildExample(
       issuer: mustEnv(env, "CF_ACCESS_ISSUER"),
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildApp({ config, identity, audit, sqliteFile });
     return { app, store, config, dir };
@@ -425,6 +429,7 @@ export async function buildExample(
     const config = configFromEnv(env);
     const upstream = await createOidcUpstreamFromEnv(env, config, identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildApp({ config, upstream, audit, sqliteFile });
     return { app, store, config, dir };
@@ -432,10 +437,11 @@ export async function buildExample(
 
   // ZERO-SETUP: quickstart secrets (creates the dir, secrets, .gitignore) + console
   // pairing. buildApp takes pairing OPTIONS and wires `audit` into the identity.
-  const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const port = Number(env.PORT ?? 3000);
   const issuer = env.OAUTH_ISSUER ?? `http://localhost:${port}`;
   const resource = env.OAUTH_RESOURCE ?? `http://localhost:${port}/mcp`;
+  assertLoopbackStarterBeforeState(issuer, resource);
+  const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer,
     resource,

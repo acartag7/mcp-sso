@@ -135,13 +135,22 @@ trust beyond the hosted defaults and the explicit loopback starter origins
 loopback URLs under `dev.allowInsecureLocalhost` is local-only and does not need
 that internet-facing mitigation. Each choice remains available separately;
 the unbounded, broadly reusable starter combination is not a valid composition.
-The check runs before the bridge constructs a CIMD resolver or any use-case.
+Adding an application callback does not mitigate a generic loopback origin that
+remains in the same additive allowlist; that mixed allowlist is still rejected.
+`Bridge` snapshots `config`, `rateLimit`, the acknowledgement, and its remaining
+dependencies once, then runs the check and constructs every use-case from that
+same snapshot. Accessor-backed input therefore cannot present one composition to
+the guard and another to runtime initialization. The check runs before the bridge
+constructs a CIMD resolver or any use-case.
 `acknowledgeUnsafeStatelessDefaults: true` on `BridgeDeps` is an explicit,
 temporary escape hatch for the localhost-only starter and emits a loud boot
 warning. Any other value is treated as absent. Internet-facing compositions do
 not set it. The acknowledgement is accepted only when both `issuer` and
 `resource` are loopback URLs. A supplied limiter must expose a callable `check`
 method; malformed limiter values fail at boot rather than counting as a bound.
-Composition roots run this guard before opening state stores.
+Composition roots run this guard before creating a state directory, signing
+keys, audit file, or state store. The console-pairing branches perform their
+loopback-only preflight from issuer/resource strings before the signing-key
+helper needed to build a complete `BridgeConfig`.
 The generated starter additionally rejects non-loopback issuer or resource URLs
 before creating its state directory, signing keys, audit file, or SQLite database.

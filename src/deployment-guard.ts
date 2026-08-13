@@ -43,9 +43,9 @@ export function assertSafeDeploymentCombination(deps: {
       && options.emitAcknowledgementWarning !== false) warnAcknowledgement();
     return;
   }
-  const hasApplicationSpecificHttps = deps.config.redirectAllowlist.some(
-    isApplicationSpecificHttpsRedirect,
-  );
+  const retainsGenericLoopback = deps.config.redirectAllowlist.some(isGenericLoopbackRedirect);
+  const hasApplicationSpecificHttps = !retainsGenericLoopback
+    && deps.config.redirectAllowlist.some(isApplicationSpecificHttpsRedirect);
   if (!hasApplicationSpecificHttps) {
     if (deps.acknowledgeUnsafeStatelessDefaults === true) {
       if (!isLoopbackUrl(deps.config.issuer) || !isLoopbackUrl(deps.config.resource)) {
@@ -59,6 +59,14 @@ export function assertSafeDeploymentCombination(deps: {
     throw new AuthConfigError(
       "stateless DCR with no application-specific HTTPS redirect and no RateLimitPort is unsafe; use stored DCR, configure an application callback, supply a limiter, or explicitly acknowledge the temporary starter risk",
     );
+  }
+}
+
+/** Reject the acknowledged console-pairing composition before its signing-key
+ * and SQLite helpers create state. Bridge repeats the complete guard at boot. */
+export function assertLoopbackStarterBeforeState(issuer: string, resource: string): void {
+  if (!isLoopbackUrl(issuer) || !isLoopbackUrl(resource)) {
+    throw new AuthConfigError("the console-pairing starter requires loopback issuer and resource URLs");
   }
 }
 

@@ -120,6 +120,33 @@ test("an HTTP loopback callback does not mitigate an internet-facing composition
   );
 });
 
+test("an application callback does not mitigate a retained generic loopback redirect", () => {
+  assert.throws(
+    () => construct(config({
+      redirectAllowlist: ["http://localhost", "https://client.test/callback"],
+    })),
+    /application-specific HTTPS redirect/,
+  );
+});
+
+test("Bridge snapshots accessor-backed dependencies before its deployment guard", () => {
+  const stored = config({ dcr: { mode: "stored", store: { async save() {}, async find() { return null; } } } });
+  const unsafe = config();
+  let configReads = 0;
+  let limiterReads = 0;
+  const deps = {
+    get config() { configReads += 1; return configReads === 1 ? stored : unsafe; },
+    store: new MemoryStore(),
+    clock,
+    audit,
+    get rateLimit() { limiterReads += 1; return limiterReads === 1 ? { async check() { return true; } } : undefined; },
+  };
+  const bridge = new Bridge(deps);
+  assert.equal(bridge.config, stored);
+  assert.equal(configReads, 1);
+  assert.equal(limiterReads, 1);
+});
+
 test("example factories reject before opening SQLite and do not coerce malformed acknowledgements", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-unsafe-composition-"));
   try {

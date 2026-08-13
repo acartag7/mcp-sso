@@ -37,7 +37,9 @@ import {
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
-import { assertSafeDeploymentCombination } from "../../src/deployment-guard.ts";
+import {
+  assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
+} from "../../src/deployment-guard.ts";
 // Reuse the fastify-sqlite example's env-wiring helpers rather than duplicate them
 // (configFromEnv / defaultListenHost / createOidcUpstreamFromEnv / assertUpstreamConfigBeforeState
 // are the same env switch). ensureStateDir — the security-critical state-dir bar
@@ -324,6 +326,7 @@ export async function buildGatewayExample(
       groupAuthorization: entraGroupAuthorizationFromEnv(env),
     }, { scopeCatalog: config.scopeCatalog });
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, upstream: { identity, callbackPath }, audit, sqliteFile });
     return { app, store, config, dir };
@@ -336,6 +339,7 @@ export async function buildGatewayExample(
       issuer: mustEnv(env, "CF_ACCESS_ISSUER"),
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, identity, audit, sqliteFile });
     return { app, store, config, dir };
@@ -344,6 +348,7 @@ export async function buildGatewayExample(
     const config = configFromEnv(env);
     const upstream = await createOidcUpstreamFromEnv(env, config, deps.identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
+    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
     const { app, store } = await buildGateway({
       config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential,
@@ -353,10 +358,11 @@ export async function buildGatewayExample(
   }
 
   // ZERO-SETUP: quickstart secrets + console pairing.
-  const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const port = Number(env.PORT ?? 3000);
   const issuer = env.OAUTH_ISSUER ?? `http://localhost:${port}`;
   const resource = env.OAUTH_RESOURCE ?? `${issuer}/mcp`;
+  assertLoopbackStarterBeforeState(issuer, resource);
+  const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer, resource,
     consentSigningSecret: secrets.consentSigningSecret,

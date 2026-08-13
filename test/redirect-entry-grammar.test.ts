@@ -427,7 +427,8 @@ test("positive round trips hold for stored web/native, stateless, and CIMD", asy
 
   const stateless = new Bridge({ config: config({
     redirectAllowlist: ["https://a.test/", "http://localhost", "http://127.0.0.1"],
-  }), store: new MemoryStore(), clock: new Clock(), audit: new Audit() });
+  }), store: new MemoryStore(), clock: new Clock(), audit: new Audit(),
+  rateLimit: { async check() { return true; } } });
   for (const redirectUri of [
     "https://claude.ai/cb", "http://localhost/cb", "http://localhost:54321/cb",
     "http://127.0.0.1:8080/cb", "https://a.test/",

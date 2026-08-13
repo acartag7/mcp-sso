@@ -65,15 +65,27 @@ export class Bridge {
   readonly cimd: CimdResolver;
 
   constructor(deps: BridgeDeps) {
-    assertSafeDeploymentCombination(deps);
-    this.config = deps.config;
-    this.clock = deps.clock;
-    this.audit = deps.audit;
-    this.rateLimit = deps.rateLimit ?? noopRateLimit;
-    this.cimd = new CimdResolver(deps);
-    if (this.cimd.enabled) this.cimd.assertCapProfile(deps.cimdTransport, deps.cimdResolver); // boot-validate the cap profile
-    this.auth = new OAuthAuthorizationUseCase({ ...deps, cimd: this.cimd });
-    this.token = new OAuthTokenUseCase(deps);
+    // BridgeDeps is a runtime boundary: accessor-backed objects must not show the
+    // guard one composition and initialize the use-cases with another.
+    const snapshot: BridgeDeps = {
+      config: deps.config,
+      store: deps.store,
+      clock: deps.clock,
+      audit: deps.audit,
+      rateLimit: deps.rateLimit,
+      acknowledgeUnsafeStatelessDefaults: deps.acknowledgeUnsafeStatelessDefaults,
+      cimdTransport: deps.cimdTransport,
+      cimdResolver: deps.cimdResolver,
+    };
+    assertSafeDeploymentCombination(snapshot);
+    this.config = snapshot.config;
+    this.clock = snapshot.clock;
+    this.audit = snapshot.audit;
+    this.rateLimit = snapshot.rateLimit ?? noopRateLimit;
+    this.cimd = new CimdResolver(snapshot);
+    if (this.cimd.enabled) this.cimd.assertCapProfile(snapshot.cimdTransport, snapshot.cimdResolver); // boot-validate the cap profile
+    this.auth = new OAuthAuthorizationUseCase({ ...snapshot, cimd: this.cimd });
+    this.token = new OAuthTokenUseCase(snapshot);
   }
 
   async handleAuthorizationServerMetadata(): Promise<NormResponse> {
