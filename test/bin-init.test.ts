@@ -86,7 +86,11 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.match(server, /origin\.includes\(","\)/, "generated /mcp gate rejects comma-coalesced Origin");
     assert.doesNotMatch(server, /request\.headers\.origin/, "generated /mcp gate never selects a normalized Origin");
     assert.match(server, /cimd:\s*\{\s*enabled:\s*true\s*\}/, "generated server enables CIMD");
-    assert.match(server, /dcr:\s*\{\s*mode:\s*"stored",\s*store\s*\}/, "generated server persists DCR in its SQLite store");
+    assert.match(
+      server,
+      /dcr:\s*\{\s*mode:\s*"stored",\s*store:\s*clientStore\s*\}/,
+      "generated server persists DCR through its SQLite-backed client store",
+    );
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST, "http:\/\/localhost,http:\/\/127\.0\.0\.1"/, "generated local composition explicitly declares loopback callback origins");
   } finally {
     await rm(dir, { recursive: true, force: true });

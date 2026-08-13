@@ -83,8 +83,6 @@ async function main(): Promise<void> {
   requireUrl("OAUTH_ISSUER", ISSUER);
   requireUrl("OAUTH_RESOURCE", RESOURCE);
   if (new URL(RESOURCE).pathname !== "/mcp") throw new Error("OAUTH_RESOURCE pathname must be /mcp (the server mounts /mcp); set OAUTH_RESOURCE to <issuer>/mcp or edit server.ts for a custom path."); if (!isLoopback(ISSUER) || !isLoopback(RESOURCE)) throw new Error("The generated starter is localhost-only: OAUTH_ISSUER and OAUTH_RESOURCE must use loopback hosts. Use the production example for an internet-facing deployment.");
-  // loadOrCreateQuickstartSecrets creates DIR (0o700) + the managed .gitignore +
-  // the signing material on first boot (the fs-trust bar + zero-setup keys).
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
   let store: ReturnType<typeof openSqliteStore> | undefined;
   const clientStore: ClientStore = {
