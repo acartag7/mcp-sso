@@ -378,6 +378,23 @@ test("stored authorize revalidates legacy registrations against the current glob
   assert.equal((response.body as { error: string }).error, "invalid_redirect_uri");
 });
 
+test("stored native authorization keeps any-port matching after registered-entry revalidation", async () => {
+  const clients = new Clients();
+  clients.values.set("native", {
+    clientId: "native", redirectUris: ["http://127.0.0.1:4000/callback"],
+    applicationType: "native", issuedAtEpoch: 1,
+  });
+  const bridge = new Bridge({
+    config: config({ redirectAllowlist: ["http://127.0.0.1:4000/callback"], dcr: { mode: "stored", store: clients } }),
+    store: new MemoryStore(), clock: new Clock(), audit: new Audit(),
+  });
+  const response = await bridge.handleAuthorize(request(undefined, {
+    client_id: "native", redirect_uri: "http://127.0.0.1:49152/callback",
+    response_type: "code", code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+  }), { subject: "user" });
+  assert.equal(response.status, 200);
+});
+
 test("positive round trips hold for stored web/native, stateless, and CIMD", async () => {
   const authorizeRegistered = async (bridge: Bridge, redirectUri: string, applicationType?: "web" | "native") => {
     const registration = await bridge.handleRegister(request({ redirect_uris: [redirectUri], ...(applicationType ? { application_type: applicationType } : {}) }));
