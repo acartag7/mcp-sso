@@ -59,6 +59,24 @@ JavaScript call only, reference stores persist the reserved
 the marker is rejected by rotation before any mutation and cannot be supplied as
 a normal write value.
 
+**MySQL subject capacity.** OIDC `sub` may be 255 characters. For the Entra
+no-`oid` key, the accepted v2 issuer is 75 characters for a 36-character tenant
+identifier, so `issuer + "|" + sub` is `75 + 1 + 255 = 331` characters. The
+`oauth_auth_codes.subject` and `oauth_refresh_tokens.subject` columns are therefore
+`VARCHAR(384)`: narrow headroom above 331 without widening any other identifier.
+The refresh lookup index remains `(subject, client_id)`, where `client_id` stays
+`VARCHAR(255)`. Under `utf8mb4`, its worst-case key is
+`(384 + 255) × 4 = 2556` bytes. InnoDB secondary-index records also carry this
+table's `VARCHAR(64)` `token_hash` primary key, so the physical worst case is
+`(384 + 255 + 64) × 4 = 2812` bytes, below the 3072-byte limit.
+
+Fresh MySQL schemas use `VARCHAR(384)` for exactly those two subject columns.
+Migration inspects and validates both columns before either ALTER: deployed `VARCHAR(255) NOT NULL`
+columns are widened in place to `VARCHAR(384) NOT NULL`; an already sufficient
+width is an idempotent no-op; an unexpected missing, nullable, non-`VARCHAR`, or
+other undersized shape fails boot rather than being silently reinterpreted.
+`client_id`, consent-JTI uniqueness, and every other column/index are unchanged.
+
 ## 12.2 Invariants the suite asserts
 1. **Hashed, single-use, resource-bound auth codes:**
    `consumeAuthCode(codeHash, nowIso, expectedGeneration?, expectedResource?)`
@@ -269,7 +287,11 @@ a normal write value.
   because `mysql2`'s pool exposes no per-connection init hook to set it once; (2)
   statements use the text protocol (`query`) rather than prepared statements
   (`execute`), which do not support the `IN (?)` array expansion the two-step sweep
-  relies on. Revisit either only if profiling flags it.
+  relies on. Revisit either only if profiling flags it. The subject-width migration
+  and index arithmetic are specified in §12.1; live MySQL 8.4 coverage starts from
+  the deployed `VARCHAR(255)` columns, migrates them, persists a 331-character Entra
+  subject through authorization and refresh rotation, and reruns migration to prove
+  idempotence.
 
 **Async-store transaction hygiene (addendum 13 — for any pooled/async adapter,
 e.g. a MySQL-compatible or Postgres store):** acquire the connection → `begin` INSIDE the `try`

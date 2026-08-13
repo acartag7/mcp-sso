@@ -234,6 +234,7 @@ Run before S2.
 | S0a.4 | Two Redis limiter instances share a key/window | Second instance observes the first's increments. |
 | S0a.5 | Redis unavailable | Limiter fails open; auth flow continues. |
 | S0a.6 | `/oauth/revoke` admission limiting | After the Fastify, Express, or Hono body boundary, each adapter reaches the same `Bridge.handleRevoke` guard with exactly `revoke:<trusted adapter IP or unknown>`. A denial is 429 before Bridge body normalization, token hashing, use-case, store, revocation, or audit work; a limiter throw proceeds. Hono's over-cap path remains 413 before the limiter. Admitted unknown and already-revoked tokens remain RFC 7009 HTTP 200. |
+| S0a.7 | MySQL 8.4 legacy subject-width migration | Starting from `VARCHAR(255)` on exactly the auth-code and refresh-token subject columns, migration widens both to `VARCHAR(384)` and is idempotent. A 331-character Entra `issuer|sub` survives authorization-code persistence, refresh persistence, and rotation with its exact bytes; the `(subject, client_id)` utf8mb4 index remains valid, including InnoDB's appended token-hash primary key. |
 
 ### T1.S1a — audit sinks
 
@@ -317,6 +318,9 @@ Notes:
 | S2b.4 | Overage marker present | Fail closed; `_claim_sources` is never dereferenced. |
 | S2b.5 | Existing Entra config without group auth | Behavior unchanged. |
 | S2b.6 | Full authorize flow | Entra-derived ceiling enforced by the S2a core flow. |
+| S2b.7 | Immutable Entra subject selection | The pure validator, explicit-key verifier, remote-JWKS factory, and redirect port all prefer exact usable `oid`, otherwise exact accepted `issuer|sub`; mutable-only identity is rejected. |
+| S2b.8 | Entra allowlist normalization boundary | `oid` keeps trimmed, case-insensitive matching; issuer-namespaced `sub` matches byte-for-byte. Mutable username/email matches only when `allowMutableClaims === true`, case-insensitively but without whitespace trimming. |
+| S2b.9 | Stored-DCR and legacy refresh compatibility | Two no-`oid` identities sharing a mutable username do not share accumulated scopes. A pre-upgrade mutable-key refresh family preserves that subject and receives the current sliding TTL on rotation; no migration is inferred. |
 
 ### T1.S3a — machine client provisioning
 

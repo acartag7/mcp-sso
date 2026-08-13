@@ -325,8 +325,13 @@ root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
 - **CloudflareAccessIdentity** — verifies `Cf-Access-Jwt-Assertion` (RS256 against
   CF JWKS, aud/iss checked), subject = the token's `sub` (a stable CF identity id; `email` the fallback — opaque-`sub`-first, matching the Entra `oid`-first sibling; CF carries the email in a separate claim, so do not key on email).
 - **EntraIdentity** — upstream OIDC auth-code+PKCE against Entra v2.0; ONE app
-  registration for the bridge; validate iss/aud/tid; map oid/email → subject. The
-  bridge then issues its OWN audience-bound tokens (no passthrough).
+  registration for the bridge; validate iss/aud/tid; subject = the exact usable
+  non-blank `oid` when present, otherwise the exact already-accepted issuer +
+  `"|"` + the exact usable non-blank signature-verified OIDC `sub`. A blank or
+  wrongly typed `oid` falls back to `sub`; a blank or wrongly typed `sub` with no
+  usable `oid` fails closed with `entra_no_subject`. `preferred_username` and
+  `email` never select the stored grant subject. The bridge then issues its OWN
+  audience-bound tokens (no passthrough).
 
 `GenericOidcIdentity` and the Google preset ship as `RedirectIdentityPort`s
 (S4a); the dedicated GitHub port and the console-pairing port are covered in
@@ -351,8 +356,10 @@ scope ceiling) is locked in §17.4.
   missing config). A blank value would otherwise build a malformed URL or make the
   `aud` check vacuous instead of raising a clear boot error.
 - **Optional subject allowlist (defense-in-depth).** A port MAY accept a
-  case-insensitive, trimmed subject/email allowlist; empty ⇒ delegate entirely to
-  the IdP's own policy (e.g. Cloudflare Access Zero Trust). Never the sole gate.
+  subject/email allowlist; empty ⇒ delegate entirely to the IdP's own policy
+  (e.g. Cloudflare Access Zero Trust). Matching semantics are port-specific and
+  MUST be documented; opaque immutable identifiers are not presumed to be
+  case-insensitive or whitespace-normalized. Never the sole gate.
 - **Unit-testable claim validation.** Export the claim-validation logic as a pure
   function so it is unit-testable WITHOUT the JWKS network fetch.
 - **Entra multi-tenant.** When `allowedTenantIds` is set, `tid` must be allowlisted
@@ -377,9 +384,26 @@ scope ceiling) is locked in §17.4.
   code exchange and verified the token before forwarding (Cloudflare Access's
   signed assertion is the model), never behind one that merely relays tokens it
   did not validate. Documented as the row-12 residual in the threat model.
-- **Entra subject allowlist.** Matches the immutable `oid` by default; matching the
-  mutable preferred_username/email requires `allowMutableClaims` (Microsoft warns
-  against using those claims for authorization).
+- **Entra subject allowlist.** Keeps trimmed, case-insensitive matching for
+  `oid`. Otherwise it matches the accepted issuer + `"|"` + `sub` byte-for-byte.
+  Raw `sub` is not a candidate because it discards issuer namespacing. Matching
+  mutable `preferred_username`/`email` requires `allowMutableClaims === true`
+  (Microsoft warns against using those claims for authorization). Only those
+  mutable candidates are compared case-insensitively; no mutable candidate or
+  allowlist entry is trimmed. This opt-in changes allowlist candidates only: an allowlist
+  match never selects or changes the stored grant subject.
+
+**Entra no-`oid` compatibility amendment (2026-08-13).** No durable-state migration
+is performed because an old username/email key cannot be attributed safely to an
+immutable account from stored data alone. Existing no-`oid` grants remain under
+their old mutable keys; the next full login uses the issuer-namespaced `sub` and
+may require reapproval. Existing access tokens, authorization codes, in-flight
+consent, and refresh-token families retain their already-issued subjects for
+their normal lifetimes. Refresh does not re-run Entra identity verification or
+rewrite a family subject. Successful rotation preserves that legacy subject and
+renews the successor to the current sliding `refreshTokenTtlSeconds`; deterministic
+cutoff requires explicit family revocation (or replay-family revocation), while an
+inactive family expires after its current TTL.
 
 ## 6.6 `FetcherPort` (boundary now; CIMD impl v0.2)
 ```ts
