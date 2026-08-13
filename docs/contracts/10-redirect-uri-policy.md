@@ -684,6 +684,11 @@ registered URI it reads, and a record carrying a non-conforming entry is refused
 not a migration: a store is not required to be rewritten, and a legacy record
 simply stops authorizing until re-registered.
 
+The read also reapplies the current §10.1 global allowlist before §10.2's
+per-client match. Removing an allowlist entry therefore revokes redirect trust
+for stored records admitted under an older configuration; an old native
+loopback row cannot retain the removed implicit loopback policy.
+
 The same read-time rule covers the OTHER carrier of registered redirect URIs:
 the **CIMD registration carried in the signed flow cookie** (§17.1.6 decision
 1c). A cookie minted before this grammar was enforced carries a
