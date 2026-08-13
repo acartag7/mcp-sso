@@ -3,6 +3,7 @@
 // suite). All secrets are SHA-256 digests; there is NO grant table (findGrantedScopes
 // queries the refresh-token tables directly).
 
+import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 const MIGRATIONS = [
@@ -56,7 +57,11 @@ const MIGRATIONS = [
 ];
 
 export function migrateSqliteStore(db: DatabaseSync): void {
-  if (clientTableExists(db)) assertClientTable(db);
+  const existingClientObject = clientSchemaObject(db);
+  if (existingClientObject && existingClientObject.type !== "table") {
+    throw new Error("oauth_clients schema is incompatible");
+  }
+  if (existingClientObject) assertClientTable(db);
   for (const migration of MIGRATIONS) {
     db.exec(migration);
   }
@@ -68,10 +73,9 @@ export function migrateSqliteStore(db: DatabaseSync): void {
   assertClientTable(db);
 }
 
-function clientTableExists(db: DatabaseSync): boolean {
-  return db.prepare(
-    "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_clients'",
-  ).get() !== undefined;
+function clientSchemaObject(db: DatabaseSync): { type: unknown } | undefined {
+  return db.prepare("SELECT type FROM sqlite_schema WHERE name = 'oauth_clients'").get() as
+    { type: unknown } | undefined;
 }
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
@@ -100,4 +104,31 @@ function assertClientTable(db: DatabaseSync): void {
     "SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = 'oauth_clients'",
   ).get() as { strict: unknown } | undefined;
   if (table?.strict !== 1) throw new Error("oauth_clients schema is incompatible");
+  assertClientConstraints(db);
+}
+
+function assertClientConstraints(db: DatabaseSync): void {
+  const prefix = `__mcp_sso_schema_probe_${randomUUID()}`;
+  const insert = db.prepare(`INSERT INTO oauth_clients (
+    client_id, redirect_uris_json, application_type, issued_at_epoch
+  ) VALUES (?, '["https://client.example/callback"]', ?, ?)`);
+  db.exec("SAVEPOINT mcp_sso_client_schema_probe");
+  try {
+    insert.run(`${prefix}_native`, "native", 0);
+    insert.run(`${prefix}_web`, "web", 0);
+    if (!insertRejected(insert, `${prefix}_kind`, "machine", 0)
+      || !insertRejected(insert, `${prefix}_epoch`, "native", -1)) {
+      throw new Error("oauth_clients schema is incompatible");
+    }
+  } catch {
+    throw new Error("oauth_clients schema is incompatible");
+  } finally {
+    db.exec("ROLLBACK TO mcp_sso_client_schema_probe; RELEASE mcp_sso_client_schema_probe");
+  }
+}
+
+function insertRejected(
+  insert: ReturnType<DatabaseSync["prepare"]>, clientId: string, applicationType: string, issuedAt: number,
+): boolean {
+  try { insert.run(clientId, applicationType, issuedAt); return false; } catch { return true; }
 }

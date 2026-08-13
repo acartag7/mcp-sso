@@ -69,6 +69,45 @@ test("SqliteStore rejects an incompatible client table before any schema mutatio
   }
 });
 
+test("SqliteStore rejects client schema-name collisions before any migration", () => {
+  for (const collision of [
+    "CREATE VIEW oauth_clients AS SELECT value FROM sentinel",
+    "CREATE INDEX oauth_clients ON sentinel(value)",
+  ]) {
+    assertRejectedSchemaIsUnchanged(collision);
+  }
+});
+
+test("SqliteStore rejects hostile client constraints before any migration", () => {
+  assertRejectedSchemaIsUnchanged(`CREATE TABLE oauth_clients (
+    client_id TEXT PRIMARY KEY NOT NULL,
+    redirect_uris_json TEXT NOT NULL,
+    application_type TEXT NOT NULL CHECK (application_type = 'machine'),
+    issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
+  ) STRICT`);
+});
+
+function assertRejectedSchemaIsUnchanged(clientSchema: string): void {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-client-hostile-schema-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const seeded = new DatabaseSync(file);
+    seeded.exec("CREATE TABLE sentinel (value TEXT) STRICT");
+    seeded.exec(clientSchema);
+    const query = "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name";
+    const before = seeded.prepare(query).all();
+    seeded.close();
+    chmodSync(file, 0o600);
+    assert.throws(() => openSqliteStore(file), /database initialization failed/);
+    const rejected = new DatabaseSync(file);
+    const after = rejected.prepare(query).all();
+    rejected.close();
+    assert.deepEqual(after, before, "rejection leaves every pre-existing schema object unchanged");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 test("integration: a DCR registration survives restart and completes authorization-code exchange", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-client-flow-"));
   const file = join(dir, "oauth.sqlite");
