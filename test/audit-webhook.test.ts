@@ -294,6 +294,21 @@ test("WebhookAudit: hostile large diagnostics have bounded exact-secret processi
   assert.ok(captured.messages.join("\n").length <= 200);
 });
 
+test("WebhookAudit: control normalization cannot expose a secret across the processing cap", async () => {
+  const secret = "!".repeat(300);
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    headers: { "X-Hook-Key": secret },
+    fetchImpl: (async () => { throw new Error(`${"\n".repeat(8_100)}${secret}`); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  assert.equal(captured.messages.join("\n").includes("!"), false);
+});
+
 test("WebhookAudit: credential-bearing query string in the URL is scrubbed from stderr", async () => {
   // A query param can carry a credential (e.g. ?access_token=…). The regex
   // redactor does NOT catch `access_token=` (the `_` defeats the \b token
