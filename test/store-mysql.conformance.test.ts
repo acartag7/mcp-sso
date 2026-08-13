@@ -15,6 +15,8 @@ import { createPool, type Pool, type PoolConnection, type RowDataPacket } from "
 import type { StorePort } from "../src/ports/store.ts";
 import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
+import { MYSQL_SUBJECT_CAPACITY } from "../src/store/mysql-subject-schema.ts";
+import { entraIssuer, validateEntraIdToken } from "../src/identity/entra.ts";
 import { runStoreConformance } from "./lib/store-conformance.ts";
 
 const RUN_INTEGRATION = process.env.RUN_INTEGRATION === "true";
@@ -85,6 +87,73 @@ function make(): StorePort {
 }
 
 if (RUN) {
+  test("MysqlStore/MySQL 8.4: migrates VARCHAR(255) subjects and persists max Entra authorization/refresh", async () => {
+    await admin!.query("ALTER TABLE oauth_auth_codes MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
+    await admin!.query("ALTER TABLE oauth_refresh_tokens MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
+    const store = await createMysqlStore(MYSQL_URL as string);
+    try {
+      await store.migrate();
+      const [columns] = await admin!.query<RowDataPacket[]>(
+        `SELECT TABLE_NAME, CHARACTER_MAXIMUM_LENGTH
+         FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'subject'
+           AND TABLE_NAME IN ('oauth_auth_codes', 'oauth_refresh_tokens')
+         ORDER BY TABLE_NAME`,
+      );
+      assert.deepEqual(
+        (columns as { TABLE_NAME: string; CHARACTER_MAXIMUM_LENGTH: number }[]).map((column) => ({
+          table: column.TABLE_NAME, width: column.CHARACTER_MAXIMUM_LENGTH,
+        })),
+        [
+          { table: "oauth_auth_codes", width: MYSQL_SUBJECT_CAPACITY },
+          { table: "oauth_refresh_tokens", width: MYSQL_SUBJECT_CAPACITY },
+        ],
+      );
+
+      const tenantId = "11111111-2222-3333-4444-555555555555";
+      const issuer = entraIssuer(tenantId);
+      const result = validateEntraIdToken({
+        iss: issuer, aud: "mysql-max-subject-client", tid: tenantId,
+        sub: "s".repeat(255), exp: Math.floor(Date.parse(FUTURE) / 1000),
+      }, {
+        tenantId, clientId: "mysql-max-subject-client", redirectUri: "https://bridge.test/oauth/entra/callback",
+      });
+      assert.ok(result.ok);
+      const subject = result.identity.subject;
+      assert.equal(issuer.length, 75);
+      assert.equal(subject.length, 331);
+
+      const codeHash = sha256Hex("max-entra-subject-code");
+      await store.saveAuthCode({
+        codeHash, clientId: "mysql-max-subject-client", subject,
+        redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
+        scopes: ["mcp:read"], codeChallenge: "challenge", codeChallengeMethod: "S256", expiresAt: FUTURE,
+      });
+      assert.equal((await store.consumeAuthCode(codeHash, NOW))?.subject, subject);
+
+      const predecessorHash = sha256Hex("max-entra-subject-refresh");
+      const successorHash = sha256Hex("max-entra-subject-successor");
+      await store.saveRefreshToken({
+        tokenHash: predecessorHash, familyId: "max-entra-subject-family", previousTokenHash: null,
+        clientId: "mysql-max-subject-client", subject, resource: "https://api.test/mcp",
+        scopes: ["mcp:read"], expiresAt: FUTURE,
+      });
+      const rotated = await store.rotateRefreshToken(predecessorHash, {
+        tokenHash: successorHash, familyId: "max-entra-subject-family", previousTokenHash: predecessorHash,
+        clientId: "attacker-client", subject: "attacker-subject", resource: "https://api.test/mcp",
+        scopes: ["mcp:write"], expiresAt: FUTURE,
+      }, NOW);
+      assert.equal(rotated?.subject, subject);
+      assert.equal((await store.findRefreshToken(successorHash))?.subject, subject);
+      assert.deepEqual(
+        await store.findGrantedScopes(subject, "mysql-max-subject-client", NOW),
+        ["mcp:read"],
+      );
+    } finally {
+      await store.close();
+    }
+  });
+
   test("MysqlStore: fresh schema has non-null exact resource columns", async () => {
     const [columns] = await admin!.query<RowDataPacket[]>(
       `SELECT TABLE_NAME, IS_NULLABLE, COLUMN_TYPE, COLLATION_NAME

@@ -190,6 +190,19 @@ test("WITHOUT groupAuthorization, Entra behavior is unchanged: the full requeste
   assert.deepEqual(scopes, ["mcp:read", "mcp:write"]);
 });
 
+test("stored DCR: distinct immutable Entra subjects sharing one mutable username never share grants", async () => {
+  const ctx = setup();
+  const clientId = await register(ctx);
+  const port = entraPort(ctx.noGroupConfig);
+  const sharedMutable = "reassigned@example.test";
+  const alice = await signIdToken(entraPayload({ oid: undefined, sub: "alice-sub", preferred_username: sharedMutable, email: sharedMutable }));
+  const bob = await signIdToken(entraPayload({ oid: undefined, sub: "bob-sub", preferred_username: sharedMutable, email: sharedMutable }));
+
+  assert.deepEqual(await grantScopes(ctx, port, alice, clientId, "mcp:read", V("alice-read")), ["mcp:read"]);
+  assert.deepEqual(await grantScopes(ctx, port, alice, clientId, "mcp:write", V("alice-write")), ["mcp:read", "mcp:write"]);
+  assert.deepEqual(await grantScopes(ctx, port, bob, clientId, "mcp:write", V("bob-write")), ["mcp:write"]);
+});
+
 test("threat-model row 22: a prior Entra grant can't resurrect a since-removed-group scope (stored mode)", async () => {
   const ctx = setup();
   const clientId = await register(ctx);

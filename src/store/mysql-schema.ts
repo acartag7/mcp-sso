@@ -21,6 +21,7 @@ import {
   assertRefreshResource, assertUtcIsoTimestamp, grantGenerationForWrite,
   grantGenerationFromStored, refreshResourceFromStored,
 } from "../ports/store.ts";
+import { migrateMysqlSubjectColumns } from "./mysql-subject-schema.ts";
 
 export const MYSQL_OAUTH_TABLES = [
   "oauth_auth_codes", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_consent_jtis",
@@ -30,7 +31,7 @@ const MIGRATIONS = [
   `CREATE TABLE IF NOT EXISTS oauth_auth_codes (
     code_hash VARCHAR(64) NOT NULL,
     client_id VARCHAR(255) NOT NULL,
-    subject VARCHAR(255) NOT NULL,
+    subject VARCHAR(384) NOT NULL,
     redirect_uri VARCHAR(2048) NOT NULL,
     resource VARCHAR(2048) NOT NULL,
     scopes_json TEXT NOT NULL,
@@ -53,7 +54,7 @@ const MIGRATIONS = [
     family_id VARCHAR(64) NOT NULL,
     previous_token_hash VARCHAR(64),
     client_id VARCHAR(255) NOT NULL,
-    subject VARCHAR(255) NOT NULL,
+    subject VARCHAR(384) NOT NULL,
     resource VARCHAR(2048) NOT NULL,
     scopes_json TEXT NOT NULL,
     expires_at VARCHAR(24) NOT NULL,
@@ -84,6 +85,7 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await ensureColumn(conn, "oauth_refresh_tokens", "grant_generation", "BIGINT UNSIGNED NULL");
   await ensureColumn(conn, "oauth_refresh_token_families", "resource", "VARCHAR(2048) NULL");
   await ensureColumn(conn, "oauth_refresh_tokens", "resource", "VARCHAR(2048) NULL");
+  await migrateMysqlSubjectColumns(conn);
   await assertColumnCollations(conn);
   await assertInnoDBEngine(conn);
 }

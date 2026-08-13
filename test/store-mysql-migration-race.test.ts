@@ -28,6 +28,9 @@ function racingConnection(options: RaceOptions): {
       if (sql.startsWith("ALTER TABLE oauth_auth_codes")) {
         throw Object.assign(new Error("simulated ALTER race"), { code: options.errorCode });
       }
+      if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
+        return [[{ data_type: "varchar", max_length: 384, is_nullable: "NO" }], []];
+      }
       if (sql.includes("COLLATION_NAME") || sql.includes("ENGINE")) return [[], []];
       return [[], []];
     },
@@ -85,6 +88,9 @@ test("MySQL migration adds nullable resource columns to pre-resource refresh tab
         seen.add(`${match[1]}:${match[2]}`);
         return [[], []];
       }
+      if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
+        return [[{ data_type: "varchar", max_length: 384, is_nullable: "NO" }], []];
+      }
       if (sql.includes("COLLATION_NAME") || sql.includes("ENGINE")) return [[], []];
       return [[], []];
     },
@@ -92,4 +98,53 @@ test("MySQL migration adds nullable resource columns to pre-resource refresh tab
   await migrateMysqlStore(connection);
   assert.ok(alters.includes("ALTER TABLE oauth_refresh_token_families ADD COLUMN resource VARCHAR(2048) NULL"));
   assert.ok(alters.includes("ALTER TABLE oauth_refresh_tokens ADD COLUMN resource VARCHAR(2048) NULL"));
+});
+
+test("MySQL subject migration widens only both deployed VARCHAR(255) columns and is idempotent", async () => {
+  const widths = new Map([
+    ["oauth_auth_codes", 255],
+    ["oauth_refresh_tokens", 255],
+  ]);
+  const subjectAlters: string[] = [];
+  const connection = {
+    query: async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
+        return [[{ data_type: "varchar", max_length: widths.get(String(values?.[0])), is_nullable: "NO" }], []];
+      }
+      if (sql.includes("MODIFY COLUMN subject")) {
+        const match = /^ALTER TABLE (oauth_auth_codes|oauth_refresh_tokens) MODIFY COLUMN subject VARCHAR\(384\)/.exec(sql);
+        assert.ok(match, `unexpected subject ALTER: ${sql}`);
+        subjectAlters.push(sql);
+        widths.set(match[1]!, 384);
+        return [[], []];
+      }
+      if (sql.includes("COLLATION_NAME") || sql.includes("ENGINE")) return [[], []];
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+
+  await migrateMysqlStore(connection);
+  await migrateMysqlStore(connection);
+  assert.equal(subjectAlters.length, 2);
+  assert.deepEqual(subjectAlters.map((sql) => sql.split(" ")[2]).sort(), ["oauth_auth_codes", "oauth_refresh_tokens"]);
+  assert.ok(subjectAlters.every((sql) => !sql.includes("client_id") && !sql.includes("consent")));
+});
+
+test("MySQL subject migration rejects an unexpected undersized shape", async () => {
+  let subjectAlters = 0;
+  const connection = {
+    query: async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
+      if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
+        return [[{ data_type: "varchar", max_length: values?.[0] === "oauth_auth_codes" ? 255 : 300, is_nullable: "NO" }], []];
+      }
+      if (sql.includes("MODIFY COLUMN subject")) subjectAlters += 1;
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /oauth_refresh_tokens\.subject has unsupported VARCHAR\(300\) width/);
+  assert.equal(subjectAlters, 0, "both subject shapes are validated before either ALTER");
 });
