@@ -35,9 +35,11 @@ This is a composition-root default, not an implicit library default. A custom
 library integration must pass `cimd: { enabled: true }`; omitting `cimd`
 disables URL-shaped client ids.
 
-For opaque DCR, a loopback registration is accepted only when its origin is
-explicitly present in `redirectAllowlist` / `OAUTH_REDIRECT_ALLOWLIST`. Loopback
-hosts are not implicit defaults.
+For opaque DCR, a loopback registration is accepted only when an exact callback
+URI or its broader origin is explicitly present in `redirectAllowlist` /
+`OAUTH_REDIRECT_ALLOWLIST`. Prefer the exact URI when the callback port is stable;
+an origin entry intentionally permits any path and, for loopback, any port on
+that host. Loopback hosts are not implicit defaults.
 
 ## For client authors: publish a metadata document
 
