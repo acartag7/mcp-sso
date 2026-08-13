@@ -22,7 +22,7 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 26 conformant (1 with a disclosed caveat), 2 reasoned deviations, 3 unresolved test-evidence rows, **1 confirmed runtime mismatch (D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
+| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 28 conformant (1 with a disclosed caveat), 2 reasoned deviations, 1 unresolved test-evidence row, **1 confirmed runtime mismatch (D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP extension) | ✅ v0.2 shipped | §17.2 |
@@ -48,10 +48,10 @@ than folded into a single "conformant" total:
 
 | Class | Count | Rows | Meaning |
 |---|---|---|---|
-| `C` conformant | 25 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
+| `C` conformant | 27 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
 | `C` with a disclosed caveat | 1 | D00-6.5.1 | Conformant in production, with a narrower environment-scoped departure (the dev-only loopback fetch) stated in the row rather than absorbed into the total. |
 | Reasoned deviation | 2 | D00-4.2.1 (`SHOULD`), D00-4.2.2 (`RECOMMENDED`) | The obligation applies and is deliberately not met; rationale recorded. |
-| `U` unresolved evidence | 3 | D00-4.1, D00-5.1, D00-6.5.2 | The enforcing source exists, but no test yet proves the complete hostile class or the shipped framework route. |
+| `U` unresolved evidence | 1 | D00-6.5.2 | The enforcing source exists, but no hostile test yet proves document-contained URLs cause no secondary fetch. |
 | **Runtime mismatch** | **1** | **D00-4.5.2** | Implementation contradicts the statement. Reproduced by direct probe, not inferred. |
 | `N/A` not applicable | 12 | — | Excluded client-side duty, optional feature not implemented, or a conditional whose trigger provably never fires. |
 
@@ -76,7 +76,7 @@ so the classification can be re-checked rather than taken on trust.
 | D00-3.7 | §3 URL **MAY** contain a port. AS-applicable; allowed except a documented cross-protocol denylist. | C | `src/cimd/admission.ts:10-13,74-76` | Frozen `admission.test.ts:33-42,153-171`; non-default and explicit `:443` positives prevent a blanket-port rejection. |
 | D00-3.8 | §3 short URL **RECOMMENDED**. Client-authoring guidance. | N/A | — | No AS rejection duty; mcp-sso applies its own 2048-byte hard cap for bounded input. |
 | D00-3.9 | §3 stable URL **RECOMMENDED**. Client-authoring/operational guidance. | N/A | — | No runtime mechanism can prove client-domain longevity. |
-| D00-4.1 | §4 AS **SHOULD** fetch the document named by `client_id`. AS-applicable. | U | `src/authorize-internals.ts:45-72`; `src/cimd/resolve.ts:167-240` | Frozen tests prove both resolution boundaries through the `Bridge`, which is the library's shipped AS surface (`s6b-dispatch.test.ts:94-145,197-251`); the adapters are thin pass-throughs to it, so no second decision path exists. Missing is only the framework HTTP-integration witness — no Fastify/Express/Hono test drives a URL `client_id` through real query wiring. |
+| D00-4.1 | §4 AS **SHOULD** fetch the document named by `client_id`. AS-applicable. | C | `src/authorize-internals.ts:45-72`; `src/cimd/resolve.ts:167-240` | `test/cimd-adapter-evidence.test.ts:181-218` is the six-cell shipped-route matrix: direct and upstream CIMD authorization for Fastify, Express, and Hono. Every direct cell reaches consent after one DNS/transport call; every upstream cell completes callback to consent without a second document fetch. |
 | D00-4.1.1 | §4.1 document **MUST** contain `client_id`. AS-enforced. | C | `src/cimd/document.ts:13-28` | Frozen `document.test.ts:51-63`; absence and wrong JSON types fail. |
 | D00-4.1.2 | §4.1 document `client_id` **MUST** equal the URL by RFC 3986 simple string comparison. AS-applicable. | C | `src/cimd/document.ts:23-27`; raw fetch key `src/cimd/guarded-fetcher.ts:26-31,105-107` | Frozen `document.test.ts:44-49` and `guarded-fetcher.test.ts:268-296`; normalization or comparison removal makes explicit-port/case witnesses pass. |
 | D00-4.1.3 | §4.1 document **MAY** contain additional properties. AS-applicable extension tolerance. | C | Named reads `src/cimd/document.ts:23-38`; named projection `src/cimd/registration.ts:36-44` | Frozen `document.test.ts:130-133` and `s6b-redirect.test.ts:162-175,351-360`; unknown fields are accepted but cannot escape into signed state. |
@@ -96,7 +96,7 @@ so the classification can be re-checked rather than taken on trust.
 | D00-4.4.5 | §4.4 AS **MUST NOT** cache invalid/malformed documents. AS-applicable. | C | Validation precedes projection/cache: `src/cimd/guarded-fetcher.ts:104-108`; `src/cimd/resolve.ts:232-240` | Frozen `s6b-cache.test.ts:176-184`; mismatched documents are rejected and fetched on every attempt. |
 | D00-4.5.1 | §4.5 AS **MUST** require redirect registration; the validated document supplies it. AS-applicable. | C | `src/cimd/document.ts:25-29`; `src/cimd/registration.ts:82-95`; `src/cimd/resolve.ts:178-183` | Frozen `s6b-redirect.test.ts:177-217` and `s6b-cache.test.ts:279-322`; an absent/nonmatching URI fails on misses and hits. |
 | D00-4.5.2 | §4.5: "According to [RFC9700], the authorization server … **MUST** ensure that the redirect URI in a request is an exact match of a registered redirect URI." The rule is delegated to RFC 9700, whose sole exception is **native-app** loopback ports. | **Runtime mismatch** | `src/cimd/registration.ts:82-95` (matcher receives no client type); `src/cimd/document.ts:23-38` accepts `application_type` but `src/cimd/registration.ts:36-44` drops it | Probed on this commit: a document declaring **`application_type: "web"`** with registered `http://localhost:5000/cb` **matches** a presented `http://localhost:7000/cb`. RFC 9700 §2.1 permits varying "port numbers in localhost redirection URIs **of native apps**" and §4.1.3 repeats "**native apps** using a localhost URI"; the host wording does cover `localhost` (RFC 8252 §8.3: it "function[s] similarly to" the §7.3 form), **but the native-app precondition is never evaluated**. `-00` §4.1 imports the IANA OAuth client-metadata registry, which registers `application_type`, so the signal is available in a CIMD document — the validator simply accepts and discards it. Applying a native-only exception to a self-declared web client, and defaulting to it when no type is present, is a fail-open trust-boundary decision. Frozen `s6b-redirect.test.ts:177-217,299-308,363-385` covers only host/port/path shapes, never a declared type, so it stays green. Fix in follow-up PR 2. *(Unrelated and sound: the loopback branch omits `search`, but `src/redirect-entry.ts:46` rejects any raw `?` on both sides; and `src/token.ts:207-218` binds only the stored authorization-code record, so it is not document enforcement.)* |
-| D00-5.1 | §5 an AS publishing RFC 8414 metadata **MUST** include the CIMD support property. AS-applicable. | U | `src/metadata.ts:17-39`; Bridge route `src/adapters/bridge.ts:95-97`; all adapters mount that handler | Frozen `s6b-metadata.test.ts:35-45` proves the builder pair, and `test/bin-init.test.ts:229-235` asserts `true` over a real HTTP route on a spawned **Fastify** server. Express and Hono assert only the metadata route's issuer (`test/lib/adapter-flow.ts:73-75`), so the served flag is unproven on two of the three shipped adapters. |
+| D00-5.1 | §5 an AS publishing RFC 8414 metadata **MUST** include the CIMD support property. AS-applicable. | C | `src/metadata.ts:17-39`; Bridge route `src/adapters/bridge.ts:95-97`; all adapters mount that handler | Frozen `s6b-metadata.test.ts:35-45` proves the builder pair; `test/cimd-adapter-evidence.test.ts:181-196` asserts the served flag is `true` through each Fastify, Express, and Hono metadata route before its direct CIMD authorization cell. |
 | D00-5.2 | §5 `client_id_metadata_document_supported` is an **OPTIONAL** registered field generally; supporting deployments publish `true`. AS-applicable. | C | `src/metadata.ts:36-39` | Frozen `s6b-metadata.test.ts:35-45`; enabled=`true`, disabled=absent, and `none` remains advertised. |
 | D00-6.1.1 | §6.1 AS **MAY** impose restrictions or relationships **between** `redirect_uris` and `client_id`/`client_uri` (e.g. same-origin). Optional policy **not** exercised. | N/A | No such comparison exists anywhere in `src/cimd/` | Verified by absence and by positive test: `document.test.ts:145-149` accepts `https://app.example.com/cb` for client id host `cdn.example.com`. The §10.0 per-entry hygiene mcp-sso does apply constrains each redirect URI on its own; it is **not** a relationship to the client identifier, and is scored under D00-4.2.1 instead. |
 | D00-6.2.1 | §6.2 clients **MAY** establish asymmetric credentials. Client option excluded by documented public-only profile. | N/A | Rejected at `src/cimd/document.ts:31-38` | Frozen `document.test.ts:88-105`; the branch is rejected rather than partially implemented. |
@@ -114,7 +114,7 @@ so the classification can be re-checked rather than taken on trust.
 
 ### Audit blockers and follow-up graph
 
-**Two runtime changes remain**, plus two normative evidence PRs. Each is a
+**Two runtime changes remain**, plus one normative evidence PR. Each is a
 separate reviewable concern; none should carry the independent RFC 9207
 error-response or scope-hierarchy work. The media-type change is complete.
 
@@ -140,15 +140,12 @@ error-response or scope-hierarchy work. The media-type change is complete.
    non-enumerated shared-secret declaration through direct and upstream
    resolution before redirect/IdP side effects. Adjacent absent and `none`
    declarations remain accepted through both boundaries.
-5. **Test PR — shipped adapter parity (closes D00-4.1 and D00-5.1, P2).** No
-   adapter test drives a `https://` CIMD `client_id` through a shipped route:
-   `test/lib/adapter-flow.ts:77-95` registers through DCR and authorizes with the
-   returned opaque id. Scope is a **six-cell matrix** — direct and upstream CIMD
-   authorization for each of Fastify, Express, and Hono — because each adapter
-   mounts two mutually exclusive authorize branches and the upstream branch also
-   registers a callback route; the upstream cells must complete callback →
-   consent. Separately, extend the served support-flag assertion to Express and
-   Hono (Fastify is covered by `test/bin-init.test.ts:229-235`).
+5. **Completed test PR — shipped adapter parity (closed D00-4.1 and D00-5.1,
+   P2).** `test/cimd-adapter-evidence.test.ts` drives the full six-cell matrix:
+   direct and upstream CIMD authorization through Fastify, Express, and Hono.
+   Direct cells reach consent; upstream cells complete callback to consent; all
+   prove exactly one DNS/transport fetch. The direct cells also assert the
+   served CIMD support flag through every adapter's metadata route.
 6. **Test PR — document-contained URLs are inert (closes D00-6.5.2, P2).**
    Publish hostile `logo_uri`, `jwks_uri`, `policy_uri`, and `tos_uri` values and
    assert exactly one outbound request: the Client Identifier URL itself.
@@ -263,5 +260,5 @@ resolves to commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` and references
 CIMD draft `-00`. Completing this mapping does not change the project target:
 MCP Authorization 2025-11-25 remains current because scope hierarchy handling
 is absent; CIMD also carries **one** confirmed `-00` runtime mismatch (D00-4.5.2 native-app
-precondition) plus two open evidence PRs. Counted individually the project has
+precondition) plus one open evidence PR. Counted individually the project has
 **two** open MCP-2026 runtime defects.
