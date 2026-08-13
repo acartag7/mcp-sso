@@ -30,7 +30,7 @@ import { resolveOpaqueRedirect } from "../authorize-internals.ts";
 import {
   OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, CALLBACK_DUP_KEYS_EXPORT, assertCallbackPath, resolveCookieProfile,
   setCookieValue, clearCookieValue, readFlowCookie, flowCookieOversized, signFlowToken,
-  verifyFlowToken, timingSafeStringEqual, findDuplicatedKeys, redirectErrorResponse,
+  verifyFlowToken, timingSafeStringEqual, findDuplicatedKeys, findRepeatedKeys, redirectErrorResponse,
   directErrorResponse, type FlowClaims,
 } from "./upstream-flow-internals.ts";
 
@@ -160,7 +160,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       writeAuditBestEffort(audit, { occurredAt: nowIso, event: "identity.verify", status, subject, reason, ip });
     try {
       let clientId: string | undefined;
-      if (findDuplicatedKeys(req.query, CALLBACK_DUP_KEYS_EXPORT).length > 0) return finish(directErrorResponse("invalid_request", "duplicate request parameters"), "failure", "duplicate_params"); // row 1
+      if (findRepeatedKeys(req.query, CALLBACK_DUP_KEYS_EXPORT).length > 0) return finish(directErrorResponse("invalid_request", "duplicate request parameters"), "failure", "duplicate_params"); // row 1
       if (!cookiePresent) return finish(directErrorResponse("invalid_request", "flow cookie missing"), "failure", "flow_cookie_missing"); // row 2 (nothing to clear)
       let claims: FlowClaims;
       try { claims = await verifyFlowToken(cookieValue as string, secret, issuer, callbackPath); } catch { return finish(directErrorResponse("invalid_request", "flow cookie invalid"), "failure", "flow_cookie_invalid"); } // row 3

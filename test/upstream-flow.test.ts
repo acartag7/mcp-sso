@@ -416,6 +416,9 @@ test("callback row 1: duplicate state/code/error/error_description => direct 400
     assert.equal(r.status, 400, `dup ${key} => 400`);
     assert.equal(a.callback()[0]?.reason, "duplicate_params", `dup ${key} => duplicate_params`);
   }
+  const emptyThenValue = await flow.handleCallback(req({ state: ["", "s"], code: "c" }, {}));
+  assert.equal(emptyThenValue.status, 400, "empty plus non-empty state remains duplicated");
+  assert.equal(audit.callback().at(-1)?.reason, "duplicate_params");
 });
 
 test("callback row 2: flow cookie absent => direct 400 flow_cookie_missing (no clear)", async () => {

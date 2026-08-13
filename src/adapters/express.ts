@@ -8,6 +8,8 @@ import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import { hasDuplicatedAuthorizeParams } from "./authorize-params.ts";
+import { OAuthError } from "../errors.ts";
 
 /** Raw JSON and form budget for the built-in OAuth POST routes (§9.6). */
 export const EXPRESS_OAUTH_BODY_MAX_BYTES = 256 * 1024;
@@ -81,6 +83,10 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
     // codeql[js/missing-rate-limiting]
     router.get("/oauth/authorize", wrap(async (req, res) => {
       const request = toNorm(req);
+      if (hasDuplicatedAuthorizeParams(request.query)) {
+        send(res, oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters")));
+        return;
+      }
       const identityResolved = await bridge.resolveIdentity(id, headerString(request.headers, identityHeader), request.ip);
       send(res, await bridge.handleAuthorize(request, identityResolved));
     }));

@@ -127,7 +127,14 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
 
   test(`${name} adapter: duplicate authorize query values reach the shared rejection boundary`, async () => {
     const audit = new MemoryAudit();
-    const client = await mount(makeBridge(undefined, audit), stubIdentity);
+    let verifyCalls = 0;
+    const identity: IdentityPort = {
+      async verify() {
+        verifyCalls += 1;
+        return { ok: true, identity: { subject: SUBJECT } };
+      },
+    };
+    const client = await mount(makeBridge(undefined, audit), identity);
     try {
       const params = new URLSearchParams({
         response_type: "code", client_id: "registered-looking-client", redirect_uri: REDIRECT,
@@ -141,6 +148,8 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       assert.equal(JSON.parse(response.body).error, "invalid_request");
       assert.equal(response.body.includes("attacker.test"), false);
       assert.equal(response.body.includes("consent_token"), false);
+      assert.equal(verifyCalls, 0, "duplicate rejection precedes IdentityPort.verify");
+      assert.equal(audit.events.some((event) => event.event === "identity.verify"), false);
       assert.equal(audit.events.some((event) => event.event === "oauth.authorize.prepare"), false);
     } finally {
       await client.close?.();

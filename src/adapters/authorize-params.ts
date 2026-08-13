@@ -21,3 +21,14 @@ export function findDuplicatedKeys(input: unknown, keys: readonly string[]): str
   }
   return duplicated;
 }
+
+/** Strict occurrence count for callback parameters, including empty values. */
+export function findRepeatedKeys(input: unknown, keys: readonly string[]): string[] {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return [];
+  const values = input as Record<string, unknown>;
+  return keys.filter((key) => Array.isArray(values[key]) && values[key].length > 1);
+}
+
+export function hasDuplicatedAuthorizeParams(query: unknown): boolean {
+  return findDuplicatedKeys(query, OAUTH_SINGLETON_PARAM_KEYS).length > 0;
+}

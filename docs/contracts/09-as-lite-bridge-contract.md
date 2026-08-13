@@ -130,7 +130,9 @@ array-valued member with more than one nonempty occurrence returns direct 400
 single-valued request follows the unchanged validation order below. The same
 pure helper and key definition govern the upstream and console-pairing authorize
 entry points; framework adapters must preserve repeated query members as arrays
-until this boundary. RFC 6749 treats valueless occurrences as omitted. RFC 8707
+until this boundary. The direct header-identity routes run the same guard before
+`IdentityPort.verify`; `Bridge.handleAuthorize` repeats it as defense in depth.
+RFC 6749 treats valueless occurrences as omitted. RFC 8707
 permits `resource` to repeat; identical nonempty resource indicators collapse to
 one target, while multiple distinct targets follow the existing post-validation
 `invalid_target` channel instead of the RFC 6749 duplicate channel.
@@ -332,7 +334,8 @@ the response. Wiring rules:
   `RateLimitPort("revoke:<ip>")` before Bridge body normalization; after
   admission it retains RFC 7009's always-200 behavior).
 - **Direct-authorize ordering:** the header-identity GET `/oauth/authorize`
-  path calls `Bridge.resolveIdentity`, which checks
+  path rejects duplicate singleton parameters before identity work, then calls
+  `Bridge.resolveIdentity`, which checks
   `RateLimitPort("authorize:<ip>")` before `IdentityPort.verify`, its audit, or
   `prepare`. Limiter denial is a direct 429 with no redirect; limiter failure
   remains fail-open (§6.7). Upstream redirect, console pairing, and CIMD retain

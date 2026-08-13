@@ -11,6 +11,8 @@ import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import { hasDuplicatedAuthorizeParams } from "./authorize-params.ts";
+import { OAuthError } from "../errors.ts";
 
 export interface HonoAdapterOptions {
   bridge: Bridge;
@@ -177,6 +179,9 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       // bridge.resolveIdentity also emits the identity.verify audit event.
       let identityResolved: { subject: string; allowedScopes?: string[] };
       const req = await toNorm(c);
+      if (hasDuplicatedAuthorizeParams(req.query)) {
+        return send(c, oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters")));
+      }
       try {
         identityResolved = await bridge.resolveIdentity(id, headerString(req.headers, identityHeader), req.ip);
       } catch (error) {
