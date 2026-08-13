@@ -124,16 +124,16 @@ upstream-redirect orchestrator for a carried CIMD registration, NEVER bound to
 client-controlled request input; when present, `prepare` uses it and does not fetch.)*
 Before building this input, `Bridge.handleAuthorize` applies the shared RFC 6749
 §3.1 occurrence guard to the canonical singleton parameter set above. An
-array-valued member with more than one occurrence returns direct 400
+array-valued member with more than one nonempty occurrence returns direct 400
 `invalid_request`, with no `Location`, before first/last-value selection,
 `prepare`, consent rendering, store access, or authorize success audit. A
 single-valued request follows the unchanged validation order below. The same
 pure helper and key definition govern the upstream and console-pairing authorize
 entry points; framework adapters must preserve repeated query members as arrays
-until this boundary. RFC 8707 permits `resource` to repeat; because this release
-supports one resource per grant, a repeated resource set is preserved as
-unsupported input and follows the existing post-validation `invalid_target`
-channel instead of the RFC 6749 duplicate channel.
+until this boundary. RFC 6749 treats valueless occurrences as omitted. RFC 8707
+permits `resource` to repeat; identical nonempty resource indicators collapse to
+one target, while multiple distinct targets follow the existing post-validation
+`invalid_target` channel instead of the RFC 6749 duplicate channel.
 
 1. `subject` REQUIRED (the adapter/`IdentityPort` resolves it before calling
    `prepare`). No subject ⇒ `access_denied` 401 **direct**, never a placeholder.

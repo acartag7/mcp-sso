@@ -18,6 +18,7 @@ import type { StorePort } from "../src/ports/store.ts";
 import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { createUpstreamRedirectFlow } from "../src/adapters/upstream-flow.ts";
+import { OAUTH_SINGLETON_PARAM_KEYS } from "../src/adapters/authorize-params.ts";
 import {
   signFlowToken, verifyFlowToken, FLOW_AUDIENCE, OAUTH_PARAM_KEYS,
 } from "../src/adapters/upstream-flow-internals.ts";
@@ -291,6 +292,20 @@ test("authorize: valueless resource occurrences are omitted before the upstream 
     assert.equal(new URL(res.headers.location as string).origin, "https://idp.test");
     assert.equal(claims.params.resource, expected);
   }
+});
+
+test("authorize: valueless singleton occurrences and identical repeated resources preserve one value", async () => {
+  for (const key of OAUTH_SINGLETON_PARAM_KEYS) {
+    const c = config(); const { flow } = makeFlow(c, fakeIdentity(c));
+    const q = authorizeQuery(); const expected = q[key];
+    (q as Record<string, unknown>)[key] = ["", expected];
+    const { res, claims } = await initiate(c, flow, q);
+    assert.equal(res.status, 302);
+    assert.equal(claims.params[key], expected, key);
+  }
+  const c = config(); const { flow } = makeFlow(c, fakeIdentity(c));
+  const { claims } = await initiate(c, flow, { ...authorizeQuery(), resource: [c.resource, c.resource] });
+  assert.equal(claims.params.resource, c.resource);
 });
 
 test("authorize: missing client_id => direct 400; bad redirect_uri => direct 4xx invalid_redirect_uri", async () => {

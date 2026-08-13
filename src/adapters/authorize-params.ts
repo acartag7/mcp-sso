@@ -10,15 +10,14 @@ export const OAUTH_PARAM_KEYS = [
  * permits `resource` to repeat, so unsupported resource sets use invalid_target. */
 export const OAUTH_SINGLETON_PARAM_KEYS = OAUTH_PARAM_KEYS.filter((key) => key !== "resource");
 
-/** RFC 6749 §3.1 duplicate-param check: any key present more than once (array
- *  length > 1 in a normalized query/form record) is ambiguous. */
+/** RFC 6749 §3.1 duplicate-param check after valueless occurrences are omitted. */
 export function findDuplicatedKeys(input: unknown, keys: readonly string[]): string[] {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return [];
   const values = input as Record<string, unknown>;
   const duplicated: string[] = [];
   for (const key of keys) {
     const value = values[key];
-    if (Array.isArray(value) && value.length > 1) duplicated.push(key);
+    if (Array.isArray(value) && value.filter((entry) => entry !== "").length > 1) duplicated.push(key);
   }
   return duplicated;
 }

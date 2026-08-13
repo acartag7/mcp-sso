@@ -85,8 +85,8 @@ export function headerString(headers: NormRequest["headers"], name: string): str
 
 export function queryString(query: NormRequest["query"], name: string): string | undefined {
   const value = query[name];
-  if (Array.isArray(value)) return value[0];
-  return typeof value === "string" ? value : undefined;
+  if (Array.isArray(value)) return value.find((entry) => entry.length > 0);
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 /** Preserve RFC 8707 multiplicity as unsupported target input for this
@@ -100,7 +100,8 @@ export function resourceParam(value: unknown): string | undefined {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) return INVALID_RESOURCE;
   const resources = value.filter((entry) => entry.length > 0);
   if (resources.length === 0) return undefined;
-  return resources.length === 1 ? resources[0] : INVALID_RESOURCE;
+  const unique = [...new Set(resources)];
+  return unique.length === 1 ? unique[0] : INVALID_RESOURCE;
 }
 
 export function formField(body: unknown, name: string): string | undefined {

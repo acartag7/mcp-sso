@@ -153,6 +153,23 @@ test("Bridge.handleAuthorize treats valueless resource occurrences as omitted", 
   }
 });
 
+test("Bridge.handleAuthorize omits valueless singleton occurrences and deduplicates identical resources", async () => {
+  for (const key of OAUTH_SINGLETON_PARAM_KEYS) {
+    const h = harness();
+    const params = validParams();
+    const response = await h.bridge.handleAuthorize(
+      request({ ...params, [key]: ["", params[key]] }), { subject: "operator" },
+    );
+    assert.equal(response.status, 200, `${key} keeps its one nonempty occurrence`);
+  }
+  const h = harness();
+  const params = validParams();
+  const response = await h.bridge.handleAuthorize(
+    request({ ...params, resource: [RESOURCE, RESOURCE] }), { subject: "operator" },
+  );
+  assert.equal(response.status, 200);
+});
+
 test("Bridge.handleAuthorize preserves the adjacent valid single-value authorize flow", async () => {
   const h = harness();
   const response = await h.bridge.handleAuthorize(request(validParams()), { subject: "operator" });
