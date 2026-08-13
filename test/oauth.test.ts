@@ -642,12 +642,11 @@ async function assertCrossResourceConsentRejected(approved: boolean): Promise<vo
   const authB = new OAuthAuthorizationUseCase({ config: makeConfig({ resource: resourceB }), store, clock, audit: auditB });
   let codeWrites = 0;
   let jtiConsumes = 0;
-  const saveAuthCode = store.saveAuthCode.bind(store);
-  const consumeConsentJti = store.consumeConsentJti.bind(store);
-  store.saveAuthCode = async (record) => { codeWrites += 1; await saveAuthCode(record); };
-  store.consumeConsentJti = async (jti, expiresAtIso) => {
-    jtiConsumes += 1;
-    return await consumeConsentJti(jti, expiresAtIso);
+  const commitConsentApproval = store.commitConsentApproval.bind(store);
+  store.commitConsentApproval = async (binding, jti, expiresAtIso, record) => {
+    const result = await commitConsentApproval(binding, jti, expiresAtIso, record);
+    if (result === "stored") { codeWrites += 1; jtiConsumes += 1; }
+    return result;
   };
   const prepared = await authA.prepare({
     clientId: "client-1", redirectUri: REDIRECT, responseType: "code",
