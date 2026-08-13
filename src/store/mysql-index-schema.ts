@@ -8,20 +8,26 @@ export async function assertConsentJtiUnique(conn: PoolConnection): Promise<void
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_consent_jtis'
      ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
   );
-  const indexes = new Map<string, { nonUnique: number | null; columns: Array<string | null>; prefix: boolean }>();
+  const indexes = new Map<string, {
+    nonUnique: number | null;
+    parts: Array<{ column: string | null; prefixed: boolean }>;
+  }>();
   for (const row of rows as { INDEX_NAME: unknown; NON_UNIQUE: unknown; COLUMN_NAME: unknown; SUB_PART: unknown }[]) {
     if (typeof row.INDEX_NAME !== "string") continue;
     const nonUnique = row.NON_UNIQUE === 0 || row.NON_UNIQUE === "0" ? 0
       : row.NON_UNIQUE === 1 || row.NON_UNIQUE === "1" ? 1 : null;
-    const index = indexes.get(row.INDEX_NAME) ?? { nonUnique, columns: [], prefix: false };
-    index.columns.push(typeof row.COLUMN_NAME === "string" ? row.COLUMN_NAME.toLowerCase() : null);
-    index.prefix ||= row.SUB_PART !== null && row.SUB_PART !== undefined;
+    const index = indexes.get(row.INDEX_NAME) ?? { nonUnique, parts: [] };
+    index.parts.push({
+      column: typeof row.COLUMN_NAME === "string" ? row.COLUMN_NAME.toLowerCase() : null,
+      prefixed: row.SUB_PART !== null && row.SUB_PART !== undefined,
+    });
     indexes.set(row.INDEX_NAME, index);
   }
   const uniqueJti = [...indexes.values()].some((index) =>
-    index.nonUnique === 0 && !index.prefix && index.columns.length === 1 && index.columns[0] === "jti");
+    index.nonUnique === 0 && index.parts.length === 1
+      && index.parts[0]?.column === "jti" && !index.parts[0].prefixed);
   const competingUnique = [...indexes.values()].some((index) =>
-    index.nonUnique === 0 && (index.prefix || !index.columns.includes("jti")));
+    index.nonUnique === 0 && !index.parts.some((part) => part.column === "jti" && !part.prefixed));
   if (!uniqueJti || competingUnique) {
     throw new StoreInputError(
       "oauth_consent_jtis must have a full-column JTI PRIMARY or UNIQUE index and no competing unique constraint; consent replay detection requires conflicts to mean duplicate JTI.",

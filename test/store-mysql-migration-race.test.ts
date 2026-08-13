@@ -234,3 +234,23 @@ test("MySQL uniqueness preflight rejects an unrelated unique constraint", async 
   } as unknown as PoolConnection;
   await assert.rejects(migrateMysqlStore(connection), /no competing unique constraint/);
 });
+
+test("MySQL uniqueness preflight accepts a secondary index containing the full JTI", async () => {
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("information_schema.STATISTICS")) return [[
+        { INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, COLUMN_NAME: "jti", SUB_PART: null },
+        { INDEX_NAME: "uq_jti_expiry", NON_UNIQUE: 0, COLUMN_NAME: "jti", SUB_PART: null },
+        { INDEX_NAME: "uq_jti_expiry", NON_UNIQUE: 0, COLUMN_NAME: "expires_at", SUB_PART: 10 },
+      ], []];
+      if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
+        return [[{ data_type: "varchar", max_length: 384, is_nullable: "NO" }], []];
+      }
+      if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await migrateMysqlStore(connection);
+});
