@@ -93,9 +93,9 @@ and does not consume the JTI.
 | Semantic mutant | Restoring `approval snapshot + current consentTokenTtlSeconds` at the enforcement point makes the restart/sweep regression fail. |
 | Wiring mutant | Returning the correct expiry from verification but passing a current-TTL-derived value at the actual approval call site makes the same regression fail; helper-only tests are insufficient. |
 
-Compatibility and migration: this release adds the optional TypeScript
-`getStoreInstanceId` capability and one metadata table to each SQL adapter;
-authorization construction requires the capability at runtime. Existing OAuth
+Compatibility and migration: this release adds required TypeScript
+`getStoreInstanceId` and `rotateStoreInstanceId` capabilities plus one metadata table
+to each SQL adapter; authorization construction requires both capabilities at runtime. Existing OAuth
 rows need no rewrite, but outstanding pre-upgrade consent JWTs lack the binding
 and are invalidated. Cloning or restoring a store into an independent deployment
 requires one `rotateStoreInstanceId()` call on the copy before it serves traffic;

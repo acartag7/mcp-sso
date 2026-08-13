@@ -32,8 +32,30 @@ function metadataQuery(sql: string): [unknown[], unknown[]] | undefined {
   }
   if (sql.includes("information_schema.CHECK_CONSTRAINTS")) return [METADATA_CHECKS, []];
   if (sql.includes("information_schema.TRIGGERS")) return [[], []];
+  if (sql.includes("information_schema.REFERENTIAL_CONSTRAINTS")) return [[], []];
   return undefined;
 }
+
+test("MySQL metadata preflight rejects foreign keys before unrelated DDL", async () => {
+  let unrelatedWrites = 0;
+  const connection = {
+    query: async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) {
+        return [values?.[0] === "oauth_store_metadata" ? [{ 1: 1 }] : [], []];
+      }
+      if (sql.includes("information_schema.COLUMNS") && sql.includes("oauth_store_metadata")) return [METADATA_COLUMNS, []];
+      if (sql.includes("information_schema.STATISTICS") && sql.includes("oauth_store_metadata")) return [METADATA_INDEXES, []];
+      if (sql.includes("information_schema.CHECK_CONSTRAINTS")) return [METADATA_CHECKS, []];
+      if (sql.includes("information_schema.TRIGGERS")) return [[], []];
+      if (sql.includes("information_schema.REFERENTIAL_CONSTRAINTS")) return [[{ CONSTRAINT_NAME: "fk_hostile" }], []];
+      if (/^(CREATE|ALTER|INSERT)/u.test(sql)) unrelatedWrites += 1;
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /must not have foreign keys/);
+  assert.equal(unrelatedWrites, 0, "foreign-key rejection precedes every migration write");
+});
 
 function racingConnection(options: RaceOptions): {
   readonly connection: PoolConnection;

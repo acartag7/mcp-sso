@@ -5,13 +5,14 @@ Every `StorePort` implementation MUST satisfy these invariants — the
 `SqliteStore`, and `MysqlStore`, and any further downstream SQL adapter must pass the same suite. **Fix #3**
 documents the one contract the source left implicit.
 
-Every store also exposes `getStoreInstanceId(): Promise<string>`. The value is
+Every store exposes both `getStoreInstanceId(): Promise<string>` and
+`rotateStoreInstanceId(): Promise<string>` as required `StorePort` methods. The value is
 an opaque base64url identifier with at least 128 bits of randomness. It is stable
 for the lifetime of a `MemoryStore`, across reopening one SQLite file, and across
 all connections/replicas using one MySQL database. Independently created stores
 have different values. Initialization is insert-if-absent and concurrency-safe;
 callers never configure or derive the value from issuer/signing material. A
-custom store without this capability is rejected when the authorization use-case
+custom store without either capability is rejected when the authorization use-case
 is constructed. This binding prevents one consent token from being redeemed in
 two replicas that accidentally share issuer and signing secrets but not state.
 
@@ -25,7 +26,7 @@ also share one identifier and coordinate a single rotation instead of rotating
 once per process. A malformed persisted identifier rejects SQL-store migration.
 The SQL adapters admit only the required metadata table shape: one non-null
 singleton column uniquely keyed and constrained to the value `1`, plus one
-non-null unique instance identifier. They create and initialize that table in a
+non-null unique instance identifier, with no triggers or foreign keys. They create and initialize that table in a
 concurrency-safe create-then-insert-if-absent sequence before migrating other
 OAuth state. An interrupted empty canonical initialization is completed;
 malformed pre-existing metadata rejects before migration writes.

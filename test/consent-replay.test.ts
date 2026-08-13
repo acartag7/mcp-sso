@@ -209,14 +209,21 @@ test("authorization construction rejects stores without a valid instance binding
   const missing = missingStore as unknown as Omit<MemoryStore, "getStoreInstanceId">;
   Object.defineProperty(missing, "getStoreInstanceId", { value: undefined });
   assert.throws(
-    () => new OAuthAuthorizationUseCase({ config: makeConfig(600), store: missing, clock, audit }),
+    () => new OAuthAuthorizationUseCase({ config: makeConfig(600), store: missing as unknown as MemoryStore, clock, audit }),
     /getStoreInstanceId is required/,
+  );
+  const noRotation = new MemoryStore();
+  Object.defineProperty(noRotation, "rotateStoreInstanceId", { value: undefined });
+  assert.throws(
+    () => new OAuthAuthorizationUseCase({ config: makeConfig(600), store: noRotation, clock, audit }),
+    /rotateStoreInstanceId is required/,
   );
   const malformed = new MemoryStore();
   malformed.getStoreInstanceId = async () => "not base64url!";
   const auth = new OAuthAuthorizationUseCase({ config: makeConfig(600), store: malformed, clock, audit });
   await assert.rejects(prepareConsent(auth), /store instance id must be 22-128 base64url characters/);
   await missingStore.close();
+  await noRotation.close();
   await malformed.close();
 });
 

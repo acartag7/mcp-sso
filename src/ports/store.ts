@@ -83,13 +83,11 @@ export function normalizeRefreshTokenWrite(input: SaveRefreshTokenInput): SaveRe
 }
 
 export interface StorePort {
-  /** Opaque durable identity of this logical store. Optional in the TypeScript
-   * shape for patch-level source compatibility; authorization construction
-   * rejects implementations that omit it. */
-  getStoreInstanceId?(): Promise<string>;
+  /** Opaque durable identity of this logical store. */
+  getStoreInstanceId(): Promise<string>;
   /** Atomically replace the binding after cloning/restoring a store into an
    * independent deployment. Invalidates outstanding consent tokens. */
-  rotateStoreInstanceId?(): Promise<string>;
+  rotateStoreInstanceId(): Promise<string>;
   /** Required capability markers when BridgeConfig uses stored DCR. */
   readonly storedDcrGrantGeneration?: number;
   readonly storedDcrResourceBinding?: number;
