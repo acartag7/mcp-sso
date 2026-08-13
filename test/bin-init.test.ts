@@ -176,11 +176,11 @@ test("bin init: the generated server.ts typechecks against the built package (ts
 
 // --- spawn layer (the done-bar) â€” gated on dist (the test gate runs before build) ---
 
-function freePort(): Promise<number> {
+function freePort(host = "127.0.0.1"): Promise<number> {
   return new Promise((resolveP, reject) => {
     const s = createServer();
     s.on("error", reject);
-    s.listen(0, "127.0.0.1", () => {
+    s.listen(0, host, () => {
       const addr = s.address();
       if (addr && typeof addr === "object") { const port = addr.port; s.close(() => resolveP(port)); }
       else { s.close(); reject(new Error("could not bind")); }
@@ -335,6 +335,37 @@ test("bin init (spawn): a blank HOST binds loopback (fail-closed on blank env â€
       await waitFor(child, new RegExp(`mcp-sso listening on 127\\.0\\.0\\.1:${port}`), 15_000);
     } finally {
       if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); }
+    }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init (spawn): IPv6 loopback defaults discovery to the listening address family", { skip: process.platform === "win32" }, async (t) => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-ipv6-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  let port: number;
+  try { port = await freePort("::1"); }
+  catch (error) { t.skip(`IPv6 loopback unavailable on this host: ${String(error)}`); return; }
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "::1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    try {
+      await waitFor(child, new RegExp(`mcp-sso listening on ::1:${port}`), 15_000);
+      const prm = await fetchBounded(`http://[::1]:${port}/.well-known/oauth-protected-resource`);
+      assert.equal(prm.status, 200);
+      assert.equal((await prm.json() as { resource: string }).resource, `http://[::1]:${port}/mcp`);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     }
   } finally {
     await rm(base, { recursive: true, force: true });

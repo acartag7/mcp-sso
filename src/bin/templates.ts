@@ -62,8 +62,10 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
 }
 const HOST = env("HOST", "127.0.0.1"); // loopback default — the pairing code is the identity gate
 const DIR = env("MCP_SSO_DIR", "./.mcp-sso");
-// 127.0.0.1 (not localhost) matches the HOST bind — no IPv6/IPv4 address-family mismatch.
-let ISSUER = env("OAUTH_ISSUER", \`http://127.0.0.1:\${PORT}\`);
+// The advertised default uses the selected loopback bind, including IPv6 brackets, so
+// discovery never points at a different address family from the listening socket.
+const DEFAULT_LOOPBACK_HOST = HOST === "::1" ? "[::1]" : HOST;
+let ISSUER = env("OAUTH_ISSUER", \`http://\${DEFAULT_LOOPBACK_HOST}:\${PORT}\`);
 while (ISSUER.endsWith("/")) ISSUER = ISSUER.slice(0, -1); // trim a trailing / so the derived resource is /mcp, not //mcp
 const RESOURCE = env("OAUTH_RESOURCE", \`\${ISSUER}/mcp\`);
 const list = (v: string | undefined, def: string): string[] => (v ?? def).split(",").map((s) => s.trim()).filter(Boolean);
