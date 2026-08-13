@@ -1,14 +1,12 @@
-// MysqlStore — pooled persistent StorePort on mysql2. See contracts §12.3 for the
-// async/pooled pattern (begun-guard + release-in-finally, FOR UPDATE, READ COMMITTED,
-// two-step sweep, duplicate-only consent handling, direct-value family upserts).
-
 import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
-import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
+import type { AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
+import { readMysqlStoreInstanceId, rotateMysqlStoreInstanceId } from "./mysql-instance.ts";
+import { commitMysqlConsentApproval, insertMysqlAuthCode } from "./mysql-consent.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
   authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
@@ -21,24 +19,35 @@ export class MysqlStore implements StorePort {
   private closed = false;
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
-  /** @param ownsPool when true, `close()` ends the pool. `createMysqlStore` sets this
-   *  for the pool it creates; a caller-supplied shared pool (`new MysqlStore(appPool)`)
-   *  defaults to false so closing the store does not tear down pools other components
-   *  still use (Codex P2). */
   constructor(pool: Pool, ownsPool = false) {
     this.pool = pool;
     this.ownsPool = ownsPool;
   }
 
+  async getStoreInstanceId(): Promise<string> {
+    this.ensureOpen();
+    return readMysqlStoreInstanceId(this.pool);
+  }
+
+  async rotateStoreInstanceId(): Promise<string> {
+    this.ensureOpen();
+    return this.transaction(async (conn) => rotateMysqlStoreInstanceId(conn));
+  }
+  async commitConsentApproval(
+    expectedStoreInstanceId: string, jti: string, expiresAtIso: string, authCode: SaveAuthCodeInput,
+  ): Promise<ConsentApprovalCommitResult> {
+    this.ensureOpen();
+    assertStoreInstanceId(expectedStoreInstanceId);
+    assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
+    validateAuthCode(authCode);
+    return this.transaction(async (conn) => commitMysqlConsentApproval(
+      conn, expectedStoreInstanceId, jti, expiresAtIso, authCode));
+  }
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();
     validateAuthCode(input);
-    await this.pool.query(
-      `INSERT INTO oauth_auth_codes (code_hash, client_id, subject, redirect_uri, resource, scopes_json, code_challenge, code_challenge_method, expires_at, grant_generation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [input.codeHash, input.clientId, input.subject, input.redirectUri, input.resource, JSON.stringify(input.scopes), input.codeChallenge, input.codeChallengeMethod, input.expiresAt, grantGenerationForWrite(input.grantGeneration)],
-    );
+    await insertMysqlAuthCode(this.pool, input);
   }
-
   async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<AuthCodeRecord | null> {
     this.ensureOpen();
     assertSha256Hex(codeHash, "codeHash");
@@ -54,7 +63,6 @@ export class MysqlStore implements StorePort {
         && (expectedGrantGeneration === undefined || record.grantGeneration === expectedGrantGeneration) ? record : null;
     });
   }
-
   async consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean> {
     this.ensureOpen();
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
@@ -69,7 +77,6 @@ export class MysqlStore implements StorePort {
       throw error;
     }
   }
-
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
     input = normalizeRefreshTokenWrite(input);
@@ -92,7 +99,6 @@ export class MysqlStore implements StorePort {
       await insertRefreshToken(conn, input);
     });
   }
-
   async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
     next = normalizeRefreshTokenWrite(next);
@@ -124,7 +130,6 @@ export class MysqlStore implements StorePort {
       return refreshTokenFromRow(row);
     });
   }
-
   async revokeRefreshTokenFamily(familyId: string, revokedAtIso: string): Promise<void> {
     this.ensureOpen();
     assertUtcIsoTimestamp(revokedAtIso, "revokedAtIso");

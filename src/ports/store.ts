@@ -65,6 +65,8 @@ export interface SaveRefreshTokenInput {
   grantGeneration?: number | null;
 }
 
+export type ConsentApprovalCommitResult = "stored" | "replayed" | "binding_mismatch";
+
 /** Reserved, unmatchable marker for an omitted member from pre-resource JS callers. */
 export const UNBOUND_REFRESH_RESOURCE = "mcp-sso:unbound-refresh-resource";
 
@@ -83,6 +85,19 @@ export function normalizeRefreshTokenWrite(input: SaveRefreshTokenInput): SaveRe
 }
 
 export interface StorePort {
+  /** Opaque durable identity of this logical store. */
+  getStoreInstanceId(): Promise<string>;
+  /** Atomically replace the binding after cloning/restoring a store into an
+   * independent deployment. Invalidates outstanding consent tokens. */
+  rotateStoreInstanceId(): Promise<string>;
+  /** Atomically validate the store binding, consume the consent JTI, and save
+   * the authorization code. Rotation serializes against this operation. */
+  commitConsentApproval(
+    expectedStoreInstanceId: string,
+    jti: string,
+    expiresAtIso: string,
+    authCode: SaveAuthCodeInput,
+  ): Promise<ConsentApprovalCommitResult>;
   /** Required capability markers when BridgeConfig uses stored DCR. */
   readonly storedDcrGrantGeneration?: number;
   readonly storedDcrResourceBinding?: number;
@@ -132,9 +147,16 @@ export interface StorePort {
 export const STORED_DCR_GRANT_GENERATION = 1 as const;
 /** First stored-DCR capability version that binds scope accumulation to resource. */
 export const STORED_DCR_RESOURCE_BINDING = 1 as const;
+const STORE_INSTANCE_ID = /^[A-Za-z0-9_-]{22,128}$/u;
 
 export class StoreInputError extends Error {
   readonly code = "invalid_store_input";
+}
+
+export function assertStoreInstanceId(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !STORE_INSTANCE_ID.test(value)) {
+    throw new StoreInputError("store instance id must be 22-128 base64url characters");
+  }
 }
 
 export function assertSha256Hex(value: string, label: string): void {

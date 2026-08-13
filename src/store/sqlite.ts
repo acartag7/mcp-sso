@@ -2,15 +2,16 @@
 
 import { DatabaseSync } from "node:sqlite";
 import type {
-  AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
+  AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
-import type { ClientRegistration, ClientStore } from "../ports/client-store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
+import { readSqliteStoreInstanceId, rotateSqliteStoreInstanceId } from "./sqlite-instance.ts";
+import { commitSqliteConsentApproval, insertSqliteAuthCode } from "./sqlite-consent.ts";
 import {
   admitSqliteFile, closeSqliteAdmission, sqlitePath, SqliteStateError,
   verifySqlitePathIdentity,
@@ -20,39 +21,40 @@ import {
   refreshTokenFromRow, revokeFamily, validateAuthCode, validateRefreshToken,
   validateRotation, type AuthCodeRow, type RefreshTokenRow,
 } from "./sqlite-records.ts";
-import { findSqliteClient, saveSqliteClient } from "./sqlite-clients.ts";
+import { SqliteClientStoreBase } from "./sqlite-clients.ts";
 
-export class SqliteStore implements StorePort, ClientStore {
+export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
-  private closed = false;
-  private readonly db: DatabaseSync;
-
   constructor(db: DatabaseSync) {
-    this.db = db;
+    super(db);
   }
 
-  async save(client: ClientRegistration): Promise<void> {
+  async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
-    saveSqliteClient(this.db, client);
+    return readSqliteStoreInstanceId(this.db);
   }
 
-  async find(clientId: string): Promise<ClientRegistration | null> {
+  async rotateStoreInstanceId(): Promise<string> {
     this.ensureOpen();
-    return findSqliteClient(this.db, clientId);
+    return this.transaction(() => rotateSqliteStoreInstanceId(this.db));
+  }
+
+  async commitConsentApproval(
+    expectedStoreInstanceId: string, jti: string, expiresAtIso: string, authCode: SaveAuthCodeInput,
+  ): Promise<ConsentApprovalCommitResult> {
+    this.ensureOpen();
+    assertStoreInstanceId(expectedStoreInstanceId);
+    assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
+    validateAuthCode(authCode);
+    return this.transaction(() => commitSqliteConsentApproval(
+      this.db, expectedStoreInstanceId, jti, expiresAtIso, authCode));
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();
     validateAuthCode(input);
-    this.db.prepare(`INSERT INTO oauth_auth_codes (
-      code_hash, client_id, subject, redirect_uri, resource, scopes_json,
-      code_challenge, code_challenge_method, expires_at, grant_generation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      input.codeHash, input.clientId, input.subject, input.redirectUri, input.resource,
-      JSON.stringify(input.scopes), input.codeChallenge, input.codeChallengeMethod,
-      input.expiresAt, grantGenerationForWrite(input.grantGeneration),
-    );
+    insertSqliteAuthCode(this.db, input);
   }
 
   async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<AuthCodeRecord | null> {
@@ -186,13 +188,6 @@ export class SqliteStore implements StorePort, ClientStore {
     });
   }
 
-  async close(): Promise<void> {
-    if (!this.closed) {
-      this.db.close();
-      this.closed = true;
-    }
-  }
-
   private transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -205,9 +200,6 @@ export class SqliteStore implements StorePort, ClientStore {
     }
   }
 
-  private ensureOpen(): void {
-    if (this.closed) throw new Error("Store is closed");
-  }
 }
 
 export function openSqliteStore(filename: string): SqliteStore {

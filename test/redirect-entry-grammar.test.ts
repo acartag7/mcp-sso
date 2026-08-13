@@ -519,9 +519,10 @@ test("nine-consumer differential rejects a canonical query-delimiter entry on ev
 
   // (7) consent token, both Deny and Approve, direct error before redirect/JTI/code.
   const consentStore = new CountingStore();
-  const auth = new OAuthAuthorizationUseCase({ config: config(), store: consentStore, clock: new Clock(), audit: new Audit() });
+  const consentConfig = config();
+  const auth = new OAuthAuthorizationUseCase({ config: consentConfig, store: consentStore, clock: new Clock(), audit: new Audit() });
   const consent = await signConsentToken({ clientId: "legacy", redirectUri: forbidden, resource: RESOURCE,
-    scopes: ["mcp:read"], codeChallenge: pkceChallenge(VERIFIER), codeChallengeMethod: "S256", subject: "user" }, config(), new Clock());
+    scopes: ["mcp:read"], codeChallenge: pkceChallenge(VERIFIER), codeChallengeMethod: "S256", subject: "user" }, consentConfig, new Clock());
   for (const approved of [false, true]) {
     await assert.rejects(auth.approve({ consentToken: consent, approved, origin: ISSUER }), (error: unknown) =>
       error instanceof OAuthError && error.code === "invalid_redirect_uri" && !error.redirect);
@@ -672,9 +673,10 @@ test("every rejection row agrees across all nine consumers (incl. non-string)", 
     assert.equal(flowStore.consentCalls, 0);
 
     const consentStore = new CountingStore();
-    const auth = new OAuthAuthorizationUseCase({ config: config(), store: consentStore, clock: new Clock(), audit: new Audit() });
+    const consentConfig = config();
+    const auth = new OAuthAuthorizationUseCase({ config: consentConfig, store: consentStore, clock: new Clock(), audit: new Audit() });
     const consent = await signConsentToken({ clientId: "legacy", redirectUri: forbiddenString, resource: RESOURCE,
-      scopes: ["mcp:read"], codeChallenge: pkceChallenge(VERIFIER), codeChallengeMethod: "S256", subject: "user" }, config(), new Clock());
+      scopes: ["mcp:read"], codeChallenge: pkceChallenge(VERIFIER), codeChallengeMethod: "S256", subject: "user" }, consentConfig, new Clock());
     for (const approved of [false, true]) {
       await assert.rejects(auth.approve({ consentToken: consent, approved, origin: ISSUER }), (error: unknown) =>
         error instanceof OAuthError && error.code === "invalid_redirect_uri" && reason.test(error.message)

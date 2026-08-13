@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { before, after, beforeEach, test } from "node:test";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
-import type { StorePort } from "../src/ports/store.ts";
+import { STORED_DCR_GRANT_GENERATION, type StorePort } from "../src/ports/store.ts";
 import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
 import { MYSQL_SUBJECT_CAPACITY } from "../src/store/mysql-subject-schema.ts";
@@ -87,6 +87,214 @@ function make(): StorePort {
 }
 
 if (RUN) {
+  test("MysqlStore: independent connections share one durable store binding", async () => {
+    const first = await createMysqlStore(MYSQL_URL as string);
+    const second = await createMysqlStore(MYSQL_URL as string);
+    try {
+      assert.equal(await first.getStoreInstanceId(), await second.getStoreInstanceId());
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
+  test("MysqlStore: rotation is visible to every connection", async () => {
+    const first = await createMysqlStore(MYSQL_URL as string);
+    const second = await createMysqlStore(MYSQL_URL as string);
+    try {
+      const before = await first.getStoreInstanceId();
+      const rotated = await first.rotateStoreInstanceId();
+      assert.notEqual(rotated, before);
+      assert.equal(await second.getStoreInstanceId(), rotated);
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
+  test("MysqlStore: approval and binding rotation serialize across connections", async () => {
+    const approvalStore = await createMysqlStore(MYSQL_URL as string);
+    const rotationStore = await createMysqlStore(MYSQL_URL as string);
+    const binding = await approvalStore.getStoreInstanceId();
+    const codeHash = sha256Hex("mysql-approval-rotation-race");
+    const authCode = {
+      codeHash, clientId: "race-client", subject: "race-subject",
+      redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
+      scopes: ["mcp:read"], codeChallenge: "race-challenge", codeChallengeMethod: "S256" as const,
+      expiresAt: FUTURE, grantGeneration: STORED_DCR_GRANT_GENERATION,
+    };
+    try {
+      const [approval, rotated] = await Promise.all([
+        approvalStore.commitConsentApproval(binding, "mysql-race-jti", FUTURE, authCode),
+        rotationStore.rotateStoreInstanceId(),
+      ]);
+      assert.notEqual(rotated, binding);
+      const code = await approvalStore.consumeAuthCode(codeHash, NOW);
+      if (approval === "stored") {
+        assert.equal(code?.codeHash, codeHash, "approval completed before rotation");
+        assert.equal(await approvalStore.consumeConsentJti("mysql-race-jti", FUTURE), false);
+      } else {
+        assert.equal(approval, "binding_mismatch", "rotation completed before approval");
+        assert.equal(code, null);
+        assert.equal(await approvalStore.consumeConsentJti("mysql-race-jti", FUTURE), true);
+      }
+    } finally {
+      await approvalStore.close();
+      await rotationStore.close();
+    }
+  });
+
+  test("MysqlStore: malformed persisted binding fails migration", async () => {
+    const [rows] = await admin!.query<RowDataPacket[]>(
+      "SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1",
+    );
+    const valid = (rows[0] as { instance_id: string }).instance_id;
+    try {
+      await admin!.query(
+        "UPDATE oauth_store_metadata SET instance_id = ? WHERE singleton = 1",
+        ["malformed!"],
+      );
+      await assert.rejects(
+        createMysqlStore(MYSQL_URL as string),
+        /store instance id must be 22-128 base64url characters/,
+      );
+    } finally {
+      await admin!.query(
+        "UPDATE oauth_store_metadata SET instance_id = ? WHERE singleton = 1",
+        [valid],
+      );
+    }
+  });
+
+  test("MysqlStore: concurrent first boot initializes one shared binding", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    const [first, second] = await Promise.all([
+      createMysqlStore(MYSQL_URL as string),
+      createMysqlStore(MYSQL_URL as string),
+    ]);
+    try {
+      assert.equal(await first.getStoreInstanceId(), await second.getStoreInstanceId());
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
+  test("MysqlStore: interrupted empty metadata initialization is completed", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    await admin!.query(`CREATE TABLE oauth_store_metadata (
+      singleton TINYINT UNSIGNED NOT NULL,
+      instance_id VARCHAR(128) NOT NULL,
+      PRIMARY KEY (singleton),
+      UNIQUE KEY uq_oauth_store_metadata_instance (instance_id),
+      CHECK (singleton = 1)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    const store = await createMysqlStore(MYSQL_URL as string);
+    try {
+      assert.match(await store.getStoreInstanceId(), /^[A-Za-z0-9_-]{22,128}$/u);
+    } finally {
+      await store.close();
+    }
+  });
+
+  test("MysqlStore: malformed metadata singleton schema fails before other DDL", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    await admin!.query(`CREATE TABLE oauth_store_metadata (
+      singleton TINYINT UNSIGNED NOT NULL,
+      instance_id VARCHAR(128) NOT NULL,
+      UNIQUE KEY uq_oauth_store_metadata_instance (instance_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    await admin!.query(
+      "INSERT INTO oauth_store_metadata (singleton, instance_id) VALUES (1, ?)",
+      ["0123456789abcdefghijklmn"],
+    );
+    try {
+      await assert.rejects(
+        createMysqlStore(MYSQL_URL as string),
+        /oauth_store_metadata indexes are incompatible/,
+      );
+    } finally {
+      await admin!.query("DROP TABLE oauth_store_metadata");
+      const restored = await createMysqlStore(MYSQL_URL as string);
+      await restored.close();
+    }
+  });
+
+  test("MysqlStore: case-variant metadata rejects before lowercase DDL", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    await admin!.query(`CREATE TABLE OAUTH_STORE_METADATA (
+      singleton TINYINT UNSIGNED NOT NULL,
+      instance_id VARCHAR(128) NOT NULL,
+      PRIMARY KEY (singleton),
+      UNIQUE KEY uq_oauth_store_metadata_instance (instance_id),
+      CHECK (singleton = 1)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    try {
+      await assert.rejects(
+        createMysqlStore(MYSQL_URL as string),
+        /oauth_store_metadata must use its exact canonical table name/,
+      );
+      const [rows] = await admin!.query<RowDataPacket[]>(
+        `SELECT TABLE_NAME FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA = DATABASE() AND LOWER(TABLE_NAME) = 'oauth_store_metadata'`,
+      );
+      assert.deepEqual(
+        (rows as { TABLE_NAME: string }[]).map((row) => row.TABLE_NAME),
+        ["OAUTH_STORE_METADATA"],
+        "rejection leaves no lowercase metadata table behind",
+      );
+    } finally {
+      await admin!.query("DROP TABLE OAUTH_STORE_METADATA");
+      const restored = await createMysqlStore(MYSQL_URL as string);
+      await restored.close();
+    }
+  });
+
+  test("MysqlStore: a non-enforced singleton check rejects before migration writes", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    await admin!.query(`CREATE TABLE oauth_store_metadata (
+      singleton TINYINT UNSIGNED NOT NULL,
+      instance_id VARCHAR(128) NOT NULL,
+      PRIMARY KEY (singleton),
+      UNIQUE KEY uq_oauth_store_metadata_instance (instance_id),
+      CHECK (singleton = 1) NOT ENFORCED
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    try {
+      await assert.rejects(
+        createMysqlStore(MYSQL_URL as string),
+        /oauth_store_metadata must constrain singleton to 1/,
+      );
+      const [rows] = await admin!.query<RowDataPacket[]>(
+        "SELECT COUNT(*) AS count FROM oauth_store_metadata",
+      );
+      assert.equal((rows[0] as { count: number }).count, 0, "rejection leaves metadata uninitialized");
+    } finally {
+      await admin!.query("DROP TABLE oauth_store_metadata");
+      const restored = await createMysqlStore(MYSQL_URL as string);
+      await restored.close();
+    }
+  });
+
+  test("MysqlStore: inbound metadata foreign keys reject before rotation can be blocked", async () => {
+    let unexpectedlyOpened: Awaited<ReturnType<typeof createMysqlStore>> | undefined;
+    await admin!.query(`CREATE TABLE oauth_store_metadata_ref (
+      instance_id VARCHAR(128) NOT NULL,
+      CONSTRAINT fk_metadata_ref FOREIGN KEY (instance_id)
+        REFERENCES oauth_store_metadata (instance_id) ON UPDATE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    await admin!.query(`INSERT INTO oauth_store_metadata_ref (instance_id)
+      SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1`);
+    try {
+      await assert.rejects(
+        async () => { unexpectedlyOpened = await createMysqlStore(MYSQL_URL as string); },
+        /oauth_store_metadata must not have foreign keys/,
+      );
+    } finally {
+      await unexpectedlyOpened?.close();
+      await admin!.query("DROP TABLE oauth_store_metadata_ref");
+    }
+  });
+
   test("MysqlStore/MySQL 8.4: migrates VARCHAR(255) subjects and persists max Entra authorization/refresh", async () => {
     await admin!.query("ALTER TABLE oauth_auth_codes MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
     await admin!.query("ALTER TABLE oauth_refresh_tokens MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");

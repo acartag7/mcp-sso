@@ -350,7 +350,7 @@ test("Bridge.handleApprove accepts both canonical approval-clock boundaries", as
   }
 });
 
-test("Bridge.handleApprove audits a backward commit clock with the initial snapshot and consumes the JTI", async () => {
+test("Bridge.handleApprove audits a backward commit clock without consuming the JTI", async () => {
   const clock = new ScriptedClock([NOW_MS, NOW_MS - 1, NOW_MS + 500]);
   const audit = new MemoryAudit();
   const store = new MemoryStore();
@@ -373,7 +373,7 @@ test("Bridge.handleApprove audits a backward commit clock with the initial snaps
       query: {}, headers: { origin: "https://auth.test" },
       body: { consent_token: consentToken, approved: "true" },
     });
-    assert.equal((retry.body as { error?: string }).error, "invalid_grant");
+    assert.equal(retry.status, 302, "an invalid commit snapshot leaves the consent token usable");
   } finally {
     await store.close();
   }
@@ -422,8 +422,7 @@ test("Bridge.handleApprove rejects a commit clock whose approval TTL crosses the
       headers: { origin: "https://auth.test" },
       body: { consent_token: consentToken, approved: "true" },
     });
-    assert.equal(retry.status, 400);
-    assert.equal((retry.body as { error?: string }).error, "invalid_grant", "the invalid commit snapshot still consumed the JTI");
+    assert.equal(retry.status, 302, "the invalid commit snapshot did not consume the JTI");
   } finally {
     await store.close();
   }

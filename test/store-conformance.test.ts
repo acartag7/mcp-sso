@@ -3,8 +3,9 @@
 // adapter must pass the same suite by importing runStoreConformance.
 
 import assert from "node:assert/strict";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -16,6 +17,258 @@ import { runStoreConformance } from "./lib/store-conformance.ts";
 
 runStoreConformance("MemoryStore", () => new MemoryStore());
 runStoreConformance("SqliteStore", () => openSqliteStore(":memory:"));
+
+test("independent MemoryStore instances have distinct consent bindings", async () => {
+  const first = new MemoryStore();
+  const second = new MemoryStore();
+  assert.notEqual(await first.getStoreInstanceId(), await second.getStoreInstanceId());
+  await first.close();
+  await second.close();
+});
+
+test("one SQLite file preserves its consent binding across reopen", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const first = openSqliteStore(file);
+    const binding = await first.getStoreInstanceId();
+    await first.close();
+    const reopened = openSqliteStore(file);
+    assert.equal(await reopened.getStoreInstanceId(), binding);
+    await reopened.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("concurrent SQLite first boot shares one initialized binding", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-race-"));
+  const file = join(dir, "oauth.sqlite");
+  const moduleUrl = new URL("../src/store/sqlite.ts", import.meta.url).href;
+  const startAt = Date.now() + 500;
+  const script = `
+    import { openSqliteStore } from ${JSON.stringify(moduleUrl)};
+    const delay = Math.max(0, Number(process.argv[2]) - Date.now());
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+    const store = openSqliteStore(process.argv[1]);
+    process.stdout.write(await store.getStoreInstanceId());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await store.close();
+  `;
+  try {
+    const bindings = await Promise.all(Array.from({ length: 8 }, () => new Promise<string>((resolveP, reject) => {
+      execFile(process.execPath, ["--input-type=module", "--eval", script, file, String(startAt)],
+        { timeout: 15_000 }, (error, stdout, stderr) => {
+          if (error) reject(new Error(`concurrent SQLite boot failed: ${stderr || error.message}`));
+          else resolveP(stdout);
+        });
+    })));
+    assert.equal(new Set(bindings).size, 1, "every process observes one durable binding");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SQLite initialization waits for a concurrent migration writer", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-lock-"));
+  const file = join(dir, "oauth.sqlite");
+  const holderScript = `
+    import { DatabaseSync } from "node:sqlite";
+    const db = new DatabaseSync(process.argv[1]);
+    db.exec("BEGIN IMMEDIATE");
+    process.stdout.write("locked\\n");
+    setTimeout(() => { db.exec("COMMIT"); db.close(); }, 250);
+  `;
+  try {
+    const initialized = openSqliteStore(file);
+    await initialized.close();
+    const holder = spawn(process.execPath, ["--input-type=module", "--eval", holderScript, file], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await new Promise<void>((resolveP, reject) => {
+      let stderr = "";
+      holder.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+      holder.once("error", reject);
+      holder.once("exit", (code) => reject(new Error(`SQLite lock holder exited ${code}: ${stderr}`)));
+      holder.stdout.setEncoding("utf8").once("data", (chunk) => {
+        if (chunk === "locked\n") resolveP();
+        else reject(new Error(`unexpected SQLite lock-holder output: ${chunk}`));
+      });
+    });
+    const contender = openSqliteStore(file);
+    await contender.close();
+    assert.equal(await new Promise<number | null>((resolveP) => holder.once("exit", resolveP)), 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SQLite approval and binding rotation serialize across processes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-approval-race-"));
+  const file = join(dir, "oauth.sqlite");
+  const moduleUrl = new URL("../src/store/sqlite.ts", import.meta.url).href;
+  const rawCode = "sqlite-approval-rotation-race";
+  const codeHash = createHash("sha256").update(rawCode).digest("hex");
+  const input = {
+    codeHash, clientId: "race-client", subject: "race-subject",
+    redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
+    scopes: ["mcp:read"], codeChallenge: "race-challenge", codeChallengeMethod: "S256",
+    expiresAt: "2026-07-03T13:00:00.000Z", grantGeneration: 1,
+  };
+  const startAt = Date.now() + 500;
+  try {
+    const initial = openSqliteStore(file);
+    const binding = await initial.getStoreInstanceId();
+    await initial.close();
+    const approvalScript = `
+      import { openSqliteStore } from ${JSON.stringify(moduleUrl)};
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, Number(process.argv[2]) - Date.now()));
+      const store = openSqliteStore(process.argv[1]);
+      process.stdout.write(await store.commitConsentApproval(${JSON.stringify(binding)}, "race-jti", ${JSON.stringify(input.expiresAt)}, ${JSON.stringify(input)}));
+      await store.close();
+    `;
+    const rotationScript = `
+      import { openSqliteStore } from ${JSON.stringify(moduleUrl)};
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, Number(process.argv[2]) - Date.now()));
+      const store = openSqliteStore(process.argv[1]);
+      process.stdout.write(await store.rotateStoreInstanceId());
+      await store.close();
+    `;
+    const run = (script: string) => new Promise<string>((resolveP, reject) => {
+      execFile(process.execPath, ["--input-type=module", "--eval", script, file, String(startAt)],
+        { timeout: 15_000 }, (error, stdout, stderr) => {
+          if (error) reject(new Error(`SQLite approval race failed: ${stderr || error.message}`));
+          else resolveP(stdout);
+        });
+    });
+    const [approval, rotated] = await Promise.all([run(approvalScript), run(rotationScript)]);
+    assert.notEqual(rotated, binding);
+    const inspect = openSqliteStore(file);
+    try {
+      const code = await inspect.consumeAuthCode(codeHash, "2026-07-03T12:00:00.000Z");
+      if (approval === "stored") {
+        assert.equal(code?.codeHash, codeHash, "approval completed before rotation");
+        assert.equal(await inspect.consumeConsentJti("race-jti", input.expiresAt), false);
+      } else {
+        assert.equal(approval, "binding_mismatch", "rotation completed before approval");
+        assert.equal(code, null);
+        assert.equal(await inspect.consumeConsentJti("race-jti", input.expiresAt), true);
+      }
+    } finally { await inspect.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("independent SQLite files have distinct consent bindings", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-distinct-"));
+  try {
+    const first = openSqliteStore(join(dir, "first.sqlite"));
+    const second = openSqliteStore(join(dir, "second.sqlite"));
+    assert.notEqual(await first.getStoreInstanceId(), await second.getStoreInstanceId());
+    await first.close();
+    await second.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a cloned SQLite store requires explicit binding rotation", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-clone-"));
+  const source = join(dir, "source.sqlite");
+  const clone = join(dir, "clone.sqlite");
+  try {
+    const original = openSqliteStore(source);
+    const sourceBinding = await original.getStoreInstanceId();
+    await original.close();
+    copyFileSync(source, clone);
+    const restored = openSqliteStore(clone);
+    assert.equal(await restored.getStoreInstanceId(), sourceBinding);
+    const rotated = await restored.rotateStoreInstanceId();
+    assert.notEqual(rotated, sourceBinding);
+    await restored.close();
+    const reopened = openSqliteStore(clone);
+    assert.equal(await reopened.getStoreInstanceId(), rotated);
+    await reopened.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SqliteStore rejects a malformed persisted binding during boot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-binding-corrupt-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const store = openSqliteStore(file);
+    await store.close();
+    const db = new DatabaseSync(file);
+    db.exec("DROP INDEX idx_oauth_auth_codes_expires_at");
+    db.prepare("UPDATE oauth_store_metadata SET instance_id = ? WHERE singleton = 1").run("malformed!");
+    db.close();
+    assert.throws(
+      () => openSqliteStore(file),
+      /sqlite: unsafe persistent state: database initialization failed/,
+    );
+    const inspect = new DatabaseSync(file);
+    const recreated = inspect.prepare(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'idx_oauth_auth_codes_expires_at'",
+    ).get();
+    inspect.close();
+    assert.equal(recreated, undefined, "malformed binding rejected before migration side effects");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SqliteStore rejects a metadata table without canonical singleton constraints", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-binding-shape-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const db = new DatabaseSync(file);
+    db.exec(`CREATE TABLE oauth_store_metadata (
+      singleton INTEGER NOT NULL,
+      instance_id TEXT NOT NULL
+    ) STRICT`);
+    db.prepare("INSERT INTO oauth_store_metadata VALUES (1, ?)")
+      .run("0123456789abcdefghijklmn");
+    db.close();
+    if (process.platform !== "win32") chmodSync(file, 0o600);
+    assert.throws(
+      () => openSqliteStore(file),
+      /sqlite: unsafe persistent state: database initialization failed/,
+    );
+    const inspect = new DatabaseSync(file);
+    const tables = inspect.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+    ).all().map((row) => (row as { name: string }).name);
+    inspect.close();
+    assert.deepEqual(tables, ["oauth_store_metadata"], "shape rejects before other migrations");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SqliteStore rejects case-variant metadata schemas before any migration", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-binding-case-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const db = new DatabaseSync(file);
+    db.exec(`CREATE TABLE OAUTH_STORE_METADATA (
+      singleton INTEGER NOT NULL,
+      instance_id TEXT NOT NULL
+    ) STRICT`);
+    db.close();
+    if (process.platform !== "win32") chmodSync(file, 0o600);
+    assert.throws(() => openSqliteStore(file), /database initialization failed/);
+    const inspect = new DatabaseSync(file);
+    const tables = inspect.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+    ).all().map((row) => (row as { name: string }).name);
+    inspect.close();
+    assert.deepEqual(tables, ["OAUTH_STORE_METADATA"], "case collision rejects before other migrations");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SqliteStore completes an interrupted empty canonical metadata initialization", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-binding-empty-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const db = new DatabaseSync(file);
+    db.exec(`CREATE TABLE oauth_store_metadata (
+    singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+    instance_id TEXT UNIQUE NOT NULL
+  ) STRICT`);
+    db.close();
+    if (process.platform !== "win32") chmodSync(file, 0o600);
+    const store = openSqliteStore(file);
+    assert.match(await store.getStoreInstanceId(), /^[A-Za-z0-9_-]{22,128}$/u);
+    await store.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test("SqliteStore (file): persists no raw secrets and only OAuth tables", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-idp-store-"));
@@ -44,7 +297,7 @@ test("SqliteStore (file): persists no raw secrets and only OAuth tables", async 
   const tables = db.prepare(`SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name`).all()
     .map((r) => String((r as { name: unknown }).name));
   db.close();
-  assert.deepEqual(tables, ["oauth_auth_codes", "oauth_clients", "oauth_consent_jtis", "oauth_refresh_token_families", "oauth_refresh_tokens"]);
+  assert.deepEqual(tables, ["oauth_auth_codes", "oauth_clients", "oauth_consent_jtis", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_store_metadata"]);
   assert.equal(tables.some((n) => /content|body|cache|page/i.test(n)), false);
   rmSync(dir, { recursive: true, force: true });
 });

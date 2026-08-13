@@ -5,6 +5,46 @@ Every `StorePort` implementation MUST satisfy these invariants — the
 `SqliteStore`, and `MysqlStore`, and any further downstream SQL adapter must pass the same suite. **Fix #3**
 documents the one contract the source left implicit.
 
+Every store exposes both `getStoreInstanceId(): Promise<string>` and
+`rotateStoreInstanceId(): Promise<string>` as required `StorePort` methods. The value is
+an opaque base64url identifier with at least 128 bits of randomness. It is stable
+for the lifetime of a `MemoryStore`, across reopening one SQLite file, and across
+all connections/replicas using one MySQL database. Independently created stores
+have different values. Initialization is insert-if-absent and concurrency-safe;
+callers never configure or derive the value from issuer/signing material. A
+custom store without either capability is rejected when the authorization use-case
+is constructed. This binding prevents one consent token from being redeemed in
+two replicas that accidentally share issuer and signing secrets but not state.
+
+Every store also exposes `commitConsentApproval(expectedStoreInstanceId, jti,
+expiresAtIso, authCode)`. It validates the expected binding, consumes the JTI,
+and stores the authorization code as one atomic operation, returning exactly
+`binding_mismatch`, `replayed`, or `stored`; every other runtime value fails
+closed without success response or audit. Binding rotation serializes against
+that operation on the same store metadata lock. Therefore rotation either wins
+before approval and rejects the old consent token without consuming its JTI or
+wins after the completed approval; it cannot interleave between binding
+validation and code storage. A custom store without this capability is rejected
+when the authorization use-case is constructed.
+
+A filesystem copy, database snapshot, or restore copies this identifier too.
+Before an independent deployment serves traffic from a copied store, the
+operator calls `rotateStoreInstanceId()` on that copy. The operation atomically
+replaces the identifier and invalidates consent tokens minted before the
+rotation; it does not rewrite authorization codes, access tokens, refresh-token
+families, or client grants. Replicas intentionally sharing one logical database
+also share one identifier and coordinate a single rotation instead of rotating
+once per process. A malformed persisted identifier rejects SQL-store migration.
+The SQL adapters admit only the exact canonical metadata table name and required shape: one non-null
+singleton column uniquely keyed and constrained to the value `1`, plus one
+non-null unique instance identifier, with no triggers or inbound/outbound foreign keys. They create and initialize that table in a
+concurrency-safe create-then-insert-if-absent sequence before migrating other
+OAuth state. SQLite re-admits a concurrently created file, waits up to five
+seconds for the migration writer, and runs schema admission, metadata insertion,
+and all OAuth DDL in one `BEGIN IMMEDIATE` transaction. An interrupted empty canonical initialization is completed;
+MySQL requires the singleton `CHECK` to be enforced. Malformed, case-variant, or
+non-enforced pre-existing metadata rejects before migration writes.
+
 ## 12.1 Records (secrets are SHA-256 hex digests; timestamps are UTC ISO 8601 with EXACTLY 3 ms digits)
 ```ts
 interface AuthCodeRecord {

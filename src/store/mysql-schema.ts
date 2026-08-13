@@ -1,8 +1,3 @@
-// MysqlStore schema + boot-time config assertions (contracts §12.3). Idempotent.
-// State is OAuth-only — no content/body/cache tables (asserted in the conformance
-// suite). All secrets are SHA-256 digests; there is NO grant table (findGrantedScopes
-// queries the refresh-token tables directly).
-//
 // Every oauth_* table is DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin: MySQL 8.x
 // otherwise defaults to case-insensitive utf8mb4_0900_ai_ci, which would conflate
 // distinct hashes/identifiers on the PRIMARY KEY and match subject/client_id
@@ -23,9 +18,12 @@ import {
   grantGenerationFromStored, refreshResourceFromStored,
 } from "../ports/store.ts";
 import { migrateMysqlSubjectColumns } from "./mysql-subject-schema.ts";
+import {
+  assertMysqlStoreInstanceSchema, ensureMysqlStoreInstance,
+} from "./mysql-instance.ts";
 
 export const MYSQL_OAUTH_TABLES = [
-  "oauth_auth_codes", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_consent_jtis",
+  "oauth_auth_codes", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_consent_jtis", "oauth_store_metadata",
 ] as const;
 
 const MIGRATIONS = [
@@ -74,14 +72,24 @@ const MIGRATIONS = [
     PRIMARY KEY (jti),
     INDEX idx_oauth_consent_jtis_expires_at (expires_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
+  `CREATE TABLE IF NOT EXISTS oauth_store_metadata (
+    singleton TINYINT UNSIGNED NOT NULL,
+    instance_id VARCHAR(128) NOT NULL,
+    PRIMARY KEY (singleton),
+    UNIQUE KEY uq_oauth_store_metadata_instance (instance_id),
+    CHECK (singleton = 1)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 ];
 
-/** Run idempotent migrations + boot-time config assertions on a connection.
- *  Call once before first use (createMysqlStore does this). */
 export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await assertStrictMode(conn);
   if (await tableExists(conn, "oauth_consent_jtis")) await assertConsentJtiUnique(conn);
-  for (const ddl of MIGRATIONS) await conn.query(ddl);
+  const metadataDdl = MIGRATIONS.at(-1)!;
+  if (await tableExists(conn, "oauth_store_metadata")) await assertMysqlStoreInstanceSchema(conn);
+  await conn.query(metadataDdl);
+  await assertMysqlStoreInstanceSchema(conn);
+  await ensureMysqlStoreInstance(conn);
+  for (const ddl of MIGRATIONS.slice(0, -1)) await conn.query(ddl);
   await ensureColumn(conn, "oauth_auth_codes", "grant_generation", "BIGINT UNSIGNED NULL");
   await ensureColumn(conn, "oauth_refresh_token_families", "grant_generation", "BIGINT UNSIGNED NULL");
   await ensureColumn(conn, "oauth_refresh_tokens", "grant_generation", "BIGINT UNSIGNED NULL");
@@ -95,9 +103,9 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
 
 async function tableExists(conn: PoolConnection, table: string): Promise<boolean> {
   const [rows] = await conn.query<RowDataPacket[]>(
-    "SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
-    [table],
-  );
+    "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LOWER(TABLE_NAME) = LOWER(?)", [table]);
+  if (rows.some((row) => row.TABLE_NAME !== table))
+    throw new StoreInputError(`${table} must use its exact canonical table name`);
   return rows.length > 0;
 }
 

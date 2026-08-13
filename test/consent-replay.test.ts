@@ -14,6 +14,7 @@ import type { ClientRegistration, ClientStore } from "../src/ports/client-store.
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { SaveAuthCodeInput } from "../src/ports/store.ts";
 import { openSqliteStore, type SqliteStore } from "../src/store/sqlite.ts";
+import { MemoryStore } from "../src/store/memory.ts";
 
 const START_MS = Date.parse("2026-07-03T12:00:00.000Z");
 const ISSUER = "https://auth.test";
@@ -67,11 +68,14 @@ function makeConfig(consentTokenTtlSeconds: number, clientStore?: ClientStore): 
   });
 }
 
-function instrumentCodeWrites(store: SqliteStore, onWrite: (input: SaveAuthCodeInput) => void): void {
-  const saveAuthCode = store.saveAuthCode.bind(store);
-  store.saveAuthCode = async (input) => {
-    onWrite(input);
-    await saveAuthCode(input);
+function instrumentCodeWrites(
+  store: SqliteStore, onWrite: (input: SaveAuthCodeInput, expiresAt: string) => void,
+): void {
+  const commit = store.commitConsentApproval.bind(store);
+  store.commitConsentApproval = async (binding, jti, expiresAt, input) => {
+    const result = await commit(binding, jti, expiresAt, input);
+    if (result === "stored") onWrite(input, expiresAt);
+    return result;
   };
 }
 
@@ -116,12 +120,10 @@ test("direct consent replay stays rejected through signed exp after shorter-TTL 
     clock.set(START_MS + 100_000);
     const firstUseStore = openSqliteStore(file);
     try {
-      instrumentCodeWrites(firstUseStore, () => { codeWrites += 1; });
-      const consumeConsentJti = firstUseStore.consumeConsentJti.bind(firstUseStore);
-      firstUseStore.consumeConsentJti = async (jti, expiresAt) => {
+      instrumentCodeWrites(firstUseStore, (_input, expiresAt) => {
+        codeWrites += 1;
         recordedExpiry ??= expiresAt;
-        return await consumeConsentJti(jti, expiresAt);
-      };
+      });
       const firstUseAuth = new OAuthAuthorizationUseCase({ config: makeConfig(60), store: firstUseStore, clock, audit });
       const firstUse = await firstUseAuth.approve({ consentToken, approved: true, origin: ISSUER });
       assert.ok(firstUse.code, "adjacent valid first use still mints one authorization code");
@@ -153,6 +155,103 @@ test("direct consent replay stays rejected through signed exp after shorter-TTL 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("a consent token minted by one store cannot be redeemed by a split-brain replica", async () => {
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  const firstStore = new MemoryStore();
+  const secondStore = new MemoryStore();
+  try {
+    const first = new OAuthAuthorizationUseCase({ config: makeConfig(600), store: firstStore, clock, audit });
+    const second = new OAuthAuthorizationUseCase({ config: makeConfig(600), store: secondStore, clock, audit });
+    const consentToken = await prepareConsent(first);
+    const accepted = await first.approve({ consentToken, approved: true, origin: ISSUER });
+    assert.ok(accepted.code, "the minting store accepts the adjacent valid approval");
+    await assert.rejects(
+      second.approve({ consentToken, approved: true, origin: ISSUER }),
+      (error: unknown) => error instanceof OAuthError && error.code === "invalid_consent",
+    );
+    assert.equal(
+      audit.events.filter((event) => event.event === "oauth.authorize.approve" && event.status === "success").length,
+      1,
+      "the independent store emits no second success",
+    );
+  } finally {
+    await firstStore.close();
+    await secondStore.close();
+  }
+});
+
+test("rotating a store binding invalidates old consent and permits a new flow", async () => {
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  const store = new MemoryStore();
+  try {
+    const auth = new OAuthAuthorizationUseCase({ config: makeConfig(600), store, clock, audit });
+    const oldConsent = await prepareConsent(auth);
+    await store.rotateStoreInstanceId();
+    await assert.rejects(
+      auth.approve({ consentToken: oldConsent, approved: true, origin: ISSUER }),
+      (error: unknown) => error instanceof OAuthError && error.code === "invalid_consent",
+    );
+    const newConsent = await prepareConsent(auth);
+    const accepted = await auth.approve({ consentToken: newConsent, approved: true, origin: ISSUER });
+    assert.ok(accepted.code, "a flow minted after rotation succeeds");
+  } finally {
+    await store.close();
+  }
+});
+
+test("authorization construction rejects stores without a valid instance binding", async () => {
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  const missingStore = new MemoryStore();
+  const missing = missingStore as unknown as Omit<MemoryStore, "getStoreInstanceId">;
+  Object.defineProperty(missing, "getStoreInstanceId", { value: undefined });
+  assert.throws(
+    () => new OAuthAuthorizationUseCase({ config: makeConfig(600), store: missing as unknown as MemoryStore, clock, audit }),
+    /getStoreInstanceId is required/,
+  );
+  const noRotation = new MemoryStore();
+  Object.defineProperty(noRotation, "rotateStoreInstanceId", { value: undefined });
+  assert.throws(
+    () => new OAuthAuthorizationUseCase({ config: makeConfig(600), store: noRotation, clock, audit }),
+    /rotateStoreInstanceId is required/,
+  );
+  const noAtomicApproval = new MemoryStore();
+  Object.defineProperty(noAtomicApproval, "commitConsentApproval", { value: undefined });
+  assert.throws(
+    () => new OAuthAuthorizationUseCase({ config: makeConfig(600), store: noAtomicApproval, clock, audit }),
+    /commitConsentApproval is required/,
+  );
+  const malformed = new MemoryStore();
+  malformed.getStoreInstanceId = async () => "not base64url!";
+  const auth = new OAuthAuthorizationUseCase({ config: makeConfig(600), store: malformed, clock, audit });
+  await assert.rejects(prepareConsent(auth), /store instance id must be 22-128 base64url characters/);
+  await missingStore.close();
+  await noRotation.close();
+  await noAtomicApproval.close();
+  await malformed.close();
+});
+
+test("approval fails closed on an unexpected atomic-store result", async () => {
+  const clock = new FakeClock(START_MS);
+  const audit = new MemoryAudit();
+  const store = new MemoryStore();
+  try {
+    const auth = new OAuthAuthorizationUseCase({ config: makeConfig(600), store, clock, audit });
+    const consentToken = await prepareConsent(auth);
+    store.commitConsentApproval = async () => undefined as never;
+    await assert.rejects(
+      auth.approve({ consentToken, approved: true, origin: ISSUER }),
+      (error: unknown) => error instanceof OAuthError && error.code === "server_error" && error.status === 500,
+    );
+    assert.equal(
+      audit.events.filter((event) => event.event === "oauth.authorize.approve" && event.status === "success").length,
+      0,
+    );
+  } finally { await store.close(); }
 });
 
 test("approval delayed across signed exp cannot race a sweep into a second code", async () => {

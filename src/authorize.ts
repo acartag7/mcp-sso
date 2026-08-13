@@ -7,8 +7,10 @@
 // resolution boundaries (decision 2): it happens inside `prepare`'s
 // pre-validation, and every failure maps to the anti-oracle generic there.
 import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
-import type { AuditPort } from "./ports/audit.ts";
 import type { StorePort } from "./ports/store.ts";
+import type { AuditPort } from "./ports/audit.ts";
+import { assertStoreInstanceCapability, storeInstanceId } from "./store-instance.ts";
+import { bindConsentStore } from "./consent-store-binding.ts";
 import type { BridgeConfig } from "./config.ts";
 import type { ConsentRequestClaims } from "./crypto.ts";
 import { OAuthError, withRedirect } from "./errors.ts";
@@ -76,15 +78,10 @@ export interface PreparedConsent extends ConsentRequestClaims {
 export interface ApproveInput {
   consentToken?: string;
   approved?: boolean;
-  /** Required Origin for the CSRF check. */
-  origin?: string;
+  /** Required Origin for the CSRF check. */ origin?: string;
 }
 
-export interface ApproveResult {
-  redirectTo: string;
-  code?: string;
-  state?: string;
-}
+export interface ApproveResult { redirectTo: string; code?: string; state?: string; }
 
 const AUDIT_PREPARE = "oauth.authorize.prepare";
 const AUDIT_APPROVE = "oauth.authorize.approve";
@@ -102,6 +99,8 @@ export class OAuthAuthorizationUseCase {
     this.clock = deps.clock;
     this.audit = deps.audit;
     this.cimd = deps.cimd;
+    assertStoreInstanceCapability(this.store);
+    bindConsentStore(this.config, this.store);
     assertStoredDcrGenerationStore(this.config, this.store);
   }
 
@@ -158,6 +157,7 @@ export class OAuthAuthorizationUseCase {
         claims = {
           clientId, redirectUri, resource, scopes, codeChallenge, codeChallengeMethod: "S256",
           state, subject: input.subject, allowedScopes: ceiling,
+          storeInstanceId: await storeInstanceId(this.store),
           // Provenance for THIS flow only (decision 3): a genuinely-validated
           // CIMD registration — its own fetch/cache hit, or the carried one.
           ...(resolved.registration ? { cimdVerified: true as const } : {}),
@@ -195,6 +195,7 @@ export class OAuthAuthorizationUseCase {
       const token = requiredStr(input.consentToken, "consent_token");
       const consent = await verifyConsentToken(token, this.config, operationClock);
       if (consent.resource !== this.config.resource) throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
+      if (consent.storeInstanceId !== await storeInstanceId(this.store)) throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
       // Scheme/claim gate runs before Deny, jti consume, or storage (§17.1.6 decision 3).
       assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
       assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard
@@ -211,16 +212,13 @@ export class OAuthAuthorizationUseCase {
       const union = dedupe([...consentScopes, ...priorScopes]);
       // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
       const scopes = allowedScopes ? union.filter((s) => allowedScopes.includes(s)) : union;
-      if (!(await this.store.consumeConsentJti(consent.jti, consent.expiresAt))) {
-        throw new OAuthError("invalid_grant", "Consent token has already been used");
-      }
       const commitClock = approvalCommitClock(
         this.clock, this.config.authorizationCodeTtlSeconds, operationClock.nowMs(),
       );
       auditClock = commitClock;
       assertConsentUnexpiredAt(consent.expiresAt, commitClock);
       const code = generateAuthorizationCode();
-      await this.store.saveAuthCode({
+      const commit = await this.store.commitConsentApproval(consent.storeInstanceId, consent.jti, consent.expiresAt, {
         codeHash: sha256Hex(code),
         clientId: consent.clientId,
         subject: consent.subject,
@@ -232,6 +230,9 @@ export class OAuthAuthorizationUseCase {
         expiresAt: expiresAtIso(commitClock, this.config.authorizationCodeTtlSeconds),
         grantGeneration: newGrantGeneration(this.config),
       });
+      if (commit === "binding_mismatch") throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
+      if (commit === "replayed") throw new OAuthError("invalid_grant", "Consent token has already been used");
+      if (commit !== "stored") throw new OAuthError("server_error", "OAuth request failed", 500);
       await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject }, commitClock);
       return { code, redirectTo: redirectWithCode(consent.redirectUri, code, this.config.issuer, consent.state), state: consent.state };
     } catch (error) {
