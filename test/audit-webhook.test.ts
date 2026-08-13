@@ -129,6 +129,21 @@ test("WebhookAudit: raw control-bearing query components redact before URL norma
   assert.equal(stderr.includes("abcd"), false);
 });
 
+test("WebhookAudit: serialized query parameter forms remain secrets", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?sig=ab%20cd", {
+    fetchImpl: (async (url) => {
+      throw new Error(`transport serialized ${new URL(String(url)).searchParams.toString()}`);
+    }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  assert.equal(captured.messages.join("\n").includes("sig=ab+cd"), false);
+});
+
 test("WebhookAudit: per-event POST is application/json with merged headers", async () => {
   const state = { calls: [] as Recorded[] };
   const sink = new WebhookAudit("https://siem.test/ingest", {

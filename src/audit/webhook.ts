@@ -146,7 +146,11 @@ export class WebhookAudit implements AuditPort {
 function collectQuerySecrets(rawUrl: string, url: URL): string[] {
   if (!url.search) return [];
   const rawQuery = rawUrl.includes("?") ? rawUrl.slice(rawUrl.indexOf("?")) : "";
-  const tokens: string[] = [rawQuery, rawQuery.replace(/[\x00-\x1f\x7f-\x9f]/g, " "), url.search];
+  const serialized = url.searchParams.toString();
+  const tokens: string[] = [
+    rawQuery, rawQuery.replace(/[\x00-\x1f\x7f-\x9f]/g, " "),
+    url.search, serialized, serialized ? `?${serialized}` : "",
+  ];
   for (const component of rawQuery.slice(1).split("&")) {
     if (component.length === 0) continue;
     tokens.push(component, component.replace(/[\x00-\x1f\x7f-\x9f]/g, " "));
@@ -164,7 +168,9 @@ function collectQuerySecrets(rawUrl: string, url: URL): string[] {
     }
   }
   for (const [k, v] of url.searchParams.entries()) {
-    tokens.push(`${k}=${v}`);
+    const pair = new URLSearchParams([[k, v]]).toString();
+    const encodedValue = pair.slice(pair.indexOf("=") + 1);
+    tokens.push(`${k}=${v}`, pair, encodedValue);
     if (v.length > 0) tokens.push(v);
     else if (k.length > 0) tokens.push(k);
   }
