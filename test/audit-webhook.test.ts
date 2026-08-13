@@ -89,12 +89,28 @@ test("WebhookAudit: constructor rejects userinfo (user:pass@) — credentials be
 });
 
 test("WebhookAudit: constructor rejects malformed header configuration", () => {
-  for (const headers of [null, [], { X: null }, { X: 1 }, "X: value"]) {
+  for (const headers of [null, [], { X: null }, { X: 1 }, "X: value", new Headers({ X: "value" }), new Map([["X", "value"]])]) {
     assert.throws(
       () => new WebhookAudit("https://siem.test/ingest", { headers: headers as never }),
       /headers must be a string-valued object/,
     );
   }
+});
+
+test("WebhookAudit: decoded control-bearing query values redact after line normalization", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?sig=ab%0Acd", {
+    fetchImpl: (async () => { throw new Error("transport reflected ab\ncd"); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("ab cd"), false);
+  assert.equal(stderr.includes("ab"), false);
+  assert.equal(stderr.includes("cd"), false);
 });
 
 test("WebhookAudit: per-event POST is application/json with merged headers", async () => {

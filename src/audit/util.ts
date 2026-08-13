@@ -62,7 +62,9 @@ export function safeErrorMessage(error: unknown): string {
  *  secrets that may be too short or unusually shaped for SECRET_PATTERNS.
  *  Exact redaction happens before the single-line length bound. NEVER throws. */
 export function safeErrorForStderr(error: unknown, exactSecrets: readonly string[]): string {
-  const secrets = [...exactSecrets].filter((value): value is string => typeof value === "string" && value.length > 0)
+  const secrets = [...new Set(exactSecrets.flatMap((value) => typeof value === "string"
+    ? [value, value.replace(STDERR_LINE_BREAKS, " ")] : []))]
+    .filter((value) => value.length > 0)
     .sort((a, b) => b.length - a.length);
   try {
     const e = error as { message?: unknown; name?: unknown } | null;
