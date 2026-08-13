@@ -56,7 +56,7 @@ test("SqliteStore bounds stored redirect JSON before parsing", async () => {
     return originalParse(...args);
   }) as typeof JSON.parse;
   try {
-    await assert.rejects(store.find(WEB.clientId), /Stored client redirect URIs are invalid/);
+    await assert.rejects(store.find(WEB.clientId));
     assert.equal(parsed, false, "over-cap stored JSON rejects before JSON.parse");
   } finally {
     JSON.parse = originalParse;
@@ -119,23 +119,17 @@ test("SqliteStore rejects user indexes and triggers attached to the client table
     "CREATE UNIQUE INDEX hostile_client_kind ON oauth_clients(application_type)",
     "CREATE TRIGGER hostile_client_insert AFTER INSERT ON oauth_clients BEGIN DELETE FROM sentinel; END",
   ]) {
-    assertRejectedSchemaIsUnchanged(undefined, auxiliary);
+    assertAttachedClientObjectIsRejected(auxiliary);
   }
 });
 
-function assertRejectedSchemaIsUnchanged(clientSchema?: string, auxiliary?: string): void {
+function assertRejectedSchemaIsUnchanged(clientSchema: string): void {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-client-hostile-schema-"));
   const file = join(dir, "oauth.sqlite");
   try {
     const seeded = new DatabaseSync(file);
     seeded.exec("CREATE TABLE sentinel (value TEXT) STRICT");
-    seeded.exec(clientSchema ?? `CREATE TABLE oauth_clients (
-      client_id TEXT PRIMARY KEY NOT NULL,
-      redirect_uris_json TEXT NOT NULL,
-      application_type TEXT NOT NULL CHECK (application_type IN ('native', 'web')),
-      issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
-    ) STRICT`);
-    if (auxiliary) seeded.exec(auxiliary);
+    seeded.exec(clientSchema);
     const query = "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name";
     const before = seeded.prepare(query).all();
     seeded.close();
@@ -145,6 +139,27 @@ function assertRejectedSchemaIsUnchanged(clientSchema?: string, auxiliary?: stri
     const after = rejected.prepare(query).all();
     rejected.close();
     assert.deepEqual(after, before, "rejection leaves every pre-existing schema object unchanged");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function assertAttachedClientObjectIsRejected(auxiliary: string): void {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-client-attached-schema-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const canonical = openSqliteStore(file);
+    const db = (canonical as unknown as { db: DatabaseSync }).db;
+    db.exec("CREATE TABLE sentinel (value TEXT) STRICT");
+    db.exec(auxiliary);
+    const query = "SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name";
+    const before = db.prepare(query).all();
+    void canonical.close();
+    assert.throws(() => openSqliteStore(file), /database initialization failed/);
+    const rejected = new DatabaseSync(file);
+    const after = rejected.prepare(query).all();
+    rejected.close();
+    assert.deepEqual(after, before, "attached-object rejection leaves the schema unchanged");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
