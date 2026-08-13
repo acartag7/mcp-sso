@@ -3,8 +3,15 @@ import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { assertStoreInstanceId, StoreInputError } from "../ports/store.ts";
 
 export async function assertMysqlStoreInstanceSchema(conn: PoolConnection): Promise<void> {
+  const [tables] = await conn.query<RowDataPacket[]>(
+    `SELECT ENGINE FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_store_metadata'`,
+  );
+  if ((tables[0] as { ENGINE?: unknown } | undefined)?.ENGINE !== "InnoDB") {
+    throw new StoreInputError("oauth_store_metadata must use the InnoDB engine");
+  }
   const [columns] = await conn.query<RowDataPacket[]>(
-    `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
+    `SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLLATION_NAME
      FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_store_metadata'`,
   );
@@ -14,7 +21,7 @@ export async function assertMysqlStoreInstanceSchema(conn: PoolConnection): Prom
   const instance = byName.get("instance_id");
   if (byName.size !== 2 || singleton?.COLUMN_TYPE !== "tinyint unsigned"
     || singleton.IS_NULLABLE !== "NO" || instance?.COLUMN_TYPE !== "varchar(128)"
-    || instance.IS_NULLABLE !== "NO") {
+    || instance.IS_NULLABLE !== "NO" || instance.COLLATION_NAME !== "utf8mb4_bin") {
     throw new StoreInputError("oauth_store_metadata columns are incompatible");
   }
   const [indexes] = await conn.query<RowDataPacket[]>(

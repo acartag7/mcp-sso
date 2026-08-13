@@ -14,8 +14,8 @@ const CONSENT_COLUMNS = [
 ];
 const STORE_INSTANCE_ROWS = [{ instance_id: "0123456789abcdefghijklmn" }];
 const METADATA_COLUMNS = [
-  { COLUMN_NAME: "singleton", COLUMN_TYPE: "tinyint unsigned", IS_NULLABLE: "NO" },
-  { COLUMN_NAME: "instance_id", COLUMN_TYPE: "varchar(128)", IS_NULLABLE: "NO" },
+  { COLUMN_NAME: "singleton", COLUMN_TYPE: "tinyint unsigned", IS_NULLABLE: "NO", COLLATION_NAME: null },
+  { COLUMN_NAME: "instance_id", COLUMN_TYPE: "varchar(128)", IS_NULLABLE: "NO", COLLATION_NAME: "utf8mb4_bin" },
 ];
 const METADATA_INDEXES = [
   { INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "singleton", SUB_PART: null },
@@ -24,6 +24,9 @@ const METADATA_INDEXES = [
 const METADATA_CHECKS = [{ CHECK_CLAUSE: "(`singleton` = 1)" }];
 
 function metadataQuery(sql: string): [unknown[], unknown[]] | undefined {
+  if (sql.includes("information_schema.TABLES") && sql.includes("oauth_store_metadata") && sql.includes("ENGINE")) {
+    return [[{ ENGINE: "InnoDB" }], []];
+  }
   if (sql.includes("information_schema.COLUMNS") && sql.includes("oauth_store_metadata")) {
     return [METADATA_COLUMNS, []];
   }
@@ -44,6 +47,7 @@ test("MySQL metadata preflight rejects foreign keys before unrelated DDL", async
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) {
         return [values?.[0] === "oauth_store_metadata" ? [{ 1: 1 }] : [], []];
       }
+      if (sql.includes("information_schema.TABLES") && sql.includes("ENGINE")) return [[{ ENGINE: "InnoDB" }], []];
       if (sql.includes("information_schema.COLUMNS") && sql.includes("oauth_store_metadata")) return [METADATA_COLUMNS, []];
       if (sql.includes("information_schema.STATISTICS") && sql.includes("oauth_store_metadata")) return [METADATA_INDEXES, []];
       if (sql.includes("information_schema.CHECK_CONSTRAINTS")) return [METADATA_CHECKS, []];
@@ -56,6 +60,27 @@ test("MySQL metadata preflight rejects foreign keys before unrelated DDL", async
   await assert.rejects(migrateMysqlStore(connection), /must not have foreign keys/);
   assert.equal(unrelatedWrites, 0, "foreign-key rejection precedes every migration write");
 });
+
+for (const [label, tableRows, columnRows, expected] of [
+  ["engine", [{ ENGINE: "MyISAM" }], METADATA_COLUMNS, /must use the InnoDB engine/],
+  ["collation", [{ ENGINE: "InnoDB" }], [METADATA_COLUMNS[0], { ...METADATA_COLUMNS[1], COLLATION_NAME: "utf8mb4_0900_ai_ci" }], /columns are incompatible/],
+] as const) {
+  test(`MySQL metadata preflight rejects ${label} drift before any write`, async () => {
+    let writes = 0;
+    const connection = {
+      query: async (sql: string, values?: unknown[]) => {
+        if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+        if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [values?.[0] === "oauth_store_metadata" ? [{ 1: 1 }] : [], []];
+        if (sql.includes("information_schema.TABLES") && sql.includes("ENGINE")) return [tableRows, []];
+        if (sql.includes("information_schema.COLUMNS") && sql.includes("oauth_store_metadata")) return [columnRows, []];
+        if (/^(CREATE|ALTER|INSERT)/u.test(sql)) writes += 1;
+        return [[], []];
+      },
+    } as unknown as PoolConnection;
+    await assert.rejects(migrateMysqlStore(connection), expected);
+    assert.equal(writes, 0, `${label} drift rejects before every migration write`);
+  });
+}
 
 function racingConnection(options: RaceOptions): {
   readonly connection: PoolConnection;
