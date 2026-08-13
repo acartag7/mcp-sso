@@ -72,7 +72,7 @@ export function migrateSqliteStore(db: DatabaseSync): void {
   }
   if (existingClientObject) assertClientTable(db);
   const metadataObject = db.prepare(
-    "SELECT type FROM sqlite_schema WHERE name = 'oauth_store_metadata'",
+    "SELECT type FROM sqlite_schema WHERE name = 'oauth_store_metadata' COLLATE NOCASE",
   ).get();
   if (metadataObject) {
     assertMetadataSchema(db);
@@ -101,14 +101,15 @@ function clientSchemaObject(db: DatabaseSync): { type: unknown } | undefined {
 
 function assertMetadataSchema(db: DatabaseSync): void {
   const schema = db.prepare(
-    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_store_metadata'",
+    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_store_metadata' COLLATE NOCASE",
   ).get() as { sql?: unknown } | undefined;
   if (schema?.sql !== METADATA_TABLE_SQL) {
     throw new Error("oauth_store_metadata schema is incompatible");
   }
   const attached = db.prepare(`SELECT name FROM sqlite_schema
-    WHERE tbl_name = 'oauth_store_metadata' AND name != 'oauth_store_metadata'
-      AND sql IS NOT NULL AND name != 'sqlite_autoindex_oauth_store_metadata_1'`).get();
+    WHERE tbl_name = 'oauth_store_metadata' COLLATE NOCASE
+      AND name != 'oauth_store_metadata' COLLATE NOCASE
+      AND sql IS NOT NULL AND name != 'sqlite_autoindex_oauth_store_metadata_1' COLLATE NOCASE`).get();
   if (attached) throw new Error("oauth_store_metadata schema is incompatible");
 }
 

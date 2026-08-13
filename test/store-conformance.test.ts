@@ -118,6 +118,27 @@ test("SqliteStore rejects a metadata table without canonical singleton constrain
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("SqliteStore rejects case-variant metadata schemas before any migration", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-binding-case-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const db = new DatabaseSync(file);
+    db.exec(`CREATE TABLE OAUTH_STORE_METADATA (
+      singleton INTEGER NOT NULL,
+      instance_id TEXT NOT NULL
+    ) STRICT`);
+    db.close();
+    if (process.platform !== "win32") chmodSync(file, 0o600);
+    assert.throws(() => openSqliteStore(file), /database initialization failed/);
+    const inspect = new DatabaseSync(file);
+    const tables = inspect.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+    ).all().map((row) => (row as { name: string }).name);
+    inspect.close();
+    assert.deepEqual(tables, ["OAUTH_STORE_METADATA"], "case collision rejects before other migrations");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("SqliteStore completes an interrupted empty canonical metadata initialization", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-binding-empty-"));
   const file = join(dir, "oauth.sqlite");
