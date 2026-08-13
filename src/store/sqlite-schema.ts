@@ -47,6 +47,12 @@ const MIGRATIONS = [
     expires_at TEXT NOT NULL
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS idx_oauth_consent_jtis_expires_at ON oauth_consent_jtis (expires_at)`,
+  `CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id TEXT PRIMARY KEY NOT NULL,
+    redirect_uris_json TEXT NOT NULL,
+    application_type TEXT NOT NULL CHECK (application_type IN ('native', 'web')),
+    issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
+  ) STRICT`,
 ];
 
 export function migrateSqliteStore(db: DatabaseSync): void {
@@ -58,6 +64,7 @@ export function migrateSqliteStore(db: DatabaseSync): void {
   ensureColumn(db, "oauth_refresh_tokens", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_token_families", "resource", "TEXT");
   ensureColumn(db, "oauth_refresh_tokens", "resource", "TEXT");
+  assertClientTable(db);
 }
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {
@@ -65,4 +72,25 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, definitio
   if (!rows.some((row) => row.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+function assertClientTable(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(oauth_clients)").all() as Array<{
+    name: unknown; type: unknown; notnull: unknown; pk: unknown;
+  }>;
+  const expected = [
+    ["client_id", "TEXT", 1, 1],
+    ["redirect_uris_json", "TEXT", 1, 0],
+    ["application_type", "TEXT", 1, 0],
+    ["issued_at_epoch", "INTEGER", 1, 0],
+  ] as const;
+  if (columns.length !== expected.length || columns.some((column, index) => {
+    const wanted = expected[index];
+    return !wanted || column.name !== wanted[0] || column.type !== wanted[1]
+      || column.notnull !== wanted[2] || column.pk !== wanted[3];
+  })) throw new Error("oauth_clients schema is incompatible");
+  const table = db.prepare(
+    "SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = 'oauth_clients'",
+  ).get() as { strict: unknown } | undefined;
+  if (table?.strict !== 1) throw new Error("oauth_clients schema is incompatible");
 }

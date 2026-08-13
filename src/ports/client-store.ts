@@ -3,7 +3,7 @@
 // which drives the per-client redirect policy (§10.2, RC item (b)). Machine
 // clients (§17.2) are provisioned out-of-band into the same store: they carry
 // allowedScopes + secrets instead of redirect URIs. Reference adapter: an
-// in-memory map; a persisted adapter is deployment-specific.
+// in-memory map plus the user-only SQLite implementation.
 
 /** Discriminant for the two record shapes (contracts §6.4). `"machine"` marks a
  *  secret-bearing client provisioned per §17.2; its `sub` (= clientId) prefix

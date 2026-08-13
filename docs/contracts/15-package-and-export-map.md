@@ -117,7 +117,11 @@ versions mcp-sso is tested against, recorded in `docs/dependency-ledger.md`; Nod
 `>=24`, native TS, no build step); `server.ts` (the composition root, built from the
 root exports + the `./fastify`, `./store/sqlite`, `./identity/console-pairing` subpaths
 — quickstart secrets + console pairing + sqlite + the `/mcp` Streamable-HTTP Origin
-gate + a protected `/mcp`, zero-setup loopback by default); `.gitignore`
+gate + a protected `/mcp`, zero-setup loopback by default). The same SQLite instance
+implements both OAuth state and stored user DCR, so a generated client registration
+survives a server restart; the shipped-entrypoint integration test restarts between
+registration and authorization before completing pairing, token exchange, and an
+official-SDK tool call. `.gitignore`
 (`node_modules/` + the `.mcp-sso/` state dir); `.npmrc` (`ignore-scripts=true` —
 dependency lifecycle scripts disabled unless the operator vets one, the project's
 supply-chain posture); and `README.md` (the run steps +

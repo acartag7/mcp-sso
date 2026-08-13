@@ -150,9 +150,11 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
     const metadata = await fetchBounded(`${server.origin}/.well-known/oauth-authorization-server`); assert.equal(metadata.status, 200);
     assert.equal((await metadata.json() as { client_id_metadata_document_supported: boolean }).client_id_metadata_document_supported, true);
     const registration = await fetchBounded(`${server.origin}/oauth/register`, { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ redirect_uris: ["http://localhost:4321/callback"] }) });
+      body: JSON.stringify({ redirect_uris: ["http://localhost:4321/callback"], application_type: "native" }) });
     assert.equal(registration.status, 201);
     const clientId = (await registration.json() as { client_id: string }).client_id; assert.match(clientId, /^mcpdc_/);
+    await server.stop(); server = undefined;
+    server = await startGenerated(generated, stateDir, port);
     const firstVerifier = "release-pack-first-0123456789abcdef0123456789012345";
     const denyVerifier = "release-pack-deny-0123456789abcdef01234567890123456";
     const secondVerifier = "release-pack-second-0123456789abcdef012345678901234";

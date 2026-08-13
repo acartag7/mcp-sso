@@ -230,14 +230,14 @@ Each gateway is a small Deployment + Service + Ingress + Secret.
   never `emptyDir` (refresh tokens are long-lived sessions; losing the file logs
   everyone out). For ≥2 replicas or clean rolling updates, use `/store/mysql` (+
   `/rate-limit/redis` so limits are shared).
-- **Stored DCR needs a second shared store.** `/store/mysql` shares the
-  `StorePort` (codes, tokens, consent, granted scopes) but **not** dynamic client
-  registrations. With `dcr.mode: "stored"`, registrations go to a separate
-  `dcr.store` (`ClientStore`) — the shipped stores implement `StorePort` only and
-  the reference `ClientStore` is in-memory, so on ≥2 replicas a client that
-  registers on pod A is rejected `invalid_client` on pod B. Back the `ClientStore`
-  with the same shared DB (a deployer-supplied adapter today), or use
-  `dcr.mode: "stateless"` (no per-client state, multi-replica-safe as shipped).
+- **Stored DCR needs shared registration state.** `SqliteStore` implements both
+  `StorePort` and the user-registration `ClientStore`, so a one-replica SQLite
+  bridge passes the same instance to `Bridge` and `dcr.store`. `/store/mysql`
+  shares codes, tokens, consent, and granted scopes but not dynamic client
+  registrations. On ≥2 replicas, back `ClientStore` with the same shared DB
+  through a deployer-supplied adapter; otherwise a client registered on pod A is
+  rejected `invalid_client` on pod B. SQLite's client surface deliberately does
+  not implement the atomic `MachineClientStore` lifecycle.
 - **CIMD needs no client-registration store.** The client hosts its metadata
   document and the bridge validates it at authorization time. The current
   `BridgeConfig` still requires either stateless or stored DCR and advertises

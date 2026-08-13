@@ -86,7 +86,7 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.match(server, /origin\.includes\(","\)/, "generated /mcp gate rejects comma-coalesced Origin");
     assert.doesNotMatch(server, /request\.headers\.origin/, "generated /mcp gate never selects a normalized Origin");
     assert.match(server, /cimd:\s*\{\s*enabled:\s*true\s*\}/, "generated server enables CIMD");
-    assert.match(server, /dcr:\s*\{\s*mode:\s*"stateless"\s*\}/, "generated server retains DCR");
+    assert.match(server, /dcr:\s*\{\s*mode:\s*"stored",\s*store\s*\}/, "generated server persists DCR in its SQLite store");
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST, "http:\/\/localhost,http:\/\/127\.0\.0\.1"/, "generated local composition explicitly declares loopback callback origins");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -196,7 +196,7 @@ function waitFor(child: ChildProcess, regex: RegExp, timeoutMs: number): Promise
   });
 }
 
-test("bin init (spawn): full pairing round-trip — register → code → consent → token → SDK callTool", async () => {
+test("bin init (spawn): registration restart → pairing → token → SDK callTool", async () => {
   // The automated done-bar: a stranger's `npx mcp-sso init && npm install && npm start`
   // boots a server an operator pairs with via a console code, then an MCP client calls a
   // protected tool. Drives the WHOLE flow (not just the tokenless challenge) through the
@@ -212,13 +212,14 @@ test("bin init (spawn): full pairing round-trip — register → code → consen
   try {
     await spawnScaffold(proj);
     await linkDeps(proj);
-    const child = spawn("node", ["server.ts"], {
+    const first = spawn("node", ["server.ts"], {
       cwd: proj,
       // No OAUTH_ISSUER override: the default is http://127.0.0.1:PORT (matches the HOST
       // bind), so the test exercises the real default config, not a masked one.
       env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "127.0.0.1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    let child = first;
     let stderrBuf = "";
     child.stderr?.on("data", (c: Buffer) => { stderrBuf += c.toString(); });
     try {
@@ -236,17 +237,28 @@ test("bin init (spawn): full pairing round-trip — register → code → consen
       );
       const reg = await fetchBounded(`${origin}/oauth/register`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ redirect_uris: [redirect] }),
+        body: JSON.stringify({ redirect_uris: [redirect], application_type: "native" }),
       });
       assert.equal(reg.status, 201, "DCR register works");
       const clientId = (await reg.json() as { client_id: string }).client_id;
       assert.match(clientId, /^mcpdc_/, "real client_id");
 
+      child.kill("SIGTERM");
+      await new Promise<void>((resolveP) => child.once("close", () => resolveP()));
+      child = spawn("node", ["server.ts"], {
+        cwd: proj,
+        env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "127.0.0.1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      stderrBuf = "";
+      child.stderr?.on("data", (c: Buffer) => { stderrBuf += c.toString(); });
+      await waitFor(child, new RegExp(`mcp-sso listening on 127.0.0.1:${port}`), 15_000);
+
       // GET /oauth/authorize → the server prints the pairing code to stderr + returns the page
       const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
       const q = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirect, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" });
       const authPage = await fetchBounded(`${origin}/oauth/authorize?${q}`);
-      assert.equal(authPage.status, 200);
+      assert.equal(authPage.status, 200, "the registered client survives process restart");
       const authHtml = await authPage.text();
       const nonce = extractField(authHtml, "pairing_nonce");
       const code = extractCode(stderrBuf); // printed by the GET (lazy, on /oauth/authorize)

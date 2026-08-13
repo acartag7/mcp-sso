@@ -114,7 +114,8 @@ normal full suite remains part of the release gate and is not duplicated here.
 An actual private-directory npm tarball is shape-checked, installed with scripts
 disabled, and invoked through its installed `.bin/mcp-sso`. The unchanged
 exact-pinned scaffold is installed, typechecked, booted, paired, and driven through
-stateless DCR, PKCE, approve and deny, token, official-SDK `ping`/visible `pong`, refresh,
+stored DCR across a process restart, PKCE, approve and deny, token,
+official-SDK `ping`/visible `pong`, refresh,
 replay-family revocation, reauthorization, RFC 7009 revocation, SQLite restart,
 and JSONL no-secret checks. Every published export root is imported from the
 installed artifact and its only runtime dependency is `jose`.

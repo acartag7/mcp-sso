@@ -90,24 +90,26 @@ async function main(): Promise<void> {
   // the signing material on first boot (the fs-trust bar + zero-setup keys).
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
   const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
-  const config = createBridgeConfig({
-    issuer: ISSUER, resource: RESOURCE,
-    consentSigningSecret: secrets.consentSigningSecret,
-    signingPrivateJwk: secrets.signingPrivateJwk,
-    redirectAllowlist: list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
-    scopeCatalog: list(process.env.OAUTH_SCOPE_CATALOG, "mcp:read,mcp:write"),
-    defaultScopes: list(process.env.OAUTH_DEFAULT_SCOPES, "mcp:read"),
-    allowedOrigins: list(process.env.OAUTH_ALLOWED_ORIGINS, ISSUER),
-    dev: isHttpLoopback(ISSUER) ? { allowInsecureLocalhost: true } : undefined,
-    cimd: { enabled: true },
-    dcr: { mode: "stateless" },
-    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
-  });
+  const store = openSqliteStore(\`\${DIR}/auth.db\`);
+  let config: ReturnType<typeof createBridgeConfig>;
+  try { config = createBridgeConfig({
+      issuer: ISSUER, resource: RESOURCE, consentSigningSecret: secrets.consentSigningSecret,
+      signingPrivateJwk: secrets.signingPrivateJwk,
+      redirectAllowlist: list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
+      scopeCatalog: list(process.env.OAUTH_SCOPE_CATALOG, "mcp:read,mcp:write"),
+      defaultScopes: list(process.env.OAUTH_DEFAULT_SCOPES, "mcp:read"),
+      allowedOrigins: list(process.env.OAUTH_ALLOWED_ORIGINS, ISSUER),
+      dev: isHttpLoopback(ISSUER) ? { allowInsecureLocalhost: true } : undefined,
+      cimd: { enabled: true },
+      dcr: { mode: "stored", store },
+      accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000,
+      consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    });
+  } catch (error) { await store.close(); throw error; }
 
   const app = Fastify();
   const clock = new SystemClock();
-  const store = openSqliteStore(\`\${DIR}/auth.db\`);
-  const bridge = new Bridge({ config, store, clock, audit, acknowledgeUnsafeStatelessDefaults: true });
+  const bridge = new Bridge({ config, store, clock, audit });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
   const toNorm = (req: FastifyRequest): NormRequest => ({
     query: req.query as NormRequest["query"], body: req.body, headers: req.headers as NormRequest["headers"], ip: req.ip,

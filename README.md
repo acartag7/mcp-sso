@@ -58,8 +58,8 @@ claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp
 # → the server prints a one-time code; paste it into the browser, then approve.
 ```
 
-The generated server enables CIMD and retains stateless DCR compatibility; the
-client chooses which registration method it uses. The generated project is the
+The generated server enables CIMD and persists opaque DCR registrations in its
+SQLite database; the client chooses which registration method it uses. The generated project is the
 zero-setup console-pairing path. To run the repository's
 real-identity-provider example instead, start from an **mcp-sso repository
 checkout** (not the generated `my-mcp-server` directory), copy

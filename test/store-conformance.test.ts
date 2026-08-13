@@ -44,7 +44,7 @@ test("SqliteStore (file): persists no raw secrets and only OAuth tables", async 
   const tables = db.prepare(`SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name`).all()
     .map((r) => String((r as { name: unknown }).name));
   db.close();
-  assert.deepEqual(tables, ["oauth_auth_codes", "oauth_consent_jtis", "oauth_refresh_token_families", "oauth_refresh_tokens"]);
+  assert.deepEqual(tables, ["oauth_auth_codes", "oauth_clients", "oauth_consent_jtis", "oauth_refresh_token_families", "oauth_refresh_tokens"]);
   assert.equal(tables.some((n) => /content|body|cache|page/i.test(n)), false);
   rmSync(dir, { recursive: true, force: true });
 });
