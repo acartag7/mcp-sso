@@ -32,9 +32,8 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
   are conformant; one confirmed runtime mismatch remains (the unevaluated
   native-app precondition on the loopback port exception), plus four unresolved
   test-evidence rows. See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
-  and the release checklist in
-  [`docs/verification.md`](docs/verification.md#spec-release-re-verification-completed-2026-08-02)
-  and the blocker in [`docs/contracts.md`](docs/contracts.md) §0 status.
+  and the canonical current status in
+  [`docs/verification.md`](docs/verification.md#current-status).
 - **Governing RFCs:** [9728](https://datatracker.ietf.org/doc/html/rfc9728)
   (Protected Resource Metadata / PRM), [8707](https://datatracker.ietf.org/doc/html/rfc8707)
   (audience / resource parameter), [8414](https://datatracker.ietf.org/doc/html/rfc8414)
@@ -60,7 +59,7 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 | `src/identity/` | **Identity adapters:** `cloudflare-access.ts`, `entra.ts`, `entra-redirect.ts`, `entra-groups.ts`, `console-pairing.ts`. |
 | `src/audit/`, `src/rate-limit/` | Reference sinks (`jsonl-file.ts`, `webhook.ts`, `combine.ts`) and `redis.ts` rate limiter. |
 | `examples/` | `fastify-sqlite/` (RS + bridge + `/mcp`) and `api-key-gateway/` (SSO front door for a token-only backend). |
-| `docs/` | **`contracts.md`** = contract status + index; **`contracts/`** = one canonical file per numbered contract section; **`threat-model.md`** = STRIDE + gates; plus authorization, deployment, verification, dependency, and troubleshooting guides. |
+| `docs/` | **`contracts.md`** = contract routing index; **`contracts/`** = one canonical file per numbered contract section; **`verification.md`** = current release and conformance status; **`threat-model.md`** = STRIDE + gates; plus authorization, deployment, dependency, and troubleshooting guides. |
 | `test/` | Unit + integration + `e2e-mcp-sdk.test.ts` (full flow through the **official MCP SDK client**). |
 
 ## 4. Commands
