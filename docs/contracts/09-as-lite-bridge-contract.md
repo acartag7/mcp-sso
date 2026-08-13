@@ -167,8 +167,9 @@ client-controlled request input; when present, `prepare` uses it and does not fe
   the authorization-code TTL offset and MUST NOT move backward relative to the
   initial snapshot. The commit snapshot rechecks the verified signed `exp` and
   owns authorization-code expiry plus every later audit timestamp. An invalid or
-  backward commit snapshot returns direct `invalid_consent` with no fabricated
-  audit event; the JTI remains consumed. A valid commit snapshot at or after
+  backward commit snapshot returns direct `invalid_consent`; the JTI remains
+  consumed, and the failure audit uses the initial operation snapshot rather
+  than fabricating a commit timestamp. A valid commit snapshot at or after
   signed `exp` returns direct `invalid_consent` using that snapshot for the
   failure audit, before code generation/storage or success audit.
 - **CSRF/`origin`** must be exactly one primitive string equal to the issuer

@@ -25,7 +25,10 @@ likewise submits both `oauth.upstream.callback` and its callback-owned
 `identity.verify` copies through best-effort containment: neither a synchronous
 throw nor an asynchronous rejection can replace the authoritative callback
 response. This containment is a token- and upstream-callback-boundary
-guarantee, not a claim that every use-case repairs arbitrary custom ports.
+  guarantee, not a claim that every use-case repairs arbitrary custom ports.
+  Approval failure evidence in the post-JTI commit-clock window also uses this
+  best-effort containment so sink failure cannot replace the authoritative
+  `invalid_consent` response after the artifact has already been consumed.
 
 `JsonlFileAudit` is a filesystem boundary as well as an evidence sink. On a
 host where Node exposes `O_NOFOLLOW`, every event opens the configured final
