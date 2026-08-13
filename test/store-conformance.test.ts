@@ -92,6 +92,49 @@ test("SqliteStore rejects a malformed persisted binding during boot", async () =
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("SqliteStore rejects a metadata table without canonical singleton constraints", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-binding-shape-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const db = new DatabaseSync(file);
+    db.exec(`CREATE TABLE oauth_store_metadata (
+      singleton INTEGER NOT NULL,
+      instance_id TEXT NOT NULL
+    ) STRICT`);
+    db.prepare("INSERT INTO oauth_store_metadata VALUES (1, ?)")
+      .run("0123456789abcdefghijklmn");
+    db.close();
+    if (process.platform !== "win32") chmodSync(file, 0o600);
+    assert.throws(
+      () => openSqliteStore(file),
+      /sqlite: unsafe persistent state: database initialization failed/,
+    );
+    const inspect = new DatabaseSync(file);
+    const tables = inspect.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+    ).all().map((row) => (row as { name: string }).name);
+    inspect.close();
+    assert.deepEqual(tables, ["oauth_store_metadata"], "shape rejects before other migrations");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SqliteStore completes an interrupted empty canonical metadata initialization", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-binding-empty-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const db = new DatabaseSync(file);
+    db.exec(`CREATE TABLE oauth_store_metadata (
+    singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+    instance_id TEXT UNIQUE NOT NULL
+  ) STRICT`);
+    db.close();
+    if (process.platform !== "win32") chmodSync(file, 0o600);
+    const store = openSqliteStore(file);
+    assert.match(await store.getStoreInstanceId(), /^[A-Za-z0-9_-]{22,128}$/u);
+    await store.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("SqliteStore (file): persists no raw secrets and only OAuth tables", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-idp-store-"));
   const file = join(dir, "oauth.sqlite");

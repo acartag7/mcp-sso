@@ -14,6 +14,11 @@ const CLIENT_TABLE_SQL = `CREATE TABLE oauth_clients (
     issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
   ) STRICT`;
 
+const METADATA_TABLE_SQL = `CREATE TABLE oauth_store_metadata (
+    singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+    instance_id TEXT UNIQUE NOT NULL
+  ) STRICT`;
+
 const MIGRATIONS = [
   `PRAGMA foreign_keys = ON`,
   `CREATE TABLE IF NOT EXISTS oauth_auth_codes (
@@ -57,10 +62,7 @@ const MIGRATIONS = [
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS idx_oauth_consent_jtis_expires_at ON oauth_consent_jtis (expires_at)`,
   CLIENT_TABLE_SQL.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"),
-  `CREATE TABLE IF NOT EXISTS oauth_store_metadata (
-    singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
-    instance_id TEXT UNIQUE NOT NULL
-  ) STRICT`,
+  METADATA_TABLE_SQL.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"),
 ];
 
 export function migrateSqliteStore(db: DatabaseSync): void {
@@ -69,17 +71,21 @@ export function migrateSqliteStore(db: DatabaseSync): void {
     throw new Error("oauth_clients schema is incompatible");
   }
   if (existingClientObject) assertClientTable(db);
-  const hasMetadata = db.prepare(
-    "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_store_metadata'",
+  const metadataObject = db.prepare(
+    "SELECT type FROM sqlite_schema WHERE name = 'oauth_store_metadata'",
   ).get();
-  if (hasMetadata) assertPersistedStoreInstance(db);
+  if (metadataObject) {
+    assertMetadataSchema(db);
+    assertMetadataValue(db, false);
+  }
   for (const migration of MIGRATIONS) {
     db.exec(migration);
   }
   db.prepare(`INSERT OR IGNORE INTO oauth_store_metadata (singleton, instance_id) VALUES (1, ?)`).run(
     randomBytes(18).toString("base64url"),
   );
-  assertPersistedStoreInstance(db);
+  assertMetadataSchema(db);
+  assertMetadataValue(db, true);
   ensureColumn(db, "oauth_auth_codes", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_token_families", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_tokens", "grant_generation", "INTEGER");
@@ -93,10 +99,24 @@ function clientSchemaObject(db: DatabaseSync): { type: unknown } | undefined {
     { type: unknown } | undefined;
 }
 
-function assertPersistedStoreInstance(db: DatabaseSync): void {
+function assertMetadataSchema(db: DatabaseSync): void {
+  const schema = db.prepare(
+    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_store_metadata'",
+  ).get() as { sql?: unknown } | undefined;
+  if (schema?.sql !== METADATA_TABLE_SQL) {
+    throw new Error("oauth_store_metadata schema is incompatible");
+  }
+  const attached = db.prepare(`SELECT name FROM sqlite_schema
+    WHERE tbl_name = 'oauth_store_metadata' AND name != 'oauth_store_metadata'
+      AND sql IS NOT NULL AND name != 'sqlite_autoindex_oauth_store_metadata_1'`).get();
+  if (attached) throw new Error("oauth_store_metadata schema is incompatible");
+}
+
+function assertMetadataValue(db: DatabaseSync, required: boolean): void {
   const metadata = db.prepare(
     "SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1",
   ).get() as { instance_id?: unknown } | undefined;
+  if (!metadata && !required) return;
   assertStoreInstanceId(metadata?.instance_id);
 }
 

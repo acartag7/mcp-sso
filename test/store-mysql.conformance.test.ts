@@ -134,6 +134,60 @@ if (RUN) {
     }
   });
 
+  test("MysqlStore: concurrent first boot initializes one shared binding", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    const [first, second] = await Promise.all([
+      createMysqlStore(MYSQL_URL as string),
+      createMysqlStore(MYSQL_URL as string),
+    ]);
+    try {
+      assert.equal(await first.getStoreInstanceId(), await second.getStoreInstanceId());
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
+  test("MysqlStore: interrupted empty metadata initialization is completed", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    await admin!.query(`CREATE TABLE oauth_store_metadata (
+      singleton TINYINT UNSIGNED NOT NULL,
+      instance_id VARCHAR(128) NOT NULL,
+      PRIMARY KEY (singleton),
+      UNIQUE KEY uq_oauth_store_metadata_instance (instance_id),
+      CHECK (singleton = 1)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    const store = await createMysqlStore(MYSQL_URL as string);
+    try {
+      assert.match(await store.getStoreInstanceId(), /^[A-Za-z0-9_-]{22,128}$/u);
+    } finally {
+      await store.close();
+    }
+  });
+
+  test("MysqlStore: malformed metadata singleton schema fails before other DDL", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    await admin!.query(`CREATE TABLE oauth_store_metadata (
+      singleton TINYINT UNSIGNED NOT NULL,
+      instance_id VARCHAR(128) NOT NULL,
+      UNIQUE KEY uq_oauth_store_metadata_instance (instance_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    await admin!.query(
+      "INSERT INTO oauth_store_metadata (singleton, instance_id) VALUES (1, ?)",
+      ["0123456789abcdefghijklmn"],
+    );
+    try {
+      await assert.rejects(
+        createMysqlStore(MYSQL_URL as string),
+        /oauth_store_metadata indexes are incompatible/,
+      );
+    } finally {
+      await admin!.query("DROP TABLE oauth_store_metadata");
+      const restored = await createMysqlStore(MYSQL_URL as string);
+      await restored.close();
+    }
+  });
+
   test("MysqlStore/MySQL 8.4: migrates VARCHAR(255) subjects and persists max Entra authorization/refresh", async () => {
     await admin!.query("ALTER TABLE oauth_auth_codes MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
     await admin!.query("ALTER TABLE oauth_refresh_tokens MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");

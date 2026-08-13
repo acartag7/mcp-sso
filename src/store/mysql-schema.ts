@@ -1,8 +1,3 @@
-// MysqlStore schema + boot-time config assertions (contracts §12.3). Idempotent.
-// State is OAuth-only — no content/body/cache tables (asserted in the conformance
-// suite). All secrets are SHA-256 digests; there is NO grant table (findGrantedScopes
-// queries the refresh-token tables directly).
-//
 // Every oauth_* table is DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin: MySQL 8.x
 // otherwise defaults to case-insensitive utf8mb4_0900_ai_ci, which would conflate
 // distinct hashes/identifiers on the PRIMARY KEY and match subject/client_id
@@ -23,7 +18,9 @@ import {
   grantGenerationFromStored, refreshResourceFromStored,
 } from "../ports/store.ts";
 import { migrateMysqlSubjectColumns } from "./mysql-subject-schema.ts";
-import { assertMysqlStoreInstance, ensureMysqlStoreInstance } from "./mysql-instance.ts";
+import {
+  assertMysqlStoreInstanceSchema, ensureMysqlStoreInstance,
+} from "./mysql-instance.ts";
 
 export const MYSQL_OAUTH_TABLES = [
   "oauth_auth_codes", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_consent_jtis", "oauth_store_metadata",
@@ -84,13 +81,15 @@ const MIGRATIONS = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`,
 ];
 
-/** Run idempotent migrations and boot assertions before first use. */
 export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await assertStrictMode(conn);
   if (await tableExists(conn, "oauth_consent_jtis")) await assertConsentJtiUnique(conn);
-  if (await tableExists(conn, "oauth_store_metadata")) await assertMysqlStoreInstance(conn);
-  for (const ddl of MIGRATIONS) await conn.query(ddl);
+  const metadataDdl = MIGRATIONS.at(-1)!;
+  if (await tableExists(conn, "oauth_store_metadata")) await assertMysqlStoreInstanceSchema(conn);
+  await conn.query(metadataDdl);
+  await assertMysqlStoreInstanceSchema(conn);
   await ensureMysqlStoreInstance(conn);
+  for (const ddl of MIGRATIONS.slice(0, -1)) await conn.query(ddl);
   await ensureColumn(conn, "oauth_auth_codes", "grant_generation", "BIGINT UNSIGNED NULL");
   await ensureColumn(conn, "oauth_refresh_token_families", "grant_generation", "BIGINT UNSIGNED NULL");
   await ensureColumn(conn, "oauth_refresh_tokens", "grant_generation", "BIGINT UNSIGNED NULL");
