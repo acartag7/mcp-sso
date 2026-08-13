@@ -104,8 +104,20 @@ test("Bridge boot accepts each adjacent composition when one unsafe-default cond
   assert.doesNotThrow(() => construct(config(), { async check() { return true; } }));
   assert.doesNotThrow(() => construct(config({ redirectAllowlist: ["https://client.test/callback"] })));
   assert.doesNotThrow(() => construct(config({ redirectAllowlist: ["https://localhost/callback"] })));
+  assert.doesNotThrow(() => construct(config({
+    issuer: "http://localhost:3000", resource: "http://localhost:3000/mcp",
+    redirectAllowlist: ["http://127.0.0.1:4321/callback"],
+    dev: { allowInsecureLocalhost: true },
+  })));
   const clients = { async save() {}, async find() { return null; } };
   assert.doesNotThrow(() => construct(config({ dcr: { mode: "stored", store: clients } })));
+});
+
+test("an HTTP loopback callback does not mitigate an internet-facing composition", () => {
+  assert.throws(
+    () => construct(config({ redirectAllowlist: ["http://localhost:4321/callback"] })),
+    /application-specific HTTPS redirect/,
+  );
 });
 
 test("example factories reject before opening SQLite and do not coerce malformed acknowledgements", async () => {

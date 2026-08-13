@@ -131,7 +131,9 @@ freezes). The frozen object is the only thing passed to use-cases.
 shape where all three conditions hold: DCR is stateless, no `RateLimitPort` was
 supplied, and `redirectAllowlist` adds no application-specific HTTPS redirect
 trust beyond the hosted defaults and the explicit loopback starter origins
-(`localhost`, `127.0.0.1`, `[::1]`). Each choice remains available separately;
+(`localhost`, `127.0.0.1`, `[::1]`). A bridge whose issuer and resource are both
+loopback URLs under `dev.allowInsecureLocalhost` is local-only and does not need
+that internet-facing mitigation. Each choice remains available separately;
 the unbounded, broadly reusable starter combination is not a valid composition.
 The check runs before the bridge constructs a CIMD resolver or any use-case.
 `acknowledgeUnsafeStatelessDefaults: true` on `BridgeDeps` is an explicit,

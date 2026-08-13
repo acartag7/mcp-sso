@@ -36,6 +36,13 @@ export function assertSafeDeploymentCombination(deps: {
   }
   const bounded = deps.rateLimit !== undefined && deps.rateLimit !== noopRateLimit;
   if (deps.config.dcr.mode !== "stateless" || bounded) return;
+  const localOnly = deps.config.dev?.allowInsecureLocalhost === true
+    && isLoopbackUrl(deps.config.issuer) && isLoopbackUrl(deps.config.resource);
+  if (localOnly) {
+    if (deps.acknowledgeUnsafeStatelessDefaults === true
+      && options.emitAcknowledgementWarning !== false) warnAcknowledgement();
+    return;
+  }
   const hasApplicationSpecificHttps = deps.config.redirectAllowlist.some(
     isApplicationSpecificHttpsRedirect,
   );
@@ -45,9 +52,7 @@ export function assertSafeDeploymentCombination(deps: {
         throw new AuthConfigError("acknowledgeUnsafeStatelessDefaults is restricted to loopback issuer and resource URLs");
       }
       if (options.emitAcknowledgementWarning !== false) {
-        console.warn(
-          "[mcp-sso] acknowledgeUnsafeStatelessDefaults is ON — stateless DCR, starter-only redirect trust, and no limiter are unsafe for internet-facing use.",
-        );
+        warnAcknowledgement();
       }
       return;
     }
@@ -55,4 +60,10 @@ export function assertSafeDeploymentCombination(deps: {
       "stateless DCR with no application-specific HTTPS redirect and no RateLimitPort is unsafe; use stored DCR, configure an application callback, supply a limiter, or explicitly acknowledge the temporary starter risk",
     );
   }
+}
+
+function warnAcknowledgement(): void {
+  console.warn(
+    "[mcp-sso] acknowledgeUnsafeStatelessDefaults is ON — stateless DCR, starter-only redirect trust, and no limiter are unsafe for internet-facing use.",
+  );
 }
