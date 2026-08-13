@@ -66,6 +66,19 @@ const MIGRATIONS = [
 ];
 
 export function migrateSqliteStore(db: DatabaseSync): void {
+  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    migrateSqliteStoreLocked(db);
+    db.exec("COMMIT");
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* preserve the migration failure */ }
+    throw error;
+  }
+}
+
+function migrateSqliteStoreLocked(db: DatabaseSync): void {
   const existingClientObject = clientSchemaObject(db);
   if (existingClientObject && existingClientObject.type !== "table") {
     throw new Error("oauth_clients schema is incompatible");
@@ -78,7 +91,7 @@ export function migrateSqliteStore(db: DatabaseSync): void {
     assertMetadataSchema(db);
     assertMetadataValue(db, false);
   }
-  for (const migration of MIGRATIONS) {
+  for (const migration of MIGRATIONS.slice(1)) {
     db.exec(migration);
   }
   db.prepare(`INSERT OR IGNORE INTO oauth_store_metadata (singleton, instance_id) VALUES (1, ?)`).run(

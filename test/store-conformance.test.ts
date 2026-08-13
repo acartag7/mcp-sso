@@ -3,6 +3,7 @@
 // adapter must pass the same suite by importing runStoreConformance.
 
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +36,32 @@ test("one SQLite file preserves its consent binding across reopen", async () => 
     const reopened = openSqliteStore(file);
     assert.equal(await reopened.getStoreInstanceId(), binding);
     await reopened.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("concurrent SQLite first boot shares one initialized binding", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-race-"));
+  const file = join(dir, "oauth.sqlite");
+  const moduleUrl = new URL("../src/store/sqlite.ts", import.meta.url).href;
+  const startAt = Date.now() + 500;
+  const script = `
+    import { openSqliteStore } from ${JSON.stringify(moduleUrl)};
+    const delay = Math.max(0, Number(process.argv[2]) - Date.now());
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+    const store = openSqliteStore(process.argv[1]);
+    process.stdout.write(await store.getStoreInstanceId());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await store.close();
+  `;
+  try {
+    const bindings = await Promise.all(Array.from({ length: 8 }, () => new Promise<string>((resolveP, reject) => {
+      execFile(process.execPath, ["--input-type=module", "--eval", script, file, String(startAt)],
+        { timeout: 15_000 }, (error, stdout, stderr) => {
+          if (error) reject(new Error(`concurrent SQLite boot failed: ${stderr || error.message}`));
+          else resolveP(stdout);
+        });
+    })));
+    assert.equal(new Set(bindings).size, 1, "every process observes one durable binding");
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

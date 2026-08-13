@@ -28,7 +28,9 @@ The SQL adapters admit only the required metadata table shape: one non-null
 singleton column uniquely keyed and constrained to the value `1`, plus one
 non-null unique instance identifier, with no triggers or foreign keys. They create and initialize that table in a
 concurrency-safe create-then-insert-if-absent sequence before migrating other
-OAuth state. An interrupted empty canonical initialization is completed;
+OAuth state. SQLite re-admits a concurrently created file, waits up to five
+seconds for the migration writer, and runs schema admission, metadata insertion,
+and all OAuth DDL in one `BEGIN IMMEDIATE` transaction. An interrupted empty canonical initialization is completed;
 malformed pre-existing metadata rejects before migration writes.
 
 ## 12.1 Records (secrets are SHA-256 hex digests; timestamps are UTC ISO 8601 with EXACTLY 3 ms digits)

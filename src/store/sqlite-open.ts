@@ -85,7 +85,9 @@ function createNew(path: string): AdmittedSqliteFile {
   try {
     fd = openSync(path, flags, Number(FILE_MODE));
   } catch (error) {
-    if (hasCode(error, "EEXIST")) fail("database path appeared concurrently");
+    // A sibling process may win first creation after our lstat. Re-admit the exact
+    // winner through the existing-file path; all existing-file checks still run.
+    if (hasCode(error, "EEXIST")) return openExisting(path);
     if (hasCode(error, "ELOOP")) fail("final path is a symlink or junction");
     fail("cannot create the database file");
   }
