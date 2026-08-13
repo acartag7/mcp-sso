@@ -28,12 +28,13 @@ How mcp-sso proves a release actually works.
 > registration surface. On this source branch, RFC 9207 error redirects include
 > the configured issuer, closing the advertised-support mismatch; this is not
 > yet a published-release claim. Final conformance remains
-> pending on two known runtime items: `requireScope` performs exact membership
-> rather than accounting for scope hierarchies; and CIMD D00-4.5.2 applies the
-> loopback port exception without checking the native-app precondition. The
+> pending on one known runtime item: `requireScope` performs exact membership
+> rather than accounting for scope hierarchies. CIMD D00-4.5.2 now gates the
+> loopback port exception on exact `application_type: "native"`; its dedicated
+> frozen suite is committed but remains inactive pending a phase-only PR. The
 > final artifact's referenced draft `-00` is completely mapped. D00-4.1.4 media
-> types and shared-cache handling are conformant; no test-evidence rows remain
-> unresolved. See the matrix in
+> types and shared-cache handling are conformant; one governed activation/evidence
+> row remains unresolved. See the matrix in
 > [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
 > and the completed [spec-release re-verification](#spec-release-re-verification-completed-2026-08-02).
 >
@@ -534,7 +535,7 @@ its enforcement evidence.
 | S6b.2 | Happy path | URL-shaped `client_id` fetches the doc, validates; authorize→token→`/mcp` succeeds. |
 | S6b.3 | Generic client error | Every CIMD failure returns identical client-facing error text. |
 | S6b.4 | Audit detail | `oauth.cimd.fetch` records the specific reason without leaking the document body or secrets. |
-| S6b.5 | Redirect URI match | Exact match required; loopback any-port exception honored. **PENDING (D00-4.5.2):** the exception must additionally be gated on a document declaring `application_type: "native"`, with `"web"` and absent both matching exactly. |
+| S6b.5 | Redirect URI match | Exact match required; the loopback any-port exception is gated on a document declaring exact `application_type: "native"`, with `"web"` and absent both matching exactly. **IMPLEMENTED; FROZEN ACTIVATION PENDING (D00-4.5.2).** |
 | S6b.6 | Scope accumulation (CIMD deferred) | CIMD ids do NOT accumulate: a genuine CIMD authorization reports `priorScopes = []` and mints only the requested (ceiling-bounded) scopes in BOTH DCR modes; seed an active legacy URL-keyed refresh row with a broader scope and prove it is never unioned. Control: an opaque stored-DCR client still accumulates. (§17.1.6 decision 3.) |
 | S6b.7 | Metadata flag | `client_id_metadata_document_supported` appears only when enabled. |
 | S6b.8 | Cache (freshness) | Cache HIT reuses only a fresh validated document. The shared cache gives valid `s-maxage` priority over `max-age`, rejects `private`, `no-store`, `no-cache`, and `Vary: *`, and includes Age, valid Date apparent age, and observed response delay. It is bounded LRU, per Bridge, raw-client-id keyed, and serves direct-mode prepare plus upstream redirect resolution. |
@@ -758,6 +759,19 @@ pending on three known items:
    (`src/cimd/registration.ts:82-95`) applies RFC 9700's native-app-only
    loopback port exception without evaluating the client type, so a document
    declaring `application_type: "web"` still receives it.
+
+### Corrections after the 2026-08-02 receipt (append-only)
+
+- **2026-08-14:** the three-item verdict above is retained as the evidence
+  state on 2026-08-02 and is now superseded for current-source status. RFC 9207
+  error redirects carry the configured issuer. D00-4.5.2 now validates and
+  carries optional `application_type` through document projection, signed flow
+  state, callback, and prepare, and grants the loopback any-port exception only
+  to exact `"native"`; the frozen four-group policy suite passes under temporary
+  activation but remains inactive pending its dedicated phase-only PR. Scope
+  hierarchy is therefore the sole remaining runtime defect, while CIMD retains
+  one governed activation/evidence gate. These are source-branch findings, not
+  a published-release claim.
    D00-4.1.4 is closed: alternate `+json` media types are restricted to the
    `application/` tree, with hostile direct and upstream resolution tests.
    Four rows also lack complete hostile or shipped-route evidence: symmetric

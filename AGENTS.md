@@ -31,9 +31,9 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
   `MUST`; and the requirement mapping for the final artifact's referenced CIMD
   draft `-00` is now
   complete. D00-4.1.4 media-type acceptance and D00-4.4.2 shared-cache handling
-  are conformant; one confirmed runtime mismatch remains (the unevaluated
-  native-app precondition on the loopback port exception); no unresolved
-  test-evidence rows remain. See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
+  are conformant; the native-app precondition on the loopback port exception is
+  implemented, with its dedicated frozen phase still inactive; one governed
+  activation/evidence row remains. See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
   and the canonical current status in
   [`docs/verification.md`](docs/verification.md#current-status).
 - **Governing RFCs:** [9728](https://datatracker.ietf.org/doc/html/rfc9728)
