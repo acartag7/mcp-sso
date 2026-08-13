@@ -82,31 +82,35 @@ export function safeErrorForStderr(error: unknown, exactSecrets: readonly string
  *  configured secret from splitting a larger credential before the generic
  *  matcher can see it. */
 function redactSecretsAndExact(input: string, secrets: readonly string[]): string {
-  const spans: Array<[number, number]> = [];
+  const source = input.slice(0, 8192);
+  const covered = new Uint8Array(source.length);
+  const cover = (start: number, end: number): void => {
+    covered.fill(1, start, Math.min(end, source.length));
+  };
   for (const pattern of SECRET_PATTERNS) {
     pattern.lastIndex = 0;
-    for (const match of input.matchAll(pattern)) {
+    for (const match of source.matchAll(pattern)) {
       const start = match.index;
-      spans.push([start, start + match[0].length]);
+      cover(start, start + match[0].length);
     }
   }
   for (const secret of secrets) {
     let start = 0;
-    while ((start = input.indexOf(secret, start)) >= 0) {
-      spans.push([start, start + secret.length]);
+    while ((start = source.indexOf(secret, start)) >= 0) {
+      cover(start, start + secret.length);
       start += secret.length;
     }
+    if (secret.length > source.length) {
+      for (let position = 0; position < Math.min(200, source.length); position += 1) {
+        if (input.startsWith(secret, position)) cover(position, source.length);
+      }
+    }
   }
-  if (spans.length === 0) return input;
-  spans.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
   let output = "";
-  let cursor = 0;
-  for (const [start, end] of spans) {
-    if (end <= cursor) continue;
-    if (start > cursor) output += input.slice(cursor, start);
-    cursor = end;
+  for (let index = 0; index < source.length; index += 1) {
+    if (covered[index] === 0) output += source[index];
   }
-  return output + input.slice(cursor);
+  return output;
 }
 
 function removeExactSecrets(input: string, secrets: readonly string[]): string {

@@ -280,6 +280,20 @@ test("WebhookAudit: case-duplicate header values remain individually secret", as
   assert.equal(stderr.includes("short-two"), false);
 });
 
+test("WebhookAudit: hostile large diagnostics have bounded exact-secret processing", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?padding=a", {
+    fetchImpl: (async () => { throw new Error("a".repeat(3_000_000)); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  assert.equal(captured.messages.join("\n").includes("a"), false);
+  assert.ok(captured.messages.join("\n").length <= 200);
+});
+
 test("WebhookAudit: credential-bearing query string in the URL is scrubbed from stderr", async () => {
   // A query param can carry a credential (e.g. ?access_token=…). The regex
   // redactor does NOT catch `access_token=` (the `_` defeats the \b token
