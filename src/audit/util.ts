@@ -82,6 +82,7 @@ export function safeErrorForStderr(error: unknown, exactSecrets: readonly string
  *  configured secret from splitting a larger credential before the generic
  *  matcher can see it. */
 function redactSecretsAndExact(input: string, secrets: readonly string[]): string {
+  if (input.length > 8192) return "diagnostic unavailable";
   const source = input.replace(STDERR_LINE_BREAKS, " ").slice(0, 8192);
   const covered = new Uint8Array(source.length);
   const cover = (start: number, end: number): void => {

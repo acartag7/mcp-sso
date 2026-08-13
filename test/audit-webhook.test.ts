@@ -280,7 +280,7 @@ test("WebhookAudit: case-duplicate header values remain individually secret", as
   assert.equal(stderr.includes("short-two"), false);
 });
 
-test("WebhookAudit: hostile large diagnostics have bounded exact-secret processing", async () => {
+test("WebhookAudit: hostile large diagnostics fall back before exact-secret processing", async () => {
   const sink = new WebhookAudit("https://siem.test/ingest?padding=a", {
     fetchImpl: (async () => { throw new Error("a".repeat(3_000_000)); }) as typeof fetch,
   });
@@ -290,8 +290,9 @@ test("WebhookAudit: hostile large diagnostics have bounded exact-secret processi
   } finally {
     captured.restore();
   }
-  assert.equal(captured.messages.join("\n").includes("a"), false);
-  assert.ok(captured.messages.join("\n").length <= 200);
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("a".repeat(100)), false);
+  assert.ok(stderr.length <= 200);
 });
 
 test("WebhookAudit: control normalization cannot expose a secret across the processing cap", async () => {
@@ -306,7 +307,9 @@ test("WebhookAudit: control normalization cannot expose a secret across the proc
   } finally {
     captured.restore();
   }
-  assert.equal(captured.messages.join("\n").includes("!"), false);
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("!"), false);
+  assert.match(stderr, /diagnostic unavailable/);
 });
 
 test("WebhookAudit: credential-bearing query string in the URL is scrubbed from stderr", async () => {
