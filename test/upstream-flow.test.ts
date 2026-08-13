@@ -859,6 +859,13 @@ test("entra-redirect: exchange success + verify ok => {ok:true,identity}; verify
   const mutableOnlyId = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport: mutableOnlyTransport, verifyKey, currentDate: new Date(NOW_MS) });
   const mutableOnly = await mutableOnlyId.exchangeAndVerify({ code: "c", codeVerifier: "v".repeat(43), nonce: "N1" });
   assert.ok(!mutableOnly.ok && mutableOnly.kind === "identity_rejected" && mutableOnly.reason === "entra_no_subject");
+  const noIatToken = await new SignJWT({ tid: tenantId, nonce: "N1", sub: "redirect-sub" })
+    .setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "k1" })
+    .setIssuer(entraIssuer(tenantId)).setAudience(clientId).setExpirationTime(now + 3600).sign(privateKey);
+  const noIatTransport = { async postForm(): Promise<{ status: number; text(): Promise<string> }> { return { status: 200, text: async () => JSON.stringify({ id_token: noIatToken }) }; } };
+  const noIatId = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport: noIatTransport, verifyKey, currentDate: new Date(NOW_MS) });
+  const noIat = await noIatId.exchangeAndVerify({ code: "c", codeVerifier: "v".repeat(43), nonce: "N1" });
+  assert.deepEqual(noIat, { ok: false, kind: "identity_rejected", reason: "entra_bad_claim" });
   // non-200 => exchange_failed
   const fail200Transport = { async postForm(): Promise<{ status: number; text(): Promise<string> }> { return { status: 500, text: async () => "boom" }; } };
   const idFail = createEntraRedirectIdentity({ tenantId, clientId, redirectUri }, { transport: fail200Transport, verifyKey, currentDate: new Date(NOW_MS) });

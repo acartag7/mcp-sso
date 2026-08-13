@@ -117,6 +117,7 @@ Verified-context rejections return `identity_rejected` (a 302 redirect with
 | `iss` != the tenant issuer (multi-tenant, after `tid`) | `entra_bad_iss` |
 | `aud` != `clientId` | `entra_bad_aud` |
 | `nonce` mismatch | `entra_bad_nonce` |
+| Missing, non-numeric, or non-finite `iat` | `entra_missing_iat` (pure validator) / `entra_bad_claim` (signed wrapper) |
 | No `exp` | `entra_missing_exp` |
 | Neither a usable non-blank string `oid` nor `sub` | `entra_no_subject` |
 | Subject not in `subjectAllowlist` | `entra_subject_not_allowed` |
@@ -166,7 +167,7 @@ scope outside the catalog, or a non-array `baseScopes`.
   nonce-bound exchange (the Cloudflare Access model). A custom `IdentityPort` must
   route raw tokens through the verifying wrapper (`verify` / `verifyEntraIdToken`),
   never the pure `validateEntraIdToken` (which validates `iss`/`aud`/`tid`/`nonce`/
-  `exp` but **skips signature**).
+  finite `iat`/`exp` but **skips signature**).
 - **The Entra token endpoint is deployer-trusted** (computed from `tenantId`, not
   discovered) with a 10 s timeout — deliberately not behind the §17.1 SSRF guard.
 

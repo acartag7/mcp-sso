@@ -136,7 +136,8 @@ export function validateEntraIdToken(payload: EntraPayload, config: EntraConfig,
   }
   if (payload.aud !== config.clientId) return { ok: false, reason: "entra_bad_aud" };
   if (expectedNonce !== undefined && payload.nonce !== expectedNonce) return { ok: false, reason: "entra_bad_nonce" };
-  if (!payload.exp) return { ok: false, reason: "entra_missing_exp" };
+  if (typeof payload.iat !== "number" || !Number.isFinite(payload.iat)) return { ok: false, reason: "entra_missing_iat" };
+  if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) return { ok: false, reason: "entra_missing_exp" };
   const oid = usableString(payload.oid);
   const sub = usableString(payload.sub);
   const subject = oid ?? (sub ? `${acceptedIssuer}|${sub}` : undefined);
@@ -188,7 +189,7 @@ export interface EntraVerifyOptions {
  *  so the full path is testable with a known key — no JWKS fetch. */
 export async function verifyEntraIdToken(token: string, key: EntraVerifyKey, config: EntraConfig, options?: EntraVerifyOptions): Promise<IdentityResult> {
   try {
-    const { payload } = await jwtVerify<EntraPayload>(token, key, { algorithms: ["RS256"], currentDate: options?.currentDate });
+    const { payload } = await jwtVerify<EntraPayload>(token, key, { algorithms: ["RS256"], requiredClaims: ["iat", "exp"], currentDate: options?.currentDate });
     return validateEntraIdToken(payload, config, options?.expectedNonce);
   } catch (error) {
     return { ok: false, reason: jwtErrorReason(error) };
@@ -223,7 +224,7 @@ export function createEntraIdentity(config: EntraConfig, opts?: { scopeCatalog?:
     async verify(input: unknown, options?: { expectedNonce?: string }): Promise<IdentityResult> {
       if (typeof input !== "string" || !input) return { ok: false, reason: "entra_id_token_missing" };
       try {
-        const { payload } = await jwtVerify<EntraPayload>(input, jwks, { algorithms: ["RS256"] });
+        const { payload } = await jwtVerify<EntraPayload>(input, jwks, { algorithms: ["RS256"], requiredClaims: ["iat", "exp"] });
         return validateEntraIdToken(payload, config, options?.expectedNonce);
       } catch (error) {
         return { ok: false, reason: jwtErrorReason(error) };
@@ -245,5 +246,4 @@ function jwtErrorReason(error: unknown): string {
 
 // Public group-authorization API (§17.4) re-exported for the ./identity/entra subpath.
 export { type GroupAuthorization, assertGroupAuthorizationMapping, resolveGroupCeiling } from "./entra-groups.ts";
-// §17.11 redirect-flow identity (createEntraRedirectIdentity) re-exported for the ./identity/entra subpath.
 export { createEntraRedirectIdentity, type EntraRedirectOptions } from "./entra-redirect.ts";

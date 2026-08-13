@@ -34,12 +34,17 @@ test("getAuthorizationUrl: PKCE S256 is enforced on the primitive (a non-S256 me
   assert.throws(() => getAuthorizationUrl(CONFIG, { state: "s1", codeChallenge: "c", codeChallengeMethod: "plain" } as never));
 });
 
-test("validateEntraIdToken: single-tenant iss/aud/tid/exp gates + exact oid subject", () => {
+test("validateEntraIdToken: single-tenant iss/aud/tid/iat/exp gates + exact oid subject", () => {
   assert.equal(validateEntraIdToken(payload() as never, CONFIG).ok, true);
   assert.equal(validateEntraIdToken(payload({ iss: "https://evil/v2.0" }) as never, CONFIG).ok, false); // bad iss
   assert.equal(validateEntraIdToken(payload({ aud: "other" }) as never, CONFIG).ok, false); // bad aud
   assert.equal(validateEntraIdToken(payload({ tid: OTHER_TENANT }) as never, CONFIG).ok, false); // foreign tid
-  assert.equal(validateEntraIdToken(payload({ exp: undefined }) as never, CONFIG).ok, false); // no exp
+  for (const iat of [undefined, null, "1", Number.NaN, Infinity, -Infinity]) {
+    assert.deepEqual(validateEntraIdToken(payload({ iat }) as never, CONFIG), { ok: false, reason: "entra_missing_iat" });
+  }
+  for (const exp of [undefined, null, "1", Number.NaN, Infinity, -Infinity]) {
+    assert.deepEqual(validateEntraIdToken(payload({ exp }) as never, CONFIG), { ok: false, reason: "entra_missing_exp" });
+  }
   const oid = validateEntraIdToken(payload({ oid: "oid-exact", sub: "sub-ignored" }) as never, CONFIG);
   assert.equal(oid.ok && oid.identity.subject, "oid-exact");
 });
@@ -142,6 +147,9 @@ test("verifyEntraIdToken: recorded fixture (known RS256 key, no JWKS fetch)", as
 
   assert.equal((await verifyEntraIdToken(await sign(payload({ iss: entraIssuer(OTHER_TENANT), tid: OTHER_TENANT })), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) })).ok, false); // foreign tenant, single-tenant config
   assert.equal((await verifyEntraIdToken(await sign(payload(), { exp: NOW - 120 }), publicKey, CONFIG, { currentDate: new Date(NOW * 1000) })).ok, false); // expired
+  const noIat = await new SignJWT(payload({ iat: undefined })).setProtectedHeader({ alg: "RS256", typ: "JWT" })
+    .setExpirationTime(NOW + 3600).sign(privateKey);
+  assert.deepEqual(await verifyEntraIdToken(noIat, publicKey, CONFIG, { currentDate: new Date(NOW * 1000) }), { ok: false, reason: "entra_bad_claim" });
   // nonce binding
   assert.equal((await verifyEntraIdToken(await sign(payload({ nonce: "n-1" })), publicKey, CONFIG, { currentDate: new Date(NOW * 1000), expectedNonce: "n-1" })).ok, true);
   assert.equal((await verifyEntraIdToken(await sign(payload({ nonce: "n-1" })), publicKey, CONFIG, { currentDate: new Date(NOW * 1000), expectedNonce: "other" })).ok, false);
@@ -194,6 +202,11 @@ test("createEntraIdentity: remote JWKS uses issuer|sub and rejects mutable-only 
     assert.equal(noOid.ok && noOid.identity.subject, `${entraIssuer(TENANT)}|factory-sub`);
     const mutableOnly = await identity.verify(await sign({ tid: TENANT, preferred_username: "shared@example.test", email: "shared@example.test" }));
     assert.deepEqual(mutableOnly, { ok: false, reason: "entra_no_subject" });
+    const noIat = await new SignJWT({ tid: TENANT, oid: "factory-sub" })
+      .setProtectedHeader({ alg: "RS256", typ: "JWT", kid: "remote-k1" })
+      .setIssuer(entraIssuer(TENANT)).setAudience(CONFIG.clientId)
+      .setExpirationTime(now + 3600).sign(privateKey);
+    assert.deepEqual(await identity.verify(noIat), { ok: false, reason: "entra_bad_claim" });
   } finally {
     globalThis.fetch = realFetch;
   }
