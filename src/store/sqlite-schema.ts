@@ -3,8 +3,7 @@
 // suite). All secrets are SHA-256 digests; there is NO grant table (findGrantedScopes
 // queries the refresh-token tables directly).
 
-import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 
 const MIGRATIONS = [
   `PRAGMA foreign_keys = ON`,
@@ -108,22 +107,26 @@ function assertClientTable(db: DatabaseSync): void {
 }
 
 function assertClientConstraints(db: DatabaseSync): void {
-  const prefix = `__mcp_sso_schema_probe_${randomUUID()}`;
-  const insert = db.prepare(`INSERT INTO oauth_clients (
-    client_id, redirect_uris_json, application_type, issued_at_epoch
-  ) VALUES (?, '["https://client.example/callback"]', ?, ?)`);
-  db.exec("SAVEPOINT mcp_sso_client_schema_probe");
+  const row = db.prepare(
+    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_clients'",
+  ).get() as { sql: unknown } | undefined;
+  if (typeof row?.sql !== "string" || !row.sql) throw new Error("oauth_clients schema is incompatible");
+  const probe = new DatabaseSync(":memory:");
   try {
-    insert.run(`${prefix}_native`, "native", 0);
-    insert.run(`${prefix}_web`, "web", 0);
-    if (!insertRejected(insert, `${prefix}_kind`, "machine", 0)
-      || !insertRejected(insert, `${prefix}_epoch`, "native", -1)) {
+    probe.exec(row.sql);
+    const insert = probe.prepare(`INSERT INTO oauth_clients (
+      client_id, redirect_uris_json, application_type, issued_at_epoch
+    ) VALUES (?, '["https://client.example/callback"]', ?, ?)`);
+    insert.run("probe-native", "native", 0);
+    insert.run("probe-web", "web", 0);
+    if (!insertRejected(insert, "probe-kind", "machine", 0)
+      || !insertRejected(insert, "probe-epoch", "native", -1)) {
       throw new Error("oauth_clients schema is incompatible");
     }
   } catch {
     throw new Error("oauth_clients schema is incompatible");
   } finally {
-    db.exec("ROLLBACK TO mcp_sso_client_schema_probe; RELEASE mcp_sso_client_schema_probe");
+    probe.close();
   }
 }
 
