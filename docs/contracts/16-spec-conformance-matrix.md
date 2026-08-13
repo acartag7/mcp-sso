@@ -22,7 +22,7 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 25 conformant (1 with a disclosed caveat), 2 reasoned deviations, 4 unresolved test-evidence rows, **1 confirmed runtime mismatch (D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
+| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 26 conformant (1 with a disclosed caveat), 2 reasoned deviations, 3 unresolved test-evidence rows, **1 confirmed runtime mismatch (D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP extension) | ✅ v0.2 shipped | §17.2 |
@@ -48,7 +48,7 @@ than folded into a single "conformant" total:
 
 | Class | Count | Rows | Meaning |
 |---|---|---|---|
-| `C` conformant | 24 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
+| `C` conformant | 25 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
 | `C` with a disclosed caveat | 1 | D00-6.5.1 | Conformant in production, with a narrower environment-scoped departure (the dev-only loopback fetch) stated in the row rather than absorbed into the total. |
 | Reasoned deviation | 2 | D00-4.2.1 (`SHOULD`), D00-4.2.2 (`RECOMMENDED`) | The obligation applies and is deliberately not met; rationale recorded. |
 | `U` unresolved evidence | 3 | D00-4.1, D00-5.1, D00-6.5.2 | The enforcing source exists, but no test yet proves the complete hostile class or the shipped framework route. |
@@ -263,5 +263,5 @@ resolves to commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` and references
 CIMD draft `-00`. Completing this mapping does not change the project target:
 MCP Authorization 2025-11-25 remains current because scope hierarchy handling
 is absent; CIMD also carries **one** confirmed `-00` runtime mismatch (D00-4.5.2 native-app
-precondition) plus three open evidence PRs. Counted individually the project has
+precondition) plus two open evidence PRs. Counted individually the project has
 **two** open MCP-2026 runtime defects.
