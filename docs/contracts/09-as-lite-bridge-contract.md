@@ -86,6 +86,18 @@ request shape with metadata this bridge understands fits the Hono boundary in
 
 ## 9.3 Authorize + consent
 
+**Reader map.** Keep these four questions separate while reading the exact
+contract below:
+
+1. Is the redirect destination trusted yet? If not, errors stay on the direct
+   HTTP channel.
+2. Which client shape is this: stored DCR, stateless DCR, or CIMD?
+3. Which scopes survive the catalog, identity ceiling, and stored-grant rules?
+4. Does approval commit replay state and the authorization code before success?
+
+The following clauses are canonical; this map changes no validation order or
+error shape.
+
 **Validation order & error channels (RFC 6749 §4.1.2.1).** The authorize flow has
 two error channels, split by whether the `redirect_uri` is trusted yet:
 

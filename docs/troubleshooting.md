@@ -5,6 +5,19 @@ kept here because they cost real time to work out and aren't obvious from
 `cloudflared --help`. The live client conformance results these relate to are
 in [`live-verification.md`](live-verification.md).
 
+Start from the symptom:
+
+| Symptom | Go to |
+| --- | --- |
+| SQLite refuses to boot or migrate | [SQLite persistent-state boot rejection](#sqlite-persistent-state-boot-rejection) |
+| A client rejects the OAuth callback when `iss` is present | [Codex CLI callback regression](#codex-cli-01441-callback-regression) |
+| A tunnel connects but the public URL returns an edge 404 | [Anonymous quick tunnels](#anonymous-quick-tunnels-404-at-the-edge) or [named-tunnel ingress](#named-tunnels-need-a-config-file-ingress-rule) |
+| A named tunnel loops on authentication | [Default config credential selection](#default-configyml-can-hijack-your-credentials) |
+
+For OAuth wire errors, configuration failures, and live-flow probes, also use
+the [configuration reference](configuration.md) and
+[live-verification checklist](live-verification.md).
+
 ## SQLite persistent-state boot rejection
 
 `openSqliteStore` accepts exact `:memory:` or an ordinary filesystem path. A

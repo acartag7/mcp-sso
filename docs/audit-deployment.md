@@ -11,6 +11,17 @@ delivery guarantees honestly.
 > Vector, Fluentd). It is the only path durable on disk; the shipper owns retry,
 > buffering, and indexing.
 
+Pick the sink by answering one question: can you accept losing an event while
+the destination is down?
+
+- **No:** write JSONL locally and let a log shipper own buffering and retry.
+- **Yes:** a webhook is the smaller at-most-once side channel.
+- **You need transactional or queue-backed delivery:** implement `AuditPort`
+  against that durable system.
+
+Authentication does not depend on audit delivery. A sink outage can lose
+evidence, but it does not turn a valid OAuth outcome into an outage.
+
 ## Three options
 
 | Path | Delivery | Durability | When |

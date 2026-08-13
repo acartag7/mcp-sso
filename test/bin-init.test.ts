@@ -92,6 +92,17 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
       "generated server persists DCR through its SQLite-backed client store",
     );
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST, "http:\/\/localhost,http:\/\/127\.0\.0\.1"/, "generated local composition explicitly declares loopback callback origins");
+    const generatedReadme = await readFile(join(dir, "README.md"), "utf8");
+    assert.match(
+      generatedReadme,
+      /LOCALHOST-ONLY\. Do not expose this generated server to the internet\./,
+      "generated run block carries the deployment boundary inline",
+    );
+    assert.match(
+      generatedReadme,
+      /rejects an internet-facing HOST, issuer, or resource\s+before it creates persistent state/,
+      "generated guide describes the enforced boot boundary",
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

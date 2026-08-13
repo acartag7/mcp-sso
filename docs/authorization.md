@@ -4,12 +4,25 @@ Who can use a `mcp-sso`-protected MCP server, and **where** each part of that
 decision is enforced. [`docs/contracts.md`](contracts.md) defines the schemas;
 this document explains the model so you can pick the right knob.
 
+Start with a concrete example. Alice belongs to the Engineering group in Entra.
+She connects a desktop client that asks for `mcp:read` and `mcp:deploy`:
+
+- Entra decides whether Alice may sign in and whether MFA or device policy is
+  required. That is Gate 1.
+- mcp-sso can map Alice's Engineering group to a maximum set of scopes. That is
+  Gate 2.
+- Alice approves what this client may receive, within that maximum.
+- The MCP tool checks the required scope on every call.
+
+These are separate decisions. Passing sign-in does not grant every tool, and a
+scope in a token does not bypass the resource server's per-call check.
+
 ## The chain, end to end
 
 A request only reaches your MCP tools after passing four independent checks,
 enforced at three different places:
 
-```
+```text
 who can authenticate?          Gate 1 — your IdP (Entra / Cloudflare Access)
 who does the bridge accept?    Gate 2 — mcp-sso allowlists (+ Entra group→scope mapping, shipped §17.4)
 what does this client get?     consent — the user approves requested scopes

@@ -8,6 +8,25 @@ Three tiers:
 - **Tier 2 — packed-artifact gate.** Proves the npm package shape works, not just the source tree.
 - **Tier 3 — manual live verification.** Real IdPs, real MCP clients, production dogfood evidence.
 
+Use the smallest tier that proves the claim, then keep the tiers below it green:
+
+| You changed… | Run at minimum | What it proves |
+| --- | --- | --- |
+| Pure parsing or validation | Tier 1 plus the full source-tree gates | The implementation and its negative cases are deterministic. |
+| A store, adapter, generated project, or protocol flow | Tier 1 with the real service or shipped entrypoint, then the release matrix | The integration works outside a unit seam. |
+| Package exports or release contents | Tier 2 | The packed artifact installs and runs as users receive it. |
+| A provider or client compatibility claim | Tier 3 after Tiers 1 and 2 | The named external system worked on a dated, recorded version. |
+
+The release command is the short path through the deterministic evidence:
+
+```bash
+pnpm run build
+RUN_INTEGRATION=true MYSQL_URL='mysql://…' REDIS_URL='redis://…' pnpm run test:release
+```
+
+It must end with every `RM.*` row passing. Tier 3 remains a separate owner-run
+check because CI cannot prove behavior in a real tenant or signed-in client.
+
 The contracts these tests enforce live in
 [§17](contracts/17-v0-2-feature-contracts.md); the
 threat rows they close are 13 and 17-25 in [`docs/threat-model.md`](threat-model.md).

@@ -1050,6 +1050,20 @@ in this flow."* Decisions:
   `[::1]` for a matching `dev.allowInsecureLocalhost` bridge. A remote HTTP,
   blank, or malformed value is `invalid_request` before secret generation,
   mutation, or success audit.
+  **Three enforcement points for machine-token classification:**
+
+  1. User authorization rejects a subject in the reserved `mcc_` namespace.
+  2. Code and refresh grants reject legacy stored user state in that namespace
+     before issuing another token.
+  3. The resource-server verifier requires the `mcc_` subject, matching
+     `client_id`, and exact `gty: "client_credentials"` marker together.
+
+  The canonical paragraph below retains the full edge cases, side-effect
+  ordering, and compatibility reasoning.
+
+  <details>
+  <summary>Exact classification contract and compatibility reasoning</summary>
+
   - `provisionMachineClient(deps, { name?, allowedScopes, secretTtlSeconds? })`
     → `{ clientId, clientSecret }`. `clientId` = `mcc_<random>` — the prefix is
     enforced, giving a namespace disjoint from human subjects and from `mcpdc_`
@@ -1093,6 +1107,9 @@ in this flow."* Decisions:
     before client-id/secret generation, `createMachineClient`, or a success
     audit. A blank or malformed deps resource is `invalid_request` before a
     credential is generated or a row/audit is written.
+
+  </details>
+
   - `rotateMachineClientSecret(deps, clientId, { graceSeconds = 86400 })` →
     `VersionedRotatedSecret { clientSecret, version }` (see Rotation below).
     The published v0.3.0 `RotatedSecret { clientSecret }` remains its base type
