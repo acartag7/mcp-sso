@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
-import type { JWK } from "jose";
+import { importJWK, SignJWT, type JWK } from "jose";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import {
@@ -105,6 +105,18 @@ async function accessTokenAt(nowMs: number): Promise<string> {
   );
 }
 
+async function accessTokenWithExpiry(exp: number | undefined): Promise<string> {
+  const key = await importJWK(config.signingPrivateJwk, "ES256");
+  const token = new SignJWT({ client_id: "client-1", scope: "mcp:read" })
+    .setProtectedHeader({ alg: "ES256", kid: config.signingKeyId, typ: "JWT" })
+    .setIssuer(config.issuer)
+    .setSubject("operator")
+    .setAudience(config.resource)
+    .setIssuedAt(Math.floor(NOW_MS / 1000));
+  if (exp !== undefined) token.setExpirationTime(exp);
+  return token.sign(key);
+}
+
 async function validConsentToken(): Promise<string> {
   return consentTokenAt(NOW_MS);
 }
@@ -128,6 +140,23 @@ test("verifyAccessToken rejects an expired JWT under a NaN clock", async () => {
     isOAuth("invalid_token", 401),
   );
   assert.equal(clock.reads, 1);
+});
+
+test("verifyAccessToken requires exp and preserves the exact expiry boundary", async () => {
+  const now = Math.floor(NOW_MS / 1000);
+  const clock: ClockPort = { nowMs: () => NOW_MS };
+  await assert.rejects(
+    verifyAccessToken(await accessTokenWithExpiry(undefined), config, clock),
+    isOAuth("invalid_token", 401),
+  );
+  await assert.rejects(
+    verifyAccessToken(await accessTokenWithExpiry(now), config, clock),
+    isOAuth("invalid_token", 401),
+  );
+  assert.deepEqual(
+    await verifyAccessToken(await accessTokenWithExpiry(now + 1), config, clock),
+    { subject: "operator", clientId: "client-1", scopes: ["mcp:read"], credentialKind: "interactive" },
+  );
 });
 
 test("verifyConsentToken rejects an expired JWT under a NaN clock", async () => {
