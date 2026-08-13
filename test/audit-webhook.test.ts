@@ -88,6 +88,15 @@ test("WebhookAudit: constructor rejects userinfo (user:pass@) — credentials be
   }
 });
 
+test("WebhookAudit: constructor rejects malformed header configuration", () => {
+  for (const headers of [null, [], { X: null }, { X: 1 }, "X: value"]) {
+    assert.throws(
+      () => new WebhookAudit("https://siem.test/ingest", { headers: headers as never }),
+      /headers must be a string-valued object/,
+    );
+  }
+});
+
 test("WebhookAudit: per-event POST is application/json with merged headers", async () => {
   const state = { calls: [] as Recorded[] };
   const sink = new WebhookAudit("https://siem.test/ingest", {

@@ -88,6 +88,10 @@ export class WebhookAudit implements AuditPort {
     this.host = parsed.host;
     this.querySecrets = collectQuerySecrets(parsed);
     this.timeoutMs = options.timeoutMs ?? 5000;
+    if (options.headers !== undefined && (typeof options.headers !== "object" || options.headers === null || Array.isArray(options.headers)
+      || Object.values(options.headers).some((value) => typeof value !== "string"))) {
+      throw new Error("WebhookAudit: headers must be a string-valued object");
+    }
     this.headers = { "Content-Type": "application/json", ...options.headers };
     this.configuredSecrets = [...Object.values(this.headers), ...this.querySecrets];
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
