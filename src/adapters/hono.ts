@@ -11,6 +11,8 @@ import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
+import { OAuthError } from "../errors.ts";
 
 export interface HonoAdapterOptions {
   bridge: Bridge;
@@ -130,13 +132,7 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
     // collapses duplicates to the first value, which would defeat the RFC 6749 §3.1
     // duplicate-param checks (contracts §17.11 authorize step 2 / callback row 1).
     // Single-valued params stay strings (unchanged behavior for every other route).
-    const query: NormRequest["query"] = {};
-    for (const [k, v] of new URL(c.req.raw.url, "http://localhost").searchParams.entries()) {
-      const ex = query[k];
-      if (ex === undefined) query[k] = v;
-      else if (Array.isArray(ex)) ex.push(v);
-      else query[k] = [ex, v];
-    }
+    const query = queryOccurrencesFromUrl(c.req.raw.url);
     return { query, body, headers, ip: clientIp?.(c) };
   };
   // Build a standard Response directly: hono route handlers accept a Response,
@@ -177,6 +173,9 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       // bridge.resolveIdentity also emits the identity.verify audit event.
       let identityResolved: { subject: string; allowedScopes?: string[] };
       const req = await toNorm(c);
+      if (hasDuplicatedAuthorizeParams(req.query)) {
+        return send(c, oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters")));
+      }
       try {
         identityResolved = await bridge.resolveIdentity(id, headerString(req.headers, identityHeader), req.ip);
       } catch (error) {

@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { headerString, headersFromDistinct, isMcpPath, noStoreHeaders, readHeader } from "../src/adapters/http.ts";
+import {
+  headerString, headersFromDistinct, INVALID_RESOURCE, isMcpPath, noStoreHeaders, readHeader, resourceParam,
+} from "../src/adapters/http.ts";
+
+test("resourceParam omits valueless occurrences before enforcing the singleton resource policy", () => {
+  assert.equal(resourceParam(undefined), undefined);
+  assert.equal(resourceParam(""), undefined);
+  assert.equal(resourceParam(["", ""]), undefined);
+  assert.equal(resourceParam(["https://api.test/mcp", ""]), "https://api.test/mcp");
+  assert.equal(resourceParam(["", "https://api.test/mcp"]), "https://api.test/mcp");
+  assert.equal(resourceParam(["https://api.test/mcp", "https://other.test/mcp"]), INVALID_RESOURCE);
+  assert.equal(resourceParam(["https://api.test/mcp", 7]), INVALID_RESOURCE);
+});
 
 test("headerString rejects normalized arrays and case-duplicate keys", () => {
   assert.equal(headerString({ Origin: "https://auth.test" }, "origin"), "https://auth.test");

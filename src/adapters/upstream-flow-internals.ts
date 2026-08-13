@@ -10,18 +10,15 @@ import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildErrorRedirect } from "../challenge.ts";
 import { headerString, type NormRequest, type NormResponse } from "./http.ts";
 
+// Re-export the shared authorize occurrence boundary so existing internal
+// importers keep the same surface while direct and pairing use the same source.
+export { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys, findRepeatedKeys } from "./authorize-params.ts";
+
 // The flow JWT moved to its own module (250-line limit); re-exported here so
 // every existing importer of these names keeps working unchanged.
 export {
   FLOW_AUDIENCE, flowAudience, signFlowToken, verifyFlowToken, type FlowClaims,
 } from "./upstream-flow-jwt.ts";
-
-/** The client OAuth params that round-trip through the signed flow cookie —
- *  exactly the §9.3 authorize inputs (same set pairing-flow.ts hidden-fields). */
-export const OAUTH_PARAM_KEYS = [
-  "response_type", "client_id", "redirect_uri", "code_challenge",
-  "code_challenge_method", "resource", "scope", "state",
-] as const;
 
 /** Callback query params checked for RFC 6749 §3.1 duplicates (failure row 1). */
 const CALLBACK_DUP_KEYS = ["state", "code", "error", "error_description"] as const;
@@ -124,17 +121,6 @@ export function timingSafeStringEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
   return left.length > 0 && left.length === right.length && timingSafeEqual(left, right);
-}
-
-/** RFC 6749 §3.1 duplicate-param check: any key present more than once (array
- *  length > 1 in the normalized query) ⇒ reject, never pick first/last. */
-export function findDuplicatedKeys(query: NormRequest["query"], keys: readonly string[]): string[] {
-  const dup: string[] = [];
-  for (const k of keys) {
-    const v = query[k];
-    if (Array.isArray(v) && v.length > 1) dup.push(k);
-  }
-  return dup;
 }
 
 export const CALLBACK_DUP_KEYS_EXPORT = CALLBACK_DUP_KEYS;

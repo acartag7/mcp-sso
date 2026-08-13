@@ -20,7 +20,7 @@ import { AuthConfigError, originOf, pathAfterOrigin } from "../config.ts";
 import { OAuthError } from "../errors.ts";
 import { assertOAuthRedirectEntry } from "../redirect.ts";
 import { pkceChallenge } from "../crypto.ts";
-import { noStoreHeaders, queryString, type NormRequest, type NormResponse } from "./http.ts";
+import { noStoreHeaders, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
 import { redactForStderr } from "../audit/util.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
@@ -28,9 +28,9 @@ import { resolveUpstreamAuthorizeClient, assertCallbackCimdPolicy } from "./upst
 import { isSchemeShaped } from "../cimd/registration.ts";
 import { resolveOpaqueRedirect } from "../authorize-internals.ts";
 import {
-  OAUTH_PARAM_KEYS, CALLBACK_DUP_KEYS_EXPORT, assertCallbackPath, resolveCookieProfile,
+  OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, CALLBACK_DUP_KEYS_EXPORT, assertCallbackPath, resolveCookieProfile,
   setCookieValue, clearCookieValue, readFlowCookie, flowCookieOversized, signFlowToken,
-  verifyFlowToken, timingSafeStringEqual, findDuplicatedKeys, redirectErrorResponse,
+  verifyFlowToken, timingSafeStringEqual, findDuplicatedKeys, findRepeatedKeys, redirectErrorResponse,
   directErrorResponse, type FlowClaims,
 } from "./upstream-flow-internals.ts";
 
@@ -103,7 +103,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
   const handleAuthorize = async (req: NormRequest): Promise<NormResponse> => {
     try {
       await guard(req, "upstream"); // step 1: upstream:<ip> rate-limit (advisory, fail-open)
-      if (findDuplicatedKeys(req.query, OAUTH_PARAM_KEYS).length > 0) { // step 2: RFC 6749 §3.1
+      if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0) { // step 2: RFC 6749 §3.1
         return directErrorResponse("invalid_request", "duplicate request parameters");
       }
       const clientId = queryString(req.query, "client_id");
@@ -160,7 +160,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       writeAuditBestEffort(audit, { occurredAt: nowIso, event: "identity.verify", status, subject, reason, ip });
     try {
       let clientId: string | undefined;
-      if (findDuplicatedKeys(req.query, CALLBACK_DUP_KEYS_EXPORT).length > 0) return finish(directErrorResponse("invalid_request", "duplicate request parameters"), "failure", "duplicate_params"); // row 1
+      if (findRepeatedKeys(req.query, CALLBACK_DUP_KEYS_EXPORT).length > 0) return finish(directErrorResponse("invalid_request", "duplicate request parameters"), "failure", "duplicate_params"); // row 1
       if (!cookiePresent) return finish(directErrorResponse("invalid_request", "flow cookie missing"), "failure", "flow_cookie_missing"); // row 2 (nothing to clear)
       let claims: FlowClaims;
       try { claims = await verifyFlowToken(cookieValue as string, secret, issuer, callbackPath); } catch { return finish(directErrorResponse("invalid_request", "flow cookie invalid"), "failure", "flow_cookie_invalid"); } // row 3
@@ -238,10 +238,10 @@ function randomToken(): string {
 
 function gatherOAuthParams(req: NormRequest): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const k of OAUTH_PARAM_KEYS) { const v = queryString(req.query, k); if (typeof v === "string") out[k] = v; }
+  for (const k of OAUTH_PARAM_KEYS) { const v = k === "resource" ? resourceParam(req.query[k]) : queryString(req.query, k);
+    if (typeof v === "string") out[k] = v; }
   return out;
 }
-
 function pickOAuthParams(params: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const k of OAUTH_PARAM_KEYS) { const v = params[k]; if (typeof v === "string") out[k] = v; }

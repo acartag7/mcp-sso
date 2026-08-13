@@ -1,0 +1,46 @@
+// Shared pure authorize-parameter occurrence rules. Every framework-free
+// authorize entry point must reject multiplicity before selecting a value.
+
+export const OAUTH_PARAM_KEYS = [
+  "response_type", "client_id", "redirect_uri", "code_challenge",
+  "code_challenge_method", "resource", "scope", "state",
+] as const;
+
+/** Authorize parameters that RFC 6749 requires to occur at most once. RFC 8707
+ * permits `resource` to repeat, so unsupported resource sets use invalid_target. */
+export const OAUTH_SINGLETON_PARAM_KEYS = OAUTH_PARAM_KEYS.filter((key) => key !== "resource");
+
+/** RFC 6749 §3.1 duplicate-param check after valueless occurrences are omitted. */
+export function findDuplicatedKeys(input: unknown, keys: readonly string[]): string[] {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return [];
+  const values = input as Record<string, unknown>;
+  const duplicated: string[] = [];
+  for (const key of keys) {
+    const value = values[key];
+    if (Array.isArray(value) && value.filter((entry) => entry !== "").length > 1) duplicated.push(key);
+  }
+  return duplicated;
+}
+
+/** Strict occurrence count for callback parameters, including empty values. */
+export function findRepeatedKeys(input: unknown, keys: readonly string[]): string[] {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return [];
+  const values = input as Record<string, unknown>;
+  return keys.filter((key) => Array.isArray(values[key]) && values[key].length > 1);
+}
+
+export function hasDuplicatedAuthorizeParams(query: unknown): boolean {
+  return findDuplicatedKeys(query, OAUTH_SINGLETON_PARAM_KEYS).length > 0;
+}
+
+/** Reconstruct raw query occurrences independently of framework parser policy. */
+export function queryOccurrencesFromUrl(rawUrl: string): Record<string, string | string[]> {
+  const query = Object.create(null) as Record<string, string | string[]>;
+  for (const [key, value] of new URL(rawUrl, "http://localhost").searchParams.entries()) {
+    const existing = query[key];
+    if (existing === undefined) query[key] = value;
+    else if (Array.isArray(existing)) existing.push(value);
+    else query[key] = [existing, value];
+  }
+  return query;
+}

@@ -6,9 +6,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
+import { OAuthError } from "../errors.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 
 export interface FastifyAdapterOptions {
   bridge: Bridge;
@@ -35,7 +37,7 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
   });
 
   const toNorm = (req: FastifyRequest): NormRequest => ({
-    query: req.query as NormRequest["query"],
+    query: queryOccurrencesFromUrl(req.raw.url ?? ""),
     body: req.body,
     headers: headersFromDistinct(req.raw.headersDistinct, req.headers as NormRequest["headers"]),
     ip: req.ip,
@@ -69,6 +71,10 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
       // bridge.resolveIdentity also emits the identity.verify audit event.
       let identityResolved: { subject: string; allowedScopes?: string[] };
       const request = toNorm(req);
+      if (hasDuplicatedAuthorizeParams(request.query)) {
+        await send(reply, oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters")));
+        return;
+      }
       try {
         identityResolved = await bridge.resolveIdentity(id, headerString(request.headers, identityHeader), request.ip);
       } catch (error) {
