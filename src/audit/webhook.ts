@@ -170,7 +170,13 @@ function collectQuerySecrets(rawUrl: string, url: URL): string[] {
   for (const [k, v] of url.searchParams.entries()) {
     const pair = new URLSearchParams([[k, v]]).toString();
     const encodedValue = pair.slice(pair.indexOf("=") + 1);
-    tokens.push(`${k}=${v}`, pair, encodedValue);
+    tokens.push(
+      `${k}=${v}`,
+      pair,
+      `${encodeURIComponent(k)}=${encodeURIComponent(v)}`,
+      encodedValue,
+      encodeURIComponent(v),
+    );
     if (v.length > 0) tokens.push(v);
     else if (k.length > 0) tokens.push(k);
   }

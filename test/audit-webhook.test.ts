@@ -144,6 +144,22 @@ test("WebhookAudit: serialized query parameter forms remain secrets", async () =
   assert.equal(captured.messages.join("\n").includes("sig=ab+cd"), false);
 });
 
+test("WebhookAudit: encodeURIComponent query forms remain secrets", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?sig=ab+cd", {
+    fetchImpl: (async (url) => {
+      const value = new URL(String(url)).searchParams.get("sig")!;
+      throw new Error(`transport encoded sig=${encodeURIComponent(value)}`);
+    }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  assert.equal(captured.messages.join("\n").includes("sig=ab%20cd"), false);
+});
+
 test("WebhookAudit: per-event POST is application/json with merged headers", async () => {
   const state = { calls: [] as Recorded[] };
   const sink = new WebhookAudit("https://siem.test/ingest", {
