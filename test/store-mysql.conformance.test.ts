@@ -114,7 +114,8 @@ if (RUN) {
       const issuer = entraIssuer(tenantId);
       const result = validateEntraIdToken({
         iss: issuer, aud: "mysql-max-subject-client", tid: tenantId,
-        sub: "s".repeat(255), exp: Math.floor(Date.parse(FUTURE) / 1000),
+        sub: "s".repeat(255), iat: Math.floor(Date.parse(NOW) / 1000),
+        exp: Math.floor(Date.parse(FUTURE) / 1000),
       }, {
         tenantId, clientId: "mysql-max-subject-client", redirectUri: "https://bridge.test/oauth/entra/callback",
       });

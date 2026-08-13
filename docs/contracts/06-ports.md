@@ -368,15 +368,21 @@ scope ceiling) is locked in §17.4.
 - **Entra nonce.** Pass a `nonce` in `getAuthorizationUrl` and validate `payload.nonce`
   on return (OIDC request binding) — recommended. The §17.11 redirect orchestrator
   always does this (orchestrator-minted CSPRNG nonce, threat-model row 31).
+- **Entra token times.** A verified id_token requires both `iat` and `exp` as
+  finite NumericDate numbers. The signed-token wrappers require `iat` at
+  `jwtVerify`; the pure claim validator requires and type-checks `exp` and
+  repeats the `iat` type/finite check so an already-verified payload cannot
+  bypass the same identity decision. This preserves `entra_bad_claim` for a
+  signed token missing `iat` and `entra_missing_exp` for one missing `exp`.
   **Header-driven mode (`identityHeader`) residual:** when a fronting proxy
   delivers a raw Entra id_token in a header, mcp-sso never minted the nonce, so
   the port's verifying wrapper (`createEntraIdentity().verify` /
   `verifyEntraIdToken` — jose `jwtVerify` enforces the RS256 signature and
   expiry, then the pure `validateEntraIdToken` claim checks apply: iss/tid/aud,
-  and `nonce` only when an expected value is set) does NOT replay-bind the
+  finite `iat`/`exp`, and `nonce` only when an expected value is set) does NOT replay-bind the
   token. `validateEntraIdToken` alone is claim validation on an
   ALREADY-signature-verified payload (exported pure for unit-testability — it
-  never checks the signature and only requires `exp` presence); a custom
+  never checks the signature); a custom
   `IdentityPort` MUST route raw tokens through the verifying wrapper, never
   the pure validator alone. Replay
   protection for a header-delivered id_token belongs to the fronting proxy —
