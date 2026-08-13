@@ -1,10 +1,10 @@
 # 5. Configuration contract
 
-All runtime behavior derives from a validated `BridgeConfig`. **Configuration is
-fail-closed**: ambiguous, incomplete, or insecure configuration is a boot
-`AuthConfigError`, never a degraded default. There is intentionally **no
-unauthenticated/local-bypass flavor** (Captatum's `local-binary` bypass is
-dropped — this is a library that enforces real auth everywhere it is used).
+`BridgeConfig` is the complete security configuration for one bridge. The
+library checks it when the bridge starts. Missing, malformed, ambiguous, or
+insecure values stop startup with `AuthConfigError`; they do not silently turn
+off authentication or another security gate. Local development still uses the
+same authenticated OAuth flow as an internet-facing deployment.
 
 ```ts
 interface BridgeConfig {
@@ -141,3 +141,5 @@ not set it. The acknowledgement is accepted only when both `issuer` and
 `resource` are loopback URLs. A supplied limiter must expose a callable `check`
 method; malformed limiter values fail at boot rather than counting as a bound.
 Composition roots run this guard before opening state stores.
+The generated starter additionally rejects non-loopback issuer or resource URLs
+before creating its state directory, signing keys, audit file, or SQLite database.

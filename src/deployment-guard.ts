@@ -17,6 +17,15 @@ function isGenericLoopbackRedirect(value: string): boolean {
   } catch { return false; }
 }
 
+function isApplicationSpecificHttpsRedirect(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      && !STARTER_REDIRECT_ORIGINS.has(url.origin)
+      && !isGenericLoopbackRedirect(value);
+  } catch { return false; }
+}
+
 export function assertSafeDeploymentCombination(deps: {
   config: BridgeConfig;
   rateLimit?: RateLimitPort;
@@ -27,11 +36,10 @@ export function assertSafeDeploymentCombination(deps: {
   }
   const bounded = deps.rateLimit !== undefined && deps.rateLimit !== noopRateLimit;
   if (deps.config.dcr.mode !== "stateless" || bounded) return;
-  const starterOnly = deps.config.redirectAllowlist.every((entry) => {
-    try { return STARTER_REDIRECT_ORIGINS.has(new URL(entry).origin) || isGenericLoopbackRedirect(entry); }
-    catch { return false; } // createBridgeConfig already rejects malformed entries.
-  });
-  if (starterOnly) {
+  const hasApplicationSpecificHttps = deps.config.redirectAllowlist.some(
+    isApplicationSpecificHttpsRedirect,
+  );
+  if (!hasApplicationSpecificHttps) {
     if (deps.acknowledgeUnsafeStatelessDefaults === true) {
       if (!isLoopbackUrl(deps.config.issuer) || !isLoopbackUrl(deps.config.resource)) {
         throw new AuthConfigError("acknowledgeUnsafeStatelessDefaults is restricted to loopback issuer and resource URLs");

@@ -85,6 +85,7 @@ test("Bridge boot rejects stateless DCR plus starter-only redirect trust plus no
     [],
     ["https://claude.ai", "https://chatgpt.com"],
     ["http://localhost", "http://127.0.0.1", "http://[::1]"],
+    ["http://localhost:4321/callback"],
     ["https://localhost", "https://127.0.0.1", "https://[::1]"],
   ]) {
     assert.throws(
