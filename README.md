@@ -103,11 +103,12 @@ official MCP extension `io.modelcontextprotocol/oauth-client-credentials`.
 
 Machine clients are **provisioned out-of-band** — there's no HTTP endpoint for
 it; you run `provisionMachineClient` against the same `MachineClientStore` the
-bridge uses. You implement that port against your database; the shipped
-`/store/sqlite` and `/store/mysql` adapters are `StorePort`-only (codes, refresh
-tokens, consent JTIs), not `ClientStore`. Machine create, rotate, and disable
-use versioned atomic mutations that commit the row with its durable audit. The
-secret is returned once and stored only as a SHA-256 hash. A custom
+bridge uses. You implement that port against your database. The shipped
+`/store/sqlite` adapter implements `ClientStore` for user DCR registrations but
+not the atomic `MachineClientStore` lifecycle; `/store/mysql` remains
+`StorePort`-only. Machine create, rotate, and disable use versioned atomic
+mutations that commit the row with its durable audit. The secret is returned
+once and stored only as a SHA-256 hash. A custom
 `ClientStore.find(clientId)` must return the row whose embedded `clientId`
 matches that lookup key; `parseMachineClientRegistration` rejects mismatched or
 malformed machine rows before verification, mutation, or token issuance. Each
