@@ -57,7 +57,7 @@ export interface CimdResolution {
 }
 
 export class CimdResolver {
-  readonly enabled: boolean;
+  readonly #enabled: boolean;
   readonly #clock: ClockPort;
   readonly #audit: AuditPort;
   readonly #rateLimit: RateLimitPort;
@@ -81,7 +81,7 @@ export class CimdResolver {
     this.#audit = deps.audit;
     this.#rateLimit = deps.rateLimit ?? noopRateLimit;
     const cimd = deps.config.cimd;
-    this.enabled = cimd?.enabled === true;
+    this.#enabled = cimd?.enabled === true;
     this.#maxInFlight = cimd?.maxInFlight ?? 8;
     this.#maxWaitersPerFetch = cimd?.maxWaitersPerFetch ?? 256;
     this.#cacheTtlCapSeconds = cimd?.cacheTtlCapSeconds ?? 3600;
@@ -93,6 +93,8 @@ export class CimdResolver {
     this.#fetchTimeoutMs = cimd?.fetchTimeoutMs ?? 5000;
   }
 
+  /** Boot-only projection; `resolve()` uses the unshadowable private slot. */
+  get enabled(): boolean { return this.#enabled; }
   /** Boot-time validation of the cap profile. Constructs and DISCARDS a fetcher
    *  so an out-of-domain cap fails at construction rather than on the first
    *  request; returns nothing, so it is not a network-capable handle. */
@@ -167,7 +169,7 @@ export class CimdResolver {
     // is publicly reachable, so without this a consumer could drive DNS/network
     // activity on a deployment that never enabled CIMD. Before the rate guard and
     // before any fetch — a rejection must cause no side effect.
-    if (!this.enabled) throw cimdGenericError();
+    if (!this.#enabled) throw cimdGenericError();
     await this.#rateGuard(input.ip, input.rateLimit);
     try {
       // The fetcher is ALWAYS built here from this resolver's validated caps

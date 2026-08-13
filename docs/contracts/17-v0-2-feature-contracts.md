@@ -98,12 +98,13 @@ brand-check (decision 5 removed it); the runtime brand still gates any internal 
 enabled, AS
 metadata emits
 `client_id_metadata_document_supported: true` (draft §5 MUST when supported).
-The root-exposed `CimdResolver` keeps its fetcher factory, cached fetcher, validated
-profile fields, and internal fetcher-selection methods in ECMAScript `#private`
+The root-exposed `CimdResolver` keeps its enable gate, fetcher factory, cached
+fetcher, validated profile fields, and internal fetcher-selection methods in ECMAScript `#private`
 slots. They are absent from the compiled runtime object's own properties and
 prototype, so same-process JavaScript cannot call, replace, or shadow a second
-network-capable entry point around `resolve()`'s enabled/rate/single-flight/cache/
-audit path. Only the intended public resolver operations remain reachable.
+network-capable entry point or alter the gate used by `resolve()`. A public
+read-only `enabled` projection exists only for boot wiring; shadowing it cannot
+change `resolve()`'s private gate. Only the intended public resolver operations remain reachable.
 Detection is by shape: a `client_id` starting with `https://` takes the CIMD
 path (draft §6.9 — our generated ids `mcpdc_`/`mcc_` never collide).
 

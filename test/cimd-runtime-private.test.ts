@@ -53,8 +53,32 @@ test("compiled root API keeps CIMD network capabilities runtime-private", async 
     }
     assert.deepEqual(
       prototype.filter((name) => name !== "constructor").sort(),
-      ["assertCapProfile", "rejectAfterResolve", "resolve"],
+      ["assertCapProfile", "enabled", "rejectAfterResolve", "resolve"],
     );
+
+    const disabledConfig = api.createBridgeConfig({
+      issuer: "https://auth.test", resource: "https://api.test/mcp",
+      consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: privateJwk,
+      redirectAllowlist: ["https://client.test/cb"], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
+      allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" },
+      accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 3600, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+    });
+    let transportCalls = 0;
+    const disabled = new api.Bridge({
+      config: disabledConfig, store: new MemoryStore(), clock: { nowMs: () => Date.now() },
+      audit: { async writeAuthEvent() {} },
+      cimdTransport: { async connectAndGet() { transportCalls += 1; throw new Error("network reached"); } },
+      cimdResolver: { async resolve() { return [{ address: "93.184.216.34", family: 4 }]; } },
+    }).cimd;
+    assert.equal(disabled.enabled, false);
+    Object.defineProperty(disabled, "enabled", { value: true, configurable: true });
+    assert.equal(disabled.enabled, true, "the public projection can be shadowed as inert user state");
+    await assert.rejects(
+      disabled.resolve({ clientId: "https://client.test/client.json", redirectUri: "https://client.test/cb" }),
+      (error: unknown) => typeof error === "object" && error !== null && "code" in error
+        && error.code === "invalid_client",
+    );
+    assert.equal(transportCalls, 0, "shadowing the projection cannot enable CIMD network work");
   } finally {
     await rm(outDir, { recursive: true, force: true });
   }
