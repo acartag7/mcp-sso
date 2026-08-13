@@ -20,9 +20,11 @@ export async function assertConsentJtiUnique(conn: PoolConnection): Promise<void
   }
   const uniqueJti = [...indexes.values()].some((index) =>
     index.nonUnique === 0 && !index.prefix && index.columns.length === 1 && index.columns[0] === "jti");
-  if (!uniqueJti) {
+  const competingUnique = [...indexes.values()].some((index) =>
+    index.nonUnique === 0 && (index.prefix || !index.columns.includes("jti")));
+  if (!uniqueJti || competingUnique) {
     throw new StoreInputError(
-      "oauth_consent_jtis.jti must have a single-column PRIMARY or UNIQUE index; consent replay detection requires JTI uniqueness.",
+      "oauth_consent_jtis must have a full-column JTI PRIMARY or UNIQUE index and no competing unique constraint; consent replay detection requires conflicts to mean duplicate JTI.",
     );
   }
 }

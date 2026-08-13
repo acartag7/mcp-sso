@@ -170,7 +170,7 @@ test("MySQL migration preflights malformed consent uniqueness before any DDL", a
       return [[], []];
     },
   } as unknown as PoolConnection;
-  await assert.rejects(migrateMysqlStore(connection), /single-column PRIMARY or UNIQUE index/);
+  await assert.rejects(migrateMysqlStore(connection), /full-column JTI PRIMARY or UNIQUE index/);
   assert.deepEqual(writes, [], "malformed existing schema rejects before CREATE or ALTER");
 });
 
@@ -208,5 +208,20 @@ test("MySQL uniqueness preflight counts functional parts and normalizes identifi
   await assert.rejects(migrateMysqlStore(makeConnection([
     { INDEX_NAME: "uq", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null },
     { INDEX_NAME: "uq", NON_UNIQUE: 0, SEQ_IN_INDEX: 2, COLUMN_NAME: null, SUB_PART: null },
-  ])), /single-column PRIMARY or UNIQUE index/);
+  ])), /full-column JTI PRIMARY or UNIQUE index/);
+});
+
+test("MySQL uniqueness preflight rejects an unrelated unique constraint", async () => {
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("information_schema.STATISTICS")) return [[
+        { INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null },
+        { INDEX_NAME: "uq_expiry", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "expires_at", SUB_PART: null },
+      ], []];
+      throw new Error(`unexpected query after malformed-schema preflight: ${sql}`);
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /no competing unique constraint/);
 });

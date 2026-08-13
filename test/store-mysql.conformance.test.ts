@@ -401,7 +401,7 @@ if (RUN) {
       );
       assert.equal(first.affectedRows, 1);
       assert.equal(replay.affectedRows, 1, "malformed schema admits a replay with another expiry");
-      await assert.rejects(createMysqlStore(MYSQL_URL as string), /single-column PRIMARY or UNIQUE index/);
+      await assert.rejects(createMysqlStore(MYSQL_URL as string), /full-column JTI PRIMARY or UNIQUE index/);
     } finally {
       await admin!.query("DROP TABLE oauth_consent_jtis");
       const restore = await createMysqlStore(MYSQL_URL as string);
