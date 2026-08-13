@@ -26,6 +26,15 @@ or resource-server outcome. Machine-client lifecycle success evidence remains
 the durable transactional exception described below; its ordinary `AuditPort`
 fan-out copy is still best effort.
 
+`WebhookAudit` treats every non-empty deployer-configured header value and
+every non-empty query component as a secret regardless of length. A transport
+diagnostic that reflects one of those exact values is scrubbed before the
+diagnostic is reduced to one bounded, control-free stderr line. This includes
+ordinary `key=value` parameters, values reflected without their key, and bare
+query components. Redaction and formatting are total: synchronous transport
+throws, rejected transport promises, and hostile thrown values cannot make the
+reference sink reject.
+
 `JsonlFileAudit` is a filesystem boundary as well as an evidence sink. On a
 host where Node exposes `O_NOFOLLOW`, every event opens the configured final
 path with `O_APPEND | O_CREAT | O_NONBLOCK | O_NOFOLLOW`, validates the opened
