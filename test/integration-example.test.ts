@@ -99,6 +99,29 @@ test("integration — explicit empty redirect allowlist removes local compositio
   }
 });
 
+test("integration — unsupported loopback URL schemes fail before starter state creation", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-bad-loopback-scheme-"));
+  try {
+    for (const target of ["fastify", "gateway"] as const) {
+      const dir = join(base, target);
+      const env = {
+        MCP_SSO_DIR: dir,
+        OAUTH_ISSUER: "ftp://localhost:3000",
+        OAUTH_RESOURCE: "ftp://localhost:3000/mcp",
+      };
+      const boot = target === "fastify"
+        ? buildExample(env)
+        : buildGatewayExample(env, {
+          backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+        });
+      await assert.rejects(boot, /console-pairing starter requires loopback/);
+      assert.equal(existsSync(dir), false, `${target}: no signing state was created`);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("integration — Cloudflare Access branch: buildExample creates the state dir, opens auth.db, selects CF identity (NOT pairing)", async () => {
   // This is the regression class that shipped untested: the CF branch derives
   // auth.db/audit.jsonl under MCP_SSO_DIR but must also CREATE that dir, or

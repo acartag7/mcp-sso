@@ -211,15 +211,24 @@ test("example factories reuse the config snapshot that passed preflight", async 
         },
       },
     ]) {
-      const safe = config({ dcr: { mode: "stored", store: { async save() {}, async find() { return null; } } } });
+      const safe = config({
+        dcr: { mode: "stored", store: { async save() {}, async find() { return null; } } },
+        allowedOrigins: ["https://auth.test"],
+      });
+      const permissive = config({ allowedOrigins: ["https://evil.test"] });
       let reads = 0;
       const opts = {
         ...entry.extra,
         sqliteFile: entry.file,
-        get config() { reads += 1; return reads === 1 ? safe : config(); },
+        get config() { reads += 1; return reads === 1 ? safe : permissive; },
       } as Parameters<typeof buildGateway>[0];
       const result = await entry.run(opts);
       assert.equal(result.bridge.config, safe);
+      const response = await result.app.inject({
+        method: "POST", url: "/mcp", headers: { origin: "https://evil.test" },
+        payload: {},
+      });
+      assert.equal(response.statusCode, 403, "runtime Origin gate uses the boot snapshot");
       assert.equal(reads, 1);
       await result.close();
     }

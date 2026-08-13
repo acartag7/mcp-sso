@@ -71,7 +71,7 @@ const list = (v: string | undefined, def: string): string[] => (v ?? def).split(
 const oneLine = (s: unknown): string => String(s).replace(/[\\x00-\\x1f\\x7f]/g, "");
 // allowInsecureLocalhost lets an http:// loopback issuer boot for local dev (the
 // bridge mints real tokens; never set this for a non-loopback / production issuer).
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]); const isLoopback = (url: string): boolean => { try { return LOOPBACK.has(new URL(url).hostname); } catch { return false; } };
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]); const isLoopback = (url: string): boolean => { try { const u = new URL(url); return (u.protocol === "http:" || u.protocol === "https:") && LOOPBACK.has(u.hostname); } catch { return false; } };
 const isHttpLoopback = (url: string): boolean => { try { const u = new URL(url); return u.protocol === "http:" && LOOPBACK.has(u.hostname); } catch { return false; } };
 
 async function main(): Promise<void> {

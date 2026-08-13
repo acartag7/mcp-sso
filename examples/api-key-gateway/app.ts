@@ -170,8 +170,8 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
       "origin",
     );
     if (origin.ambiguous || (origin.value !== undefined
-      && !opts.config.allowedOrigins.includes(origin.value)
-      && origin.value !== originOf(opts.config.issuer))) {
+      && !config.allowedOrigins.includes(origin.value)
+      && origin.value !== originOf(config.issuer))) {
       reply.code(403).send({ jsonrpc: "2.0", error: { code: -32001, message: "Origin not allowed" }, id: null });
     }
   });
@@ -187,7 +187,7 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
       return await authorizer.authorize({ authorization: request.headers.authorization });
     } catch (error) {
       const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
-      reply.header("www-authenticate", buildUnauthorizedChallenge(opts.config, { scope: opts.config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
+      reply.header("www-authenticate", buildUnauthorizedChallenge(config, { scope: config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
       reply.code(oe.status).send({ jsonrpc: "2.0", error: { code: -32001, message: `${oe.code}: ${oe.message}` }, id: null });
       return null;
     }

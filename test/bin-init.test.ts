@@ -515,6 +515,35 @@ test("bin init (spawn): an internet-facing starter fails BEFORE persistent state
   }
 });
 
+test("bin init (spawn): an unsupported loopback scheme fails BEFORE persistent state is created", async () => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-loopback-scheme-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: {
+        ...process.env,
+        MCP_SSO_DIR: stateDir,
+        OAUTH_ISSUER: "ftp://localhost:3000",
+        OAUTH_RESOURCE: "ftp://localhost:3000/mcp",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    const code = await new Promise<number | null>((resolveP) => child.on("close", resolveP));
+    assert.notEqual(code, 0);
+    assert.match(stderr, /generated starter is localhost-only/);
+    assert.equal(existsSync(stateDir), false, "no signing state was created");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test("bin init: refuses a missing descendant through a symlink into a writable destination (macOS /tmp→/private/tmp shape)", { skip: process.platform === "win32" }, async () => {
   // A trusted symlink ancestor (under a non-writable parent) that points into a writable
   // destination: the walk must check the DESTINATION's writability (stat follows the

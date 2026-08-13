@@ -6,7 +6,11 @@ const STARTER_REDIRECT_ORIGINS = new Set(DEFAULT_ALLOWED_REDIRECT_ORIGINS);
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function isLoopbackUrl(value: string): boolean {
-  try { return LOOPBACK_HOSTS.has(new URL(value).hostname); }
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:")
+      && LOOPBACK_HOSTS.has(url.hostname);
+  }
   catch { return false; }
 }
 
