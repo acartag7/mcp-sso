@@ -322,7 +322,7 @@ test("Bridge.handleApprove accepts both canonical approval-clock boundaries", as
   }
 });
 
-test("Bridge.handleApprove rejects a backward commit clock without audit and consumes the JTI", async () => {
+test("Bridge.handleApprove audits a backward commit clock with the initial snapshot and consumes the JTI", async () => {
   const clock = new ScriptedClock([NOW_MS, NOW_MS - 1, NOW_MS]);
   const audit = new MemoryAudit();
   const store = new MemoryStore();
@@ -335,7 +335,11 @@ test("Bridge.handleApprove rejects a backward commit clock without audit and con
     });
     assert.equal(response.status, 400);
     assert.equal((response.body as { error?: string }).error, "invalid_consent");
-    assert.deepEqual(audit.events, []);
+    assert.deepEqual(audit.events, [{
+      occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.authorize.approve",
+      status: "failure", clientId: undefined, subject: undefined,
+      redirectHost: undefined, reason: "invalid_consent",
+    }]);
     const retry = await bridge.handleApprove({
       query: {}, headers: { origin: "https://auth.test" },
       body: { consent_token: consentToken, approved: "true" },
@@ -362,7 +366,11 @@ test("Bridge.handleApprove rejects a commit clock whose approval TTL crosses the
     assert.equal(response.status, 400);
     assert.equal((response.body as { error?: string }).error, "invalid_consent");
     assert.equal(clock.reads, 2);
-    assert.deepEqual(audit.events, []);
+    assert.deepEqual(audit.events, [{
+      occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.authorize.approve",
+      status: "failure", clientId: undefined, subject: undefined,
+      redirectHost: undefined, reason: "invalid_consent",
+    }]);
     const retry = await bridge.handleApprove({
       query: {},
       headers: { origin: "https://auth.test" },

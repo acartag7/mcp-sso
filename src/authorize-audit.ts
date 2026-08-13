@@ -7,6 +7,7 @@ import type { AuditPort } from "./ports/audit.ts";
 import type { ClockPort } from "./ports/clock.ts";
 import { OAuthError } from "./errors.ts";
 import { hostOf } from "./authorize-internals.ts";
+import { writeAuditBestEffort } from "./audit/best-effort.ts";
 
 export type AuthorizeAuditEvent = "oauth.authorize.prepare" | "oauth.authorize.approve";
 
@@ -35,7 +36,7 @@ export async function writeAuthorizeFailure(
   audit: AuditPort, clock: ClockPort, event: AuthorizeAuditEvent, error: unknown,
   clientId?: string, redirectUri?: string, subject?: string,
 ): Promise<void> {
-  await audit.writeAuthEvent({
+  await writeAuditBestEffort(audit, {
     occurredAt: new Date(clock.nowMs()).toISOString(), event, status: "failure",
     clientId, subject, redirectHost: redirectUri ? hostOf(redirectUri) : undefined,
     reason: error instanceof OAuthError ? error.code : "internal_error",

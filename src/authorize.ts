@@ -214,7 +214,6 @@ export class OAuthAuthorizationUseCase {
       if (!(await this.store.consumeConsentJti(consent.jti, consent.expiresAt))) {
         throw new OAuthError("invalid_grant", "Consent token has already been used");
       }
-      auditClock = undefined;
       const commitClock = approvalCommitClock(
         this.clock, this.config.authorizationCodeTtlSeconds, operationClock.nowMs(),
       );
@@ -236,7 +235,7 @@ export class OAuthAuthorizationUseCase {
       await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject }, commitClock);
       return { code, redirectTo: redirectWithCode(consent.redirectUri, code, this.config.issuer, consent.state), state: consent.state };
     } catch (error) {
-      if (auditClock) await this.auditFailure(AUDIT_APPROVE, error, undefined, undefined, undefined, auditClock);
+      await this.auditFailure(AUDIT_APPROVE, error, undefined, undefined, undefined, auditClock);
       throw error;
     }
   }
