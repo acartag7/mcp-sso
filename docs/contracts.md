@@ -7,15 +7,16 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and the contract set
 > disagree, the contract set wins until one of them is deliberately changed.
 >
-> Status: **v0.3.3**. This release is based on exact merged implementation commit
-> `5725e77d26651f4c0a303554a3f0fd3bdf897df8`. It carries the v0.3.2
-> grant-generation cutover forward and strengthens cross-resource isolation for
-> consent, authorization codes, refresh families, stored grants, and machine
-> credentials. It also adds bounded Hono OAuth request bodies, revocation
-> admission limiting, hardened persistent SQLite opening and JSONL audit-file
-> handling, corrected CIMD JSON media-type and shared-cache behavior, and the
-> complete shipped-feature release matrix in `docs/verification.md`. Registry
-> and tag evidence belongs in the release and verification receipts.
+> Status: **v0.3.4**. This release is based on exact merged implementation commit
+> `b16de3bee8f35021aeb86f6c23ff5d8ea95a5408`. It carries v0.3.3 forward and
+> closes security gaps in authorization-parameter ambiguity, loopback redirect
+> trust, custom audit-sink containment, access-token expiry, and Entra token
+> exchange. It also strengthens immutable Entra identity and issued-at checks,
+> stored-DCR application-type handling, credential-response cache controls,
+> consent-JTI uniqueness and store-instance binding, CIMD runtime encapsulation,
+> webhook secret redaction, commit-window evidence, production deployment
+> defaults, and generated-project persistence. Registry and tag evidence belongs
+> in the release and verification receipts.
 >
 > The §17 feature contracts are locked; CIMD §17.1, generic OIDC, and the
 > Google preset are implemented. Google has reproducible

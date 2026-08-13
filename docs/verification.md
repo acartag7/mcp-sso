@@ -548,6 +548,22 @@ points and used the installed executable to scaffold the five documented
 project files. This is prepublication evidence, not evidence of a `v0.3.3` tag,
 npm publication, or GitHub Release.
 
+**v0.3.4 prepublication candidate input (2026-08-14).** The release-only
+candidate based on exact merged implementation commit
+`b16de3bee8f35021aeb86f6c23ff5d8ea95a5408` declares package version 0.3.4.
+The clean source-tree suite passed 1,214 tests with nine platform or
+release-selector skips and zero failures. The integration-enabled suite passed
+1,269 tests with nine release-selector skips and zero failures against
+disposable MySQL 8.4 and Redis 7 services; the executable release matrix then
+reported all ten required rows passing with no required row skipped. The
+240-file dry-run tarball contained only `dist/`, `docs/`, `README.md`, `LICENSE`,
+and `package.json` at its root, and its package manifest retained `jose` as the
+sole runtime dependency. RM.1 installed the actual tarball and completed the
+generated-server lifecycle through the installed executable, including the
+official-SDK `ping`/`pong`, refresh rotation, replay-family rejection, and
+revocation; all 13 public entry points imported. This is prepublication
+evidence, not evidence of a `v0.3.4` tag, npm publication, or GitHub Release.
+
 ### Release-authority gate
 
 Before tagging, verify the `publish` GitHub Environment through the repository
