@@ -40,23 +40,24 @@ Every port follows the same authorization model (see
 Blank config counts as missing config. The example's env wiring rejects blank
 required values (`mustEnv`) and selects each provider branch by *presence*, so a
 blank required env var fails the **boot** instead of silently falling back to
-console pairing. Most factories also reject blank required fields at construction
-(Cloudflare's `audience`; the OIDC / Google `clientId`, `issuer`, `redirectUri`).
-The **Entra** factory is the exception — it does not non-empty-check `tenantId` /
-`clientId`, so wire it through a caller that rejects blanks (as the example's
-`mustEnv` does).
+console pairing. Factories also reject their security-critical blank required
+fields at construction (Cloudflare's `audience`; OIDC / Google's `clientId`,
+`issuer`, and `redirectUri`; Entra's `tenantId` and `clientId`). Callers still
+reject blank environment values before selecting a provider branch, as the
+example's `mustEnv` does.
 
 ## Subjects prefer the immutable identifier
 
 - Cloudflare Access → `sub` (opaque UUID), falling back to `email` if `sub` is absent
-- Entra → `oid`, falling back to `preferred_username` / `email`
+- Entra → `oid`, falling back to `${acceptedIssuer}|${sub}`; mutable username and
+  email claims never key grants
 - Google → the provider `sub` (raw — Google's `sub` is globally unique)
 - generic OIDC → `${issuer}|${sub}` (the `sub` namespaced by issuer to defend against
   cross-issuer collisions; the allowlist still matches the raw `sub`)
 
 Prefer the immutable subject for grants and audits; do not key authorization on the
-email — it is mutable, and for Cloudflare and Entra it is also the subject
-*fallback*. Email handling differs by port: **Google** surfaces the email only when
+email — it is mutable. Cloudflare Access retains its documented email fallback;
+Entra does not. Email handling differs by port: **Google** surfaces the email only when
 the provider marks it `email_verified`; **Cloudflare Access**, **Entra**, and
 **generic OIDC** surface the email claim as-is (generic OIDC applies the
 `email_verified` check only to optional allowlist *matching*, not to whether the
