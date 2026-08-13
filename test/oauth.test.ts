@@ -11,7 +11,10 @@ import {
 import { OAuthError, oauthErrorBody } from "../src/errors.ts";
 import { pkceChallenge, sha256Hex, signAccessToken, verifyAccessToken } from "../src/crypto.ts";
 import { requireScope } from "../src/scopes.ts";
-import { buildErrorRedirect, buildUnauthorizedChallenge } from "../src/challenge.ts";
+import {
+  buildAuthorizationErrorRedirect, buildUnauthorizedChallenge,
+} from "../src/challenge.ts";
+import { buildErrorRedirect as rootBuildErrorRedirect } from "../src/index.ts";
 import {
   authorizationServerMetadata, jwks, protectedResourceMetadata, protectedResourceMetadataUrls,
 } from "../src/metadata.ts";
@@ -1150,9 +1153,9 @@ test("401 challenge carries resource_metadata + scope + error (fix #1)", () => {
   assert.match(challenge, /error_description="Bearer token is invalid"/);
 });
 
-test("error redirects replace owned parameters and include exactly one configured issuer", () => {
+test("authorization error redirects replace owned parameters and include exactly one configured issuer", () => {
   const config = makeConfig();
-  const redirect = buildErrorRedirect(
+  const redirect = buildAuthorizationErrorRedirect(
     config,
     `${REDIRECT}?keep=1&error=old&error=duplicate&iss=https%3A%2F%2Fevil.test&state=stale&error_description=stale#fragment`,
     "invalid_scope",
@@ -1163,6 +1166,17 @@ test("error redirects replace owned parameters and include exactly one configure
   assert.deepEqual(url.searchParams.getAll("iss"), [config.issuer]);
   assert.equal(url.searchParams.has("state"), false);
   assert.equal(url.searchParams.has("error_description"), false);
+  assert.equal(url.hash, "");
+});
+
+test("legacy buildErrorRedirect keeps its public argument order", () => {
+  const redirect = rootBuildErrorRedirect(`${REDIRECT}?keep=1#fragment`, "invalid_scope", "state-1", "bad scope");
+  const url = new URL(redirect);
+  assert.equal(url.searchParams.get("keep"), "1");
+  assert.equal(url.searchParams.get("error"), "invalid_scope");
+  assert.equal(url.searchParams.get("state"), "state-1");
+  assert.equal(url.searchParams.get("error_description"), "bad scope");
+  assert.equal(url.searchParams.has("iss"), false);
   assert.equal(url.hash, "");
 });
 

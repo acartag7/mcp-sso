@@ -41,10 +41,25 @@ export function buildBasicClientChallenge(config: BridgeConfig): string {
   return `Basic realm="${escapeQuoted(config.issuer)}", charset="UTF-8"`;
 }
 
+/** Build the legacy RFC 6749 §4.1.2.1 error redirect. This public signature is
+ *  retained for source compatibility. It cannot add the RFC 9207 issuer and is
+ *  therefore not used for library-owned authorization responses.
+ *
+ *  @deprecated Use {@link buildAuthorizationErrorRedirect} when constructing
+ *  an authorization-server response. */
+export function buildErrorRedirect(redirectUri: string, code: string, state?: string, description?: string): string {
+  const url = new URL(redirectUri);
+  url.searchParams.set("error", code);
+  if (state) url.searchParams.set("state", state);
+  if (description) url.searchParams.set("error_description", description);
+  url.hash = "";
+  return url.href;
+}
+
 /** Build an RFC 6749 §4.1.2.1 + RFC 9207 error redirect. The redirect_uri MUST
  *  already be §10-validated by the caller (the authorize use-case tags
  *  post-validation errors with it). */
-export function buildErrorRedirect(config: BridgeConfig, redirectUri: string, code: string, state?: string, description?: string): string {
+export function buildAuthorizationErrorRedirect(config: BridgeConfig, redirectUri: string, code: string, state?: string, description?: string): string {
   const url = new URL(redirectUri);
   url.searchParams.set("error", code);
   url.searchParams.set("iss", config.issuer);

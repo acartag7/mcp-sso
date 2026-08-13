@@ -5,7 +5,7 @@
 import type { BridgeConfig } from "../config.ts";
 import { originOf } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
-import { buildErrorRedirect, buildUnauthorizedChallenge } from "../challenge.ts";
+import { buildAuthorizationErrorRedirect, buildUnauthorizedChallenge } from "../challenge.ts";
 
 export interface NormRequest {
   query: Record<string, string | string[] | undefined>;
@@ -135,7 +135,7 @@ export function isMcpPath(requestUrl: string): boolean {
  *  surface passes it; the OAuth authorize/token endpoints do not). */
 export function oauthErrorResponse(config: BridgeConfig, error: OAuthError, challenge?: { scope?: string[] }): NormResponse {
   if (error.redirect) {
-    const location = buildErrorRedirect(config, error.redirect.redirectUri, error.code, error.redirect.state, error.message);
+    const location = buildAuthorizationErrorRedirect(config, error.redirect.redirectUri, error.code, error.redirect.state, error.message);
     return { status: 302, headers: { location }, redirect: location };
   }
   const headers: Record<string, string> = {};

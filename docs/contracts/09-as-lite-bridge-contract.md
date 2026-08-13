@@ -123,13 +123,17 @@ two error channels, split by whether the `redirect_uri` is trusted yet:
   `unsupported_response_type`, `invalid_target`, `invalid_scope`, `invalid_request`
   (bad PKCE params), `access_denied` (the user clicked Deny), and `server_error`.
   The core provides
-  `buildErrorRedirect(config, redirectUri, code, state?, description?)`; the
+  `buildAuthorizationErrorRedirect(config, redirectUri, code, state?, description?)`; the
   required `BridgeConfig` supplies the exact issuer and cannot be omitted by a
   library call site; every such call site passes its validated `Bridge.config`.
   The builder replaces any pre-existing
   `error`, `iss`, `state`, or `error_description` member it owns rather than
   appending an ambiguous duplicate. It does not validate the redirect
   destination; the caller must already have established the redirect channel.
+  The root export retains the pre-existing
+  `buildErrorRedirect(redirectUri, code, state?, description?)` signature for
+  source compatibility, but library-owned authorization responses do not use
+  that issuer-less legacy helper.
   The use-case tags these errors with the validated `redirectUri` + `state` so the
   adapter answers 302. (This is what lets claude.ai render "you declined" instead
   of a dead JSON page. The source never implemented error redirects; this completes

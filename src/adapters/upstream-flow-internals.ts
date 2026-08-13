@@ -7,7 +7,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { AuthConfigError, type BridgeConfig } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
-import { buildErrorRedirect } from "../challenge.ts";
+import { buildAuthorizationErrorRedirect } from "../challenge.ts";
 import { headerString, type NormRequest, type NormResponse } from "./http.ts";
 
 // Re-export the shared authorize occurrence boundary so existing internal
@@ -131,7 +131,7 @@ export const CALLBACK_DUP_KEYS_EXPORT = CALLBACK_DUP_KEYS;
  *  `redirect_uri` (from the verified flow params) with a FIXED description; the
  *  IdP's own error/error_description are never echoed. */
 export function redirectErrorResponse(config: BridgeConfig, redirectUri: string, code: string, state: string | undefined, description: string): NormResponse {
-  const location = buildErrorRedirect(config, redirectUri, code, state, description);
+  const location = buildAuthorizationErrorRedirect(config, redirectUri, code, state, description);
   return { status: 302, headers: { location }, redirect: location };
 }
 

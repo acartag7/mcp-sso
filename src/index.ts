@@ -32,7 +32,8 @@ export {
 } from "./redirect.ts";
 
 export {
-  type ChallengeOptions, buildUnauthorizedChallenge, buildBasicClientChallenge, buildErrorRedirect,
+  type ChallengeOptions, buildUnauthorizedChallenge, buildBasicClientChallenge,
+  buildErrorRedirect, buildAuthorizationErrorRedirect,
   protectedResourceMetadataUrl,
 } from "./challenge.ts";
 
