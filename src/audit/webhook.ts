@@ -86,7 +86,7 @@ export class WebhookAudit implements AuditPort {
     }
     this.url = url;
     this.host = parsed.host;
-    this.querySecrets = collectQuerySecrets(parsed);
+    this.querySecrets = collectQuerySecrets(url, parsed);
     this.timeoutMs = options.timeoutMs ?? 5000;
     if (options.headers !== undefined && (typeof options.headers !== "object" || options.headers === null || Array.isArray(options.headers)
       || ![Object.prototype, null].includes(Object.getPrototypeOf(options.headers))
@@ -143,9 +143,19 @@ export class WebhookAudit implements AuditPort {
  *  `key=value` pair (handles a pair echoed without the leading `?`), and any
  *  non-empty value (handles a value echoed alone). Bare query components are
  *  secrets too. Length never weakens exact configured-value redaction. */
-function collectQuerySecrets(url: URL): string[] {
+function collectQuerySecrets(rawUrl: string, url: URL): string[] {
   if (!url.search) return [];
-  const tokens: string[] = [url.search];
+  const rawQuery = rawUrl.includes("?") ? rawUrl.slice(rawUrl.indexOf("?")) : "";
+  const tokens: string[] = [rawQuery, rawQuery.replace(/[\x00-\x1f\x7f-\x9f]/g, " "), url.search];
+  for (const component of rawQuery.slice(1).split("&")) {
+    if (component.length === 0) continue;
+    tokens.push(component, component.replace(/[\x00-\x1f\x7f-\x9f]/g, " "));
+    const separator = component.indexOf("=");
+    if (separator >= 0 && separator < component.length - 1) {
+      const value = component.slice(separator + 1);
+      tokens.push(value, value.replace(/[\x00-\x1f\x7f-\x9f]/g, " "));
+    }
+  }
   for (const component of url.search.slice(1).split("&")) {
     if (component.length > 0) {
       tokens.push(component);

@@ -113,6 +113,22 @@ test("WebhookAudit: decoded control-bearing query values redact after line norma
   assert.equal(stderr.includes("cd"), false);
 });
 
+test("WebhookAudit: raw control-bearing query components redact before URL normalization", async () => {
+  const raw = "sig=ab\ncd";
+  const sink = new WebhookAudit(`https://siem.test/ingest?${raw}`, {
+    fetchImpl: (async () => { throw new Error(`transport reflected ${raw}`); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("ab cd"), false);
+  assert.equal(stderr.includes("abcd"), false);
+});
+
 test("WebhookAudit: per-event POST is application/json with merged headers", async () => {
   const state = { calls: [] as Recorded[] };
   const sink = new WebhookAudit("https://siem.test/ingest", {
