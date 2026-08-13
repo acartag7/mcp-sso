@@ -2170,6 +2170,10 @@ decision 1) at authorize time; any failure to establish that context is a
 | 12 | `bridge.handleAuthorize` errors | its own §9.3 channels | unchanged |
 | 13 | success | 200 consent page | — |
 
+Every redirect-channel response in rows 7, 8, 10, 11, and 12 includes RFC
+9207 `iss`, exactly equal to the bridge issuer. Rows 1–6 and 9 remain direct
+errors with no `Location` and no redirect parameters.
+
 Rows 1 and 2 return without a clear only when no readable flow cookie exists;
 row 1 also clears when a cookie was present. Every callback exit that clears a
 readable cookie — duplicate-parameter, invalid-cookie/expiry/state/CIMD policy,

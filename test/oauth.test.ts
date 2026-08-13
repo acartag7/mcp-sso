@@ -11,7 +11,7 @@ import {
 import { OAuthError, oauthErrorBody } from "../src/errors.ts";
 import { pkceChallenge, sha256Hex, signAccessToken, verifyAccessToken } from "../src/crypto.ts";
 import { requireScope } from "../src/scopes.ts";
-import { buildUnauthorizedChallenge } from "../src/challenge.ts";
+import { buildErrorRedirect, buildUnauthorizedChallenge } from "../src/challenge.ts";
 import {
   authorizationServerMetadata, jwks, protectedResourceMetadata, protectedResourceMetadataUrls,
 } from "../src/metadata.ts";
@@ -698,6 +698,7 @@ test("Deny redirects access_denied without consuming the consent jti (fix #5)", 
   const url = new URL(denied.redirectTo);
   assert.equal(`${url.protocol}//${url.host}${url.pathname}`, REDIRECT);
   assert.equal(url.searchParams.get("error"), "access_denied");
+  assert.equal(url.searchParams.get("iss"), ctx.config.issuer);
   assert.equal(url.searchParams.get("state"), "deny-state");
   // the consent jti was NOT consumed: the same token can still be approved
   const approved = await ctx.auth.approve({ consentToken: prepared.consentToken, approved: true, origin: "https://auth.test" });
@@ -925,7 +926,9 @@ test("approve without an explicit approved:true is a Deny at the CORE layer (§9
   // approved absent (undefined) must deny — not fall through to code issuance.
   const denied: ApproveResult = await ctx.auth.approve({ consentToken: prepared.consentToken, origin: "https://auth.test" });
   assert.equal(denied.code, undefined);
-  assert.equal(new URL(denied.redirectTo).searchParams.get("error"), "access_denied");
+  const redirect = new URL(denied.redirectTo);
+  assert.equal(redirect.searchParams.get("error"), "access_denied");
+  assert.equal(redirect.searchParams.get("iss"), ctx.config.issuer);
   // and the jti was not consumed: an explicit approve still succeeds.
   const approved = await ctx.auth.approve({ consentToken: prepared.consentToken, approved: true, origin: "https://auth.test" });
   assert.ok(approved.code, "absent-field deny did not consume the consent token");
@@ -1145,6 +1148,22 @@ test("401 challenge carries resource_metadata + scope + error (fix #1)", () => {
   assert.match(challenge, /scope="mcp:read mcp:write"/);
   assert.match(challenge, /error="invalid_token"/);
   assert.match(challenge, /error_description="Bearer token is invalid"/);
+});
+
+test("error redirects replace owned parameters and include exactly one configured issuer", () => {
+  const config = makeConfig();
+  const redirect = buildErrorRedirect(
+    config,
+    `${REDIRECT}?keep=1&error=old&error=duplicate&iss=https%3A%2F%2Fevil.test&state=stale&error_description=stale#fragment`,
+    "invalid_scope",
+  );
+  const url = new URL(redirect);
+  assert.equal(url.searchParams.get("keep"), "1");
+  assert.deepEqual(url.searchParams.getAll("error"), ["invalid_scope"]);
+  assert.deepEqual(url.searchParams.getAll("iss"), [config.issuer]);
+  assert.equal(url.searchParams.has("state"), false);
+  assert.equal(url.searchParams.has("error_description"), false);
+  assert.equal(url.hash, "");
 });
 
 test("AS metadata advertises iss flag + public-client auth method + S256", () => {

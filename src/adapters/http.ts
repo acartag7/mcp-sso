@@ -130,16 +130,17 @@ export function isMcpPath(requestUrl: string): boolean {
 }
 
 /** Map an OAuthError to a normalized response: a redirect-tagged error ⇒ 302 to
- *  redirect_uri?error=…; otherwise a direct status with the RFC 6749 §5.2 body.
- *  `challengeConfig` adds the §8.2 WWW-Authenticate challenge on 401 (the /mcp
+ *  redirect_uri?error=…&iss=…; otherwise a direct status with the RFC 6749 §5.2
+ *  body. `challenge` adds the §8.2 WWW-Authenticate challenge on 401 (the /mcp
  *  surface passes it; the OAuth authorize/token endpoints do not). */
-export function oauthErrorResponse(error: OAuthError, challengeConfig?: { config: BridgeConfig; scope?: string[]; }): NormResponse {
+export function oauthErrorResponse(config: BridgeConfig, error: OAuthError, challenge?: { scope?: string[] }): NormResponse {
   if (error.redirect) {
-    return { status: 302, headers: { location: buildErrorRedirect(error.redirect.redirectUri, error.code, error.redirect.state, error.message) }, redirect: buildErrorRedirect(error.redirect.redirectUri, error.code, error.redirect.state, error.message) };
+    const location = buildErrorRedirect(config, error.redirect.redirectUri, error.code, error.redirect.state, error.message);
+    return { status: 302, headers: { location }, redirect: location };
   }
   const headers: Record<string, string> = {};
-  if (error.status === 401 && challengeConfig) {
-    headers["www-authenticate"] = buildUnauthorizedChallenge(challengeConfig.config, { scope: challengeConfig.scope, error: error.code, errorDescription: error.message });
+  if (error.status === 401 && challenge) {
+    headers["www-authenticate"] = buildUnauthorizedChallenge(config, { scope: challenge.scope, error: error.code, errorDescription: error.message });
   }
   return { status: error.status, headers, body: oauthErrorBody(error) };
 }

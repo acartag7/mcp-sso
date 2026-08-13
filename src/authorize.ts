@@ -201,7 +201,7 @@ export class OAuthAuthorizationUseCase {
       assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
       if (input.approved !== true) {
-        const redirectTo = buildErrorRedirect(consent.redirectUri, "access_denied", consent.state);
+        const redirectTo = buildErrorRedirect(this.config, consent.redirectUri, "access_denied", consent.state);
         await this.auditFailure(AUDIT_APPROVE, new OAuthError("access_denied", "Consent was denied"), consent.clientId, undefined, consent.subject, operationClock);
         return { redirectTo, state: consent.state };
       }

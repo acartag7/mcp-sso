@@ -174,12 +174,12 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       let identityResolved: { subject: string; allowedScopes?: string[] };
       const req = await toNorm(c);
       if (hasDuplicatedAuthorizeParams(req.query)) {
-        return send(c, oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters")));
+        return send(c, oauthErrorResponse(bridge.config, new OAuthError("invalid_request", "duplicate request parameters")));
       }
       try {
         identityResolved = await bridge.resolveIdentity(id, headerString(req.headers, identityHeader), req.ip);
       } catch (error) {
-        return send(c, oauthErrorResponse(asDirectOAuth(error)));
+        return send(c, oauthErrorResponse(bridge.config, asDirectOAuth(error)));
       }
       return send(c, await bridge.handleAuthorize(req, identityResolved));
     });

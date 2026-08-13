@@ -41,16 +41,22 @@ export function buildBasicClientChallenge(config: BridgeConfig): string {
   return `Basic realm="${escapeQuoted(config.issuer)}", charset="UTF-8"`;
 }
 
-/** Build an RFC 6749 §4.1.2.1 error redirect: redirect_uri?error=…&state=…
- *  (&error_description). The redirect_uri MUST already be §10-validated by the
- *  caller (the authorize use-case tags post-validation errors with it). */
-export function buildErrorRedirect(redirectUri: string, code: string, state?: string, description?: string): string {
+/** Build an RFC 6749 §4.1.2.1 + RFC 9207 error redirect. The redirect_uri MUST
+ *  already be §10-validated by the caller (the authorize use-case tags
+ *  post-validation errors with it). */
+export function buildErrorRedirect(config: BridgeConfig, redirectUri: string, code: string, state?: string, description?: string): string {
   const url = new URL(redirectUri);
   url.searchParams.set("error", code);
-  if (state) url.searchParams.set("state", state);
-  if (description) url.searchParams.set("error_description", description);
+  url.searchParams.set("iss", config.issuer);
+  setOrDelete(url.searchParams, "state", state);
+  setOrDelete(url.searchParams, "error_description", description);
   url.hash = "";
   return url.href;
+}
+
+function setOrDelete(params: URLSearchParams, name: string, value: string | undefined): void {
+  if (value === undefined) params.delete(name);
+  else params.set(name, value);
 }
 
 function escapeQuoted(value: string): string {

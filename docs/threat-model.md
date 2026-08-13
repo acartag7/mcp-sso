@@ -135,7 +135,10 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
   RFC 6749 §4.1.2.1): a redirect (success or error) is issued ONLY to a
   `redirect_uri` that already passed §10 validation. Pre-validation failures
   (bad `client_id`/`redirect_uri`, no identity) are direct 4xx — they NEVER
-  redirect, because the destination is untrusted.
+  redirect, because the destination is untrusted. Every library-owned
+  authorization response sent to a client over a validated redirect, including
+  upstream callback failures, carries the exact configured RFC 9207 `iss`;
+  direct errors carry no redirect parameters.
 - **CSRF on approve** ([§9.3](./contracts/09-as-lite-bridge-contract.md#93-authorize--consent)): the
   `origin` check lives in the core use-case; a missing/foreign origin is
   rejected (direct 403). The single-use consent JTI is the primary replay

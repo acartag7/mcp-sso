@@ -12,7 +12,7 @@
 | Redirect-entry grammar §10.0 (all nine consumers) | ✅ implemented — the nine-leg differential test passes across every consumer | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
-| RFC 9207 `iss` + `authorization_response_iss_parameter_supported` | ⚠️ partial: metadata advertises support and successful code responses include `iss`; redirected authorization errors omit it, so MCP 2026-07-28 conformance remains blocked | §9.1, §9.3 |
+| RFC 9207 `iss` + `authorization_response_iss_parameter_supported` | ✅ metadata advertises support; successful code responses and every library-owned authorization error redirect include the exact configured issuer; direct errors remain unredirected | §9.1, §9.3 |
 | Scope accumulation on step-up — stored-DCR opaque clients only | ✅ v0.1; CIMD clients stand alone by documented profile decision | §9.3, §11, §17.1.6 |
 | Refresh rotation + family replay revocation | ✅ v0.1 | §7.4, §12 |
 | RFC 6749 §6 refresh client-binding | ✅ v0.1 | §7.4 |
@@ -261,8 +261,7 @@ so neither inventory absorbs the other.
 [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)
 resolves to commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` and references
 CIMD draft `-00`. Completing this mapping does not change the project target:
-MCP Authorization 2025-11-25 remains current because redirected authorization
-errors still omit RFC 9207 `iss`, scope hierarchy handling is absent, and CIMD
-now carries **one** confirmed `-00` runtime mismatch (D00-4.5.2 native-app
+MCP Authorization 2025-11-25 remains current because scope hierarchy handling
+is absent; CIMD also carries **one** confirmed `-00` runtime mismatch (D00-4.5.2 native-app
 precondition) plus three open evidence PRs. Counted individually the project has
-**three** open MCP-2026 runtime defects.
+**two** open MCP-2026 runtime defects.

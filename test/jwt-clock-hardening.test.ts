@@ -322,7 +322,9 @@ test("Bridge.handleApprove reuses one snapshot on the Deny exit", async () => {
       body: { consent_token: await validConsentToken(), approved: "false" },
     });
     assert.equal(response.status, 302);
-    assert.equal(new URL(response.redirect!).searchParams.get("error"), "access_denied");
+    const redirect = new URL(response.redirect!);
+    assert.equal(redirect.searchParams.get("error"), "access_denied");
+    assert.equal(redirect.searchParams.get("iss"), config.issuer);
     assert.equal(clock.reads, 1);
     assert.equal(audit.events[0]?.occurredAt, new Date(NOW_MS).toISOString());
     assert.equal(audit.events[0]?.status, "failure");

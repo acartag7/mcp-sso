@@ -25,15 +25,15 @@ How mcp-sso proves a release actually works.
 > [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)
 > artifact was manually re-verified on 2026-08-02. Its DCR deprecation and
 > client-side DCR `application_type` requirement align with the v0.3.2
-> registration surface. Final conformance remains pending on three known items:
-> redirected authorization errors omit RFC 9207 `iss` while metadata advertises
-> support; `requireScope` performs exact membership rather than accounting for
-> scope hierarchies; and the final artifact's referenced CIMD draft `-00` is now
-> completely mapped. D00-4.1.4 now restricts alternate JSON media types to the
-> `application/` tree; shared-cache handling is conformant, while one confirmed
-> runtime mismatch remains (D00-4.5.2, the native-app precondition on the
-> loopback port exception), plus four unresolved
-> test-evidence rows. See the matrix in
+> registration surface. On this source branch, RFC 9207 error redirects include
+> the configured issuer, closing the advertised-support mismatch; this is not
+> yet a published-release claim. Final conformance remains
+> pending on two known runtime items: `requireScope` performs exact membership
+> rather than accounting for scope hierarchies; and CIMD D00-4.5.2 applies the
+> loopback port exception without checking the native-app precondition. The
+> final artifact's referenced draft `-00` is completely mapped. D00-4.1.4 media
+> types and shared-cache handling are conformant; four test-evidence rows remain
+> unresolved. See the matrix in
 > [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
 > and the completed [spec-release re-verification](#spec-release-re-verification-completed-2026-08-02).
 >
@@ -771,6 +771,12 @@ plus **four CIMD test-evidence rows**. The conformance target must
 not move from 2025-11-25 until every one of them is resolved and the resulting
 implementation passes the full release gates.
 
+**Closure note (2026-08-14):** item 1 above is superseded on this source branch.
+The shared builder now requires bridge config, and core Deny, adapter-mapped
+errors, and upstream callback rows 7/8/10/11 include its exact issuer while
+direct errors remain unredirected. The current remainder is **two runtime
+defects** plus **four CIMD test-evidence rows**; the target stays 2025-11-25.
+
 ## Done rules
 
 Per build session:
@@ -818,10 +824,11 @@ The packed-artifact pre-tag smoke passed at exact clean-main commit `e71a2bb`.
 The published `mcp-sso@0.3.0` artifact repeated the eight peer-free and all-13
 with-peers import smokes, produced both metadata documents, and carried verified
 registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
-stable artifact was manually checked on 2026-08-02. The release still targets
-MCP Authorization 2025-11-25 because the completed receipt above records **three**
-open **runtime** requirements — RFC 9207 error responses, scope hierarchies, and
-one confirmed CIMD draft `-00` mismatch (D00-4.5.2 native-app precondition) — plus four
+stable artifact was manually checked on 2026-08-02. The published release keeps
+the three-gap result in that dated receipt. This source branch closes RFC 9207
+error redirects but still targets MCP Authorization 2025-11-25 because **two**
+open **runtime** requirements remain — scope hierarchies and one confirmed CIMD
+draft `-00` mismatch (D00-4.5.2 native-app precondition) — plus four
 unresolved CIMD test-evidence rows. The CIMD remainder is **not** test-only.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current

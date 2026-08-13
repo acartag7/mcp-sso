@@ -24,10 +24,12 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 - **Spec target:** **MCP Authorization `2025-11-25`**. The official stable
   `2026-07-28` artifact was manually re-verified on 2026-08-02. Its DCR
   deprecation and client-side DCR `application_type` requirement align with the
-  v0.3.2 registration surface. Final conformance is still pending: redirected
-  authorization errors omit RFC 9207 `iss`; `requireScope` implements exact
-  membership rather than the final text's scope-hierarchy `MUST`; and the
-  requirement mapping for the final artifact's referenced CIMD draft `-00` is now
+  v0.3.2 registration surface. The current source tree includes the configured
+  issuer on RFC 9207 error redirects; this is not yet a published-release claim.
+  Final conformance is still pending: `requireScope`
+  implements exact membership rather than the final text's scope-hierarchy
+  `MUST`; and the requirement mapping for the final artifact's referenced CIMD
+  draft `-00` is now
   complete. D00-4.1.4 media-type acceptance and D00-4.4.2 shared-cache handling
   are conformant; one confirmed runtime mismatch remains (the unevaluated
   native-app precondition on the loopback port exception), plus four unresolved

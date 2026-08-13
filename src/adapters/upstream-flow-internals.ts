@@ -5,7 +5,7 @@
 // the clock is passed in (no ambient time). Everything is framework-free.
 
 import { timingSafeEqual } from "node:crypto";
-import { AuthConfigError } from "../config.ts";
+import { AuthConfigError, type BridgeConfig } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildErrorRedirect } from "../challenge.ts";
 import { headerString, type NormRequest, type NormResponse } from "./http.ts";
@@ -130,8 +130,8 @@ export const CALLBACK_DUP_KEYS_EXPORT = CALLBACK_DUP_KEYS;
 /** A redirect-channel error (rows 7/8/10/11): 302 to the §10-validated
  *  `redirect_uri` (from the verified flow params) with a FIXED description; the
  *  IdP's own error/error_description are never echoed. */
-export function redirectErrorResponse(redirectUri: string, code: string, state: string | undefined, description: string): NormResponse {
-  const location = buildErrorRedirect(redirectUri, code, state, description);
+export function redirectErrorResponse(config: BridgeConfig, redirectUri: string, code: string, state: string | undefined, description: string): NormResponse {
+  const location = buildErrorRedirect(config, redirectUri, code, state, description);
   return { status: 302, headers: { location }, redirect: location };
 }
 
