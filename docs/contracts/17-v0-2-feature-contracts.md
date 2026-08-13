@@ -1540,7 +1540,7 @@ gate replaces no-gate).
   pure RFC 6749 §3.1 occurrence guard and canonical singleton-key definition
   as `Bridge.handleAuthorize` and §17.11 upstream authorize. If any of
   `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
-  `code_challenge_method`, `scope`, or `state` has more than one
+  `code_challenge_method`, `scope`, or `state` has more than one nonempty
   occurrence in the normalized authorize query, it returns direct 400 `invalid_request` with
   no `Location`. This check runs before selecting any OAuth value and before
   `beginSession`, pairing-code output, `verify`, hidden-field rendering,
@@ -2109,10 +2109,10 @@ The singleton-key set and its pure duplicate-finding helper are shared with dire
 `Bridge.handleAuthorize` and `handlePairingAuthorize`; this upstream path keeps
 the same step-2 response and ordering while eliminating per-entry-point key-list
 drift.
-RFC 8707 permits repeated `resource` indicators. This single-resource release
-preserves such a set as unsupported resource input, which reaches the existing
-post-validation `invalid_target` channel; it is not classified as an RFC 6749
-duplicate.
+RFC 8707 permits repeated `resource` indicators. Identical nonempty indicators
+collapse to one target. Multiple distinct indicators remain unsupported in this
+single-resource release and reach the existing post-validation `invalid_target`
+channel; they are not classified as an RFC 6749 duplicate.
 3. `client_id` present and `redirect_uri` **mode-appropriately validated**
    (§17.1.6 decision 1a): for a literal-lowercase-`https://` CIMD id with `cimd`
    enabled, the CIMD document match (shape-first, BEFORE any `store.find`);
