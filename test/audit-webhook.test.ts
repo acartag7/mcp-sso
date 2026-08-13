@@ -264,6 +264,22 @@ test("WebhookAudit: non-ASCII whitespace configured values remain secrets", asyn
   assert.equal(captured.messages.join("\n").includes(secret), false);
 });
 
+test("WebhookAudit: case-duplicate header values remain individually secret", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest", {
+    headers: { "X-Hook-Key": "short-one", "x-hook-key": "short-two" },
+    fetchImpl: (async () => { throw new Error("transport parsed short-one and short-two"); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("short-one"), false);
+  assert.equal(stderr.includes("short-two"), false);
+});
+
 test("WebhookAudit: credential-bearing query string in the URL is scrubbed from stderr", async () => {
   // A query param can carry a credential (e.g. ?access_token=…). The regex
   // redactor does NOT catch `access_token=` (the `_` defeats the \b token
