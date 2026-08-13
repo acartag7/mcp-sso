@@ -10,6 +10,7 @@ import { createBridgeConfig } from "../src/config.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import type { ClientRegistration } from "../src/ports/client-store.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
+import { runClientStoreConformance } from "./lib/client-store-conformance.ts";
 
 const WEB: ClientRegistration = {
   clientId: "mcpdc_0123456789abcdef0123456789abcdef",
@@ -17,6 +18,8 @@ const WEB: ClientRegistration = {
   applicationType: "web",
   issuedAtEpoch: 1,
 };
+
+runClientStoreConformance("SqliteStore", () => openSqliteStore(":memory:"));
 
 function signingJwk(): JWK {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -37,16 +40,6 @@ test("SqliteStore persists DCR user registrations across process replacement", a
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test("SqliteStore returns fresh registration snapshots", async () => {
-  const store = openSqliteStore(":memory:");
-  await store.save(WEB);
-  const first = await store.find(WEB.clientId);
-  assert.ok(first && first.applicationType !== "machine");
-  first.redirectUris[0] = "https://mutated.test/callback";
-  assert.deepEqual(await store.find(WEB.clientId), WEB);
-  await store.close();
 });
 
 test("integration: a DCR registration survives restart and completes authorization-code exchange", async () => {
@@ -125,38 +118,4 @@ test("integration: a DCR registration survives restart and completes authorizati
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test("SqliteStore rejects invalid, machine, and colliding client writes without replacement", async () => {
-  const store = openSqliteStore(":memory:");
-  await store.save(WEB);
-  await assert.rejects(
-    () => store.save({ ...WEB, redirectUris: ["https://attacker.test/callback"] }),
-  );
-  assert.deepEqual(await store.find(WEB.clientId), WEB, "collision preserves the first redirect binding");
-
-  const malformed = [
-    { ...WEB, clientId: "foreign" },
-    { ...WEB, issuedAtEpoch: -1 },
-    { ...WEB, redirectUris: ["http://127.0.0.1/callback"] },
-    { ...WEB, applicationType: "native", redirectUris: ["https://client.test/callback"] },
-    {
-      clientId: "mcc_0123456789abcdef0123456789abcdef",
-      redirectUris: [],
-      applicationType: "machine",
-      issuedAtEpoch: 1,
-      allowedScopes: ["mcp:read"],
-      secrets: [],
-    },
-  ] as ClientRegistration[];
-  for (const client of malformed) await assert.rejects(() => store.save(client));
-  assert.equal(await store.find("foreign"), null);
-  await store.close();
-});
-
-test("SqliteStore client methods fail after the shared connection closes", async () => {
-  const store = openSqliteStore(":memory:");
-  await store.close();
-  await assert.rejects(() => store.find(WEB.clientId), /Store is closed/);
-  await assert.rejects(() => store.save(WEB), /Store is closed/);
 });

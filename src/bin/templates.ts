@@ -37,11 +37,11 @@ import {
   Bridge, RequestAuthorizer, createBridgeConfig, originOf, isMcpPath,
   loadOrCreateQuickstartSecrets, handlePairingAuthorize,
   SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
+  type ClientRegistration, type ClientStore,
 } from "mcp-sso";
 import { registerOAuthRoutes } from "mcp-sso/fastify";
 import { openSqliteStore } from "mcp-sso/store/sqlite";
 import { createConsolePairingIdentity } from "mcp-sso/identity/console-pairing";
-
 // The normalized request/response shapes the framework-free surface speaks. Inlined
 // here so this starter compiles standalone; they are also exported from "mcp-sso"
 // (NormRequest / NormResponse) — swap to those imports if you prefer.
@@ -75,10 +75,7 @@ const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]); const isLoopback 
 const isHttpLoopback = (url: string): boolean => { try { const u = new URL(url); return u.protocol === "http:" && LOOPBACK.has(u.hostname); } catch { return false; } };
 
 async function main(): Promise<void> {
-  // Validate the env-sourced config BEFORE creating state (the validate-before-side-effects
-  // invariant): a malformed issuer/resource rejects here, not after loadOrCreateQuickstartSecrets
-  // writes the state dir + signing secrets.
-  // Validate: parseable URL, no userinfo, resource pathname /mcp (the server mounts /mcp). Errors don't echo the value (a malformed credential-bearing URL would leak).
+  // Validate URLs before state creation; errors never echo credential-bearing input.
   const requireUrl = (label: string, v: string): void => {
     let u: URL; try { u = new URL(v); } catch { throw new Error(\`\${label} is not a valid URL\`); }
     if (u.username || u.password) throw new Error(\`\${label} must not contain userinfo (user:password@) — use a plain URL\`);
@@ -89,10 +86,12 @@ async function main(): Promise<void> {
   // loadOrCreateQuickstartSecrets creates DIR (0o700) + the managed .gitignore +
   // the signing material on first boot (the fs-trust bar + zero-setup keys).
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
-  const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
-  const store = openSqliteStore(\`\${DIR}/auth.db\`);
-  let config: ReturnType<typeof createBridgeConfig>;
-  try { config = createBridgeConfig({
+  let store: ReturnType<typeof openSqliteStore> | undefined;
+  const clientStore: ClientStore = {
+    async save(client: ClientRegistration): Promise<void> { if (!store) throw new Error("mcp-sso: client store is not ready"); await store.save(client); },
+    async find(clientId: string): Promise<ClientRegistration | null> { if (!store) throw new Error("mcp-sso: client store is not ready"); return store.find(clientId); },
+  };
+  const config = createBridgeConfig({
       issuer: ISSUER, resource: RESOURCE, consentSigningSecret: secrets.consentSigningSecret,
       signingPrivateJwk: secrets.signingPrivateJwk,
       redirectAllowlist: list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
@@ -101,11 +100,12 @@ async function main(): Promise<void> {
       allowedOrigins: list(process.env.OAUTH_ALLOWED_ORIGINS, ISSUER),
       dev: isHttpLoopback(ISSUER) ? { allowInsecureLocalhost: true } : undefined,
       cimd: { enabled: true },
-      dcr: { mode: "stored", store },
+      dcr: { mode: "stored", store: clientStore },
       accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000,
       consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
     });
-  } catch (error) { await store.close(); throw error; }
+  store = openSqliteStore(\`\${DIR}/auth.db\`);
+  const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
 
   const app = Fastify();
   const clock = new SystemClock();

@@ -527,6 +527,30 @@ test("bin init (spawn): an internet-facing starter fails BEFORE persistent state
   }
 });
 
+test("bin init (spawn): invalid scope config fails before SQLite creates auth.db", async () => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-badscope-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1", OAUTH_SCOPE_CATALOG: "" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    const code = await new Promise<number | null>((resolveP) => child.on("close", resolveP));
+    assert.notEqual(code, 0, "an empty scope catalog fails closed");
+    assert.match(stderr, /scopeCatalog must be a non-empty array/);
+    assert.equal(existsSync(join(stateDir, "auth.db")), false, "config validation ran before SQLite opened the database");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test("bin init (spawn): an unsupported loopback scheme fails BEFORE persistent state is created", async () => {
   await ensureDist();
   const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-loopback-scheme-"));
