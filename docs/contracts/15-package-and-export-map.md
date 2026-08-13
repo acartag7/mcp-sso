@@ -121,7 +121,11 @@ gate + a protected `/mcp`, zero-setup loopback by default). The same SQLite inst
 implements both OAuth state and stored user DCR, so a generated client registration
 survives a server restart; the shipped-entrypoint integration test restarts between
 registration and authorization before completing pairing, token exchange, and an
-official-SDK tool call. `.gitignore`
+official-SDK tool call. The generated composition rejects a non-loopback `HOST` before
+creating keys or opening SQLite: stored DCR is intentionally confined to the starter's
+single-operator localhost envelope, where an unauthenticated network caller cannot grow
+the persistent client table. Internet-facing deployments use the production composition
+with a real rate limiter and identity provider. `.gitignore`
 (`node_modules/` + the `.mcp-sso/` state dir); `.npmrc` (`ignore-scripts=true` —
 dependency lifecycle scripts disabled unless the operator vets one, the project's
 supply-chain posture); and `README.md` (the run steps +

@@ -82,6 +82,7 @@ async function main(): Promise<void> {
   };
   requireUrl("OAUTH_ISSUER", ISSUER);
   requireUrl("OAUTH_RESOURCE", RESOURCE);
+  if (HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") throw new Error("The generated starter is localhost-only: HOST must be a loopback address. Use the production example with a real identity provider and rate limiter for an internet-facing deployment.");
   if (new URL(RESOURCE).pathname !== "/mcp") throw new Error("OAUTH_RESOURCE pathname must be /mcp (the server mounts /mcp); set OAUTH_RESOURCE to <issuer>/mcp or edit server.ts for a custom path."); if (!isLoopback(ISSUER) || !isLoopback(RESOURCE)) throw new Error("The generated starter is localhost-only: OAUTH_ISSUER and OAUTH_RESOURCE must use loopback hosts. Use the production example for an internet-facing deployment.");
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
   let store: ReturnType<typeof openSqliteStore> | undefined;
@@ -156,14 +157,6 @@ async function main(): Promise<void> {
     finally { await mcp.close(); }
   });
 
-  // Off-loopback warning: the pairing code is the identity gate — binding it to a non-loopback host exposes it to the network. Mirrors examples/fastify-sqlite/index.ts.
-  if (HOST !== "127.0.0.1" && HOST !== "localhost") {
-    console.error(\`[mcp-sso] WARNING: console pairing is bound to \${oneLine(HOST)} (non-loopback). The one-time code is the identity gate — anyone who can reach this port can attempt it. Pairing is for single-operator / private-console use only; use a real identity provider for a network-exposed server.\`);
-    // HOST off loopback: the issuer MUST be the publicly-reachable URL or discovery advertises 127.0.0.1 + RFC 9728 fails.
-    if (!(process.env.OAUTH_ISSUER && process.env.OAUTH_ISSUER.trim())) {
-      console.error(\`[mcp-sso] WARNING: HOST=\${oneLine(HOST)} but OAUTH_ISSUER is unset (defaults to http://127.0.0.1:\${PORT}). Set OAUTH_ISSUER to the URL clients actually reach.\`);
-    }
-  }
   await app.listen({ port: PORT, host: HOST });
   console.error(\`mcp-sso listening on \${oneLine(HOST)}:\${PORT}  (console pairing — paste the one-time code printed above)\`);
   console.error(\`  issuer=\${oneLine(config.issuer)}  resource=\${oneLine(config.resource)}\`);

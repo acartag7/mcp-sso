@@ -364,28 +364,29 @@ test("bin init (spawn): PORT=0 fails closed at boot (not an unusable ephemeral b
   }
 });
 
-test("bin init (spawn): HOST off-loopback without OAUTH_ISSUER warns about the issuer mismatch", async () => {
+test("bin init (spawn): HOST off-loopback fails before persistent state is created", async () => {
   await ensureDist();
   const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-hostwarn-"));
   const proj = join(base, "proj");
   const stateDir = join(base, "state");
-  const port = await freePort();
   try {
     await spawnScaffold(proj);
     await linkDeps(proj);
     const child = spawn("node", ["server.ts"], {
       cwd: proj,
-      // HOST off loopback, OAUTH_ISSUER intentionally UNSET → the advertised issuer
-      // (127.0.0.1) won't match the host clients reach (RFC 9728 resource validation).
-      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "0.0.0.0" },
+      env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "0.0.0.0" },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    try {
-      const stderr = await waitFor(child, /OAUTH_ISSUER is unset/, 15_000);
-      assert.match(stderr, /HOST=0\.0\.0\.0 but OAUTH_ISSUER is unset/, "off-loopback HOST without OAUTH_ISSUER warns about the mismatch");
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); }
-    }
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    const code = await Promise.race([
+      new Promise<number | null>((resolveP) => child.on("close", resolveP)),
+      new Promise<"still-running">((resolveP) => setTimeout(() => resolveP("still-running"), 2_000)),
+    ]);
+    if (code === "still-running") child.kill("SIGKILL");
+    assert.notEqual(code, 0, "an off-loopback bind fails closed");
+    assert.match(stderr, /HOST must be a loopback address/);
+    assert.equal(existsSync(stateDir), false, "no signing keys or persistent registration database were created");
   } finally {
     await rm(base, { recursive: true, force: true });
   }
