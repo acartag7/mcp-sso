@@ -342,3 +342,35 @@ test("WebhookAudit: never rejects when the transport throws a hostile error (thr
   });
   await assert.doesNotReject(() => sink.writeAuthEvent({ ...baseEvent }));
 });
+
+test("WebhookAudit: hostile-error fallback cannot reproduce a configured secret", async () => {
+  for (const secret of ["diagnostic", "unavailable", "act"]) {
+    const captured = captureConsoleError();
+    try {
+      const hostile = { get message() { throw new Error("getter boom"); } };
+      const sink = new WebhookAudit("https://siem.test/ingest", {
+        headers: { "X-Hook-Key": secret },
+        fetchImpl: (async () => { throw hostile; }) as typeof fetch,
+      });
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...baseEvent }));
+    } finally { captured.restore(); }
+    assert.equal(captured.messages.join("\n").includes(secret), false, secret);
+  }
+});
+
+test("WebhookAudit: final redaction covers the fixed prefix and configured host", async () => {
+  for (const item of [
+    { url: "https://siem.test/ingest", secret: "siem" },
+    { url: "https://collector.test/ingest", secret: "audit" },
+  ]) {
+    const captured = captureConsoleError();
+    try {
+      const sink = new WebhookAudit(item.url, {
+        headers: { "X-Hook-Key": item.secret },
+        fetchImpl: (async () => { throw new Error("network down"); }) as typeof fetch,
+      });
+      await sink.writeAuthEvent({ ...baseEvent });
+    } finally { captured.restore(); }
+    assert.equal(captured.messages.join("\n").includes(item.secret), false, item.secret);
+  }
+});

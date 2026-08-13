@@ -105,16 +105,13 @@ export class WebhookAudit implements AuditPort {
       if (!response.ok) {
         // Non-2xx is a failed delivery — at-most-once means we do NOT retry.
         // Surface only the status + host; never the body or headers.
-        console.error(
-          `[mcp-sso] audit webhook non-2xx (${response.status}) from ${this.host}`,
-        );
+        this.writeDiagnostic(`[mcp-sso] audit webhook non-2xx (${response.status}) from ${this.host}`);
       }
     } catch (error) {
       // Timeout, DNS, connection refused, TLS — all fail-open. The error message
       // is redacted (and known header values scrubbed) before reaching stderr.
-      console.error(
-        `[mcp-sso] audit webhook write failed to ${this.host}: ${this.safeError(error)}`,
-      );
+      const errorDiagnostic = safeErrorForStderr(error, this.configuredSecrets);
+      this.writeDiagnostic(`[mcp-sso] audit webhook write failed to ${this.host}: ${errorDiagnostic}`);
     }
   }
 
@@ -122,8 +119,8 @@ export class WebhookAudit implements AuditPort {
    *  deployer's own header values (e.g. a SIEM bearer token) and configured
    *  query-string params in case the regex redactor missed a non-standard
    *  format. Never throws. */
-  private safeError(error: unknown): string {
-    return safeErrorForStderr(error, this.configuredSecrets);
+  private writeDiagnostic(line: string): void {
+    console.error(safeErrorForStderr(line, this.configuredSecrets));
   }
 }
 
