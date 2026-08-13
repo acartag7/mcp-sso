@@ -27,10 +27,12 @@ How mcp-sso proves a release actually works.
 > client-side DCR `application_type` requirement align with the v0.3.2
 > registration surface. On this source branch, RFC 9207 error redirects include
 > the configured issuer, closing the advertised-support mismatch; this is not
-> yet a published-release claim. Final conformance remains
-> pending on two known runtime items: `requireScope` performs exact membership
-> rather than accounting for scope hierarchies; and CIMD D00-4.5.2 applies the
-> loopback port exception without checking the native-app precondition. The
+> yet a published-release claim. This source branch also adds an optional,
+> exact-resource scope implication graph and wires `RequestAuthorizer` to it,
+> closing the scope-hierarchy runtime gap without changing exact behavior when
+> the policy is omitted; this is not yet a published-release claim. Final
+> conformance remains pending on one known runtime item: CIMD D00-4.5.2 applies
+> the loopback port exception without checking the native-app precondition. The
 > final artifact's referenced draft `-00` is completely mapped. D00-4.1.4 media
 > types and shared-cache handling are conformant; four test-evidence rows remain
 > unresolved. See the matrix in
@@ -777,6 +779,14 @@ errors, and upstream callback rows 7/8/10/11 include its exact issuer while
 direct errors remain unredirected. The current remainder is **two runtime
 defects** plus **four CIMD test-evidence rows**; the target stays 2025-11-25.
 
+**Scope closure note (2026-08-14):** item 2 above is also superseded on this
+source branch. `createBridgeConfig` boot-validates and deeply freezes a bounded,
+exact-resource implication graph; `requireScope` stays exact unless explicitly
+passed that policy; and `RequestAuthorizer` passes it for transitive sufficiency
+checks without adding implied strings to the token. The current remainder is
+**one runtime defect** plus **four CIMD test-evidence rows**; the target stays
+2025-11-25.
+
 ## Done rules
 
 Per build session:
@@ -826,9 +836,9 @@ with-peers import smokes, produced both metadata documents, and carried verified
 registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
 stable artifact was manually checked on 2026-08-02. The published release keeps
 the three-gap result in that dated receipt. This source branch closes RFC 9207
-error redirects but still targets MCP Authorization 2025-11-25 because **two**
-open **runtime** requirements remain — scope hierarchies and one confirmed CIMD
-draft `-00` mismatch (D00-4.5.2 native-app precondition) — plus four
+error redirects and scope-hierarchy handling but still targets MCP
+Authorization 2025-11-25 because **one** open **runtime** requirement remains —
+the confirmed CIMD draft `-00` mismatch (D00-4.5.2 native-app precondition) — plus four
 unresolved CIMD test-evidence rows. The CIMD remainder is **not** test-only.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current

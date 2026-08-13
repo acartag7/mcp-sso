@@ -8,6 +8,7 @@ import type { ClientStore } from "./ports/client-store.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
 import { parseRedirectEntry, RedirectEntryError } from "./redirect-entry.ts";
 import { scopeListProblem } from "./scopes.ts";
+import { snapshotScopeHierarchy, type ScopeHierarchyPolicy } from "./scope-hierarchy.ts";
 import {
   configOwnKeys, configValue, isArrayValue, isEcP256PrivateJwk, snapshotArray,
   snapshotClientCredentials, snapshotDcr, snapshotDev, snapshotJwk,
@@ -15,6 +16,7 @@ import {
 } from "./config-snapshot.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
+export type { ScopeHierarchyPolicy, ScopeImplication } from "./scope-hierarchy.ts";
 
 export type DcrMode = { mode: "stateless" } | { mode: "stored"; store: ClientStore };
 
@@ -42,6 +44,7 @@ export interface BridgeConfig {
   redirectAllowlist: string[];
   scopeCatalog: string[];
   defaultScopes: string[];
+  scopeHierarchy?: ScopeHierarchyPolicy;
   allowedOrigins: string[];
   dcr: DcrMode;
   dev?: DevOptions;
@@ -70,7 +73,7 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "issuer", "resource", "consentSigningSecret", "signingPrivateJwk",
   "signingKeyId", "redirectAllowlist", "scopeCatalog", "defaultScopes",
-  "allowedOrigins", "dcr", "dev", "clientCredentials", "cimd",
+  "scopeHierarchy", "allowedOrigins", "dcr", "dev", "clientCredentials", "cimd",
   "accessTokenTtlSeconds", "refreshTokenTtlSeconds", "consentTokenTtlSeconds",
   "authorizationCodeTtlSeconds",
 ]);
@@ -115,6 +118,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const redirectAllowlist = snapshotRedirectAllowlist(rawRedirectAllowlist, makeError);
   const rawScopeCatalog = configValue(input, "scopeCatalog", makeError);
   const rawDefaultScopes = configValue(input, "defaultScopes", makeError);
+  const rawScopeHierarchy = configValue(input, "scopeHierarchy", makeError);
   const rawAllowedOrigins = configValue(input, "allowedOrigins", makeError);
   const rawDcr = configValue(input, "dcr", makeError);
   const rawDev = configValue(input, "dev", makeError);
@@ -144,6 +148,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   }
   const scopeCatalogProblem = scopeListProblem(scopeCatalog);
   if (scopeCatalogProblem) throw new AuthConfigError(`scopeCatalog ${scopeCatalogProblem}`);
+  const scopeHierarchy = snapshotScopeHierarchy(rawScopeHierarchy, resource, scopeCatalog, makeError);
   const defaultScopes = snapshotStringArray("defaultScopes", rawDefaultScopes, makeError);
   const defaultScopesProblem = scopeListProblem(defaultScopes);
   if (defaultScopesProblem) throw new AuthConfigError(`defaultScopes ${defaultScopesProblem}`);
@@ -186,7 +191,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   }
   return Object.freeze({
     issuer, resource, consentSigningSecret, signingPrivateJwk, signingKeyId,
-    redirectAllowlist, scopeCatalog, defaultScopes, allowedOrigins, dcr, dev,
+    redirectAllowlist, scopeCatalog, defaultScopes, scopeHierarchy, allowedOrigins, dcr, dev,
     clientCredentials, cimd, accessTokenTtlSeconds, refreshTokenTtlSeconds,
     consentTokenTtlSeconds, authorizationCodeTtlSeconds,
   });

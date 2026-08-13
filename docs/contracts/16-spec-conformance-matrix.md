@@ -5,7 +5,7 @@
 | RFC 9728 PRM (root) | ✅ v0.1 | §9.1 |
 | RFC 9728 PRM (path-inserted) | ✅ v0.1 *(fix #2)* | §9.1 |
 | `WWW-Authenticate: … resource_metadata=…, scope=…` (401) | ✅ v0.1 *(fix #1)* | §8.2 |
-| `insufficient_scope` 403 step-up | ✅ exact-scope check; ⚠️ MCP 2026-07-28 additionally requires servers to account for scope hierarchies, which the current flat `requireScope` helper does not model | §8.3, §11 |
+| `insufficient_scope` 403 step-up | ✅ exact by default; an optional exact-resource, boot-validated implication graph accounts for configured scope hierarchies transitively without expanding token claims | §5, §8.3, §11 |
 | RFC 8414 AS metadata | ✅ v0.1 | §9.1 |
 | RFC 7591 DCR (stateless) | ✅ implemented as a deprecated compatibility path; MCP 2026-07-28 retains DCR as `MAY` | §9.2 |
 | Stored-client DCR + `application_type` | ✅ server behavior aligns: raw values are validated, omission defaults to `"web"`, and stored per-type redirect policy is enforced. The final MCP `MUST` to send an appropriate value applies to clients | §9.2, §10.2 |
@@ -114,9 +114,9 @@ so the classification can be re-checked rather than taken on trust.
 
 ### Audit blockers and follow-up graph
 
-**Two runtime changes remain**, plus three normative evidence PRs. Each is a
-separate reviewable concern; none should carry the independent RFC 9207
-error-response or scope-hierarchy work. The media-type change is complete.
+**One runtime change remains**, plus three normative evidence PRs. Each is a
+separate reviewable concern; none should carry the completed independent RFC
+9207 error-response or scope-hierarchy work. The media-type change is complete.
 
 1. **Completed runtime PR — media-type acceptance (closed D00-4.1.4, P1).**
    `isJsonMediaType` now accepts exactly `application/json`, or an essence that
@@ -261,7 +261,8 @@ so neither inventory absorbs the other.
 [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)
 resolves to commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` and references
 CIMD draft `-00`. Completing this mapping does not change the project target:
-MCP Authorization 2025-11-25 remains current because scope hierarchy handling
-is absent; CIMD also carries **one** confirmed `-00` runtime mismatch (D00-4.5.2 native-app
-precondition) plus three open evidence PRs. Counted individually the project has
-**two** open MCP-2026 runtime defects.
+MCP Authorization 2025-11-25 remains current because CIMD carries **one**
+confirmed `-00` runtime mismatch (D00-4.5.2 native-app precondition) plus three
+open evidence PRs. The source tree's RFC 9207 and scope-hierarchy changes are
+not yet published-release claims. Counted individually the project has **one**
+open MCP-2026 runtime defect.
