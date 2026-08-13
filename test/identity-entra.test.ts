@@ -104,6 +104,7 @@ test("subjectAllowed: no-oid matches only the exact issuer-namespaced immutable 
   assert.equal(subjectAllowed(noOid as never, [`${entraIssuer(OTHER_TENANT)}|stable-sub`]), false);
   assert.equal(subjectAllowed(noOid as never, [`${issuer}|Stable-Sub`]), false);
   assert.equal(subjectAllowed(noOid as never, [` ${issuer}|stable-sub `]), false);
+  assert.equal(subjectAllowed(payload({ oid: "oid-selected", sub: "stable-sub" }) as never, [`${issuer}|stable-sub`]), false);
 });
 
 test("validateEntraIdToken: subjectAllowlist matches oid by default, mutable only when opted in", () => {
