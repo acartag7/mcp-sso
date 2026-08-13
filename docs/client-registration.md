@@ -37,11 +37,13 @@ disables URL-shaped client ids.
 
 For opaque DCR, a loopback registration is accepted only when an exact callback
 URI or its broader origin is explicitly present in `redirectAllowlist` /
-`OAUTH_REDIRECT_ALLOWLIST`. Prefer the exact URI when the callback port is stable;
-an origin entry intentionally permits any path and, for loopback, any port on
-that host. In stored-native DCR, the exact entry restricts registration but the
-later authorization match intentionally ignores the port while retaining the
-registered scheme, host, path, and query. Loopback hosts are not implicit defaults.
+`OAUTH_REDIRECT_ALLOWLIST`. In stateless DCR, prefer the exact URI when the
+callback port is stable. An origin entry intentionally permits any path; a
+portless loopback origin also permits any port, while an origin with an explicit
+port keeps that port fixed. In stored-native DCR, an exact entry restricts
+registration but the later authorization match intentionally ignores the port
+while retaining the registered scheme, host, and path. Loopback hosts are not
+implicit defaults.
 
 ## For client authors: publish a metadata document
 
