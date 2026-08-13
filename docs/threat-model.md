@@ -7,38 +7,7 @@
 > Update this file before any change to auth, tokens, redirect policy, the
 > store, identity, egress, or the publish pipeline.
 >
-> Status: **v0.3.4.** This release carries the v0.3.3 threat controls forward
-> and closes authorization-code redirection through ambiguous callback input,
-> verifier outages caused by rejecting custom audit sinks, Entra token-endpoint
-> credential forwarding on redirects, and indefinitely valid signed access
-> tokens without `exp`. It also records the merged immutable Entra subject and
-> `iat` checks, stored-DCR application-type rejection, credential-response
-> no-store policy, consent-JTI uniqueness and store-instance binding, runtime-
-> private CIMD capabilities, webhook secret redaction, commit-window failure
-> evidence, unsafe-default deployment guard, and secure generated-project state.
-> Threats 17–25 cover the
-> [§17](./contracts/17-v0-2-feature-contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
-> contracts — most shipped in v0.2; CIMD (§17.1) ships in v0.3.0
-> (S6a/S6b, frozen suites active), with
-> live verification across Cloudflare Access, Entra, and Google. Claude Code
-> 2.1.220 repeated all three CIMD happy paths and protected calls at exact
-> runtime commit `af2a61f` on 2026-07-28; the Entra deny/ceiling sweep remains
-> pending. Device flow (§17.3) and the
-> GitHub identity port (§17.6) remain contract-locked, implementation pending.
-> Threats 29–33 cover the shipped [§17.11](./contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
-> upstream redirect-leg orchestrator, including the per-flow audience binding
-> in rows 33 and 37 (shipped with the §17.11 flow-instance amendment; frozen
-> suite `flow-instance-binding` active). Threat 34 records the contract-only,
-> implementation-pending dynamic-key boundary in
-> [§4.1](./contracts/04-design-principles.md#41-dynamic-key-and-parsed-record-composition-boundary).
-> Threat 35 covers the CIMD × upstream-redirect flow
-> ([§17.1.6](./contracts/17-v0-2-feature-contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)),
-> implemented on `main`, including rule 20's shared entry grammar. Threat 39
-> covers the 0.3.0 invalid-clock JWT hardening.
-> Refresh theft detection through `OAuthTokenUseCase` and
-> `StorePort.rotateRefreshToken` was repeated at exact runtime commit `af2a61f`
-> on 2026-07-28: refresh A→B→C succeeded, replayed A returned HTTP 400
-> `invalid_grant`, and current C then returned HTTP 400 `invalid_grant`.
+> Current release and conformance status: [verification status](verification.md#current-status).
 
 ## Assets
 

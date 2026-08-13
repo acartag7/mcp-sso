@@ -2,6 +2,74 @@
 
 How mcp-sso proves a release actually works.
 
+## Current status
+
+> Status: **v0.3.4**. This release is based on exact merged implementation commit
+> `b16de3bee8f35021aeb86f6c23ff5d8ea95a5408`. It carries v0.3.3 forward and
+> closes security gaps in authorization-parameter ambiguity, loopback redirect
+> trust, custom audit-sink containment, access-token expiry, and Entra token
+> exchange. It also strengthens immutable Entra identity and issued-at checks,
+> stored-DCR application-type handling, credential-response cache controls,
+> consent-JTI uniqueness and store-instance binding, CIMD runtime encapsulation,
+> webhook secret redaction, commit-window evidence, production deployment
+> defaults, and generated-project persistence. Registry and tag evidence belongs
+> in the release and verification receipts.
+>
+> The §17 feature contracts are locked; CIMD §17.1, generic OIDC, and the
+> Google preset are implemented. Google has reproducible
+> historical live verification; CIMD was live-verified through exact runtime
+> commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
+> A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
+> dedicated GitHub port in §17.6 remain contract-only. Spec conformance target:
+> **MCP Authorization 2025-11-25**. The official stable
+> [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)
+> artifact was manually re-verified on 2026-08-02. Its DCR deprecation and
+> client-side DCR `application_type` requirement align with the v0.3.2
+> registration surface. Final conformance remains pending on three known items:
+> redirected authorization errors omit RFC 9207 `iss` while metadata advertises
+> support; `requireScope` performs exact membership rather than accounting for
+> scope hierarchies; and the final artifact's referenced CIMD draft `-00` is now
+> completely mapped. D00-4.1.4 now restricts alternate JSON media types to the
+> `application/` tree; shared-cache handling is conformant, while one confirmed
+> runtime mismatch remains (D00-4.5.2, the native-app precondition on the
+> loopback port exception), plus four unresolved
+> test-evidence rows. See the matrix in
+> [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
+> and the completed [spec-release re-verification](#spec-release-re-verification-completed-2026-08-02).
+>
+> Threat-model delta: this release carries the v0.3.3 threat controls forward
+> and closes authorization-code redirection through ambiguous callback input,
+> verifier outages caused by rejecting custom audit sinks, Entra token-endpoint
+> credential forwarding on redirects, and indefinitely valid signed access
+> tokens without `exp`. It also records the merged immutable Entra subject and
+> `iat` checks, stored-DCR application-type rejection, credential-response
+> no-store policy, consent-JTI uniqueness and store-instance binding, runtime-
+> private CIMD capabilities, webhook secret redaction, commit-window failure
+> evidence, unsafe-default deployment guard, and secure generated-project state.
+> Threats 17–25 cover the
+> [§17](contracts/17-v0-2-feature-contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
+> contracts — most shipped in v0.2; CIMD (§17.1) ships in v0.3.0
+> (S6a/S6b, frozen suites active), with
+> live verification across Cloudflare Access, Entra, and Google. Claude Code
+> 2.1.220 repeated all three CIMD happy paths and protected calls at exact
+> runtime commit `af2a61f` on 2026-07-28; the Entra deny/ceiling sweep remains
+> pending. Device flow (§17.3) and the
+> GitHub identity port (§17.6) remain contract-locked, implementation pending.
+> Threats 29–33 cover the shipped [§17.11](contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
+> upstream redirect-leg orchestrator, including the per-flow audience binding
+> in rows 33 and 37 (shipped with the §17.11 flow-instance amendment; frozen
+> suite `flow-instance-binding` active). Threat 34 records the contract-only,
+> implementation-pending dynamic-key boundary in
+> [§4.1](contracts/04-design-principles.md#41-dynamic-key-and-parsed-record-composition-boundary).
+> Threat 35 covers the CIMD × upstream-redirect flow
+> ([§17.1.6](contracts/17-v0-2-feature-contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)),
+> implemented on `main`, including rule 20's shared entry grammar. Threat 39
+> covers the 0.3.0 invalid-clock JWT hardening.
+> Refresh theft detection through `OAuthTokenUseCase` and
+> `StorePort.rotateRefreshToken` was repeated at exact runtime commit `af2a61f`
+> on 2026-07-28: refresh A→B→C succeeded, replayed A returned HTTP 400
+> `invalid_grant`, and current C then returned HTTP 400 `invalid_grant`.
+
 Three tiers:
 
 - **Tier 1 — CI tests.** Loopback servers and injected fakes only; no public network, no real provider accounts. This is the definition of "implemented".

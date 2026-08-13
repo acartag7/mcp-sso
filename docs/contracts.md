@@ -7,40 +7,7 @@
 > surface; `docs/dependency-ledger.md` records the pins. If code and the contract set
 > disagree, the contract set wins until one of them is deliberately changed.
 >
-> Status: **v0.3.4**. This release is based on exact merged implementation commit
-> `b16de3bee8f35021aeb86f6c23ff5d8ea95a5408`. It carries v0.3.3 forward and
-> closes security gaps in authorization-parameter ambiguity, loopback redirect
-> trust, custom audit-sink containment, access-token expiry, and Entra token
-> exchange. It also strengthens immutable Entra identity and issued-at checks,
-> stored-DCR application-type handling, credential-response cache controls,
-> consent-JTI uniqueness and store-instance binding, CIMD runtime encapsulation,
-> webhook secret redaction, commit-window evidence, production deployment
-> defaults, and generated-project persistence. Registry and tag evidence belongs
-> in the release and verification receipts.
->
-> The §17 feature contracts are locked; CIMD §17.1, generic OIDC, and the
-> Google preset are implemented. Google has reproducible
-> historical live verification; CIMD was live-verified through exact runtime
-> commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
-> A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
-> dedicated GitHub port in §17.6 remain contract-only. Spec conformance target:
-> **MCP Authorization 2025-11-25**. The official stable
-> [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)
-> artifact was manually re-verified on 2026-08-02. Its DCR deprecation and
-> client-side DCR `application_type` requirement align with the v0.3.2
-> registration surface. Final conformance remains pending on three known items:
-> redirected authorization errors omit RFC 9207 `iss` while metadata advertises
-> support; `requireScope` performs exact membership rather than accounting for
-> scope hierarchies; and the final artifact's referenced CIMD draft `-00` is now
-> completely mapped. D00-4.1.4 now restricts alternate JSON media types to the
-> `application/` tree; shared-cache handling is conformant, while one confirmed
-> runtime mismatch remains (D00-4.5.2, the native-app precondition on the
-> loopback port exception), plus four unresolved
-> test-evidence rows. See the matrix in
-> [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
-> and the completed release checklist in
-> [`docs/verification.md` — "Spec-release re-verification (completed
-> 2026-08-02)"](verification.md#spec-release-re-verification-completed-2026-08-02).
+> Current release and conformance status: [verification status](verification.md#current-status).
 
 ## Contents
 
@@ -57,7 +24,7 @@ contract:
 | A v0.2 or v0.3 feature | [§17 Feature contracts](contracts/17-v0-2-feature-contracts.md) |
 
 This is one contract set, not 18 independent specifications. The index owns
-status and routing; each numbered file owns the exact rules for its section.
+routing; each numbered file owns the exact rules for its section.
 
 1. [Purpose & scope](contracts/01-purpose-and-scope.md)
 2. [The two roles](contracts/02-the-two-roles.md)
@@ -78,4 +45,4 @@ status and routing; each numbered file owns the exact rules for its section.
 17. [v0.2 feature contracts (locked 2026-07-04)](contracts/17-v0-2-feature-contracts.md)
 18. [Contract-change protocol](contracts/18-contract-change-protocol.md)
 
-Each numbered file is canonical for its section; this index owns the shared status and routing.
+Each numbered file is canonical for its section; this index owns the shared routing.
