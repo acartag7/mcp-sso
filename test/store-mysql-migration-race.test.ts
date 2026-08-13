@@ -128,6 +128,9 @@ test("MySQL subject migration widens only both deployed VARCHAR(255) columns and
         widths.set(match[1]!, 384);
         return [[], []];
       }
+      if (sql.includes("information_schema.STATISTICS")) return [[{
+        INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null,
+      }], []];
       if (sql.includes("COLLATION_NAME") || sql.includes("ENGINE")) return [[], []];
       return [[], []];
     },
@@ -184,6 +187,9 @@ test("MySQL migration accepts string zero metadata for a full-column JTI key", a
         statisticsReads += 1;
         return [[{ INDEX_NAME: "PRIMARY", NON_UNIQUE: "0", SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null }], []];
       }
+      if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
+        return [[{ data_type: "varchar", max_length: 384, is_nullable: "NO" }], []];
+      }
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
       return [[], []];
     },
@@ -198,6 +204,9 @@ test("MySQL uniqueness preflight counts functional parts and normalizes identifi
       if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
       if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
       if (sql.includes("information_schema.STATISTICS")) return [rows, []];
+      if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
+        return [[{ data_type: "varchar", max_length: 384, is_nullable: "NO" }], []];
+      }
       if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
       return [[], []];
     },
