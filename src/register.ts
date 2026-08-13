@@ -11,6 +11,7 @@ import type { ApplicationType } from "./ports/client-store.ts";
 import type { BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri, assertRegistrationRedirectPolicy } from "./redirect.ts";
+import { writeAuditBestEffort } from "./audit/best-effort.ts";
 
 const MAX_GRANT_TYPES = 32;
 const MAX_GRANT_TYPE_BYTES = 256;
@@ -85,14 +86,14 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
     if (config.dcr.mode === "stored") {
       await config.dcr.store.save({ clientId, redirectUris, applicationType, issuedAtEpoch: issuedAt });
     }
-    await audit.writeAuthEvent({
+    await writeAuditBestEffort(audit, {
       occurredAt: new Date(clock.nowMs()).toISOString(),
       event: "oauth.register", status: "success",
       redirectHost: redirectUris[0] ? hostOf(redirectUris[0]) : undefined,
     });
     return { client_id: clientId, client_id_issued_at: issuedAt, redirect_uris: redirectUris, token_endpoint_auth_method: "none" };
   } catch (error) {
-    await audit.writeAuthEvent({
+    await writeAuditBestEffort(audit, {
       occurredAt: new Date(clock.nowMs()).toISOString(),
       event: "oauth.register", status: "failure",
       reason: error instanceof OAuthError ? error.code : "invalid_request",

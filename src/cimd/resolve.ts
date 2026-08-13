@@ -21,7 +21,7 @@ import type { CimdTransport, DnsResolver } from "./transport.ts";
 import { CimdSuccessCache, computeCacheExpiryMs } from "./cache.ts";
 import { WaiterCounts } from "./waiters.ts";
 import { cimdRedirectMatches, projectCimdRegistration, type CimdRegistration } from "./registration.ts";
-
+import { writeAuditBestEffort } from "../audit/best-effort.ts";
 export interface CimdResolverDeps {
   config: BridgeConfig;
   clock: ClockPort;
@@ -241,7 +241,7 @@ export class CimdResolver {
   }
 
   private async emit(status: "success" | "failure", reason: string | undefined, clientId: string, ip?: string): Promise<void> {
-    await this.audit.writeAuthEvent({
+    await writeAuditBestEffort(this.audit, {
       occurredAt: new Date(this.clock.nowMs()).toISOString(),
       event: "oauth.cimd.fetch", status, reason, clientId, ip,
     });

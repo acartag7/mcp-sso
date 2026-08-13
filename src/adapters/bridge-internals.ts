@@ -9,6 +9,7 @@ import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
 import { headerString, type NormRequest } from "./http.ts";
+import { writeAuditBestEffort } from "../audit/best-effort.ts";
 
 export function hasBasicAuthorization(headers: NormRequest["headers"]): boolean {
   return Object.entries(headers).some(([key, raw]) =>
@@ -23,12 +24,10 @@ export async function assertUnambiguousAuthorization(
 ): Promise<void> {
   if (!ambiguous) return;
   if (grantType === "client_credentials") {
-    try {
-      await audit.writeAuthEvent({
-        occurredAt: new Date(clock.nowMs()).toISOString(), event: "oauth.token.client_credentials",
-        status: "failure", clientId, reason: "invalid_client",
-      });
-    } catch { /* the rejection remains authoritative when this evidence write fails */ }
+    await writeAuditBestEffort(audit, {
+      occurredAt: new Date(clock.nowMs()).toISOString(), event: "oauth.token.client_credentials",
+      status: "failure", clientId, reason: "invalid_client",
+    });
   }
   throw new OAuthError("invalid_client", "Authorization header must occur exactly once", 401);
 }

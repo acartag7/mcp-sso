@@ -192,8 +192,9 @@ full pattern, topology, and Kubernetes notes in
   the signed response before saving refresh state;
   `OAuthTokenUseCase.refresh` attempts to revoke the rotated family if any later
   response preparation step fails and returns no token; durable compensation
-  still depends on the configured store accepting that write. All
-  `OAuthTokenUseCase` audit writes are contained by `writeTokenAudit`. **Access tokens are
+  still depends on the configured store accepting that write. Every
+  non-transactional use-case audit write is best effort, so a custom sink outage
+  cannot replace the authoritative OAuth or resource-server outcome. **Access tokens are
   short-TTL ES256 bearer tokens — like
   any OAuth access token, a stolen one is valid until `exp`** (no access-token
   introspection or revocation in v0.2; [threat-model row 1](docs/threat-model.md)).
