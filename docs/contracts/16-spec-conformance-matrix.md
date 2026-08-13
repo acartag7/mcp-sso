@@ -22,7 +22,7 @@
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
 | Rate-limit hook port — no-op default | ✅ v0.1 | §6.7 |
-| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 28 conformant (1 with a disclosed caveat), 2 reasoned deviations, 1 unresolved test-evidence row, **1 confirmed runtime mismatch (D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
+| CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ⚠️ complete 44-statement mapping below: 29 conformant (1 with a disclosed caveat), 2 reasoned deviations, no unresolved test-evidence rows, **1 confirmed runtime mismatch (D00-4.5.2 native-app precondition)**, 12 not applicable. Frozen acceptance suite `s6b-cimd-flow` is active | §6.6, §17.1, §16.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |
 | `client_credentials` (MCP extension) | ✅ v0.2 shipped | §17.2 |
@@ -48,10 +48,10 @@ than folded into a single "conformant" total:
 
 | Class | Count | Rows | Meaning |
 |---|---|---|---|
-| `C` conformant | 27 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
+| `C` conformant | 28 | — | Enforced in source and pinned by a test that fails if the enforcement is removed. |
 | `C` with a disclosed caveat | 1 | D00-6.5.1 | Conformant in production, with a narrower environment-scoped departure (the dev-only loopback fetch) stated in the row rather than absorbed into the total. |
 | Reasoned deviation | 2 | D00-4.2.1 (`SHOULD`), D00-4.2.2 (`RECOMMENDED`) | The obligation applies and is deliberately not met; rationale recorded. |
-| `U` unresolved evidence | 1 | D00-6.5.2 | The enforcing source exists, but no hostile test yet proves document-contained URLs cause no secondary fetch. |
+| `U` unresolved evidence | 0 | — | Every evidence-only gap is closed; the remaining open rows require runtime changes rather than more proof of current behavior. |
 | **Runtime mismatch** | **1** | **D00-4.5.2** | Implementation contradicts the statement. Reproduced by direct probe, not inferred. |
 | `N/A` not applicable | 12 | — | Excluded client-side duty, optional feature not implemented, or a conditional whose trigger provably never fires. |
 
@@ -107,14 +107,14 @@ so the classification can be re-checked rather than taken on trust.
 | D00-6.4.2 | §6.4 non-fetching AS **SHOULD** take additional UI measures. Conditional branch inapplicable: URL clients fail closed when not fetched/carried. | N/A | `src/authorize-internals.ts:55-71` | Frozen dispatch `s6b-dispatch.test.ts:105-128,208-227`; no unidentified URL client reaches consent. |
 | D00-6.4.3 | §6.4 AS **SHOULD** display the `client_id` hostname with fetched information. AS-applicable. | C | `src/authorize-internals.ts:112-118`; `src/adapters/consent-page.ts:18-31` | Frozen `s6b-consent.test.ts:94-123` plus ordinary prominence test `test/consent-page.test.ts:26-48`; omission or reordering fails. |
 | D00-6.5.1 | §6.5 AS **SHOULD** avoid fetching URLs on private or loopback addresses. `-00` states no development exception. | C in production; disclosed `SHOULD` deviation on the dev path | Production: `src/cimd/blocklist.ts:19-40,132-145`, all-record guard `src/cimd/guarded-fetcher.ts:68-87`. Dev path: `src/cimd/guarded-fetcher.ts:78-83` | Production is stricter than the draft — every IANA special-use range blocks, proven by `blocklist.test.ts:19-123` and `guarded-fetcher.test.ts:109-131,257-277` (mixed answers and rebinding included). **Deviation:** under `dev.allowInsecureLocalhost` a loopback document is fetched when every resolved record is loopback (`s6b-boot.test.ts:104-140` proves it is off by default and on only under the flag). `-00` has no such carve-out; draft `-02` §8.6 later sanctions exactly this dev-only shape, which informs the rationale but does not retroactively make it `-00` text. |
-| D00-6.5.2 | §6.5 AS **SHOULD** account for non-HTTP schemes in document-contained URLs. AS-applicable; mcp-sso fetches no document-contained URL. | U | Named projection `src/cimd/registration.ts:36-44`; only client-id retrieval exists in `src/cimd/guarded-fetcher.ts` | Frozen projection tests show `logo_uri`/unknown fields do not enter signed state (`s6b-redirect.test.ts:162-175`), but no hostile test proves `logo_uri`, `jwks_uri`, `policy_uri`, and `tos_uri` trigger zero secondary network calls. |
+| D00-6.5.2 | §6.5 AS **SHOULD** account for non-HTTP schemes in document-contained URLs. AS-applicable; mcp-sso fetches no document-contained URL. | C | Named projection `src/cimd/registration.ts:36-44`; only client-id retrieval exists in `src/cimd/guarded-fetcher.ts` | `test/cimd-document-url-inert.test.ts:13-20,110-153` publishes hostile `logo_uri`, `jwks_uri`, `policy_uri`, and `tos_uri` values, completes direct and upstream callback-to-consent flows, proves none render, and records exactly one transport request: the client identifier document itself. |
 | D00-6.6.1 | §6.6 AS **SHOULD** limit response size. AS-applicable. | C | Streaming cap `src/cimd/guarded-fetcher.ts:160-174`; cap config `src/cimd/options.ts:17-18,42-47` | Frozen `guarded-fetcher.test.ts:175-178,251-255,306-315`; single- and multi-chunk overflow fail without truncation. |
-| D00-6.7.1 | §6.7 AS using `logo_uri` **SHOULD** prefetch/cache it. Optional UI feature not implemented; logo is neither fetched nor displayed. | N/A | `src/cimd/document.ts` ignores the member; named display projection excludes it | Frozen `document.test.ts:130-133` proves acceptance as unknown metadata; follow-up no-secondary-fetch test is tracked under D00-6.5.2. |
+| D00-6.7.1 | §6.7 AS using `logo_uri` **SHOULD** prefetch/cache it. Optional UI feature not implemented; logo is neither fetched nor displayed. | N/A | `src/cimd/document.ts` ignores the member; named display projection excludes it | Frozen `document.test.ts:130-133` proves acceptance as unknown metadata; `test/cimd-document-url-inert.test.ts:13-20,110-153` proves it is neither fetched nor displayed through both resolution modes. |
 | D00-6.8.1 | §6.8 AS **MAY** apply domain-reputation heuristics. Optional feature not implemented. | N/A | — | Deterministic hostname display and IDNA rejection are implemented instead; no reputation claim is made. |
 
 ### Audit blockers and follow-up graph
 
-**Two runtime changes remain**, plus one normative evidence PR. Each is a
+**Two runtime changes remain**; no normative evidence PR remains. Each is a
 separate reviewable concern; none should carry the independent RFC 9207
 error-response or scope-hierarchy work. The media-type change is complete.
 
@@ -146,9 +146,11 @@ error-response or scope-hierarchy work. The media-type change is complete.
    Direct cells reach consent; upstream cells complete callback to consent; all
    prove exactly one DNS/transport fetch. The direct cells also assert the
    served CIMD support flag through every adapter's metadata route.
-6. **Test PR — document-contained URLs are inert (closes D00-6.5.2, P2).**
-   Publish hostile `logo_uri`, `jwks_uri`, `policy_uri`, and `tos_uri` values and
-   assert exactly one outbound request: the Client Identifier URL itself.
+6. **Completed test PR — document-contained URLs are inert (closed D00-6.5.2,
+   P2).** `test/cimd-document-url-inert.test.ts` publishes hostile `logo_uri`,
+   `jwks_uri`, `policy_uri`, and `tos_uri` values through direct and upstream
+   callback-to-consent flows. Both record exactly one transport request — the
+   Client Identifier URL itself — and render none of those values.
 
 **Adjacent, not `-00` obligations.** Tracked so they are not lost, and
 deliberately *not* counted as draft or MCP conformance blockers:
@@ -260,5 +262,5 @@ resolves to commit `5f5440bb26a62e2cf3440b92da5a667efa03b267` and references
 CIMD draft `-00`. Completing this mapping does not change the project target:
 MCP Authorization 2025-11-25 remains current because scope hierarchy handling
 is absent; CIMD also carries **one** confirmed `-00` runtime mismatch (D00-4.5.2 native-app
-precondition) plus one open evidence PR. Counted individually the project has
+precondition) and no open evidence PRs. Counted individually the project has
 **two** open MCP-2026 runtime defects.

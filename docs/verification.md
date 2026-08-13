@@ -32,7 +32,7 @@ How mcp-sso proves a release actually works.
 > rather than accounting for scope hierarchies; and CIMD D00-4.5.2 applies the
 > loopback port exception without checking the native-app precondition. The
 > final artifact's referenced draft `-00` is completely mapped. D00-4.1.4 media
-> types and shared-cache handling are conformant; one test-evidence row remains
+> types and shared-cache handling are conformant; no test-evidence rows remain
 > unresolved. See the matrix in
 > [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
 > and the completed [spec-release re-verification](#spec-release-re-verification-completed-2026-08-02).
@@ -777,8 +777,10 @@ errors, and upstream callback rows 7/8/10/11 include its exact issuer while
 direct errors remain unredirected. Symmetric client-auth declarations now have
 direct and upstream hostile evidence. The six-cell shipped-adapter matrix now
 proves direct and upstream resolution plus served metadata on all three
-frameworks. The current remainder is **two runtime defects** plus **one CIMD
-test-evidence row**; the target stays 2025-11-25.
+frameworks. Hostile document-contained URLs are inert through direct and
+upstream callback-to-consent flows. The current remainder is **two runtime
+defects** and **no unresolved CIMD test-evidence rows**; the target stays
+2025-11-25.
 
 ## Done rules
 
@@ -831,8 +833,8 @@ stable artifact was manually checked on 2026-08-02. The published release keeps
 the three-gap result in that dated receipt. This source branch closes RFC 9207
 error redirects but still targets MCP Authorization 2025-11-25 because **two**
 open **runtime** requirements remain — scope hierarchies and one confirmed CIMD
-draft `-00` mismatch (D00-4.5.2 native-app precondition) — plus one
-unresolved CIMD test-evidence row. The CIMD remainder is **not** test-only.
+draft `-00` mismatch (D00-4.5.2 native-app precondition). No unresolved CIMD
+test-evidence rows remain. The CIMD remainder is **not** test-only.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
 compatibility awaits upstream resolution and retest.
