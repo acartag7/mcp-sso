@@ -191,3 +191,22 @@ test("MySQL migration accepts string zero metadata for a full-column JTI key", a
   await migrateMysqlStore(connection);
   assert.equal(statisticsReads, 2, "existing and post-migration checks both run");
 });
+
+test("MySQL uniqueness preflight counts functional parts and normalizes identifier case", async () => {
+  const makeConnection = (rows: unknown[]) => ({
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.TABLES")) return [[{ 1: 1 }], []];
+      if (sql.includes("information_schema.STATISTICS")) return [rows, []];
+      if (sql.startsWith("SELECT 1 FROM information_schema.COLUMNS")) return [[{ 1: 1 }], []];
+      return [[], []];
+    },
+  }) as unknown as PoolConnection;
+  await migrateMysqlStore(makeConnection([{
+    INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "JTI", SUB_PART: null,
+  }]));
+  await assert.rejects(migrateMysqlStore(makeConnection([
+    { INDEX_NAME: "uq", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null },
+    { INDEX_NAME: "uq", NON_UNIQUE: 0, SEQ_IN_INDEX: 2, COLUMN_NAME: null, SUB_PART: null },
+  ])), /single-column PRIMARY or UNIQUE index/);
+});

@@ -8,13 +8,13 @@ export async function assertConsentJtiUnique(conn: PoolConnection): Promise<void
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_consent_jtis'
      ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
   );
-  const indexes = new Map<string, { nonUnique: number | null; columns: string[]; prefix: boolean }>();
+  const indexes = new Map<string, { nonUnique: number | null; columns: Array<string | null>; prefix: boolean }>();
   for (const row of rows as { INDEX_NAME: unknown; NON_UNIQUE: unknown; COLUMN_NAME: unknown; SUB_PART: unknown }[]) {
-    if (typeof row.INDEX_NAME !== "string" || typeof row.COLUMN_NAME !== "string") continue;
+    if (typeof row.INDEX_NAME !== "string") continue;
     const nonUnique = row.NON_UNIQUE === 0 || row.NON_UNIQUE === "0" ? 0
       : row.NON_UNIQUE === 1 || row.NON_UNIQUE === "1" ? 1 : null;
     const index = indexes.get(row.INDEX_NAME) ?? { nonUnique, columns: [], prefix: false };
-    index.columns.push(row.COLUMN_NAME);
+    index.columns.push(typeof row.COLUMN_NAME === "string" ? row.COLUMN_NAME.toLowerCase() : null);
     index.prefix ||= row.SUB_PART !== null && row.SUB_PART !== undefined;
     indexes.set(row.INDEX_NAME, index);
   }
