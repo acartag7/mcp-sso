@@ -233,6 +233,22 @@ test("WebhookAudit: a fetch error echoing secrets is redacted from stderr (diagn
   assert.ok(stderr.includes("upstream said"), "a benign diagnostic was preserved");
 });
 
+test("WebhookAudit: a short configured secret cannot split a larger bearer credential", async () => {
+  const sink = new WebhookAudit("https://siem.test/ingest?padding=-", {
+    fetchImpl: (async () => { throw new Error("transport reflected Bearer abc-def details"); }) as typeof fetch,
+  });
+  const captured = captureConsoleError();
+  try {
+    await sink.writeAuthEvent({ ...baseEvent });
+  } finally {
+    captured.restore();
+  }
+  const stderr = captured.messages.join("\n");
+  assert.equal(stderr.includes("abc"), false);
+  assert.equal(stderr.includes("def"), false);
+  assert.ok(stderr.includes("transport reflected"));
+});
+
 test("WebhookAudit: credential-bearing query string in the URL is scrubbed from stderr", async () => {
   // A query param can carry a credential (e.g. ?access_token=…). The regex
   // redactor does NOT catch `access_token=` (the `_` defeats the \b token

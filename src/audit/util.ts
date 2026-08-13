@@ -70,17 +70,43 @@ export function safeErrorForStderr(error: unknown, exactSecrets: readonly string
     const name = typeof e?.name === "string" ? e.name : "";
     if (name && name !== "Error" && !message.startsWith(name)) message = `${name}: ${message}`;
     if (!message) message = "unknown error";
-    message = replaceExactSecrets(message, secrets, " ");
+    message = redactSecretsAndExact(message, secrets);
     return removeExactSecrets(redactForStderr(message), secrets);
   } catch {
     return removeExactSecrets("diagnostic unavailable", secrets);
   }
 }
 
-function replaceExactSecrets(input: string, secrets: readonly string[], replacement: string): string {
-  let output = input;
-  for (const secret of secrets) output = output.split(secret).join(replacement);
-  return output;
+/** Remove the union of generic-secret and exact-secret spans from the original
+ *  string. Computing both classes before changing any bytes prevents a short
+ *  configured secret from splitting a larger credential before the generic
+ *  matcher can see it. */
+function redactSecretsAndExact(input: string, secrets: readonly string[]): string {
+  const spans: Array<[number, number]> = [];
+  for (const pattern of SECRET_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of input.matchAll(pattern)) {
+      const start = match.index;
+      spans.push([start, start + match[0].length]);
+    }
+  }
+  for (const secret of secrets) {
+    let start = 0;
+    while ((start = input.indexOf(secret, start)) >= 0) {
+      spans.push([start, start + secret.length]);
+      start += secret.length;
+    }
+  }
+  if (spans.length === 0) return input;
+  spans.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  let output = "";
+  let cursor = 0;
+  for (const [start, end] of spans) {
+    if (end <= cursor) continue;
+    if (start > cursor) output += input.slice(cursor, start);
+    cursor = end;
+  }
+  return output + input.slice(cursor);
 }
 
 function removeExactSecrets(input: string, secrets: readonly string[]): string {
