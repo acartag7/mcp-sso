@@ -20,20 +20,20 @@ class FakeClock implements ClockPort { private ms: number; constructor(ms: numbe
 class MemoryAudit implements AuditPort { readonly events: AuthAuditEvent[] = []; async writeAuthEvent(e: AuthAuditEvent): Promise<void> { this.events.push(e); } }
 
 function jwk(): JWK { const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" }); return { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK; }
-function config(): BridgeConfig {
+function config(redirectAllowlist: string[] = [REDIRECT]): BridgeConfig {
   return createBridgeConfig({
     issuer: "https://auth.test", resource: "https://api.test/mcp",
     consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: jwk(), signingKeyId: "k",
-    redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
+    redirectAllowlist, scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
     allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" },
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
 }
 
 interface Ctx { bridge: Bridge; audit: MemoryAudit; }
-function setup(rateLimit?: RateLimitPort): Ctx {
+function setup(rateLimit?: RateLimitPort, redirectAllowlist?: string[]): Ctx {
   const audit = new MemoryAudit();
-  return { bridge: new Bridge({ config: config(), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit, rateLimit }), audit };
+  return { bridge: new Bridge({ config: config(redirectAllowlist), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit, rateLimit }), audit };
 }
 function req(partial: Partial<NormRequest> & { query?: NormRequest["query"]; body?: unknown }): NormRequest {
   return { query: partial.query ?? {}, body: partial.body, headers: partial.headers ?? {}, ip: partial.ip ?? "1.2.3.4" };
@@ -256,7 +256,7 @@ test("bridge: Deny redirects access_denied (fix #5)", async () => {
 
 test("bridge: consent CSP permits both loopback callback redirects", async () => {
   for (const approved of ["true", "false"]) {
-    const ctx = setup();
+    const ctx = setup(undefined, [REDIRECT, "http://127.0.0.1"]);
     const verifier = "v-12345678901234567890123456789012345678";
     const page = await ctx.bridge.handleAuthorize(req({ query: {
       response_type: "code", client_id: "c", redirect_uri: LOOPBACK_REDIRECT,
