@@ -45,7 +45,7 @@ export async function assertMysqlStoreInstanceSchema(conn: PoolConnection): Prom
     throw new StoreInputError("oauth_store_metadata indexes are incompatible");
   }
   const [checks] = await conn.query<RowDataPacket[]>(
-    `SELECT cc.CHECK_CLAUSE
+    `SELECT cc.CHECK_CLAUSE, tc.ENFORCED
      FROM information_schema.TABLE_CONSTRAINTS tc
      JOIN information_schema.CHECK_CONSTRAINTS cc
        ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
@@ -53,9 +53,9 @@ export async function assertMysqlStoreInstanceSchema(conn: PoolConnection): Prom
      WHERE tc.CONSTRAINT_SCHEMA = DATABASE()
        AND tc.TABLE_NAME = 'oauth_store_metadata' AND tc.CONSTRAINT_TYPE = 'CHECK'`,
   );
-  const clauses = (checks as Array<Record<string, unknown>>).map((row) =>
-    String(row.CHECK_CLAUSE).replace(/[\s`()]/gu, "").toLowerCase());
-  if (clauses.length !== 1 || clauses[0] !== "singleton=1") {
+  const constraints = checks as Array<Record<string, unknown>>;
+  const clauses = constraints.map((row) => String(row.CHECK_CLAUSE).replace(/[\s`()]/gu, "").toLowerCase());
+  if (clauses.length !== 1 || clauses[0] !== "singleton=1" || constraints[0]?.ENFORCED !== "YES") {
     throw new StoreInputError("oauth_store_metadata must constrain singleton to 1");
   }
   const [triggers] = await conn.query<RowDataPacket[]>(

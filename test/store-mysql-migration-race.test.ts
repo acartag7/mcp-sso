@@ -21,7 +21,7 @@ const METADATA_INDEXES = [
   { INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "singleton", SUB_PART: null },
   { INDEX_NAME: "uq_oauth_store_metadata_instance", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "instance_id", SUB_PART: null },
 ];
-const METADATA_CHECKS = [{ CHECK_CLAUSE: "(`singleton` = 1)" }];
+const METADATA_CHECKS = [{ CHECK_CLAUSE: "(`singleton` = 1)", ENFORCED: "YES" }];
 
 function metadataQuery(sql: string): [unknown[], unknown[]] | undefined {
   if (sql.includes("information_schema.TABLES") && sql.includes("oauth_store_metadata") && sql.includes("ENGINE")) {
@@ -75,6 +75,28 @@ test("MySQL metadata preflight rejects a case-variant name before any write", as
   } as unknown as PoolConnection;
   await assert.rejects(migrateMysqlStore(connection), /must use its exact canonical table name/);
   assert.equal(writes, 0, "case-variant name rejects before every migration write");
+});
+
+test("MySQL metadata preflight rejects a non-enforced singleton check before any write", async () => {
+  let writes = 0;
+  const connection = {
+    query: async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith("SELECT @@session.sql_mode")) return [[{ sql_mode: "STRICT_TRANS_TABLES" }], []];
+      if (sql.startsWith("SELECT TABLE_NAME FROM information_schema.TABLES")) {
+        return [values?.[0] === "oauth_store_metadata" ? [{ TABLE_NAME: "oauth_store_metadata" }] : [], []];
+      }
+      if (sql.includes("information_schema.TABLES") && sql.includes("ENGINE")) return [[{ ENGINE: "InnoDB" }], []];
+      if (sql.includes("information_schema.COLUMNS") && sql.includes("oauth_store_metadata")) return [METADATA_COLUMNS, []];
+      if (sql.includes("information_schema.STATISTICS") && sql.includes("oauth_store_metadata")) return [METADATA_INDEXES, []];
+      if (sql.includes("information_schema.CHECK_CONSTRAINTS")) {
+        return [[{ CHECK_CLAUSE: "(`singleton` = 1)", ENFORCED: "NO" }], []];
+      }
+      if (/^(CREATE|ALTER|INSERT)/u.test(sql)) writes += 1;
+      return [[], []];
+    },
+  } as unknown as PoolConnection;
+  await assert.rejects(migrateMysqlStore(connection), /must constrain singleton to 1/);
+  assert.equal(writes, 0, "non-enforced check rejects before every migration write");
 });
 
 for (const [label, tableRows, columnRows, expected] of [

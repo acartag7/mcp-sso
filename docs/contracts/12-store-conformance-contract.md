@@ -31,7 +31,8 @@ concurrency-safe create-then-insert-if-absent sequence before migrating other
 OAuth state. SQLite re-admits a concurrently created file, waits up to five
 seconds for the migration writer, and runs schema admission, metadata insertion,
 and all OAuth DDL in one `BEGIN IMMEDIATE` transaction. An interrupted empty canonical initialization is completed;
-malformed or case-variant pre-existing metadata rejects before migration writes.
+MySQL requires the singleton `CHECK` to be enforced. Malformed, case-variant, or
+non-enforced pre-existing metadata rejects before migration writes.
 
 ## 12.1 Records (secrets are SHA-256 hex digests; timestamps are UTC ISO 8601 with EXACTLY 3 ms digits)
 ```ts

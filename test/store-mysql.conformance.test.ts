@@ -218,6 +218,31 @@ if (RUN) {
     }
   });
 
+  test("MysqlStore: a non-enforced singleton check rejects before migration writes", async () => {
+    await admin!.query("DROP TABLE oauth_store_metadata");
+    await admin!.query(`CREATE TABLE oauth_store_metadata (
+      singleton TINYINT UNSIGNED NOT NULL,
+      instance_id VARCHAR(128) NOT NULL,
+      PRIMARY KEY (singleton),
+      UNIQUE KEY uq_oauth_store_metadata_instance (instance_id),
+      CHECK (singleton = 1) NOT ENFORCED
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    try {
+      await assert.rejects(
+        createMysqlStore(MYSQL_URL as string),
+        /oauth_store_metadata must constrain singleton to 1/,
+      );
+      const [rows] = await admin!.query<RowDataPacket[]>(
+        "SELECT COUNT(*) AS count FROM oauth_store_metadata",
+      );
+      assert.equal((rows[0] as { count: number }).count, 0, "rejection leaves metadata uninitialized");
+    } finally {
+      await admin!.query("DROP TABLE oauth_store_metadata");
+      const restored = await createMysqlStore(MYSQL_URL as string);
+      await restored.close();
+    }
+  });
+
   test("MysqlStore/MySQL 8.4: migrates VARCHAR(255) subjects and persists max Entra authorization/refresh", async () => {
     await admin!.query("ALTER TABLE oauth_auth_codes MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
     await admin!.query("ALTER TABLE oauth_refresh_tokens MODIFY COLUMN subject VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL");
