@@ -65,6 +65,8 @@ export interface SaveRefreshTokenInput {
   grantGeneration?: number | null;
 }
 
+export type ConsentApprovalCommitResult = "stored" | "replayed" | "binding_mismatch";
+
 /** Reserved, unmatchable marker for an omitted member from pre-resource JS callers. */
 export const UNBOUND_REFRESH_RESOURCE = "mcp-sso:unbound-refresh-resource";
 
@@ -88,6 +90,14 @@ export interface StorePort {
   /** Atomically replace the binding after cloning/restoring a store into an
    * independent deployment. Invalidates outstanding consent tokens. */
   rotateStoreInstanceId(): Promise<string>;
+  /** Atomically validate the store binding, consume the consent JTI, and save
+   * the authorization code. Rotation serializes against this operation. */
+  commitConsentApproval(
+    expectedStoreInstanceId: string,
+    jti: string,
+    expiresAtIso: string,
+    authCode: SaveAuthCodeInput,
+  ): Promise<ConsentApprovalCommitResult>;
   /** Required capability markers when BridgeConfig uses stored DCR. */
   readonly storedDcrGrantGeneration?: number;
   readonly storedDcrResourceBinding?: number;

@@ -212,16 +212,13 @@ export class OAuthAuthorizationUseCase {
       const union = dedupe([...consentScopes, ...priorScopes]);
       // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
       const scopes = allowedScopes ? union.filter((s) => allowedScopes.includes(s)) : union;
-      if (!(await this.store.consumeConsentJti(consent.jti, consent.expiresAt))) {
-        throw new OAuthError("invalid_grant", "Consent token has already been used");
-      }
       const commitClock = approvalCommitClock(
         this.clock, this.config.authorizationCodeTtlSeconds, operationClock.nowMs(),
       );
       auditClock = commitClock;
       assertConsentUnexpiredAt(consent.expiresAt, commitClock);
       const code = generateAuthorizationCode();
-      await this.store.saveAuthCode({
+      const commit = await this.store.commitConsentApproval(consent.storeInstanceId, consent.jti, consent.expiresAt, {
         codeHash: sha256Hex(code),
         clientId: consent.clientId,
         subject: consent.subject,
@@ -233,6 +230,8 @@ export class OAuthAuthorizationUseCase {
         expiresAt: expiresAtIso(commitClock, this.config.authorizationCodeTtlSeconds),
         grantGeneration: newGrantGeneration(this.config),
       });
+      if (commit === "binding_mismatch") throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
+      if (commit === "replayed") throw new OAuthError("invalid_grant", "Consent token has already been used");
       await this.auditSuccess(AUDIT_APPROVE, { clientId: consent.clientId, redirectUri: consent.redirectUri, resource: consent.resource, scopes, subject: consent.subject }, commitClock);
       return { code, redirectTo: redirectWithCode(consent.redirectUri, code, this.config.issuer, consent.state), state: consent.state };
     } catch (error) {

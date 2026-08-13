@@ -16,6 +16,16 @@ custom store without either capability is rejected when the authorization use-ca
 is constructed. This binding prevents one consent token from being redeemed in
 two replicas that accidentally share issuer and signing secrets but not state.
 
+Every store also exposes `commitConsentApproval(expectedStoreInstanceId, jti,
+expiresAtIso, authCode)`. It validates the expected binding, consumes the JTI,
+and stores the authorization code as one atomic operation, returning
+`binding_mismatch`, `replayed`, or `stored`. Binding rotation serializes against
+that operation on the same store metadata lock. Therefore rotation either wins
+before approval and rejects the old consent token without consuming its JTI or
+wins after the completed approval; it cannot interleave between binding
+validation and code storage. A custom store without this capability is rejected
+when the authorization use-case is constructed.
+
 A filesystem copy, database snapshot, or restore copies this identifier too.
 Before an independent deployment serves traffic from a copied store, the
 operator calls `rotateStoreInstanceId()` on that copy. The operation atomically

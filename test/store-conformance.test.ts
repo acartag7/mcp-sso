@@ -97,6 +97,61 @@ test("SQLite initialization waits for a concurrent migration writer", async () =
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("SQLite approval and binding rotation serialize across processes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-approval-race-"));
+  const file = join(dir, "oauth.sqlite");
+  const moduleUrl = new URL("../src/store/sqlite.ts", import.meta.url).href;
+  const rawCode = "sqlite-approval-rotation-race";
+  const codeHash = createHash("sha256").update(rawCode).digest("hex");
+  const input = {
+    codeHash, clientId: "race-client", subject: "race-subject",
+    redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
+    scopes: ["mcp:read"], codeChallenge: "race-challenge", codeChallengeMethod: "S256",
+    expiresAt: "2026-07-03T13:00:00.000Z", grantGeneration: 1,
+  };
+  const startAt = Date.now() + 500;
+  try {
+    const initial = openSqliteStore(file);
+    const binding = await initial.getStoreInstanceId();
+    await initial.close();
+    const approvalScript = `
+      import { openSqliteStore } from ${JSON.stringify(moduleUrl)};
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, Number(process.argv[2]) - Date.now()));
+      const store = openSqliteStore(process.argv[1]);
+      process.stdout.write(await store.commitConsentApproval(${JSON.stringify(binding)}, "race-jti", ${JSON.stringify(input.expiresAt)}, ${JSON.stringify(input)}));
+      await store.close();
+    `;
+    const rotationScript = `
+      import { openSqliteStore } from ${JSON.stringify(moduleUrl)};
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, Number(process.argv[2]) - Date.now()));
+      const store = openSqliteStore(process.argv[1]);
+      process.stdout.write(await store.rotateStoreInstanceId());
+      await store.close();
+    `;
+    const run = (script: string) => new Promise<string>((resolveP, reject) => {
+      execFile(process.execPath, ["--input-type=module", "--eval", script, file, String(startAt)],
+        { timeout: 15_000 }, (error, stdout, stderr) => {
+          if (error) reject(new Error(`SQLite approval race failed: ${stderr || error.message}`));
+          else resolveP(stdout);
+        });
+    });
+    const [approval, rotated] = await Promise.all([run(approvalScript), run(rotationScript)]);
+    assert.notEqual(rotated, binding);
+    const inspect = openSqliteStore(file);
+    try {
+      const code = await inspect.consumeAuthCode(codeHash, "2026-07-03T12:00:00.000Z");
+      if (approval === "stored") {
+        assert.equal(code?.codeHash, codeHash, "approval completed before rotation");
+        assert.equal(await inspect.consumeConsentJti("race-jti", input.expiresAt), false);
+      } else {
+        assert.equal(approval, "binding_mismatch", "rotation completed before approval");
+        assert.equal(code, null);
+        assert.equal(await inspect.consumeConsentJti("race-jti", input.expiresAt), true);
+      }
+    } finally { await inspect.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("independent SQLite files have distinct consent bindings", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-distinct-"));
   try {

@@ -96,7 +96,7 @@ export async function readMysqlStoreInstanceId(pool: Pool): Promise<string> {
   return value;
 }
 
-export async function rotateMysqlStoreInstanceId(pool: Pool): Promise<string> {
+export async function rotateMysqlStoreInstanceId(pool: Pool | PoolConnection): Promise<string> {
   const value = randomBytes(18).toString("base64url");
   const [result] = await pool.query(
     "UPDATE oauth_store_metadata SET instance_id = ? WHERE singleton = 1",

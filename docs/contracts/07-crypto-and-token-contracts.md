@@ -18,16 +18,19 @@ boolean `true` only, minted ONLY on genuine CIMD validation; OMITTED when
 absent/false; any present non-`true` value fails verification), `jti` (random,
 single-use), `store_instance` (the opaque §12 store binding), `iat`, `exp`.
 Verified with `algorithms: ["HS256"]`, pinned iss+aud, clock from
-`ClockPort`. **Single-use:** the `jti` is consumed atomically on approve (§12
-`consumeConsentJti`); a replay is rejected with `invalid_grant`.
+`ClockPort`. **Single-use:** direct approval validates the store binding, consumes
+the `jti`, and stores the authorization code atomically (§12
+`commitConsentApproval`); a replay is rejected with `invalid_grant`.
 Under the 0.3.0 §6.1 amendment, `verifyConsentToken` takes one
 canonical snapshot before `jwtVerify`; snapshot failure remains
 the existing `invalid_consent` error.
 
 **Replica/store binding.** Before signing a consent JWT, `prepare` reads the
 store's §12 opaque instance binding and includes it as `store_instance`.
-`approve` requires exact equality with a fresh read from its store before denial,
-JTI consumption, authorization-code generation/storage, or success audit. A
+`approve` first requires exact equality with a fresh read before denial or other
+work. Successful approval then revalidates the binding while atomically consuming
+the JTI and storing the authorization code. Binding rotation serializes against
+that commit, so it cannot interleave after validation but before storage. A
 consent token minted against an independent store therefore fails with direct
 `invalid_consent` even when issuer and signing secrets are shared. Replicas over
 the same MySQL database read the same durable binding and remain compatible.
@@ -51,7 +54,7 @@ non-number, non-finite, fractional, unsafe, or out-of-range `exp` maps to the
 existing direct `invalid_consent` error. Negative NumericDates are accepted when
 they represent canonical year-0000 timestamps; verification still rejects them
 as expired at any later current time. `OAuthAuthorizationUseCase.approve` MUST
-pass the returned canonical string unchanged to `consumeConsentJti`.
+pass the returned canonical string unchanged to `commitConsentApproval`.
 
 A JTI accepted once MUST remain rejected in a surviving conforming store through
 the signed `exp`, including after a sweep whose `now` is before or exactly equal
@@ -61,8 +64,8 @@ state across process replacement; `MemoryStore` remains explicitly process-local
 and cannot preserve any tombstone across destruction of its owning process or
 across independent replicas.
 
-Replay rejection occurs before authorization-code generation/storage and before
-an `oauth.authorize.approve` success audit. After a successful JTI consume,
+Replay rejection occurs before authorization-code storage and before an
+`oauth.authorize.approve` success audit. Before the atomic approval commit,
 `approve` MUST take a fresh canonical commit snapshot, require it to be no
 earlier than the initial verification snapshot, validate the authorization-code
 TTL offset at that snapshot, and recheck the signed expiry
@@ -79,8 +82,8 @@ and does not consume the JTI.
 | --- | --- |
 | Authority | The verified consent JWT's signed `exp`; never the approval-time `consentTokenTtlSeconds`, authorization-code TTL, sweep time, or adapter default. |
 | Capture point | `verifyConsentToken`, after signature/algorithm/issuer/audience/time verification, parses the same verified payload and returns one canonical signed-expiry string through an additive return-only intersection. `ConsentRequestClaims` adds only the optional internal `storeInstanceId` signing input. No consumer reparses the raw JWT. |
-| Consumers | Direct consent approval passes the returned expiry to `StorePort.consumeConsentJti`. The upstream-flow sibling continues to pass its independently verified flow JWT `exp`; every `consumeConsentJti` production caller is covered. |
-| Side-effect order | Origin, JWT, resource, CIMD/redirect, approval, and scope gates precede JTI consumption. Successful JTI consumption is followed by a fresh commit snapshot and signed-expiry recheck; both precede code generation, `saveAuthCode`, redirect construction, and success audit. An extant-tombstone replay stops at JTI consumption. A sweep/consume race stops at the commit recheck. |
+| Consumers | Direct consent approval passes the returned expiry to `StorePort.commitConsentApproval`. The upstream-flow sibling continues to pass its independently verified flow JWT `exp` to `consumeConsentJti`; both production paths are covered. |
+| Side-effect order | Origin, JWT, resource, CIMD/redirect, approval, fresh commit snapshot, and signed-expiry recheck precede the atomic binding-check/JTI-consume/code-store operation, redirect construction, and success audit. An extant-tombstone replay or rotated binding stops inside that operation without a code write. A sweep/consume race stops at the commit recheck. |
 | Lifecycle: same configuration | First valid approval succeeds once; immediate or later replay before signed `exp` fails. |
 | Lifecycle: shorter TTL after mint/restart | A token minted under a longer TTL retains its signed expiry. Approval under a shorter current TTL records the original signed expiry; sweeping at `approval time + shorter TTL` does not restore eligibility. |
 | Lifecycle: longer TTL after mint/restart | The tombstone is not extended to the new TTL. It remains only through the token's earlier signed expiry. |
@@ -94,8 +97,9 @@ and does not consume the JTI.
 | Wiring mutant | Returning the correct expiry from verification but passing a current-TTL-derived value at the actual approval call site makes the same regression fail; helper-only tests are insufficient. |
 
 Compatibility and migration: this release adds required TypeScript
-`getStoreInstanceId` and `rotateStoreInstanceId` capabilities plus one metadata table
-to each SQL adapter; authorization construction requires both capabilities at runtime. Existing OAuth
+`getStoreInstanceId`, `rotateStoreInstanceId`, and `commitConsentApproval`
+capabilities plus one metadata table to each SQL adapter; authorization
+construction requires all three capabilities at runtime. Existing OAuth
 rows need no rewrite, but outstanding pre-upgrade consent JWTs lack the binding
 and are invalidated. Cloning or restoring a store into an independent deployment
 requires one `rotateStoreInstanceId()` call on the copy before it serves traffic;

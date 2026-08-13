@@ -2,15 +2,16 @@
 
 import { DatabaseSync } from "node:sqlite";
 import type {
-  AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
+  AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertUtcIsoTimestamp,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
 import { readSqliteStoreInstanceId, rotateSqliteStoreInstanceId } from "./sqlite-instance.ts";
+import { commitSqliteConsentApproval, insertSqliteAuthCode } from "./sqlite-consent.ts";
 import {
   admitSqliteFile, closeSqliteAdmission, sqlitePath, SqliteStateError,
   verifySqlitePathIdentity,
@@ -36,20 +37,24 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
 
   async rotateStoreInstanceId(): Promise<string> {
     this.ensureOpen();
-    return rotateSqliteStoreInstanceId(this.db);
+    return this.transaction(() => rotateSqliteStoreInstanceId(this.db));
+  }
+
+  async commitConsentApproval(
+    expectedStoreInstanceId: string, jti: string, expiresAtIso: string, authCode: SaveAuthCodeInput,
+  ): Promise<ConsentApprovalCommitResult> {
+    this.ensureOpen();
+    assertStoreInstanceId(expectedStoreInstanceId);
+    assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
+    validateAuthCode(authCode);
+    return this.transaction(() => commitSqliteConsentApproval(
+      this.db, expectedStoreInstanceId, jti, expiresAtIso, authCode));
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();
     validateAuthCode(input);
-    this.db.prepare(`INSERT INTO oauth_auth_codes (
-      code_hash, client_id, subject, redirect_uri, resource, scopes_json,
-      code_challenge, code_challenge_method, expires_at, grant_generation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      input.codeHash, input.clientId, input.subject, input.redirectUri, input.resource,
-      JSON.stringify(input.scopes), input.codeChallenge, input.codeChallengeMethod,
-      input.expiresAt, grantGenerationForWrite(input.grantGeneration),
-    );
+    insertSqliteAuthCode(this.db, input);
   }
 
   async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<AuthCodeRecord | null> {

@@ -68,11 +68,14 @@ function makeConfig(consentTokenTtlSeconds: number, clientStore?: ClientStore): 
   });
 }
 
-function instrumentCodeWrites(store: SqliteStore, onWrite: (input: SaveAuthCodeInput) => void): void {
-  const saveAuthCode = store.saveAuthCode.bind(store);
-  store.saveAuthCode = async (input) => {
-    onWrite(input);
-    await saveAuthCode(input);
+function instrumentCodeWrites(
+  store: SqliteStore, onWrite: (input: SaveAuthCodeInput, expiresAt: string) => void,
+): void {
+  const commit = store.commitConsentApproval.bind(store);
+  store.commitConsentApproval = async (binding, jti, expiresAt, input) => {
+    const result = await commit(binding, jti, expiresAt, input);
+    if (result === "stored") onWrite(input, expiresAt);
+    return result;
   };
 }
 
@@ -117,12 +120,10 @@ test("direct consent replay stays rejected through signed exp after shorter-TTL 
     clock.set(START_MS + 100_000);
     const firstUseStore = openSqliteStore(file);
     try {
-      instrumentCodeWrites(firstUseStore, () => { codeWrites += 1; });
-      const consumeConsentJti = firstUseStore.consumeConsentJti.bind(firstUseStore);
-      firstUseStore.consumeConsentJti = async (jti, expiresAt) => {
+      instrumentCodeWrites(firstUseStore, (_input, expiresAt) => {
+        codeWrites += 1;
         recordedExpiry ??= expiresAt;
-        return await consumeConsentJti(jti, expiresAt);
-      };
+      });
       const firstUseAuth = new OAuthAuthorizationUseCase({ config: makeConfig(60), store: firstUseStore, clock, audit });
       const firstUse = await firstUseAuth.approve({ consentToken, approved: true, origin: ISSUER });
       assert.ok(firstUse.code, "adjacent valid first use still mints one authorization code");
@@ -218,12 +219,19 @@ test("authorization construction rejects stores without a valid instance binding
     () => new OAuthAuthorizationUseCase({ config: makeConfig(600), store: noRotation, clock, audit }),
     /rotateStoreInstanceId is required/,
   );
+  const noAtomicApproval = new MemoryStore();
+  Object.defineProperty(noAtomicApproval, "commitConsentApproval", { value: undefined });
+  assert.throws(
+    () => new OAuthAuthorizationUseCase({ config: makeConfig(600), store: noAtomicApproval, clock, audit }),
+    /commitConsentApproval is required/,
+  );
   const malformed = new MemoryStore();
   malformed.getStoreInstanceId = async () => "not base64url!";
   const auth = new OAuthAuthorizationUseCase({ config: makeConfig(600), store: malformed, clock, audit });
   await assert.rejects(prepareConsent(auth), /store instance id must be 22-128 base64url characters/);
   await missingStore.close();
   await noRotation.close();
+  await noAtomicApproval.close();
   await malformed.close();
 });
 

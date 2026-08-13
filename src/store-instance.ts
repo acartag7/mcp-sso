@@ -11,6 +11,9 @@ export function assertStoreInstanceCapability(store: StorePort): asserts store i
   if (typeof store.rotateStoreInstanceId !== "function") {
     throw new Error("StorePort.rotateStoreInstanceId is required for clone and restore isolation");
   }
+  if (typeof store.commitConsentApproval !== "function") {
+    throw new Error("StorePort.commitConsentApproval is required for atomic consent approval");
+  }
 }
 
 export async function storeInstanceId(store: StorePort): Promise<string> {

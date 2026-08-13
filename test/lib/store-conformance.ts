@@ -46,6 +46,25 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     await store.close();
   });
 
+  test(`${label}: consent approval atomically binds JTI and authorization code`, async () => {
+    const store = make();
+    const binding = await store.getStoreInstanceId();
+    const input = authCode("atomic-consent-code", FUTURE);
+    assert.equal(await store.commitConsentApproval(binding, "atomic-jti", FUTURE, input), "stored");
+    assert.equal(await store.commitConsentApproval(binding, "atomic-jti", FUTURE, authCode("replay-code", FUTURE)), "replayed");
+    assert.equal((await store.consumeAuthCode(input.codeHash, NOW))?.codeHash, input.codeHash);
+    const staleBinding = binding;
+    await store.rotateStoreInstanceId();
+    const rejected = authCode("stale-binding-code", FUTURE);
+    assert.equal(
+      await store.commitConsentApproval(staleBinding, "stale-binding-jti", FUTURE, rejected),
+      "binding_mismatch",
+    );
+    assert.equal(await store.consumeAuthCode(rejected.codeHash, NOW), null, "binding rejection stores no code");
+    assert.equal(await store.consumeConsentJti("stale-binding-jti", FUTURE), true, "binding rejection consumes no JTI");
+    await store.close();
+  });
+
   test(`${label}: auth codes are hashed, single-use, expire`, async () => {
     const store = make();
     const raw = "raw-auth-code-secret";

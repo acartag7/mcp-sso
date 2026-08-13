@@ -5,10 +5,10 @@
 
 import { randomBytes } from "node:crypto";
 import type {
-  AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
+  AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertGrantGeneration,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertGrantGeneration, assertStoreInstanceId,
   assertRefreshResource, assertSha256Hex, assertUtcIsoTimestamp, grantGenerationForWrite,
   normalizeRefreshTokenWrite, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
@@ -35,6 +35,22 @@ export class MemoryStore implements StorePort {
     this.ensureOpen();
     this.storeInstanceId = randomBytes(18).toString("base64url");
     return this.storeInstanceId;
+  }
+
+  async commitConsentApproval(
+    expectedStoreInstanceId: string, jti: string, expiresAtIso: string, authCode: SaveAuthCodeInput,
+  ): Promise<ConsentApprovalCommitResult> {
+    this.ensureOpen();
+    assertStoreInstanceId(expectedStoreInstanceId);
+    assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
+    validateAuthCode(authCode);
+    if (expectedStoreInstanceId !== this.storeInstanceId) return "binding_mismatch";
+    if (this.consentJtis.has(jti)) return "replayed";
+    this.consentJtis.set(jti, expiresAtIso);
+    this.authCodes.set(authCode.codeHash, {
+      ...authCode, grantGeneration: grantGenerationForWrite(authCode.grantGeneration),
+    });
+    return "stored";
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {

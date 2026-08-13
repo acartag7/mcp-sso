@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { before, after, beforeEach, test } from "node:test";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
-import type { StorePort } from "../src/ports/store.ts";
+import { STORED_DCR_GRANT_GENERATION, type StorePort } from "../src/ports/store.ts";
 import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
 import { MYSQL_SUBJECT_CAPACITY } from "../src/store/mysql-subject-schema.ts";
@@ -109,6 +109,38 @@ if (RUN) {
     } finally {
       await first.close();
       await second.close();
+    }
+  });
+
+  test("MysqlStore: approval and binding rotation serialize across connections", async () => {
+    const approvalStore = await createMysqlStore(MYSQL_URL as string);
+    const rotationStore = await createMysqlStore(MYSQL_URL as string);
+    const binding = await approvalStore.getStoreInstanceId();
+    const codeHash = sha256Hex("mysql-approval-rotation-race");
+    const authCode = {
+      codeHash, clientId: "race-client", subject: "race-subject",
+      redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
+      scopes: ["mcp:read"], codeChallenge: "race-challenge", codeChallengeMethod: "S256" as const,
+      expiresAt: FUTURE, grantGeneration: STORED_DCR_GRANT_GENERATION,
+    };
+    try {
+      const [approval, rotated] = await Promise.all([
+        approvalStore.commitConsentApproval(binding, "mysql-race-jti", FUTURE, authCode),
+        rotationStore.rotateStoreInstanceId(),
+      ]);
+      assert.notEqual(rotated, binding);
+      const code = await approvalStore.consumeAuthCode(codeHash, NOW);
+      if (approval === "stored") {
+        assert.equal(code?.codeHash, codeHash, "approval completed before rotation");
+        assert.equal(await approvalStore.consumeConsentJti("mysql-race-jti", FUTURE), false);
+      } else {
+        assert.equal(approval, "binding_mismatch", "rotation completed before approval");
+        assert.equal(code, null);
+        assert.equal(await approvalStore.consumeConsentJti("mysql-race-jti", FUTURE), true);
+      }
+    } finally {
+      await approvalStore.close();
+      await rotationStore.close();
     }
   });
 
