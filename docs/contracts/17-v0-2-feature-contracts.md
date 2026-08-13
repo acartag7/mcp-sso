@@ -2099,7 +2099,7 @@ the decision-2 generic `invalid_client` so document size is not a content oracle
    same advisory posture — `false` ⇒ 429, thrown ⇒ fail-open). Rationale: each
    initiated flow authorizes at most one outbound token-endpoint call at the
    callback, so limiting initiation bounds exchange amplification.
-2. Any singleton authorize parameter present **more than once** (array-valued
+2. Any singleton authorize parameter with **more than one nonempty occurrence** (array-valued
    in `NormRequest.query`) ⇒ **direct 400 `invalid_request`** before any
    cookie is set — RFC 6749 §3.1 forbids repeated request parameters, and
    silently picking first/last would make parameter-pollution behavior
