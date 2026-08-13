@@ -288,7 +288,7 @@ test("WebhookAudit: transport mutation cannot erase configured secrets from reda
   } finally { captured.restore(); }
   const stderr = captured.messages.join("\n");
   assert.equal(stderr.includes("abc"), false);
-  assert.match(stderr, /transport reflected \[redacted\]/);
+  assert.match(stderr, /transport reflected/);
 });
 
 test("WebhookAudit: exact configured values redact before generic secret patterns", async () => {
@@ -303,7 +303,7 @@ test("WebhookAudit: exact configured values redact before generic secret pattern
   } finally { captured.restore(); }
   const stderr = captured.messages.join("\n");
   assert.equal(stderr.includes("prefix-"), false);
-  assert.match(stderr, /transport reflected \[redacted\]/);
+  assert.match(stderr, /transport reflected/);
 });
 
 test("WebhookAudit: raw plus-bearing query values redact when reflected alone", async () => {
@@ -316,7 +316,21 @@ test("WebhookAudit: raw plus-bearing query values redact when reflected alone", 
   } finally { captured.restore(); }
   const stderr = captured.messages.join("\n");
   assert.equal(stderr.includes("ab+c"), false);
-  assert.match(stderr, /transport reflected \[redacted\]/);
+  assert.match(stderr, /transport reflected/);
+});
+
+test("WebhookAudit: the diagnostic placeholder cannot reproduce a configured secret", async () => {
+  for (const secret of ["redacted", "[redacted]", "act"]) {
+    const captured = captureConsoleError();
+    try {
+      const sink = new WebhookAudit("https://siem.test/ingest", {
+        headers: { "X-Hook-Key": secret },
+        fetchImpl: (async () => { throw new Error(`transport reflected ${secret} token=value`); }) as typeof fetch,
+      });
+      await sink.writeAuthEvent({ ...baseEvent });
+    } finally { captured.restore(); }
+    assert.equal(captured.messages.join("\n").includes(secret), false, secret);
+  }
 });
 
 test("WebhookAudit: never rejects when the transport throws a hostile error (throwing message getter)", async () => {

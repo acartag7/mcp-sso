@@ -68,12 +68,20 @@ export function safeErrorForStderr(error: unknown, exactSecrets: readonly string
     const name = typeof e?.name === "string" ? e.name : "";
     if (name && name !== "Error" && !message.startsWith(name)) message = `${name}: ${message}`;
     if (!message) message = "unknown error";
-    for (const secret of [...exactSecrets].filter((value) => value.length > 0).sort((a, b) => b.length - a.length)) {
-      message = message.split(secret).join("[redacted]");
-    }
-    return redactForStderr(message);
+    const secrets = [...exactSecrets].filter((value) => value.length > 0).sort((a, b) => b.length - a.length);
+    message = removeExactSecrets(message, secrets);
+    return removeExactSecrets(redactForStderr(message), secrets);
   } catch {
     return "[redacted]";
+  }
+}
+
+function removeExactSecrets(input: string, secrets: readonly string[]): string {
+  let output = input;
+  while (true) {
+    const before = output;
+    for (const secret of secrets) output = output.split(secret).join("");
+    if (output === before) return output;
   }
 }
 
