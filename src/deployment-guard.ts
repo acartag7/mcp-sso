@@ -31,9 +31,7 @@ export function assertSafeDeploymentCombination(deps: {
   rateLimit?: RateLimitPort;
   acknowledgeUnsafeStatelessDefaults?: true;
 }, options: { emitAcknowledgementWarning?: boolean } = {}): void {
-  if (deps.rateLimit !== undefined && typeof deps.rateLimit?.check !== "function") {
-    throw new AuthConfigError("rateLimit must implement an async check(key) method");
-  }
+  if (deps.rateLimit !== undefined) snapshotRateLimit(deps.rateLimit);
   const bounded = deps.rateLimit !== undefined && deps.rateLimit !== noopRateLimit;
   if (deps.config.dcr.mode !== "stateless" || bounded) return;
   const localOnly = deps.config.dev?.allowInsecureLocalhost === true
@@ -60,6 +58,23 @@ export function assertSafeDeploymentCombination(deps: {
       "stateless DCR with no application-specific HTTPS redirect and no RateLimitPort is unsafe; use stored DCR, configure an application callback, supply a limiter, or explicitly acknowledge the temporary starter risk",
     );
   }
+}
+
+/** Read and bind a RateLimitPort once so an accessor-backed `check` cannot pass
+ * boot validation and disappear when a request reaches the guard. */
+export function snapshotRateLimit(rateLimit: RateLimitPort | undefined): RateLimitPort | undefined {
+  if (rateLimit === undefined || rateLimit === noopRateLimit) return rateLimit;
+  let check: unknown;
+  try { check = rateLimit.check; }
+  catch { throw new AuthConfigError("rateLimit must implement an async check(key) method"); }
+  if (typeof check !== "function") {
+    throw new AuthConfigError("rateLimit must implement an async check(key) method");
+  }
+  return Object.freeze({
+    async check(key: string): Promise<boolean> {
+      return await Reflect.apply(check, rateLimit, [key]) as boolean;
+    },
+  });
 }
 
 /** Reject the acknowledged console-pairing composition before its signing-key

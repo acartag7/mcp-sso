@@ -20,7 +20,7 @@ export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
-import { assertSafeDeploymentCombination } from "../deployment-guard.ts";
+import { assertSafeDeploymentCombination, snapshotRateLimit } from "../deployment-guard.ts";
 import { formField, formObject, headerString, noStoreHeaders, oauthErrorResponse, queryString, readHeader, resourceParam,
   type NormRequest, type NormResponse,
 } from "./http.ts";
@@ -72,7 +72,7 @@ export class Bridge {
       store: deps.store,
       clock: deps.clock,
       audit: deps.audit,
-      rateLimit: deps.rateLimit,
+      rateLimit: snapshotRateLimit(deps.rateLimit),
       acknowledgeUnsafeStatelessDefaults: deps.acknowledgeUnsafeStatelessDefaults,
       cimdTransport: deps.cimdTransport,
       cimdResolver: deps.cimdResolver,

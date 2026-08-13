@@ -147,6 +147,20 @@ test("Bridge snapshots accessor-backed dependencies before its deployment guard"
   assert.equal(limiterReads, 1);
 });
 
+test("Bridge binds the limiter method that passed boot validation", async () => {
+  let reads = 0;
+  const limiter = Object.defineProperty({}, "check", {
+    get() {
+      reads += 1;
+      return reads === 1 ? async () => false : undefined;
+    },
+  });
+  const bridge = construct(config(), limiter as never);
+  const response = await bridge.handleRegister({ query: {}, headers: {}, body: {}, ip: "1.2.3.4" });
+  assert.equal(response.status, 429, "the bound denying method remains authoritative");
+  assert.equal(reads, 1);
+});
+
 test("example factories reject before opening SQLite and do not coerce malformed acknowledgements", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-unsafe-composition-"));
   try {
@@ -164,6 +178,42 @@ test("example factories reject before opening SQLite and do not coerce malformed
     for (const entry of cases) {
       await assert.rejects(entry.run, /stateless DCR/);
       assert.equal(existsSync(entry.file), false, "rejected composition created a SQLite file");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("example factories reuse the config snapshot that passed preflight", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-factory-snapshot-"));
+  try {
+    for (const entry of [
+      {
+        file: join(dir, "app.db"),
+        run: (opts: Parameters<typeof buildApp>[0]) => buildApp(opts),
+        extra: { pairing: {} },
+      },
+      {
+        file: join(dir, "gateway.db"),
+        run: (opts: Parameters<typeof buildGateway>[0]) => buildGateway(opts as Parameters<typeof buildGateway>[0]),
+        extra: {
+          backendUrl: "http://127.0.0.1:8788/mcp",
+          getBackendCredential: () => "test",
+          pairing: {},
+        },
+      },
+    ]) {
+      const safe = config({ dcr: { mode: "stored", store: { async save() {}, async find() { return null; } } } });
+      let reads = 0;
+      const opts = {
+        ...entry.extra,
+        sqliteFile: entry.file,
+        get config() { reads += 1; return reads === 1 ? safe : config(); },
+      } as Parameters<typeof buildGateway>[0];
+      const result = await entry.run(opts);
+      assert.equal(result.bridge.config, safe);
+      assert.equal(reads, 1);
+      await result.close();
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

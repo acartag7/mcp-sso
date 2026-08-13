@@ -140,8 +140,10 @@ remains in the same additive allowlist; that mixed allowlist is still rejected.
 `Bridge` snapshots `config`, `rateLimit`, the acknowledgement, and its remaining
 dependencies once, then runs the check and constructs every use-case from that
 same snapshot. Accessor-backed input therefore cannot present one composition to
-the guard and another to runtime initialization. The check runs before the bridge
-constructs a CIMD resolver or any use-case.
+the guard and another to runtime initialization. The validated limiter's `check`
+method is also read and bound once; request handling invokes that bound function
+rather than re-reading an accessor-backed method. The check runs before the
+bridge constructs a CIMD resolver or any use-case.
 `acknowledgeUnsafeStatelessDefaults: true` on `BridgeDeps` is an explicit,
 temporary escape hatch for the localhost-only starter and emits a loud boot
 warning. Any other value is treated as absent. Internet-facing compositions do
@@ -151,6 +153,8 @@ method; malformed limiter values fail at boot rather than counting as a bound.
 Composition roots run this guard before creating a state directory, signing
 keys, audit file, or state store. The console-pairing branches perform their
 loopback-only preflight from issuer/resource strings before the signing-key
-helper needed to build a complete `BridgeConfig`.
+helper needed to build a complete `BridgeConfig`. Exported factories snapshot
+their config and acknowledgement once and reuse those exact values after
+preflight, including for store and bridge construction.
 The generated starter additionally rejects non-loopback issuer or resource URLs
 before creating its state directory, signing keys, audit file, or SQLite database.
