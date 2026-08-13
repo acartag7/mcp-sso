@@ -155,7 +155,7 @@ export async function verifyAccessToken(token: string, config: BridgeConfig, clo
     const { payload } = await jwtVerify(token, key, {
       algorithms: ["ES256"],
       issuer: config.issuer,
-      audience: config.resource,
+      audience: config.resource, requiredClaims: ["exp"],
       currentDate: new Date(nowMs),
     });
     return accessClaims(payload);
