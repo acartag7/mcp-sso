@@ -31,6 +31,9 @@ function racingConnection(options: RaceOptions): {
       if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
         return [[{ data_type: "varchar", max_length: 384, is_nullable: "NO" }], []];
       }
+      if (sql.includes("information_schema.STATISTICS")) {
+        return [[{ INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null }], []];
+      }
       if (sql.includes("COLLATION_NAME") || sql.includes("ENGINE")) return [[], []];
       return [[], []];
     },
@@ -90,6 +93,9 @@ test("MySQL migration adds nullable resource columns to pre-resource refresh tab
       }
       if (sql.startsWith("SELECT DATA_TYPE AS data_type")) {
         return [[{ data_type: "varchar", max_length: 384, is_nullable: "NO" }], []];
+      }
+      if (sql.includes("information_schema.STATISTICS")) {
+        return [[{ INDEX_NAME: "PRIMARY", NON_UNIQUE: 0, SEQ_IN_INDEX: 1, COLUMN_NAME: "jti", SUB_PART: null }], []];
       }
       if (sql.includes("COLLATION_NAME") || sql.includes("ENGINE")) return [[], []];
       return [[], []];

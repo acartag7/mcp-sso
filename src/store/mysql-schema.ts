@@ -16,6 +16,7 @@
 
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput } from "../ports/store.ts";
+import { assertConsentJtiUnique } from "./mysql-index-schema.ts";
 import {
   StoreInputError, assertGrantGeneration, assertSha256Hex,
   assertRefreshResource, assertUtcIsoTimestamp, grantGenerationForWrite,
@@ -88,6 +89,7 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await migrateMysqlSubjectColumns(conn);
   await assertColumnCollations(conn);
   await assertInnoDBEngine(conn);
+  await assertConsentJtiUnique(conn);
 }
 
 async function ensureColumn(conn: PoolConnection, table: string, column: string, definition: string): Promise<void> {
