@@ -7,7 +7,7 @@
 // default stays strict, deviations are per-file and justified, and the gate
 // fails closed on anything unrecorded.
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 const ROOT = new URL("../src", import.meta.url).pathname;
 const LIMIT = 250;
@@ -27,12 +27,20 @@ if (!existsSync(ROOT)) {
 
 const sizes = new Map();
 
+/** Exception keys are written with forward slashes, but `relative()` yields
+ *  backslashes on win32 — an unnormalized key would miss twice there: the
+ *  exception reads as nonexistent AND the real file as unrecorded, failing the
+ *  required gate for Windows contributors. */
+function key(path) {
+  return relative(ROOT, path).split(sep).join("/");
+}
+
 function walk(dir) {
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
     if (statSync(p).isDirectory()) walk(p);
     else if (p.endsWith(".ts")) {
-      sizes.set(relative(ROOT, p), readFileSync(p, "utf8").split("\n").length);
+      sizes.set(key(p), readFileSync(p, "utf8").split("\n").length);
     }
   }
 }

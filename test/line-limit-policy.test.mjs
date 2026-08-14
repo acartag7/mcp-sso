@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 const CHECKER = new URL("../scripts/check-line-length.mjs", import.meta.url).pathname;
@@ -14,9 +14,10 @@ const CHECKER = new URL("../scripts/check-line-length.mjs", import.meta.url).pat
 async function runChecker(files, exceptions = "{}") {
   const root = await mkdtemp(join(tmpdir(), "mcp-sso-lines-"));
   try {
-    await mkdir(join(root, "src", "adapters"), { recursive: true });
     for (const [name, lines] of Object.entries(files)) {
-      await writeFile(join(root, "src", name), "// x\n".repeat(lines));
+      const target = join(root, "src", ...name.split("/"));
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, "// x\n".repeat(lines));
     }
     const source = (await import("node:fs/promises")).readFile;
     const original = await source(CHECKER, "utf8");
@@ -70,6 +71,23 @@ test("an exception without a real reason is rejected", async () => {
     '{ "big.ts": { limit: 280, reason: "because" } }');
   assert.equal(code, 1);
   assert.match(output, /needs a reason/);
+});
+
+test("a nested exception key resolves on every platform separator", async () => {
+  // The map is written with forward slashes; `relative()` yields backslashes on
+  // win32. Without normalization this misses twice — the exception reads as
+  // nonexistent and the real file as unrecorded — failing the gate for Windows
+  // contributors. Only a NESTED path exercises it.
+  const spec = '{ "store/deep.ts": { limit: 280, reason: "one cohesive surface; splitting separates a guard from its effect" } }';
+
+  const ok = await runChecker({ "store/deep.ts": 260 }, spec);
+  assert.equal(ok.code, 0, ok.output);
+  assert.doesNotMatch(ok.output, /does not exist|unrecorded/);
+
+  // The ceiling still binds through the normalized key.
+  const over = await runChecker({ "store/deep.ts": 300 }, spec);
+  assert.equal(over.code, 1);
+  assert.match(over.output, /store\/deep\.ts: 301 lines exceeds its recorded 280-line exception/);
 });
 
 test("an exception for a file that does not exist is rejected", async () => {
