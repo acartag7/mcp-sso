@@ -170,8 +170,8 @@ client** → refresh → replay-detection (family revocation observed) → revok
 
 ## Repository quality rules
 
-- The 15 acceptance test files under `test/acceptance/` are frozen in
-  `test/acceptance/acceptance.manifest.json`; all four flags in `phases.json`
+- The 16 acceptance test files under `test/acceptance/` are frozen in
+  `test/acceptance/acceptance.manifest.json`; all five flags in `phases.json`
   are active. Do not edit frozen tests casually. If the contract is wrong, stop
   and review the contract change explicitly. CI keeps `freeze-hash`,
   `mixed-diff`, and `stage-artifact` active.
