@@ -437,19 +437,23 @@ test("positive round trips hold for stored web/native, stateless, and CIMD", asy
   assert.throws(() => validateCimdDocument(JSON.stringify({
     client_id: "https://meta.test/client", client_name: "A", redirect_uris: ["https://a.test"],
   }), "https://meta.test/client"), (error: unknown) => error instanceof CimdError && error.reason === "document_invalid");
-  const raw = JSON.stringify({ client_id: "https://meta.test/client", client_name: "A", redirect_uris: ["https://a.test/", "http://[::1]:9/"] });
+  const raw = JSON.stringify({
+    client_id: "https://meta.test/client", client_name: "A", application_type: "native",
+    redirect_uris: ["https://a.test/", "http://[::1]:9/"],
+  });
   const doc = validateCimdDocument(raw, "https://meta.test/client");
   const projected = projectCimdRegistration(doc);
   assert.deepEqual(projected.redirect_uris, ["https://a.test/", "http://[::1]:9/"]);
+  assert.equal(projected.application_type, "native");
   assert.throws(() => projectCimdRegistration({ ...doc, redirect_uris: ["https://a.test/cb?"] }), CimdError);
-  assert.equal(cimdRedirectMatches("https://a.test/", projected.redirect_uris), true);
-  assert.equal(cimdRedirectMatches("http://[::1]:7777/", projected.redirect_uris), true);
+  assert.equal(cimdRedirectMatches("https://a.test/", projected), true);
+  assert.equal(cimdRedirectMatches("http://[::1]:7777/", projected), true);
   for (const [registered, presented] of [["https://a.test/cb%2F", "https://a.test/cb%2f"], ["https://a.test/cb%2f", "https://a.test/cb%2F"]] as const) {
     assert.throws(() => assertAllowedRedirectUri(presented, [registered]), OAuthError);
     assert.throws(() => assertRedirectAllowedForClient(presented, {
       clientId: "case", redirectUris: [registered], applicationType: "web", issuedAtEpoch: 1,
     }), OAuthError);
-    assert.equal(cimdRedirectMatches(presented, [registered]), false);
+    assert.equal(cimdRedirectMatches(presented, { redirect_uris: [registered] }), false);
   }
 });
 
