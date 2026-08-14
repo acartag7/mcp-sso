@@ -60,7 +60,7 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   // validation; adapter-level catches strip redirect targets and hide non-OAuth
   // details (verification.md HF.3).
   const wrap = (fn: (req: Request, res: Response) => Promise<void>): (req: Request, res: Response) => Promise<void> =>
-    (req, res) => fn(req, res).catch((error) => { send(res, oauthErrorResponse(asDirectOAuth(error))); });
+    (req, res) => fn(req, res).catch((error) => { send(res, oauthErrorResponse(bridge.config, asDirectOAuth(error))); });
 
   const resourcePath = pathAfterOrigin(bridge.config.resource);
   router.get("/.well-known/oauth-authorization-server", wrap(async (_req, res) => send(res, await bridge.handleAuthorizationServerMetadata())));
@@ -84,7 +84,7 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
     router.get("/oauth/authorize", wrap(async (req, res) => {
       const request = toNorm(req);
       if (hasDuplicatedAuthorizeParams(request.query)) {
-        send(res, oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters")));
+        send(res, oauthErrorResponse(bridge.config, new OAuthError("invalid_request", "duplicate request parameters")));
         return;
       }
       const identityResolved = await bridge.resolveIdentity(id, headerString(request.headers, identityHeader), request.ip);

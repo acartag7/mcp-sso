@@ -14,11 +14,21 @@
   catalog (unknown or over-bound ⇒ `invalid_scope`), de-dupes, and falls back to
   `defaultScopes` when none requested. Returns the validated list.
 - `scopeString(scopes)` → sorted, space-joined (stable token `scope` values).
-- `requireScope(auth, required)` → exact-membership 403 `insufficient_scope`
-  step-up (§8.3). **MCP 2026-07-28 gap:** the final text says servers `MUST`
-  account for scope hierarchies where a broader scope implies narrower scopes.
-  This flat helper has no hierarchy policy; resolving that requires a separate
-  contract-first runtime change.
+- `scopeHierarchy` (optional config) is a bounded, immutable implication graph
+  for the exact `BridgeConfig.resource`. Each `granted → implies` edge says a
+  token carrying the broader `granted` scope satisfies the directly narrower
+  scope; reachability is transitive. Boot admits at most 128 granted rows and
+  4,096 direct edges, and rejects empty rows, duplicates, self-references,
+  cycles, unknown catalog scopes, malformed or extra members, and a resource
+  binding that is not byte-for-byte equal to `BridgeConfig.resource`. Omission
+  or an empty graph means exact membership, never an inferred hierarchy.
+- `requireScope(auth, required, hierarchy?)` → 403 `insufficient_scope`
+  step-up (§8.3). The helper remains exact unless the caller explicitly passes a
+  validated hierarchy. With one, an exact grant or a transitively implied grant
+  succeeds. `RequestAuthorizer` passes its validated config policy; it does not
+  infer relationships from scope names. The graph applies only at resource
+  authorization: tokens continue to carry the scopes actually granted, so
+  implication does not mint or accumulate additional scope strings.
 - **Accumulation *(RC item (c)) — stored-DCR opaque clients only.*** Re-authorization
   unions the requested scopes with those derived from this `(subject, clientId)`'s
   active refresh-token records (§9.3) — **no grant store**. In stateless mode, and for

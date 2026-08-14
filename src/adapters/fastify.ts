@@ -72,13 +72,13 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
       let identityResolved: { subject: string; allowedScopes?: string[] };
       const request = toNorm(req);
       if (hasDuplicatedAuthorizeParams(request.query)) {
-        await send(reply, oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters")));
+        await send(reply, oauthErrorResponse(bridge.config, new OAuthError("invalid_request", "duplicate request parameters")));
         return;
       }
       try {
         identityResolved = await bridge.resolveIdentity(id, headerString(request.headers, identityHeader), request.ip);
       } catch (error) {
-        await send(reply, oauthErrorResponse(asDirectOAuth(error)));
+        await send(reply, oauthErrorResponse(bridge.config, asDirectOAuth(error)));
         return;
       }
       await send(reply, await bridge.handleAuthorize(request, identityResolved));

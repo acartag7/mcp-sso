@@ -77,5 +77,5 @@ export function assertCallbackCimdPolicy(config: BridgeConfig, claims: FlowClaim
     return false; // a non-CIMD client_id MUST carry NO cimd claim
   }
   if (carried === undefined) return true;
-  return cimdRedirectMatches(claims.params.redirect_uri, carried.redirect_uris);
+  return cimdRedirectMatches(claims.params.redirect_uri, carried);
 }

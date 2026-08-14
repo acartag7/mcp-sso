@@ -6,10 +6,8 @@
 > to a port, schema, or error shape. `docs/threat-model.md` reasons about this
 > surface; `docs/dependency-ledger.md` records the pins. If code and the contract set
 > disagree, the contract set wins until one of them is deliberately changed.
->
-> Current release and conformance status: [verification status](verification.md#current-status).
 
-## Contents
+## Change routing
 
 Read this index by task; open the numbered file only when you need its exact
 contract:
@@ -22,6 +20,10 @@ contract:
 | Durable state or audit | [§12 Stores](contracts/12-store-conformance-contract.md) and [§13 Audit](contracts/13-audit-contract.md) |
 | MCP-version claims | [§16 Conformance matrix](contracts/16-spec-conformance-matrix.md) |
 | A v0.2 or v0.3 feature | [§17 Feature contracts](contracts/17-v0-2-feature-contracts.md) |
+
+Current release and conformance status: [verification status](verification.md#current-status).
+
+## Numbered contracts
 
 This is one contract set, not 18 independent specifications. The index owns
 routing; each numbered file owns the exact rules for its section.
@@ -44,5 +46,3 @@ routing; each numbered file owns the exact rules for its section.
 16. [Spec-conformance matrix](contracts/16-spec-conformance-matrix.md)
 17. [v0.2 feature contracts (locked 2026-07-04)](contracts/17-v0-2-feature-contracts.md)
 18. [Contract-change protocol](contracts/18-contract-change-protocol.md)
-
-Each numbered file is canonical for its section; this index owns the shared routing.

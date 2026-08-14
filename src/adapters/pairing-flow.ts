@@ -52,7 +52,7 @@ export async function handlePairingAuthorize(
 ): Promise<NormResponse> {
   const { bridge, pairing } = deps;
   if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0) {
-    return oauthErrorResponse(new OAuthError("invalid_request", "duplicate request parameters"));
+    return oauthErrorResponse(bridge.config, new OAuthError("invalid_request", "duplicate request parameters"));
   }
   const oauthParams = gatherOAuthParams(req);
   const submittedCode = method === "POST" ? formField(req.body, "pairing_code") : undefined;

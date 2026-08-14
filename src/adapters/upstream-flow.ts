@@ -197,17 +197,17 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       if (!firstUse) return finish(directErrorResponse("invalid_request", "flow already used"), "failure", "flow_replayed", clientId);
       const idpError = queryString(req.query, "error"); // rows 7/8: IdP error params are NEVER echoed
       if (idpError) {
-        if (["access_denied", "consent_required", "interaction_required", "login_required"].includes(idpError)) return finish(redirectErrorResponse(clientRedirectUri, "access_denied", clientState, "upstream identity provider denied the request"), "failure", "upstream_denied", clientId);
-        return finish(redirectErrorResponse(clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "upstream_error", clientId);
+        if (["access_denied", "consent_required", "interaction_required", "login_required"].includes(idpError)) return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "access_denied", clientState, "upstream identity provider denied the request"), "failure", "upstream_denied", clientId);
+        return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "upstream_error", clientId);
       }
       const code = queryString(req.query, "code");
       if (!code) return finish(directErrorResponse("invalid_request", "missing authorization code"), "failure", "missing_code", clientId); // row 9
       let exchange; // rows 10/11: exchange + verify (a throw is always exchange_failed)
-      try { exchange = await identity.exchangeAndVerify({ code, codeVerifier: claims.codeVerifier, nonce: claims.nonce }); } catch (e) { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(e)); return finish(redirectErrorResponse(clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
+      try { exchange = await identity.exchangeAndVerify({ code, codeVerifier: claims.codeVerifier, nonce: claims.nonce }); } catch (e) { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(e)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
       if (!exchange.ok) {
-        if (exchange.kind === "exchange_failed") { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(exchange.reason)); return finish(redirectErrorResponse(clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
+        if (exchange.kind === "exchange_failed") { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(exchange.reason)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
         await emitIdentityVerify("failure", exchange.reason, undefined);
-        return finish(redirectErrorResponse(clientRedirectUri, "access_denied", clientState, "upstream identity verification failed"), "failure", "identity_rejected", clientId); // row 11 (§9.3 extension)
+        return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "access_denied", clientState, "upstream identity verification failed"), "failure", "identity_rejected", clientId); // row 11 (§9.3 extension)
       }
       await emitIdentityVerify("success", undefined, exchange.identity.subject); // identity decision reached
       const synthetic: NormRequest = { query: pickOAuthParams(claims.params), body: undefined, headers: req.headers, ip }; // rows 12/13 — ceiling travels
