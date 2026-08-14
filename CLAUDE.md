@@ -19,8 +19,8 @@ specific to Claude Code sessions here and does not belong in the portable
 ## Repository quality rules
 
 The canonical rules live in [`AGENTS.md`](AGENTS.md), which this file includes
-via `@AGENTS.md`. In short: keep the 15 manifest-frozen acceptance tests and all
-four active phases intact; keep `freeze-hash`, `mixed-diff`, and
+via `@AGENTS.md`. In short: keep the 16 manifest-frozen acceptance tests and all
+five active phases intact; keep `freeze-hash`, `mixed-diff`, and
 `stage-artifact` active; define product and security contracts before new trust
 boundaries; fail closed with allowlists; and run the existing repository gates.
 
