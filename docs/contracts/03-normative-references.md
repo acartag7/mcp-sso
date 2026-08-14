@@ -29,5 +29,6 @@
   `MUST` account for scope hierarchies when deciding token sufficiency. This
   source branch closes the RFC 9207 response, scope-hierarchy, CIMD native-app,
   media-type, shared-cache, and governed evidence gaps. The complete draft `-00`
-  mapping has no unresolved runtime or evidence row (§16.1). This source-tree
-  status is not yet a published-release claim.
+  mapping has no unresolved runtime or evidence row (§16.1). Version v0.3.5
+  packages this source-tree target without making a published-artifact
+  conformance claim.
