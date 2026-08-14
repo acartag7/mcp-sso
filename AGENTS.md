@@ -67,7 +67,7 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 
 - **pnpm via corepack** (the `packageManager` pin is `pnpm@10.34.4`). `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` minutes = **15-day install floor**; every pin is also recorded (version + publish date) in [`docs/dependency-ledger.md`](docs/dependency-ledger.md). Node `>=24` (native TS for dev/test; the npm artifact is plain-`tsc` compiled ESM + `.d.ts`).
 - `pnpm run typecheck` — `tsc --noEmit`.
-- `pnpm run check:lines` — **250-line file limit**, enforced by `scripts/check-line-length.mjs`.
+- `pnpm run check:lines` — **250-line file limit**, enforced by `scripts/check-line-length.mjs`. The limit is a cohesion nudge, not an end in itself: a file may exceed it only via a **recorded exception** in that script, stating why splitting would separate things that belong together. Unrecorded overage fails; an exception is a ceiling, not a bypass; and an exception whose file drops back under 250 fails as **stale** so allowances are returned. Prefer splitting at a real seam — reach for an exception when the alternative is a fragment that separates a guard from its side effect.
 - `pnpm test` — `node --test`.
 - `pnpm run build` — `rm -rf dist && tsc -p tsconfig.build.json`.
 - `npm pack --dry-run` — before any release: the tarball must contain only
@@ -167,6 +167,35 @@ describes:
 Run the real flow, not just unit tests: register → authorize (through the
 identity port) → token → call a protected `/mcp` with the **official MCP SDK
 client** → refresh → replay-detection (family revocation observed) → revoke.
+
+## Surfacing a decision to the owner
+
+Findings and tradeoffs that need the owner's call are written as a disclosure,
+not as a checklist. `file:line` evidence is the appendix; consequence is the
+report. Full format in the global rules — the short version, per item:
+
+1. **What it is** — one line of mechanism.
+2. **What actually happens** — concrete, plain words, real sequence.
+3. **If it's not fixed** — who ends up able to do what. Never omit this.
+4. **Where it already works** — the sibling that got it right. In this repo the
+   recurring defect is a guard wired to one path and assumed on its mirror
+   (upstream vs direct authorize, one adapter vs three, entry-point vs stored
+   state), so "X does this correctly, Y doesn't" is usually the true shape.
+5. **Recommendation with the reasoning attached**, not a severity label.
+
+Across a set: rank by what matters; state exploitable-today vs latent vs
+reliability; and **separate mechanical fixes** (nobody chose this) **from design
+decisions** (the code does what a comment says on purpose — these need a
+contract change first, per §5 and the contract-change protocol). Never present
+both in one undifferentiated list.
+
+Always include what was **disproved** — the attacks that failed, the invariants
+that held. That is what makes the confirmed items credible, and it bounds what
+the project may claim. Lead with what is genuinely sound where it is.
+
+This applies to adversarial-assessment reports, PR descriptions that surface a
+tradeoff, and any Spec Reviewer briefing (see
+`memory/use-spec-reviewer-for-owner-decisions.md`).
 
 ## Repository quality rules
 
