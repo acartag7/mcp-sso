@@ -201,15 +201,38 @@ export async function buildApp(opts: ExampleOptions) {
   return { app, store, bridge, close: async () => { await store.close(); } };
 }
 
+export const UNSAFE_NON_LOOPBACK_PAIRING_ENV = "MCP_SSO_UNSAFE_ALLOW_NON_LOOPBACK_PAIRING";
+const LOOPBACK_LISTEN_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
 /** Default listen host by mode. Console pairing binds LOOPBACK by default (its
  *  trust envelope is "whoever can read the process's stderr IS the operator" —
  *  a non-loopback bind exposes the pairing authorize surface + the printed-code
  *  attempt budget to the network). Cloudflare and every redirect-flow path bind
  *  0.0.0.0 (network deployment — the real IdP is the gate, unlike pairing's
- *  loopback envelope; the callback must be reachable by the IdP). HOST env
- *  overrides either. */
+ *  loopback envelope; the callback must be reachable by the IdP). */
 export function defaultListenHost(env: Record<string, string | undefined> = process.env): string {
   return productionIdentityConfigured(env) ? "0.0.0.0" : "127.0.0.1";
+}
+
+/** Fail the console-pairing examples before quickstart secrets or any other
+ *  state side effect when HOST escapes the supported loopback envelope. The
+ *  deliberately unsafe override is exact and loud; it changes only the listen
+ *  host decision, never the separate issuer/resource loopback preflight. */
+export function assertConsolePairingListenHostBeforeState(
+  env: Record<string, string | undefined>,
+): void {
+  const host = env.HOST ?? defaultListenHost(env);
+  if (LOOPBACK_LISTEN_HOSTS.has(host)) return;
+  if (env[UNSAFE_NON_LOOPBACK_PAIRING_ENV] !== "true") {
+    throw new AuthConfigError(
+      `console-pairing examples require a loopback HOST (localhost, 127.0.0.1, or ::1); ` +
+        `set ${UNSAFE_NON_LOOPBACK_PAIRING_ENV}=true only for deliberate temporary non-loopback testing`,
+    );
+  }
+  console.error(
+    `[mcp-sso] DANGER: ${UNSAFE_NON_LOOPBACK_PAIRING_ENV}=true permits console pairing on non-loopback HOST=${host}. ` +
+      "Anyone who can reach this port can attempt the pairing identity gate; use a real IdP for network exposure.",
+  );
 }
 
 /** Read config from env (the production path; standalone index.ts uses quickstart
@@ -443,6 +466,7 @@ export async function buildExample(
   const issuer = env.OAUTH_ISSUER ?? `http://localhost:${port}`;
   const resource = env.OAUTH_RESOURCE ?? `http://localhost:${port}/mcp`;
   assertLoopbackStarterBeforeState(issuer, resource);
+  assertConsolePairingListenHostBeforeState(env);
   const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer,
@@ -459,7 +483,6 @@ export async function buildExample(
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
-  const { app, store } = await buildApp({ config, pairing: {}, audit, sqliteFile,
-    acknowledgeUnsafeStatelessDefaults: true });
+  const { app, store } = await buildApp({ config, pairing: {}, audit, sqliteFile });
   return { app, store, config, dir };
 }

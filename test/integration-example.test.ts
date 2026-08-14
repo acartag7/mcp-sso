@@ -24,7 +24,9 @@ import {
   configFromEnv,
   createOidcUpstreamFromEnv,
   defaultListenHost,
+  assertConsolePairingListenHostBeforeState,
   entraGroupAuthorizationFromEnv,
+  UNSAFE_NON_LOOPBACK_PAIRING_ENV,
 } from "../examples/fastify-sqlite/app.ts";
 import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
@@ -122,6 +124,71 @@ test("integration — unsupported loopback URL schemes fail before starter state
   }
 });
 
+test("integration — no-IdP non-loopback HOST fails before state in both examples unless the unsafe escape is exact", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-nonloopback-refuse-"));
+  try {
+    for (const target of ["fastify", "gateway"] as const) {
+      for (const override of [undefined, "false", "TRUE"] as const) {
+        const dir = join(base, `${target}-${override ?? "unset"}`);
+        const env = {
+          MCP_SSO_DIR: dir,
+          HOST: "0.0.0.0",
+          ...(override === undefined ? {} : { [UNSAFE_NON_LOOPBACK_PAIRING_ENV]: override }),
+        };
+        const boot = target === "fastify"
+          ? buildExample(env)
+          : buildGatewayExample(env, {
+            backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+          });
+        await assert.rejects(boot, new RegExp(`${UNSAFE_NON_LOOPBACK_PAIRING_ENV}=true`));
+        assert.equal(existsSync(dir), false, `${target}/${override ?? "unset"}: no state was created`);
+      }
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — exact unsafe non-loopback escape warns before state and neither zero-setup example auto-acknowledges", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-nonloopback-escape-"));
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+  try {
+    for (const target of ["fastify", "gateway"] as const) {
+      const dir = join(base, target);
+      const env = {
+        MCP_SSO_DIR: dir,
+        HOST: "0.0.0.0",
+        [UNSAFE_NON_LOOPBACK_PAIRING_ENV]: "true",
+      };
+      const built = target === "fastify"
+        ? await buildExample(env)
+        : await buildGatewayExample(env, {
+          backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+        });
+      assert.ok(existsSync(join(dir, "secrets.json")), `${target}: escape permitted state creation`);
+      await built.app.close();
+      await built.store.close();
+    }
+  } finally {
+    console.error = originalError;
+    console.warn = originalWarn;
+    rmSync(base, { recursive: true, force: true });
+  }
+  const escapeWarnings = errors.filter((line) => line.includes(`DANGER: ${UNSAFE_NON_LOOPBACK_PAIRING_ENV}=true`));
+  assert.equal(escapeWarnings.length, 2, "each example emits one loud unsafe-escape warning");
+  assert.ok(escapeWarnings.every((line) => line.includes("HOST=0.0.0.0")));
+  assert.equal(
+    warnings.filter((line) => line.includes("acknowledgeUnsafeStatelessDefaults")).length,
+    0,
+    "zero-setup builders no longer auto-acknowledge the core unsafe-composition escape",
+  );
+});
+
 test("integration — Cloudflare Access branch: buildExample creates the state dir, opens auth.db, selects CF identity (NOT pairing)", async () => {
   // This is the regression class that shipped untested: the CF branch derives
   // auth.db/audit.jsonl under MCP_SSO_DIR but must also CREATE that dir, or
@@ -201,6 +268,9 @@ test("integration — listen host: pairing binds loopback; Cloudflare binds 0.0.
   assert.equal(defaultListenHost({ OIDC_ISSUER: "https://issuer.test" }), "0.0.0.0", "generic OIDC redirect mode → all interfaces");
   assert.equal(defaultListenHost({ GOOGLE_CLIENT_ID: "" }), "0.0.0.0", "blank Google selector remains production mode (boot later rejects it)");
   assert.equal(defaultListenHost({ OIDC_ISSUER: "" }), "0.0.0.0", "blank OIDC selector remains production mode (boot later rejects it)");
+  for (const host of ["localhost", "127.0.0.1", "::1"]) {
+    assert.doesNotThrow(() => assertConsolePairingListenHostBeforeState({ HOST: host }), `${host} is an admitted exact loopback bind`);
+  }
 });
 
 test("integration — every provider-selector pair fails before state creation in both examples", async () => {

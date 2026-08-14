@@ -176,5 +176,16 @@ loopback-only preflight from issuer/resource strings before the signing-key
 helper needed to build a complete `BridgeConfig`. Exported factories snapshot
 their config and acknowledgement once and reuse those exact values after
 preflight, including for store and bridge construction.
+The two runnable repository examples do not set the acknowledgement: their
+loopback issuer/resource composition is already admitted by the local-only rule
+above. When no production identity-provider selector is present, they also
+preflight the effective listen host before the signing-key helper or any other
+state side effect. Only exact `localhost`, `127.0.0.1`, and `::1` binds are
+admitted by default. A non-loopback bind is a boot error unless the deployer sets
+the deliberately unsafe, example-only escape hatch
+`MCP_SSO_UNSAFE_ALLOW_NON_LOOPBACK_PAIRING=true`; using that exact value emits a
+loud warning before state creation. The escape hatch changes only the listen-host
+decision. It never relaxes the issuer/resource loopback preflight, and it is
+ignored by real-IdP branches.
 The generated starter additionally rejects non-loopback issuer or resource URLs
 before creating its state directory, signing keys, audit file, or SQLite database.

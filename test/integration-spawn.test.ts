@@ -2,12 +2,13 @@
 // `node examples/fastify-sqlite/index.ts` and
 // `node examples/api-key-gateway/index.ts`, spawned as children. These are the
 // only tests that exercise listen() + each entry's main() ordering, which the
-// in-process builders cannot reach. Also covers threat-model row 27 (the
-// off-loopback pairing warning index.ts prints).
+// in-process builders cannot reach. Also covers threat-model row 27's
+// pre-listen refusal of an off-loopback pairing bind.
 
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -134,7 +135,7 @@ async function assertWellKnownServed(base: string): Promise<void> {
 function childEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const k of Object.keys(env)) {
-    if (k.startsWith("OAUTH_") || k.startsWith("CF_ACCESS_") || k.startsWith("ENTRA_") || k.startsWith("GOOGLE_") || k.startsWith("OIDC_") || k.startsWith("BACKEND_")) delete env[k];
+    if (k.startsWith("OAUTH_") || k.startsWith("MCP_SSO_") || k.startsWith("CF_ACCESS_") || k.startsWith("ENTRA_") || k.startsWith("GOOGLE_") || k.startsWith("OIDC_") || k.startsWith("BACKEND_")) delete env[k];
   }
   return Object.assign(env, overrides);
 }
@@ -172,22 +173,41 @@ test("integration — spawned index.ts: readiness, .well-known served, /mcp 401+
   }
 });
 
-test("integration — spawned index.ts: HOST=0.0.0.0 prints the off-loopback pairing WARNING (threat-model row 27)", async () => {
-  // The host SELECTION (loopback vs 0.0.0.0) is unit-tested in integration-example;
-  // this asserts the LOUD stderr WARNING that selection triggers — the operator
-  // signal that the single-operator pairing envelope has been breached.
-  const port = await freePort();
-  const tmp = await mkdtemp(join(tmpdir(), "mcp-sso-spawn-warn-"));
-  const dir = join(tmp, "state"); // does NOT exist — buildExample creates it
-  const env = childEnv({ MCP_SSO_DIR: dir, PORT: String(port), HOST: "0.0.0.0" });
-  const child = spawn("node", [ENTRY], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+test("integration — both spawned entries refuse no-IdP HOST=0.0.0.0 before state or backend listen", async () => {
+  const tmp = await mkdtemp(join(tmpdir(), "mcp-sso-spawn-nonloopback-"));
+  const occupied = createServer();
+  await new Promise<void>((resolve, reject) => {
+    occupied.once("error", reject);
+    occupied.listen(0, "127.0.0.1", resolve);
+  });
+  const address = occupied.address();
+  assert.ok(address && typeof address === "object", "occupied backend has a TCP address");
   try {
-    const stderr = await waitForStderr(child, /mcp-sso example listening on 0\.0\.0\.0:/, 15_000);
-    assert.match(stderr, /\[mcp-sso\] WARNING: console pairing is bound to 0\.0\.0\.0 \(non-loopback\)/, "off-loopback warning printed before listen");
-    const exited = await waitForExitAfter(child, "SIGTERM", 5_000);
-    assert.equal(exited.signal, "SIGTERM");
+    for (const [name, entry, extra] of [
+      ["fastify", ENTRY, {}],
+      ["gateway", GATEWAY_ENTRY, {
+        BACKEND_API_KEY: randomBytes(32).toString("base64url"),
+        BACKEND_HOST: "127.0.0.1",
+        BACKEND_PORT: String(address.port),
+      }],
+    ] as const) {
+      const dir = join(tmp, name);
+      const env = childEnv({ MCP_SSO_DIR: dir, HOST: "0.0.0.0", ...extra });
+      const child = spawn("node", [entry], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+      try {
+        const exited = await waitForClose(child, 15_000);
+        assert.notEqual(exited.code, 0, `${name}: unsafe bind exits nonzero`);
+        assert.match(exited.stderr, /MCP_SSO_UNSAFE_ALLOW_NON_LOOPBACK_PAIRING=true/);
+        assert.doesNotMatch(exited.stderr, /EADDRINUSE/, `${name}: refusal precedes backend listen`);
+        assert.equal(existsSync(dir), false, `${name}: no state directory`);
+      } finally {
+        killHard(child);
+      }
+    }
   } finally {
-    killHard(child);
+    await new Promise<void>((resolve, reject) =>
+      occupied.close((error) => { if (error) reject(error); else resolve(); })
+    );
     await rm(tmp, { recursive: true, force: true });
   }
 });

@@ -47,6 +47,7 @@ import {
 // AND package consumers apply the SAME bar (contracts §15 DX).
 import {
   configFromEnv, defaultListenHost, createOidcUpstreamFromEnv,
+  assertConsolePairingListenHostBeforeState,
   assertUpstreamConfigBeforeState, entraGroupAuthorizationFromEnv,
   assertSingleIdentityProviderSelector, oidcProviderConfigured, productionIdentityConfigured,
   type OidcIdentityFactories,
@@ -364,6 +365,7 @@ export async function buildGatewayExample(
   const issuer = env.OAUTH_ISSUER ?? `http://localhost:${port}`;
   const resource = env.OAUTH_RESOURCE ?? `${issuer}/mcp`;
   assertLoopbackStarterBeforeState(issuer, resource);
+  assertConsolePairingListenHostBeforeState(env);
   const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer, resource,
@@ -380,7 +382,6 @@ export async function buildGatewayExample(
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl,
-    getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile,
-    acknowledgeUnsafeStatelessDefaults: true });
+    getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile });
   return { app, store, config, dir };
 }
