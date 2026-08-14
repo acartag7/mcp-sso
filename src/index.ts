@@ -5,6 +5,7 @@
 
 export {
   type BridgeConfig, type DcrMode, type DevOptions, type ClientCredentialsOptions,
+  type ScopeHierarchyPolicy, type ScopeImplication,
   AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin,
 } from "./config.ts";
 
