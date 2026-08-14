@@ -5,8 +5,10 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix, win32 } from "node:path";
 import { test } from "node:test";
+
+import { exceptionKey } from "../scripts/check-line-length.mjs";
 
 const CHECKER = new URL("../scripts/check-line-length.mjs", import.meta.url).pathname;
 
@@ -73,11 +75,24 @@ test("an exception without a real reason is rejected", async () => {
   assert.match(output, /needs a reason/);
 });
 
-test("a nested exception key resolves on every platform separator", async () => {
+test("exception keys normalize win32 separators, not just the host platform's", () => {
   // The map is written with forward slashes; `relative()` yields backslashes on
-  // win32. Without normalization this misses twice — the exception reads as
-  // nonexistent and the real file as unrecorded — failing the gate for Windows
-  // contributors. Only a NESTED path exercises it.
+  // win32, so an unnormalized key misses twice there — the exception reads as
+  // nonexistent AND the real file as unrecorded, failing the required gate for
+  // Windows contributors.
+  //
+  // This asserts against win32 semantics EXPLICITLY. Driving the checker through
+  // the ambient `sep` would pass on a POSIX runner whether or not the
+  // normalization exists, so such a test pins nothing.
+  assert.equal(exceptionKey(win32.relative("C:\\repo\\src", "C:\\repo\\src\\store\\deep.ts"), win32.sep), "store/deep.ts");
+  assert.equal(exceptionKey(posix.relative("/repo/src", "/repo/src/store/deep.ts"), posix.sep), "store/deep.ts");
+
+  // Top-level names are unaffected either way — which is why only a NESTED path
+  // can exercise the defect.
+  assert.equal(exceptionKey(win32.relative("C:\\repo\\src", "C:\\repo\\src\\bridge.ts"), win32.sep), "bridge.ts");
+});
+
+test("a nested exception key resolves end to end through the real checker", async () => {
   const spec = '{ "store/deep.ts": { limit: 280, reason: "one cohesive surface; splitting separates a guard from its effect" } }';
 
   const ok = await runChecker({ "store/deep.ts": 260 }, spec);

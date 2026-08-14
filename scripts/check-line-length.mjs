@@ -9,6 +9,18 @@
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
+/** Map a platform-relative path onto the forward-slash form the EXCEPTIONS map
+ *  uses. `relative()` yields backslashes on win32, so an unnormalized key would
+ *  miss twice there — the exception reads as nonexistent AND the real file as
+ *  unrecorded overage, failing the required gate for Windows contributors.
+ *
+ *  Exported and separator-injectable so the regression can exercise win32
+ *  semantics on a POSIX runner; testing it through the ambient `sep` would pass
+ *  on Linux whether or not the normalization exists. */
+export function exceptionKey(relativePath, separator) {
+  return separator === "/" ? relativePath : relativePath.split(separator).join("/");
+}
+
 const ROOT = new URL("../src", import.meta.url).pathname;
 const LIMIT = 250;
 
@@ -27,12 +39,8 @@ if (!existsSync(ROOT)) {
 
 const sizes = new Map();
 
-/** Exception keys are written with forward slashes, but `relative()` yields
- *  backslashes on win32 — an unnormalized key would miss twice there: the
- *  exception reads as nonexistent AND the real file as unrecorded, failing the
- *  required gate for Windows contributors. */
 function key(path) {
-  return relative(ROOT, path).split(sep).join("/");
+  return exceptionKey(relative(ROOT, path), sep);
 }
 
 function walk(dir) {
