@@ -211,6 +211,8 @@ test("bridge: pre-validation redirect error is a direct 400 (no Location)", asyn
   const res = await ctx.bridge.handleAuthorize(req({ query: { response_type: "code", client_id: "c", redirect_uri: "https://evil.test/cb", code_challenge: pkceChallenge("v-123456789012345678901234567890123"), code_challenge_method: "S256" } }), { subject: SUBJECT });
   assert.equal(res.status, 400);
   assert.equal(res.redirect, undefined);
+  assert.equal(res.headers.location, undefined);
+  assert.equal(Object.hasOwn(res.body as object, "iss"), false);
 });
 
 test("bridge: post-validation scope error is a 302 to redirect_uri?error=invalid_scope", async () => {
@@ -219,6 +221,7 @@ test("bridge: post-validation scope error is a 302 to redirect_uri?error=invalid
   assert.equal(res.status, 302);
   const u = new URL(res.headers.location as string);
   assert.equal(u.searchParams.get("error"), "invalid_scope");
+  assert.equal(u.searchParams.get("iss"), ctx.bridge.config.issuer);
   assert.equal(u.searchParams.get("state"), "s");
 });
 
@@ -251,6 +254,7 @@ test("bridge: Deny redirects access_denied (fix #5)", async () => {
   assert.equal(res.headers["cache-control"], undefined, "deny redirect is outside the credential-bearing response rule");
   const u = new URL(res.headers.location as string);
   assert.equal(u.searchParams.get("error"), "access_denied");
+  assert.equal(u.searchParams.get("iss"), ctx.bridge.config.issuer);
   assert.equal(u.searchParams.get("state"), "deny");
 });
 
@@ -274,6 +278,7 @@ test("bridge: consent CSP permits both loopback callback redirects", async () =>
     assert.equal(res.status, 302);
     const callback = new URL(String(res.headers.location));
     assert.equal(callback.origin + callback.pathname, LOOPBACK_REDIRECT);
+    assert.equal(callback.searchParams.get("iss"), ctx.bridge.config.issuer);
     if (approved === "true") {
       assert.ok(callback.searchParams.get("code"), "Approve returns a code to the loopback callback");
       assert.equal(callback.searchParams.get("error"), null);
@@ -295,6 +300,7 @@ test("bridge: approve WITHOUT an approved field is a Deny, never an auto-approve
     assert.equal(res.status, 302);
     const u = new URL(res.headers.location as string);
     assert.equal(u.searchParams.get("error"), "access_denied");
+    assert.equal(u.searchParams.get("iss"), ctx.bridge.config.issuer);
     assert.equal(u.searchParams.get("code"), null, "no code minted");
   }
   // The explicit Approve still works afterwards (deny does not consume the jti).

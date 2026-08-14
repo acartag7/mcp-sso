@@ -21,20 +21,20 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 
 ## 2. MCP specification compliance
 
-- **Spec target:** **MCP Authorization `2025-11-25`**. The official stable
+- **Spec target:** **MCP Authorization `2026-07-28`** for the current source
+  tree; published v0.3.4 retains the `2025-11-25` baseline. The official stable
   `2026-07-28` artifact was manually re-verified on 2026-08-02. Its DCR
   deprecation and client-side DCR `application_type` requirement align with the
-  v0.3.2 registration surface. Final conformance is still pending: redirected
-  authorization errors omit RFC 9207 `iss`; `requireScope` implements exact
-  membership rather than the final text's scope-hierarchy `MUST`; and the
-  requirement mapping for the final artifact's referenced CIMD draft `-00` is now
-  complete. D00-4.1.4 media-type acceptance and D00-4.4.2 shared-cache handling
-  are conformant; one confirmed runtime mismatch remains (the unevaluated
-  native-app precondition on the loopback port exception), plus four unresolved
-  test-evidence rows. See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
-  and the release checklist in
-  [`docs/verification.md`](docs/verification.md#spec-release-re-verification-completed-2026-08-02)
-  and the blocker in [`docs/contracts.md`](docs/contracts.md) §0 status.
+  v0.3.2 registration surface. The current source tree includes the configured
+  issuer on RFC 9207 error redirects and a bounded exact-resource implication
+  graph for the final text's scope-hierarchy `MUST`; neither is yet a
+  published-release claim. The final artifact's referenced CIMD draft `-00` is
+  completely mapped. D00-4.1.4 media-type acceptance, D00-4.4.2 shared-cache
+  handling, and D00-4.5.2 native-app policy are conformant; the dedicated frozen
+  native-loopback phase is active, and no CIMD runtime or evidence gap remains.
+  See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
+  and the canonical current status in
+  [`docs/verification.md`](docs/verification.md#current-status).
 - **Governing RFCs:** [9728](https://datatracker.ietf.org/doc/html/rfc9728)
   (Protected Resource Metadata / PRM), [8707](https://datatracker.ietf.org/doc/html/rfc8707)
   (audience / resource parameter), [8414](https://datatracker.ietf.org/doc/html/rfc8414)
@@ -60,7 +60,7 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 | `src/identity/` | **Identity adapters:** `cloudflare-access.ts`, `entra.ts`, `entra-redirect.ts`, `entra-groups.ts`, `console-pairing.ts`. |
 | `src/audit/`, `src/rate-limit/` | Reference sinks (`jsonl-file.ts`, `webhook.ts`, `combine.ts`) and `redis.ts` rate limiter. |
 | `examples/` | `fastify-sqlite/` (RS + bridge + `/mcp`) and `api-key-gateway/` (SSO front door for a token-only backend). |
-| `docs/` | **`contracts.md`** = contract status + index; **`contracts/`** = one canonical file per numbered contract section; **`threat-model.md`** = STRIDE + gates; plus authorization, deployment, verification, dependency, and troubleshooting guides. |
+| `docs/` | **`contracts.md`** = contract routing index; **`contracts/`** = one canonical file per numbered contract section; **`verification.md`** = current release and conformance status; **`threat-model.md`** = STRIDE + gates; plus authorization, deployment, dependency, and troubleshooting guides. |
 | `test/` | Unit + integration + `e2e-mcp-sdk.test.ts` (full flow through the **official MCP SDK client**). |
 
 ## 4. Commands
@@ -170,8 +170,8 @@ client** → refresh → replay-detection (family revocation observed) → revok
 
 ## Repository quality rules
 
-- The 15 acceptance test files under `test/acceptance/` are frozen in
-  `test/acceptance/acceptance.manifest.json`; all four flags in `phases.json`
+- The 16 acceptance test files under `test/acceptance/` are frozen in
+  `test/acceptance/acceptance.manifest.json`; all five flags in `phases.json`
   are active. Do not edit frozen tests casually. If the contract is wrong, stop
   and review the contract change explicitly. CI keeps `freeze-hash`,
   `mixed-diff`, and `stage-artifact` active.

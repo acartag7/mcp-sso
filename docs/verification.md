@@ -2,6 +2,75 @@
 
 How mcp-sso proves a release actually works.
 
+## Current status
+
+> Status: **v0.3.4**. This release is based on exact merged implementation commit
+> `b16de3bee8f35021aeb86f6c23ff5d8ea95a5408`. It carries v0.3.3 forward and
+> closes security gaps in authorization-parameter ambiguity, loopback redirect
+> trust, custom audit-sink containment, access-token expiry, and Entra token
+> exchange. It also strengthens immutable Entra identity and issued-at checks,
+> stored-DCR application-type handling, credential-response cache controls,
+> consent-JTI uniqueness and store-instance binding, CIMD runtime encapsulation,
+> webhook secret redaction, commit-window evidence, production deployment
+> defaults, and generated-project persistence. Registry and tag evidence belongs
+> in the release and verification receipts.
+>
+> The §17 feature contracts are locked; CIMD §17.1, generic OIDC, and the
+> Google preset are implemented. Google has reproducible
+> historical live verification; CIMD was live-verified through exact runtime
+> commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
+> A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
+> dedicated GitHub port in §17.6 remain contract-only. Source-tree spec
+> conformance target: **MCP Authorization 2026-07-28**. Published v0.3.4 retains
+> the 2025-11-25 baseline. The official stable
+> [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)
+> artifact was manually re-verified on 2026-08-02. Its DCR deprecation and
+> client-side DCR `application_type` requirement align with the v0.3.2
+> registration surface. On this source branch, RFC 9207 error redirects include
+> the configured issuer, closing the advertised-support mismatch. The optional,
+> exact-resource scope implication graph closes the scope-hierarchy runtime gap
+> without changing exact behavior when policy is omitted. CIMD D00-4.5.2 gates
+> the loopback port exception on exact `application_type: "native"`, and its
+> dedicated frozen suite is active. The final artifact's referenced draft `-00`
+> is completely mapped; D00-4.1.4 media types, D00-4.4.2 shared-cache handling,
+> and D00-4.5.2 native-app policy are conformant, with no unresolved runtime or
+> evidence row. This is not yet a published-release claim. See the matrix in
+> [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
+> and the completed [spec-release re-verification](#spec-release-re-verification-completed-2026-08-02).
+>
+> Threat-model delta: this release carries the v0.3.3 threat controls forward
+> and closes authorization-code redirection through ambiguous callback input,
+> verifier outages caused by rejecting custom audit sinks, Entra token-endpoint
+> credential forwarding on redirects, and indefinitely valid signed access
+> tokens without `exp`. It also records the merged immutable Entra subject and
+> `iat` checks, stored-DCR application-type rejection, credential-response
+> no-store policy, consent-JTI uniqueness and store-instance binding, runtime-
+> private CIMD capabilities, webhook secret redaction, commit-window failure
+> evidence, unsafe-default deployment guard, and secure generated-project state.
+> Threats 17–25 cover the
+> [§17](contracts/17-v0-2-feature-contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
+> contracts — most shipped in v0.2; CIMD (§17.1) ships in v0.3.0
+> (S6a/S6b, frozen suites active), with
+> live verification across Cloudflare Access, Entra, and Google. Claude Code
+> 2.1.220 repeated all three CIMD happy paths and protected calls at exact
+> runtime commit `af2a61f` on 2026-07-28; the Entra deny/ceiling sweep remains
+> pending. Device flow (§17.3) and the
+> GitHub identity port (§17.6) remain contract-locked, implementation pending.
+> Threats 29–33 cover the shipped [§17.11](contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
+> upstream redirect-leg orchestrator, including the per-flow audience binding
+> in rows 33 and 37 (shipped with the §17.11 flow-instance amendment; frozen
+> suite `flow-instance-binding` active). Threat 34 records the contract-only,
+> implementation-pending dynamic-key boundary in
+> [§4.1](contracts/04-design-principles.md#41-dynamic-key-and-parsed-record-composition-boundary).
+> Threat 35 covers the CIMD × upstream-redirect flow
+> ([§17.1.6](contracts/17-v0-2-feature-contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)),
+> implemented on `main`, including rule 20's shared entry grammar. Threat 39
+> covers the 0.3.0 invalid-clock JWT hardening.
+> Refresh theft detection through `OAuthTokenUseCase` and
+> `StorePort.rotateRefreshToken` was repeated at exact runtime commit `af2a61f`
+> on 2026-07-28: refresh A→B→C succeeded, replayed A returned HTTP 400
+> `invalid_grant`, and current C then returned HTTP 400 `invalid_grant`.
+
 Three tiers:
 
 - **Tier 1 — CI tests.** Loopback servers and injected fakes only; no public network, no real provider accounts. This is the definition of "implemented".
@@ -466,7 +535,7 @@ its enforcement evidence.
 | S6b.2 | Happy path | URL-shaped `client_id` fetches the doc, validates; authorize→token→`/mcp` succeeds. |
 | S6b.3 | Generic client error | Every CIMD failure returns identical client-facing error text. |
 | S6b.4 | Audit detail | `oauth.cimd.fetch` records the specific reason without leaking the document body or secrets. |
-| S6b.5 | Redirect URI match | Exact match required; loopback any-port exception honored. **PENDING (D00-4.5.2):** the exception must additionally be gated on a document declaring `application_type: "native"`, with `"web"` and absent both matching exactly. |
+| S6b.5 | Redirect URI match | Exact match required; the loopback any-port exception is gated on a document declaring exact `application_type: "native"`, with `"web"` and absent both matching exactly. **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2).** |
 | S6b.6 | Scope accumulation (CIMD deferred) | CIMD ids do NOT accumulate: a genuine CIMD authorization reports `priorScopes = []` and mints only the requested (ceiling-bounded) scopes in BOTH DCR modes; seed an active legacy URL-keyed refresh row with a broader scope and prove it is never unioned. Control: an opaque stored-DCR client still accumulates. (§17.1.6 decision 3.) |
 | S6b.7 | Metadata flag | `client_id_metadata_document_supported` appears only when enabled. |
 | S6b.8 | Cache (freshness) | Cache HIT reuses only a fresh validated document. The shared cache gives valid `s-maxage` priority over `max-age`, rejects `private`, `no-store`, `no-cache`, and `Vary: *`, and includes Age, valid Date apparent age, and observed response delay. It is bounded LRU, per Bridge, raw-client-id keyed, and serves direct-mode prepare plus upstream redirect resolution. |
@@ -690,6 +759,7 @@ pending on three known items:
    (`src/cimd/registration.ts:82-95`) applies RFC 9700's native-app-only
    loopback port exception without evaluating the client type, so a document
    declaring `application_type: "web"` still receives it.
+
    D00-4.1.4 is closed: alternate `+json` media types are restricted to the
    `application/` tree, with hostile direct and upstream resolution tests.
    Four rows also lack complete hostile or shipped-route evidence: symmetric
@@ -702,6 +772,37 @@ CIMD native-app precondition)
 plus **four CIMD test-evidence rows**. The conformance target must
 not move from 2025-11-25 until every one of them is resolved and the resulting
 implementation passes the full release gates.
+
+**Closure note (2026-08-14):** item 1 above is superseded on this source branch.
+The shared builder now requires bridge config, and core Deny, adapter-mapped
+errors, and upstream callback rows 7/8/10/11 include its exact issuer while
+direct errors remain unredirected. Symmetric client-auth declarations now have
+direct and upstream hostile evidence. The six-cell shipped-adapter matrix now
+proves direct and upstream resolution plus served metadata on all three
+frameworks. Hostile document-contained URLs are inert through direct and
+upstream callback-to-consent flows. The current remainder is **two runtime
+defects** and **no unresolved CIMD test-evidence rows**; the target stays
+2025-11-25.
+
+**Scope closure note (2026-08-14):** item 2 above is also superseded on this
+source branch. `createBridgeConfig` boot-validates and deeply freezes a bounded,
+exact-resource implication graph; `requireScope` stays exact unless explicitly
+passed that policy; and `RequestAuthorizer` passes it for transitive sufficiency
+checks without adding implied strings to the token. The current remainder is
+**one runtime defect** plus **four CIMD test-evidence rows**; the target stays
+2025-11-25.
+
+### Corrections after the 2026-08-02 receipt (append-only)
+
+- **2026-08-14 final source-tree correction:** the dated verdict and incremental
+  closure notes above are retained as historical evidence and superseded for
+  current-source status. RFC 9207 error redirects carry the configured issuer;
+  the bounded exact-resource implication graph closes scope hierarchy handling;
+  and D00-4.5.2 validates and carries optional `application_type`, grants the
+  loopback any-port exception only to exact `"native"`, and is pinned by its
+  active frozen four-group suite. The source tree therefore targets MCP
+  Authorization 2026-07-28 with no unresolved runtime or CIMD evidence row.
+  Published v0.3.4 retains its earlier baseline.
 
 ## Done rules
 
@@ -750,11 +851,11 @@ The packed-artifact pre-tag smoke passed at exact clean-main commit `e71a2bb`.
 The published `mcp-sso@0.3.0` artifact repeated the eight peer-free and all-13
 with-peers import smokes, produced both metadata documents, and carried verified
 registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
-stable artifact was manually checked on 2026-08-02. The release still targets
-MCP Authorization 2025-11-25 because the completed receipt above records **three**
-open **runtime** requirements — RFC 9207 error responses, scope hierarchies, and
-one confirmed CIMD draft `-00` mismatch (D00-4.5.2 native-app precondition) — plus four
-unresolved CIMD test-evidence rows. The CIMD remainder is **not** test-only.
+stable artifact was manually checked on 2026-08-02. The published release keeps
+the three-gap result in that dated receipt. This source branch closes RFC 9207
+error redirects, scope-hierarchy handling, and the CIMD native-app policy. The
+source tree therefore targets MCP Authorization 2026-07-28 with no unresolved
+runtime or CIMD evidence row; published v0.3.4 retains its earlier baseline.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
 compatibility awaits upstream resolution and retest.

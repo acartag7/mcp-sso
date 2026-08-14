@@ -11,9 +11,10 @@ adapter (Phase 3) exposes them over HTTP.
   `grant_types_supported: ["authorization_code","refresh_token"]`,
   `code_challenge_methods_supported: ["S256"]`, `scopes_supported: catalog`,
   `token_endpoint_auth_methods_supported: ["none"]` (public clients + PKCE), and
-  **`authorization_response_iss_parameter_supported: true`**. The successful
-  authorization response carries RFC 9207 `iss`; the final-spec verification
-  found that redirected error responses do not yet carry it (§16 blocker).
+  **`authorization_response_iss_parameter_supported: true`**. Every successful
+  or error authorization response sent over a validated redirect carries RFC
+  9207 `iss`, exactly equal to `config.issuer`. Direct HTTP errors carry no
+  redirect parameters and therefore no `iss`.
 - **`protectedResourceMetadata(config)`** (RFC 9728), served at **both**:
   - `${resourceOrigin}/.well-known/oauth-protected-resource` (root), and
   - `${resourceOrigin}/.well-known/oauth-protected-resource${resourcePath}`
@@ -117,17 +118,27 @@ two error channels, split by whether the `redirect_uri` is trusted yet:
   and `redirect_uri` failing §10. Also, at `approve`: a CSRF/`origin` failure (`invalid_origin`) and
   consent-token integrity failures (replay/invalid/expired). These throw
   `OAuthError`; the adapter answers a direct 4xx with the §9.5 body (no `Location`).
-- **Redirect to `redirect_uri?error=<code>[&state=…][&error_description=…]`** —
+- **Redirect to `redirect_uri?error=<code>&iss=<issuer>[&state=…][&error_description=…]`** —
   every error discovered **after** `client_id` + `redirect_uri` validate:
   `unsupported_response_type`, `invalid_target`, `invalid_scope`, `invalid_request`
   (bad PKCE params), `access_denied` (the user clicked Deny), and `server_error`.
-  The core provides `buildErrorRedirect(redirectUri, code, state, description?)`;
-  the use-case tags these errors with the validated `redirectUri` + `state` so the
+  The core provides
+  `buildAuthorizationErrorRedirect(config, redirectUri, code, state?, description?)`; the
+  required `BridgeConfig` supplies the exact issuer and cannot be omitted by a
+  library call site; every such call site passes its validated `Bridge.config`.
+  The builder replaces any pre-existing
+  `error`, `iss`, `state`, or `error_description` member it owns rather than
+  appending an ambiguous duplicate. It does not validate the redirect
+  destination; the caller must already have established the redirect channel.
+  The root export retains the pre-existing
+  `buildErrorRedirect(redirectUri, code, state?, description?)` signature for
+  source compatibility, but library-owned authorization responses do not use
+  that issuer-less legacy helper.
+  The use-case tags these errors with the validated `redirectUri` + `state` so the
   adapter answers 302. (This is what lets claude.ai render "you declined" instead
   of a dead JSON page. The source never implemented error redirects; this completes
-  fix #5.) **2026-08-02 final-spec finding:** these error redirects currently omit
-  RFC 9207 `iss`, even though AS metadata advertises support. They therefore do
-  not yet satisfy the 2026-07-28 authorization-response profile.
+  fix #5.) Direct errors never call the builder and never gain a `Location` or
+  `iss` parameter.
 
 **`prepare({ clientId, redirectUri, responseType, codeChallenge,
 codeChallengeMethod, resource?, scope?, state?, subject, allowedScopes?, registration? })`** → `PreparedConsent`:
@@ -229,7 +240,7 @@ one target, while multiple distinct targets follow the existing post-validation
   Deny-redirected to its attacker `redirect_uri`).
 - **Only `approved === true` approves (fail-closed):** anything else — `false`,
   absent, or malformed — ⇒ Deny: the consent token is **not** consumed; redirect
-  to `redirect_uri?error=access_denied&state=…`. The adapter's form parsing is
+  to `redirect_uri?error=access_denied&iss=<issuer>&state=…`. The adapter's form parsing is
   equally strict (only `true`/`"true"` approves) so a POST missing the
   `approved` field can never auto-approve at either layer. *(Fix #5 — the
   source's unreachable Deny path; the UI button is Phase 3. Hardened 2026-07-07:
@@ -407,7 +418,7 @@ the response. Wiring rules:
   context MUST read stable Hono `Context`/environment data rather than assuming
   raw Request identity survives body guarding.
 - **Error → response:** an `OAuthError` with `.redirect` ⇒ **302** to the tagged
-  `redirect_uri?error=…`; otherwise direct — status `error.status`, body
+  `redirect_uri?error=…&iss=<issuer>`; otherwise direct — status `error.status`, body
   `oauthErrorBody(error)` (§9.5). On the protected `/mcp` surface, 401/403 set the
   `WWW-Authenticate` challenge from `buildUnauthorizedChallenge` (§8.2/§8.3).
   `Bridge.handleToken` performs normalized header/body extraction inside this

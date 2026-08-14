@@ -114,6 +114,9 @@ function req(query: NormRequest["query"], headers: Record<string, string> = {}, 
 // Typed header accessors (Record<string,string> + noUncheckedIndexedAccess ⇒ string | undefined).
 const hLoc = (res: NormResponse): string => res.headers.location ?? "";
 const hCookie = (res: NormResponse): string => res.headers["set-cookie"] ?? "";
+function assertRedirectIssuer(res: NormResponse, issuer = ISSUER): void {
+  assert.deepEqual(new URL(hLoc(res)).searchParams.getAll("iss"), [issuer]);
+}
 function assertCookieMutationNoStore(res: NormResponse, label: string): void {
   assert.notEqual(res.headers["set-cookie"], undefined, `${label}: response mutates the flow cookie`);
   assert.equal(res.headers["cache-control"], "no-store", `${label}: cookie mutation is not cacheable`);
@@ -547,6 +550,7 @@ test("callback row 7: IdP error in {access_denied,...} => 302 access_denied 'ups
     assert.match(hLoc(res), /error=access_denied/);
     assert.match(hLoc(res), /error_description=upstream\+identity\+provider\+denied\+the\+request/);
     assert.match(hLoc(res), /state=client-state/); // the CLIENT's state, not the upstream state
+    assertRedirectIssuer(res);
     assertCookieMutationNoStore(res, `upstream denial ${err}`);
     assert.equal(audit.callback().at(-1)?.reason, "upstream_denied");
   }
@@ -559,6 +563,7 @@ test("callback row 8: IdP error = anything else => 302 server_error 'upstream id
   assert.equal(res.status, 302);
   assert.match(hLoc(res), /error=server_error/);
   assert.match(hLoc(res), /error_description=upstream\+identity\+provider\+error/);
+  assertRedirectIssuer(res);
   assertCookieMutationNoStore(res, "upstream error");
   assert.equal(audit.callback().at(-1)?.reason, "upstream_error");
 });
@@ -606,6 +611,7 @@ test("callback row 10: exchange_failed (non-200/timeout/missing id_token) => 302
   const i1 = await initiate(c, f1);
   const r1 = await f1.handleCallback(callbackReq(c, i1.cookieValue, { state: i1.claims.state, code: "c" }));
   assert.equal(r1.status, 302); assert.match(hLoc(r1), /error=server_error/);
+  assertRedirectIssuer(r1);
   assertCookieMutationNoStore(r1, "returned exchange error");
   assert.match(hLoc(r1), /error_description=upstream\+identity\+provider\+error/);
   assert.equal(a1.callback().at(-1)?.reason, "exchange_failed");
@@ -616,6 +622,7 @@ test("callback row 10: exchange_failed (non-200/timeout/missing id_token) => 302
   const i2 = await initiate(c, f2);
   const r2 = await f2.handleCallback(callbackReq(c, i2.cookieValue, { state: i2.claims.state, code: "c" }));
   assert.equal(r2.status, 302);
+  assertRedirectIssuer(r2);
   assertCookieMutationNoStore(r2, "thrown exchange error");
   assert.equal(a2.callback().at(-1)?.reason, "exchange_failed", "a throw is classified exchange_failed");
   assert.equal(a2.identity().length, 0, "a thrown exchange also reaches no identity decision — no identity.verify");
@@ -630,6 +637,7 @@ test("callback row 11: identity_rejected => 302 access_denied + identity.verify 
   assert.equal(res.status, 302);
   assert.match(hLoc(res), /error=access_denied/);
   assert.match(hLoc(res), /error_description=upstream\+identity\+verification\+failed/);
+  assertRedirectIssuer(res);
   assertCookieMutationNoStore(res, "identity denial");
   assert.equal(audit.callback().at(-1)?.reason, "identity_rejected");
   const idv = audit.identity().at(-1);
@@ -660,6 +668,7 @@ test("callback row 12: bridge.handleAuthorize error (e.g. invalid_scope) travels
   assert.equal(res.status, 302, "invalid_scope is a redirect-channel error");
   assert.match(hLoc(res), /error=invalid_scope/);
   assert.match(hLoc(res), /state=client-state/);
+  assertRedirectIssuer(res);
   assertCookieMutationNoStore(res, "bridge callback error");
   assert.equal(audit.callback().at(-1)?.reason, "bridge_error");
 });

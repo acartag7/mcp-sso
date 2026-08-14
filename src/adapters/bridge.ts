@@ -115,7 +115,7 @@ export class Bridge {
       );
       return { status: 201, headers: { "cache-control": "no-store" }, body: registered };
     } catch (error) {
-      return oauthErrorResponse(asOAuth(error));
+      return oauthErrorResponse(this.config, asOAuth(error));
     }
   }
 
@@ -148,7 +148,7 @@ export class Bridge {
       });
       return { status: 200, headers: { ...CONSENT_HEADERS }, body: renderConsentPage(this.config, prepared) };
     } catch (error) {
-      return oauthErrorResponse(asOAuth(error));
+      return oauthErrorResponse(this.config, asOAuth(error));
     }
   }
   /** Resolve a verified identity via the IdentityPort and emit the identity.verify
@@ -183,7 +183,7 @@ export class Bridge {
       });
       return { status: 302, headers: result.code === undefined ? { location: result.redirectTo } : noStoreHeaders({ location: result.redirectTo }), redirect: result.redirectTo };
     } catch (error) {
-      return oauthErrorResponse(asOAuth(error));
+      return oauthErrorResponse(this.config, asOAuth(error));
     }
   }
 
@@ -214,7 +214,7 @@ export class Bridge {
     } catch (error) {
       // §17.2: failed Basic auth earns the Basic challenge; post-only does not.
       const oauth = asOAuth(error);
-      const res = oauthErrorResponse(oauth);
+      const res = oauthErrorResponse(this.config, oauth);
       if (oauth.code === "invalid_client" && oauth.status === 401 && basicAttempted) {
         res.headers["www-authenticate"] = buildBasicClientChallenge(this.config);
       }
@@ -231,7 +231,7 @@ export class Bridge {
       await this.token.revoke(formField(formObject(req.body), "token"));
       return { status: 200, headers: { "cache-control": "no-store" }, body: {} };
     } catch (error) {
-      return oauthErrorResponse(asOAuth(error));
+      return oauthErrorResponse(this.config, asOAuth(error));
     }
   }
 
