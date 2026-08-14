@@ -5,6 +5,7 @@
 
 export {
   type BridgeConfig, type DcrMode, type DevOptions, type ClientCredentialsOptions,
+  type ScopeHierarchyPolicy, type ScopeImplication,
   AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin,
 } from "./config.ts";
 
@@ -32,7 +33,8 @@ export {
 } from "./redirect.ts";
 
 export {
-  type ChallengeOptions, buildUnauthorizedChallenge, buildBasicClientChallenge, buildErrorRedirect,
+  type ChallengeOptions, buildUnauthorizedChallenge, buildBasicClientChallenge,
+  buildErrorRedirect, buildAuthorizationErrorRedirect,
   protectedResourceMetadataUrl,
 } from "./challenge.ts";
 

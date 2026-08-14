@@ -28,6 +28,13 @@ interface BridgeConfig {
   // --- scope contract (see §11); REQUIRED, fail-closed ---
   scopeCatalog: string[];         // the complete set of scopes this resource honors
   defaultScopes: string[];        // granted when a request omits scope; MUST be ⊆ catalog
+  scopeHierarchy?: {              // omitted => exact membership only
+    resource: string;             // MUST equal this BridgeConfig.resource byte-for-byte
+    implications: Array<{
+      granted: string;            // a broader granted scope
+      implies: string[];          // directly implied narrower scopes
+    }>;
+  };
 
   // --- CSRF/Origin policy for the consent approve step (see §9) ---
   allowedOrigins: string[];       // same-origin issuer + any explicitly allowed origins
@@ -100,6 +107,18 @@ interface BridgeConfig {
   catalog means the resource honors no scopes and every authorize fails closed —
   the deployer MUST declare scopes explicitly. These boot limits ensure a
   server-generated consent token always fits the approval-form transport bound.
+- An optional `scopeHierarchy` is one implication graph for the exact configured
+  `resource`; the repeated resource binding MUST equal `BridgeConfig.resource`
+  byte-for-byte. The graph has at most 128 `granted` rows and 4,096 direct
+  edges. Every row has exactly the string key `granted` and array key `implies`;
+  each scope is a member of `scopeCatalog`. Empty graphs are accepted and mean
+  exact membership. Empty `implies` rows, duplicate `granted` rows, duplicate
+  targets within a row, self-references, cycles, unknown scopes, extra string
+  keys, symbol keys, malformed containers, and over-bound graphs are boot
+  `AuthConfigError`s. The validated graph is snapshotted and deeply frozen.
+  `BridgeConfig.resource` remains singular; this explicit binding makes the
+  policy shape ready to become one graph per resource without claiming that a
+  multi-resource bridge ships today.
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
 - `redirectAllowlist` is an array, and **every entry satisfies the §10.0
@@ -117,7 +136,8 @@ interface BridgeConfig {
 `createBridgeConfig` publishes frozen snapshots of every caller-provided
 container it validates: `signingPrivateJwk`, `redirectAllowlist`,
 `scopeCatalog`, `defaultScopes`, `allowedOrigins`, `dcr`, `dev`,
-`clientCredentials`, and `cimd`. The published containers are never the
+`clientCredentials`, `cimd`, and every nested `scopeHierarchy` container. The
+published containers are never the
 caller's objects or arrays, so later caller mutation cannot change the validated
 configuration. Copies use explicit member allowlists and single reads. The
 `dcr` wrapper is copied and frozen, but a stored-mode wrapper retains the exact

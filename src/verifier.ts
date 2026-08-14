@@ -43,7 +43,7 @@ export class RequestAuthorizer {
     try {
       const token = bearerToken(input.authorization);
       const verified = await verifyAccessToken(token, this.config, operationClock);
-      if (input.requiredScope) requireScope(verified, input.requiredScope);
+      if (input.requiredScope) requireScope(verified, input.requiredScope, this.config.scopeHierarchy);
       await writeAuditBestEffort(this.audit, {
         occurredAt,
         event: "auth.request", status: "success",

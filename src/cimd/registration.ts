@@ -6,13 +6,16 @@
 // (decision 1, used at authorize + callback + prepare's re-check), and the
 // strict parse of the signed `cimd` flow-cookie claim.
 
-import { assertCimdRedirectUri, type CimdDocument } from "./document.ts";
+import {
+  assertCimdRedirectUri, type CimdApplicationType, type CimdDocument,
+} from "./document.ts";
 import { isLoopbackRedirect, parseRedirectEntry } from "../redirect-entry.ts";
 
 export interface CimdRegistration {
   readonly client_id: string;
   readonly client_name: string;
   readonly redirect_uris: readonly string[];
+  readonly application_type?: CimdApplicationType;
 }
 
 /** RFC 3986 scheme syntax followed by "://" (§17.1.5 rule 22). */
@@ -41,6 +44,8 @@ export function projectCimdRegistration(document: CimdDocument): CimdRegistratio
     client_id: document.client_id,
     client_name: document.client_name,
     redirect_uris: Object.freeze(redirectUris),
+    ...(document.application_type === undefined
+      ? {} : { application_type: document.application_type }),
   });
 }
 
@@ -56,6 +61,8 @@ export function parseCimdRegistrationClaim(value: unknown, expectedClientId: unk
   const clientId = raw.client_id;
   const clientName = raw.client_name;
   const redirectUris = raw.redirect_uris;
+  const applicationType = raw.application_type;
+  let validatedApplicationType: CimdApplicationType | undefined;
   if (typeof clientId !== "string" || typeof expectedClientId !== "string" || clientId !== expectedClientId) {
     throw new Error("cimd claim client_id does not match the flow params");
   }
@@ -65,30 +72,51 @@ export function parseCimdRegistrationClaim(value: unknown, expectedClientId: unk
   if (!Array.isArray(redirectUris) || redirectUris.length < 1 || redirectUris.length > MAX_REDIRECT_URIS) {
     throw new Error("cimd claim redirect_uris is invalid");
   }
+  if (Object.hasOwn(raw, "application_type")) {
+    if (applicationType !== "native" && applicationType !== "web") {
+      throw new Error("cimd claim application_type is invalid");
+    }
+    validatedApplicationType = applicationType;
+  }
   const uris: string[] = [];
   for (const uri of redirectUris) {
     if (typeof uri !== "string" || uri.length === 0) throw new Error("cimd claim redirect_uris entry is invalid");
     uris.push(uri);
   }
-  return Object.freeze({ client_id: clientId, client_name: clientName, redirect_uris: Object.freeze(uris) });
+  return Object.freeze({
+    client_id: clientId,
+    client_name: clientName,
+    redirect_uris: Object.freeze(uris),
+    ...(validatedApplicationType === undefined ? {} : { application_type: validatedApplicationType }),
+  });
 }
 
 /** THE shared CIMD redirect matcher (§17.1.6 decision 1, rule 20). An https
  *  entry matches by EXACT raw-string equality (no normalization, port
- *  included); a loopback `http` entry matches RFC 8252 any-port using the
- *  runtime semantics of src/redirect.ts:95-103 (scheme, host, path, and search
- *  equal; port ignored). Called at authorize, at the callback row-5a gate, and
- *  at prepare's defensive re-check — never array `includes`. */
-export function cimdRedirectMatches(presented: unknown, registered: readonly string[]): boolean {
-  if (!Array.isArray(registered)) return false;
+ *  included); only an explicitly native registration gets RFC 8252 any-port
+ *  matching for loopback `http`, using src/redirect.ts:95-103 semantics
+ *  (scheme, host, path, and search equal; port ignored). Called at authorize,
+ *  at the callback row-5a gate, and at prepare's defensive re-check — never
+ *  array `includes`. */
+export function cimdRedirectMatches(
+  presented: unknown,
+  registration: Pick<CimdRegistration, "redirect_uris" | "application_type">,
+): boolean {
+  if (typeof registration !== "object" || registration === null) return false;
   try {
+    const applicationType = registration.application_type;
+    if (applicationType !== undefined && applicationType !== "native" && applicationType !== "web") return false;
+    const registered = registration.redirect_uris;
+    if (!Array.isArray(registered)) return false;
     const candidate = parseRedirectEntry(presented);
     const entries = registered.map((entry) => parseRedirectEntry(entry));
     return entries.some((entry) => entry.raw === candidate.raw || (
-      entry.url.protocol === "http:" && isLoopbackRedirect(entry)
+      applicationType === "native"
+      && entry.url.protocol === "http:" && isLoopbackRedirect(entry)
       && candidate.url.protocol === entry.url.protocol
       && candidate.url.hostname === entry.url.hostname
       && candidate.url.pathname === entry.url.pathname
+      && candidate.url.search === entry.url.search
     ));
   } catch {
     return false;
