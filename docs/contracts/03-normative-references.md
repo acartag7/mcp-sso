@@ -27,6 +27,6 @@
   RFC 9207 `iss` in success and error authorization responses; and servers
   `MUST` account for scope hierarchies when deciding token sufficiency. This
   source branch closes the RFC 9207 response gap. The final target remains
-  pending on scope-hierarchy handling plus, in the complete CIMD draft `-00`
-  mapping (§16.1), one confirmed runtime mismatch (the native-app precondition)
-  and no unresolved test-evidence rows. The media-type mismatch is closed.
+  pending on scope-hierarchy handling plus activation of the frozen CIMD
+  native-loopback policy suite (§16.1). The native-app precondition and
+  media-type mismatches are closed in source.

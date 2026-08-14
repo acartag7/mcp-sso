@@ -6,6 +6,7 @@
     "cimd/document.test.ts": "5f64ee53075da8a343f3a6213a82393a71ded3da25c35b80f5d2700ad1c8b774",
     "cimd/flow-instance-binding.test.ts": "7b653d179e536019f52a4459a679d7a9bd1ec256eebe907fa05008ecf623cd36",
     "cimd/guarded-fetcher.test.ts": "6b1480d502067351fdcae87e120f3c7779e61be6a52f10899a4c31121dce3ab0",
+    "cimd/native-loopback-policy.test.ts": "428b33cc574627bdc17483cc3c6c870bdd09c06054c36f3c9da9f4275e30e325",
     "cimd/s6b-anti-oracle.test.ts": "43e06d9872bd1b193368092bd289839fdc268d5b53068b3d8541d07c3d8dbdca",
     "cimd/s6b-audit.test.ts": "e7e9201b6ed30385ad4469b3d87b06bd34de57ca891d8a87f6c3ffacf963245e",
     "cimd/s6b-boot.test.ts": "9846bc379c34af449c31a903c862c66eda60772ff331125dd764114ab9ba26b9",
