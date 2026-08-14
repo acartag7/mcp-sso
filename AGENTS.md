@@ -21,18 +21,18 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 
 ## 2. MCP specification compliance
 
-- **Spec target:** **MCP Authorization `2025-11-25`**. The official stable
+- **Spec target:** **MCP Authorization `2026-07-28`** for the current source
+  tree; published v0.3.4 retains the `2025-11-25` baseline. The official stable
   `2026-07-28` artifact was manually re-verified on 2026-08-02. Its DCR
   deprecation and client-side DCR `application_type` requirement align with the
   v0.3.2 registration surface. The current source tree includes the configured
   issuer on RFC 9207 error redirects and a bounded exact-resource implication
   graph for the final text's scope-hierarchy `MUST`; neither is yet a
-  published-release claim. Final conformance is still pending. The requirement
-  mapping for the final artifact's referenced CIMD draft `-00` is now
-  complete. D00-4.1.4 media-type acceptance and D00-4.4.2 shared-cache handling
-  are conformant; one confirmed runtime mismatch remains (the unevaluated
-  native-app precondition on the loopback port exception), plus four unresolved
-  test-evidence rows. See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
+  published-release claim. The final artifact's referenced CIMD draft `-00` is
+  completely mapped. D00-4.1.4 media-type acceptance, D00-4.4.2 shared-cache
+  handling, and D00-4.5.2 native-app policy are conformant; the dedicated frozen
+  native-loopback phase is active, and no CIMD runtime or evidence gap remains.
+  See the matrix in [`docs/contracts/16-spec-conformance-matrix.md`](docs/contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
   and the canonical current status in
   [`docs/verification.md`](docs/verification.md#current-status).
 - **Governing RFCs:** [9728](https://datatracker.ietf.org/doc/html/rfc9728)

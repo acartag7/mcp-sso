@@ -178,7 +178,7 @@ export class CimdResolver {
       const outcome = await this.#registrationFor(input.clientId, this.#fetcherFor(input.seams));
       // A cache HIT reuses the fetched DOCUMENT, never the authorization
       // decision: the shared matcher re-runs on EVERY request.
-      if (!cimdRedirectMatches(input.redirectUri, outcome.registration.redirect_uris)) {
+      if (!cimdRedirectMatches(input.redirectUri, outcome.registration)) {
         throw new CimdError("document_invalid");
       }
       // Every SUCCESSFUL resolution emits success, cache hit included. Decision

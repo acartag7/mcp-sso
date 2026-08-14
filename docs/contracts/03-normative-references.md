@@ -18,15 +18,16 @@
 - **RFC 8252** — Native apps; loopback redirect any-port rule (§7.3).
 - **RFC 9207** — `iss` parameter in authorization responses and
   `authorization_response_iss_parameter_supported` metadata.
-- **MCP Authorization 2025-11-25** — the current conformance target.
-- **MCP Authorization 2026-07-28** — official stable artifact manually checked
+- **MCP Authorization 2025-11-25** — the published v0.3.4 baseline target.
+- **MCP Authorization 2026-07-28** — the current source-tree conformance target;
+  official stable artifact manually checked
   on 2026-08-02. DCR is deprecated but remains a `MAY` compatibility mechanism;
   CIMD remains a `SHOULD` and references
   `draft-ietf-oauth-client-id-metadata-document-00`; MCP clients `MUST` send an
   appropriate DCR `application_type`; authorization servers `SHOULD` include
   RFC 9207 `iss` in success and error authorization responses; and servers
   `MUST` account for scope hierarchies when deciding token sufficiency. This
-  source branch closes the RFC 9207 response and scope-hierarchy gaps. The
-  final target remains pending on, in the complete CIMD draft `-00` mapping
-  (§16.1), one confirmed runtime mismatch (the native-app precondition) and
-  four unresolved test-evidence rows. The media-type mismatch is closed.
+  source branch closes the RFC 9207 response, scope-hierarchy, CIMD native-app,
+  media-type, shared-cache, and governed evidence gaps. The complete draft `-00`
+  mapping has no unresolved runtime or evidence row (§16.1). This source-tree
+  status is not yet a published-release claim.

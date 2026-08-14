@@ -2,5 +2,6 @@
   "s6a-cimd-primitives": true,
   "s6b-cimd-flow": true,
   "s6b-waiter-cap": true,
-  "flow-instance-binding": true
+  "flow-instance-binding": true,
+  "cimd-native-loopback-policy": true
 }
