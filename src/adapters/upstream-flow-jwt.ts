@@ -65,6 +65,8 @@ export async function signFlowToken(args: {
         client_id: args.cimd.client_id,
         client_name: args.cimd.client_name,
         redirect_uris: [...args.cimd.redirect_uris],
+        ...(args.cimd.application_type === undefined
+          ? {} : { application_type: args.cimd.application_type }),
       },
     }),
   })
