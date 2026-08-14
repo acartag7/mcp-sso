@@ -4,16 +4,15 @@ How mcp-sso proves a release actually works.
 
 ## Current status
 
-> Status: **v0.3.4**. This release is based on exact merged implementation commit
-> `b16de3bee8f35021aeb86f6c23ff5d8ea95a5408`. It carries v0.3.3 forward and
-> closes security gaps in authorization-parameter ambiguity, loopback redirect
-> trust, custom audit-sink containment, access-token expiry, and Entra token
-> exchange. It also strengthens immutable Entra identity and issued-at checks,
-> stored-DCR application-type handling, credential-response cache controls,
-> consent-JTI uniqueness and store-instance binding, CIMD runtime encapsulation,
-> webhook secret redaction, commit-window evidence, production deployment
-> defaults, and generated-project persistence. Registry and tag evidence belongs
-> in the release and verification receipts.
+> Status: **v0.3.5**. This package line is based on exact merged implementation
+> commit `bfdd7b562cafce91c000c5d17c160aa289d5bee6`. It carries v0.3.4 forward and
+> packages the source-tree work targeting MCP Authorization 2026-07-28: issuer
+> identifiers on library-owned authorization error redirects, an optional
+> exact-resource scope implication graph, native-only CIMD loopback-port
+> elasticity, and the remaining governed CIMD evidence. It also centralizes
+> release and conformance status, routes the contract index by task, and permits
+> recorded file-limit exceptions. Registry and tag evidence belongs in the
+> release and verification receipts.
 >
 > The §17 feature contracts are locked; CIMD §17.1, generic OIDC, and the
 > Google preset are implemented. Google has reproducible
@@ -21,8 +20,9 @@ How mcp-sso proves a release actually works.
 > commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
 > A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
 > dedicated GitHub port in §17.6 remain contract-only. Source-tree spec
-> conformance target: **MCP Authorization 2026-07-28**. Published v0.3.4 retains
-> the 2025-11-25 baseline. The official stable
+> conformance target: **MCP Authorization 2026-07-28**. Version v0.3.5 packages
+> this work without making a published-artifact conformance claim; published
+> v0.3.4 retains the 2025-11-25 baseline. The official stable
 > [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)
 > artifact was manually re-verified on 2026-08-02. Its DCR deprecation and
 > client-side DCR `application_type` requirement align with the v0.3.2
@@ -34,42 +34,21 @@ How mcp-sso proves a release actually works.
 > dedicated frozen suite is active. The final artifact's referenced draft `-00`
 > is completely mapped; D00-4.1.4 media types, D00-4.4.2 shared-cache handling,
 > and D00-4.5.2 native-app policy are conformant, with no unresolved runtime or
-> evidence row. This is not yet a published-release claim. See the matrix in
+> evidence row. This is not a published-artifact conformance claim. See the matrix in
 > [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
 > and the completed [spec-release re-verification](#spec-release-re-verification-completed-2026-08-02).
 >
-> Threat-model delta: this release carries the v0.3.3 threat controls forward
-> and closes authorization-code redirection through ambiguous callback input,
-> verifier outages caused by rejecting custom audit sinks, Entra token-endpoint
-> credential forwarding on redirects, and indefinitely valid signed access
-> tokens without `exp`. It also records the merged immutable Entra subject and
-> `iat` checks, stored-DCR application-type rejection, credential-response
-> no-store policy, consent-JTI uniqueness and store-instance binding, runtime-
-> private CIMD capabilities, webhook secret redaction, commit-window failure
-> evidence, unsafe-default deployment guard, and secure generated-project state.
-> Threats 17–25 cover the
-> [§17](contracts/17-v0-2-feature-contracts.md#17-v02-feature-contracts-locked-2026-07-04) feature
-> contracts — most shipped in v0.2; CIMD (§17.1) ships in v0.3.0
-> (S6a/S6b, frozen suites active), with
-> live verification across Cloudflare Access, Entra, and Google. Claude Code
-> 2.1.220 repeated all three CIMD happy paths and protected calls at exact
-> runtime commit `af2a61f` on 2026-07-28; the Entra deny/ceiling sweep remains
-> pending. Device flow (§17.3) and the
-> GitHub identity port (§17.6) remain contract-locked, implementation pending.
-> Threats 29–33 cover the shipped [§17.11](contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)
-> upstream redirect-leg orchestrator, including the per-flow audience binding
-> in rows 33 and 37 (shipped with the §17.11 flow-instance amendment; frozen
-> suite `flow-instance-binding` active). Threat 34 records the contract-only,
-> implementation-pending dynamic-key boundary in
-> [§4.1](contracts/04-design-principles.md#41-dynamic-key-and-parsed-record-composition-boundary).
-> Threat 35 covers the CIMD × upstream-redirect flow
-> ([§17.1.6](contracts/17-v0-2-feature-contracts.md#1716-s6b-flow-integration-amendments-decisions-16-2026-07-23)),
-> implemented on `main`, including rule 20's shared entry grammar. Threat 39
-> covers the 0.3.0 invalid-clock JWT hardening.
-> Refresh theft detection through `OAuthTokenUseCase` and
-> `StorePort.rotateRefreshToken` was repeated at exact runtime commit `af2a61f`
-> on 2026-07-28: refresh A→B→C succeeded, replayed A returned HTTP 400
-> `invalid_grant`, and current C then returned HTTP 400 `invalid_grant`.
+> Threat-model delta: v0.3.5 carries the v0.3.4 controls forward. Library-owned
+> authorization error redirects now identify the configured issuer; scope
+> implication is available only through a bounded, boot-validated,
+> exact-resource policy; and a CIMD document receives loopback-port elasticity
+> only when it declares an exact native application type. The client-auth,
+> three-adapter, served-metadata, and inert document-URL evidence closes the four
+> previously incomplete CIMD rows. Existing live-provider evidence and residuals
+> are unchanged: CIMD has dated Cloudflare Access, Entra ID, and Google evidence;
+> a second non-Google generic-OIDC issuer and the Entra deny/ceiling sweep remain
+> pending. Device flow (§17.3) and the dedicated GitHub port (§17.6) remain
+> contract-only.
 
 Three tiers:
 
@@ -633,6 +612,23 @@ official-SDK `ping`/`pong`, refresh rotation, replay-family rejection, and
 revocation; all 13 public entry points imported. This is prepublication
 evidence, not evidence of a `v0.3.4` tag, npm publication, or GitHub Release.
 
+**v0.3.5 prepublication candidate input (2026-08-15).** The release-only
+candidate based on exact merged implementation commit
+`bfdd7b562cafce91c000c5d17c160aa289d5bee6` declares package version 0.3.5.
+The clean source-tree suite passed 1,246 tests with nine platform or
+release-selector skips and zero failures. The integration-enabled suite passed
+1,301 tests with nine release-selector skips and zero failures against
+disposable MySQL 8.4 and Redis 7 services; the executable release matrix then
+reported all ten required rows passing with no required row skipped. The
+242-file dry-run tarball contained only `dist/`, `docs/`, `README.md`, `LICENSE`,
+and `package.json` at its root, and its package manifest retained `jose` as the
+sole runtime dependency. RM.1 installed the actual tarball, exercised the
+generated server through the installed executable, completed the official-SDK
+`ping`/`pong`, refresh, replay-rejection, and revocation lifecycle, and imported
+all 13 public entry points. This is prepublication evidence, not evidence of a
+`v0.3.5` tag, npm publication, GitHub Release, or published-artifact conformance
+claim.
+
 ### Release-authority gate
 
 Before tagging, verify the `publish` GitHub Environment through the repository
@@ -854,8 +850,10 @@ registry signatures and attestations. The implementation was reviewed against `2
 stable artifact was manually checked on 2026-08-02. The published release keeps
 the three-gap result in that dated receipt. This source branch closes RFC 9207
 error redirects, scope-hierarchy handling, and the CIMD native-app policy. The
-source tree therefore targets MCP Authorization 2026-07-28 with no unresolved
-runtime or CIMD evidence row; published v0.3.4 retains its earlier baseline.
+The source tree therefore targets MCP Authorization 2026-07-28 with no unresolved
+runtime or CIMD evidence row. Version v0.3.5 packages that work without making a
+published-artifact conformance claim; published v0.3.4 retains its earlier
+baseline.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
 compatibility awaits upstream resolution and retest.
