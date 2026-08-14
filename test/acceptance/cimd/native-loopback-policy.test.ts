@@ -172,9 +172,9 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     const seed = await ctx.flow.handleAuthorize(request(params(REGISTERED)));
     const audience = jose.decodeJwt(cookieValue(seed.headers["set-cookie"])).aud;
 
-    async function forge(applicationType: unknown | typeof OMIT, redirect: string = DIFFERENT_PORT) {
+    async function forge(applicationType: unknown | typeof OMIT, registered: string, redirect: string) {
       const cimd: Record<string, unknown> = {
-        client_id: CLIENT_ID, client_name: "Carried", redirect_uris: [REGISTERED],
+        client_id: CLIENT_ID, client_name: "Carried", redirect_uris: [registered],
       };
       if (applicationType !== OMIT) cimd.application_type = applicationType;
       const now = Math.floor(NOW / 1000);
@@ -186,17 +186,22 @@ if (phases["cimd-native-loopback-policy"] !== true) {
         .sign(enc(ctx.config.consentSigningSecret));
     }
 
-    for (const [applicationType, redirect, expected, consumed] of [
-      ["native", DIFFERENT_PORT, 200, 1], ["web", REGISTERED, 200, 1],
-      ["web", DIFFERENT_PORT, 400, 0], [OMIT, DIFFERENT_PORT, 400, 0],
-      ["mobile", DIFFERENT_PORT, 400, 0], ["", DIFFERENT_PORT, 400, 0],
-      [null, DIFFERENT_PORT, 400, 0], [1, DIFFERENT_PORT, 400, 0],
-      ["mobile", REGISTERED, 400, 0], ["", REGISTERED, 400, 0],
-      [null, REGISTERED, 400, 0], [1, REGISTERED, 400, 0],
-      [true, REGISTERED, 400, 0], [[], REGISTERED, 400, 0], [{}, REGISTERED, 400, 0],
-    ] as const) {
+    const cases: Array<readonly [unknown | typeof OMIT, string, string, number, number]> = [];
+    for (const loopback of LOOPBACKS) {
+      cases.push(
+        ["native", loopback.registered, loopback.differentPort, 200, 1],
+        ["web", loopback.registered, loopback.differentPort, 400, 0],
+        [OMIT, loopback.registered, loopback.differentPort, 400, 0],
+      );
+    }
+    cases.push(["web", REGISTERED, REGISTERED, 200, 1], [OMIT, REGISTERED, REGISTERED, 200, 1]);
+    for (const malformed of ["mobile", "", null, 1, true, [], {}]) {
+      cases.push([malformed, REGISTERED, REGISTERED, 400, 0]);
+    }
+
+    for (const [applicationType, registered, redirect, expected, consumed] of cases) {
       const before = consumes;
-      const token = await forge(applicationType, redirect);
+      const token = await forge(applicationType, registered, redirect);
       const response = await ctx.flow.handleCallback(request(
         { code: "upstream-code", state: "flow-state" },
         { cookie: `__Host-mcp-sso-upstream=${token}` },
