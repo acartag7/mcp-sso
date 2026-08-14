@@ -3,6 +3,7 @@
 // rejected with invalid_scope. `requireScope` drives the 403 step-up (§8.3).
 
 import { OAuthError } from "./errors.ts";
+import { hierarchyImplies, type ScopeHierarchyPolicy } from "./scope-hierarchy.ts";
 
 export type CredentialKind = "interactive" | "machine";
 
@@ -192,9 +193,13 @@ function invalidScope(): OAuthError {
   return new OAuthError("invalid_scope", "Requested scope is not supported");
 }
 
-/** 403 insufficient_scope step-up if the subject lacks `required`. */
-export function requireScope(auth: AuthorizedSubject, required: string): void {
-  if (!auth.scopes.includes(required)) {
+/** 403 insufficient_scope step-up if exact or explicitly configured implication fails. */
+export function requireScope(
+  auth: AuthorizedSubject,
+  required: string,
+  hierarchy?: ScopeHierarchyPolicy,
+): void {
+  if (!auth.scopes.includes(required) && !hierarchyImplies(hierarchy, auth.scopes, required)) {
     throw new OAuthError("insufficient_scope", `Missing required scope: ${required}`, 403);
   }
 }

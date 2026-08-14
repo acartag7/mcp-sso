@@ -46,9 +46,11 @@ Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-re
 - `error`/`error_description` included when the rejection reason is known
   (`invalid_token`, `invalid_request`, `insufficient_scope`).
 
-## 8.3 `requireScope(auth, required) → void`  (403 step-up)
+## 8.3 `requireScope(auth, required, hierarchy?) → void`  (403 step-up)
 Throws `OAuthError("insufficient_scope", …, 403)` if the verified subject lacks
-the scope. The adapter emits a 403 whose `WWW-Authenticate` carries the same
+the scope. With no explicit hierarchy it uses exact membership. When passed the
+validated `config.scopeHierarchy`, a granted scope also satisfies every scope
+reachable through one or more `granted → implies` edges. The adapter emits a 403 whose `WWW-Authenticate` carries the same
 `resource_metadata` + `scope` + `error="insufficient_scope"` so the client can
 step up and re-authorize for the missing scope.
 
@@ -64,8 +66,9 @@ class RequestAuthorizer {
   }>;
 }
 ```
-Extracts the bearer token, verifies it, enforces `requiredScope` if given, audits
-the outcome, and rethrows `OAuthError` on failure. The adapter maps the thrown
+Extracts the bearer token, verifies it, enforces `requiredScope` if given using
+the exact-resource `config.scopeHierarchy` when present, audits the outcome,
+and rethrows `OAuthError` on failure. The adapter maps the thrown
 `OAuthError` to a 401/403 with the challenge from §8.2/§8.3. **No bypass path.**
 `RequestAuthorizer.authorize` returns the `credentialKind` produced by
 `verifyAccessToken`; `VerifiedAccessToken`, `AuthorizedSubject`, and the

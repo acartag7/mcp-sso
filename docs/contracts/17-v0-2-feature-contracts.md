@@ -19,8 +19,8 @@ against -01's additional SSRF, redirect, and response constraints. The final MCP
 citation is `-00`; §16.1 now carries the complete 44-statement mapping. The
 `+json` media-type mismatch, shared-cache directive handling, and the loopback
 port native-app precondition are implemented. The frozen native-loopback policy
-suite is committed but remains inactive pending its dedicated phase-only
-activation PR, so final CIMD draft conformance cannot yet be claimed. §16.2
+suite is active, so the implemented public-client profile has no remaining
+draft `-00` runtime or evidence gap. §16.2
 additionally records a
 draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
 member.
@@ -289,7 +289,7 @@ decision. Everything else in the pipeline still runs under the flag.
   https entries exact-match at authorize (draft §4.5 / RFC 9700); loopback http
   matches RFC 8252 any-port **only for a document declaring
   `application_type: "native"`** — see the §17.1.6 decision-1 shared matcher for
-  the canonical rule and its **IMPLEMENTED; FROZEN ACTIVATION PENDING
+  the canonical rule and its **IMPLEMENTED; FROZEN SUITE ACTIVE
   (D00-4.5.2)** status. If present:
   `response_types` must include `"code"`; `grant_types` must be an array of
   non-empty strings that includes `"authorization_code"`. Additional grant
@@ -320,7 +320,7 @@ decision. Everything else in the pipeline still runs under the flag.
   only (`oauth.cimd.fetch`, failure, reason code).
 - The presented `redirect_uri` must exact-match a document entry (loopback
   any-port exception, native-declared documents only — §17.1.6 decision 1,
-  **IMPLEMENTED; FROZEN ACTIVATION PENDING (D00-4.5.2)**). The consent page MUST present the client_id host and
+  **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2)**). The consent page MUST present the client_id host and
   redirect host before the cosmetic name as the primary identity anchors, and
   SHOULD warn when every registered redirect is loopback (the MCP localhost-
   impersonation consideration). `client_name` renders second as explicitly
@@ -369,11 +369,10 @@ archived and does not qualify as release evidence. On 2026-07-28, Claude Code
 runtime commit `af2a61f` with all three providers. The implementation was
 reviewed against `2026-07-28-RC`; the official final artifact was then checked
 on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
-44 normative statements: 28 `C` conformant plus one conformant disclosed caveat,
-two reasoned deviations, 12 not applicable to the implemented public-client profile,
-one unresolved activation/evidence row, and no runtime mismatch. D00-4.5.2's
-native-app precondition is implemented; its dedicated frozen suite remains
-inactive pending the phase-only activation PR.
+44 normative statements: 29 `C` conformant plus one conformant disclosed caveat,
+two reasoned deviations, 12 not applicable to the implemented public-client
+profile, and no unresolved runtime or evidence row. D00-4.5.2's native-app
+precondition is implemented and its dedicated frozen suite is active.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -569,7 +568,7 @@ inactive pending the phase-only activation PR.
     canonical form;
     raw-equality against a non-canonical entry is what made the two matchers
     disagree. Only the
-    `http:` case is loopback. **IMPLEMENTED; FROZEN ACTIVATION PENDING
+    `http:` case is loopback. **IMPLEMENTED; FROZEN SUITE ACTIVE
     (D00-4.5.2, §16.1):** RFC 9700 — which
     draft `-00` §4.5 delegates to — permits varying loopback ports only for
     **native apps**, and `application_type` is in the IANA client-metadata
@@ -606,7 +605,7 @@ inactive pending the phase-only activation PR.
     `invalid_client`, never treated as a stateless-DCR client.
 23. For a CIMD `client_id`, `prepare`'s redirect validation is the document
     exact-match (loopback any-port per rule 20, native-declared documents only —
-    §17.1.6 decision 1, **IMPLEMENTED; FROZEN ACTIVATION PENDING
+    §17.1.6 decision 1, **IMPLEMENTED; FROZEN SUITE ACTIVE
     (D00-4.5.2)**), REPLACING §9.3 step 2's §10
     global-allowlist check for that client. Non-CIMD flows are unchanged.
 24. Single-flight/overload: coalesce concurrent fetches for the same RAW
@@ -690,7 +689,7 @@ ignored; fragment already rejected), and only when the carried
 `application_type` is exact `"native"`. It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and
 `prepare`'s re-check MUST call this SAME matcher.
-**IMPLEMENTED; FROZEN ACTIVATION PENDING (D00-4.5.2, §16.1) — this rule is the canonical definition the other
+**IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2, §16.1) — this rule is the canonical definition the other
 any-port statements defer to, so the precondition is stated here once:** RFC 9700
 permits varying the loopback port **only for native apps**, and `application_type`
 is in the IANA client-metadata registry draft `-00` §4.1 imports. The any-port
@@ -699,7 +698,7 @@ branch therefore applies only when the validated document declares
 property, gets exact raw-string matching (fail closed). The shipped matcher
 receives the named registration, rejects malformed runtime discriminants, and
 gates the branch on the carried type. The frozen four-group acceptance suite is
-committed inactive and is the remaining evidence gate.
+active.
 
 *1a. Shape-first three-way dispatch; CIMD REPLACES §10 for CIMD ids.* Client_id
 shape is classified identically at BOTH the authorize resolve (`upstream-flow.ts:99`)
