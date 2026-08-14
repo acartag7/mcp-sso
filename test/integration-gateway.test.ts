@@ -107,7 +107,12 @@ function sdkFetchShim(app: { inject(args: unknown): Promise<unknown> }, captured
 }
 
 interface Harness {
-  app: { inject(args: unknown): Promise<unknown>; close(): Promise<void> };
+  app: {
+    inject(args: unknown): Promise<unknown>;
+    listen(opts: { port: number; host: string }): Promise<string>;
+    server: { address(): AddressInfo | string | null };
+    close(): Promise<void>;
+  };
   backend: { close(): Promise<void> };
   backendUrl: string;
   received: BackendReceived[];
@@ -276,6 +281,30 @@ test("integration — gateway: full proxied round trip (pairing→token→SDK cl
   const h = await buildHarness();
   try {
     const { accessToken } = await pairingToken(h.app as never, captured);
+
+    await h.app.listen({ port: 0, host: "127.0.0.1" });
+    const gatewayPort = (h.app.server.address() as AddressInfo).port;
+    const receivedBeforeDuplicates = h.received.length;
+    const duplicateInit = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: {
+      protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "duplicate-bearer", version: "0" },
+    }, id: 1 });
+    for (const authorization of [
+      [["Authorization", `Bearer ${accessToken}`], ["authorization", "Bearer attacker"]],
+      [["authorization", "Bearer attacker"], ["Authorization", `Bearer ${accessToken}`]],
+    ] as const) {
+      const duplicate = await sendRaw(gatewayPort, [
+        "POST /mcp HTTP/1.1",
+        `Host: 127.0.0.1:${gatewayPort}`,
+        "Content-Type: application/json",
+        ...authorization.map(([name, value]) => `${name}: ${value}`),
+        `Content-Length: ${Buffer.byteLength(duplicateInit)}`,
+        "Connection: close",
+        "", duplicateInit,
+      ]);
+      assert.equal(duplicate.status, 401, "gateway rejects duplicate bearer field lines");
+      assert.match(duplicate.raw, /\r\nwww-authenticate:\s*Bearer resource_metadata=/i);
+    }
+    assert.equal(h.received.length, receivedBeforeDuplicates, "duplicate bearer input never reached the backend");
 
     // Capture process stderr for EVERY forward-path operation (the path that calls
     // getBackendCredential) — the backend credential must never be logged. Installed

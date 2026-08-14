@@ -152,7 +152,9 @@ async function serveMcp(req: IncomingMessage, res: ServerResponse, parsedBody: u
   // parsing and for all methods — mirroring the example's onRequest hook.
   let auth: { subject: string };
   try {
-    auth = await authorizer.authorize({ authorization: req.headers.authorization });
+    auth = await authorizer.authorize({
+      authorization: headersFromDistinct(req.headersDistinct, req.headers).authorization,
+    });
   } catch (error) {
     const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
     res.writeHead(oe.status, {
@@ -264,6 +266,22 @@ async function mountHono(bridge: Bridge, authorizer: RequestAuthorizer, config: 
 
 interface FlowArtifacts { clientId: string; verifier: string; accessToken: string; refreshToken: string; newRefreshToken: string; consentToken: string }
 
+async function assertDuplicateBearerRejected(port: number, accessToken: string): Promise<void> {
+  const init = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: {
+    protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "duplicate-bearer", version: "0" },
+  }, id: 1 });
+  for (const authorization of [
+    [["Authorization", `Bearer ${accessToken}`], ["authorization", "Bearer attacker"]],
+    [["authorization", "Bearer attacker"], ["Authorization", `Bearer ${accessToken}`]],
+  ] as const) {
+    const response = await rawOccurrenceCall(
+      port, "POST", "/mcp", [["Content-Type", "application/json"], ...authorization], init,
+    );
+    assert.equal(response.status, 401, "duplicate bearer field lines reject before normalized-value selection");
+    assert.match(response.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/);
+  }
+}
+
 /** Drive the full /mcp round-trip against a real socket. `full` false stops after
  *  the first refresh (used by the sqlite-FILE reopen test, which needs a LIVE
  *  successor + a consumed-but-not-revoked predecessor to prove persistence). */
@@ -358,7 +376,8 @@ test("integration — express full /mcp round-trip: register → authorize → t
   const { bridge, authorizer } = deps(config, store);
   const mount = await mountExpress(bridge, authorizer, config, port);
   try {
-    await driveRoundTrip(mount.base, base, base, { full: true });
+    const artifacts = await driveRoundTrip(mount.base, base, base, { full: true });
+    await assertDuplicateBearerRejected(port, artifacts.accessToken);
   } finally {
     await mount.close();
     await store.close();
@@ -373,7 +392,8 @@ test("integration — hono full /mcp round-trip (node:http↔fetch bridge, no @h
   const { bridge, authorizer } = deps(config, store);
   const mount = await mountHono(bridge, authorizer, config, port);
   try {
-    await driveRoundTrip(mount.base, base, base, { full: true });
+    const artifacts = await driveRoundTrip(mount.base, base, base, { full: true });
+    await assertDuplicateBearerRejected(port, artifacts.accessToken);
   } finally {
     await mount.close();
     await store.close();

@@ -143,7 +143,7 @@ async function main(): Promise<void> {
   app.post("/mcp", async (request, reply) => {
     let auth;
     try {
-      auth = await authorizer.authorize({ authorization: request.headers.authorization });
+      auth = await authorizer.authorize({ authorization: request.raw.headersDistinct.authorization });
     } catch (error) {
       const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
       reply.header("www-authenticate", buildUnauthorizedChallenge(config, { scope: config.scopeCatalog, error: oe.code, errorDescription: oe.message }));

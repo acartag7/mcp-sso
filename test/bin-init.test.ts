@@ -85,6 +85,8 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.match(server, /occurrences\?\.length === 1/, "generated /mcp gate accepts exactly one occurrence");
     assert.match(server, /origin\.includes\(","\)/, "generated /mcp gate rejects comma-coalesced Origin");
     assert.doesNotMatch(server, /request\.headers\.origin/, "generated /mcp gate never selects a normalized Origin");
+    assert.match(server, /request\.raw\.headersDistinct\.authorization/, "generated /mcp bearer gate preserves raw Authorization occurrences");
+    assert.doesNotMatch(server, /request\.headers\.authorization/, "generated /mcp bearer gate never selects a normalized Authorization value");
     assert.match(server, /cimd:\s*\{\s*enabled:\s*true\s*\}/, "generated server enables CIMD");
     assert.match(
       server,

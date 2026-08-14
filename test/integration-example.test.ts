@@ -867,6 +867,21 @@ test("integration — zero-setup branch: full flow through the entry (pairing co
       // path, not only the absent-Origin path every other call proves).
       await callProtectedMcp(app, config.resource, accessToken, "console-operator", { origin: ORIGIN });
 
+      const port = (app.server.address() as AddressInfo).port;
+      const init = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: {
+        protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "duplicate-bearer", version: "0" },
+      }, id: 1 });
+      for (const authorization of [
+        [["Authorization", `Bearer ${accessToken}`], ["authorization", "Bearer attacker"]],
+        [["authorization", "Bearer attacker"], ["Authorization", `Bearer ${accessToken}`]],
+      ] as const) {
+        const response = await rawOccurrenceCall(
+          port, "POST", "/mcp", [["Content-Type", "application/json"], ...authorization], init,
+        );
+        assert.equal(response.status, 401, "runnable example rejects duplicate bearer field lines");
+        assert.match(response.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/);
+      }
+
       // Refresh rotates.
       const refreshed = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId }).toString() });
       assert.equal(refreshed.statusCode, 200);

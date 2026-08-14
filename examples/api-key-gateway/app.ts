@@ -185,7 +185,12 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   // subject on success, or null once the challenge response has been sent.
   const authorizeOrChallenge = async (request: FastifyRequest, reply: FastifyReply): Promise<RequestAuthResult | null> => {
     try {
-      return await authorizer.authorize({ authorization: request.headers.authorization });
+      return await authorizer.authorize({
+        authorization: headersFromDistinct(
+          request.raw.headersDistinct,
+          request.headers as NormRequest["headers"],
+        ).authorization,
+      });
     } catch (error) {
       const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
       reply.header("www-authenticate", buildUnauthorizedChallenge(config, { scope: config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
