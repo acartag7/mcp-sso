@@ -15,6 +15,7 @@ import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { signAccessToken } from "../src/crypto.ts";
 import { OAuthError } from "../src/errors.ts";
 import { RequestAuthorizer } from "../src/verifier.ts";
+import { headersFromDistinct } from "../src/adapters/http.ts";
 import { SystemClock } from "../src/ports/clock.ts";
 import { noopAudit } from "../src/ports/audit.ts";
 
@@ -61,6 +62,33 @@ test("security — cross-resource audience fail-closed (RFC 8707 §7.2): a token
   // Negative: B rejects the A-audience token even though the signature is valid
   // under B's verifier (same key) — audience fail-closed is the core RFC 8707 promise.
   await assert.rejects(authorizer(configB).authorize({ authorization: `Bearer ${tokenA}` }), isInvalidToken);
+});
+
+test("security — RequestAuthorizer rejects duplicate Authorization occurrences but accepts one normalized occurrence", async () => {
+  const config = httpsConfig("https://api.test/mcp", ecJwk());
+  const token = await signAccessToken(
+    { subject: "single-header", clientId: "c", scopes: ["mcp:read"] },
+    config,
+    new SystemClock(),
+  );
+  const auth = authorizer(config);
+  const single = headersFromDistinct(undefined, { authorization: [`Bearer ${token}`] }).authorization;
+  assert.ok(Array.isArray(single), "injector fallback preserves the one-element occurrence array");
+  const accepted = await auth.authorize({ authorization: single });
+  assert.equal(accepted.subject, "single-header");
+
+  for (const authorization of [
+    [`Bearer ${token}`, "Bearer attacker"],
+    ["Bearer attacker", `Bearer ${token}`],
+  ]) {
+    await assert.rejects(
+      auth.authorize({ authorization }),
+      (error: unknown) => error instanceof OAuthError
+        && error.code === "invalid_token"
+        && error.status === 401,
+      "duplicate occurrences are rejected before first/last-value selection",
+    );
+  }
 });
 
 test("security — alg:none and HS256(consent-secret) token forgeries are rejected by the ES256 verifier (threat-model row 3)", async () => {

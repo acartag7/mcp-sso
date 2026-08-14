@@ -13,6 +13,7 @@
 // the synthetic request's `query` — bridge.handleAuthorize reads query, not body.
 
 import type { Bridge } from "./bridge.ts";
+import { asOAuth } from "./bridge-internals.ts";
 import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
 import { OAuthError } from "../errors.ts";
 import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
@@ -53,6 +54,11 @@ export async function handlePairingAuthorize(
   const { bridge, pairing } = deps;
   if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0) {
     return oauthErrorResponse(bridge.config, new OAuthError("invalid_request", "duplicate request parameters"));
+  }
+  try {
+    await bridge.guardPairingAuthorize(req.ip);
+  } catch (error) {
+    return oauthErrorResponse(bridge.config, asOAuth(error));
   }
   const oauthParams = gatherOAuthParams(req);
   const submittedCode = method === "POST" ? formField(req.body, "pairing_code") : undefined;

@@ -70,6 +70,12 @@ Extracts the bearer token, verifies it, enforces `requiredScope` if given using
 the exact-resource `config.scopeHierarchy` when present, audits the outcome,
 and rethrows `OAuthError` on failure. The adapter maps the thrown
 `OAuthError` to a 401/403 with the challenge from §8.2/§8.3. **No bypass path.**
+An array-valued `authorization` input preserves distinct header occurrences:
+exactly one element is processed as the bearer value, while zero or more than
+one elements fail closed as `invalid_token` 401 before any first/last-value
+selection or token verification. This keeps a one-element array produced by a
+normalized-header boundary valid without allowing duplicate Authorization
+input to choose the credential that reaches enforcement.
 `RequestAuthorizer.authorize` returns the `credentialKind` produced by
 `verifyAccessToken`; `VerifiedAccessToken`, `AuthorizedSubject`, and the
 `RequestAuthResult` alias all expose the same required field.

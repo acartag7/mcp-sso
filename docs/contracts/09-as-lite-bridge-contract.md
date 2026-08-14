@@ -352,7 +352,8 @@ the response. Wiring rules:
   its path-inserted form → `protectedResourceMetadata` (§9.1); GET `/oauth/jwks` →
   `jwks`; POST `/oauth/register` → `registerClient` (behind `RateLimitPort`,
   §6.7); GET `/oauth/authorize` → resolve subject via `IdentityPort` → `prepare`,
-  render the consent page; POST `/oauth/authorize/approve` → `approve`; POST
+  render the consent page; POST `/oauth/authorize/approve` →
+  `RateLimitPort("approve:<ip>")` → `approve`; POST
   `/oauth/token` → `exchangeAuthorizationCode`/`refresh` (behind `RateLimitPort`);
   POST `/oauth/revoke` → adapter body boundary → `revoke` (behind
   `RateLimitPort("revoke:<ip>")` before Bridge body normalization; after
@@ -362,8 +363,13 @@ the response. Wiring rules:
   `Bridge.resolveIdentity`, which checks
   `RateLimitPort("authorize:<ip>")` before `IdentityPort.verify`, its audit, or
   `prepare`. Limiter denial is a direct 429 with no redirect; limiter failure
-  remains fail-open (§6.7). Upstream redirect, console pairing, and CIMD retain
-  their independent budgets rather than receiving a second adapter-level check.
+  remains fail-open (§6.7). Upstream redirect and CIMD retain their independent
+  budgets rather than receiving a second adapter-level check. Console pairing
+  charges `RateLimitPort("authorize:<ip>")` in `handlePairingAuthorize`, after its
+  duplicate-query guard and before any pairing session, code verification, or
+  consent work; it then calls `Bridge.handleAuthorize` without an additional
+  `authorize:<ip>` charge. Its identity port's optional submitted-code
+  `pairing:<ip>` hook remains a separate defense-in-depth budget.
 - **Hono and Express OAuth POST body bounds:** before request-body parsing or any Bridge
   invocation, the Hono adapter applies a fixed **262,144-byte (256 KiB)**
   streaming cap to `/oauth/register`, `/oauth/authorize/approve`,

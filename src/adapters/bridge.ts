@@ -168,12 +168,17 @@ export class Bridge {
     await this.guard("authorize", ip);
     return resolveIdentityWithAudit(identity, input, ip, (status, reason, subject, at) => this.emitIdentityVerify(status, reason, subject, at));
   }
+  /** Charge console-pairing authorize once at its flow-level entry point. */
+  async guardPairingAuthorize(ip?: string): Promise<void> {
+    await this.guard("authorize", ip);
+  }
   private async emitIdentityVerify(status: AuthAuditStatus, reason: string | undefined, subject: string | undefined, ip: string | undefined): Promise<void> {
     await writeAuditBestEffort(this.audit, { occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "identity.verify", status, subject, reason, ip });
   }
 
   async handleApprove(req: NormRequest): Promise<NormResponse> {
     try {
+      await this.guard("approve", req.ip);
       const body = formObject(req.body);
       const consentToken = formField(body, "consent_token") ?? consentCookie(req);
       const result = await this.auth.approve({

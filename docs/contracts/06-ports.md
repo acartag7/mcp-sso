@@ -448,12 +448,15 @@ locked in **§17.1**.
 interface RateLimitPort { check(key: string): Promise<boolean>; }
 const noopRateLimit: RateLimitPort = { async check(): Promise<boolean> { return true; } };
 ```
-Optional DoS defense for unauthenticated registration, token exchange,
-revocation, and direct header-based identity verification (threat-model #8).
-`Bridge` calls `check("register:<ip>")` / `check("token:<ip>")` before those
-use-cases, and `check("revoke:<ip>")` at the start of `Bridge.handleRevoke`,
-before its `formObject` normalization, token hashing, store access or mutation,
-and audit work. Shipped adapters first apply their own request-body boundary and
+Optional DoS defense for unauthenticated registration, approval, token exchange,
+revocation, and identity resolution (threat-model #8). `Bridge` calls
+`check("register:<ip>")` / `check("approve:<ip>")` /
+`check("token:<ip>")` before those use-cases, and
+`check("revoke:<ip>")` at the start of `Bridge.handleRevoke`, before its
+`formObject` normalization, token hashing, store access or mutation, and audit
+work. `Bridge.handleApprove` likewise checks `approve:<ip>` before normalizing or
+reading the approval body, validating Origin, or consuming consent state.
+Shipped adapters first apply their own request-body boundary and
 then call `Bridge`, so revocation admission is not an adapter body-parser gate:
 Hono's 256 KiB body cap remains earlier and an over-cap request returns 413
 without consuming a revocation-limit slot.
@@ -461,8 +464,17 @@ without consuming a revocation-limit slot.
 `IdentityPort.verify`; `false` ⇒ **429 Too Many Requests**. A denied revocation
 does no token-use-case, store, or audit work; an admitted unknown or
 already-revoked token retains RFC 7009's HTTP 200 existence-hiding behavior.
-Upstream redirect, console pairing, and CIMD keep their separate
-`upstream:<ip>`, `pairing:<ip>`, and `cimd:<ip>` budgets.
+Upstream redirect and CIMD keep their separate `upstream:<ip>` and `cimd:<ip>`
+budgets. The console-pairing orchestrator calls
+`Bridge.guardPairingAuthorize(ip)` to charge the `authorize:<ip>` guard once per
+GET or POST authorize request, after the duplicate-query occurrence check and
+before OAuth value selection, pairing
+session/code work, verification, consent preparation, store work, or audit. It
+does not call `resolveIdentity`, and
+`Bridge.handleAuthorize` does not add an `authorize:<ip>` charge; direct
+header-based authorization already charges that budget in `resolveIdentity`.
+The console-pairing identity's optional submitted-code `pairing:<ip>` hook stays
+an independent defense-in-depth budget.
 When the same port is supplied to both `Bridge` and an upstream redirect flow,
 the bound boot snapshot retains the source port's identity. The shared CIMD
 resolver therefore charges that counting port once for the request's

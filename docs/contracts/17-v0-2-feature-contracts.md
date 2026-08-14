@@ -1578,8 +1578,15 @@ gate replaces no-gate).
   guarantee of this query-occurrence guard. Single-valued GET and POST pairing
   flows are unchanged.
 - **Rate limiting:** the attempt cap is built-in and in-process — it cannot be
-  misconfigured away; the `RateLimitPort` hook (`pairing:<ip>`) adds
-  defense-in-depth.
+  misconfigured away. In addition, `handlePairingAuthorize` charges the
+  Bridge-owned `RateLimitPort` hook (`authorize:<ip>`) once per GET or POST after
+  the duplicate-query occurrence check and before OAuth value selection,
+  `beginSession`, code output, `verify`, consent preparation, store work, or
+  audit. A denial is a direct 429 and does not print, validate, or consume a
+  pairing code. Pairing does not call `Bridge.resolveIdentity`; after successful
+  code verification it calls `Bridge.handleAuthorize` without a second
+  `authorize:<ip>` charge. The identity port's in-process attempt cap and its
+  optional submitted-code `pairing:<ip>` hook remain independent backstops.
 - **Trust boundary (threat model):** whoever can read the process's stderr IS
   the operator. Log pipelines (docker logs, CloudWatch, Loki) EXTEND that
   boundary — codes land in them; TTL + single-use + attempt cap bound but do

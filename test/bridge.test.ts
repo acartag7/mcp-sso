@@ -7,7 +7,9 @@ import type { ClockPort } from "../src/ports/clock.ts";
 import type { RateLimitPort } from "../src/ports/rate-limit.ts";
 import type { NormRequest } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
+import { handlePairingAuthorize } from "../src/adapters/pairing-flow.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
+import type { ConsolePairingIdentity } from "../src/identity/console-pairing.ts";
 import { generateRefreshToken, parseRefreshFamilyId, pkceChallenge, sha256Hex } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
@@ -317,6 +319,29 @@ test("bridge: rate-limit (fix #7) returns 429 when the port denies", async () =>
   assert.equal((res.body as { error: string }).error, "temporarily_unavailable");
 });
 
+test("bridge: approve limiter denies before approval input or consent-state work", async () => {
+  const keys: string[] = [];
+  const bridge = setup({ async check(key) { keys.push(key); return false; } }).bridge;
+  let approveCalls = 0;
+  (bridge as unknown as { auth: { approve(input: unknown): Promise<never> } }).auth = {
+    async approve() { approveCalls += 1; throw new Error("approval use case must not run"); },
+  };
+  let bodyReads = 0;
+  const body = new Proxy({ consent_token: "unread", approved: "true" }, {
+    get(target, property, receiver) {
+      bodyReads += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  const response = await bridge.handleApprove(req({ body, ip: "203.0.113.44" }));
+  assert.equal(response.status, 429);
+  assert.equal((response.body as { error: string }).error, "temporarily_unavailable");
+  assert.deepEqual(keys, ["approve:203.0.113.44"]);
+  assert.equal(bodyReads, 0);
+  assert.equal(approveCalls, 0);
+});
+
 test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Redis outage must not lock out auth)", async () => {
   const boom: RateLimitPort = { async check(): Promise<boolean> { throw new Error("redis down"); } };
   const ctx = setup(boom);
@@ -354,6 +379,72 @@ test("bridge: authorize rate-limit failure stays fail-open", async () => {
   assert.deepEqual(keys, ["authorize:1.2.3.4"]);
   assert.equal(verifyCalls, 1);
   assert.equal(resolved.subject, SUBJECT);
+});
+
+test("bridge: pairing authorize denial charges authorize once before pairing effects", async () => {
+  const keys: string[] = [];
+  const ctx = setup({ async check(key) { keys.push(key); return false; } });
+  let beginCalls = 0;
+  let verifyCalls = 0;
+  const pairing: ConsolePairingIdentity = {
+    async beginSession() { beginCalls += 1; return { nonce: "unused", expiresAt: new Date(NOW_MS + 60_000).toISOString() }; },
+    async verify() { verifyCalls += 1; return { ok: true, identity: { subject: SUBJECT } }; },
+  };
+
+  const response = await handlePairingAuthorize(
+    { bridge: ctx.bridge, pairing },
+    "GET",
+    req({ ip: "203.0.113.45" }),
+  );
+  assert.equal(response.status, 429);
+  assert.deepEqual(keys, ["authorize:203.0.113.45"]);
+  assert.equal(beginCalls, 0);
+  assert.equal(verifyCalls, 0);
+  assert.equal(ctx.audit.events.length, 0);
+});
+
+test("bridge: successful pairing authorize charges authorize exactly once", async () => {
+  const keys: string[] = [];
+  const ctx = setup({ async check(key) { keys.push(key); return true; } });
+  let verifyCalls = 0;
+  const pairing: ConsolePairingIdentity = {
+    async beginSession() { throw new Error("successful submitted code must not begin a session"); },
+    async verify() { verifyCalls += 1; return { ok: true, identity: { subject: SUBJECT } }; },
+  };
+  const verifier = "v-12345678901234567890123456789012345678";
+  const response = await handlePairingAuthorize(
+    { bridge: ctx.bridge, pairing },
+    "POST",
+    req({
+      ip: "203.0.113.46",
+      query: {
+        response_type: "code", client_id: "c", redirect_uri: REDIRECT,
+        code_challenge: pkceChallenge(verifier), code_challenge_method: "S256",
+      },
+      body: { pairing_code: "BBBBBBBBBBBB", pairing_nonce: "nonce" },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(verifyCalls, 1);
+  assert.deepEqual(keys, ["authorize:203.0.113.46"], "pairing flow and handleAuthorize must not double-charge");
+});
+
+test("bridge: pairing duplicate-query rejection precedes its authorize charge", async () => {
+  const keys: string[] = [];
+  const ctx = setup({ async check(key) { keys.push(key); return true; } });
+  let beginCalls = 0;
+  const pairing: ConsolePairingIdentity = {
+    async beginSession() { beginCalls += 1; return { nonce: "unused", expiresAt: new Date(NOW_MS + 60_000).toISOString() }; },
+    async verify() { throw new Error("duplicate query must not be verified"); },
+  };
+  const response = await handlePairingAuthorize(
+    { bridge: ctx.bridge, pairing },
+    "GET",
+    req({ query: { redirect_uri: [REDIRECT, "https://other.test/callback"] } }),
+  );
+  assert.equal(response.status, 400);
+  assert.deepEqual(keys, []);
+  assert.equal(beginCalls, 0);
 });
 
 test("bridge: the consent page is frame-blocked (threat row 36 — clickjacking would bypass row 17's user judgment)", async () => {
