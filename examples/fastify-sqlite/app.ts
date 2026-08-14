@@ -56,10 +56,10 @@ import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
 import { assertCallbackPath } from "../../src/adapters/upstream-flow-internals.ts";
 import {
-  headersFromDistinct, isMcpPath, readHeader,
+  headersFromDistinct, isMcpPath, OAUTH_POST_BODY_MAX_BYTES, readHeader,
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
-import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
+import { addOAuthFormContentTypeParser, registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 import {
   assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
 } from "../../src/deployment-guard.ts";
@@ -128,11 +128,14 @@ export async function buildApp(opts: ExampleOptions) {
     // framework-free handlePairingAuthorize orchestrator.
     await registerOAuthRoutes(app, { bridge, skipAuthorize: true });
     const pairing = createConsolePairingIdentity({ ...opts.pairing, audit });
-    app.get("/oauth/authorize", async (req, reply) => {
-      await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req as never)));
-    });
-    app.post("/oauth/authorize", async (req, reply) => {
-      await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req as never)));
+    await app.register(async (pairingApp) => {
+      addOAuthFormContentTypeParser(pairingApp);
+      pairingApp.get("/oauth/authorize", async (req, reply) => {
+        await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req as never)));
+      });
+      pairingApp.post("/oauth/authorize", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => {
+        await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req as never)));
+      });
     });
   } else {
     // Awaited so a missing `identity` (now optional for the pairing mode) rejects

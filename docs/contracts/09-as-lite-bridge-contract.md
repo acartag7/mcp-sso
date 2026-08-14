@@ -364,18 +364,26 @@ the response. Wiring rules:
   `prepare`. Limiter denial is a direct 429 with no redirect; limiter failure
   remains fail-open (§6.7). Upstream redirect, console pairing, and CIMD retain
   their independent budgets rather than receiving a second adapter-level check.
-- **Hono and Express OAuth POST body bounds:** before request-body parsing or any Bridge
-  invocation, the Hono adapter applies a fixed **262,144-byte (256 KiB)**
-  streaming cap to `/oauth/register`, `/oauth/authorize/approve`,
-  `/oauth/token`, and `/oauth/revoke`. The fixed raw-byte budget admits a compact
+- **OAuth POST body bound (all framework adapters):** before request-body parsing
+  or any Bridge invocation, Fastify, Express, and Hono apply the same fixed
+  **262,144-byte (256 KiB)** raw-body budget to `/oauth/register`,
+  `/oauth/authorize/approve`, `/oauth/token`, and `/oauth/revoke`. The budget is
+  defined once in the shared adapter HTTP module and applies regardless of the
+  request's content type inside the adapter-owned parsing boundary. Fastify's
+  per-route enforcement also constrains application-supplied parsers registered
+  in the same scope; an Express parser mounted earlier remains caller-owned as
+  noted below. JSON and URL-encoded forms are the built-in semantic input
+  formats. The adapter-owned multipart and unknown-media handling leaves the
+  body absent or yields non-object bytes rather than OAuth fields. The fixed budget admits a compact
   JSON serialization with all recognized DCR field values at their maxima: 16 redirect URIs ×
   2,048 UTF-8 bytes (about 192 KiB when every URI character is legally serialized
   as a JSON `\uXXXX` escape), plus 32 `grant_types` entries × 256 UTF-8 bytes
   (about 48 KiB with the same encoding). The combined regression witness is
   245,939 bytes. This is not a semantic DCR size promise: JSON permits arbitrary
   insignificant whitespace, and RFC 7591 requires unknown metadata to be ignored.
-  A Hono request whose raw representation exceeds this finite security budget is
-  rejected with 413 rather than passed to a parser. A missing `Content-Length` and a
+- **Hono OAuth POST body enforcement:** a request whose raw representation exceeds
+  the shared finite security budget is rejected with 413 rather than passed to a
+  parser. A missing `Content-Length` and a
   `Transfer-Encoding` body are stream-counted. A present `Content-Length` must
   be one canonical decimal integer (`0` or a non-zero digit followed by digits),
   must not coexist with `Transfer-Encoding`, and must not exceed the cap;
@@ -383,18 +391,38 @@ the response. Wiring rules:
   values fail closed. A valid declared length does not bypass streaming
   accounting: the pinned `hono/body-limit` middleware still counts the actual
   body bytes. JSON, URL-encoded, multipart, and unknown content types share the
-  same pre-parse bound. A stream read/framing failure before downstream parsing
+  same pre-parse bound, but the adapter parses only the exact
+  `application/json` and `application/x-www-form-urlencoded` media-type
+  essences. A stream read/framing failure before downstream parsing
   returns a fixed direct 400 `invalid_request` response without logging the raw
   throwable or invoking downstream work. Below-cap parser failures retain the
   existing fail-closed parser-error path. A caller that uses `skipAuthorize` to
   mount a custom Hono POST authorize surface (including console pairing) MUST
   mount the adapter-exported `honoOAuthBodyLimit` before its body parser; the
   adapter's four built-in POST routes mount that same middleware automatically.
-- **Express OAuth POST body bound:** the returned Express router installs
-  `express.json` and `express.urlencoded` with the same fixed **262,144-byte
-  (256 KiB)** limit before its OAuth handlers. It therefore admits the bounded
+- **Fastify OAuth POST body enforcement:** every built-in OAuth POST route sets
+  Fastify's per-route `bodyLimit` to the shared budget. The limit therefore
+  replaces Fastify's larger server default for JSON, the adapter's URL-encoded
+  parser, the adapter's buffer-valued catch-all for otherwise unsupported media
+  types, and any other content-type parser the application registers. The
+  catch-all enforces the byte boundary without turning unsupported bytes into
+  OAuth fields. The adapter registers its parsers and routes in an encapsulated
+  Fastify plugin scope, so the catch-all cannot replace a caller-owned parser on
+  unrelated routes. The `mcp-sso/fastify` subpath also exports
+  `addOAuthFormContentTypeParser` and `OAUTH_POST_BODY_MAX_BYTES` so a caller-owned
+  OAuth POST (for example console pairing) can install the same form semantics
+  and cap inside its own encapsulated plugin scope. An over-cap request receives
+  Fastify's direct 413 response before the route handler or Bridge runs.
+- **Express OAuth POST body enforcement:** the returned Express router installs
+  `express.json` and `express.urlencoded` with the shared limit, followed by a
+  bounded raw fallback for every otherwise unmatched content type, scoped to
+  the four exact OAuth POST paths before their handlers. These parsers do not
+  consume unrelated routes mounted after the returned router. The fallback
+  enforces the raw budget; it does not interpret an
+  unsupported media type as OAuth fields. The router therefore admits the bounded
   core DCR domain and a consent form under the 192 KiB signer ceiling, while an
-  over-cap JSON or form body is rejected by Express before Bridge invocation with
+  over-cap body of any content type is rejected by Express before Bridge
+  invocation with
   direct 413 `{error:"invalid_request",error_description:"Request body is too large"}`.
   Malformed JSON/form input is a direct sanitized 400 instead of Express's
   default development stack response/logging path. An application that mounts a

@@ -7,6 +7,9 @@ import { originOf } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildAuthorizationErrorRedirect, buildUnauthorizedChallenge } from "../challenge.ts";
 
+/** Raw request-body budget shared by every built-in OAuth POST route (§9.6). */
+export const OAUTH_POST_BODY_MAX_BYTES = 256 * 1024;
+
 export interface NormRequest {
   query: Record<string, string | string[] | undefined>;
   body: unknown;

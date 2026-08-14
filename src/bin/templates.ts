@@ -39,7 +39,7 @@ import {
   SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
   type ClientRegistration, type ClientStore,
 } from "mcp-sso";
-import { registerOAuthRoutes } from "mcp-sso/fastify";
+import { addOAuthFormContentTypeParser, OAUTH_POST_BODY_MAX_BYTES, registerOAuthRoutes } from "mcp-sso/fastify";
 import { openSqliteStore } from "mcp-sso/store/sqlite";
 import { createConsolePairingIdentity } from "mcp-sso/identity/console-pairing";
 // The normalized request/response shapes the framework-free surface speaks. Inlined
@@ -124,8 +124,10 @@ async function main(): Promise<void> {
   // Zero-setup: skip the default authorize; mount the console-pairing surface.
   await registerOAuthRoutes(app, { bridge, skipAuthorize: true });
   const pairing = createConsolePairingIdentity({ audit });
-  app.get("/oauth/authorize", async (req, reply) => { await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req))); });
-  app.post("/oauth/authorize", async (req, reply) => { await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req))); });
+  await app.register(async (pairingApp) => { addOAuthFormContentTypeParser(pairingApp);
+    pairingApp.get("/oauth/authorize", async (req, reply) => { await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req))); });
+    pairingApp.post("/oauth/authorize", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => { await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req))); });
+  });
 
   // MCP Streamable-HTTP Origin gate (DNS-rebinding MUST): reject a present, non-allowlisted
   // Origin BEFORE body parsing, for every method. isMcpPath parses the pathname (absolute-form-safe).
