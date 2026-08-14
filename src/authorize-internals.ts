@@ -62,7 +62,7 @@ export async function resolveAuthorizeClient(args: {
     // be the one consequence of a mismatch. (The orchestrator already binds
     // them at flow-token parse; this is the same check at the second seam.)
     if (args.registration.client_id !== clientId) throw cimdGenericError();
-    if (!cimdRedirectMatches(redirectUri, args.registration.redirect_uris)) throw cimdGenericError();
+    if (!cimdRedirectMatches(redirectUri, args.registration)) throw cimdGenericError();
     return { redirectUri, registration: args.registration, emitCimdSuccess: noop };
   }
   if (isCimdClientId(clientId)) {

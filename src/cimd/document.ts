@@ -5,8 +5,11 @@ export interface CimdDocument {
   readonly client_id: string;
   readonly client_name: string;
   readonly redirect_uris: readonly string[];
+  readonly application_type?: CimdApplicationType;
   readonly raw: Record<string, unknown>;
 }
+
+export type CimdApplicationType = "native" | "web";
 
 const PRIVATE_JWK_MEMBERS = new Set(["d", "p", "q", "dp", "dq", "qi", "oth", "k"]);
 
@@ -23,10 +26,17 @@ export function validateCimdDocument(rawBody: string, rawClientId: string): Cimd
   const clientId = parsed.client_id;
   const clientName = parsed.client_name;
   const redirectUris = parsed.redirect_uris;
+  const applicationType = parsed.application_type;
+  let validatedApplicationType: CimdApplicationType | undefined;
   if (typeof clientId !== "string" || clientId !== rawClientId) throw invalid();
   if (typeof clientName !== "string" || clientName.length === 0 || clientName.length > 256) throw invalid();
   if (!Array.isArray(redirectUris) || redirectUris.length < 1 || redirectUris.length > 16) throw invalid();
   for (const redirectUri of redirectUris) assertCimdRedirectUri(redirectUri);
+
+  if (Object.hasOwn(parsed, "application_type")) {
+    if (applicationType !== "native" && applicationType !== "web") throw invalid();
+    validatedApplicationType = applicationType;
+  }
 
   if (Object.hasOwn(parsed, "token_endpoint_auth_method")
     && parsed.token_endpoint_auth_method !== "none") throw invalid();
@@ -41,6 +51,7 @@ export function validateCimdDocument(rawBody: string, rawClientId: string): Cimd
     client_id: clientId,
     client_name: clientName,
     redirect_uris: [...redirectUris] as string[],
+    ...(validatedApplicationType === undefined ? {} : { application_type: validatedApplicationType }),
     raw: parsed,
   };
 }
