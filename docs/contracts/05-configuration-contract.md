@@ -187,5 +187,8 @@ the deliberately unsafe, example-only escape hatch
 loud warning before state creation. The escape hatch changes only the listen-host
 decision. It never relaxes the issuer/resource loopback preflight, and it is
 ignored by real-IdP branches.
+After that pure listen-host preflight, the API-key gateway binds its backend
+listener before invoking the stateful gateway builder. An invalid or occupied
+backend bind therefore leaves no quickstart state behind.
 The generated starter additionally rejects non-loopback issuer or resource URLs
 before creating its state directory, signing keys, audit file, or SQLite database.

@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     && process.env[UNSAFE_NON_LOOPBACK_PAIRING_ENV] !== "true") {
     // The gateway has a second listener. Reject the public pairing bind before
     // even reading backend config or starting that backend. The exact unsafe
-    // escape is warned by buildGatewayExample before state or either listener.
+    // escape is warned by buildGatewayExample before state or the public listener.
     assertConsolePairingListenHostBeforeState(process.env);
   }
   // Read the backend credential ONCE, behind a closure. Missing = boot failure.
@@ -50,18 +50,19 @@ async function main(): Promise<void> {
   }
   const getBackendCredential = (): string => backendApiKey;
 
-  // Derive the trusted backend URL without starting a listener. buildGatewayExample
-  // runs the no-IdP public-HOST preflight before creating state, so an unsafe public
-  // bind is rejected (or its explicit escape warned) before this backend side effect.
+  // Derive the trusted backend URL without starting a listener. The entrypoint
+  // preflight above rejects an unsafe public bind before this backend side effect;
+  // the explicit escape is warned later by the builder before state creation.
   const backendPort = Number(process.env.BACKEND_PORT ?? 8788);
   const backendHost = process.env.BACKEND_HOST ?? "127.0.0.1";
   const backendUrl = `http://${backendHost}:${backendPort}/mcp`;
 
-  // Build the gateway first (identity branch selected by env, same as
-  // fastify-sqlite), then start the token-only stub backend on its local port.
-  const { app, config } = await buildGatewayExample(process.env, { backendUrl, getBackendCredential });
+  // The public-host preflight above must win before this listener. Once it passes,
+  // bind the backend before the stateful gateway builder so an invalid or occupied
+  // backend bind cannot leave quickstart state behind.
   const backend = await buildBackend({ apiKey: backendApiKey });
   await backend.app.listen({ port: backendPort, host: backendHost });
+  const { app, config } = await buildGatewayExample(process.env, { backendUrl, getBackendCredential });
   const port = Number(process.env.PORT ?? 3000);
   const host = process.env.HOST ?? defaultListenHost(process.env);
   await app.listen({ port, host });

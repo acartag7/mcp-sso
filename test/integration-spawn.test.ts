@@ -212,6 +212,38 @@ test("integration — both spawned entries refuse no-IdP HOST=0.0.0.0 before sta
   }
 });
 
+test("integration — gateway occupied backend bind leaves no quickstart state", async () => {
+  const tmp = await mkdtemp(join(tmpdir(), "mcp-sso-spawn-backend-bind-"));
+  const dir = join(tmp, "state");
+  const occupied = createServer();
+  await new Promise<void>((resolve, reject) => {
+    occupied.once("error", reject);
+    occupied.listen(0, "127.0.0.1", resolve);
+  });
+  const address = occupied.address();
+  assert.ok(address && typeof address === "object", "occupied backend has a TCP address");
+  const env = childEnv({
+    MCP_SSO_DIR: dir,
+    HOST: "127.0.0.1",
+    BACKEND_API_KEY: randomBytes(32).toString("base64url"),
+    BACKEND_HOST: "127.0.0.1",
+    BACKEND_PORT: String(address.port),
+  });
+  const child = spawn("node", [GATEWAY_ENTRY], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    const exited = await waitForClose(child, 15_000);
+    assert.notEqual(exited.code, 0, "occupied backend bind exits nonzero");
+    assert.match(exited.stderr, /EADDRINUSE/);
+    assert.equal(existsSync(dir), false, "backend bind failure precedes quickstart state creation");
+  } finally {
+    killHard(child);
+    await new Promise<void>((resolve, reject) =>
+      occupied.close((error) => { if (error) reject(error); else resolve(); })
+    );
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("integration — gateway entrypoint rejects ambiguous providers before backend listen", async () => {
   const occupied = createServer();
   await new Promise<void>((resolve, reject) => {
