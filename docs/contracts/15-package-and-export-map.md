@@ -226,7 +226,8 @@ validation ordering (benign residual):** the generated server pre-validates the
 `OAUTH_ISSUER`/`OAUTH_RESOURCE` URLs before the state-creating helper, but the deeper
 config validation (`createBridgeConfig` — scheme, scope shapes) runs *after*
 `loadOrCreateQuickstartSecrets`, so a malformed env value leaves a `secrets.json`. That
-file is owner-only (`0600` in a `0700` gitignored dir), holds secrets generated
+file is owner-only on POSIX (`0600` in a `0700` gitignored dir; on Windows those
+mode gates are skipped and the deployer owns the ACL — §12, issue #219), holds secrets generated
 independently of the rejected config (so they are valid, not bad), and is reused verbatim
 on the next (fixed) boot — no leak, no exposed/bad/committed state; full pre-validation
 would need a library secret-free `validateConfig` (deferred).
