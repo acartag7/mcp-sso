@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { test } from "node:test";
+import type { Pool, PoolConnection } from "mysql2/promise";
 import {
   STORE_EXPIRY_SWEEP_INTERVAL_MS, StoreExpiryScheduler,
 } from "../src/store/expiry-scheduler.ts";
+import { MysqlStore } from "../src/store/mysql.ts";
 
 const execFileP = promisify(execFile);
 const START = Date.parse("2026-08-16T12:00:00.000Z");
@@ -77,6 +79,40 @@ test("an unref'd store scheduler does not keep an idle process alive", async () 
     "--input-type=module", "--eval",
     `import { MemoryStore } from ${JSON.stringify(memoryUrl)}; new MemoryStore();`,
   ], { timeout: 2_000 });
+});
+
+test("MysqlStore does not schedule expiry deletion before migration succeeds", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: START });
+  let releaseMigration: (() => void) | undefined;
+  const migrationBlocked = new Promise<void>((resolve) => { releaseMigration = resolve; });
+  let getConnectionCalls = 0;
+  const connection = {
+    async query() {
+      await migrationBlocked;
+      throw new Error("migration failed");
+    },
+    release() {},
+  } as unknown as PoolConnection;
+  const pool = {
+    async getConnection() {
+      getConnectionCalls += 1;
+      return connection;
+    },
+  } as unknown as Pool;
+  const store = new MysqlStore(pool);
+  const migration = store.migrate();
+  await settleUntil(() => getConnectionCalls === 1);
+
+  t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS * 2);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(getConnectionCalls, 1, "a pending migration must not race a scheduled sweep");
+
+  releaseMigration?.();
+  await assert.rejects(migration, /migration failed/);
+  t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS * 2);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(getConnectionCalls, 1, "a failed migration must not leave a scheduler running");
+  await store.close();
 });
 
 async function settleUntil(done: () => boolean): Promise<void> {

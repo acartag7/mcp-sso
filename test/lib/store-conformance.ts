@@ -54,6 +54,39 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     }
   });
 
+  test(`${label}: scheduled collection retains a consent tombstone while its signed JWT is valid`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
+    const store = make();
+    const signedExpiry = new Date(Date.parse(NOW) + STORE_EXPIRY_SWEEP_INTERVAL_MS + 1).toISOString();
+    const jti = `scheduled-boundary-${label}`;
+    const sweepExpired = store.sweepExpired.bind(store);
+    let sweeps = 0;
+    store.sweepExpired = async (nowIso) => {
+      await sweepExpired(nowIso);
+      sweeps += 1;
+    };
+    try {
+      assert.equal(await store.consumeConsentJti(jti, signedExpiry), true);
+      t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+      await settleUntil(() => sweeps === 1);
+      assert.equal(
+        await store.consumeConsentJti(jti, signedExpiry),
+        false,
+        "the first scheduled sweep collected a tombstone while its signed JWT was still valid",
+      );
+
+      t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+      await settleUntil(() => sweeps === 2);
+      assert.equal(
+        await store.consumeConsentJti(jti, FUTURE),
+        true,
+        "a later scheduled sweep did not collect the expired tombstone",
+      );
+    } finally {
+      await store.close();
+    }
+  });
+
   test(`${label}: close waits for an active expiry sweep and prevents later runs`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
     const store = make();

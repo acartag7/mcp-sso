@@ -20,7 +20,7 @@ export class MysqlStore implements StorePort {
   private closed = false;
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
-  private readonly expiryScheduler = new StoreExpiryScheduler(this);
+  private expiryScheduler: StoreExpiryScheduler | undefined;
   constructor(pool: Pool, ownsPool = false) {
     this.pool = pool; this.ownsPool = ownsPool;
   }
@@ -194,18 +194,18 @@ export class MysqlStore implements StorePort {
     const conn = await this.pool.getConnection();
     try { await migrateMysqlStore(conn); }
     finally { try { conn.release(); } catch { /* swallow cleanup */ } }
+    this.ensureOpen();
+    this.expiryScheduler ??= new StoreExpiryScheduler(this);
   }
-
   async close(): Promise<void> {
     if (!this.closed) {
-      await this.expiryScheduler.stop();
+      await this.expiryScheduler?.stop();
       if (this.closed) return;
       this.closed = true;
       // Only end a pool this store created; never a caller-supplied shared pool.
       if (this.ownsPool) await this.pool.end();
     }
   }
-
   /** §12.3 addendum 13: acquire OUTSIDE the try; begin inside behind a begun-guard;
    *  release in finally on EVERY path; swallow cleanup so the original error propagates.
    *  READ COMMITTED drops InnoDB gap locks (no sweep/rotate deadlock). */
