@@ -1678,7 +1678,17 @@ gate replaces no-gate).
   `${issuer}/.well-known/openid-configuration`; the document's `issuer` MUST
   exactly equal the configured issuer (OIDC Discovery §4.3; RFC 8414 §3.3:
   "MUST NOT be used" on mismatch — boot failure); all endpoints + `jwks_uri`
-  MUST pass the raw `^https://` check (addendum 11). Discovery/JWKS fetches
+  MUST pass the raw `^https://` check (addendum 11). The discovered
+  `authorization_endpoint`, `token_endpoint`, and `jwks_uri` WHATWG hostnames
+  MUST also equal the configured issuer's WHATWG hostname before the identity
+  is constructed. This is exact hostname equality, not a registrable-domain or
+  suffix policy: a sibling subdomain is a separate trust target. The only
+  built-in cross-host exception is the exact Google preset, which pins each
+  field separately to Google's known hosts (`accounts.google.com`,
+  `oauth2.googleapis.com`, and `www.googleapis.com` respectively); callers
+  cannot widen that map. Manual endpoint mode remains explicit deployer-trusted
+  configuration and is not subject to the discovery-document host rule.
+  Discovery/JWKS fetches
   use plain https (NOT the 17.1 SSRF guard): the issuer is deployer-trusted
   config, and enterprise IdPs legitimately live on private networks —
   documented rationale. Redirects on the discovery fetch: not followed
@@ -1731,6 +1741,9 @@ gate replaces no-gate).
   `https://accounts.google.com` + discovery; `clientSecret` REQUIRED
   (Google's advertised token auth methods are secret-based only; its docs'
   newer "Optional" marking is unverified — we treat it as required);
+  discovery accepts only the exact per-field hosts named above, preserving
+  Google's cross-host metadata without granting a suffix or caller-configured
+  exception;
   subject = `sub` per Google's own don't-key-on-email guidance; optional
   `hostedDomain` validated against the **`hd` claim** (Google: check the
   claim, never the email's domain); email surfaced only when

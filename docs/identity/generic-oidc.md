@@ -48,10 +48,14 @@ const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit,
 - **`endpoints: "discover"`** (recommended) — the OIDC discovery document is
   fetched once at boot from `${issuer}/.well-known/openid-configuration`. The
   document's `issuer` MUST exactly equal your configured `issuer` (else boot
-  fails). Redirects are not followed. This is plain https, not the CIMD SSRF
-  guard — the issuer is deployer-trusted config.
+  fails). Its authorization, token, and JWKS hostnames must also exactly equal
+  the issuer hostname; sibling subdomains and other registrable-domain matches
+  are rejected. Redirects are not followed. This is plain https, not the CIMD
+  SSRF guard — the issuer is deployer-trusted config, while the fetched endpoint
+  locations are not.
 - **`endpoints: { … }`** (manual) — supply the three endpoints directly; no
-  boot-time fetch. Each must still be `https://`.
+  boot-time fetch. Each must still be `https://`; explicitly configured
+  cross-host endpoints are allowed because the deployer selected every URL.
 - **PKCE** — always S256. If discovery does not advertise
   `code_challenge_methods_supported` containing `S256`, boot **fails** unless you
   set `allowProviderWithoutPkce: true` (it then proceeds with a loud warning;
