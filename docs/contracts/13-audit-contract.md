@@ -69,9 +69,11 @@ options?)` emit the fixed stderr diagnostic `[mcp-sso] audit jsonl disabled:
 partial_write_rollback_unverified` exactly once when that instance first
 disables appends, and invoke the snapshotted `onDisable` callback exactly once
 with the same closed reason. Neither signal includes the path, event, fragment,
-or thrown error. A callback throw or returned rejection is contained and is not
-retried; returned work is not awaited and cannot reject `writeAuthEvent`, delay
-authentication, or re-enable the sink. Ordinary write failures and a
+or thrown error. The callback is scheduled on a detached `setImmediate` turn
+after `writeAuthEvent` can settle, so synchronous work before an async callback's
+first `await` is not on the authentication promise path. A callback throw or
+returned rejection is contained and is not retried; callback work cannot reject
+`writeAuthEvent`, delay authentication, or re-enable the sink. Ordinary write failures and a
 partial write whose tail is successfully rolled back do not invoke the hook.
 Later calls return fail-open without more file work or duplicate disable
 signals. A supplied options value must be a non-null, non-array object, and a

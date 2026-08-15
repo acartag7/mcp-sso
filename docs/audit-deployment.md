@@ -64,8 +64,9 @@ framing. The transition emits one fixed stderr line containing
 fragment, or raw error. Alert on that exact line. You may also wire the optional
 `onDisable(reason)` callback into your metrics or paging system; it receives
 only the same fixed reason, exactly once. Callback failures are swallowed and
-returned work is not awaited, so the hook cannot change or delay the fail-open
-authentication outcome.
+the callback starts on a detached `setImmediate` turn after the audit write can
+settle, so even synchronous work before its first `await` cannot change or delay
+the fail-open authentication outcome.
 
 ```ts
 const audit = new JsonlFileAudit("/var/log/mcp-sso/audit.jsonl", {

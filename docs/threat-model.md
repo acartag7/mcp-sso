@@ -371,7 +371,9 @@ and later events do no file work. On the transition it emits exactly one fixed,
 redacted stderr diagnostic and invokes an optional snapshotted `onDisable`
 callback with the closed reason `partial_write_rollback_unverified`. Neither
 channel includes the configured path, event, fragment, or raw error, and a
-throwing callback is contained. The callback is an alert seam, not recovery:
+throwing callback is contained. The callback starts on a detached turn after the
+audit write can settle, keeping synchronous pre-await hook work off the
+authentication promise path. The callback is an alert seam, not recovery:
 an operator must inspect and repair or rotate the fragment before replacing the
 sink instance. Lost events while disabled remain the row 24 fail-open residual.
 
