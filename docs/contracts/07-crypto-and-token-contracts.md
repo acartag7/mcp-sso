@@ -127,6 +127,10 @@ clock from `ClockPort`.
 Under the 0.3.0 §6.1 amendment, `verifyAccessToken` takes one
 canonical snapshot before `jwtVerify`; snapshot failure remains
 the existing `invalid_token` 401.
+All three access-token issuance owners use the §6.1 token-operation snapshot.
+`signAccessToken` therefore receives a fixed, already-validated clock: `iat`,
+`exp`, related refresh expiry, store timestamps, and audit timestamps within one
+grant operation derive from the same millisecond value.
 
 **Fix #6 — cached verification key:** the public JWK is imported to an ES256 key
 **once** (memoized on the config) rather than per request, as the source does.
@@ -148,6 +152,10 @@ code. Reference stores do not consume a code on resource mismatch, so a failed
 B-side redemption leaves the A-bound code eligible for exactly one legitimate
 A-side redemption. Once A succeeds, replay remains rejected.
 
+Before consuming a code, `exchangeAuthorizationCode` takes the §6.1 user-token
+snapshot with both token TTL offsets covered. Snapshot failure consumes no code,
+creates no refresh family, signs no access token, and emits no timestamped audit.
+
 **0.3.2 stored-DCR generation amendment.** An
 authorization code issued under `dcr.mode:"stored"` carries
 `grantGeneration = STORED_DCR_GRANT_GENERATION`. Code consumption supplies that
@@ -164,6 +172,10 @@ rotate without a lookup). Stored only as `sha256(token)`.
 - **Rotation:** `rotateRefreshToken(tokenHash, next, now)` marks the current
   token consumed, inserts the next, and returns the **consumed** record. Replay of
   an already-consumed token revokes the whole family.
+- **Operation clock:** `OAuthTokenUseCase.refresh` takes the §6.1 user-token
+  snapshot before parsing or rotating. Rotation time, successor expiry, access
+  JWT dates, compensation revocation, and outcome audit all derive from that one
+  snapshot. Snapshot failure leaves the predecessor and family unchanged.
 - **Resource binding:** every new refresh family and every member carries the
   authorization code's exact resource string. The resource is fixed for the whole
   family. `rotateRefreshToken` receives the bridge's expected resource and checks

@@ -1,5 +1,5 @@
 // OAuthTokenUseCase — auth-code exchange, refresh rotation, revocation (contracts §9.4). Refresh enforces RFC 6749 §6 client binding (mismatch revokes the family); revoke follows RFC 7009 (always succeeds; unknown token is a no-op).
-import type { ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { AuthCodeRecord, RefreshTokenRecord, StorePort } from "./ports/store.ts";
 import type { BridgeConfig } from "./config.ts";
@@ -9,6 +9,7 @@ import { resolveClientCredentialsScope, scopeString, storedScopes } from "./scop
 import { authenticateMachineClientSecret } from "./machine-client-auth.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 import { writeTokenAudit } from "./token-audit.ts";
+import { revokeRefreshToken } from "./token-revoke.ts";
 import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
 export interface OAuthTokenDeps {
   config: BridgeConfig;
@@ -50,7 +51,6 @@ export interface UserTokenResponse {
 
 /** Backward-compatible alias (v0.1 name); §17.2 split it into User vs Machine responses. */
 export type TokenResponse = UserTokenResponse;
-
 /** §17.2 machine-grant response: NO `refresh_token` member (not optional) — the
  *  client holds a durable credential, so a refresh token is a second bearer
  *  secret with zero benefit (RFC 6749 §4.4.3). */
@@ -74,32 +74,33 @@ export class OAuthTokenUseCase {
     this.audit = deps.audit;
     assertStoredDcrGenerationStore(this.config, this.store);
   }
-
   async exchangeAuthorizationCode(input: AuthorizationCodeGrantInput): Promise<UserTokenResponse> {
+    const operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock, Math.max(this.config.accessTokenTtlSeconds, this.config.refreshTokenTtlSeconds) * 1000));
     try {
       if (input.grantType !== "authorization_code") {
         throw new OAuthError("unsupported_grant_type", "grant_type is not supported");
       }
-      const record = await this.consumeValidCode(input);
+      const record = await this.consumeValidCode(input, operationClock);
       if (record.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace"); // pre-side-effect (§9.3): code burned, NO refresh token saved, no success audited
       const refreshToken = generateRefreshToken();
       const familyId = parseRefreshFamilyId(refreshToken);
       if (!familyId) throw new OAuthError("server_error", "Refresh token generation failed", 500);
-      const prepared = await this.tokenResponse(record, refreshToken);
+      const prepared = await this.tokenResponse(record, refreshToken, operationClock);
       await this.store.saveRefreshToken({
         tokenHash: sha256Hex(refreshToken), familyId, previousTokenHash: null,
         clientId: record.clientId, subject: record.subject, resource: record.resource, scopes: prepared.scopes,
-        expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
+        expiresAt: expiresAtIso(operationClock, this.config.refreshTokenTtlSeconds),
         grantGeneration: record.grantGeneration,
       });
-      await this.auditToken("oauth.token.authorization_code", "success", record);
+      await this.auditToken("oauth.token.authorization_code", "success", record, operationClock);
       return prepared.response;
     } catch (error) {
-      await this.auditFailure("oauth.token.authorization_code", error, input.clientId);
+      await this.auditFailure("oauth.token.authorization_code", error, input.clientId, operationClock);
       throw error;
     }
   }
   async refresh(input: RefreshGrantInput): Promise<UserTokenResponse> {
+    const operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock, Math.max(this.config.accessTokenTtlSeconds, this.config.refreshTokenTtlSeconds) * 1000));
     try {
       if (input.grantType !== "refresh_token") {
         throw new OAuthError("unsupported_grant_type", "grant_type is not supported");
@@ -109,13 +110,13 @@ export class OAuthTokenUseCase {
       if (!familyId) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       const nextRaw = generateRefreshToken(familyId);
       const previousHash = sha256Hex(raw);
-      const rotatedAtIso = new Date(this.clock.nowMs()).toISOString();
+      const rotatedAtIso = new Date(operationClock.nowMs()).toISOString();
       const rotated = await this.store.rotateRefreshToken(
         previousHash,
         {
           tokenHash: sha256Hex(nextRaw), familyId, previousTokenHash: previousHash,
           clientId: input.clientId ?? "", subject: "", resource: this.config.resource, scopes: [],
-          expiresAt: expiresAtIso(this.clock, this.config.refreshTokenTtlSeconds),
+          expiresAt: expiresAtIso(operationClock, this.config.refreshTokenTtlSeconds),
         },
         rotatedAtIso,
         expectedStoredDcrGrantGeneration(this.config),
@@ -127,8 +128,8 @@ export class OAuthTokenUseCase {
         // The rotated record's stored client is authoritative (RFC 6749 §6).
         if (!input.clientId || input.clientId !== rotated.clientId) throw new OAuthError("invalid_grant", "Refresh token client binding is invalid");
         if (rotated.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace");
-        const prepared = await this.tokenResponse(rotated, nextRaw);
-        await this.auditToken("oauth.token.refresh", "success", rotated);
+        const prepared = await this.tokenResponse(rotated, nextRaw, operationClock);
+        await this.auditToken("oauth.token.refresh", "success", rotated, operationClock);
         return prepared.response;
       } catch (error) {
         // Preparation stays after replay-authoritative rotation; failures revoke its unreturned successor.
@@ -136,7 +137,7 @@ export class OAuthTokenUseCase {
         throw error;
       }
     } catch (error) {
-      await this.auditFailure("oauth.token.refresh", error, input.clientId);
+      await this.auditFailure("oauth.token.refresh", error, input.clientId, operationClock);
       throw error;
     }
   }
@@ -148,6 +149,7 @@ export class OAuthTokenUseCase {
    *  client / malformed record ⇒ invalid_client, with a fixed
    *  two digest comparisons (custom-store lookup timing remains external). */
   async exchangeClientCredentials(input: ClientCredentialsGrantInput): Promise<MachineTokenResponse> {
+    const operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock, this.config.accessTokenTtlSeconds * 1000));
     let clientId: string | undefined; // captured for the failure audit where known
     try {
       // Fail-closed (defense-in-depth): metadata does not advertise the surface
@@ -164,22 +166,22 @@ export class OAuthTokenUseCase {
       const clientSecret = basic ? basic.clientSecret : input.clientSecret;
       if (!clientId || !clientSecret || !clientStore) throw new OAuthError("invalid_client", "Client authentication is required", 401);
       const client = await authenticateMachineClientSecret(
-        { store: clientStore, clock: this.clock, resource: this.config.resource },
+        { store: clientStore, clock: operationClock, resource: this.config.resource },
         clientId,
         clientSecret,
       );
       if (!client) throw new OAuthError("invalid_client", "Client authentication failed", 401);
       const scopes = resolveClientCredentialsScope(input.scope, client.allowedScopes, this.config.scopeCatalog);
       if (input.resource !== undefined && input.resource !== this.config.resource) throw new OAuthError("invalid_target", "resource does not match the configured resource");
-      const accessToken = await signAccessToken({ subject: clientId, clientId, scopes, machine: true }, this.config, this.clock);
+      const accessToken = await signAccessToken({ subject: clientId, clientId, scopes, machine: true }, this.config, operationClock);
       await writeTokenAudit(this.audit, {
-        occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "success",
+        occurredAt: new Date(operationClock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "success",
         clientId, subject: clientId, scopes, resource: this.config.resource,
       });
       return { access_token: accessToken, token_type: "Bearer", expires_in: this.config.accessTokenTtlSeconds, scope: scopeString(scopes) };
     } catch (error) {
       await writeTokenAudit(this.audit, {
-        occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "failure",
+        occurredAt: new Date(operationClock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "failure",
         clientId, reason: error instanceof OAuthError ? error.code : "internal_error",
       });
       throw error;
@@ -189,24 +191,12 @@ export class OAuthTokenUseCase {
   /** RFC 7009: always succeeds (the adapter returns 200). An unknown or
    *  already-revoked token is a no-op — it never leaks existence via 4xx. */
   async revoke(refreshToken: string | undefined): Promise<void> {
-    const nowIso = new Date(this.clock.nowMs()).toISOString();
-    let revoked = false;
-    if (refreshToken) {
-      const existing = await this.store.findRefreshToken(sha256Hex(refreshToken));
-      if (existing) {
-        await this.store.revokeRefreshTokenFamily(existing.familyId, nowIso);
-        revoked = true;
-      }
-    }
-    await writeTokenAudit(this.audit, {
-      occurredAt: nowIso, event: "oauth.revoke", status: "success",
-      reason: revoked ? undefined : "unrecognized_token",
-    });
+    await revokeRefreshToken({ store: this.store, clock: this.clock, audit: this.audit }, refreshToken);
   }
 
-  private async consumeValidCode(input: AuthorizationCodeGrantInput): Promise<AuthCodeRecord> {
+  private async consumeValidCode(input: AuthorizationCodeGrantInput, clock: ClockPort): Promise<AuthCodeRecord> {
     const code = requiredStr(input.code, "code"), expected = expectedStoredDcrGrantGeneration(this.config);
-    const record = await this.store.consumeAuthCode(sha256Hex(code), new Date(this.clock.nowMs()).toISOString(), expected, this.config.resource);
+    const record = await this.store.consumeAuthCode(sha256Hex(code), new Date(clock.nowMs()).toISOString(), expected, this.config.resource);
     if (!record || !hasExpectedGrantGeneration(record, expected) || record.resource !== this.config.resource) throw new OAuthError("invalid_grant", "Authorization code is invalid");
     const redirectUri = record.redirectUri;
     try { assertOAuthRedirectEntry(redirectUri); } catch { throw new OAuthError("invalid_grant", "Authorization code is invalid"); }
@@ -218,26 +208,25 @@ export class OAuthTokenUseCase {
     }
     return record;
   }
-  private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string): Promise<{ response: UserTokenResponse; scopes: string[] }> {
+  private async tokenResponse(record: AuthCodeRecord | RefreshTokenRecord, refreshToken: string, clock: ClockPort): Promise<{ response: UserTokenResponse; scopes: string[] }> {
     const scopes = storedScopes(record.scopes, this.config.scopeCatalog);
-    const accessToken = await signAccessToken({ subject: record.subject, clientId: record.clientId, scopes }, this.config, this.clock);
+    const accessToken = await signAccessToken({ subject: record.subject, clientId: record.clientId, scopes }, this.config, clock);
     return { scopes, response: {
       access_token: accessToken, token_type: "Bearer",
       expires_in: this.config.accessTokenTtlSeconds, refresh_token: refreshToken,
       scope: scopeString(scopes),
     } };
   }
-
-  private async auditToken(event: "oauth.token.authorization_code" | "oauth.token.refresh", status: "success", record: AuthCodeRecord | RefreshTokenRecord): Promise<void> {
+  private async auditToken(event: "oauth.token.authorization_code" | "oauth.token.refresh", status: "success", record: AuthCodeRecord | RefreshTokenRecord, clock: ClockPort): Promise<void> {
     await writeTokenAudit(this.audit, {
-      occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status,
+      occurredAt: new Date(clock.nowMs()).toISOString(), event, status,
       clientId: record.clientId, subject: record.subject, resource: this.config.resource, scopes: record.scopes,
     });
   }
 
-  private async auditFailure(event: "oauth.token.authorization_code" | "oauth.token.refresh", error: unknown, clientId?: string): Promise<void> {
+  private async auditFailure(event: "oauth.token.authorization_code" | "oauth.token.refresh", error: unknown, clientId: string | undefined, clock: ClockPort): Promise<void> {
     await writeTokenAudit(this.audit, {
-      occurredAt: new Date(this.clock.nowMs()).toISOString(), event, status: "failure",
+      occurredAt: new Date(clock.nowMs()).toISOString(), event, status: "failure",
       clientId, reason: error instanceof OAuthError ? error.code : "internal_error",
     });
   }

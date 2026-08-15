@@ -277,6 +277,15 @@ Run before S2.
 | HF.2 | `IdentityPort` throws `OAuthError("access_denied", 401)` | Same HTTP 401 body on Fastify, Express, and Hono. |
 | HF.3 | Non-OAuth error thrown inside a handler | 500 with a top-level string error body, never a framework-specific envelope. |
 
+### T1.TC — token-operation clock snapshots
+
+| # | Scenario | Assert |
+|---|---|---|
+| TC.1 | Authorization-code exchange succeeds with a second clock read scripted invalid | Exactly one underlying read; code-consumption time, access JWT dates, refresh expiry, and success audit share the initial snapshot. |
+| TC.2 | Refresh succeeds with a second clock read scripted invalid | Exactly one underlying read; rotation, successor expiry, access JWT dates, and success audit share the initial snapshot. Compensation reuses the same rotation timestamp. |
+| TC.3 | Client credentials succeeds with a second clock read scripted invalid | Exactly one underlying read; secret-expiry decision, access JWT dates, and success audit share the initial snapshot. |
+| TC.4 | Initial snapshot is non-canonical or a token TTL crosses the canonical upper bound | Direct use-case rejects before code consumption, refresh rotation, client-store lookup, signing, or audit. Bridge returns sanitized 500 `internal_error`. |
+
 ### T1.HB — Hono OAuth request-body bound
 
 | # | Scenario | Assert |
