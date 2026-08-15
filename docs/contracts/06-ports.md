@@ -50,6 +50,19 @@ This amendment is deliberately limited to the proven access/consent JWT class.
 Console-pairing expiry remains the separate §17.5/B2-F6 slice; unrelated clock
 consumers are not refactored here.
 
+**Token-issuance amendment.** Each `OAuthTokenUseCase` issuance owner —
+authorization-code exchange, refresh rotation, and client credentials — takes
+one canonical initial snapshot before grant validation, client-store access, or
+OAuth store mutation. User-grant operations validate the larger of the access-
+and refresh-token TTL offsets; client credentials validates the access-token
+offset. The operation passes a `fixedClockSnapshot` through code consumption or
+rotation, client-secret expiry checks, JWT signing, refresh expiry, compensation,
+and success or failure audit construction. No later step reads the underlying
+port. An invalid initial snapshot or overflowing future offset escapes as an
+internal failure before state or audit work; the Bridge maps it to its sanitized
+500 `internal_error`, because no valid timestamp exists for an honest audit
+event. Revocation is not an issuance path and retains its single timestamp read.
+
 ## 6.2 `AuditPort`
 ```ts
 interface AuditPort { writeAuthEvent(event: AuthAuditEvent): Promise<void>; }

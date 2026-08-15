@@ -283,6 +283,13 @@ one target, while multiple distinct targets follow the existing post-validation
 `exchangeAuthorizationCode`/`refresh`/device. The `client_credentials` grant
 (§17.2, shipped S3b) returns `MachineTokenResponse`: identical except it has NO
 `refresh_token` member at all — not an optional one.)*
+- **Finite operation clock:** each of the authorization-code, refresh, and
+  client-credentials issuance operations takes exactly one §6.1 snapshot before
+  grant/authentication/store work and reuses it for every token, expiry,
+  mutation timestamp, compensation timestamp, and audit timestamp. A bad clock
+  or overflowing TTL offset is sanitized by Bridge as 500 `internal_error`
+  before mutation, token signing, or audit; an honest timestamp is never
+  fabricated.
 - **`exchangeAuthorizationCode`**: consumes the code (§7.3), verifies PKCE S256
   and client/redirect/resource binding, then `tokenResponse` parses the stored
   scopes and
