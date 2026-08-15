@@ -328,6 +328,7 @@ Run before S2.
 | S1a.9 | JSONL rotation and descriptor-bound append | Existing regular files append; a missing target is `0600`; a rename-and-recreate rotation directs the next complete JSONL line to the replacement file. (`test/audit-jsonl-file.test.ts`, `test/audit-jsonl-file-security.test.ts`) |
 | S1a.10 | JSONL mutation witnesses | Removing `O_NOFOLLOW` makes the symlink witness modify its victim; removing the descriptor regular-file check makes the device witness stop reporting a rejected target. |
 | S1a.11 | JSONL short-write framing | A controlled first short write holds its suffix while a second event starts; the same sink instance does not issue the second event's write until the first line completes, and the resulting file has two parseable lines in order. A retry failure after a positive prefix rolls the fragment back before a later event writes. (`test/audit-jsonl-file-security.test.ts`) |
+| S1a.12 | JSONL permanent-disable signal | An unverified partial-line rollback emits one fixed redacted stderr diagnostic and schedules the optional closed-reason `onDisable` hook exactly once on a detached turn after `writeAuthEvent` settles. Synchronous pre-await hook work therefore stays off the authentication promise path; a throwing or rejecting hook is contained. Later events do no file work and produce no duplicate signal. The factory forwards the option. Ordinary IO failures and verified rollback never call it. (`test/audit-jsonl-file-security.test.ts`, `test/audit-jsonl-file.test.ts`) |
 
 Notes:
 
