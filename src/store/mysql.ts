@@ -1,4 +1,5 @@
-import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
+import { createPool, type Pool, type PoolConnection, type PoolOptions, type RowDataPacket } from "mysql2/promise";
+import type { ClockPort } from "../ports/clock.ts";
 import type { AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
@@ -6,12 +7,18 @@ import {
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import { readMysqlStoreInstanceId, rotateMysqlStoreInstanceId } from "./mysql-instance.ts";
-import { commitMysqlConsentApproval, insertMysqlAuthCode } from "./mysql-consent.ts";
+import {
+  advanceMysqlSweepWatermark, commitMysqlConsentApproval,
+  consumeMysqlConsentJti, insertMysqlAuthCode,
+} from "./mysql-consent.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
   authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
   type AuthCodeRow, type RefreshTokenRow,
 } from "./mysql-schema.ts";
+import { StoreExpiryLifecycle } from "./expiry-lifecycle.ts";
+
+export const MYSQL_EXPIRY_REPLICA_SKEW_MS = 300_000;
 
 export class MysqlStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
@@ -19,16 +26,13 @@ export class MysqlStore implements StorePort {
   private closed = false;
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
-  constructor(pool: Pool, ownsPool = false) {
-    this.pool = pool;
-    this.ownsPool = ownsPool;
-  }
+  private readonly expiry = new StoreExpiryLifecycle(this, false, MYSQL_EXPIRY_REPLICA_SKEW_MS);
+  constructor(pool: Pool, ownsPool = false) { this.pool = pool; this.ownsPool = ownsPool; }
 
   async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
     return readMysqlStoreInstanceId(this.pool);
   }
-
   async rotateStoreInstanceId(): Promise<string> {
     this.ensureOpen();
     return this.transaction(async (conn) => rotateMysqlStoreInstanceId(conn));
@@ -66,16 +70,7 @@ export class MysqlStore implements StorePort {
   async consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean> {
     this.ensureOpen();
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
-    try {
-      await this.pool.query<ResultSetHeader>(
-        `INSERT INTO oauth_consent_jtis (jti, expires_at) VALUES (?, ?)`,
-        [jti, expiresAtIso],
-      );
-      return true;
-    } catch (error) {
-      if (isDuplicateEntry(error)) return false;
-      throw error;
-    }
+    return this.transaction(async (conn) => consumeMysqlConsentJti(conn, jti, expiresAtIso));
   }
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
@@ -171,6 +166,7 @@ export class MysqlStore implements StorePort {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
     await this.transaction(async (conn) => {
+      await advanceMysqlSweepWatermark(conn, nowIso);
       await conn.query(`DELETE FROM oauth_auth_codes WHERE expires_at < ?`, [nowIso]);
       await conn.query(`DELETE FROM oauth_consent_jtis WHERE expires_at < ?`, [nowIso]);
       // Two-step (review H1): SELECT exact dead rows by PK, then DELETE by hash — a
@@ -187,7 +183,7 @@ export class MysqlStore implements StorePort {
       await conn.query(`DELETE FROM oauth_refresh_token_families WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens)`);
     });
   }
-
+  startExpiryCollection(clock: ClockPort): void { this.ensureOpen(); this.expiry.start(clock); }
   /** Run idempotent migrations + boot-time config assertions (strict mode, binary collation).
    *  MUST be called once before first use; createMysqlStore does this. */
   async migrate(): Promise<void> {
@@ -195,16 +191,18 @@ export class MysqlStore implements StorePort {
     const conn = await this.pool.getConnection();
     try { await migrateMysqlStore(conn); }
     finally { try { conn.release(); } catch { /* swallow cleanup */ } }
+    this.ensureOpen();
+    this.expiry.markReady();
   }
-
   async close(): Promise<void> {
     if (!this.closed) {
+      await this.expiry.stop();
+      if (this.closed) return;
       this.closed = true;
       // Only end a pool this store created; never a caller-supplied shared pool.
       if (this.ownsPool) await this.pool.end();
     }
   }
-
   /** §12.3 addendum 13: acquire OUTSIDE the try; begin inside behind a begun-guard;
    *  release in finally on EVERY path; swallow cleanup so the original error propagates.
    *  READ COMMITTED drops InnoDB gap locks (no sweep/rotate deadlock). */
@@ -241,7 +239,7 @@ export async function createMysqlStore(config: string | PoolOptions): Promise<My
     await store.migrate();
   } catch (error) {
     // Do not leak the pool if boot-time config assertions (strict mode, collation, engine) fail.
-    try { await pool.end(); } catch { /* swallow cleanup */ }
+    try { await store.close(); } catch { /* swallow cleanup */ }
     throw error;
   }
   return store;

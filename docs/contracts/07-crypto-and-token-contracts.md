@@ -59,10 +59,15 @@ pass the returned canonical string unchanged to `commitConsentApproval`.
 A JTI accepted once MUST remain rejected in a surviving conforming store through
 the signed `exp`, including after a sweep whose `now` is before or exactly equal
 to that expiry. A sweep after the signed expiry MAY collect the tombstone because
-the JWT can no longer pass expiry verification. SQLite and MySQL preserve this
-state across process replacement; `MemoryStore` remains explicitly process-local
-and cannot preserve any tombstone across destruction of its owning process or
-across independent replicas.
+the JWT can no longer pass expiry verification on a clock at or beyond that
+sweep. Every sweep also advances a monotonic store watermark in the same
+transaction as deletion. A later JTI consume or approval commit whose original
+signed expiry is strictly before that watermark MUST reject even when the
+physical tombstone was collected. This fence prevents a lagging replica or a
+post-restart backward clock from resurrecting a replay after another replica
+swept it. SQLite persists the fence across reopen; MySQL shares it across every
+replica using the database. `MemoryStore` keeps it only for that object/process
+lifetime and remains unable to preserve tombstones across independent replicas.
 
 Replay rejection occurs before authorization-code storage and before an
 `oauth.authorize.approve` success audit. Before the atomic approval commit,
@@ -88,7 +93,7 @@ and does not consume the JTI.
 | Lifecycle: shorter TTL after mint/restart | A token minted under a longer TTL retains its signed expiry. Approval under a shorter current TTL records the original signed expiry; sweeping at `approval time + shorter TTL` does not restore eligibility. |
 | Lifecycle: longer TTL after mint/restart | The tombstone is not extended to the new TTL. It remains only through the token's earlier signed expiry. |
 | Lifecycle: sweep boundary | Sweep before or exactly at signed expiry retains the JTI. Sweep after signed expiry may delete it. A newly started approval then fails at JWT verification; an approval verified before expiry but delayed past it fails at the post-consume commit recheck. Neither path stores a code or emits success. |
-| Lifecycle: store adapters | Memory, SQLite, and MySQL have the same supplied-expiry and sweep semantics. Only persistent adapters claim process-restart durability; shared storage is required across replicas. |
+| Lifecycle: store adapters | Memory, SQLite, and MySQL have the same supplied-expiry, sweep, and watermark-fence semantics. SQLite persists the fence across reopen; MySQL shares it across replicas. Memory remains process-local. |
 | Semantic behavior | First use returns an authorization code. Any second approval while the JWT is otherwise valid returns direct `invalid_grant` and cannot mint another code. At/after JWT expiry the existing direct `invalid_consent` path wins. |
 | Forbidden effects | Current TTL must not influence an already-signed token's tombstone. Replay must not generate/save a code, emit approval success, extend an existing tombstone, or redirect success. A sweep race may reinsert only the same signed expired timestamp before the commit recheck fails; it cannot make the approval successful. |
 | Positive proof | An adjacent valid first-use approval remains green and records the exact verified signed expiry. Shared conformance proves all stores retain that supplied expiry through sweep. JWT boundary tests preserve consent verification at the latest mint time whose signed `exp` remains canonical; the access-token upper-bound proof stays unchanged. |

@@ -81,7 +81,19 @@ JTIs — **all secrets stored only as SHA-256 hashes**; there is **no separate g
 table** (prior grants are derived from active refresh-token records — §9.3).
 Methods: `saveAuthCode`, `consumeAuthCode`, `saveRefreshToken`, `rotateRefreshToken`,
 `revokeRefreshTokenFamily`, `findRefreshToken`, `consumeConsentJti`,
-`findGrantedScopes`, `sweepExpired`, `close`. Full shapes in §12.
+`findGrantedScopes`, `sweepExpired`, optional `startExpiryCollection`, and
+`close`. Full shapes in §12. `Bridge` invokes the optional lifecycle hook with
+its exact configured `ClockPort` only after boot validation succeeds; a direct
+store consumer invokes it after the store is ready. The three reference stores
+then own the §12.2 non-overlapping timer, so deployers do not wire one. A custom
+store may omit the hook only when it provides an equivalent lifecycle using the
+same configured clock; `close()` must stop any owned collection.
+Persistent stores also keep §12's monotonic sweep watermark: tombstone deletion
+and watermark advancement are atomic, and later JTI consumption/approval is
+fenced by the original supplied signed expiry.
+Automatic MySQL collection additionally subtracts §12's explicit five-minute
+replica-clock bound from its local aggregate clock before sweeping every record
+class. Direct multi-replica callers of `sweepExpired` own the same coordination.
 Under the 0.3.3 consent correction,
 `consumeConsentJti(jti, expiresAtIso)` receives the canonical verified signed JWT
 expiry from the caller and MUST persist that exact expiry; `sweepExpired` retains

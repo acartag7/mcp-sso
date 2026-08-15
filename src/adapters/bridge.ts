@@ -86,6 +86,7 @@ export class Bridge {
     if (this.cimd.enabled) this.cimd.assertCapProfile(snapshot.cimdTransport, snapshot.cimdResolver); // boot-validate the cap profile
     this.auth = new OAuthAuthorizationUseCase({ ...snapshot, cimd: this.cimd });
     this.token = new OAuthTokenUseCase(snapshot);
+    snapshot.store.startExpiryCollection?.(snapshot.clock);
   }
 
   async handleAuthorizationServerMetadata(): Promise<NormResponse> {

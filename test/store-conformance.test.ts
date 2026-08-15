@@ -39,6 +39,66 @@ test("one SQLite file preserves its consent binding across reopen", async () => 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("one SQLite file preserves its sweep fence across reopen", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-sweep-fence-"));
+  const file = join(dir, "oauth.sqlite");
+  const expiresAt = "2026-07-03T12:30:00.000Z";
+  try {
+    const first = openSqliteStore(file);
+    assert.equal(await first.consumeConsentJti("restart-sweep-jti", expiresAt), true);
+    await first.sweepExpired("2026-07-03T12:30:00.001Z");
+    await first.close();
+
+    const reopened = openSqliteStore(file);
+    assert.equal(await reopened.consumeConsentJti("restart-sweep-jti", expiresAt), false);
+    assert.equal(await reopened.consumeConsentJti("restart-sweep-jti", "2026-07-03T13:00:00.000Z"), true);
+    await reopened.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SQLite migrates the pre-fence metadata schema before collection starts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-sweep-fence-migration-"));
+  const file = join(dir, "oauth.sqlite");
+  const legacy = new DatabaseSync(file);
+  try {
+    legacy.exec("CREATE TABLE oauth_store_metadata (\n"
+      + "    singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),\n"
+      + "    instance_id TEXT UNIQUE NOT NULL\n"
+      + "  ) STRICT");
+    legacy.prepare(
+      "INSERT INTO oauth_store_metadata (singleton, instance_id) VALUES (1, ?)",
+    ).run("0123456789abcdefghijklmn");
+  } finally { legacy.close(); }
+  if (process.platform !== "win32") chmodSync(file, 0o600);
+  try {
+    const migrated = openSqliteStore(file);
+    const columns = new DatabaseSync(file, { readOnly: true });
+    try {
+      assert.ok((columns.prepare("PRAGMA table_info(oauth_store_metadata)").all() as { name: string }[])
+        .some((column) => column.name === "swept_through"));
+    } finally { columns.close(); }
+    await migrated.close();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("SqliteStore rejects a malformed persisted sweep watermark during boot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-sweep-fence-corrupt-"));
+  const file = join(dir, "oauth.sqlite");
+  try {
+    const store = openSqliteStore(file);
+    await store.close();
+    const db = new DatabaseSync(file);
+    db.prepare(
+      "UPDATE oauth_store_metadata SET swept_through = ? WHERE singleton = 1",
+    ).run("malformed");
+    db.close();
+    assert.throws(
+      () => openSqliteStore(file),
+      /sqlite: unsafe persistent state: database initialization failed/,
+    );
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("concurrent SQLite first boot shares one initialized binding", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-store-instance-race-"));
   const file = join(dir, "oauth.sqlite");

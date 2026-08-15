@@ -12,6 +12,7 @@ import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import type { ConsolePairingIdentity } from "../src/identity/console-pairing.ts";
 import { generateRefreshToken, parseRefreshFamilyId, pkceChallenge, sha256Hex } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { STORE_EXPIRY_SWEEP_INTERVAL_MS } from "../src/store/expiry-scheduler.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
 const REDIRECT = "https://client.test/callback";
@@ -99,6 +100,25 @@ test("bridge: full OAuth flow (metadata -> register -> authorize -> approve -> t
 
   const revoked = await b.handleRevoke(req({ body: { token: refreshToken } }));
   assert.equal(revoked.status, 200);
+});
+
+test("bridge: expiry collection uses the exact configured clock", async (t) => {
+  t.mock.timers.enable({
+    apis: ["setTimeout", "Date"],
+    now: NOW_MS + STORE_EXPIRY_SWEEP_INTERVAL_MS * 10,
+  });
+  const store = new MemoryStore();
+  const clock = new FakeClock(NOW_MS);
+  const seen: string[] = [];
+  store.sweepExpired = async (nowIso) => { seen.push(nowIso); };
+  new Bridge({ config: config(), store, clock, audit: new MemoryAudit() });
+
+  t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+  for (let turn = 0; turn < 100 && seen.length === 0; turn++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.deepEqual(seen, [new Date(NOW_MS).toISOString()]);
+  await store.close();
 });
 
 test("bridge: handleRevoke maps an unexpected store throw to the §9.5 500 body (no internals leaked)", async () => {

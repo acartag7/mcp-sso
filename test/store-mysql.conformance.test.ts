@@ -13,7 +13,8 @@ import { createHash } from "node:crypto";
 import { before, after, beforeEach, test } from "node:test";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import { STORED_DCR_GRANT_GENERATION, type StorePort } from "../src/ports/store.ts";
-import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
+import { MYSQL_EXPIRY_REPLICA_SKEW_MS, MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
+import { STORE_EXPIRY_SWEEP_INTERVAL_MS } from "../src/store/expiry-scheduler.ts";
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
 import { MYSQL_SUBJECT_CAPACITY } from "../src/store/mysql-subject-schema.ts";
 import { entraIssuer, validateEntraIdToken } from "../src/identity/entra.ts";
@@ -70,6 +71,7 @@ beforeEach(async () => {
   await admin.query("DELETE FROM oauth_refresh_token_families");
   await admin.query("DELETE FROM oauth_auth_codes");
   await admin.query("DELETE FROM oauth_consent_jtis");
+  await admin.query("UPDATE oauth_store_metadata SET swept_through = NULL WHERE singleton = 1");
 });
 
 after(async () => {
@@ -84,6 +86,10 @@ after(async () => {
 // creates, so ownsPool=true). Tables already exist.
 function make(): StorePort {
   return new MysqlStore(createPool(MYSQL_URL as string), true);
+}
+
+async function makeMigrated(): Promise<StorePort> {
+  return createMysqlStore(MYSQL_URL as string);
 }
 
 if (RUN) {
@@ -144,6 +150,75 @@ if (RUN) {
     }
   });
 
+  test("MysqlStore: a shared sweep fence blocks replay through a slower replica", async () => {
+    const sweeper = await createMysqlStore(MYSQL_URL as string);
+    const slowerReplica = await createMysqlStore(MYSQL_URL as string);
+    const expiresAt = "2026-07-03T12:30:00.000Z";
+    const sweptAt = "2026-07-03T12:30:00.001Z";
+    const codeHash = sha256Hex("cross-replica-sweep-fence-code");
+    try {
+      assert.equal(await sweeper.consumeConsentJti("cross-replica-flow-jti", expiresAt), true);
+      await sweeper.sweepExpired(sweptAt);
+      assert.equal(await slowerReplica.consumeConsentJti("cross-replica-flow-jti", expiresAt), false);
+
+      const binding = await slowerReplica.getStoreInstanceId();
+      const result = await slowerReplica.commitConsentApproval(
+        binding, "cross-replica-approval-jti", expiresAt, {
+          codeHash, clientId: "client", subject: "subject",
+          redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
+          scopes: ["mcp:read"], codeChallenge: "challenge", codeChallengeMethod: "S256",
+          expiresAt: FUTURE,
+        });
+      assert.equal(result, "replayed");
+      assert.equal(await slowerReplica.consumeAuthCode(codeHash, NOW), null);
+      assert.equal(await slowerReplica.consumeConsentJti("cross-replica-flow-jti", FUTURE), true);
+    } finally {
+      await sweeper.close();
+      await slowerReplica.close();
+    }
+  });
+
+  test("MysqlStore: scheduled collection preserves artifacts across the replica-skew boundary", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
+    const ahead = await createMysqlStore(MYSQL_URL as string);
+    const slower = await createMysqlStore(MYSQL_URL as string);
+    const slowExpiry = new Date(Date.parse(NOW) + 1).toISOString();
+    const codeHash = sha256Hex("replica-skew-auth-code");
+    const tokenHash = sha256Hex("replica-skew-refresh");
+    let scheduledNow: string | undefined;
+    const sweepExpired = ahead.sweepExpired.bind(ahead);
+    ahead.sweepExpired = async (nowIso) => { scheduledNow = nowIso; };
+    try {
+      await ahead.saveAuthCode({
+        codeHash, clientId: "client", subject: "subject",
+        redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
+        scopes: ["mcp:read"], codeChallenge: "challenge", codeChallengeMethod: "S256",
+        expiresAt: slowExpiry,
+      });
+      await ahead.saveRefreshToken(refresh(
+        "replica-skew-refresh", "replica-skew-family", null, slowExpiry,
+      ));
+      ahead.startExpiryCollection({
+        nowMs: () => Date.parse(NOW) + MYSQL_EXPIRY_REPLICA_SKEW_MS,
+      });
+      t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+      await settleUntil(() => scheduledNow !== undefined);
+      assert.equal(scheduledNow, NOW, "the production MySQL scheduler must subtract the replica horizon");
+      if (scheduledNow === undefined) assert.fail("the production MySQL scheduler did not run");
+      await sweepExpired(scheduledNow);
+
+      assert.equal((await slower.consumeAuthCode(codeHash, NOW))?.codeHash, codeHash);
+      assert.equal((await slower.rotateRefreshToken(
+        tokenHash,
+        refresh("replica-skew-successor", "replica-skew-family", tokenHash, FUTURE),
+        NOW,
+      ))?.tokenHash, tokenHash);
+    } finally {
+      await ahead.close();
+      await slower.close();
+    }
+  });
+
   test("MysqlStore: malformed persisted binding fails migration", async () => {
     const [rows] = await admin!.query<RowDataPacket[]>(
       "SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1",
@@ -163,6 +238,50 @@ if (RUN) {
         "UPDATE oauth_store_metadata SET instance_id = ? WHERE singleton = 1",
         [valid],
       );
+    }
+  });
+
+  test("MysqlStore: malformed persisted sweep watermark fails migration", async () => {
+    try {
+      await admin!.query(
+        "UPDATE oauth_store_metadata SET swept_through = ? WHERE singleton = 1",
+        ["malformed"],
+      );
+      await assert.rejects(
+        createMysqlStore(MYSQL_URL as string),
+        /sweptThrough must be a UTC ISO timestamp with exactly 3 ms digits/,
+      );
+    } finally {
+      await admin!.query(
+        "UPDATE oauth_store_metadata SET swept_through = NULL WHERE singleton = 1",
+      );
+    }
+  });
+
+  test("MysqlStore migrates the pre-fence metadata schema", async () => {
+    await admin!.query("ALTER TABLE oauth_store_metadata DROP COLUMN swept_through");
+    let migrated: StorePort | undefined;
+    try {
+      migrated = await createMysqlStore(MYSQL_URL as string);
+      const [columns] = await admin!.query<RowDataPacket[]>(
+        `SELECT COLUMN_TYPE, IS_NULLABLE, COLLATION_NAME FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_store_metadata'
+         AND COLUMN_NAME = 'swept_through'`,
+      );
+      assert.deepEqual(columns, [{
+        COLUMN_TYPE: "varchar(24)", IS_NULLABLE: "YES", COLLATION_NAME: "utf8mb4_bin",
+      }]);
+    } finally {
+      await migrated?.close();
+      const [columns] = await admin!.query<RowDataPacket[]>(
+        `SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'oauth_store_metadata' AND COLUMN_NAME = 'swept_through'`,
+      );
+      if (columns.length === 0) {
+        await admin!.query("ALTER TABLE oauth_store_metadata ADD COLUMN swept_through VARCHAR(24) NULL");
+      }
+      const restored = await createMysqlStore(MYSQL_URL as string);
+      await restored.close();
     }
   });
 
@@ -406,7 +525,7 @@ if (RUN) {
     );
   });
 
-  runStoreConformance("MysqlStore", make);
+  runStoreConformance("MysqlStore", makeMigrated);
 
   test("MysqlStore: two store instances serialize matching and mismatching resource consumes", async () => {
     const wrongResourceStore = make();
@@ -719,4 +838,11 @@ function refresh(rawToken: string, familyId: string, previousTokenHash: string |
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function settleUntil(done: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 100 && !done(); turn++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(done(), true, "scheduled work did not settle");
 }

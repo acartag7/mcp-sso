@@ -1,6 +1,7 @@
 // SqliteStore — persistent StorePort + user ClientStore (contracts §6.4, §12.3).
 
 import { DatabaseSync } from "node:sqlite";
+import type { ClockPort } from "../ports/clock.ts";
 import type {
   AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
@@ -11,7 +12,10 @@ import {
 } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
 import { readSqliteStoreInstanceId, rotateSqliteStoreInstanceId } from "./sqlite-instance.ts";
-import { commitSqliteConsentApproval, insertSqliteAuthCode } from "./sqlite-consent.ts";
+import {
+  advanceSqliteSweepWatermark, commitSqliteConsentApproval,
+  consumeSqliteConsentJti, insertSqliteAuthCode,
+} from "./sqlite-consent.ts";
 import {
   admitSqliteFile, closeSqliteAdmission, sqlitePath, SqliteStateError,
   verifySqlitePathIdentity,
@@ -22,12 +26,14 @@ import {
   validateRotation, type AuthCodeRow, type RefreshTokenRow,
 } from "./sqlite-records.ts";
 import { SqliteClientStoreBase } from "./sqlite-clients.ts";
+import { StoreExpiryLifecycle } from "./expiry-lifecycle.ts";
 
 export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
-  constructor(db: DatabaseSync) {
-    super(db);
+  private readonly expiry = new StoreExpiryLifecycle(this);
+  constructor(db: DatabaseSync, options: { schemaReady?: true } = {}) {
+    super(db); if (options.schemaReady === true) this.expiry.markReady();
   }
 
   async getStoreInstanceId(): Promise<string> {
@@ -75,10 +81,7 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   async consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean> {
     this.ensureOpen();
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso"); // addendum 10: source left this unvalidated
-    const result = this.db.prepare(
-      `INSERT INTO oauth_consent_jtis (jti, expires_at) VALUES (?, ?) ON CONFLICT(jti) DO NOTHING`,
-    ).run(jti, expiresAtIso);
-    return (result.changes ?? 0) > 0;
+    return this.transaction(() => consumeSqliteConsentJti(this.db, jti, expiresAtIso));
   }
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
@@ -174,6 +177,7 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
     this.transaction(() => {
+      advanceSqliteSweepWatermark(this.db, nowIso);
       this.db.prepare(`DELETE FROM oauth_auth_codes WHERE expires_at < ?`).run(nowIso);
       this.db.prepare(`DELETE FROM oauth_consent_jtis WHERE expires_at < ?`).run(nowIso);
       // Family-validity retention (addendum 8): delete a refresh token (consumed or
@@ -187,6 +191,10 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
       this.db.prepare(`DELETE FROM oauth_refresh_token_families WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens)`).run();
     });
   }
+
+  startExpiryCollection(clock: ClockPort): void { this.ensureOpen(); this.expiry.start(clock); }
+
+  override async close(): Promise<void> { await this.expiry.stop(); await super.close(); }
 
   private transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
@@ -218,7 +226,7 @@ export function openSqliteStore(filename: string): SqliteStore {
     admissionOpen = false;
     closeSqliteAdmission(admission.fd);
     migrateSqliteStore(db);
-    return new SqliteStore(db);
+    return new SqliteStore(db, { schemaReady: true });
   } catch (error) {
     try { db?.close(); } catch { /* preserve the boot failure */ }
     if (admissionOpen) {
@@ -233,7 +241,7 @@ function openAndMigrate(path: ":memory:"): SqliteStore {
   const db = new DatabaseSync(path);
   try {
     migrateSqliteStore(db);
-    return new SqliteStore(db);
+    return new SqliteStore(db, { schemaReady: true });
   } catch (error) {
     try { db.close(); } catch { /* preserve the migration failure */ }
     throw error;

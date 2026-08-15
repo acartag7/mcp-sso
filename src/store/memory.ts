@@ -4,9 +4,11 @@
 // active refresh records (no grant table).
 
 import { randomBytes } from "node:crypto";
+import type { ClockPort } from "../ports/clock.ts";
 import type {
   AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
+import { StoreExpiryLifecycle } from "./expiry-lifecycle.ts";
 import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertGrantGeneration, assertStoreInstanceId,
   assertRefreshResource, assertSha256Hex, assertUtcIsoTimestamp, grantGenerationForWrite,
@@ -20,10 +22,12 @@ export class MemoryStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
   private closed = false;
+  private readonly expiry = new StoreExpiryLifecycle(this, true);
   private readonly authCodes = new Map<string, AuthCodeRecord>();
   private readonly refreshTokens = new Map<string, StoredRefresh>();
   private readonly families = new Map<string, StoredFamily>();
   private readonly consentJtis = new Map<string, string>();
+  private sweptThrough: string | null = null;
   private storeInstanceId = randomBytes(18).toString("base64url");
 
   async getStoreInstanceId(): Promise<string> {
@@ -46,6 +50,7 @@ export class MemoryStore implements StorePort {
     validateAuthCode(authCode);
     if (expectedStoreInstanceId !== this.storeInstanceId) return "binding_mismatch";
     if (this.consentJtis.has(jti)) return "replayed";
+    if (this.sweptThrough !== null && expiresAtIso < this.sweptThrough) return "replayed";
     this.consentJtis.set(jti, expiresAtIso);
     this.authCodes.set(authCode.codeHash, {
       ...authCode, grantGeneration: grantGenerationForWrite(authCode.grantGeneration),
@@ -74,6 +79,7 @@ export class MemoryStore implements StorePort {
     this.ensureOpen();
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso"); // addendum 10: source left this unvalidated
     if (this.consentJtis.has(jti)) return false;
+    if (this.sweptThrough !== null && expiresAtIso < this.sweptThrough) return false;
     this.consentJtis.set(jti, expiresAtIso);
     return true;
   }
@@ -158,6 +164,7 @@ export class MemoryStore implements StorePort {
   async sweepExpired(nowIso: string): Promise<void> {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
+    if (this.sweptThrough === null || this.sweptThrough < nowIso) this.sweptThrough = nowIso;
     for (const [hash, record] of this.authCodes) if (record.expiresAt < nowIso) this.authCodes.delete(hash);
     for (const [jti, expiresAt] of this.consentJtis) if (expiresAt < nowIso) this.consentJtis.delete(jti);
     // Family-validity retention (addendum 8): delete a refresh token (consumed or
@@ -174,7 +181,13 @@ export class MemoryStore implements StorePort {
     for (const familyId of [...this.families.keys()]) if (!liveFamilies.has(familyId)) this.families.delete(familyId);
   }
 
+  startExpiryCollection(clock: ClockPort): void {
+    this.ensureOpen();
+    this.expiry.start(clock);
+  }
+
   async close(): Promise<void> {
+    await this.expiry.stop();
     this.closed = true;
   }
 

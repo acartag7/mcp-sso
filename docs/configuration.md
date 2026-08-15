@@ -156,6 +156,26 @@ existing database must be owned by that user with exact mode `0600` and one
 link. On Windows, use a deployer-controlled private directory ACL; POSIX mode
 bits do not enforce Windows access control.
 
+The three reference OAuth stores collect expired state themselves. After boot
+validation, `Bridge` binds each ready store to its exact configured `ClockPort`;
+the store then owns one unref'd, non-overlapping five-minute sweep and stops it
+during `close()`, so deployers do not need an application `setInterval`. A
+direct store consumer calls `startExpiryCollection(clock)` after readiness. A
+direct `new SqliteStore(db)` rejects that binding unless a caller that owns
+migration constructs it with `{ schemaReady: true }` after migration succeeds.
+Collection keeps the
+existing signed-expiry and refresh-family boundaries: a consent JTI or refresh
+family with any member valid at the sweep timestamp remains. A fixed
+`[mcp-sso] store expiry sweep failed` diagnostic means collection could not run;
+the store retries on its next ordinary interval. Custom `StorePort`
+implementations must own an equivalent lifecycle using the Bridge clock.
+SQLite persists and MySQL shares a monotonic sweep fence, so a later process or
+slower replica cannot re-admit a collected JTI with its original signed expiry.
+Automatic MySQL sweeps also retain every record for an extra five-minute
+replica-clock window. All replicas sharing that database must keep their
+configured `ClockPort`s within five minutes; a manual multi-replica sweeper must
+subtract the same horizon before calling `sweepExpired`.
+
 ## api-key-gateway example (`BACKEND_*`)
 
 Only for [`examples/api-key-gateway`](../examples/api-key-gateway) (SSO in front of
