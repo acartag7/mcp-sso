@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import type {
   AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
+import { StoreExpiryScheduler } from "./expiry-scheduler.ts";
 import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertGrantGeneration, assertStoreInstanceId,
   assertRefreshResource, assertSha256Hex, assertUtcIsoTimestamp, grantGenerationForWrite,
@@ -20,6 +21,7 @@ export class MemoryStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
   private closed = false;
+  private readonly expiryScheduler = new StoreExpiryScheduler(this);
   private readonly authCodes = new Map<string, AuthCodeRecord>();
   private readonly refreshTokens = new Map<string, StoredRefresh>();
   private readonly families = new Map<string, StoredFamily>();
@@ -175,6 +177,7 @@ export class MemoryStore implements StorePort {
   }
 
   async close(): Promise<void> {
+    await this.expiryScheduler.stop();
     this.closed = true;
   }
 

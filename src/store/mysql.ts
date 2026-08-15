@@ -12,6 +12,7 @@ import {
   authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
   type AuthCodeRow, type RefreshTokenRow,
 } from "./mysql-schema.ts";
+import { StoreExpiryScheduler } from "./expiry-scheduler.ts";
 
 export class MysqlStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
@@ -19,16 +20,15 @@ export class MysqlStore implements StorePort {
   private closed = false;
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
+  private readonly expiryScheduler = new StoreExpiryScheduler(this);
   constructor(pool: Pool, ownsPool = false) {
-    this.pool = pool;
-    this.ownsPool = ownsPool;
+    this.pool = pool; this.ownsPool = ownsPool;
   }
 
   async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
     return readMysqlStoreInstanceId(this.pool);
   }
-
   async rotateStoreInstanceId(): Promise<string> {
     this.ensureOpen();
     return this.transaction(async (conn) => rotateMysqlStoreInstanceId(conn));
@@ -187,7 +187,6 @@ export class MysqlStore implements StorePort {
       await conn.query(`DELETE FROM oauth_refresh_token_families WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens)`);
     });
   }
-
   /** Run idempotent migrations + boot-time config assertions (strict mode, binary collation).
    *  MUST be called once before first use; createMysqlStore does this. */
   async migrate(): Promise<void> {
@@ -199,6 +198,8 @@ export class MysqlStore implements StorePort {
 
   async close(): Promise<void> {
     if (!this.closed) {
+      await this.expiryScheduler.stop();
+      if (this.closed) return;
       this.closed = true;
       // Only end a pool this store created; never a caller-supplied shared pool.
       if (this.ownsPool) await this.pool.end();
@@ -241,7 +242,7 @@ export async function createMysqlStore(config: string | PoolOptions): Promise<My
     await store.migrate();
   } catch (error) {
     // Do not leak the pool if boot-time config assertions (strict mode, collation, engine) fail.
-    try { await pool.end(); } catch { /* swallow cleanup */ }
+    try { await store.close(); } catch { /* swallow cleanup */ }
     throw error;
   }
   return store;

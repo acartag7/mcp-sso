@@ -22,13 +22,12 @@ import {
   validateRotation, type AuthCodeRow, type RefreshTokenRow,
 } from "./sqlite-records.ts";
 import { SqliteClientStoreBase } from "./sqlite-clients.ts";
+import { StoreExpiryScheduler } from "./expiry-scheduler.ts";
 
 export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
-  constructor(db: DatabaseSync) {
-    super(db);
-  }
+  private readonly expiryScheduler = new StoreExpiryScheduler(this);
 
   async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
@@ -186,6 +185,11 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
       // delete ANY empty family (not only revoked ones).
       this.db.prepare(`DELETE FROM oauth_refresh_token_families WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens)`).run();
     });
+  }
+
+  override async close(): Promise<void> {
+    await this.expiryScheduler.stop();
+    await super.close();
   }
 
   private transaction<T>(fn: () => T): T {

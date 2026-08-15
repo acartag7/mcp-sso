@@ -19,8 +19,62 @@ const FUTURE = "2026-07-03T13:00:00.000Z";
 const PAST = "2026-07-03T11:00:00.000Z";
 const RESOURCE_A = "https://api-a.test/mcp";
 const RESOURCE_B = "https://api-b.test/mcp";
+const STORE_EXPIRY_SWEEP_INTERVAL_MS = 300_000;
 
 export function runStoreConformance(label: string, make: () => StorePort): void {
+  test(`${label}: expiry collection starts without caller scheduler wiring`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
+    const store = make();
+    const expiredJti = `scheduled-expired-${label}`;
+    const activeJti = `scheduled-active-${label}`;
+    const expiredToken = refresh(`scheduled-expired-token-${label}`, `scheduled-expired-family-${label}`, null, PAST);
+    const activeToken = refresh(`scheduled-active-token-${label}`, `scheduled-active-family-${label}`, null, FUTURE);
+    try {
+      assert.equal(await store.consumeConsentJti(expiredJti, PAST), true);
+      assert.equal(await store.consumeConsentJti(activeJti, FUTURE), true);
+      await store.saveRefreshToken(expiredToken);
+      await store.saveRefreshToken(activeToken);
+
+      t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+      let expiredJtiCollected = false;
+      let expiredFamilyCollected = false;
+      for (let attempt = 0; attempt < 100 && (!expiredJtiCollected || !expiredFamilyCollected); attempt++) {
+        if (!expiredJtiCollected) expiredJtiCollected = await store.consumeConsentJti(expiredJti, FUTURE);
+        expiredFamilyCollected = await store.findRefreshToken(expiredToken.tokenHash) === null;
+        if (!expiredJtiCollected || !expiredFamilyCollected) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+      }
+      assert.equal(expiredJtiCollected, true, "the store never self-collected an expired consent JTI");
+      assert.equal(expiredFamilyCollected, true, "the store never self-collected an expired refresh family");
+      assert.equal(await store.consumeConsentJti(activeJti, FUTURE), false, "the scheduler collected a live JTI");
+      assert.equal((await store.findRefreshToken(activeToken.tokenHash))?.tokenHash, activeToken.tokenHash);
+    } finally {
+      await store.close();
+    }
+  });
+
+  test(`${label}: close waits for an active expiry sweep and prevents later runs`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
+    const store = make();
+    let releaseSweep: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => { releaseSweep = resolve; });
+    let calls = 0;
+    store.sweepExpired = async () => { calls += 1; await blocked; };
+    t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+    await settleUntil(() => calls === 1);
+
+    let closed = false;
+    const closing = store.close().then(() => { closed = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(closed, false, "close returned before its active sweep settled");
+    releaseSweep?.();
+    await closing;
+    t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS * 2);
+    assert.equal(calls, 1, "a closed store began another sweep");
+    await assert.rejects(store.findRefreshToken("unused"), /Store is closed/);
+  });
+
   test(`${label}: store instance binding is stable for one logical store`, async () => {
     const store = make();
     const getStoreInstanceId = store.getStoreInstanceId?.bind(store);
@@ -553,6 +607,13 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
     assert.ok(await store.findRefreshToken(sha256Hex("edge")), "expires_at == now survives (>= now is still-valid)");
     await store.close();
   });
+}
+
+async function settleUntil(done: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 100 && !done(); turn++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(done(), true, "scheduled work did not settle");
 }
 
 function authCode(rawCode: string, expiresAt: string, grantGeneration?: number | null): SaveAuthCodeInput {
