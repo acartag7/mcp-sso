@@ -1,4 +1,5 @@
 import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
+import type { ClockPort } from "../ports/clock.ts";
 import type { AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
@@ -12,7 +13,7 @@ import {
   authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
   type AuthCodeRow, type RefreshTokenRow,
 } from "./mysql-schema.ts";
-import { StoreExpiryScheduler } from "./expiry-scheduler.ts";
+import { StoreExpiryLifecycle } from "./expiry-lifecycle.ts";
 
 export class MysqlStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
@@ -20,10 +21,8 @@ export class MysqlStore implements StorePort {
   private closed = false;
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
-  private expiryScheduler: StoreExpiryScheduler | undefined;
-  constructor(pool: Pool, ownsPool = false) {
-    this.pool = pool; this.ownsPool = ownsPool;
-  }
+  private readonly expiry = new StoreExpiryLifecycle(this);
+  constructor(pool: Pool, ownsPool = false) { this.pool = pool; this.ownsPool = ownsPool; }
 
   async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
@@ -187,6 +186,7 @@ export class MysqlStore implements StorePort {
       await conn.query(`DELETE FROM oauth_refresh_token_families WHERE family_id NOT IN (SELECT DISTINCT family_id FROM oauth_refresh_tokens)`);
     });
   }
+  startExpiryCollection(clock: ClockPort): void { this.ensureOpen(); this.expiry.start(clock); }
   /** Run idempotent migrations + boot-time config assertions (strict mode, binary collation).
    *  MUST be called once before first use; createMysqlStore does this. */
   async migrate(): Promise<void> {
@@ -195,11 +195,11 @@ export class MysqlStore implements StorePort {
     try { await migrateMysqlStore(conn); }
     finally { try { conn.release(); } catch { /* swallow cleanup */ } }
     this.ensureOpen();
-    this.expiryScheduler ??= new StoreExpiryScheduler(this);
+    this.expiry.markReady();
   }
   async close(): Promise<void> {
     if (!this.closed) {
-      await this.expiryScheduler?.stop();
+      await this.expiry.stop();
       if (this.closed) return;
       this.closed = true;
       // Only end a pool this store created; never a caller-supplied shared pool.

@@ -1,6 +1,7 @@
 // SqliteStore — persistent StorePort + user ClientStore (contracts §6.4, §12.3).
 
 import { DatabaseSync } from "node:sqlite";
+import type { ClockPort } from "../ports/clock.ts";
 import type {
   AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
@@ -22,15 +23,14 @@ import {
   validateRotation, type AuthCodeRow, type RefreshTokenRow,
 } from "./sqlite-records.ts";
 import { SqliteClientStoreBase } from "./sqlite-clients.ts";
-import { StoreExpiryScheduler } from "./expiry-scheduler.ts";
+import { StoreExpiryLifecycle } from "./expiry-lifecycle.ts";
 
 export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
-  private expiryScheduler: StoreExpiryScheduler | undefined;
+  private readonly expiry = new StoreExpiryLifecycle(this);
   constructor(db: DatabaseSync, options: { schemaReady?: true } = {}) {
-    super(db);
-    if (options.schemaReady === true) this.expiryScheduler = new StoreExpiryScheduler(this);
+    super(db); if (options.schemaReady === true) this.expiry.markReady();
   }
 
   async getStoreInstanceId(): Promise<string> {
@@ -191,10 +191,9 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
     });
   }
 
-  override async close(): Promise<void> {
-    await this.expiryScheduler?.stop();
-    await super.close();
-  }
+  startExpiryCollection(clock: ClockPort): void { this.ensureOpen(); this.expiry.start(clock); }
+
+  override async close(): Promise<void> { await this.expiry.stop(); await super.close(); }
 
   private transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");

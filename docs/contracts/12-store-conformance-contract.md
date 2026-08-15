@@ -279,28 +279,36 @@ other undersized shape fails boot rather than being silently reinterpreted.
     one transaction, and MySQL keeps both under `SELECT ... FOR UPDATE` until the
     transaction commits.
 
-12. **Self-running expiry collection:** a live store MUST arrange periodic calls
-    to its own `sweepExpired` without requiring a Bridge, adapter, example, or
-    deployer timer. `MemoryStore` starts the shared reference scheduler at
-    construction. `openSqliteStore` completes admission and schema migration,
-    then constructs `SqliteStore` with the explicit `{ schemaReady: true }`
-    readiness declaration that starts its scheduler. The public
-    `new SqliteStore(callerDatabaseSync)` default starts no scheduler and issues
-    no expiry SQL; a caller that owns migration may pass `{ schemaReady: true }`
-    only after that migration has succeeded. `MysqlStore` starts the scheduler
-    only after `migrate()` succeeds; direct constructor
-    callers MUST invoke `migrate()`, while `createMysqlStore` does so before it
-    returns. A failed or still-running MySQL migration therefore cannot race a
-    scheduled deletion against an unvalidated or partially migrated schema.
-    The first run is delayed by the fixed five-minute
+12. **Clock-bound expiry collection:** a live reference store MUST arrange
+    periodic calls to its own `sweepExpired` without requiring a deployer timer.
+    After every boot assertion succeeds, `Bridge` invokes the optional
+    `StorePort.startExpiryCollection(clock)` hook with its exact configured
+    `ClockPort`; a direct store consumer invokes the same hook after readiness.
+    No reference-store scheduler starts before that binding. Rebinding the same
+    store to the same clock object is idempotent. If multiple Bridges share one
+    store with distinct clocks, all are retained and each sweep uses their
+    earliest valid snapshot; collection therefore never outruns any Bridge that
+    can still accept a signed artifact. An invalid bound clock prevents that run.
+
+    `MemoryStore` is ready immediately. `openSqliteStore` completes admission
+    and migration, then constructs `SqliteStore` with `{ schemaReady: true }`;
+    that declaration permits the later clock binding but does not start a timer.
+    The public `new SqliteStore(callerDatabaseSync)` default remains inert, and
+    a caller that owns migration may declare readiness only after it succeeds.
+    `MysqlStore.migrate()` marks the store ready; `createMysqlStore` completes
+    it before returning. Binding before SQLite/MySQL readiness fails closed, so
+    failed or running migration cannot race scheduled deletion against an
+    unvalidated or partial schema. The first run is delayed by the fixed five-minute
     `STORE_EXPIRY_SWEEP_INTERVAL_MS`; each later run is
     scheduled only after the prior sweep settles, so one store instance never
     overlaps sweeps. The timer is `unref()`'d and cannot keep an otherwise-idle
-    process alive. Each run derives one canonical UTC ISO timestamp from the
-    system clock and invokes the existing conformance boundary; it does not add
-    a second deletion policy. The `< now` predicates in invariants 2 and 5
-    remain authoritative, including the 0.3.3 consent tombstone's signed `exp`
-    and the exact-expiry retention boundary.
+    process alive. Each run snapshots the bound clock once with
+    `finiteClockSnapshot`, derives one canonical UTC ISO timestamp, and invokes
+    the existing conformance boundary; ambient host time is never substituted.
+    A host clock ahead of a configured clock therefore cannot collect a consent
+    tombstone while that same Bridge still accepts its signed JWT. The `< now`
+    predicates in invariants 2 and 5 remain authoritative, including the 0.3.3
+    tombstone's signed `exp` and exact-expiry retention boundary.
 
     A sweep failure is contained, emits only the fixed stderr diagnostic
     `[mcp-sso] store expiry sweep failed`, and schedules the next ordinary run;
@@ -311,9 +319,9 @@ other undersized shape fails boot rather than being silently reinterpreted.
     is idempotent; no later sweep begins. Therefore eligible auth-code rows,
     consent-JTI tombstones, refresh-token families/members, and empty families
     remain at most one successful sweep interval plus sweep duration after
-    eligibility under a healthy store. A storage outage or backward system
-    clock can extend retention until recovery/catch-up, but cannot collect a
-    still-valid row. A downstream `StorePort` implementation owns the same
+    eligibility under a healthy store. A storage outage, invalid snapshot, or
+    backward configured clock can extend retention until recovery/catch-up, but
+    cannot collect a still-valid row. A downstream `StorePort` implementation owns the same
     scheduler lifecycle; implementing only the callable `sweepExpired` method
     is no longer conforming for a long-lived store.
 
@@ -422,10 +430,10 @@ adapters.)
 SQLite database. `new SqliteStore(callerDatabaseSync)` remains public and
 caller-owned: it wraps an already-open connection and makes no claim about the
 connection's filesystem provenance, permissions, directory trust, or sidecars.
-The default constructor also starts no expiry scheduler. A direct caller may
+The default constructor also rejects expiry-clock binding. A direct caller may
 declare `{ schemaReady: true }` only after its own schema creation/migration has
-succeeded; that declaration starts the same non-overlapping scheduler used by
-`openSqliteStore`.
+succeeded; that declaration permits `startExpiryCollection(clock)` to start the
+same non-overlapping scheduler used after `openSqliteStore`.
 
 The exact string `:memory:` is accepted on every platform and performs no
 filesystem check or write. Every other value is a persistent path. At runtime a

@@ -1,3 +1,5 @@
+import { finiteClockSnapshot, type ClockPort } from "../ports/clock.ts";
+
 export const STORE_EXPIRY_SWEEP_INTERVAL_MS = 300_000;
 
 interface ExpirySweepTarget {
@@ -6,12 +8,14 @@ interface ExpirySweepTarget {
 
 export class StoreExpiryScheduler {
   private readonly target: ExpirySweepTarget;
+  private readonly clock: ClockPort;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private active: Promise<void> = Promise.resolve();
   private stopped = false;
 
-  constructor(target: ExpirySweepTarget) {
+  constructor(target: ExpirySweepTarget, clock: ClockPort) {
     this.target = target;
+    this.clock = clock;
     this.schedule();
   }
 
@@ -35,7 +39,8 @@ export class StoreExpiryScheduler {
 
   private async run(): Promise<void> {
     try {
-      await this.target.sweepExpired(new Date(Date.now()).toISOString());
+      const nowMs = finiteClockSnapshot(this.clock);
+      await this.target.sweepExpired(new Date(nowMs).toISOString());
     } catch {
       reportSweepFailure();
     } finally {

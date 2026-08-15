@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
+import type { ClockPort } from "../../src/ports/clock.ts";
 import type { SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../../src/ports/store.ts";
 import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING,
@@ -22,7 +23,7 @@ const RESOURCE_B = "https://api-b.test/mcp";
 const STORE_EXPIRY_SWEEP_INTERVAL_MS = 300_000;
 
 export function runStoreConformance(label: string, make: () => StorePort | Promise<StorePort>): void {
-  test(`${label}: expiry collection starts without caller scheduler wiring`, async (t) => {
+  test(`${label}: expiry collection starts after configured-clock binding`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
     const store = await make();
     const expiredJti = `scheduled-expired-${label}`;
@@ -34,6 +35,7 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
       assert.equal(await store.consumeConsentJti(activeJti, FUTURE), true);
       await store.saveRefreshToken(expiredToken);
       await store.saveRefreshToken(activeToken);
+      startExpiryCollection(store, { nowMs: () => Date.now() });
 
       t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
       let expiredJtiCollected = false;
@@ -54,10 +56,11 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
     }
   });
 
-  test(`${label}: scheduled collection retains a consent tombstone while its signed JWT is valid`, async (t) => {
+  test(`${label}: host time cannot collect a tombstone still valid to the configured clock`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
     const store = await make();
-    const signedExpiry = new Date(Date.parse(NOW) + STORE_EXPIRY_SWEEP_INTERVAL_MS + 1).toISOString();
+    let configuredNow = Date.parse(NOW);
+    const signedExpiry = new Date(configuredNow + STORE_EXPIRY_SWEEP_INTERVAL_MS + 1).toISOString();
     const jti = `scheduled-boundary-${label}`;
     const sweepExpired = store.sweepExpired.bind(store);
     let sweeps = 0;
@@ -67,7 +70,8 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
     };
     try {
       assert.equal(await store.consumeConsentJti(jti, signedExpiry), true);
-      t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+      startExpiryCollection(store, { nowMs: () => configuredNow });
+      t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS * 2);
       await settleUntil(() => sweeps === 1);
       assert.equal(
         await store.consumeConsentJti(jti, signedExpiry),
@@ -75,7 +79,9 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
         "the first scheduled sweep collected a tombstone while its signed JWT was still valid",
       );
 
-      await store.sweepExpired(new Date(Date.parse(NOW) + STORE_EXPIRY_SWEEP_INTERVAL_MS * 2).toISOString());
+      configuredNow += STORE_EXPIRY_SWEEP_INTERVAL_MS * 2;
+      t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+      await settleUntil(() => sweeps === 2);
       assert.equal(
         await store.consumeConsentJti(jti, FUTURE),
         true,
@@ -93,6 +99,7 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
     const blocked = new Promise<void>((resolve) => { releaseSweep = resolve; });
     let calls = 0;
     store.sweepExpired = async () => { calls += 1; await blocked; };
+    startExpiryCollection(store, { nowMs: () => Date.now() });
     t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
     await settleUntil(() => calls === 1);
 
@@ -639,6 +646,11 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
     assert.ok(await store.findRefreshToken(sha256Hex("edge")), "expires_at == now survives (>= now is still-valid)");
     await store.close();
   });
+}
+
+function startExpiryCollection(store: StorePort, clock: ClockPort): void {
+  assert.equal(typeof store.startExpiryCollection, "function");
+  store.startExpiryCollection?.(clock);
 }
 
 async function settleUntil(done: () => boolean): Promise<void> {

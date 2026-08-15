@@ -51,8 +51,9 @@ The `./store/sqlite` subpath exports both `openSqliteStore(path)` and the
 `SqliteStore` constructor. Only `openSqliteStore` provides the §12.4 persistent
 filesystem-admission guarantee; `new SqliteStore(callerDatabaseSync)` deliberately
 leaves filesystem provenance, permissions, directory trust, and schema migration
-with the caller. Its default starts no expiry scheduler; `{ schemaReady: true }`
-is the explicit post-migration declaration that starts collection.
+with the caller. Its default rejects expiry-clock binding; `{ schemaReady: true }`
+is the explicit post-migration declaration that permits collection to start
+when `Bridge` or a direct store consumer supplies the exact `ClockPort`.
 The console-pairing identity (§17.5) ships as the `./identity/console-pairing`
 subpath, parallel to the other identity ports; its framework-free authorize
 helpers (`handlePairingAuthorize`, `renderPairingPage`) are root-exported so a

@@ -4,17 +4,20 @@ import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { Pool, PoolConnection } from "mysql2/promise";
+import type { ClockPort } from "../src/ports/clock.ts";
 import {
   STORE_EXPIRY_SWEEP_INTERVAL_MS, StoreExpiryScheduler,
 } from "../src/store/expiry-scheduler.ts";
 import { MysqlStore } from "../src/store/mysql.ts";
+import { MemoryStore } from "../src/store/memory.ts";
 import { migrateSqliteStore } from "../src/store/sqlite-schema.ts";
 import { SqliteStore } from "../src/store/sqlite.ts";
 
 const execFileP = promisify(execFile);
 const START = Date.parse("2026-08-16T12:00:00.000Z");
+const systemClock: ClockPort = { nowMs: () => Date.now() };
 
-test("expiry scheduler snapshots system time and never overlaps runs", async (t) => {
+test("expiry scheduler snapshots its configured clock and never overlaps runs", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: START });
   let releaseFirst: (() => void) | undefined;
   const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -24,7 +27,7 @@ test("expiry scheduler snapshots system time and never overlaps runs", async (t)
       seen.push(nowIso);
       if (seen.length === 1) await firstBlocked;
     },
-  });
+  }, systemClock);
 
   t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
   await settleUntil(() => seen.length === 1);
@@ -50,7 +53,7 @@ test("expiry scheduler reports a fixed failure and retries at the next interval"
       calls += 1;
       if (calls === 1) throw new Error("private database path and connection string");
     },
-  });
+  }, systemClock);
 
   t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
   await settleUntil(() => messages.length === 1);
@@ -67,7 +70,7 @@ test("a throwing stderr sink cannot stop expiry retry", async (t) => {
   let calls = 0;
   const scheduler = new StoreExpiryScheduler({
     async sweepExpired() { calls += 1; if (calls === 1) throw new Error("store failed"); },
-  });
+  }, systemClock);
 
   t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
   await settleUntil(() => calls === 1);
@@ -80,13 +83,14 @@ test("an unref'd store scheduler does not keep an idle process alive", async () 
   const memoryUrl = new URL("../src/store/memory.ts", import.meta.url).href;
   await execFileP(process.execPath, [
     "--input-type=module", "--eval",
-    `import { MemoryStore } from ${JSON.stringify(memoryUrl)}; new MemoryStore();`,
+    `import { MemoryStore } from ${JSON.stringify(memoryUrl)}; const store = new MemoryStore(); store.startExpiryCollection({ nowMs: () => Date.now() });`,
   ], { timeout: 2_000 });
 });
 
 test("SqliteStore waits for an explicit post-migration readiness declaration", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: START });
   const unready = new SqliteStore(new DatabaseSync(":memory:"));
+  assert.throws(() => unready.startExpiryCollection(systemClock), /schema is not ready/);
   let unreadySweeps = 0;
   unready.sweepExpired = async () => { unreadySweeps += 1; };
   t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS * 2);
@@ -99,6 +103,7 @@ test("SqliteStore waits for an explicit post-migration readiness declaration", a
   const ready = new SqliteStore(readyDb, { schemaReady: true });
   let readySweeps = 0;
   ready.sweepExpired = async () => { readySweeps += 1; };
+  ready.startExpiryCollection(systemClock);
   t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
   await settleUntil(() => readySweeps === 1);
   await ready.close();
@@ -123,6 +128,7 @@ test("MysqlStore does not schedule expiry deletion before migration succeeds", a
     },
   } as unknown as Pool;
   const store = new MysqlStore(pool);
+  assert.throws(() => store.startExpiryCollection(systemClock), /schema is not ready/);
   const migration = store.migrate();
   await settleUntil(() => getConnectionCalls === 1);
 
@@ -132,10 +138,36 @@ test("MysqlStore does not schedule expiry deletion before migration succeeds", a
 
   releaseMigration?.();
   await assert.rejects(migration, /migration failed/);
+  assert.throws(() => store.startExpiryCollection(systemClock), /schema is not ready/);
   t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS * 2);
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(getConnectionCalls, 1, "a failed migration must not leave a scheduler running");
   await store.close();
+});
+
+test("expiry collection shared by multiple Bridges uses their earliest clock", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: START });
+  const readyDb = new DatabaseSync(":memory:");
+  migrateSqliteStore(readyDb);
+  const store = new SqliteStore(readyDb, { schemaReady: true });
+  const first = { nowMs: () => START + STORE_EXPIRY_SWEEP_INTERVAL_MS * 2 };
+  const second = { nowMs: () => START - STORE_EXPIRY_SWEEP_INTERVAL_MS };
+  const seen: string[] = [];
+  store.sweepExpired = async (nowIso) => { seen.push(nowIso); };
+  store.startExpiryCollection(first);
+  store.startExpiryCollection(first);
+  store.startExpiryCollection(second);
+  t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+  await settleUntil(() => seen.length === 1);
+  assert.deepEqual(seen, [new Date(second.nowMs()).toISOString()]);
+  await store.close();
+});
+
+test("expiry collection cannot start after close begins", async () => {
+  const store = new MemoryStore();
+  const closing = store.close();
+  assert.throws(() => store.startExpiryCollection(systemClock), /expiry collection is stopped/);
+  await closing;
 });
 
 async function settleUntil(done: () => boolean): Promise<void> {

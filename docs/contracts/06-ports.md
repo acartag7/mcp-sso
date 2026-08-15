@@ -81,12 +81,13 @@ JTIs — **all secrets stored only as SHA-256 hashes**; there is **no separate g
 table** (prior grants are derived from active refresh-token records — §9.3).
 Methods: `saveAuthCode`, `consumeAuthCode`, `saveRefreshToken`, `rotateRefreshToken`,
 `revokeRefreshTokenFamily`, `findRefreshToken`, `consumeConsentJti`,
-`findGrantedScopes`, `sweepExpired`, `close`. Full shapes in §12.
-Long-lived stores own the §12.2 self-running expiry scheduler; callers do not
-wire a timer for the three reference stores. `openSqliteStore` starts collection
-only after migration; a direct `SqliteStore` caller must declare schema readiness
-as specified in §12.2. A custom store must provide an equivalent non-overlapping
-lifecycle and stop it from `close()`.
+`findGrantedScopes`, `sweepExpired`, optional `startExpiryCollection`, and
+`close`. Full shapes in §12. `Bridge` invokes the optional lifecycle hook with
+its exact configured `ClockPort` only after boot validation succeeds; a direct
+store consumer invokes it after the store is ready. The three reference stores
+then own the §12.2 non-overlapping timer, so deployers do not wire one. A custom
+store may omit the hook only when it provides an equivalent lifecycle using the
+same configured clock; `close()` must stop any owned collection.
 Under the 0.3.3 consent correction,
 `consumeConsentJti(jti, expiresAtIso)` receives the canonical verified signed JWT
 expiry from the caller and MUST persist that exact expiry; `sweepExpired` retains

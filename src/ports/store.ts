@@ -5,6 +5,8 @@
 // via findGrantedScopes). Every adapter (memory, sqlite, any downstream SQL)
 // must satisfy the §12 invariants, asserted by the store-conformance suite.
 
+import type { ClockPort } from "./clock.ts";
+
 export interface AuthCodeRecord {
   /** sha256(raw code). */
   codeHash: string;
@@ -140,6 +142,8 @@ export interface StorePort {
   /** Delete expired auth codes, JTIs, unconsumed expired refresh tokens, orphaned
    *  revoked families. */
   sweepExpired(nowIso: string): Promise<void>;
+  /** Bind an owned expiry scheduler to the composition root's exact clock. */
+  startExpiryCollection?(clock: ClockPort): void;
   close(): Promise<void>;
 }
 
