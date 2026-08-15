@@ -1,4 +1,4 @@
-import { createPool, type Pool, type PoolConnection, type PoolOptions, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
+import { createPool, type Pool, type PoolConnection, type PoolOptions, type RowDataPacket } from "mysql2/promise";
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
 import {
@@ -7,7 +7,10 @@ import {
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import { readMysqlStoreInstanceId, rotateMysqlStoreInstanceId } from "./mysql-instance.ts";
-import { commitMysqlConsentApproval, insertMysqlAuthCode } from "./mysql-consent.ts";
+import {
+  advanceMysqlSweepWatermark, commitMysqlConsentApproval,
+  consumeMysqlConsentJti, insertMysqlAuthCode,
+} from "./mysql-consent.ts";
 import {
   migrateMysqlStore, insertRefreshToken, revokeFamily, isDuplicateEntry, nextFromRow,
   authCodeFromRow, refreshTokenFromRow, validateAuthCode, validateRefreshToken, validateRotation, parseScopes,
@@ -65,16 +68,7 @@ export class MysqlStore implements StorePort {
   async consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean> {
     this.ensureOpen();
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
-    try {
-      await this.pool.query<ResultSetHeader>(
-        `INSERT INTO oauth_consent_jtis (jti, expires_at) VALUES (?, ?)`,
-        [jti, expiresAtIso],
-      );
-      return true;
-    } catch (error) {
-      if (isDuplicateEntry(error)) return false;
-      throw error;
-    }
+    return this.transaction(async (conn) => consumeMysqlConsentJti(conn, jti, expiresAtIso));
   }
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
@@ -170,6 +164,7 @@ export class MysqlStore implements StorePort {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
     await this.transaction(async (conn) => {
+      await advanceMysqlSweepWatermark(conn, nowIso);
       await conn.query(`DELETE FROM oauth_auth_codes WHERE expires_at < ?`, [nowIso]);
       await conn.query(`DELETE FROM oauth_consent_jtis WHERE expires_at < ?`, [nowIso]);
       // Two-step (review H1): SELECT exact dead rows by PK, then DELETE by hash — a

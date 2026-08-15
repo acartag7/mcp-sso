@@ -27,6 +27,7 @@ export class MemoryStore implements StorePort {
   private readonly refreshTokens = new Map<string, StoredRefresh>();
   private readonly families = new Map<string, StoredFamily>();
   private readonly consentJtis = new Map<string, string>();
+  private sweptThrough: string | null = null;
   private storeInstanceId = randomBytes(18).toString("base64url");
 
   async getStoreInstanceId(): Promise<string> {
@@ -49,6 +50,7 @@ export class MemoryStore implements StorePort {
     validateAuthCode(authCode);
     if (expectedStoreInstanceId !== this.storeInstanceId) return "binding_mismatch";
     if (this.consentJtis.has(jti)) return "replayed";
+    if (this.sweptThrough !== null && expiresAtIso < this.sweptThrough) return "replayed";
     this.consentJtis.set(jti, expiresAtIso);
     this.authCodes.set(authCode.codeHash, {
       ...authCode, grantGeneration: grantGenerationForWrite(authCode.grantGeneration),
@@ -77,6 +79,7 @@ export class MemoryStore implements StorePort {
     this.ensureOpen();
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso"); // addendum 10: source left this unvalidated
     if (this.consentJtis.has(jti)) return false;
+    if (this.sweptThrough !== null && expiresAtIso < this.sweptThrough) return false;
     this.consentJtis.set(jti, expiresAtIso);
     return true;
   }
@@ -161,6 +164,7 @@ export class MemoryStore implements StorePort {
   async sweepExpired(nowIso: string): Promise<void> {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
+    if (this.sweptThrough === null || this.sweptThrough < nowIso) this.sweptThrough = nowIso;
     for (const [hash, record] of this.authCodes) if (record.expiresAt < nowIso) this.authCodes.delete(hash);
     for (const [jti, expiresAt] of this.consentJtis) if (expiresAt < nowIso) this.consentJtis.delete(jti);
     // Family-validity retention (addendum 8): delete a refresh token (consumed or

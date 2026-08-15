@@ -35,11 +35,19 @@ function recordingStore(): { readonly store: MysqlStore; readonly queries: Recor
 }
 
 function consentStore(error?: unknown): MysqlStore {
-  const pool = {
-    query: async () => {
-      if (error !== undefined) throw error;
+  const connection = {
+    query: async (sql: string) => {
+      if (sql.startsWith("SELECT swept_through")) return [[{ swept_through: null }], []];
+      if (sql.startsWith("INSERT INTO oauth_consent_jtis") && error !== undefined) throw error;
       return [{ affectedRows: 1 }, []];
     },
+    beginTransaction: async () => {},
+    commit: async () => {},
+    rollback: async () => {},
+    release: () => {},
+  } as unknown as PoolConnection;
+  const pool = {
+    getConnection: async () => connection,
   } as unknown as Pool;
   return new MysqlStore(pool);
 }

@@ -169,6 +169,8 @@ family with any member valid at the sweep timestamp remains. A fixed
 `[mcp-sso] store expiry sweep failed` diagnostic means collection could not run;
 the store retries on its next ordinary interval. Custom `StorePort`
 implementations must own an equivalent lifecycle using the Bridge clock.
+SQLite persists and MySQL shares a monotonic sweep fence, so a later process or
+slower replica cannot re-admit a collected JTI with its original signed expiry.
 
 ## api-key-gateway example (`BACKEND_*`)
 

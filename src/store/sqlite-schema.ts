@@ -5,7 +5,7 @@
 
 import { randomBytes } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { assertStoreInstanceId } from "../ports/store.ts";
+import { assertStoreInstanceId, assertUtcIsoTimestamp, StoreInputError } from "../ports/store.ts";
 
 const CLIENT_TABLE_SQL = `CREATE TABLE oauth_clients (
     client_id TEXT PRIMARY KEY NOT NULL,
@@ -14,9 +14,15 @@ const CLIENT_TABLE_SQL = `CREATE TABLE oauth_clients (
     issued_at_epoch INTEGER NOT NULL CHECK (issued_at_epoch >= 0)
   ) STRICT`;
 
-const METADATA_TABLE_SQL = `CREATE TABLE oauth_store_metadata (
+const LEGACY_METADATA_TABLE_SQL = `CREATE TABLE oauth_store_metadata (
     singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
     instance_id TEXT UNIQUE NOT NULL
+  ) STRICT`;
+
+const METADATA_TABLE_SQL = `CREATE TABLE oauth_store_metadata (
+    singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
+    instance_id TEXT UNIQUE NOT NULL,
+    swept_through TEXT
   ) STRICT`;
 
 const MIGRATIONS = [
@@ -88,8 +94,9 @@ function migrateSqliteStoreLocked(db: DatabaseSync): void {
     "SELECT type FROM sqlite_schema WHERE name = 'oauth_store_metadata' COLLATE NOCASE",
   ).get();
   if (metadataObject) {
-    assertMetadataSchema(db);
-    assertMetadataValue(db, false);
+    const legacyMetadata = assertMetadataSchema(db, true);
+    assertMetadataValue(db, false, !legacyMetadata);
+    if (legacyMetadata) migrateLegacyMetadata(db);
   }
   for (const migration of MIGRATIONS.slice(1)) {
     db.exec(migration);
@@ -98,7 +105,7 @@ function migrateSqliteStoreLocked(db: DatabaseSync): void {
     randomBytes(18).toString("base64url"),
   );
   assertMetadataSchema(db);
-  assertMetadataValue(db, true);
+  assertMetadataValue(db, true, true);
   ensureColumn(db, "oauth_auth_codes", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_token_families", "grant_generation", "INTEGER");
   ensureColumn(db, "oauth_refresh_tokens", "grant_generation", "INTEGER");
@@ -112,11 +119,12 @@ function clientSchemaObject(db: DatabaseSync): { type: unknown } | undefined {
     { type: unknown } | undefined;
 }
 
-function assertMetadataSchema(db: DatabaseSync): void {
+function assertMetadataSchema(db: DatabaseSync, allowLegacy = false): boolean {
   const schema = db.prepare(
     "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'oauth_store_metadata' COLLATE NOCASE",
   ).get() as { sql?: unknown } | undefined;
-  if (schema?.sql !== METADATA_TABLE_SQL) {
+  if (schema?.sql !== METADATA_TABLE_SQL
+    && !(allowLegacy && schema?.sql === LEGACY_METADATA_TABLE_SQL)) {
     throw new Error("oauth_store_metadata schema is incompatible");
   }
   const attached = db.prepare(`SELECT name FROM sqlite_schema
@@ -124,14 +132,33 @@ function assertMetadataSchema(db: DatabaseSync): void {
       AND name != 'oauth_store_metadata' COLLATE NOCASE
       AND sql IS NOT NULL AND name != 'sqlite_autoindex_oauth_store_metadata_1' COLLATE NOCASE`).get();
   if (attached) throw new Error("oauth_store_metadata schema is incompatible");
+  return schema.sql === LEGACY_METADATA_TABLE_SQL;
 }
 
-function assertMetadataValue(db: DatabaseSync, required: boolean): void {
-  const metadata = db.prepare(
+function migrateLegacyMetadata(db: DatabaseSync): void {
+  const row = db.prepare(
     "SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1",
-  ).get() as { instance_id?: unknown } | undefined;
+  ).get() as { instance_id?: string } | undefined;
+  db.exec("DROP TABLE oauth_store_metadata");
+  db.exec(METADATA_TABLE_SQL);
+  if (row) db.prepare(
+    "INSERT INTO oauth_store_metadata (singleton, instance_id) VALUES (1, ?)",
+  ).run(row.instance_id!);
+}
+
+function assertMetadataValue(db: DatabaseSync, required: boolean, hasSweepColumn: boolean): void {
+  const metadata = db.prepare(
+    `SELECT instance_id${hasSweepColumn ? ", swept_through" : ""}
+     FROM oauth_store_metadata WHERE singleton = 1`,
+  ).get() as { instance_id?: unknown; swept_through?: unknown } | undefined;
   if (!metadata && !required) return;
   assertStoreInstanceId(metadata?.instance_id);
+  if (hasSweepColumn && metadata?.swept_through !== null) {
+    if (typeof metadata?.swept_through !== "string") {
+      throw new StoreInputError("oauth_store_metadata sweep watermark is invalid");
+    }
+    assertUtcIsoTimestamp(metadata.swept_through, "sweptThrough");
+  }
 }
 
 function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string): void {

@@ -461,7 +461,10 @@ deployer acts on.
     successful run during a storage outage, expired codes, signed-expiry JTI
     tombstones, and dead refresh families remain until recovery; the scheduler
     never substitutes host time for the Bridge clock or weakens the existing
-    exact-expiry/family-validity predicates.
+    exact-expiry/family-validity predicates. A monotonic sweep watermark is
+    committed with deletion and checked by later JTI consumes/approval commits;
+    one ahead MySQL replica therefore cannot make a collected replay admissible
+    through a slower replica.
   - Saturation surfaces as a 500 (NOT fail-open — fail-open applies only to
     `RateLimitPort` per [§6.7](./contracts/06-ports.md#67-ratelimitport-fix-7)); wiring
     the Redis `RateLimitPort` is the in-band DoS mitigation.

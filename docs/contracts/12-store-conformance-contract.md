@@ -310,6 +310,15 @@ other undersized shape fails boot rather than being silently reinterpreted.
     predicates in invariants 2 and 5 remain authoritative, including the 0.3.3
     tombstone's signed `exp` and exact-expiry retention boundary.
 
+    The timestamp also advances a monotonic sweep watermark atomically with the
+    deletion transaction/critical section. `consumeConsentJti` and
+    `commitConsentApproval` reject a missing JTI when its supplied signed expiry
+    is strictly earlier than that watermark. They still admit an unrelated
+    future-expiry JTI, so physical rows remain collectible. SQLite persists the
+    watermark across reopen; MySQL serializes the shared watermark row against
+    every replica's JTI consume/approval commit. An ahead replica can therefore
+    collect an expired row, but a slower replica cannot resurrect that replay.
+
     A sweep failure is contained, emits only the fixed stderr diagnostic
     `[mcp-sso] store expiry sweep failed`, and schedules the next ordinary run;
     it never echoes a store error, record, path, or connection string. This
@@ -321,9 +330,9 @@ other undersized shape fails boot rather than being silently reinterpreted.
     remain at most one successful sweep interval plus sweep duration after
     eligibility under a healthy store. A storage outage, invalid snapshot, or
     backward configured clock can extend retention until recovery/catch-up, but
-    cannot collect a still-valid row. A downstream `StorePort` implementation owns the same
-    scheduler lifecycle; implementing only the callable `sweepExpired` method
-    is no longer conforming for a long-lived store.
+    cannot collect a still-valid row. A downstream `StorePort` implementation
+    owns the same scheduler lifecycle and sweep fence; implementing only the
+    callable `sweepExpired` method is no longer conforming for a long-lived store.
 
 ## 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`) — in-process maps; dev/test only, labeled loud.

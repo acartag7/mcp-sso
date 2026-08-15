@@ -88,6 +88,9 @@ store consumer invokes it after the store is ready. The three reference stores
 then own the §12.2 non-overlapping timer, so deployers do not wire one. A custom
 store may omit the hook only when it provides an equivalent lifecycle using the
 same configured clock; `close()` must stop any owned collection.
+Persistent stores also keep §12's monotonic sweep watermark: tombstone deletion
+and watermark advancement are atomic, and later JTI consumption/approval is
+fenced by the original supplied signed expiry.
 Under the 0.3.3 consent correction,
 `consumeConsentJti(jti, expiresAtIso)` receives the canonical verified signed JWT
 expiry from the caller and MUST persist that exact expiry; `sweepExpired` retains

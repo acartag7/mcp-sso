@@ -12,7 +12,10 @@ import {
 } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
 import { readSqliteStoreInstanceId, rotateSqliteStoreInstanceId } from "./sqlite-instance.ts";
-import { commitSqliteConsentApproval, insertSqliteAuthCode } from "./sqlite-consent.ts";
+import {
+  advanceSqliteSweepWatermark, commitSqliteConsentApproval,
+  consumeSqliteConsentJti, insertSqliteAuthCode,
+} from "./sqlite-consent.ts";
 import {
   admitSqliteFile, closeSqliteAdmission, sqlitePath, SqliteStateError,
   verifySqlitePathIdentity,
@@ -78,10 +81,7 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   async consumeConsentJti(jti: string, expiresAtIso: string): Promise<boolean> {
     this.ensureOpen();
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso"); // addendum 10: source left this unvalidated
-    const result = this.db.prepare(
-      `INSERT INTO oauth_consent_jtis (jti, expires_at) VALUES (?, ?) ON CONFLICT(jti) DO NOTHING`,
-    ).run(jti, expiresAtIso);
-    return (result.changes ?? 0) > 0;
+    return this.transaction(() => consumeSqliteConsentJti(this.db, jti, expiresAtIso));
   }
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
@@ -177,6 +177,7 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");
     this.transaction(() => {
+      advanceSqliteSweepWatermark(this.db, nowIso);
       this.db.prepare(`DELETE FROM oauth_auth_codes WHERE expires_at < ?`).run(nowIso);
       this.db.prepare(`DELETE FROM oauth_consent_jtis WHERE expires_at < ?`).run(nowIso);
       // Family-validity retention (addendum 8): delete a refresh token (consumed or

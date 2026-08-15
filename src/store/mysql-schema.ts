@@ -18,9 +18,7 @@ import {
   grantGenerationFromStored, refreshResourceFromStored,
 } from "../ports/store.ts";
 import { migrateMysqlSubjectColumns } from "./mysql-subject-schema.ts";
-import {
-  assertMysqlStoreInstanceSchema, ensureMysqlStoreInstance,
-} from "./mysql-instance.ts";
+import { assertMysqlStoreInstanceSchema, ensureMysqlStoreInstance } from "./mysql-instance.ts";
 
 export const MYSQL_OAUTH_TABLES = [
   "oauth_auth_codes", "oauth_refresh_token_families", "oauth_refresh_tokens", "oauth_consent_jtis", "oauth_store_metadata",
@@ -75,6 +73,7 @@ const MIGRATIONS = [
   `CREATE TABLE IF NOT EXISTS oauth_store_metadata (
     singleton TINYINT UNSIGNED NOT NULL,
     instance_id VARCHAR(128) NOT NULL,
+    swept_through VARCHAR(24),
     PRIMARY KEY (singleton),
     UNIQUE KEY uq_oauth_store_metadata_instance (instance_id),
     CHECK (singleton = 1)
@@ -85,8 +84,9 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await assertStrictMode(conn);
   if (await tableExists(conn, "oauth_consent_jtis")) await assertConsentJtiUnique(conn);
   const metadataDdl = MIGRATIONS.at(-1)!;
-  if (await tableExists(conn, "oauth_store_metadata")) await assertMysqlStoreInstanceSchema(conn);
+  if (await tableExists(conn, "oauth_store_metadata")) await assertMysqlStoreInstanceSchema(conn, true);
   await conn.query(metadataDdl);
+  await ensureColumn(conn, "oauth_store_metadata", "swept_through", "VARCHAR(24) NULL");
   await assertMysqlStoreInstanceSchema(conn);
   await ensureMysqlStoreInstance(conn);
   for (const ddl of MIGRATIONS.slice(0, -1)) await conn.query(ddl);

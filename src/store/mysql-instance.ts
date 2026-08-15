@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
-import { assertStoreInstanceId, StoreInputError } from "../ports/store.ts";
+import { assertStoreInstanceId, assertUtcIsoTimestamp, StoreInputError } from "../ports/store.ts";
 
-export async function assertMysqlStoreInstanceSchema(conn: PoolConnection): Promise<void> {
+export async function assertMysqlStoreInstanceSchema(
+  conn: PoolConnection, allowLegacySweepColumn = false,
+): Promise<void> {
   const [tables] = await conn.query<RowDataPacket[]>(
     `SELECT ENGINE FROM information_schema.TABLES
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'oauth_store_metadata'`,
@@ -19,7 +21,12 @@ export async function assertMysqlStoreInstanceSchema(conn: PoolConnection): Prom
     .map((row) => [String(row.COLUMN_NAME).toLowerCase(), row]));
   const singleton = byName.get("singleton");
   const instance = byName.get("instance_id");
-  if (byName.size !== 2 || singleton?.COLUMN_TYPE !== "tinyint unsigned"
+  const sweptThrough = byName.get("swept_through");
+  const sweepColumnValid = sweptThrough?.COLUMN_TYPE === "varchar(24)"
+    && sweptThrough.IS_NULLABLE === "YES" && sweptThrough.COLLATION_NAME === "utf8mb4_bin";
+  const shapeValid = (byName.size === 3 && sweepColumnValid)
+    || (allowLegacySweepColumn && byName.size === 2 && sweptThrough === undefined);
+  if (!shapeValid || singleton?.COLUMN_TYPE !== "tinyint unsigned"
     || singleton.IS_NULLABLE !== "NO" || instance?.COLUMN_TYPE !== "varchar(128)"
     || instance.IS_NULLABLE !== "NO" || instance.COLLATION_NAME !== "utf8mb4_bin") {
     throw new StoreInputError("oauth_store_metadata columns are incompatible");
@@ -83,9 +90,16 @@ export async function ensureMysqlStoreInstance(conn: PoolConnection): Promise<vo
 
 export async function assertMysqlStoreInstance(conn: PoolConnection): Promise<void> {
   const [rows] = await conn.query<RowDataPacket[]>(
-    "SELECT instance_id FROM oauth_store_metadata WHERE singleton = 1",
+    "SELECT instance_id, swept_through FROM oauth_store_metadata WHERE singleton = 1",
   );
-  assertStoreInstanceId((rows[0] as { instance_id?: unknown } | undefined)?.instance_id);
+  const row = rows[0] as { instance_id?: unknown; swept_through?: unknown } | undefined;
+  assertStoreInstanceId(row?.instance_id);
+  if (row?.swept_through !== null) {
+    if (typeof row?.swept_through !== "string") {
+      throw new StoreInputError("oauth_store_metadata sweep watermark is invalid");
+    }
+    assertUtcIsoTimestamp(row.swept_through, "sweptThrough");
+  }
 }
 
 export async function readMysqlStoreInstanceId(pool: Pool): Promise<string> {

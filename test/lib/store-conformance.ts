@@ -248,7 +248,22 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
     await store.sweepExpired(expiresAt);
     assert.equal(await store.consumeConsentJti("signed-exp-jti", expiresAt), false, "expiry-boundary sweep retains replay signal");
     await store.sweepExpired("2026-07-03T12:30:00.001Z");
+    assert.equal(await store.consumeConsentJti("signed-exp-jti", expiresAt), false, "sweep fence rejects the collected replay expiry");
     assert.equal(await store.consumeConsentJti("signed-exp-jti", FUTURE), true, "post-expiry sweep collected the tombstone");
+    await store.close();
+  });
+
+  test(`${label}: sweep fence blocks approval after physical JTI collection`, async () => {
+    const store = await make();
+    const consentExpiry = "2026-07-03T12:30:00.000Z";
+    const code = authCode(`sweep-fence-code-${label}`, FUTURE);
+    const binding = await store.getStoreInstanceId();
+    await store.sweepExpired("2026-07-03T12:30:00.001Z");
+    assert.equal(
+      await store.commitConsentApproval(binding, `sweep-fence-jti-${label}`, consentExpiry, code),
+      "replayed",
+    );
+    assert.equal(await store.consumeAuthCode(code.codeHash, NOW), null, "fenced approval stored no code");
     await store.close();
   });
 
