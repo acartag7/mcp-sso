@@ -407,15 +407,24 @@ the response. Wiring rules:
   Fastify's per-route `bodyLimit` to the shared budget. The limit therefore
   replaces Fastify's larger server default for JSON, the adapter's URL-encoded
   parser, the adapter's buffer-valued catch-all for otherwise unsupported media
-  types, and any other content-type parser the application registers. The
+  types, and any application parser that delegates raw accounting to Fastify. The
   catch-all enforces the byte boundary without turning unsupported bytes into
   OAuth fields. The adapter registers its parsers and routes in an encapsulated
   Fastify plugin scope, so the catch-all cannot replace a caller-owned parser on
-  unrelated routes. The `mcp-sso/fastify` subpath also exports
-  `addOAuthFormContentTypeParser` and `OAUTH_POST_BODY_MAX_BYTES` so a caller-owned
-  OAuth POST (for example console pairing) can install the same form semantics
-  and cap inside its own encapsulated plugin scope. An over-cap request receives
-  Fastify's direct 413 response before the route handler or Bridge runs.
+  unrelated routes. When `skipAuthorize` leaves POST `/oauth/authorize` to the
+  caller, `registerOAuthRoutes` preserves the existing automatic URL-encoded
+  form behavior in the caller's scope: it installs the shared form parser only
+  when that scope has neither an exact form parser nor a caller-owned wildcard,
+  and it adds a route-registration hook that clamps the later exact pairing POST
+  to the lesser of its declared `bodyLimit` and the shared budget. JSON, form,
+  and caller-parsed unknown media therefore cannot regain Fastify's larger
+  default or widen the OAuth cap, while a caller's stricter route limit and
+  existing parser semantics remain intact. The hook does not alter other paths
+  or methods. `addOAuthFormContentTypeParser` is idempotent for inherited/existing
+  form or wildcard parsers and remains exported with
+  `OAUTH_POST_BODY_MAX_BYTES` for explicit custom composition. An over-cap
+  request receives Fastify's direct 413 response before the pairing handler or
+  Bridge runs.
 - **Express OAuth POST body enforcement:** the returned Express router installs
   `express.json` and `express.urlencoded` with the shared limit, followed by a
   bounded raw fallback for every otherwise unmatched content type, scoped to

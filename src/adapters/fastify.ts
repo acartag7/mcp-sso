@@ -26,6 +26,8 @@ export const FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT = Object.freeze({
   timeWindow: PAIRING_AUTHORIZE_WINDOW_MS,
 });
 
+const OAUTH_FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
+
 export interface FastifyAdapterOptions {
   bridge: Bridge;
   /** IdentityPort for the default header-based authorize. Required unless
@@ -44,12 +46,28 @@ export interface FastifyAdapterOptions {
 }
 
 export function addOAuthFormContentTypeParser(app: FastifyInstance): void {
-  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
+  if (app.hasContentTypeParser(OAUTH_FORM_CONTENT_TYPE) || app.hasContentTypeParser("*")) return;
+  app.addContentTypeParser(OAUTH_FORM_CONTENT_TYPE, { parseAs: "string" }, (_req, body, done) => {
     done(null, Object.fromEntries(new URLSearchParams(String(body))));
   });
 }
 
 export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
+  if (opts.skipAuthorize && !opts.upstream) {
+    // Pre-A1 compatibility: caller-owned pairing routes registered after this
+    // function inherit automatic form parsing. Keep only the catch-all parser in
+    // the child scope so unrelated unknown media retain caller semantics.
+    addOAuthFormContentTypeParser(app);
+    app.addHook("onRoute", (routeOptions) => {
+      const methods = Array.isArray(routeOptions.method) ? routeOptions.method : [routeOptions.method];
+      if (routeOptions.url !== "/oauth/authorize"
+        || !methods.some((method) => method.toUpperCase() === "POST")) return;
+      routeOptions.bodyLimit = Math.min(
+        routeOptions.bodyLimit ?? OAUTH_POST_BODY_MAX_BYTES,
+        OAUTH_POST_BODY_MAX_BYTES,
+      );
+    });
+  }
   await app.register(async (scope) => registerScopedOAuthRoutes(scope, opts));
 }
 

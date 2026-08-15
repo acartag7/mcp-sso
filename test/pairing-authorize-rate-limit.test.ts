@@ -31,7 +31,10 @@ test("pairing authorize hard cap covers GET and POST before pairing or Bridge ef
     max: PAIRING_AUTHORIZE_MAX_REQUESTS, timeWindow: PAIRING_AUTHORIZE_WINDOW_MS,
   });
   const pairing = new Pairing();
-  const bridge = { config: { resource: "https://api.test/mcp" } } as Bridge;
+  const bridge = {
+    config: { resource: "https://api.test/mcp" },
+    guardPairingAuthorize: async () => {},
+  } as unknown as Bridge;
   for (let count = 0; count < PAIRING_AUTHORIZE_MAX_REQUESTS; count += 1) {
     const admitted = await handlePairingAuthorize(
       { bridge, pairing }, "GET", request(`203.0.113.${count}`),
@@ -66,7 +69,10 @@ test("pairing authorize hard cap covers GET and POST before pairing or Bridge ef
 test("pairing authorize window resets exactly and clock rollback fails closed", async (t) => {
   let now = 1_000_000;
   t.mock.method(Date, "now", () => now);
-  const bridge = { config: { resource: "https://api.test/mcp" } } as Bridge;
+  const bridge = {
+    config: { resource: "https://api.test/mcp" },
+    guardPairingAuthorize: async () => {},
+  } as unknown as Bridge;
   const saturated = new Pairing();
   for (let count = 0; count < PAIRING_AUTHORIZE_MAX_REQUESTS; count += 1) {
     assert.equal((await handlePairingAuthorize(
