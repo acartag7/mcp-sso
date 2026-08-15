@@ -151,16 +151,28 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
       const advisoryId = parsed.pathname.startsWith("/advisories/")
         ? decodeURIComponent(parsed.pathname.slice("/advisories/".length))
         : parsed.searchParams.get("cve_id");
-      const record = policy.advisoryExceptions
-        .find((exception) => exception.advisoryIds.includes(advisoryId));
-      assert.ok(record, `known advisory URL: ${url}`);
+      const exception = policy.advisoryExceptions
+        .find((record) => record.advisoryIds.includes(advisoryId));
+      const transitive = Object.entries(policy.transitivePins)
+        .find(([, record]) => record.advisoryIds.includes(advisoryId));
+      const packageName = exception?.package ?? transitive?.[0];
+      const adoptedVersion = exception?.adoptedVersion ?? transitive?.[1].version;
+      assert.ok(packageName && adoptedVersion, `known advisory URL: ${url}`);
+      const firstPatchedVersions = packageName === "fast-uri"
+        ? {
+            "GHSA-4c8g-83qw-93j6": ["2.4.1", "3.1.3", "4.0.1"],
+            "GHSA-v2hh-gcrm-f6hx": ["2.4.3", "3.1.4", "4.1.1"],
+            "GHSA-7p8r-x3mc-p8w7": ["2.4.4", "3.1.5", "4.1.2"],
+          }[advisoryId]
+        : [adoptedVersion];
+      assert.ok(firstPatchedVersions, `known advisory version lines: ${advisoryId}`);
       return Response.json({
         ghsa_id: advisoryId.startsWith("GHSA-") ? advisoryId : null,
         cve_id: advisoryId.startsWith("CVE-") ? advisoryId : null,
-        vulnerabilities: [{
-          package: { ecosystem: "npm", name: record.package },
-          first_patched_version: record.adoptedVersion,
-        }],
+        vulnerabilities: firstPatchedVersions.map((firstPatchedVersion) => ({
+          package: { ecosystem: "npm", name: packageName },
+          first_patched_version: firstPatchedVersion,
+        })),
       });
     }
     if (url.includes("api.github.com/repos/")) {
@@ -174,11 +186,20 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
       });
     }
     const name = decodeURIComponent(new URL(url).pathname.slice(1));
-    const record = policy.packages[name];
+    const record = policy.packages[name] ?? policy.transitivePins[name];
     assert.ok(record, `known package URL: ${url}`);
-    return Response.json({ time: { [record.version]: record.published } });
+    const time = { [record.version]: record.published };
+    if (name === "fast-uri") time["3.1.4"] = record.published;
+    return Response.json({ time });
   };
   await verifyRemoteDependencyPolicy(policy, { fetchImpl, token: "not-a-secret" });
+
+  const staleTransitive = structuredClone(policy);
+  staleTransitive.transitivePins["fast-uri"].version = "3.1.4";
+  await assert.rejects(
+    verifyRemoteDependencyPolicy(staleTransitive, { fetchImpl, token: "not-a-secret" }),
+    /fast-uri: advisory .* first patched version 3\.1\.5 is newer than adopted 3\.1\.4/,
+  );
 
   const badFetch = async (input, init) => {
     const url = String(input);

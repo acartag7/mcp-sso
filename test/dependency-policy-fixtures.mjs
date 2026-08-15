@@ -13,6 +13,7 @@ async function conformingNow(root = ROOT) {
   const policy = await loadDependencyPolicy(root);
   const ordinaryRecords = [
     ...Object.values(policy.packages),
+    ...Object.values(policy.transitivePins),
     ...Object.values(policy.actions).filter((record) => record.firstPartyException !== true),
   ];
   const newestPublication = Math.max(...ordinaryRecords.map((record) => Date.parse(record.published)));
@@ -70,8 +71,10 @@ export async function makeHonoExceptionYoung(root, { includeWorkspaceExclusion =
 
 async function setLockfileFastUri(root, { version = "3.1.5", secondVersion = null } = {}) {
   const lockfile = join(root, "pnpm-lock.yaml");
-  await replace(lockfile, "  fast-uri@3.1.2:\n", `  fast-uri@${version}:\n`);
-  await replace(lockfile, "  fast-uri@3.1.2: {}", `  fast-uri@${version}: {}`);
+  if (version !== "3.1.5") {
+    await replace(lockfile, "  fast-uri@3.1.5:\n", `  fast-uri@${version}:\n`);
+    await replace(lockfile, "  fast-uri@3.1.5: {}", `  fast-uri@${version}: {}`);
+  }
   if (secondVersion !== null) {
     // Model a genuine two-resolution tree: both sections list both versions.
     await replace(lockfile, `  fast-uri@${version}:\n`, `  fast-uri@${version}:\n  fast-uri@${secondVersion}:\n`);

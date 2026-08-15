@@ -208,6 +208,7 @@ function upstreamFetch(policy, {
   advisoryPackage = "hono",
   fixedVersion = policy.packages.hono.version,
   fixedVersions = {},
+  extraVulnerabilities = [],
 } = {}) {
   return async (input) => {
     const url = String(input);
@@ -217,13 +218,26 @@ function upstreamFetch(policy, {
         ? decodeURIComponent(parsed.pathname.slice("/advisories/".length))
         : parsed.searchParams.get("cve_id");
       assert.ok(advisoryId, `advisory ID present: ${url}`);
+      const transitive = Object.entries(policy.transitivePins)
+        .find(([, record]) => record.advisoryIds.includes(advisoryId));
+      if (transitive) {
+        const [packageName, record] = transitive;
+        return Response.json({
+          ghsa_id: advisoryId.startsWith("GHSA-") ? advisoryId : null,
+          cve_id: advisoryId.startsWith("CVE-") ? advisoryId : null,
+          vulnerabilities: [{
+            package: { ecosystem: "npm", name: packageName },
+            first_patched_version: record.version,
+          }],
+        });
+      }
       return Response.json({
         ghsa_id: advisoryId.startsWith("GHSA-") ? advisoryId : "GHSA-54fx-42gc-7vw4",
         cve_id: advisoryId.startsWith("CVE-") ? advisoryId : null,
         vulnerabilities: [{
           package: { ecosystem: "npm", name: advisoryPackage },
           first_patched_version: fixedVersions[advisoryId] ?? fixedVersion,
-        }],
+        }, ...extraVulnerabilities],
       });
     }
     if (url.includes("api.github.com/repos/")) {
@@ -234,7 +248,7 @@ function upstreamFetch(policy, {
       return Response.json({ sha: record.sha, commit: { committer: { date: record.published } } });
     }
     const name = decodeURIComponent(new URL(url).pathname.slice(1));
-    const record = policy.packages[name];
+    const record = policy.packages[name] ?? policy.transitivePins[name];
     assert.ok(record, `known package URL: ${url}`);
     return Response.json({ time: { [record.version]: record.published } });
   };
@@ -295,10 +309,35 @@ test("remote advisory evidence binds the package and first patched version", asy
   await t.test("non-fixing adopted version", async () => {
     await assert.rejects(
       verifyRemoteDependencyPolicy(exceptionPolicy, {
-        fetchImpl: upstreamFetch(policy, { fixedVersion: "999.0.0" }),
+        fetchImpl: upstreamFetch(policy, { fixedVersion: "4.12.99" }),
       }),
-      /hono: advisory GHSA-54fx-42gc-7vw4 first patched version 999\.0\.0 is newer than adopted/,
+      /hono: advisory GHSA-54fx-42gc-7vw4 first patched version 4\.12\.99 is newer than adopted/,
     );
+  });
+
+  await t.test("malformed matching release evidence rejects before line filtering", async () => {
+    await assert.rejects(
+      verifyRemoteDependencyPolicy(exceptionPolicy, {
+        fetchImpl: upstreamFetch(policy, {
+          extraVulnerabilities: [{
+            package: { ecosystem: "npm", name: "hono" },
+            first_patched_version: null,
+          }],
+        }),
+      }),
+      /hono: advisory .* has no stable first patched version for the adopted pin/,
+    );
+  });
+
+  await t.test("malformed evidence for another package does not poison the adopted package", async () => {
+    await verifyRemoteDependencyPolicy(exceptionPolicy, {
+      fetchImpl: upstreamFetch(policy, {
+        extraVulnerabilities: [{
+          package: { ecosystem: "npm", name: "express" },
+          first_patched_version: null,
+        }],
+      }),
+    });
   });
 
   await t.test("adopted version must be the minimum that fixes all advisories", async () => {

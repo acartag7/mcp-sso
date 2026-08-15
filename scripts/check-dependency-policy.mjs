@@ -6,6 +6,9 @@ import {
   validateExceptionBindings,
   verifyAdvisoryExceptionEvidence,
   workspaceCooldownConfig,
+  parseStableVersion,
+  validAdvisoryId,
+  validPackageName,
 } from "./dependency-policy-exceptions.mjs";
 import { lockfilePackageVersions } from "./dependency-policy-lockfile.mjs";
 
@@ -58,6 +61,25 @@ function assertRecordShape(policy) {
   const errors = [];
   const exceptions = validateAdvisoryExceptionRecords(policy.advisoryExceptions);
   errors.push(...exceptions.errors);
+  object(policy.transitivePins, "dependency policy transitivePins");
+  for (const [name, recordValue] of Object.entries(policy.transitivePins)) {
+    const record = object(recordValue, `transitive pin ${name}`);
+    if (!validPackageName(name)) errors.push(`${name}: transitive pin package name is invalid`);
+    const keys = Object.keys(record).sort();
+    if (keys.length !== 3 || keys[0] !== "advisoryIds" || keys[1] !== "published" || keys[2] !== "version") {
+      errors.push(`${name}: transitive pin must contain exactly advisoryIds, published, and version`);
+    }
+    if (parseStableVersion(record.version) === null) {
+      errors.push(`${name}: transitive pin version is invalid`);
+    }
+    if (!validDate(record.published)) errors.push(`${name}: transitive pin published date is invalid`);
+    if (!Array.isArray(record.advisoryIds) || record.advisoryIds.length === 0
+      || record.advisoryIds.some((id) => !validAdvisoryId(id))) {
+      errors.push(`${name}: transitive pin advisoryIds must be a non-empty valid advisory list`);
+    } else if (new Set(record.advisoryIds).size !== record.advisoryIds.length) {
+      errors.push(`${name}: transitive pin advisoryIds contains duplicates`);
+    }
+  }
   for (const [name, recordValue] of Object.entries(policy.packages)) {
     const record = object(recordValue, `package ${name}`);
     if (typeof record.version !== "string" || record.version === "") errors.push(`${name}: version is invalid`);
@@ -163,6 +185,25 @@ export async function verifyLocalDependencyPolicy(root = process.cwd(), now = ne
     else if (!exceptions.has(name)) assertAge(name, policy.packages[name].published, policy.minimumAgeDays, now, errors);
   }
 
+  for (const [name, record] of Object.entries(policy.transitivePins)) {
+    if (name in pins || name in policy.packages) {
+      errors.push(`${name}: transitive pin must not duplicate a direct package pin`);
+    }
+    const override = workspace.overrides.get(name);
+    if (override !== record.version) {
+      errors.push(`${name}: workspace override ${String(override)} != transitive pin ${record.version}`);
+    }
+    const resolved = lockfileVersions.get(name);
+    if (resolved === undefined) errors.push(`${name}: transitive pin is missing from the lockfile`);
+    else if (resolved.size !== 1 || !resolved.has(record.version)) {
+      errors.push(`${name}: lockfile resolutions ${[...resolved].sort().join(",")} != transitive pin ${record.version}`);
+    }
+    assertAge(name, record.published, policy.minimumAgeDays, now, errors);
+  }
+  for (const name of workspace.overrides.keys()) {
+    if (!(name in policy.transitivePins)) errors.push(`${name}: workspace override is missing from transitivePins`);
+  }
+
   const used = new Set();
   for (const action of await workflowPins(root)) {
     const record = policy.actions[action.repo];
@@ -222,6 +263,27 @@ export async function verifyRemoteDependencyPolicy(policy, options = {}) {
       errors.push(`${name}: ${error instanceof Error ? error.message : "remote verification failed"}`);
     }
   }));
+  await Promise.all(Object.entries(policy.transitivePins).map(async ([name, record]) => {
+    try {
+      const packument = await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}`, fetchImpl);
+      if (packument.time?.[record.version] !== record.published) {
+        errors.push(`${name}: transitive pin publication date does not match npm`);
+      }
+    } catch (error) {
+      errors.push(`${name}: ${error instanceof Error ? error.message : "remote verification failed"}`);
+    }
+  }));
+  await verifyAdvisoryExceptionEvidence(
+    Object.entries(policy.transitivePins).map(([packageName, record]) => ({
+      package: packageName,
+      advisoryIds: record.advisoryIds,
+      adoptedVersion: record.version,
+    })),
+    fetchJson,
+    fetchImpl,
+    token,
+    errors,
+  );
   await verifyAdvisoryExceptionEvidence(
     policy.advisoryExceptions,
     fetchJson,

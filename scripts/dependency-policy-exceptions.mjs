@@ -10,12 +10,12 @@ const RECORD_KEYS = new Set([
   "justification",
 ]);
 
-function validPackageName(value) {
+export function validPackageName(value) {
   return typeof value === "string"
     && /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(value);
 }
 
-function validAdvisoryId(value) {
+export function validAdvisoryId(value) {
   return typeof value === "string"
     && (/^GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/.test(value)
       || /^CVE-\d{4}-\d{4,}$/.test(value));
@@ -27,7 +27,7 @@ function validDateOnly(value) {
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-function parseStableVersion(value) {
+export function parseStableVersion(value) {
   if (typeof value !== "string") return null;
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value);
   return match?.slice(1) ?? null;
@@ -41,6 +41,10 @@ function compareStableVersions(left, right) {
     if (left[index] !== right[index]) return left[index] > right[index] ? 1 : -1;
   }
   return 0;
+}
+
+function sameReleaseLine(left, right) {
+  return left[0] === right[0] && (left[0] !== "0" || left[1] === right[1]);
 }
 
 export function validateAdvisoryExceptionRecords(value) {
@@ -119,7 +123,28 @@ export async function workspaceCooldownConfig(root) {
   if (new Set(exclusions).size !== exclusions.length) {
     throw new Error("pnpm-workspace.yaml minimumReleaseAgeExclude contains duplicates");
   }
-  return { minimumAgeMinutes: Number(ageMatch[1]), excludedPackages: new Set(exclusions) };
+
+  const overrideHeaders = lines.flatMap((line, index) => line === "overrides:" ? [index] : []);
+  if (overrideHeaders.length !== 1) {
+    throw new Error("pnpm-workspace.yaml must contain exactly one overrides mapping");
+  }
+  const overrides = new Map();
+  for (let index = overrideHeaders[0] + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line === "" || /^\s*#/.test(line)) continue;
+    if (!/^\s/.test(line)) break;
+    const match = /^  ((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*): (\d+\.\d+\.\d+)$/.exec(line);
+    if (!match || !validPackageName(match[1]) || parseStableVersion(match[2]) === null) {
+      throw new Error("pnpm-workspace.yaml overrides must be exact package-to-version entries");
+    }
+    if (overrides.has(match[1])) throw new Error(`pnpm-workspace.yaml overrides duplicates ${match[1]}`);
+    overrides.set(match[1], match[2]);
+  }
+  return {
+    minimumAgeMinutes: Number(ageMatch[1]),
+    excludedPackages: new Set(exclusions),
+    overrides,
+  };
 }
 
 export function validateExceptionBindings({
@@ -212,30 +237,37 @@ export async function verifyAdvisoryExceptionEvidence(records, fetchJson, fetchI
           hasInvalidEvidence = true;
           return;
         }
-        const unverifiedFix = matching.find(
-          (vulnerability) => parseStableVersion(vulnerability.first_patched_version) === null,
-        );
-        if (adoptedVersion === null || unverifiedFix) {
+        const parsedFixes = matching.map((vulnerability) => parseStableVersion(
+          vulnerability.first_patched_version,
+        ));
+        if (adoptedVersion === null || parsedFixes.some((fixedVersion) => fixedVersion === null)) {
           errors.push(
             `${record.package}: advisory ${id} has no stable first patched version for the adopted pin`,
           );
           hasInvalidEvidence = true;
           return;
         }
-        const parsedFixes = matching.map((vulnerability) => parseStableVersion(
-          vulnerability.first_patched_version,
-        ));
-        const newerFix = parsedFixes.find((fixedVersion) => (
-          compareStableVersions(fixedVersion, adoptedVersion) > 0
-        ));
-        if (newerFix) {
+        const releaseLineFixes = adoptedVersion === null ? [] : parsedFixes.filter(
+          (fixedVersion) => fixedVersion !== null && sameReleaseLine(fixedVersion, adoptedVersion),
+        );
+        if (releaseLineFixes.length === 0) {
           errors.push(
-            `${record.package}: advisory ${id} first patched version ${newerFix.join(".")} is newer than adopted ${record.adoptedVersion}`,
+            `${record.package}: advisory ${id} has no stable first patched version for the adopted pin`,
           );
           hasInvalidEvidence = true;
           return;
         }
-        firstPatchedVersions.push(...parsedFixes);
+        const releaseLineFix = releaseLineFixes.reduce((latest, fixedVersion) => (
+          compareStableVersions(fixedVersion, latest) > 0 ? fixedVersion : latest
+        ));
+        if (compareStableVersions(releaseLineFix, adoptedVersion) > 0) {
+          errors.push(
+            `${record.package}: advisory ${id} first patched version ${releaseLineFix.join(".")} is newer than adopted ${record.adoptedVersion}`,
+          );
+          hasInvalidEvidence = true;
+          return;
+        }
+        firstPatchedVersions.push(releaseLineFix);
       } catch (error) {
         errors.push(`${record.package}: ${id}: ${error instanceof Error ? error.message : "remote verification failed"}`);
         hasInvalidEvidence = true;
