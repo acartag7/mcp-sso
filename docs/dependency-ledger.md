@@ -8,8 +8,8 @@
 > `docs/threat-model.md` ("Implementation gates").
 >
 > The enforcing check computes the cutoff from the current UTC date. At this
-> recheck (**2026-08-10**), an ordinary pin is acceptable only if published on
-> or before **2026-07-26** (≥15 days old). A published-advisory exception must
+> recheck (**2026-08-15**), an ordinary pin is acceptable only if published on
+> or before **2026-07-31** (≥15 days old). A published-advisory exception must
 > satisfy the separate two-rule policy below.
 
 ## The 15-day rule and `minimumReleaseAge`
@@ -76,6 +76,7 @@ optional peer that a consumer opts into.
 | [`typescript`](https://www.typescriptlang.org/) | `6.0.3` | 2026-04-16 | ✅ | Type-checking + the publish `tsc` build. |
 | [`@types/node`](https://www.npmjs.com/package/@types/node) | `24.13.2` | 2026-06-10 | ✅ | Node 24 typings; matches the `engines.node >=24` target. |
 | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | ✅ | The official MCP SDK — used in tests/the Phase 4 example (the end-to-end verify client) AND as a runtime dep of every server scaffolded by `npx mcp-sso init` (§15), pinned there at this same version. Not a runtime dep of the mcp-sso package itself (jose-only). |
+| [`@fastify/rate-limit`](https://github.com/fastify/fastify-rate-limit) | `11.2.0` | 2026-07-29 | ✅ | Real fail-closed `/mcp` middleware for the Fastify examples, generated starter, and isolated helper subpath. Also an optional peer; not loaded by the root/core entry. |
 | [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | ✅ | Reference framework adapter — dev/test + optional peer. |
 | [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | ✅ | Framework adapter — dev/test + optional peer. |
 | [`hono`](https://hono.dev/) | `4.12.34` | 2026-08-03 | Advisory exception | Framework adapter — dev/test + optional peer; the minimum version fixing the recorded published advisories. |
@@ -113,13 +114,14 @@ It becomes eligible for a plain `pnpm update fast-uri` at that timestamp.
 
 ## Optional peer dependencies (not shipped to consumers)
 
-`fastify`, `express`, `hono`, `mysql2`, and `ioredis` are declared as **optional
+`@fastify/rate-limit`, `fastify`, `express`, `hono`, `mysql2`, and `ioredis` are declared as **optional
 `peerDependencies`** — a consumer installs only the adapter(s) it uses. They are
 also installed as **devDependencies** (above) for adapter testing. `jose` remains
 the sole runtime dep.
 
 | Package | Peer range | Notes |
 |---|---|---|
+| `@fastify/rate-limit` | `>=11.2.0 <12` | `/fastify/protected-resource-rate-limit`; mandatory finite `/mcp` admission in the shipped Fastify composition roots. |
 | `fastify` | `>=5` | `/fastify` adapter (reference). |
 | `express` | `>=5` | `/express` adapter. |
 | `hono` | `>=4.12.34 <5` | `/hono` adapter; lower bound is the tested advisory-fixed `bodyLimit` implementation, upper bound excludes an unverified major. |
@@ -185,6 +187,7 @@ upstream registries.
     }
   ],
   "packages": {
+    "@fastify/rate-limit": { "version": "11.2.0", "published": "2026-07-29T14:38:39.112Z" },
     "@modelcontextprotocol/sdk": { "version": "1.29.0", "published": "2026-03-30T16:50:42.718Z" },
     "@types/express": { "version": "5.0.6", "published": "2025-12-01T20:35:51.488Z" },
     "@types/node": { "version": "24.13.2", "published": "2026-06-10T22:15:29.361Z" },

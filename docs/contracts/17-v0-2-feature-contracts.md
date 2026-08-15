@@ -1845,6 +1845,19 @@ gate replaces no-gate).
 - Express + Hono equivalents of `examples/fastify-sqlite` — execution only,
   no new contract surface. Examples use console pairing (17.5) or a real IdP;
   the `DEV_STUB_SUBJECT` pattern is removed.
+- **Protected-resource request budget.** Both runnable Fastify examples and the
+  generated starter install `@fastify/rate-limit` for `/mcp` through the
+  §8.4/§15 helper. It is a mandatory finite `onRequest` budget (default 60 per
+  60 seconds per Fastify `request.ip`), not the optional/fail-open §6.7 OAuth
+  hook. The foreign-Origin gate stays earlier; after it admits a request,
+  normal denial (429) or counter-store failure (fixed 503) precedes body
+  parsing, bearer verification/audit, MCP SDK/server construction, backend-key
+  access, and backend fetch. POST/GET/DELETE gateway routes carry the same fixed
+  group id. The local store is bounded, per-process, and per-method-route; shared public replicas
+  need a conforming shared store or aggregate trusted-edge budget. The private
+  token-only stub backend is not double-charged: it is reachable only through
+  the already-budgeted gateway in the documented loopback/NetworkPolicy
+  topology, and retains its independent static-credential gate.
 - **API-key-gateway example** (mcp-sso as the SSO front door for a backend
   that only accepts a static API key): the backend key lives in an env var
   (`BACKEND_API_KEY`), read once at boot into a closure — never logged, never

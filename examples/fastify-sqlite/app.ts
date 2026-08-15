@@ -61,6 +61,10 @@ import {
 } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 import {
+  registerProtectedResourceRateLimit,
+  type ProtectedResourceRateLimitOptions,
+} from "../../src/adapters/fastify-protected-resource-rate-limit.ts";
+import {
   assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
 } from "../../src/deployment-guard.ts";
 
@@ -81,6 +85,8 @@ export interface ExampleOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer + pairing. Default noopAudit. */
   audit?: AuditPort;
+  /** Mandatory `/mcp` Fastify budget. Defaults to 60 requests / 60 seconds / IP. */
+  protectedResourceRateLimit?: ProtectedResourceRateLimitOptions;
   /** Local starter only: explicitly acknowledge the unsafe default combination. */
   acknowledgeUnsafeStatelessDefaults?: true;
 }
@@ -94,6 +100,12 @@ export async function buildApp(opts: ExampleOptions) {
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
   }, { emitAcknowledgementWarning: false });
   const app = Fastify();
+  const protectedRateLimit = await registerProtectedResourceRateLimit(app, opts.protectedResourceRateLimit);
+  const protectedRoute = { config: { rateLimit: {
+    max: protectedRateLimit.max,
+    timeWindow: protectedRateLimit.timeWindowMs,
+    groupId: protectedRateLimit.groupId,
+  } } };
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
@@ -173,7 +185,7 @@ export async function buildApp(opts: ExampleOptions) {
   });
 
   // Protected /mcp: verify the bridge-issued access token, then delegate to an MCP server.
-  app.post("/mcp", async (request, reply) => {
+  app.post("/mcp", protectedRoute, async (request, reply) => {
     let auth;
     try {
       auth = await authorizer.authorize({

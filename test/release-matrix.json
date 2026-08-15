@@ -13,6 +13,7 @@
     "./store/sqlite",
     "./store/mysql",
     "./rate-limit/redis",
+    "./fastify/protected-resource-rate-limit",
     "./fastify",
     "./express",
     "./hono",

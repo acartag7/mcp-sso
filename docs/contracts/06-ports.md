@@ -482,6 +482,16 @@ resolver therefore charges that counting port once for the request's
 The default `noopRateLimit` allows everything (rate-limiting is advisory, not a
 hard gate). A thrown error is treated as **fail-open** (allow) — a rate-limiter
 outage must not lock out all auth; this is defense-in-depth, not a security boundary.
+
+This advisory OAuth-port policy does **not** govern the protected resource
+itself. A Fastify host mounts `/mcp` through the separately exported
+`mcp-sso/fastify/protected-resource-rate-limit` helper (§8.4/§15): that helper
+registers the real `@fastify/rate-limit` middleware with a mandatory finite
+per-IP budget, `onRequest` admission, and `skipOnError: false`. A counter-store
+failure therefore rejects before bearer verification or protected handler work;
+it is never converted into the `RateLimitPort` fail-open outcome. Keeping the
+two policies distinct avoids silently inheriting an availability-oriented OAuth
+default at the resource boundary.
 **`req.ip` behind a proxy:** the adapter keys on the framework's `req.ip`, which
 behind a reverse proxy/tunnel is the proxy's address, not the client's. The
 composition root MUST configure the framework to trust the proxy hop

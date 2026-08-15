@@ -38,6 +38,10 @@ import {
 } from "../../src/adapters/http.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 import {
+  registerProtectedResourceRateLimit,
+  type ProtectedResourceRateLimitOptions,
+} from "../../src/adapters/fastify-protected-resource-rate-limit.ts";
+import {
   assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
 } from "../../src/deployment-guard.ts";
 // Reuse the fastify-sqlite example's env-wiring helpers rather than duplicate them
@@ -74,6 +78,8 @@ export interface GatewayOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer (+ pairing). Default noopAudit. */
   audit?: AuditPort;
+  /** Mandatory `/mcp` Fastify budget. Defaults to 60 requests / 60 seconds / IP. */
+  protectedResourceRateLimit?: ProtectedResourceRateLimitOptions;
   /** Local starter only: explicitly acknowledge the unsafe default combination. */
   acknowledgeUnsafeStatelessDefaults?: true;
 }
@@ -103,6 +109,12 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
   }, { emitAcknowledgementWarning: false });
   const app = Fastify();
+  const protectedRateLimit = await registerProtectedResourceRateLimit(app, opts.protectedResourceRateLimit);
+  const protectedRoute = { config: { rateLimit: {
+    max: protectedRateLimit.max,
+    timeWindow: protectedRateLimit.timeWindowMs,
+    groupId: protectedRateLimit.groupId,
+  } } };
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
@@ -266,15 +278,15 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   // All three methods sit behind the SAME Origin + bearer gate. POST and GET are
   // forwarded; DELETE returns an explicit 405 (the stub backend has no session
   // termination) rather than being silently dropped (docs/gateway-deployment.md).
-  app.post("/mcp", async (request, reply) => {
+  app.post("/mcp", protectedRoute, async (request, reply) => {
     if (!(await authorizeOrChallenge(request, reply))) return;
     await forward("POST", request, reply);
   });
-  app.get("/mcp", async (request, reply) => {
+  app.get("/mcp", protectedRoute, async (request, reply) => {
     if (!(await authorizeOrChallenge(request, reply))) return;
     await forward("GET", request, reply);
   });
-  app.delete("/mcp", async (request, reply) => {
+  app.delete("/mcp", protectedRoute, async (request, reply) => {
     if (!(await authorizeOrChallenge(request, reply))) return;
     reply.code(405).send({ jsonrpc: "2.0", error: { code: -32001, message: "DELETE /mcp not supported (backend has no session termination)" }, id: null });
   });

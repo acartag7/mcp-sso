@@ -1,7 +1,8 @@
 # 15. Package & export map
 
-Single package `mcp-sso`. Runtime dep: **`jose` only**. Framework adapters,
-identity ports, and the MySQL/Redis adapters are optional `peerDependencies`
+Single package `mcp-sso`. Root/core runtime dep: **`jose` only**. Framework adapters,
+identity ports, the MySQL/Redis adapters, and the Fastify protected-resource
+rate-limit helper are optional `peerDependencies`
 (the consumer installs only the ones it uses); `node:sqlite` is built-in (no
 dep). No postinstall, no bundler. Dev runs on **Node 24 native TS** (`.ts`
 imports, no build step); the published artifact is plain-`tsc` ESM + `.d.ts`.
@@ -24,6 +25,7 @@ the npm artifact is cut, so the published package is never broken by `.ts` paths
   "./store/mysql":              { "types": "./dist/store/mysql.d.ts",              "default": "./dist/store/mysql.js" },
   "./rate-limit/redis":         { "types": "./dist/rate-limit/redis.d.ts",         "default": "./dist/rate-limit/redis.js" },
   "./fastify":                  { "types": "./dist/adapters/fastify.d.ts",         "default": "./dist/adapters/fastify.js" },
+  "./fastify/protected-resource-rate-limit": { "types": "./dist/adapters/fastify-protected-resource-rate-limit.d.ts", "default": "./dist/adapters/fastify-protected-resource-rate-limit.js" },
   "./express":                  { "types": "./dist/adapters/express.d.ts",         "default": "./dist/adapters/express.js" },
   "./hono":                     { "types": "./dist/adapters/hono.d.ts",            "default": "./dist/adapters/hono.js" },
   "./identity/cloudflare-access": { "types": "./dist/identity/cloudflare-access.d.ts", "default": "./dist/identity/cloudflare-access.js" },
@@ -80,6 +82,23 @@ exactly-one-occurrence decision inline from
 `request.raw.headersDistinct.origin`. These are reference composition-root
 controls, not automatic `/mcp` middleware in the framework adapters.
 
+Those same three composition roots mount protected routes with the real
+`@fastify/rate-limit` plugin via the isolated
+`mcp-sso/fastify/protected-resource-rate-limit` subpath. The helper validates a
+closed options object (`max` integer 1..10,000; `timeWindowMs` integer
+1,000..3,600,000; defaults 60 / 60,000), registers `onRequest` admission with
+`global: false` and `skipOnError: false`, and returns the snapshotted policy the
+caller places in each protected route's `config.rateLimit`. The examples group
+each method-specific route under the fixed `mcp-protected-resource` id; the
+finite in-memory default is per process and per method route. A supplied custom store is wrapped so
+synchronous throws, callback errors, duplicate callbacks, and malformed
+counter results become one fixed 503 error before the route handler, never a
+fail-open request or a raw backend-error leak. A normal budget denial is 429.
+The helper is a separate subpath so importing `mcp-sso/fastify` for OAuth route
+wiring does not force the plugin on existing consumers; consumers of the new
+subpath install its optional peer. This does not change the root package's
+`jose`-only runtime graph.
+
 **Consumer-facing example helpers (DX):** five symbols the in-repo example leans on
 to implement the recommended patterns are root-exported, so a package consumer
 replicating those patterns imports them from `mcp-sso` instead of reimplementing
@@ -112,12 +131,14 @@ the `jose`-only runtime posture.
 `npm install && npm start` and pair with via a console-printed one-time code (then
 `claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp`). It generates:
 `package.json` (`"type": "module"`, `"start": "node server.ts"`, exact-pinned deps —
-`mcp-sso` at the running version + `fastify` + `@modelcontextprotocol/sdk` at the
+`mcp-sso` at the running version + `fastify` + `@fastify/rate-limit` +
+`@modelcontextprotocol/sdk` at the
 versions mcp-sso is tested against, recorded in `docs/dependency-ledger.md`; Node
 `>=24`, native TS, no build step); `server.ts` (the composition root, built from the
 root exports + the `./fastify`, `./store/sqlite`, `./identity/console-pairing` subpaths
 — quickstart secrets + console pairing + sqlite + the `/mcp` Streamable-HTTP Origin
-gate + a protected `/mcp`, zero-setup loopback by default). The same SQLite instance
+gate + mandatory fail-closed protected-resource rate limiting + a protected `/mcp`,
+zero-setup loopback by default). The same SQLite instance
 implements both OAuth state and stored user DCR, so a generated client registration
 survives a server restart; the shipped-entrypoint integration test restarts between
 registration and authorization before completing pairing, token exchange, and an

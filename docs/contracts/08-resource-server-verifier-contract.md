@@ -81,6 +81,22 @@ passes the raw `Authorization` occurrence array into `RequestAuthorizer`; it mus
 not select Fastify's or Node's normalized first value before this check. The
 release-stack composition harnesses follow the same rule so their real-socket
 evidence exercises the shipped boundary rather than a weaker stand-in.
+Before that bearer call, every shipped Fastify `/mcp` composition root also
+installs the real `@fastify/rate-limit` plugin through
+`mcp-sso/fastify/protected-resource-rate-limit`. The route config applies a
+finite per-IP budget (default **60 requests per 60 seconds**) at `onRequest`;
+`skipOnError` is fixed `false`, so a backing-store error fails closed instead
+of running `RequestAuthorizer` or the protected handler. The existing foreign-
+`Origin` gate remains first: rejected cross-origin traffic is 403 without
+consuming the protected-resource budget; admitted traffic is rate-limited
+before body parsing, bearer verification/audit, MCP SDK construction, backend
+credential access, or proxy fetch. A denial is 429. Fastify's `request.ip` is
+the key; the host must configure `trustProxy` only for its actual trusted hop.
+The helper's in-memory default is bounded per process and per method route; a multi-replica public
+deployment supplies a conforming shared store or enforces an aggregate budget
+at its trusted edge. This is composition-root admission, not a new field on
+`RequestAuthInput`: the framework-free verifier intentionally has no authority
+to infer a client IP.
 `RequestAuthorizer.authorize` returns the `credentialKind` produced by
 `verifyAccessToken`; `VerifiedAccessToken`, `AuthorizedSubject`, and the
 `RequestAuthResult` alias all expose the same required field.

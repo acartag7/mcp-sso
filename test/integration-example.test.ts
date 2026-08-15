@@ -13,6 +13,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import type { FastifyRateLimitOptions, FastifyRateLimitStore } from "@fastify/rate-limit";
 import { exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -1102,5 +1103,55 @@ test("integration — /mcp Origin gate admits the issuer origin even when allowe
     }
   } finally {
     rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — runnable /mcp budget denies before bearer audit and does not charge a rejected Origin", async () => {
+  const issuer = "http://localhost:3000";
+  const config = createBridgeConfig({
+    issuer, resource: `${issuer}/mcp`, consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: jwk(), redirectAllowlist: [], scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"], allowedOrigins: [issuer], dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true }, accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300,
+    authorizationCodeTtlSeconds: 300,
+  });
+  const auditEvents: string[] = [];
+  let limiterIncrements = 0;
+  class CountingStore implements FastifyRateLimitStore {
+    constructor(_options: FastifyRateLimitOptions) {}
+    incr(
+      _key: string,
+      callback: (error: Error | null, result?: { current: number; ttl: number }) => void,
+      timeWindow: number,
+    ): void {
+      limiterIncrements += 1;
+      callback(null, { current: limiterIncrements, ttl: timeWindow });
+    }
+    child(): FastifyRateLimitStore { return this; }
+  }
+  const built = await buildApp({
+    config,
+    identity: { async verify() { return { ok: false, reason: "unused" }; } },
+    audit: { async writeAuthEvent(event) { auditEvents.push(event.event); } },
+    protectedResourceRateLimit: { max: 1, timeWindowMs: 60_000, store: CountingStore },
+    acknowledgeUnsafeStatelessDefaults: true,
+  });
+  const request = { method: "POST" as const, url: "/mcp", headers: { "content-type": "application/json" }, payload: "{}" };
+  try {
+    const foreign = await built.app.inject({ ...request, headers: { ...request.headers, origin: "https://evil.test" } });
+    assert.equal(foreign.statusCode, 403, "Origin rejects before the limiter and does not consume its budget");
+    assert.equal(limiterIncrements, 0, "foreign Origin causes zero limiter-store increments");
+    const admitted = await built.app.inject(request);
+    assert.equal(admitted.statusCode, 401, "the first allowed request reaches bearer verification");
+    assert.equal(limiterIncrements, 1, "the admitted request consumes exactly one limiter-store increment");
+    assert.equal(auditEvents.filter((event) => event === "auth.request").length, 1);
+    const denied = await built.app.inject(request);
+    assert.equal(denied.statusCode, 429);
+    assert.equal(auditEvents.filter((event) => event === "auth.request").length, 1,
+      "over-budget denial occurs before RequestAuthorizer audit effects");
+  } finally {
+    await built.app.close();
+    await built.close();
   }
 });

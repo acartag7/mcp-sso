@@ -74,13 +74,15 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     const repoPkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8")) as { version: string; devDependencies: Record<string, string> };
     assert.equal(deps["mcp-sso"], repoPkg.version, "mcp-sso pinned to the running (repo) version");
     assert.equal(deps.fastify, repoPkg.devDependencies.fastify, "fastify pinned to the repo's tested devDependency");
+    assert.equal(deps["@fastify/rate-limit"], repoPkg.devDependencies["@fastify/rate-limit"], "Fastify rate limiter pinned to the repo's tested devDependency");
     assert.equal(deps["@modelcontextprotocol/sdk"], repoPkg.devDependencies["@modelcontextprotocol/sdk"], "MCP SDK pinned to the repo's tested devDependency");
     assert.ok(!/[\^~]/.test(Object.values(deps).join(" ")), "no version ranges — exact pins only");
 
     const server = await readFile(join(dir, "server.ts"), "utf8");
-    for (const marker of ['from "mcp-sso"', "registerOAuthRoutes", "isMcpPath", "loadOrCreateQuickstartSecrets", "createConsolePairingIdentity", "handlePairingAuthorize"]) {
+    for (const marker of ['from "mcp-sso"', 'from "mcp-sso/fastify/protected-resource-rate-limit"', "registerOAuthRoutes", "registerProtectedResourceRateLimit", "isMcpPath", "loadOrCreateQuickstartSecrets", "createConsolePairingIdentity", "handlePairingAuthorize"]) {
       assert.ok(server.includes(marker), `server.ts composition root includes ${marker}`);
     }
+    assert.match(server, /config:\s*\{\s*rateLimit:/, "generated /mcp route enables the mandatory finite budget");
     assert.match(server, /request\.raw\.headersDistinct\.origin/, "generated /mcp gate reads raw Origin occurrences");
     assert.match(server, /occurrences\?\.length === 1/, "generated /mcp gate accepts exactly one occurrence");
     assert.match(server, /origin\.includes\(","\)/, "generated /mcp gate rejects comma-coalesced Origin");

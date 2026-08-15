@@ -1,10 +1,9 @@
 // File templates for `mcp-sso init` (contracts §15 "Init CLI"). Dep-free (node builtins); ships in dist/bin.
-
 /** fastify + the MCP SDK are pinned to the versions mcp-sso is TESTED against (the
  *  repo's devDependencies). The published package cannot read the repo's devDeps at
  *  runtime, so these are fixed here + recorded in docs/dependency-ledger.md; bump them
  *  with the repo's devDeps (exact pins, no ^/~, per the supply-chain rules). */
-const FASTIFY_VERSION = "5.8.5";
+const FASTIFY_VERSION = "5.8.5"; const FASTIFY_RATE_LIMIT_VERSION = "11.2.0";
 const MCP_SDK_VERSION = "1.29.0";
 
 export interface TemplateVars {
@@ -40,6 +39,7 @@ import {
   type ClientRegistration, type ClientStore,
 } from "mcp-sso";
 import { registerOAuthRoutes } from "mcp-sso/fastify";
+import { registerProtectedResourceRateLimit } from "mcp-sso/fastify/protected-resource-rate-limit";
 import { openSqliteStore } from "mcp-sso/store/sqlite";
 import { createConsolePairingIdentity } from "mcp-sso/identity/console-pairing";
 // The normalized request/response shapes the framework-free surface speaks. Inlined
@@ -108,7 +108,8 @@ async function main(): Promise<void> {
   store = openSqliteStore(\`\${DIR}/auth.db\`);
   const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
 
-  const app = Fastify();
+  const app = Fastify(); const protectedRateLimit = await registerProtectedResourceRateLimit(app);
+  const protectedRoute = { config: { rateLimit: { max: protectedRateLimit.max, timeWindow: protectedRateLimit.timeWindowMs, groupId: protectedRateLimit.groupId } } };
   const clock = new SystemClock();
   const bridge = new Bridge({ config, store, clock, audit });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
@@ -140,7 +141,7 @@ async function main(): Promise<void> {
   });
 
   // Protected /mcp: verify the bridge-minted access token, then delegate to an MCP server.
-  app.post("/mcp", async (request, reply) => {
+  app.post("/mcp", protectedRoute, async (request, reply) => {
     let auth;
     try {
       auth = await authorizer.authorize({ authorization: request.raw.headersDistinct.authorization });
@@ -179,6 +180,7 @@ function packageJson(vars: TemplateVars): string {
     engines: { node: ">=24" },
     dependencies: {
       "mcp-sso": vars.mcpSsoVersion,
+      "@fastify/rate-limit": FASTIFY_RATE_LIMIT_VERSION,
       fastify: FASTIFY_VERSION,
       "@modelcontextprotocol/sdk": MCP_SDK_VERSION,
     },
