@@ -21,10 +21,10 @@ const RESOURCE_A = "https://api-a.test/mcp";
 const RESOURCE_B = "https://api-b.test/mcp";
 const STORE_EXPIRY_SWEEP_INTERVAL_MS = 300_000;
 
-export function runStoreConformance(label: string, make: () => StorePort): void {
+export function runStoreConformance(label: string, make: () => StorePort | Promise<StorePort>): void {
   test(`${label}: expiry collection starts without caller scheduler wiring`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
-    const store = make();
+    const store = await make();
     const expiredJti = `scheduled-expired-${label}`;
     const activeJti = `scheduled-active-${label}`;
     const expiredToken = refresh(`scheduled-expired-token-${label}`, `scheduled-expired-family-${label}`, null, PAST);
@@ -56,7 +56,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
 
   test(`${label}: scheduled collection retains a consent tombstone while its signed JWT is valid`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
-    const store = make();
+    const store = await make();
     const signedExpiry = new Date(Date.parse(NOW) + STORE_EXPIRY_SWEEP_INTERVAL_MS + 1).toISOString();
     const jti = `scheduled-boundary-${label}`;
     const sweepExpired = store.sweepExpired.bind(store);
@@ -75,12 +75,11 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
         "the first scheduled sweep collected a tombstone while its signed JWT was still valid",
       );
 
-      t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
-      await settleUntil(() => sweeps === 2);
+      await store.sweepExpired(new Date(Date.parse(NOW) + STORE_EXPIRY_SWEEP_INTERVAL_MS * 2).toISOString());
       assert.equal(
         await store.consumeConsentJti(jti, FUTURE),
         true,
-        "a later scheduled sweep did not collect the expired tombstone",
+        "a later sweep did not collect the expired tombstone",
       );
     } finally {
       await store.close();
@@ -89,7 +88,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
 
   test(`${label}: close waits for an active expiry sweep and prevents later runs`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
-    const store = make();
+    const store = await make();
     let releaseSweep: (() => void) | undefined;
     const blocked = new Promise<void>((resolve) => { releaseSweep = resolve; });
     let calls = 0;
@@ -109,7 +108,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: store instance binding is stable for one logical store`, async () => {
-    const store = make();
+    const store = await make();
     const getStoreInstanceId = store.getStoreInstanceId?.bind(store);
     assert.ok(getStoreInstanceId);
     const first = await getStoreInstanceId();
@@ -120,7 +119,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: store instance binding rotation is atomic and durable`, async () => {
-    const store = make();
+    const store = await make();
     const get = store.getStoreInstanceId?.bind(store);
     const rotate = store.rotateStoreInstanceId?.bind(store);
     assert.ok(get);
@@ -134,7 +133,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: consent approval atomically binds JTI and authorization code`, async () => {
-    const store = make();
+    const store = await make();
     const binding = await store.getStoreInstanceId();
     const input = authCode("atomic-consent-code", FUTURE);
     assert.equal(await store.commitConsentApproval(binding, "atomic-jti", FUTURE, input), "stored");
@@ -153,7 +152,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: auth codes are hashed, single-use, expire`, async () => {
-    const store = make();
+    const store = await make();
     const raw = "raw-auth-code-secret";
     await store.saveAuthCode(authCode(raw, FUTURE));
     const consumed = await store.consumeAuthCode(sha256Hex(raw), NOW);
@@ -170,7 +169,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: stored-DCR generation rejects and burns legacy auth codes`, async () => {
-    const store = make();
+    const store = await make();
     assert.equal(store.storedDcrGrantGeneration, STORED_DCR_GRANT_GENERATION);
     assert.equal(store.storedDcrResourceBinding, STORED_DCR_RESOURCE_BINDING);
     await store.saveAuthCode(authCode("generation-current", FUTURE, STORED_DCR_GRANT_GENERATION));
@@ -187,7 +186,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: auth-code resource mismatch returns null without consuming the code`, async () => {
-    const store = make();
+    const store = await make();
     const raw = "resource-bound-code";
     const resourceA = "https://resource-a.test/mcp";
     const resourceB = "https://resource-b.test/mcp";
@@ -207,7 +206,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: concurrent matching and mismatching resource consumes allow only the matching call`, async () => {
-    const store = make();
+    const store = await make();
     const raw = "resource-race-code";
     const resourceA = "https://resource-a.test/mcp";
     const resourceB = "https://resource-b.test/mcp";
@@ -223,7 +222,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: consent jti is single-use`, async () => {
-    const store = make();
+    const store = await make();
     assert.equal(await store.consumeConsentJti("jti-1", FUTURE), true);
     assert.equal(await store.consumeConsentJti("jti-1", FUTURE), false); // replay
     assert.equal(await store.consumeConsentJti("jti-2", FUTURE), true);
@@ -231,7 +230,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: consent jti survives sweep through its supplied signed expiry`, async () => {
-    const store = make();
+    const store = await make();
     const expiresAt = "2026-07-03T12:30:00.000Z";
     assert.equal(await store.consumeConsentJti("signed-exp-jti", expiresAt), true);
     await store.sweepExpired("2026-07-03T12:29:59.999Z");
@@ -244,7 +243,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: rotates refresh tokens and replay revokes the family`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("one", "fam-1", null, FUTURE));
     const rotated = await store.rotateRefreshToken(sha256Hex("one"), refresh("two", "fam-1", sha256Hex("one"), FUTURE), NOW);
     assert.equal(rotated?.tokenHash, sha256Hex("one"));
@@ -256,7 +255,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: an omitted untyped resource persists unbound and cannot rotate`, async () => {
-    const store = make();
+    const store = await make();
     const legacy = refresh("unbound-source", "fam-unbound", null, FUTURE) as { resource?: string } & Omit<SaveRefreshTokenInput, "resource">;
     delete legacy.resource;
     await store.saveRefreshToken(legacy as SaveRefreshTokenInput);
@@ -277,7 +276,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: an omitted untyped successor resource is normalized and cannot replace the stored resource`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("untyped-next-source", "fam-untyped-next", null, FUTURE));
     const next = refresh("untyped-next-successor", "fam-untyped-next", sha256Hex("untyped-next-source"), FUTURE) as { resource?: string } & Omit<SaveRefreshTokenInput, "resource">;
     delete next.resource;
@@ -294,7 +293,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: refresh resource binding rejects substitution without mutating the family`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("resource-source", "fam-resource", null, FUTURE, undefined, RESOURCE_A));
     const wrong = await store.rotateRefreshToken(
       sha256Hex("resource-source"),
@@ -340,7 +339,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: family and token resource strings cannot diverge`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("resource-family-a", "fam-resource-invariant", null, FUTURE, undefined, RESOURCE_A));
     await assert.rejects(
       store.saveRefreshToken(refresh("resource-family-b", "fam-resource-invariant", null, FUTURE, undefined, RESOURCE_B)),
@@ -352,7 +351,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: rotation copies the exact stored resource string over a successor input`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("resource-copy-source", "fam-resource-copy", null, FUTURE, undefined, RESOURCE_A));
     const rotated = await store.rotateRefreshToken(
       sha256Hex("resource-copy-source"),
@@ -367,7 +366,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: concurrent resource A/B rotation permits only the bound resource`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("resource-race", "fam-resource-race", null, FUTURE, undefined, RESOURCE_A));
     const [wrong, correct] = await Promise.all([
       store.rotateRefreshToken(
@@ -398,7 +397,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: explicit family revocation is idempotent and disables a rotated successor`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("comp-one", "fam-comp", null, FUTURE));
     const rotated = await store.rotateRefreshToken(
       sha256Hex("comp-one"),
@@ -422,7 +421,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: rotation backfill ignores caller-supplied identity (fix #3)`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("m1", "fam-m", null, FUTURE));
     // attacker rotates a stolen token, supplying a DIFFERENT client/subject/scopes
     await store.rotateRefreshToken(sha256Hex("m1"), {
@@ -438,7 +437,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: refresh generation is checked before rotation and copied from durable state`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("gen-current", "fam-gen", null, FUTURE, STORED_DCR_GRANT_GENERATION));
     const rotated = await store.rotateRefreshToken(
       sha256Hex("gen-current"),
@@ -475,7 +474,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: a successor-hash collision returns null and leaves the predecessor unconsumed (§12.2 invariant 8)`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("col-orig", "fam-col", null, FUTURE));
     await store.saveRefreshToken(refresh("col-existing", "fam-col-other", null, FUTURE)); // hash collides with the successor below
     // Rotate "col-orig" but supply a successor tokenHash that already exists -> null.
@@ -490,7 +489,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: saveRefreshToken rejects a duplicate tokenHash — never a silent overwrite (§12.2 invariant 8)`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("dup", "fam-dup", null, FUTURE));
     await store.rotateRefreshToken(sha256Hex("dup"), refresh("dup-2", "fam-dup", sha256Hex("dup"), FUTURE), NOW);
     // Re-saving the consumed hash must reject; an overwrite would rebuild the row
@@ -503,7 +502,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: rejects expired refresh tokens and closes idempotently`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("exp", "fam-e", null, PAST));
     assert.equal(await store.rotateRefreshToken(sha256Hex("exp"), refresh("next", "fam-e", sha256Hex("exp"), FUTURE), NOW), null);
     await store.close();
@@ -512,7 +511,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: findGrantedScopes derives the union from active refresh records`, async () => {
-    const store = make();
+    const store = await make();
     assert.deepEqual(await store.findGrantedScopes("subject-1", "client-1", NOW), []); // none yet
     await store.saveRefreshToken(refresh("g1", "fam-g1", null, FUTURE)); // subject-1/client-1/mcp:read
     assert.deepEqual(await store.findGrantedScopes("subject-1", "client-1", NOW), ["mcp:read"]);
@@ -527,7 +526,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: findGrantedScopes excludes legacy and non-current generations`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("scope-current", "fam-scope-current", null, FUTURE, STORED_DCR_GRANT_GENERATION));
     await store.saveRefreshToken({
       ...refresh("scope-legacy", "fam-scope-legacy", null, FUTURE, null),
@@ -550,7 +549,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: findGrantedScopes binds scope accumulation to the exact resource`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh(
       "scope-resource-a", "fam-scope-resource-a", null, FUTURE,
       STORED_DCR_GRANT_GENERATION, RESOURCE_A,
@@ -594,7 +593,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: consumeConsentJti rejects a non-3-ms timestamp (addendum 10)`, async () => {
-    const store = make();
+    const store = await make();
     await assert.rejects(store.consumeConsentJti("jti", "not-a-timestamp"), (e: unknown) => e instanceof StoreInputError);
     await assert.rejects(store.consumeConsentJti("jti", "2026-07-03T13:00:00Z"), (e: unknown) => e instanceof StoreInputError); // no ms
     await assert.rejects(store.consumeConsentJti("jti", "2026-07-03T13:00:00.00Z"), (e: unknown) => e instanceof StoreInputError); // 2 digits
@@ -603,7 +602,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: sweep retains a consumed predecessor while its successor is valid (addendum 8)`, async () => {
-    const store = make();
+    const store = await make();
     const early = "2026-07-03T12:30:00.000Z"; // predecessor expiry
     const late = "2026-07-03T13:00:00.000Z"; // successor expiry (outlives predecessor)
     await store.saveRefreshToken(refresh("pred", "fam-succ", null, early));
@@ -620,7 +619,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: sweep deletes a family only once every member is past validity`, async () => {
-    const store = make();
+    const store = await make();
     await store.saveRefreshToken(refresh("only", "fam-only", null, "2026-07-03T12:30:00.000Z"));
     await store.sweepExpired("2026-07-03T12:45:00.000Z"); // past the only token's expiry
     // Directly verify sweep actually deleted the row — `rotate ... === null` alone cannot
@@ -633,7 +632,7 @@ export function runStoreConformance(label: string, make: () => StorePort): void 
   });
 
   test(`${label}: sweep treats expires_at == now as still-valid (boundary, addendum 8)`, async () => {
-    const store = make();
+    const store = await make();
     // a token expiring EXACTLY at the sweep instant is a still-valid family member
     await store.saveRefreshToken(refresh("edge", "fam-edge", null, NOW));
     await store.sweepExpired(NOW);

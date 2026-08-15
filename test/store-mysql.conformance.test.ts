@@ -86,6 +86,10 @@ function make(): StorePort {
   return new MysqlStore(createPool(MYSQL_URL as string), true);
 }
 
+async function makeMigrated(): Promise<StorePort> {
+  return createMysqlStore(MYSQL_URL as string);
+}
+
 if (RUN) {
   test("MysqlStore: independent connections share one durable store binding", async () => {
     const first = await createMysqlStore(MYSQL_URL as string);
@@ -406,7 +410,7 @@ if (RUN) {
     );
   });
 
-  runStoreConformance("MysqlStore", make);
+  runStoreConformance("MysqlStore", makeMigrated);
 
   test("MysqlStore: two store instances serialize matching and mismatching resource consumes", async () => {
     const wrongResourceStore = make();
