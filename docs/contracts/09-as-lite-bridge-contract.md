@@ -430,10 +430,10 @@ the response. Wiring rules:
   same pre-parse bound, but the adapter parses only the exact
   `application/json` and `application/x-www-form-urlencoded` media-type
   essences. Duplicate `Content-Type` fields arrive coalesced (`a, a`) and match
-  no essence, so Hono leaves such bodies unparsed — a known, fail-closed
-  cross-adapter differential: Fastify and Express parsers still accept a
-  duplicated form content type. A stream read/framing failure before downstream
-  parsing
+  no essence, so Hono leaves such bodies unparsed. The normalized occurrence
+  snapshot marks that header ambiguous, and the same Bridge form gate used by
+  Fastify and Express returns direct 400 after the route limiter and before field
+  selection. A stream read/framing failure before downstream parsing
   returns a fixed direct 400 `invalid_request` response without logging the raw
   throwable or invoking downstream work. Below-cap parser failures retain the
   existing fail-closed parser-error path. A caller that uses `skipAuthorize` to
@@ -538,7 +538,11 @@ the response. Wiring rules:
   `urlencoded({ extended: false })` already yields arrays for repeats. Each
   adapter records that exact parsed object separately on `NormRequest.formBody`
   only for the URL-encoded media type, so Bridge can distinguish repeated form
-  occurrences from legitimate JSON arrays. `handlePairingAuthorize`,
+  occurrences from legitimate JSON arrays. A duplicated, array-valued,
+  case-duplicated, or comma-coalesced `Content-Type` is instead recorded as an
+  ambiguous form snapshot; the four built-in Bridge POST routes reject it as
+  direct 400 `invalid_request` rather than dropping provenance and trusting a
+  framework-selected parser result. `handlePairingAuthorize`,
   `Bridge.handleApprove`, `Bridge.handleToken`, `Bridge.handleRevoke`, and
   `Bridge.handleRegister` reject recognized singleton-key multiplicity on the
   form snapshot; they must not see a first- or last-wins string. The four Bridge
