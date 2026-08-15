@@ -282,9 +282,13 @@ other undersized shape fails boot rather than being silently reinterpreted.
 12. **Self-running expiry collection:** a live store MUST arrange periodic calls
     to its own `sweepExpired` without requiring a Bridge, adapter, example, or
     deployer timer. `MemoryStore` starts the shared reference scheduler at
-    construction. `SqliteStore` is constructed only after its schema migration,
-    so its scheduler starts after admission and migration succeed. `MysqlStore`
-    starts the scheduler only after `migrate()` succeeds; direct constructor
+    construction. `openSqliteStore` completes admission and schema migration,
+    then constructs `SqliteStore` with the explicit `{ schemaReady: true }`
+    readiness declaration that starts its scheduler. The public
+    `new SqliteStore(callerDatabaseSync)` default starts no scheduler and issues
+    no expiry SQL; a caller that owns migration may pass `{ schemaReady: true }`
+    only after that migration has succeeded. `MysqlStore` starts the scheduler
+    only after `migrate()` succeeds; direct constructor
     callers MUST invoke `migrate()`, while `createMysqlStore` does so before it
     returns. A failed or still-running MySQL migration therefore cannot race a
     scheduled deletion against an unvalidated or partially migrated schema.
@@ -418,6 +422,10 @@ adapters.)
 SQLite database. `new SqliteStore(callerDatabaseSync)` remains public and
 caller-owned: it wraps an already-open connection and makes no claim about the
 connection's filesystem provenance, permissions, directory trust, or sidecars.
+The default constructor also starts no expiry scheduler. A direct caller may
+declare `{ schemaReady: true }` only after its own schema creation/migration has
+succeeded; that declaration starts the same non-overlapping scheduler used by
+`openSqliteStore`.
 
 The exact string `:memory:` is accepted on every platform and performs no
 filesystem check or write. Every other value is a persistent path. At runtime a

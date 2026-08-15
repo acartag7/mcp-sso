@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { Pool, PoolConnection } from "mysql2/promise";
 import {
   STORE_EXPIRY_SWEEP_INTERVAL_MS, StoreExpiryScheduler,
 } from "../src/store/expiry-scheduler.ts";
 import { MysqlStore } from "../src/store/mysql.ts";
+import { migrateSqliteStore } from "../src/store/sqlite-schema.ts";
+import { SqliteStore } from "../src/store/sqlite.ts";
 
 const execFileP = promisify(execFile);
 const START = Date.parse("2026-08-16T12:00:00.000Z");
@@ -79,6 +82,26 @@ test("an unref'd store scheduler does not keep an idle process alive", async () 
     "--input-type=module", "--eval",
     `import { MemoryStore } from ${JSON.stringify(memoryUrl)}; new MemoryStore();`,
   ], { timeout: 2_000 });
+});
+
+test("SqliteStore waits for an explicit post-migration readiness declaration", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: START });
+  const unready = new SqliteStore(new DatabaseSync(":memory:"));
+  let unreadySweeps = 0;
+  unready.sweepExpired = async () => { unreadySweeps += 1; };
+  t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS * 2);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(unreadySweeps, 0, "the default constructor must not schedule against an unready schema");
+  await unready.close();
+
+  const readyDb = new DatabaseSync(":memory:");
+  migrateSqliteStore(readyDb);
+  const ready = new SqliteStore(readyDb, { schemaReady: true });
+  let readySweeps = 0;
+  ready.sweepExpired = async () => { readySweeps += 1; };
+  t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+  await settleUntil(() => readySweeps === 1);
+  await ready.close();
 });
 
 test("MysqlStore does not schedule expiry deletion before migration succeeds", async (t) => {

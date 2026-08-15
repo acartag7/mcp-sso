@@ -27,7 +27,11 @@ import { StoreExpiryScheduler } from "./expiry-scheduler.ts";
 export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
-  private readonly expiryScheduler = new StoreExpiryScheduler(this);
+  private expiryScheduler: StoreExpiryScheduler | undefined;
+  constructor(db: DatabaseSync, options: { schemaReady?: true } = {}) {
+    super(db);
+    if (options.schemaReady === true) this.expiryScheduler = new StoreExpiryScheduler(this);
+  }
 
   async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
@@ -188,7 +192,7 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   }
 
   override async close(): Promise<void> {
-    await this.expiryScheduler.stop();
+    await this.expiryScheduler?.stop();
     await super.close();
   }
 
@@ -222,7 +226,7 @@ export function openSqliteStore(filename: string): SqliteStore {
     admissionOpen = false;
     closeSqliteAdmission(admission.fd);
     migrateSqliteStore(db);
-    return new SqliteStore(db);
+    return new SqliteStore(db, { schemaReady: true });
   } catch (error) {
     try { db?.close(); } catch { /* preserve the boot failure */ }
     if (admissionOpen) {
@@ -237,7 +241,7 @@ function openAndMigrate(path: ":memory:"): SqliteStore {
   const db = new DatabaseSync(path);
   try {
     migrateSqliteStore(db);
-    return new SqliteStore(db);
+    return new SqliteStore(db, { schemaReady: true });
   } catch (error) {
     try { db.close(); } catch { /* preserve the migration failure */ }
     throw error;

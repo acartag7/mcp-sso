@@ -83,8 +83,10 @@ Methods: `saveAuthCode`, `consumeAuthCode`, `saveRefreshToken`, `rotateRefreshTo
 `revokeRefreshTokenFamily`, `findRefreshToken`, `consumeConsentJti`,
 `findGrantedScopes`, `sweepExpired`, `close`. Full shapes in §12.
 Long-lived stores own the §12.2 self-running expiry scheduler; callers do not
-need to wire a timer for the three reference stores. A custom store must provide
-an equivalent non-overlapping lifecycle and stop it from `close()`.
+wire a timer for the three reference stores. `openSqliteStore` starts collection
+only after migration; a direct `SqliteStore` caller must declare schema readiness
+as specified in §12.2. A custom store must provide an equivalent non-overlapping
+lifecycle and stop it from `close()`.
 Under the 0.3.3 consent correction,
 `consumeConsentJti(jti, expiresAtIso)` receives the canonical verified signed JWT
 expiry from the caller and MUST persist that exact expiry; `sweepExpired` retains

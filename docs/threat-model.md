@@ -452,9 +452,11 @@ deployer acts on.
   - Pool sizing is the deployer's job. Provision `mysql2` `connectionLimit`
     (default 10) for peak token-refresh arrival rate × per-request latency, plus
     headroom for refresh bursts AND the store-owned periodic `sweepExpired`.
-    Memory, SQLite, and MySQL start one unref'd, non-overlapping five-minute
-    scheduler per store instance and stop it during `close()`; a fixed redacted
-    diagnostic reports a failed run and the next interval retries. Without a
+    Memory and the schema-ready SQLite/MySQL factory paths start one unref'd,
+    non-overlapping five-minute scheduler per store instance and stop it during
+    `close()`; direct SQLite construction stays inert until the caller explicitly
+    declares its migration complete. A fixed redacted diagnostic reports a
+    failed run and the next interval retries. Without a
     successful run during a storage outage, expired codes, signed-expiry JTI
     tombstones, and dead refresh families remain until recovery; the scheduler
     never weakens the existing exact-expiry/family-validity predicates.
