@@ -1810,8 +1810,9 @@ gate replaces no-gate).
     transition it emits the fixed, path- and event-free stderr diagnostic
     `audit jsonl disabled: partial_write_rollback_unverified` and invokes the
     optional snapshotted callback exactly once with the closed reason
-    `"partial_write_rollback_unverified"`. A throwing callback is swallowed,
-    never retried, and cannot reject the audit port or re-enable appends;
+    `"partial_write_rollback_unverified"`. A callback throw or returned
+    rejection is swallowed; returned work is not awaited, never retried, and
+    cannot reject the audit port, delay authentication, or re-enable appends;
     ordinary write failures and verified rollback do not invoke it. Later
     events do no file work and emit no duplicate disable signal. Malformed
     options or a non-function callback reject at construction before IO.

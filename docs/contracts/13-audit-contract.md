@@ -60,7 +60,7 @@ transition is an operator-visible state, not an ordinary per-event write error:
 ```ts
 type JsonlFileAuditDisableReason = "partial_write_rollback_unverified";
 interface JsonlFileAuditOptions {
-  onDisable?: (reason: JsonlFileAuditDisableReason) => void;
+  onDisable?: (reason: JsonlFileAuditDisableReason) => void | Promise<void>;
 }
 ```
 
@@ -69,8 +69,9 @@ options?)` emit the fixed stderr diagnostic `[mcp-sso] audit jsonl disabled:
 partial_write_rollback_unverified` exactly once when that instance first
 disables appends, and invoke the snapshotted `onDisable` callback exactly once
 with the same closed reason. Neither signal includes the path, event, fragment,
-or thrown error. A throwing callback is contained and is not retried; it cannot
-reject `writeAuthEvent` or re-enable the sink. Ordinary write failures and a
+or thrown error. A callback throw or returned rejection is contained and is not
+retried; returned work is not awaited and cannot reject `writeAuthEvent`, delay
+authentication, or re-enable the sink. Ordinary write failures and a
 partial write whose tail is successfully rolled back do not invoke the hook.
 Later calls return fail-open without more file work or duplicate disable
 signals. A supplied options value must be a non-null, non-array object, and a
