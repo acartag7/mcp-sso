@@ -228,6 +228,37 @@ test("handlePairingAuthorize preserves repeated resource input for invalid_targe
   assert.equal(h.audit.events.some((event) => event.event === "oauth.authorize.prepare" && event.status === "success"), false);
 });
 
+test("handlePairingAuthorize preserves repeated body resource indicators for invalid_target after pairing", async () => {
+  const h = harness();
+  const params = validParams();
+  const response = await handlePairingAuthorize(
+    { bridge: h.bridge, pairing: h.pairing }, "POST",
+    pairingPost({}, {
+      ...params,
+      resource: [params.resource, "https://other.test/mcp"],
+      pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce",
+    }),
+  );
+  assert.equal(response.status, 302, "body resource multiplicity must not default to config.resource");
+  assert.equal(new URL(response.headers.location as string).searchParams.get("error"), "invalid_target");
+  assert.equal(h.pairing.verifyCalls, 1);
+  assert.equal(h.audit.events.some((event) => event.event === "oauth.authorize.prepare" && event.status === "success"), false);
+  assert.doesNotMatch(String(response.body), /consent_token/);
+});
+
+test("handlePairingAuthorize omits the unsupported-resource sentinel from the pairing page", async () => {
+  const h = harness();
+  const params = validParams();
+  const response = await handlePairingAuthorize(
+    { bridge: h.bridge, pairing: h.pairing }, "POST",
+    pairingPost({}, { ...params, resource: [params.resource, "https://other.test/mcp"] }),
+  );
+  assert.equal(response.status, 200);
+  assert.match(String(response.body), /Pair this device/);
+  assert.doesNotMatch(String(response.body), /invalid-resource/);
+  assert.equal(h.pairing.verifyCalls, 0);
+});
+
 test("handlePairingAuthorize treats valueless resource occurrences as omitted", async () => {
   for (const resource of ["", ["", ""], [RESOURCE, ""], ["", RESOURCE]]) {
     const h = harness();
@@ -238,6 +269,17 @@ test("handlePairingAuthorize treats valueless resource occurrences as omitted", 
       }),
     );
     assert.equal(response.status, 200);
+    assert.match(String(response.body), /name="consent_token"/);
+  }
+  for (const resource of ["", ["", ""], [RESOURCE, ""], ["", RESOURCE]]) {
+    const h = harness();
+    const response = await handlePairingAuthorize(
+      { bridge: h.bridge, pairing: h.pairing }, "POST",
+      pairingPost({}, {
+        ...validParams(), resource, pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce",
+      }),
+    );
+    assert.equal(response.status, 200, "valueless body resource must not become invalid_target");
     assert.match(String(response.body), /name="consent_token"/);
   }
 });

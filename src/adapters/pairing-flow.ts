@@ -18,7 +18,7 @@ import { assertApproveOrigin } from "../authorize-internals.ts";
 import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
 import { OAuthError } from "../errors.ts";
 import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, PAIRING_BODY_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
-import { formField, headerString, oauthErrorResponse, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
+import { formField, headerString, INVALID_RESOURCE, oauthErrorResponse, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
 
 // Pairing keeps its page-specific `form-action`: Continue terminates on this
@@ -66,7 +66,8 @@ export async function handlePairingAuthorize(
   } catch (error) {
     return oauthErrorResponse(bridge.config, asOAuth(error));
   }
-  const oauthParams = gatherOAuthParams(req);
+  const gathered = gatherOAuthParams(req);
+  const oauthParams = gathered.page;
   const submittedCode = method === "POST" ? formField(req.body, "pairing_code") : undefined;
 
   if (submittedCode) {
@@ -78,7 +79,7 @@ export async function handlePairingAuthorize(
       // Pass the resolved identity object so any allowedScopes ceiling travels
       // through (console-pairing sets none today — old no-ceiling behavior).
       const synthetic: NormRequest = {
-        query: { ...oauthParams }, body: undefined, headers: req.headers, ip: req.ip,
+        query: gathered.query, body: undefined, headers: req.headers, ip: req.ip,
       };
       return bridge.handleAuthorize(synthetic, { subject: result.identity.subject, allowedScopes: result.identity.allowedScopes });
     }
@@ -95,15 +96,21 @@ export async function handlePairingAuthorize(
   return pairingPage(session, oauthParams);
 }
 
-function gatherOAuthParams(req: NormRequest): Record<string, string> {
-  const out: Record<string, string> = {};
+function formMember(body: unknown, name: string): unknown {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
+  return Object.hasOwn(body, name) ? (body as Record<string, unknown>)[name] : undefined;
+}
+
+function gatherOAuthParams(req: NormRequest): { page: Record<string, string>; query: Record<string, string> } {
+  const page: Record<string, string> = {};
   for (const key of OAUTH_PARAM_KEYS) {
-    const v = key === "resource"
-      ? resourceParam(req.query[key]) ?? formField(req.body, key)
-      : queryString(req.query, key) ?? formField(req.body, key);
-    if (typeof v === "string") out[key] = v;
+    if (key === "resource") continue;
+    const v = queryString(req.query, key) ?? formField(req.body, key);
+    if (typeof v === "string") page[key] = v;
   }
-  return out;
+  const resource = resourceParam(req.query.resource) ?? resourceParam(formMember(req.body, "resource"));
+  if (resource !== undefined && resource !== INVALID_RESOURCE) page.resource = resource;
+  return { page, query: resource === undefined ? page : { ...page, resource } };
 }
 
 function pairingPage(

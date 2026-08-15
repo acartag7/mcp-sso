@@ -1580,6 +1580,13 @@ gate replaces no-gate).
   reconstruct form-body occurrences instead of first/last-wins collapsing them
   (§9.6); Express already preserves arrays. A caller that pre-selects one
   occurrence before `handlePairingAuthorize` has erased the evidence.
+  RFC 8707 `resource` is not a singleton: repeated query or form-body
+  indicators are passed through `resourceParam` onto the synthetic authorize
+  query after a successful pairing so distinct values still reach
+  `invalid_target`. `formField` must not drop a body array and let
+  `prepare` default to `config.resource`. Identical nonempty indicators still
+  collapse to one target. The pairing HTML omits the internal unsupported-set
+  sentinel from hidden fields and display.
 - **Pairing POST Origin:** every POST — code submission or a no-code re-render —
   requires exactly one primitive `Origin` equal to the issuer origin or an
   `allowedOrigins` member, using the same `assertApproveOrigin` gate as §9.3
