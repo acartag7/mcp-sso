@@ -469,6 +469,10 @@ revocation, and identity resolution (threat-model #8). `Bridge` calls
 `formObject` normalization, token hashing, store access or mutation, and audit
 work. `Bridge.handleApprove` likewise checks `approve:<ip>` before normalizing or
 reading the approval body, validating Origin, or consuming consent state.
+After a register, approve, token, or revoke check admits the request, Bridge
+rejects repeated recognized URL-encoded form members before field selection or
+the endpoint use-case. The duplicate rejection does not skip the admission
+charge and performs no endpoint audit or durable mutation.
 Shipped adapters first apply their own request-body boundary and
 then call `Bridge`, so revocation admission is not an adapter body-parser gate:
 Hono's 256 KiB body cap remains earlier and an over-cap request returns 413

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { createServer } from "node:http";
 import { test } from "node:test";
 import type { JWK } from "jose";
 import type { Context } from "hono";
@@ -11,9 +12,33 @@ import { createBridgeConfig } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { createOAuthApp } from "../src/adapters/hono.ts";
 import { runAdapterFlow, type AdapterClient, type AdapterResp } from "./lib/adapter-flow.ts";
+import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 runAdapterFlow("hono", async (bridge, identity) => {
   const app = createOAuthApp({ bridge, identity });
+  const server = createServer(async (incoming, outgoing) => {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
+      const headers = new Headers();
+      for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
+        headers.append(incoming.rawHeaders[index]!, incoming.rawHeaders[index + 1]!);
+      }
+      const init: RequestInit = { method: incoming.method, headers };
+      if (incoming.method !== "GET" && incoming.method !== "HEAD") init.body = Buffer.concat(chunks);
+      const response = await app.fetch(new Request(`http://localhost${incoming.url ?? "/"}`, init));
+      outgoing.statusCode = response.status;
+      response.headers.forEach((value, name) => outgoing.setHeader(name, value));
+      outgoing.end(Buffer.from(await response.arrayBuffer()));
+    } catch {
+      outgoing.statusCode = 500;
+      outgoing.end("request failed");
+    }
+  });
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Hono test server did not bind a TCP port");
   const client: AdapterClient = {
     async get(path, headers) {
       const r = await app.request(path, { method: "GET", headers: headers ?? {} });
@@ -27,14 +52,9 @@ runAdapterFlow("hono", async (bridge, identity) => {
       const r = await app.request(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
       return { status: r.status, headers: Object.fromEntries(r.headers), body: await r.text() } as AdapterResp;
     },
-    async requestOccurrences(method, path, occurrences, body) {
-      const headers = new Headers();
-      for (const [name, value] of occurrences) headers.append(name, value);
-      const init: RequestInit = { method, headers };
-      if (body !== undefined) init.body = body;
-      const r = await app.fetch(new Request(`http://localhost${path}`, init));
-      return { status: r.status, headers: Object.fromEntries(r.headers), body: await r.text() };
-    },
+    requestOccurrences: (method, path, headers, body) =>
+      rawOccurrenceCall(address.port, method, path, headers, body),
+    async close() { await new Promise<void>((resolve) => server.close(() => resolve())); },
   };
   return client;
 });
