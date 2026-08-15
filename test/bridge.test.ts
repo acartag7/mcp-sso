@@ -109,17 +109,39 @@ test("bridge: handleRevoke maps an unexpected store throw to the §9.5 500 body 
   const secret = "TOP_SECRET_INTERNAL_DETAIL";
   const store = new MemoryStore();
   store.findRefreshToken = async () => { throw new Error(secret); };
-  const bridge = new Bridge({ config: config(), store, clock: new FakeClock(NOW_MS), audit: new MemoryAudit() });
+  const audit = new MemoryAudit();
+  const bridge = new Bridge({ config: config(), store, clock: new FakeClock(NOW_MS), audit });
   const res = await bridge.handleRevoke(req({ body: { token: "rt_anything" } }));
   assert.equal(res.status, 500);
   const body = res.body as Record<string, unknown>;
   assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
   assert.equal(body.error, "internal_error");
   assert.ok(!JSON.stringify(body).includes(secret), "thrown message must not leak into the response");
+  assert.deepEqual(audit.events, [{
+    occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.revoke",
+    status: "failure", reason: "internal_error",
+  }]);
 
   // RFC 7009 semantics unchanged by the catch: an unrecognized token is still 200.
   const unrecognized = await setup().bridge.handleRevoke(req({ body: { token: "rt_unknown" } }));
   assert.equal(unrecognized.status, 200);
+});
+
+test("bridge: revoke-family store failure keeps the 500 mapping and emits a failure audit", async () => {
+  const store = new MemoryStore();
+  const token = await saveRevocableToken(store);
+  store.revokeRefreshTokenFamily = async () => { throw new Error("database unavailable"); };
+  const audit = new MemoryAudit();
+  const bridge = new Bridge({ config: config(), store, clock: new FakeClock(NOW_MS), audit });
+
+  const response = await bridge.handleRevoke(req({ body: { token } }));
+
+  assert.equal(response.status, 500);
+  assert.equal((response.body as { error: string }).error, "internal_error");
+  assert.deepEqual(audit.events, [{
+    occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.revoke",
+    status: "failure", reason: "internal_error",
+  }]);
 });
 
 test("bridge: revoke limiter denies before token extraction, use case, store, or audit work", async () => {
@@ -187,7 +209,11 @@ test("bridge: admitted unknown and already-revoked tokens retain RFC 7009 HTTP 2
   assert.equal(alreadyRevoked.status, 200);
   assert.deepEqual(keys, ["revoke:1.2.3.4", "revoke:1.2.3.4", "revoke:1.2.3.4"]);
   assert.equal(revocationCalls, 2);
-  assert.equal(audit.events.filter((event) => event.event === "oauth.revoke").length, 3);
+  assert.deepEqual(audit.events.map(({ event, status, reason }) => ({ event, status, reason })), [
+    { event: "oauth.revoke", status: "success", reason: "unrecognized_token" },
+    { event: "oauth.revoke", status: "success", reason: undefined },
+    { event: "oauth.revoke", status: "success", reason: undefined },
+  ]);
 });
 
 test("bridge: a throwing revoke limiter fails open and revocation proceeds", async () => {
@@ -443,6 +469,53 @@ test("bridge: custom adapters cannot bypass form repetition by omitting formBody
       assert.equal((response.body as { error: string }).error, "invalid_request");
       assert.equal(response.headers.location, undefined);
       assert.deepEqual(ctx.audit.events, [], "fallback rejection precedes endpoint audit work");
+    });
+  }
+});
+
+test("bridge: supplied formBody cannot bypass ambiguous Content-Type rejection", async (t) => {
+  const routes = [
+    {
+      label: "register",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRegister(request),
+    },
+    {
+      label: "approve",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleApprove(request),
+    },
+    {
+      label: "token",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleToken(request),
+    },
+    {
+      label: "revoke",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRevoke(request),
+    },
+    {
+      label: "pairing",
+      call: (bridge: Bridge, request: NormRequest) => handlePairingAuthorize({
+        bridge,
+        pairing: {
+          async beginSession() { throw new Error("ambiguous Content-Type must reject before pairing"); },
+          async verify() { throw new Error("ambiguous Content-Type must reject before verification"); },
+        },
+      }, "POST", request),
+    },
+  ] as const;
+  for (const route of routes) {
+    await t.test(route.label, async () => {
+      const ctx = setup();
+      const response = await route.call(ctx.bridge, req({
+        body: {},
+        formBody: {},
+        headers: { "content-type": ["application/x-www-form-urlencoded", "application/json"] },
+      }));
+      assert.equal(response.status, 400);
+      assert.deepEqual(response.body, {
+        error: "invalid_request",
+        error_description: "duplicate request parameters",
+      });
+      assert.deepEqual(ctx.audit.events, [], "header rejection precedes endpoint work");
     });
   }
 });

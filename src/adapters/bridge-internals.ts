@@ -86,15 +86,17 @@ export function checkedFormObject(
   keys: readonly string[],
   jsonArrayKeys: readonly string[] = [],
 ): Record<string, unknown> {
+  const headerFormBody = formBodySnapshot(req.body, req.headers);
   const formBody = req.formBody === undefined
-    ? formBodySnapshot(req.body, req.headers)
+    ? headerFormBody
     : req.formBody;
   const legacyKeys = keys.filter((key) => !jsonArrayKeys.includes(key));
   const legacyBodyIsAmbiguous = req.formBody === undefined
     && formBody === undefined
     && headerString(req.headers, "content-type") === undefined
     && findRepeatedKeys(req.body, legacyKeys).length > 0;
-  if (isAmbiguousFormContentType(formBody)
+  if (isAmbiguousFormContentType(headerFormBody)
+    || isAmbiguousFormContentType(formBody)
     || findRepeatedKeys(formBody, keys).length > 0
     || legacyBodyIsAmbiguous) {
     throw new OAuthError("invalid_request", "duplicate request parameters");

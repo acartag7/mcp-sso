@@ -298,6 +298,13 @@ one target, while multiple distinct targets follow the existing post-validation
   `code_verifier`, `refresh_token`, `client_secret`, `scope`, and `resource`.
   Any repeated occurrence, including an empty occurrence, is direct 400
   `invalid_request`; no first or last value selects the grant path.
+- **Finite operation clock:** each of the authorization-code, refresh, and
+  client-credentials issuance operations takes exactly one §6.1 snapshot before
+  grant/authentication/store work and reuses it for every token, expiry,
+  mutation timestamp, compensation timestamp, and audit timestamp. A bad clock
+  or overflowing TTL offset is sanitized by Bridge as 500 `internal_error`
+  before mutation, token signing, or audit; an honest timestamp is never
+  fabricated.
 - **`exchangeAuthorizationCode`**: consumes the code (§7.3), verifies PKCE S256
   and client/redirect/resource binding, then `tokenResponse` parses the stored
   scopes and
@@ -542,10 +549,12 @@ the response. Wiring rules:
   adapters built against the earlier `NormRequest` shape, a framework-free
   form handler whose optional `formBody` is absent reconstructs the same
   decision from `body` plus the normalized `Content-Type`; omission therefore
-  cannot bypass duplicate or ambiguous-header rejection. A duplicated, array-valued,
-  case-duplicated, or comma-coalesced `Content-Type` is instead recorded as an
-  ambiguous form snapshot; the four built-in Bridge POST routes reject it as
-  direct 400 `invalid_request` rather than dropping provenance and trusting a
+  cannot bypass duplicate or ambiguous-header rejection. Supplying `formBody`
+  also cannot bypass the header check: every framework-free form handler
+  independently re-reads the normalized `Content-Type` occurrence before using
+  either body snapshot. A duplicated, array-valued, case-duplicated, or
+  comma-coalesced `Content-Type` is recorded as ambiguous and rejected as direct
+  400 `invalid_request` rather than dropping provenance and trusting a
   framework-selected parser result. `handlePairingAuthorize`,
   `Bridge.handleApprove`, `Bridge.handleToken`, `Bridge.handleRevoke`, and
   `Bridge.handleRegister` reject recognized singleton-key multiplicity on the
