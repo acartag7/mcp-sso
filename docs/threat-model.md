@@ -154,7 +154,10 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
   `docs/dependency-ledger.md`. A younger direct npm pin is permitted only for a
   published GHSA/CVE fix with a one-to-one `advisoryExceptions` /
   `minimumReleaseAgeExclude` record, current pin+ledger binding, and upstream
-  package/first-patched-version verification. CI actions are SHA-pinned.
+  package/first-patched-version verification; a younger **transitive**
+  (lockfile-resolved, never directly pinned) version gets the same exception
+  shape with a single lockfile-resolution binding instead of a pin+ledger row.
+  CI actions are SHA-pinned.
   `check:deps` rejects drift between the ledger, direct package pins, and
   workflow Action pins, and verifies third-party Action tag/date evidence
   upstream. npm publish is `--provenance` from GitHub Actions OIDC only — **no
@@ -182,7 +185,7 @@ The why behind [contracts §5–§14](./contracts.md). Each control is a guarant
 | 12 | Identity spoofing | Spoofing | `IdentityPort` verifies the upstream credential; no/failed identity ⇒ 401 fail-closed; no passthrough | Depends on the concrete port validating iss/aud/tid. Header mode (`identityHeader`) carries a nonce residual — [see below](#row-12--header-mode-nonce-residual). The §17.11 redirect orchestrator does not (it mints its own nonce, row 31) |
 | 13 | SSRF via CIMD (v0.2) | SSRF | `createGuardedFetcher` enforces the [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract) network boundary: URL admission (https-only, no userinfo/fragment/query/dot-segments/IP-literals/CRLF), complete IANA IPv4+IPv6 blocklists (binary compare; embedding prefixes blocked wholesale), all-records DNS validation + pinned connect (no re-resolve), redirects refused (draft -01 MUST NOT), 200-only, 5 KiB cap, and 5 s deadline. `CimdResolver.resolve` catches resolution failures and `mapCimdError` collapses them to one generic client-facing `invalid_client`. Its network-capable factory, cached fetcher, validated profile, and selector methods are ECMAScript `#private`, so the root-exposed resolver has no callable or shadowable runtime bypass around `resolve()` | Timing side-channel could leak coarse network facts (fetch duration); accepted — response content/error shape leak nothing |
 | 14 | Secrets in logs/audit | Info disclosure | Metadata-only audit; tests assert no raw secrets leak. Webhook failure diagnostics exactly scrub every non-empty configured header value and query component regardless of length, then remove controls and bound the resulting stderr line; hostile thrown values cannot bypass formatting or turn the fail-open sink into a rejection | None |
-| 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day ordinary pins; SHA-pinned CI; provenance publish; no postinstall/bundler. A younger direct npm pin requires a published GHSA/CVE, an exact one-to-one workspace/ledger exception, current-pin binding, and upstream advisory package/first-patched-version verification | A zero-day in jose itself — minimized by single-dep + pin + age. An advisory fix can itself be compromised; review remains required, and the exception is package-specific rather than a global cooldown reduction |
+| 15 | Compromised dependency / build | Supply chain | jose-only runtime; ≥15-day ordinary pins; SHA-pinned CI; provenance publish; no postinstall/bundler. A younger pin — direct or transitive (lockfile-resolved) — requires a published GHSA/CVE, an exact one-to-one workspace/ledger exception, kind-specific binding (pin+ledger row for direct; a single lockfile resolution for transitive), and upstream advisory package/first-patched-version verification | A zero-day in jose itself — minimized by single-dep + pin + age. An advisory fix can itself be compromised; review remains required, and the exception is package-specific rather than a global cooldown reduction |
 | 16 | Dev flag used to weaken a real host | Misconfiguration | `allowInsecureLocalhost` rejected unless loopback + loud warning | Someone tunnels a loopback dev instance out — dev-only, documented |
 | 17 | (v0.2) CIMD client impersonation via lookalike/localhost redirect (the MCP-documented attack: legit metadata URL + attacker's loopback redirect) | Spoofing | Exact `client_id` echo-match; redirect exact-match against the document except for RFC 8252 loopback any-port when the validated declaration is exact `application_type: "native"`; `"web"` and absent declarations remain exact, malformed values reject; the consent page presents the client-ID and redirect hosts first as the decision anchors, warns on loopback-only redirects, and renders `client_name` second as self-reported, unverified text. **The page is frame-blocked (row 36)** — without that, the user judgment this row depends on can be bypassed by an overlay rather than deceived | Real and spec-acknowledged: user judgment on lookalike domains / loopback approval remains the last line — CIMD cannot fully close this by design. A native app's varying-port exception also means a different local process that binds the same registered host/path on another port can receive the code; this is the RFC-defined native-app tradeoff, not an exception granted to web or untyped clients. The frozen policy suite is active |
 | 18 | (v0.2) Machine-client secret theft / misuse | Spoofing / Elevation | Provisioning, storage, verification, scope, rotation, and disable controls are separated in the [enforcement detail below](#row-18--machine-client-secret-enforcement) | A stolen secret is valid until rotated or disabled — there is no theft *signal* (unlike refresh replay); already-issued access tokens remain valid until their ordinary expiry |
@@ -380,8 +383,9 @@ false guarantee.
   the publish pipeline without updating **this file and
   [contracts](./contracts.md)**.
 - No dependency install or bump without a `docs/dependency-ledger.md` recheck
-  (version + publish date, ≥15 days for ordinary pins; a younger direct pin
-  requires the documented, verified published-advisory exception).
+  (version + publish date, ≥15 days for ordinary pins; a younger pin — direct
+  or transitive — requires the documented, verified published-advisory
+  exception).
 - The [store-conformance suite](./contracts/12-store-conformance-contract.md#12-store-conformance-contract)
   MUST be green (memory + sqlite + mysql) before any correctness claim; any
   further downstream SQL adapter must pass the same suite.

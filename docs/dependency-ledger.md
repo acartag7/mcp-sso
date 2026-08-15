@@ -36,27 +36,43 @@ weaken the rule to paper over a fresh-publish install problem.
 1. **Ordinary updates wait.** A package or third-party Action release must be at
    least `minimumAgeDays` old. The global `minimumReleaseAge` and this ledger
    remain the same floor; an exception never lowers either value.
-2. **Published-advisory fixes do not wait.** When a published GHSA or CVE affects
-   a directly pinned package, adopt the minimum version that fixes all recorded
-   advisories after inspecting the release. Add that exact package to
+2. **Published-advisory fixes do not wait.** When a published GHSA or CVE
+   affects a package this repository resolves — directly pinned **or**
+   transitive in the lockfile — adopt the minimum version that fixes all
+   recorded advisories after inspecting the release. Add that exact package to
    `minimumReleaseAgeExclude` and add one matching `advisoryExceptions` record.
 
 Each advisory-exception record contains:
 
-- `package` — the exact direct npm package name;
+- `kind` — `"direct"` or `"transitive"`;
+- `package` — the exact npm package name;
 - `advisoryIds` — one or more published `GHSA-…` or `CVE-…` identifiers;
-- `adoptedVersion` — the exact direct pin selected as the minimum fixing version;
+- `adoptedVersion` — the exact version selected as the minimum fixing version;
 - `adoptedAt` — the UTC calendar date on which the exception was adopted; and
 - `justification` — why the cooldown was skipped and what release was inspected.
 
+A `direct` record must name a package pinned in `package.json` with a ledger
+row, and `adoptedVersion` must equal both. A `transitive` record must name a
+package that is **not** directly pinned and has no ledger row, and the
+lockfile must resolve **exactly one** version of it, equal to
+`adoptedVersion` — a second resolved version means some path still executes
+an affected build, so it rejects. When a later update re-resolves the
+package, pins it directly, or drops it from the tree, update the record or
+remove the exclusion + record pair together; the gate fails closed on the
+drift, the same lifecycle as a `direct` record surviving a pin change.
+
 The dependency-policy gate requires a one-to-one match between exception
-records and `minimumReleaseAgeExclude`, binds every exception to the current
-direct pin and ledger version, and remotely confirms that every recorded
+records and `minimumReleaseAgeExclude`, binds every `direct` exception to the
+current direct pin and ledger version, binds every `transitive` exception to
+a single matching lockfile resolution, and remotely confirms that every recorded
 advisory exists, names the recorded npm package, and reports stable first
 patched versions whose latest value is the adopted version. An unrecorded exclusion, a record without an
-exclusion, a future pin change that leaves stale exception evidence, or an
+exclusion, a future pin or lockfile change that leaves stale exception evidence, or an
 unknown field fails closed. The package-specific exclusion does not exempt any
-other dependency and does not weaken the global 15-day floor.
+other dependency and does not weaken the global 15-day floor. The upstream
+advisory evidence itself is confirmed by the `--verify-remote` runs in CI and
+pre-publish; the local `check:deps` run enforces record shape and binding
+only.
 
 ## Runtime dependencies (shipped to consumers)
 
@@ -108,7 +124,9 @@ advisories (`3.1.3` fixes one, `3.1.4` two, so a partial bump would
 leave `pnpm audit` red while reading as "fixed"). It was published
 2026-07-31T09:16Z and crosses the 15-day floor at **2026-08-15T09:16Z** —
 hours after this sweep — so it is deliberately **not** adopted early: the
-recorded-exception machinery above binds to direct pins, and weakening the
+recorded-exception machinery bound to direct pins at sweep time (it was
+extended to transitive lockfile resolutions later the same day — see the
+two-rule policy above), and weakening the
 global floor for a same-day wait is exactly what the two-rule policy forbids.
 It becomes eligible for a plain `pnpm update fast-uri` at that timestamp.
 
@@ -174,6 +192,7 @@ upstream registries.
   "minimumAgeDays": 15,
   "advisoryExceptions": [
     {
+      "kind": "direct",
       "package": "hono",
       "advisoryIds": [
         "GHSA-54fx-42gc-7vw4",

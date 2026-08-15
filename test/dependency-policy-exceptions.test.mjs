@@ -8,6 +8,7 @@ import {
 } from "../scripts/check-dependency-policy.mjs";
 import {
   makeHonoExceptionYoung,
+  makeTransitiveException,
   fixture,
   NOW,
   replace,
@@ -18,6 +19,108 @@ test("a recorded advisory exception bypasses the floor only for its exact packag
   const root = await fixture();
   await makeHonoExceptionYoung(root);
   await verifyLocalDependencyPolicy(root, NOW);
+});
+
+test("a transitive advisory exception binds to a single lockfile resolution", async (t) => {
+  await t.test("recorded exception with a matching resolution passes", async () => {
+    const root = await fixture();
+    await makeTransitiveException(root);
+    await verifyLocalDependencyPolicy(root, NOW);
+  });
+
+  await t.test("adopted version drift from the lockfile resolution", async () => {
+    const root = await fixture();
+    await makeTransitiveException(root, { version: "3.1.6", lockfileVersion: "3.1.5" });
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /fast-uri: adopted version 3\.1\.6 != lockfile resolution 3\.1\.5/,
+    );
+  });
+
+  await t.test("two resolved versions reject", async () => {
+    const root = await fixture();
+    await makeTransitiveException(root, { secondVersion: "3.0.0" });
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /fast-uri: lockfile resolves 2 versions; a transitive exception requires exactly one/,
+    );
+  });
+
+  await t.test("duplicate records for one package reject", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const original = policy.advisoryExceptions.find((record) => record.package === "hono");
+    const duplicate = {
+      ...original,
+      advisoryIds: ["GHSA-79qm-7rj5-m7r9"],
+      justification: "Must not be accepted: a second record for an excepted package.",
+    };
+    await replace(
+      join(root, "docs/dependency-ledger.md"),
+      '"advisoryExceptions": [',
+      `"advisoryExceptions": [\n    ${JSON.stringify(duplicate, null, 2).replaceAll("\n", "\n    ")},`,
+    );
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /hono: duplicate advisory exception/);
+  });
+
+  await t.test("package absent from the lockfile", async () => {
+    const root = await fixture();
+    await makeTransitiveException(root, { packageName: "left-pad" });
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /left-pad: transitive advisory exception package is missing from the lockfile/,
+    );
+  });
+
+  await t.test("directly pinned package must use the direct kind", async () => {
+    const root = await fixture();
+    await makeTransitiveException(root, { packageName: "express" });
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /express: transitive advisory exception must not name a directly pinned package/,
+    );
+  });
+
+  await t.test("missing kind is rejected", async () => {
+    const root = await fixture();
+    await makeHonoExceptionYoung(root);
+    await replace(
+      join(root, "docs/dependency-ledger.md"),
+      '"kind": "direct",\n      "package": "hono",',
+      '"package": "hono",',
+    );
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /kind must be "direct" or "transitive"/);
+  });
+
+  await t.test("an alias-resolved second version cannot hide from the parser", async (t) => {
+    await t.test("bare alias key", async () => {
+      const root = await fixture();
+      await makeTransitiveException(root);
+      await replace(
+        join(root, "pnpm-lock.yaml"),
+        "  fast-uri@3.1.5: {}",
+        "  'evil-alias@npm:fast-uri@3.1.2': {}",
+      );
+      await assert.rejects(
+        verifyLocalDependencyPolicy(root, NOW),
+        /unsupported package entry: 'evil-alias@npm:fast-uri@3\.1\.2'/,
+      );
+    });
+
+    await t.test("alias key carrying an inline mapping", async () => {
+      const root = await fixture();
+      await makeTransitiveException(root);
+      await replace(
+        join(root, "pnpm-lock.yaml"),
+        "  fast-uri@3.1.5:\n",
+        "  'evil-alias@npm:fast-uri@3.1.2': {resolution: {integrity: sha512-x}}\n",
+      );
+      await assert.rejects(
+        verifyLocalDependencyPolicy(root, NOW),
+        /unsupported package entry: 'evil-alias@npm:fast-uri@3\.1\.2'/,
+      );
+    });
+  });
 });
 
 test("workspace and ledger advisory-exception layers cannot diverge", async (t) => {
@@ -61,6 +164,7 @@ test("workspace and ledger advisory-exception layers cannot diverge", async (t) 
     const root = await fixture();
     const policy = await loadDependencyPolicy(root);
     const record = {
+      kind: "direct",
       package: "pnpm",
       advisoryIds: ["GHSA-54fx-42gc-7vw4"],
       adoptedVersion: policy.packages.pnpm.version,
