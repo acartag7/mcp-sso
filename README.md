@@ -238,9 +238,11 @@ full pattern, topology, and Kubernetes notes in
   existing typed OAuth failure through the production request and
   approval paths ([threat-model row 39](docs/threat-model.md)).
 - **Optional request budgets** — `RateLimitPort` runs before registration,
-  token exchange, and direct header-based identity verification
-  (`Bridge.resolveIdentity`); its default is intentionally no-op, so production
-  deployments wire the Redis adapter or a trusted rate-limiting proxy.
+  consent approval, token exchange, revocation, and direct header-based identity
+  verification (`Bridge.resolveIdentity`). Upstream redirect, CIMD, and console
+  pairing keep their separate named budgets. The port default is intentionally
+  no-op, so production deployments wire the Redis adapter or a trusted
+  rate-limiting proxy.
 - **Reference `/mcp` Origin gates reject ambiguity** — the runnable examples use
   `headersFromDistinct` plus `readHeader`, and the generated server checks
   `request.raw.headersDistinct.origin` inline, before parsing or bearer
