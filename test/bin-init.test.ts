@@ -83,6 +83,8 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
       assert.ok(server.includes(marker), `server.ts composition root includes ${marker}`);
     }
     assert.match(server, /config:\s*\{\s*rateLimit:/, "generated /mcp route enables the mandatory finite budget");
+    assert.match(server, /Fastify\(\{ trustProxy: false \}\)/, "generated loopback starter never trusts forwarded client IPs");
+    assert.doesNotMatch(server, /MCP_SSO_TRUSTED_PROXIES/, "generated starter has no production proxy-trust env escape");
     assert.match(server, /request\.raw\.headersDistinct\.origin/, "generated /mcp gate reads raw Origin occurrences");
     assert.match(server, /occurrences\?\.length === 1/, "generated /mcp gate accepts exactly one occurrence");
     assert.match(server, /origin\.includes\(","\)/, "generated /mcp gate rejects comma-coalesced Origin");

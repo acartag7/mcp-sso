@@ -106,7 +106,7 @@ async function main(): Promise<void> {
   store = openSqliteStore(\`\${DIR}/auth.db\`);
   const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
 
-  const app = Fastify(); const protectedRateLimit = await registerProtectedResourceRateLimit(app);
+  const app = Fastify({ trustProxy: false }); const protectedRateLimit = await registerProtectedResourceRateLimit(app);
   const protectedRoute = { config: { rateLimit: { max: protectedRateLimit.max, timeWindow: protectedRateLimit.timeWindowMs, groupId: protectedRateLimit.groupId } } };
   const clock = new SystemClock();
   const bridge = new Bridge({ config, store, clock, audit });

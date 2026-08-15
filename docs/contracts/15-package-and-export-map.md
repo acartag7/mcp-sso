@@ -98,6 +98,19 @@ already counted) and a non-negative safe-integer `ttl`; zero, negative,
 fractional, unsafe, wrongly typed, missing, or accessor-throwing values reject,
 never a
 fail-open request or a raw backend-error leak. A normal budget denial is 429.
+The two runnable example factories take an optional `trustedProxies` array and
+the production env compositions parse `MCP_SSO_TRUSTED_PROXIES` into that same
+shape. Absence is explicit Fastify `trustProxy: false`: an untrusted socket
+cannot make `X-Forwarded-For` select another bucket. A present value is a
+snapshotted allowlist of 1..32 unique concrete IP or CIDR strings (each at most
+64 characters; CIDR prefixes are 1..32 for IPv4 and 1..128 for IPv6). Blank,
+wrongly typed, sparse/accessor-throwing, duplicate, malformed, or over-limit
+configuration is a boot error before state-directory, SQLite, listener, or
+protected-handler effects. Boolean trust-all, numeric hop-count, custom
+function, and proxy-addr named-range forms are deliberately not exposed. The
+validated array is passed to Fastify's `trustProxy`, so Fastify/proxy-addr walks
+the chain from the socket and stops at the first untrusted address; it does not
+trust a client-supplied forwarded address merely because the header exists.
 The helper is a separate subpath so importing `mcp-sso/fastify` for OAuth route
 wiring does not force the plugin on existing consumers; consumers of the new
 subpath install its optional peer. This does not change the root package's
@@ -142,7 +155,9 @@ versions mcp-sso is tested against, recorded in `docs/dependency-ledger.md`; Nod
 root exports + the `./fastify`, `./store/sqlite`, `./identity/console-pairing` subpaths
 — quickstart secrets + console pairing + sqlite + the `/mcp` Streamable-HTTP Origin
 gate + mandatory fail-closed protected-resource rate limiting + a protected `/mcp`,
-zero-setup loopback by default). The same SQLite instance
+zero-setup loopback by default). The generated localhost-only server fixes
+Fastify `trustProxy: false` and has no forwarded-IP env escape; production proxy
+trust belongs to the env-driven examples above. The same SQLite instance
 implements both OAuth state and stored user DCR, so a generated client registration
 survives a server restart; the shipped-entrypoint integration test restarts between
 registration and authorization before completing pairing, token exchange, and an

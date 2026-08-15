@@ -24,9 +24,11 @@ import {
   assertSingleIdentityProviderSelector,
   UNSAFE_NON_LOOPBACK_PAIRING_ENV,
 } from "../fastify-sqlite/app.ts";
+import { trustedProxiesFromEnv } from "../fastify-sqlite/trusted-proxy.ts";
 
 async function main(): Promise<void> {
   assertSingleIdentityProviderSelector(process.env);
+  trustedProxiesFromEnv(process.env);
   if (!productionIdentityConfigured(process.env)
     && process.env[UNSAFE_NON_LOOPBACK_PAIRING_ENV] !== "true") {
     // The gateway has a second listener. Reject the public pairing bind before

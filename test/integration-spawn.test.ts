@@ -272,3 +272,37 @@ test("integration — gateway entrypoint rejects ambiguous providers before back
     );
   }
 });
+
+test("integration — gateway entrypoint rejects malformed proxy trust before backend listen or state", async () => {
+  const tmp = await mkdtemp(join(tmpdir(), "mcp-sso-spawn-proxy-trust-"));
+  const dir = join(tmp, "state");
+  const occupied = createServer();
+  await new Promise<void>((resolve, reject) => {
+    occupied.once("error", reject);
+    occupied.listen(0, "127.0.0.1", resolve);
+  });
+  const address = occupied.address();
+  assert.ok(address && typeof address === "object", "occupied backend has a TCP address");
+  const env = childEnv({
+    MCP_SSO_DIR: dir,
+    HOST: "127.0.0.1",
+    MCP_SSO_TRUSTED_PROXIES: "not-an-ip",
+    BACKEND_API_KEY: randomBytes(32).toString("base64url"),
+    BACKEND_HOST: "127.0.0.1",
+    BACKEND_PORT: String(address.port),
+  });
+  const child = spawn("node", [GATEWAY_ENTRY], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    const exited = await waitForClose(child, 15_000);
+    assert.notEqual(exited.code, 0, "malformed proxy trust exits nonzero");
+    assert.match(exited.stderr, /trusted proxies must be 1\.\.32 unique IP or CIDR entries/);
+    assert.doesNotMatch(exited.stderr, /EADDRINUSE/, "proxy validation precedes the occupied backend listener");
+    assert.equal(existsSync(dir), false, "proxy validation precedes state creation");
+  } finally {
+    killHard(child);
+    await new Promise<void>((resolve, reject) =>
+      occupied.close((error) => { if (error) reject(error); else resolve(); })
+    );
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

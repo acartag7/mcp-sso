@@ -67,6 +67,7 @@ import {
 import {
   assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
 } from "../../src/deployment-guard.ts";
+import { trustedProxiesFromEnv, trustedProxiesFromOptions } from "./trusted-proxy.ts";
 
 export interface ExampleOptions {
   config: BridgeConfig;
@@ -87,6 +88,8 @@ export interface ExampleOptions {
   audit?: AuditPort;
   /** Mandatory `/mcp` Fastify budget. Defaults to 60 requests / 60 seconds / IP. */
   protectedResourceRateLimit?: ProtectedResourceRateLimitOptions;
+  /** Exact proxy IP/CIDR allowlist for Fastify request.ip. Absent means trustProxy:false. */
+  trustedProxies?: readonly string[];
   /** Local starter only: explicitly acknowledge the unsafe default combination. */
   acknowledgeUnsafeStatelessDefaults?: true;
 }
@@ -99,7 +102,8 @@ export async function buildApp(opts: ExampleOptions) {
     config,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
   }, { emitAcknowledgementWarning: false });
-  const app = Fastify();
+  const trustedProxies = trustedProxiesFromOptions(opts);
+  const app = Fastify({ trustProxy: trustedProxies ?? false });
   const protectedRateLimit = await registerProtectedResourceRateLimit(app, opts.protectedResourceRateLimit);
   const protectedRoute = { config: { rateLimit: {
     max: protectedRateLimit.max,
@@ -418,6 +422,7 @@ export async function buildExample(
   dir: string;
 }> {
   assertSingleIdentityProviderSelector(env);
+  const trustedProxies = trustedProxiesFromEnv(env);
   const dir = env.MCP_SSO_DIR ?? "./.mcp-sso";
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
   const audit = new JsonlFileAudit(join(dir, "audit.jsonl"));
@@ -445,7 +450,7 @@ export async function buildExample(
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
     assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
-    const { app, store } = await buildApp({ config, upstream: { identity, callbackPath }, audit, sqliteFile });
+    const { app, store } = await buildApp({ config, upstream: { identity, callbackPath }, audit, sqliteFile, trustedProxies });
     return { app, store, config, dir };
   }
   if (env.CF_ACCESS_AUDIENCE !== undefined) {
@@ -461,7 +466,7 @@ export async function buildExample(
     });
     assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
-    const { app, store } = await buildApp({ config, identity, audit, sqliteFile });
+    const { app, store } = await buildApp({ config, identity, audit, sqliteFile, trustedProxies });
     return { app, store, config, dir };
   }
   if (oidcProviderConfigured(env)) {
@@ -473,7 +478,7 @@ export async function buildExample(
     const upstream = await createOidcUpstreamFromEnv(env, config, identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
     await ensureStateDir(dir);
-    const { app, store } = await buildApp({ config, upstream, audit, sqliteFile });
+    const { app, store } = await buildApp({ config, upstream, audit, sqliteFile, trustedProxies });
     return { app, store, config, dir };
   }
 
@@ -500,6 +505,6 @@ export async function buildExample(
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
-  const { app, store } = await buildApp({ config, pairing: {}, audit, sqliteFile });
+  const { app, store } = await buildApp({ config, pairing: {}, audit, sqliteFile, trustedProxies });
   return { app, store, config, dir };
 }

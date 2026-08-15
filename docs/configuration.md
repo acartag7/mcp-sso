@@ -139,6 +139,7 @@ See [`identity/generic-oidc.md`](identity/generic-oidc.md).
 | `MCP_SSO_DIR` | optional | `./.mcp-sso` | State directory (sqlite + audit + quickstart secrets). |
 | `PORT` | optional | `3000` | Listen port. |
 | `HOST` | optional | by mode | Console pairing admits only exact `localhost`, `127.0.0.1`, or `::1`; a real identity binds `0.0.0.0`. A no-IdP non-loopback value is a pre-state boot error. |
+| `MCP_SSO_TRUSTED_PROXIES` | optional | unset (`trustProxy: false`) | Comma-separated IP/CIDR allowlist of reverse proxies that connect directly or through an entirely trusted chain (for example `127.0.0.1,::1`). Fastify ignores `X-Forwarded-For` from every other socket and selects the nearest untrusted address after a trusted hop. Do not list client networks, use `true`, or use a hop count. Malformed or blank config fails before state or listeners. |
 | `MCP_SSO_UNSAFE_ALLOW_NON_LOOPBACK_PAIRING` | optional ⚠️ | unset | Example-only break-glass override. Exact `true` permits a no-IdP non-loopback `HOST` and prints a loud warning before state creation. It does not permit non-loopback issuer/resource URLs. Use a real IdP instead for network exposure. |
 
 This is a breaking change for the old zero-setup invocation

@@ -93,7 +93,14 @@ non-negative safe integer; malformed results return the same fixed 503. The exis
 consuming the protected-resource budget; admitted traffic is rate-limited
 before body parsing, bearer verification/audit, MCP SDK construction, backend
 credential access, or proxy fetch. A denial is 429. Fastify's `request.ip` is
-the key; the host must configure `trustProxy` only for its actual trusted hop.
+the key. The two runnable Fastify example factories default to explicit
+`trustProxy: false`; their optional `trustedProxies`/`MCP_SSO_TRUSTED_PROXIES`
+allowlist accepts only validated concrete proxy IP/CIDR entries and is handed to
+Fastify's proxy-addr chain resolver. An untrusted socket's `X-Forwarded-For`
+therefore cannot select a bucket, while a configured trusted socket resolves to
+the nearest untrusted client address. Malformed proxy trust is a pre-state boot
+failure. The generated loopback-only starter remains fixed at `trustProxy: false`
+rather than exposing a forwarded-header escape.
 The helper's in-memory default is bounded per process and per method route; a multi-replica public
 deployment supplies a conforming shared store or enforces an aggregate budget
 at its trusted edge. This is composition-root admission, not a new field on

@@ -29,7 +29,8 @@ import {
   entraGroupAuthorizationFromEnv,
   UNSAFE_NON_LOOPBACK_PAIRING_ENV,
 } from "../examples/fastify-sqlite/app.ts";
-import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
+import { buildGateway, buildGatewayExample } from "../examples/api-key-gateway/app.ts";
+import { TRUSTED_PROXIES_ENV } from "../examples/fastify-sqlite/trusted-proxy.ts";
 import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 function jwk(): JWK {
@@ -1153,5 +1154,156 @@ test("integration — runnable /mcp budget denies before bearer audit and does n
   } finally {
     await built.app.close();
     await built.close();
+  }
+});
+
+test("integration — example proxy trust keeps untrusted forwarded IPs in one bucket and separates trusted clients", async () => {
+  const issuer = "http://localhost:3000";
+  const config = createBridgeConfig({
+    issuer, resource: `${issuer}/mcp`, consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: jwk(), redirectAllowlist: [], scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"], allowedOrigins: [issuer], dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true }, accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300,
+    authorizationCodeTtlSeconds: 300,
+  });
+  const identity = { async verify() { return { ok: false as const, reason: "unused" }; } };
+  const factories = [
+    {
+      name: "fastify-sqlite",
+      build: (trustedProxies?: readonly string[]) => buildApp({
+        config, identity, trustedProxies,
+        protectedResourceRateLimit: { max: 1, timeWindowMs: 60_000 },
+        acknowledgeUnsafeStatelessDefaults: true,
+      }),
+    },
+    {
+      name: "api-key-gateway",
+      build: (trustedProxies?: readonly string[]) => buildGateway({
+        config, identity, trustedProxies,
+        backendUrl: "http://127.0.0.1:1/mcp",
+        getBackendCredential: () => { throw new Error("bearer gate was bypassed"); },
+        protectedResourceRateLimit: { max: 1, timeWindowMs: 60_000 },
+        acknowledgeUnsafeStatelessDefaults: true,
+      }),
+    },
+  ];
+  const remoteAddress = "203.0.113.10";
+  const request = (forwarded: string) => ({
+    method: "POST" as const, url: "/mcp", remoteAddress,
+    headers: { "content-type": "application/json", "x-forwarded-for": forwarded },
+    payload: "{}",
+  });
+
+  for (const factory of factories) {
+    for (const [mode, trustedProxies] of [
+      ["default-off", undefined],
+      ["untrusted-socket", ["192.0.2.10"]],
+    ] as const) {
+      const built = await factory.build(trustedProxies);
+      try {
+        assert.equal((await built.app.inject(request("198.51.100.1"))).statusCode, 401);
+        assert.equal(
+          (await built.app.inject(request("198.51.100.2"))).statusCode,
+          429,
+          `${factory.name}/${mode}: an untrusted socket cannot rotate X-Forwarded-For into a fresh bucket`,
+        );
+      } finally {
+        await built.app.close();
+        await built.close();
+      }
+    }
+
+    const built = await factory.build(["203.0.113.0/24"]);
+    try {
+      assert.equal((await built.app.inject(request("198.51.100.1"))).statusCode, 401);
+      assert.equal(
+        (await built.app.inject(request("198.51.100.2"))).statusCode,
+        401,
+        `${factory.name}: distinct clients behind the configured proxy receive distinct buckets`,
+      );
+      assert.equal(
+        (await built.app.inject(request("198.51.100.1"))).statusCode,
+        429,
+        `${factory.name}: the first trusted client remains bounded in its own bucket`,
+      );
+    } finally {
+      await built.app.close();
+      await built.close();
+    }
+  }
+});
+
+test("integration — malformed trusted-proxy config fails before example state and SQLite effects", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-trusted-proxy-invalid-"));
+  const throwing = new Proxy(["127.0.0.1"], {
+    get(target, property, receiver) {
+      if (property === "0") throw new Error("raw proxy getter detail");
+      return Reflect.get(target, property, receiver) as unknown;
+    },
+  });
+  const malformed: unknown[] = [true, [], ["loopback"], ["0.0.0.0/0"], ["127.0.0.1", "127.0.0.1"], throwing];
+  const config = createBridgeConfig({
+    issuer: "http://localhost:3000", resource: "http://localhost:3000/mcp",
+    consentSigningSecret: "x".repeat(40), signingPrivateJwk: jwk(), redirectAllowlist: [],
+    scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"], allowedOrigins: ["http://localhost:3000"],
+    dcr: { mode: "stateless" }, dev: { allowInsecureLocalhost: true }, accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  try {
+    for (const [index, trustedProxies] of malformed.entries()) {
+      for (const target of ["fastify", "gateway"] as const) {
+        const sqliteFile = join(base, `${target}-${index}.db`);
+        const common = {
+          config, sqliteFile, trustedProxies: trustedProxies as readonly string[],
+          identity: { async verify() { return { ok: false as const, reason: "unused" }; } },
+          acknowledgeUnsafeStatelessDefaults: true as const,
+        };
+        const boot = target === "fastify"
+          ? buildApp(common)
+          : buildGateway({
+            ...common, backendUrl: "http://127.0.0.1:1/mcp",
+            getBackendCredential: () => "unused",
+          });
+        await assert.rejects(boot, /trusted proxies must be 1\.\.32 unique IP or CIDR entries/);
+        assert.equal(existsSync(sqliteFile), false, `${target}/${index}: rejected config did not open SQLite`);
+      }
+    }
+
+    for (const target of ["fastify", "gateway"] as const) {
+      const sqliteFile = join(base, `${target}-option-getter.db`);
+      const options = {
+        config, sqliteFile,
+        identity: { async verify() { return { ok: false as const, reason: "unused" }; } },
+        acknowledgeUnsafeStatelessDefaults: true as const,
+        ...(target === "gateway" ? {
+          backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+        } : {}),
+      };
+      Object.defineProperty(options, "trustedProxies", {
+        get() { throw new Error("raw option getter detail"); },
+      });
+      const boot = target === "fastify"
+        ? buildApp(options)
+        : buildGateway(options as Parameters<typeof buildGateway>[0]);
+      await assert.rejects(boot, /trusted proxies must be 1\.\.32 unique IP or CIDR entries/);
+      assert.equal(existsSync(sqliteFile), false, `${target}: throwing option getter did not open SQLite`);
+    }
+
+    for (const [index, raw] of ["", "not-an-ip", "127.0.0.1,", "0.0.0.0/0"].entries()) {
+      for (const target of ["fastify", "gateway"] as const) {
+        const dir = join(base, `env-${target}-${index}`);
+        const env = { MCP_SSO_DIR: dir, [TRUSTED_PROXIES_ENV]: raw };
+        const boot = target === "fastify"
+          ? buildExample(env)
+          : buildGatewayExample(env, {
+            backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+          });
+        await assert.rejects(boot, /trusted proxies must be 1\.\.32 unique IP or CIDR entries/);
+        assert.equal(existsSync(dir), false, `${target}/${index}: malformed env created no state directory`);
+      }
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });
