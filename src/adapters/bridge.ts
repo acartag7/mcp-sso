@@ -14,7 +14,7 @@ import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "..
 import { OAuthError } from "../errors.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
 import { renderConsentPage } from "./consent-page.ts";
-import { APPROVE_SINGLETON_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, REGISTER_SINGLETON_PARAM_KEYS, REVOKE_SINGLETON_PARAM_KEYS, TOKEN_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
+import { APPROVE_SINGLETON_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, REGISTER_JSON_ARRAY_PARAM_KEYS, REGISTER_SINGLETON_PARAM_KEYS, REVOKE_SINGLETON_PARAM_KEYS, TOKEN_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
 import { asOAuth, assertUnambiguousAuthorization, checkedFormObject, consentCookie, hasBasicAuthorization, parseApproved, resolveIdentityWithAudit } from "./bridge-internals.ts";
 export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
@@ -101,7 +101,7 @@ export class Bridge {
   async handleRegister(req: NormRequest): Promise<NormResponse> {
     try {
       await this.guard("register", req.ip);
-      const body = checkedFormObject(req, REGISTER_SINGLETON_PARAM_KEYS);
+      const body = checkedFormObject(req, REGISTER_SINGLETON_PARAM_KEYS, REGISTER_JSON_ARRAY_PARAM_KEYS);
       // All DCR metadata crosses as raw unknown values. registerClient owns the
       // container → member → grammar checks and snapshots arrays before use.
       const redirectUris = Object.hasOwn(body, "redirect_uris") ? body.redirect_uris : undefined;

@@ -15,6 +15,8 @@ export const APPROVE_SINGLETON_PARAM_KEYS = ["consent_token", "approved"] as con
 export const REGISTER_SINGLETON_PARAM_KEYS = [
   "redirect_uris", "application_type", "token_endpoint_auth_method", "grant_types",
 ] as const;
+/** DCR members whose JSON representation is legitimately array-valued. */
+export const REGISTER_JSON_ARRAY_PARAM_KEYS = ["redirect_uris", "grant_types"] as const;
 export const TOKEN_SINGLETON_PARAM_KEYS = [
   "grant_type", "code", "redirect_uri", "client_id", "code_verifier",
   "refresh_token", "client_secret", "scope", "resource",

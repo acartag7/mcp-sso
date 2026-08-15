@@ -412,6 +412,41 @@ test("bridge: every recognized OAuth form key rejects strict repetition before e
   }
 });
 
+test("bridge: custom adapters cannot bypass form repetition by omitting formBody", async (t) => {
+  const routes = [
+    {
+      label: "register", key: "redirect_uris",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRegister(request),
+    },
+    {
+      label: "approve", key: "approved",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleApprove(request),
+    },
+    {
+      label: "token", key: "grant_type",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleToken(request),
+    },
+    {
+      label: "revoke", key: "token",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRevoke(request),
+    },
+  ] as const;
+  for (const route of routes) {
+    await t.test(route.label, async () => {
+      const ctx = setup();
+      const body = { [route.key]: ["first", "last"] };
+      const response = await route.call(ctx.bridge, req({
+        body,
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+      }));
+      assert.equal(response.status, 400);
+      assert.equal((response.body as { error: string }).error, "invalid_request");
+      assert.equal(response.headers.location, undefined);
+      assert.deepEqual(ctx.audit.events, [], "fallback rejection precedes endpoint audit work");
+    });
+  }
+});
+
 test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Redis outage must not lock out auth)", async () => {
   const boom: RateLimitPort = { async check(): Promise<boolean> { throw new Error("redis down"); } };
   const ctx = setup(boom);

@@ -8,7 +8,7 @@ import { isBasicAttempt } from "../client-auth.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
-import { formObject, headerString, isAmbiguousFormContentType, type NormRequest } from "./http.ts";
+import { formBodySnapshot, formObject, headerString, isAmbiguousFormContentType, type NormRequest } from "./http.ts";
 import { findRepeatedKeys } from "./authorize-params.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
 
@@ -81,8 +81,22 @@ export function parseApproved(raw: unknown): boolean {
 }
 
 /** Reject ambiguous form provenance or repeated keys, then return the parsed body. */
-export function checkedFormObject(req: NormRequest, keys: readonly string[]): Record<string, unknown> {
-  if (isAmbiguousFormContentType(req.formBody) || findRepeatedKeys(req.formBody, keys).length > 0) {
+export function checkedFormObject(
+  req: NormRequest,
+  keys: readonly string[],
+  jsonArrayKeys: readonly string[] = [],
+): Record<string, unknown> {
+  const formBody = req.formBody === undefined
+    ? formBodySnapshot(req.body, req.headers)
+    : req.formBody;
+  const legacyKeys = keys.filter((key) => !jsonArrayKeys.includes(key));
+  const legacyBodyIsAmbiguous = req.formBody === undefined
+    && formBody === undefined
+    && headerString(req.headers, "content-type") === undefined
+    && findRepeatedKeys(req.body, legacyKeys).length > 0;
+  if (isAmbiguousFormContentType(formBody)
+    || findRepeatedKeys(formBody, keys).length > 0
+    || legacyBodyIsAmbiguous) {
     throw new OAuthError("invalid_request", "duplicate request parameters");
   }
   return formObject(req.body);
