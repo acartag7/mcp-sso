@@ -8,7 +8,7 @@ import { isBasicAttempt } from "../client-auth.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
-import { formObject, headerString, type NormRequest } from "./http.ts";
+import { formObject, headerString, isAmbiguousFormContentType, type NormRequest } from "./http.ts";
 import { findRepeatedKeys } from "./authorize-params.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
 
@@ -80,9 +80,9 @@ export function parseApproved(raw: unknown): boolean {
   return raw === true || raw === "true"; // fail-closed (§9.3): absent/malformed never auto-approves
 }
 
-/** Reject repeated recognized form keys, then return the ordinary parsed body. */
+/** Reject ambiguous form provenance or repeated keys, then return the parsed body. */
 export function checkedFormObject(req: NormRequest, keys: readonly string[]): Record<string, unknown> {
-  if (findRepeatedKeys(req.formBody, keys).length > 0) {
+  if (isAmbiguousFormContentType(req.formBody) || findRepeatedKeys(req.formBody, keys).length > 0) {
     throw new OAuthError("invalid_request", "duplicate request parameters");
   }
   return formObject(req.body);

@@ -88,10 +88,18 @@ export function headerString(headers: NormRequest["headers"], name: string): str
   return readHeader(headers, name).value;
 }
 
+const AMBIGUOUS_FORM_CONTENT_TYPE = Symbol("ambiguous-form-content-type");
+
 /** Retain form provenance so Bridge can distinguish repeats from JSON arrays. */
 export function formBodySnapshot(body: unknown, headers: NormRequest["headers"]): unknown {
-  const contentType = headerString(headers, "content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  const { value, ambiguous } = readHeader(headers, "content-type");
+  if (ambiguous) return AMBIGUOUS_FORM_CONTENT_TYPE;
+  const contentType = value?.split(";", 1)[0]?.trim().toLowerCase();
   return contentType === "application/x-www-form-urlencoded" ? body : undefined;
+}
+
+export function isAmbiguousFormContentType(value: unknown): boolean {
+  return value === AMBIGUOUS_FORM_CONTENT_TYPE;
 }
 
 export function queryString(query: NormRequest["query"], name: string): string | undefined {

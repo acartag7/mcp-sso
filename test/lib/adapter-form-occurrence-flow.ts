@@ -88,4 +88,56 @@ export function runAdapterFormOccurrenceFlow(
       }
     }
   });
+
+  test(`${name} adapter: ambiguous OAuth Content-Type rejects before endpoint work`, async (t) => {
+    for (const formCase of FORM_CASES) {
+      await t.test(formCase.label, async () => {
+        const keys: string[] = [];
+        const audit = new MemoryAudit();
+        const bridge = makeBridge({ async check(key) { keys.push(key); return true; } }, audit);
+        const identity: IdentityPort = { async verify() { return { ok: false, reason: "unused" }; } };
+        const client = await mount(bridge, identity);
+        try {
+          const params = new URLSearchParams();
+          params.append(formCase.key, formCase.value);
+          params.append(formCase.key, formCase.value);
+          for (const [key, value] of formCase.other) params.append(key, value);
+          const response = await client.requestOccurrences("POST", formCase.path, [
+            ["Content-Type", "application/x-www-form-urlencoded"],
+            ["Content-Type", "application/x-www-form-urlencoded"],
+            ...(formCase.headers ?? []),
+          ], params.toString());
+          assert.equal(response.status, 400);
+          assert.equal(response.headers.location, undefined);
+          assert.equal(JSON.parse(response.body).error, "invalid_request");
+          assert.equal(response.body.includes(SENTINEL), false);
+          const ip = name === "hono" ? "unknown" : "127.0.0.1";
+          assert.deepEqual(keys, [`${formCase.limiter}:${ip}`], "the existing limiter is charged exactly once");
+          assert.deepEqual(audit.events, [], "header ambiguity precedes endpoint audit work");
+        } finally {
+          await client.close?.();
+        }
+      });
+    }
+
+    await t.test("JSON registration", async () => {
+      const keys: string[] = [];
+      const audit = new MemoryAudit();
+      const bridge = makeBridge({ async check(key) { keys.push(key); return true; } }, audit);
+      const identity: IdentityPort = { async verify() { return { ok: false, reason: "unused" }; } };
+      const client = await mount(bridge, identity);
+      try {
+        const response = await client.requestOccurrences("POST", "/oauth/register", [
+          ["Content-Type", "application/json"], ["Content-Type", "application/json"],
+        ], JSON.stringify({ redirect_uris: [REDIRECT] }));
+        assert.equal(response.status, 400);
+        assert.equal(JSON.parse(response.body).error, "invalid_request");
+        const ip = name === "hono" ? "unknown" : "127.0.0.1";
+        assert.deepEqual(keys, [`register:${ip}`]);
+        assert.deepEqual(audit.events, []);
+      } finally {
+        await client.close?.();
+      }
+    });
+  });
 }
