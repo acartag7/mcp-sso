@@ -51,10 +51,30 @@ helpers (`handlePairingAuthorize`, `renderPairingPage`) are root-exported so a
 consumer can mount the pairing surface alongside the `skipAuthorize` adapter
 option. A Hono consumer also imports `honoOAuthBodyLimit` from `mcp-sso/hono`
 and mounts it before parsing the caller-owned pairing POST; the four built-in
-Hono OAuth POST routes apply it automatically. The in-repo example imports the
-framework-free helpers from source; package consumers import them from the root
-entry. The framework-free `Bridge` class — the central object
-a consumer constructs and passes to a framework adapter — is root-exported
+Hono OAuth POST routes apply it automatically. A Fastify consumer mounts a
+caller-owned pairing POST after `registerOAuthRoutes(..., { skipAuthorize: true })`;
+that registration automatically supplies bounded URL-encoded form parsing and
+clamps the later exact POST `/oauth/authorize` route to the shared budget.
+`addOAuthFormContentTypeParser` and `OAUTH_POST_BODY_MAX_BYTES` remain exported
+from `mcp-sso/fastify` for explicit custom composition, and
+`FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT` is route metadata that exactly mirrors
+§17.5's mandatory framework-free gate. The generated starter and both in-repo
+Fastify examples attach that metadata to pairing GET and POST.
+`registerOAuthRoutes` keeps its catch-all parser encapsulated and its pairing
+limit hook exact-path scoped, so neither replaces parsers or limits on
+unrelated caller routes; the one caller-visible exception is the exact form
+parser it adds in the caller's scope for `skipAuthorize` compatibility, which
+overrides a caller-owned wildcard for urlencoded there (Fastify exposes no
+working wildcard detection — see §9.6). A pairing POST registered after the
+call is clamped to the shared budget; one registered before it keeps its own
+route limit. The in-repo example imports the framework-free helpers
+from source; package consumers import them from the root entry. The
+Express adapter path-scopes bounded parsing to its four built-in POST routes and
+caller-owned pairing POST `/oauth/authorize`; the
+`mcp-sso/express` subpath retains `EXPRESS_OAUTH_BODY_MAX_BYTES` as an exact
+compatibility alias of the shared budget. The framework-free `Bridge` class —
+the central object a consumer constructs and passes to a framework adapter — is
+root-exported
 (`import { Bridge, RequestAuthorizer } from "mcp-sso"`). `isMcpPath(requestUrl)` —
 the `/mcp` Streamable-HTTP path check a consumer's `onRequest` Origin-gate hook uses
 to scope DNS-rebinding protection to MCP paths (it robustly handles the

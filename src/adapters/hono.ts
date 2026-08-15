@@ -10,7 +10,10 @@ import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
-import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import {
+  headerString, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
+  type NormRequest, type NormResponse,
+} from "./http.ts";
 import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import { OAuthError } from "../errors.ts";
 
@@ -41,7 +44,6 @@ export interface HonoAdapterOptions {
   clientIp?: (c: Context) => string | undefined;
 }
 
-const OAUTH_POST_BODY_MAX_BYTES = 256 * 1024;
 const CONTENT_LENGTH = /^(?:0|[1-9][0-9]*)$/;
 
 function payloadTooLarge(): Response {
@@ -120,11 +122,11 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, clientIp } = opts;
 
   const toNorm = async (c: Context): Promise<NormRequest> => {
-    const ct = c.req.header("content-type") ?? "";
+    const ct = (c.req.header("content-type")?.split(";", 1)[0] ?? "").trim().toLowerCase();
     let body: unknown;
     try {
-      if (ct.includes("application/json")) body = await c.req.json();
-      else if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) body = await c.req.parseBody();
+      if (ct === "application/json") body = await c.req.json();
+      else if (ct === "application/x-www-form-urlencoded") body = await c.req.parseBody();
     } catch { body = undefined; }
     const headers: NormRequest["headers"] = {};
     c.req.raw.headers.forEach((value, key) => { headers[key] = value; });

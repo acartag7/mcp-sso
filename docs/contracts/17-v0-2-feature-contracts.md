@@ -1577,9 +1577,29 @@ gate replaces no-gate).
   per key; duplicate form-body handling remains an adapter-body contract, not a
   guarantee of this query-occurrence guard. Single-valued GET and POST pairing
   flows are unchanged.
-- **Rate limiting:** the attempt cap is built-in and in-process — it cannot be
-  misconfigured away; the `RateLimitPort` hook (`pairing:<ip>`) adds
-  defense-in-depth.
+- **Rate limiting:** `handlePairingAuthorize` applies a mandatory in-process
+  fixed-window gate shared by GET and POST: **60 requests per 60 seconds per
+  `ConsolePairingIdentity` instance**, across all client IPs. The check runs
+  before duplicate/query selection, `beginSession`, code output, body-field
+  selection, `verify`, hidden-field rendering, `Bridge`, store work, or success
+  audit. Denial is a fixed direct 429 `temporarily_unavailable` response. The
+  state is weakly keyed by the identity instance, so discarded identities do
+  not accumulate process memory; a spoofed IP cannot create a fresh bucket. The
+  Fastify pairing routes also attach matching `config.rateLimit` metadata from
+  `FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT`; this makes the hard gate visible to
+  framework tooling and lets a separately installed Fastify limiter reject
+  earlier, but it never replaces the framework-free enforcement.
+  **Availability residual:** because the mandatory bucket is deliberately
+  shared across all client IPs, any caller that can reach this single-operator
+  surface can consume the 60-request budget and deny the legitimate operator
+  for the rest of the current window. This is the fixed-memory,
+  spoofed-IP-cardinality-resistant tradeoff; the default loopback envelope
+  limits who can exercise it. The bucket admits again at exactly 60 seconds.
+  A wall-clock rollback fails closed and admits nothing until the original
+  window start plus 60 seconds is reached.
+  Separately, the five-wrong-code attempt cap is built-in and in-process — it
+  cannot be misconfigured away — and the `RateLimitPort` hook (`pairing:<ip>`)
+  adds defense-in-depth for submitted-code verification.
 - **Trust boundary (threat model):** whoever can read the process's stderr IS
   the operator. Log pipelines (docker logs, CloudWatch, Loki) EXTEND that
   boundary — codes land in them; TTL + single-use + attempt cap bound but do

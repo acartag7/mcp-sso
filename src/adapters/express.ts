@@ -1,18 +1,29 @@
 // Express adapter (contracts §9.6). Thin wiring over the framework-free Bridge.
 // The returned Router owns bounded OAuth JSON/form parsing. Maps NormResponse → Express.
 
-import { json, Router, urlencoded } from "express";
+import { json, raw, Router, urlencoded } from "express";
 import type { NextFunction, Request, Response } from "express";
 import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
-import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import {
+  headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
+  type NormRequest, type NormResponse,
+} from "./http.ts";
 import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import { OAuthError } from "../errors.ts";
 
-/** Raw JSON and form budget for the built-in OAuth POST routes (§9.6). */
-export const EXPRESS_OAUTH_BODY_MAX_BYTES = 256 * 1024;
+/** Published compatibility name; the shared value is authoritative (§9.6). */
+export const EXPRESS_OAUTH_BODY_MAX_BYTES = OAUTH_POST_BODY_MAX_BYTES;
+
+const OAUTH_POST_PATHS = [
+  "/oauth/register",
+  "/oauth/authorize",
+  "/oauth/authorize/approve",
+  "/oauth/token",
+  "/oauth/revoke",
+];
 
 function parserErrorStatus(error: unknown): 400 | 413 | undefined {
   if (typeof error !== "object" || error === null) return undefined;
@@ -40,8 +51,12 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   // Keep the framework parser boundary aligned with the core-supported OAuth
   // request domain. This lives inside the returned router, so unrelated app
   // routes do not inherit the OAuth limit.
-  router.use(json({ limit: EXPRESS_OAUTH_BODY_MAX_BYTES }));
-  router.use(urlencoded({ extended: false, limit: EXPRESS_OAUTH_BODY_MAX_BYTES }));
+  router.post(
+    OAUTH_POST_PATHS,
+    json({ limit: OAUTH_POST_BODY_MAX_BYTES }),
+    urlencoded({ extended: false, limit: OAUTH_POST_BODY_MAX_BYTES }),
+    raw({ limit: OAUTH_POST_BODY_MAX_BYTES, type: () => true }),
+  );
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
 
   const toNorm = (req: Request): NormRequest => ({

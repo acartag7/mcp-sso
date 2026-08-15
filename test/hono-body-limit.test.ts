@@ -163,7 +163,7 @@ function failedStreamRequest(
   });
 }
 
-test("hono body cap: small JSON, form, and multipart bodies reach real routes", async () => {
+test("hono body cap: small JSON and form bodies parse, while multipart remains unparsed", async () => {
   const { app, calls, requests } = harness();
 
   const json = await app.request("/oauth/register", {
@@ -186,8 +186,37 @@ test("hono body cap: small JSON, form, and multipart bodies reach real routes", 
   multipartBody.set("redirect_uris", "https://client.test/callback");
   const multipart = await app.request("/oauth/register", { method: "POST", body: multipartBody });
   assert.equal(multipart.status, 200);
-  assert.equal((requests.at(-1)?.body as Record<string, unknown>).redirect_uris, "https://client.test/callback");
+  assert.equal(requests.at(-1)?.body, undefined);
   assert.deepEqual(calls, ["register", "token", "register"]);
+
+  const realMultipartBody = new FormData();
+  realMultipartBody.set("redirect_uris", "https://client.test/callback");
+  const realMultipart = await realApp().request("/oauth/register", { method: "POST", body: realMultipartBody });
+  assert.equal(realMultipart.status, 400);
+  assert.equal((await realMultipart.json() as { error: string }).error, "invalid_request");
+});
+
+test("hono body parsing matches exact media-type essences, not substring lookalikes", async () => {
+  const { app, requests } = harness();
+  for (const contentType of [
+    "application/json-seq",
+    "text/application/jsonish",
+    "application/x-www-form-urlencoded-extra",
+  ]) {
+    const response = await app.request("/oauth/register", {
+      method: "POST", headers: { "content-type": contentType },
+      body: JSON.stringify({ redirect_uris: ["https://client.test/callback"] }),
+    });
+    assert.equal(response.status, 200, contentType);
+    assert.equal(requests.at(-1)?.body, undefined, contentType);
+  }
+
+  const realResponse = await realApp().request("/oauth/register", {
+    method: "POST", headers: { "content-type": "application/json-seq" },
+    body: JSON.stringify({ redirect_uris: ["https://client.test/callback"] }),
+  });
+  assert.equal(realResponse.status, 400);
+  assert.equal((await realResponse.json() as { error: string }).error, "invalid_request");
 });
 
 test("hono body cap: a fully JSON-escaped largest recognized registration is admitted", async () => {
