@@ -1572,14 +1572,15 @@ gate replaces no-gate).
   occurrence in the normalized authorize **query**, or — on POST — in the
   normalized authorize **form body**, it returns direct 400 `invalid_request`
   with no `Location`. POST also rejects a repeated `pairing_code` or
-  `pairing_nonce`. These checks run before selecting any OAuth or pairing-form
-  value and before `beginSession`, pairing-code output, `verify`, hidden-field
-  rendering, `bridge.handleAuthorize`, consent preparation/rendering, store
-  mutation, success audit, or the `authorize:<ip>` charge. The generated pairing
-  form still round-trips one snapshotted value per key. Fastify and Hono
-  reconstruct form-body occurrences instead of first/last-wins collapsing them
-  (§9.6); Express already preserves arrays. A caller that pre-selects one
-  occurrence before `handlePairingAuthorize` has erased the evidence.
+  `pairing_nonce`. These checks run after the mandatory in-process authorize
+  gate and before selecting any OAuth or pairing-form value, `beginSession`,
+  pairing-code output, `verify`, hidden-field rendering, `bridge.handleAuthorize`,
+  consent preparation/rendering, store mutation, success audit, or the
+  `authorize:<ip>` charge. The generated pairing form still round-trips one
+  snapshotted value per key. Fastify and Hono reconstruct form-body occurrences
+  instead of first/last-wins collapsing them (§9.6); Express already preserves
+  arrays. A caller that pre-selects one occurrence before
+  `handlePairingAuthorize` has erased the evidence.
   RFC 8707 `resource` is not a singleton: repeated query or form-body
   indicators are passed through `resourceParam` onto the synthetic authorize
   query after a successful pairing so distinct values still reach
@@ -1594,16 +1595,35 @@ gate replaces no-gate).
   comma-coalesced `Origin` is direct 403 `invalid_origin` with no pairing
   session, verification, hidden-field rewrite, or `authorize:<ip>` charge. GET
   pairing does not require `Origin` (a first navigation may omit it).
-- **Rate limiting:** the attempt cap is built-in and in-process — it cannot be
-  misconfigured away. In addition, `handlePairingAuthorize` charges the
-  Bridge-owned `RateLimitPort` hook (`authorize:<ip>`) once per GET or POST after
-  the duplicate-query, duplicate-body, and POST Origin checks and before OAuth
+- **Rate limiting:** `handlePairingAuthorize` applies a mandatory in-process
+  fixed-window gate shared by GET and POST: **60 requests per 60 seconds per
+  `ConsolePairingIdentity` instance**, across all client IPs. The check runs
+  before duplicate/query/body selection, Origin, `beginSession`, code output,
+  `verify`, hidden-field rendering, `Bridge`, store work, or success
+  audit. Denial is a fixed direct 429 `temporarily_unavailable` response. The
+  state is weakly keyed by the identity instance, so discarded identities do
+  not accumulate process memory; a spoofed IP cannot create a fresh bucket. The
+  Fastify pairing routes also attach matching `config.rateLimit` metadata from
+  `FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT`; this makes the hard gate visible to
+  framework tooling and lets a separately installed Fastify limiter reject
+  earlier, but it never replaces the framework-free enforcement.
+  **Availability residual:** because the mandatory bucket is deliberately
+  shared across all client IPs, any caller that can reach this single-operator
+  surface can consume the 60-request budget and deny the legitimate operator
+  for the rest of the current window. This is the fixed-memory,
+  spoofed-IP-cardinality-resistant tradeoff; the default loopback envelope
+  limits who can exercise it. The bucket admits again at exactly 60 seconds.
+  A wall-clock rollback fails closed and admits nothing until the original
+  window start plus 60 seconds is reached.
+  After that hard gate, `handlePairingAuthorize` charges the Bridge-owned
+  `RateLimitPort` hook (`authorize:<ip>`) once per GET or POST before OAuth
   value selection, `beginSession`, code output, `verify`, consent preparation,
-  store work, or audit. A denial is a direct 429 and does not print, validate, or consume a
-  pairing code. Pairing does not call `Bridge.resolveIdentity`; after successful
-  code verification it calls `Bridge.handleAuthorize` without a second
-  `authorize:<ip>` charge. The identity port's in-process attempt cap and its
-  optional submitted-code `pairing:<ip>` hook remain independent backstops.
+  store work, or audit. A denial is a direct 429 and does not print, validate,
+  or consume a pairing code. Pairing does not call `Bridge.resolveIdentity`;
+  after successful code verification it calls `Bridge.handleAuthorize` without
+  a second `authorize:<ip>` charge. The five-wrong-code attempt cap is built-in
+  and in-process — it cannot be misconfigured away — and the identity port's
+  optional submitted-code `pairing:<ip>` hook remains an independent backstop.
 - **Trust boundary (threat model):** whoever can read the process's stderr IS
   the operator. Log pipelines (docker logs, CloudWatch, Loki) EXTEND that
   boundary — codes land in them; TTL + single-use + attempt cap bound but do

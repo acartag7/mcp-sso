@@ -9,8 +9,24 @@ import { pathAfterOrigin } from "../config.ts";
 import { OAuthError } from "../errors.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
-import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
+import {
+  headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
+  type NormRequest, type NormResponse,
+} from "./http.ts";
 import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
+import {
+  PAIRING_AUTHORIZE_MAX_REQUESTS, PAIRING_AUTHORIZE_WINDOW_MS,
+} from "./pairing-flow.ts";
+
+export { OAUTH_POST_BODY_MAX_BYTES };
+
+/** Route metadata matching handlePairingAuthorize's mandatory hard gate. */
+export const FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT = Object.freeze({
+  max: PAIRING_AUTHORIZE_MAX_REQUESTS,
+  timeWindow: PAIRING_AUTHORIZE_WINDOW_MS,
+});
+
+const OAUTH_FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
 
 export interface FastifyAdapterOptions {
   bridge: Bridge;
@@ -29,11 +45,45 @@ export interface FastifyAdapterOptions {
   upstream?: UpstreamRedirectFlow;
 }
 
+export function addOAuthFormContentTypeParser(app: FastifyInstance): void {
+  // Only an exact form parser is guarded: hasContentTypeParser("*") is dead on
+  // every Fastify 5.x (wildcards are stored under a key the lookup never
+  // produces), so a caller-owned wildcard is deliberately NOT detected — the
+  // exact parser is installed and, by exact-match precedence, takes urlencoded
+  // bodies in this scope away from that wildcard. Never add a wildcard check
+  // back: if it ever worked, the parser would be skipped and the OAuth routes
+  // would fall to the child-scope Buffer catch-all, 400ing every form client.
+  if (app.hasContentTypeParser(OAUTH_FORM_CONTENT_TYPE)) return;
+  app.addContentTypeParser(OAUTH_FORM_CONTENT_TYPE, { parseAs: "string" }, (_req, body, done) => {
+    done(null, formOccurrencesFromUrlEncoded(String(body)));
+  });
+}
+
 export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
+  if (opts.skipAuthorize && !opts.upstream) {
+    // Pre-A1 compatibility: caller-owned pairing routes registered after this
+    // function inherit automatic form parsing. Keep only the catch-all parser in
+    // the child scope so unrelated unknown media retain caller semantics.
+    addOAuthFormContentTypeParser(app);
+    app.addHook("onRoute", (routeOptions) => {
+      const methods = Array.isArray(routeOptions.method) ? routeOptions.method : [routeOptions.method];
+      if (routeOptions.url !== "/oauth/authorize"
+        || !methods.some((method) => method.toUpperCase() === "POST")) return;
+      routeOptions.bodyLimit = Math.min(
+        routeOptions.bodyLimit ?? OAUTH_POST_BODY_MAX_BYTES,
+        OAUTH_POST_BODY_MAX_BYTES,
+      );
+    });
+  }
+  await app.register(async (scope) => registerScopedOAuthRoutes(scope, opts));
+}
+
+async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
 
-  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
-    done(null, formOccurrencesFromUrlEncoded(String(body)));
+  addOAuthFormContentTypeParser(app);
+  app.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
+    done(null, body);
   });
 
   const toNorm = (req: FastifyRequest): NormRequest => ({
@@ -53,7 +103,7 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
   app.get("/.well-known/oauth-protected-resource", async (_req, reply) => send(reply, await bridge.handleProtectedResourceMetadata()));
   app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (_req, reply) => send(reply, await bridge.handleProtectedResourceMetadata()));
   app.get("/oauth/jwks", async (_req, reply) => send(reply, await bridge.handleJwks()));
-  app.post("/oauth/register", async (req, reply) => send(reply, await bridge.handleRegister(toNorm(req))));
+  app.post("/oauth/register", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => send(reply, await bridge.handleRegister(toNorm(req))));
   if (upstream && (identity || skipAuthorize)) {
     throw new Error("registerOAuthRoutes: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
   }
@@ -84,7 +134,7 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
       await send(reply, await bridge.handleAuthorize(request, identityResolved));
     });
   }
-  app.post("/oauth/authorize/approve", async (req, reply) => send(reply, await bridge.handleApprove(toNorm(req))));
-  app.post("/oauth/token", async (req, reply) => send(reply, await bridge.handleToken(toNorm(req))));
-  app.post("/oauth/revoke", async (req, reply) => send(reply, await bridge.handleRevoke(toNorm(req))));
+  app.post("/oauth/authorize/approve", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => send(reply, await bridge.handleApprove(toNorm(req))));
+  app.post("/oauth/token", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => send(reply, await bridge.handleToken(toNorm(req))));
+  app.post("/oauth/revoke", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => send(reply, await bridge.handleRevoke(toNorm(req))));
 }

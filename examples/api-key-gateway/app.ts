@@ -33,11 +33,13 @@ import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
 import {
-  headersFromDistinct, isMcpPath, readHeader as readSecurityHeader,
+  headersFromDistinct, isMcpPath, OAUTH_POST_BODY_MAX_BYTES, readHeader as readSecurityHeader,
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
 import { queryOccurrencesFromUrl } from "../../src/adapters/authorize-params.ts";
-import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
+import {
+  addOAuthFormContentTypeParser, FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, registerOAuthRoutes,
+} from "../../src/adapters/fastify.ts";
 import {
   registerProtectedResourceRateLimit,
   type ProtectedResourceRateLimitOptions,
@@ -149,11 +151,19 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   } else if (opts.pairing) {
     await registerOAuthRoutes(app, { bridge, skipAuthorize: true });
     const pairing = createConsolePairingIdentity({ ...opts.pairing, audit });
-    app.get("/oauth/authorize", async (req, reply) => {
-      await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req as never)));
-    });
-    app.post("/oauth/authorize", async (req, reply) => {
-      await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req as never)));
+    await app.register(async (pairingApp) => {
+      addOAuthFormContentTypeParser(pairingApp);
+      pairingApp.get("/oauth/authorize", {
+        config: { rateLimit: FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT },
+      }, async (req, reply) => {
+        await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req as never)));
+      });
+      pairingApp.post("/oauth/authorize", {
+        bodyLimit: OAUTH_POST_BODY_MAX_BYTES,
+        config: { rateLimit: FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT },
+      }, async (req, reply) => {
+        await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req as never)));
+      });
     });
   } else {
     await registerOAuthRoutes(app, { bridge, identity: opts.identity, identityHeader: opts.identityHeader });

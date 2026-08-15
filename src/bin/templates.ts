@@ -36,7 +36,7 @@ import {
   SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
   type ClientRegistration, type ClientStore,
 } from "mcp-sso";
-import { registerOAuthRoutes } from "mcp-sso/fastify";
+import { addOAuthFormContentTypeParser, FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, OAUTH_POST_BODY_MAX_BYTES, registerOAuthRoutes } from "mcp-sso/fastify";
 import { registerProtectedResourceRateLimit } from "mcp-sso/fastify/protected-resource-rate-limit";
 import { openSqliteStore } from "mcp-sso/store/sqlite";
 import { createConsolePairingIdentity } from "mcp-sso/identity/console-pairing";
@@ -124,8 +124,10 @@ async function main(): Promise<void> {
   // Zero-setup: skip the default authorize; mount the console-pairing surface.
   await registerOAuthRoutes(app, { bridge, skipAuthorize: true });
   const pairing = createConsolePairingIdentity({ audit });
-  app.get("/oauth/authorize", async (req, reply) => { await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req))); });
-  app.post("/oauth/authorize", async (req, reply) => { await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req))); });
+  await app.register(async (pairingApp) => { addOAuthFormContentTypeParser(pairingApp);
+    pairingApp.get("/oauth/authorize", { config: { rateLimit: FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT } }, async (req, reply) => { await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req))); });
+    pairingApp.post("/oauth/authorize", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES, config: { rateLimit: FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT } }, async (req, reply) => { await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req))); });
+  });
 
   // MCP Streamable-HTTP Origin gate (DNS-rebinding MUST): reject a present, non-allowlisted
   // Origin BEFORE body parsing, for every method. isMcpPath parses the pathname (absolute-form-safe).
@@ -196,7 +198,6 @@ const GITIGNORE = `node_modules/
 // this is the safe default; remove the line only if a dep you've vetted needs a script.
 const NPMRC = `ignore-scripts=true
 `;
-
 function readme(vars: TemplateVars): string {
   return `# ${vars.name}
 
