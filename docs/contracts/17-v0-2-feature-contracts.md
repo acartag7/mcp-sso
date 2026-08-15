@@ -1589,6 +1589,14 @@ gate replaces no-gate).
   `FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT`; this makes the hard gate visible to
   framework tooling and lets a separately installed Fastify limiter reject
   earlier, but it never replaces the framework-free enforcement.
+  **Availability residual:** because the mandatory bucket is deliberately
+  shared across all client IPs, any caller that can reach this single-operator
+  surface can consume the 60-request budget and deny the legitimate operator
+  for the rest of the current window. This is the fixed-memory,
+  spoofed-IP-cardinality-resistant tradeoff; the default loopback envelope
+  limits who can exercise it. The bucket admits again at exactly 60 seconds.
+  A wall-clock rollback fails closed and admits nothing until the original
+  window start plus 60 seconds is reached.
   Separately, the five-wrong-code attempt cap is built-in and in-process — it
   cannot be misconfigured away — and the `RateLimitPort` hook (`pairing:<ip>`)
   adds defense-in-depth for submitted-code verification.

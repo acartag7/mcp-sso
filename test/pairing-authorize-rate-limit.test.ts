@@ -32,13 +32,13 @@ test("pairing authorize hard cap covers GET and POST before pairing or Bridge ef
   });
   const pairing = new Pairing();
   const bridge = { config: { resource: "https://api.test/mcp" } } as Bridge;
-  for (let count = 0; count < 60; count += 1) {
+  for (let count = 0; count < PAIRING_AUTHORIZE_MAX_REQUESTS; count += 1) {
     const admitted = await handlePairingAuthorize(
       { bridge, pairing }, "GET", request(`203.0.113.${count}`),
     );
     assert.equal(admitted.status, 200);
   }
-  assert.equal(pairing.beginCalls, 60);
+  assert.equal(pairing.beginCalls, PAIRING_AUTHORIZE_MAX_REQUESTS);
 
   const deniedGet = await handlePairingAuthorize(
     { bridge, pairing }, "GET", request("198.51.100.1"),
@@ -48,7 +48,10 @@ test("pairing authorize hard cap covers GET and POST before pairing or Bridge ef
     error: "temporarily_unavailable", error_description: "Too many requests",
   });
   assert.equal(deniedGet.redirect, undefined);
-  assert.equal(pairing.beginCalls, 60, "denial precedes session creation and code output");
+  assert.equal(
+    pairing.beginCalls, PAIRING_AUTHORIZE_MAX_REQUESTS,
+    "denial precedes session creation and code output",
+  );
 
   const deniedPost = await handlePairingAuthorize(
     { bridge, pairing }, "POST", request("198.51.100.2", {
@@ -57,7 +60,46 @@ test("pairing authorize hard cap covers GET and POST before pairing or Bridge ef
   );
   assert.equal(deniedPost.status, 429);
   assert.equal(pairing.verifyCalls, 0, "denial precedes code verification and Bridge authorization");
-  assert.equal(pairing.beginCalls, 60);
+  assert.equal(pairing.beginCalls, PAIRING_AUTHORIZE_MAX_REQUESTS);
+});
+
+test("pairing authorize window resets exactly and clock rollback fails closed", async (t) => {
+  let now = 1_000_000;
+  t.mock.method(Date, "now", () => now);
+  const bridge = { config: { resource: "https://api.test/mcp" } } as Bridge;
+  const saturated = new Pairing();
+  for (let count = 0; count < PAIRING_AUTHORIZE_MAX_REQUESTS; count += 1) {
+    assert.equal((await handlePairingAuthorize(
+      { bridge, pairing: saturated }, "GET", request("127.0.0.1"),
+    )).status, 200);
+  }
+  assert.equal((await handlePairingAuthorize(
+    { bridge, pairing: saturated }, "GET", request("127.0.0.1"),
+  )).status, 429);
+  now += PAIRING_AUTHORIZE_WINDOW_MS - 1;
+  assert.equal((await handlePairingAuthorize(
+    { bridge, pairing: saturated }, "GET", request("127.0.0.1"),
+  )).status, 429);
+  now += 1;
+  assert.equal((await handlePairingAuthorize(
+    { bridge, pairing: saturated }, "GET", request("127.0.0.1"),
+  )).status, 200);
+
+  const rollback = new Pairing();
+  now = 2_000_000;
+  assert.equal((await handlePairingAuthorize(
+    { bridge, pairing: rollback }, "GET", request("127.0.0.1"),
+  )).status, 200);
+  now -= 1;
+  assert.equal((await handlePairingAuthorize(
+    { bridge, pairing: rollback }, "GET", request("127.0.0.1"),
+  )).status, 429);
+  assert.equal(rollback.beginCalls, 1, "rollback denial precedes pairing work");
+  now = 2_000_000 + PAIRING_AUTHORIZE_WINDOW_MS;
+  assert.equal((await handlePairingAuthorize(
+    { bridge, pairing: rollback }, "GET", request("127.0.0.1"),
+  )).status, 200);
+  assert.equal(rollback.beginCalls, 2);
 });
 
 test("every shipped Fastify pairing route attaches the shared rate-limit metadata", () => {
