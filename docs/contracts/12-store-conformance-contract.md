@@ -281,9 +281,15 @@ other undersized shape fails boot rather than being silently reinterpreted.
 
 12. **Self-running expiry collection:** a live store MUST arrange periodic calls
     to its own `sweepExpired` without requiring a Bridge, adapter, example, or
-    deployer timer. `MemoryStore`, `SqliteStore`, and `MysqlStore` each start the
-    shared reference scheduler at construction. Its first run is delayed by the
-    fixed five-minute `STORE_EXPIRY_SWEEP_INTERVAL_MS`; each later run is
+    deployer timer. `MemoryStore` starts the shared reference scheduler at
+    construction. `SqliteStore` is constructed only after its schema migration,
+    so its scheduler starts after admission and migration succeed. `MysqlStore`
+    starts the scheduler only after `migrate()` succeeds; direct constructor
+    callers MUST invoke `migrate()`, while `createMysqlStore` does so before it
+    returns. A failed or still-running MySQL migration therefore cannot race a
+    scheduled deletion against an unvalidated or partially migrated schema.
+    The first run is delayed by the fixed five-minute
+    `STORE_EXPIRY_SWEEP_INTERVAL_MS`; each later run is
     scheduled only after the prior sweep settles, so one store instance never
     overlaps sweeps. The timer is `unref()`'d and cannot keep an otherwise-idle
     process alive. Each run derives one canonical UTC ISO timestamp from the
