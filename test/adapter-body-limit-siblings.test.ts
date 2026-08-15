@@ -158,18 +158,23 @@ test("fastify OAuth parser scope preserves caller parsing on unrelated routes", 
 test("fastify built-in OAuth scope replaces an inherited last-wins form parser", async () => {
   const { bridge, requests } = bridgeHarness();
   const app = Fastify();
+  let unrelatedBody: unknown;
   app.addContentTypeParser(
     "application/x-www-form-urlencoded", { parseAs: "string" },
     (_request, body, done) => done(null, Object.fromEntries(new URLSearchParams(String(body)))),
   );
-  app.post("/other-form", async (request) => request.body);
+  app.post("/other-form", async (request) => {
+    unrelatedBody = request.body;
+    return { ok: true };
+  });
   await registerOAuthRoutes(app, { bridge, skipAuthorize: true });
   try {
     const unrelated = await app.inject({
       method: "POST", url: "/other-form", headers: { "content-type": "application/x-www-form-urlencoded" },
       payload: "token=first&token=last",
     });
-    assert.deepEqual(unrelated.json(), { token: "last" }, "the parent parser remains caller-owned");
+    assert.deepEqual(unrelated.json(), { ok: true });
+    assert.deepEqual(unrelatedBody, { token: "last" }, "the parent parser remains caller-owned");
 
     const oauth = await app.inject({
       method: "POST", url: "/oauth/revoke", headers: { "content-type": "application/x-www-form-urlencoded" },
