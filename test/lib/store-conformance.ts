@@ -79,6 +79,9 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
         "the first scheduled sweep collected a tombstone while its signed JWT was still valid",
       );
 
+      // The MySQL target resolves across multiple microtasks. Let the scheduler's
+      // finally block install the next timer after the wrapped sweep increments.
+      await new Promise<void>((resolve) => setImmediate(resolve));
       configuredNow += STORE_EXPIRY_SWEEP_INTERVAL_MS * 2;
       t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
       await settleUntil(() => sweeps === 2);
@@ -654,8 +657,12 @@ function startExpiryCollection(store: StorePort, clock: ClockPort): void {
 }
 
 async function settleUntil(done: () => boolean): Promise<void> {
-  for (let turn = 0; turn < 100 && !done(); turn++) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
+  for (let turn = 0; turn < 1_000 && !done(); turn++) {
+    // setTimeout is mocked in these rows; a one-shot real setInterval turn gives
+    // live SQL I/O time to settle instead of spinning through setImmediate only.
+    await new Promise<void>((resolve) => {
+      const interval = setInterval(() => { clearInterval(interval); resolve(); }, 1);
+    });
   }
   assert.equal(done(), true, "scheduled work did not settle");
 }

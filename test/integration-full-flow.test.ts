@@ -36,7 +36,7 @@ import { noopAudit } from "../src/ports/audit.ts";
 import type { IdentityPort } from "../src/ports/identity.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
-import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
+import { createMysqlStore } from "../src/store/mysql.ts";
 import { createOAuthRouter } from "../src/adapters/express.ts";
 import { createOAuthApp } from "../src/adapters/hono.ts";
 import { headersFromDistinct, readHeader } from "../src/adapters/http.ts";
@@ -622,15 +622,12 @@ if (MYSQL_URL) {
         const [lockRows] = await conn.query("SELECT GET_LOCK(?, 120) AS ok", [LOCK_NAME]);
         assert.equal((lockRows as Array<{ ok: number }>)[0]?.ok, 1, `acquired ${LOCK_NAME}`);
 
-        // Migrate (+ boot-time strict-mode/collation asserts) on the shared DB.
-        const migrator = await createMysqlStore(MYSQL_URL as string);
-        await migrator.close();
-
         const port = await freePort();
         const base = `http://127.0.0.1:${port}`;
         const config = makeConfig({ resource: `${base}/mcp`, issuer: base });
-        const pool = createPool(MYSQL_URL as string);
-        const store = new MysqlStore(pool, true); // ownsPool: close() ends it
+        // Use the production factory so this store instance itself completes
+        // migration and boot assertions before Bridge binds expiry collection.
+        const store = await createMysqlStore(MYSQL_URL as string);
         const { bridge, authorizer } = deps(config, store);
         const mount = await mountExpress(bridge, authorizer, config, port);
         try {
