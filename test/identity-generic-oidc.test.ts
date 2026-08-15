@@ -25,6 +25,7 @@ import {
   type GenericOidcConfig, type GenericOidcIdTokenPayload, type ResolvedEndpoints,
   type DiscoveryTransport, type GenericOidcTokenTransport,
 } from "../src/identity/generic-oidc.ts";
+import { assertDiscoveredEndpointHost } from "../src/identity/generic-oidc-discovery.ts";
 
 const ISSUER = "https://idp.example.com";
 const CLIENT_ID = "generic-test-client-id";
@@ -238,6 +239,44 @@ test("resolveEndpoints: discover happy path; manual mode (no fetch, default algs
   assert.deepEqual(m.allowedAlgs, ["RS256", "ES256"]);
 });
 
+test("assertDiscoveredEndpointHost: exact canonical hostname only, never a registrable-domain sibling", () => {
+  assert.doesNotThrow(() => assertDiscoveredEndpointHost(
+    ISSUER,
+    "https://IDP.EXAMPLE.COM:9443/token",
+    "token_endpoint",
+  ));
+  assert.throws(
+    () => assertDiscoveredEndpointHost(ISSUER, "https://tokens.idp.example.com/token", "token_endpoint"),
+    /generic_oidc_discovery_endpoint_host_mismatch/,
+  );
+  assert.throws(
+    () => assertDiscoveredEndpointHost(ISSUER, "https://oauth.example.com/token", "token_endpoint"),
+    /generic_oidc_discovery_endpoint_host_mismatch/,
+  );
+});
+
+test("resolveEndpoints: every discovered endpoint host is bound; explicit manual cross-host config remains valid", async () => {
+  for (const [field, value] of [
+    ["authorization_endpoint", "https://attacker.test/authorize"],
+    ["token_endpoint", "https://attacker.test/token"],
+    ["jwks_uri", "https://attacker.test/jwks"],
+  ] as const) {
+    await assert.rejects(
+      resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ [field]: value }))),
+      /generic_oidc_discovery_endpoint_host_mismatch/,
+    );
+  }
+  const manual = await resolveEndpoints({
+    issuer: ISSUER,
+    endpoints: {
+      authorizationEndpoint: "https://login.explicit.test/authorize",
+      tokenEndpoint: "https://token.explicit.test/token",
+      jwksUri: "https://keys.explicit.test/jwks",
+    },
+  });
+  assert.equal(manual.tokenEndpoint, "https://token.explicit.test/token");
+});
+
 test("resolveEndpoints: discover boot failures (issuer mismatch, http endpoints, 3xx, non-200, malformed, missing PKCE)", async () => {
   await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ issuer: "https://evil.test" })))); // issuer mismatch
   await assert.rejects(resolveEndpoints({ issuer: ISSUER, endpoints: "discover" }, fakeDiscovery(discoveryDoc({ authorization_endpoint: "http://insecure.test/auth" })))); // http endpoint
@@ -268,6 +307,16 @@ test("createGenericOidcIdentity: async build; verify rejects non-string; manual 
   assert.equal(id.redirectUri, REDIRECT_URI);
   assert.equal((await id.verify(undefined)).ok, false); // non-string id_token — no JWKS fetch
   assert.match(id.getAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c" }), /nonce=n/);
+});
+
+test("createGenericOidcIdentity: discovery host guard is wired before identity construction", async () => {
+  await assert.rejects(
+    createGenericOidcIdentity(
+      { ...CONFIG, endpoints: "discover" },
+      { discoveryFetch: fakeDiscovery(discoveryDoc({ token_endpoint: "https://attacker.test/capture" })) },
+    ),
+    /generic_oidc_discovery_endpoint_host_mismatch/,
+  );
 });
 
 // --- RedirectIdentityPort wrapper (outcome mapping, no JWKS via verifyKey) ----

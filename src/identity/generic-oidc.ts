@@ -3,7 +3,8 @@
 // id_token (iss/aud/iat/exp/nonce/at_hash), and takes the subject from `sub`
 // (keyed as (issuer, sub)). The bridge then issues its OWN audience-bound tokens
 // (no upstream-token passthrough). Endpoints come from OIDC Discovery (fetched
-// once at boot; issuer exact-match; https-only; redirects not followed) OR manual
+// once at boot; issuer exact-match; https-only; endpoint hosts bound to that
+// issuer except for the fixed Google map; redirects not followed) OR manual
 // config (zero fetch). Plain https, NOT the §17.1 SSRF guard — deployer-trusted
 // config. Claim validation is exported + unit-testable without the JWKS fetch
 // (addendum 12); code exchange takes an injectable transport (no network in tests).

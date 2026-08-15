@@ -6,9 +6,10 @@
 //
 // Fail-closed boot rules: discovery-document `issuer` MUST exactly equal the
 // configured issuer (OIDC Discovery §4.3 / RFC 8414 §3.3); every endpoint +
-// `jwks_uri` MUST pass the raw `^https://` check (addendum 11); discovery
-// redirects are NOT followed (a 3xx ⇒ boot failure); PKCE `S256` MUST be
-// advertised unless `allowProviderWithoutPkce` is set (loud).
+// `jwks_uri` MUST pass the raw `^https://` check (addendum 11) and the exact
+// discovery-host policy; discovery redirects are NOT followed (a 3xx ⇒ boot
+// failure); PKCE `S256` MUST be advertised unless
+// `allowProviderWithoutPkce` is set (loud).
 
 import { assertHttpsRaw } from "./util.ts";
 import { resolveAllowedAlgs } from "./generic-oidc-claims.ts";
@@ -83,6 +84,33 @@ export interface ResolvedEndpoints {
   allowedAlgs: string[];
   /** How a confidential client sends its secret (moot for a public client). */
   tokenAuthMethod: TokenAuthMethod;
+}
+
+type DiscoveredEndpointField = "authorization_endpoint" | "token_endpoint" | "jwks_uri";
+
+const GOOGLE_DISCOVERY_ISSUER = "https://accounts.google.com";
+const GOOGLE_DISCOVERY_HOSTS: Readonly<Record<DiscoveredEndpointField, string>> = Object.freeze({
+  authorization_endpoint: "accounts.google.com",
+  token_endpoint: "oauth2.googleapis.com",
+  jwks_uri: "www.googleapis.com",
+});
+
+/** Bind fetched endpoint locations to the configured trust root. Generic
+ *  discovery uses exact WHATWG hostname equality: no suffix or registrable-
+ *  domain widening. Google's exact issuer is the sole built-in exception and
+ *  has one fixed expected hostname per field. This helper is internal source
+ *  surface; callers cannot configure the exception map. */
+export function assertDiscoveredEndpointHost(
+  issuer: string,
+  endpoint: string,
+  field: DiscoveredEndpointField,
+): void {
+  const expected = issuer === GOOGLE_DISCOVERY_ISSUER
+    ? GOOGLE_DISCOVERY_HOSTS[field]
+    : new URL(issuer).hostname;
+  if (new URL(endpoint).hostname !== expected) {
+    throw new Error(`generic_oidc_discovery_endpoint_host_mismatch: ${field} hostname is not trusted for the configured issuer`);
+  }
 }
 
 function stringField(value: unknown, label: string): string {
@@ -175,6 +203,9 @@ export async function resolveEndpoints(
     assertValidHttpsEndpoint(authorizationEndpoint, "authorization_endpoint");
     assertValidHttpsEndpoint(tokenEndpoint, "token_endpoint");
     assertValidHttpsEndpoint(jwksUri, "jwks_uri");
+    assertDiscoveredEndpointHost(config.issuer, authorizationEndpoint, "authorization_endpoint");
+    assertDiscoveredEndpointHost(config.issuer, tokenEndpoint, "token_endpoint");
+    assertDiscoveredEndpointHost(config.issuer, jwksUri, "jwks_uri");
     const allowedAlgs = resolveAllowedAlgs(asStringArray(doc.id_token_signing_alg_values_supported, "id_token_signing_alg_values_supported"));
     const methods = asStringArray(doc.code_challenge_methods_supported, "code_challenge_methods_supported") ?? [];
     if (!methods.includes("S256")) {

@@ -27,7 +27,11 @@ const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit,
 `iss` is accepted **only** as `https://accounts.google.com` (the schemeless
 legacy `accounts.google.com` variant is rejected). Discovery is fetched at boot
 from `https://accounts.google.com/.well-known/openid-configuration` and its
-`issuer` must match.
+`issuer` must match. Google is the preset's only cross-host discovery exception:
+the authorization, token, and JWKS fields must use the exact fixed hosts
+`accounts.google.com`, `oauth2.googleapis.com`, and `www.googleapis.com`
+respectively. The preset accepts no sibling/suffix match and exposes no option
+to widen that map.
 
 ## Set up a Google OAuth client (Google Cloud Console)
 
