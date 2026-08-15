@@ -9,6 +9,7 @@ import { resolveClientCredentialsScope, scopeString, storedScopes } from "./scop
 import { authenticateMachineClientSecret } from "./machine-client-auth.ts";
 import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 import { writeTokenAudit } from "./token-audit.ts";
+import { revokeRefreshToken } from "./token-revoke.ts";
 import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
 export interface OAuthTokenDeps {
   config: BridgeConfig;
@@ -190,19 +191,7 @@ export class OAuthTokenUseCase {
   /** RFC 7009: always succeeds (the adapter returns 200). An unknown or
    *  already-revoked token is a no-op — it never leaks existence via 4xx. */
   async revoke(refreshToken: string | undefined): Promise<void> {
-    const nowIso = new Date(this.clock.nowMs()).toISOString();
-    let revoked = false;
-    if (refreshToken) {
-      const existing = await this.store.findRefreshToken(sha256Hex(refreshToken));
-      if (existing) {
-        await this.store.revokeRefreshTokenFamily(existing.familyId, nowIso);
-        revoked = true;
-      }
-    }
-    await writeTokenAudit(this.audit, {
-      occurredAt: nowIso, event: "oauth.revoke", status: "success",
-      reason: revoked ? undefined : "unrecognized_token",
-    });
+    await revokeRefreshToken({ store: this.store, clock: this.clock, audit: this.audit }, refreshToken);
   }
 
   private async consumeValidCode(input: AuthorizationCodeGrantInput, clock: ClockPort): Promise<AuthCodeRecord> {
