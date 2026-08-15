@@ -20,17 +20,13 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { exportJWK, generateKeyPair, type JWK } from "jose";
 import { AuthConfigError } from "./config.ts";
+import { validateSecrets, type QuickstartSecrets } from "./quickstart-shape.ts";
+
+export type { QuickstartSecrets } from "./quickstart-shape.ts";
 
 // O_NOFOLLOW refuses symlinks; O_NONBLOCK stops a FIFO/special file hanging open.
 const O_NOFOLLOW: number | undefined = (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW;
 const O_NONBLOCK: number = (fsc as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
-
-export interface QuickstartSecrets {
-  /** EC P-256 private JWK (kty/crv/d/x/y) — passes `createBridgeConfig`'s §5 check. */
-  signingPrivateJwk: JWK;
-  /** >=32-char HS256 consent secret (base64url of 48 random bytes). */
-  consentSigningSecret: string;
-}
 
 export interface QuickstartOptions {
   /** Directory holding `secrets.json` + `.gitignore`. Default `./.mcp-sso`. */
@@ -42,6 +38,24 @@ const GITIGNORE_FILE = ".gitignore";
 const FILE_MODE = 0o600;
 const DIR_MODE = 0o700;
 
+/** The POSIX mode and ownership gates below (`0700` dir, `0600` file, owning
+ *  uid) have no Windows equivalent here: `process.platform === "win32"` skips
+ *  each one, and this library does not read or set DACLs. Windows still gets
+ *  `O_EXCL` creation, symlink/junction refusal, and the regular-file check, but
+ *  a permissive inherited ACL is NOT detected and is therefore NOT a boot
+ *  failure. Warn once, loudly, rather than let the threat model's unconditional
+ *  promise stand on a platform that cannot keep it (issue #219 tracks real DACL
+ *  admission). */
+function warnWindowsPermissionGap(dir: string): void {
+  if (process.platform !== "win32") return;
+  console.warn(
+    `[mcp-sso] quickstart secrets in ${dir} are NOT permission-checked on Windows: `
+    + "file/directory mode and ownership gates are POSIX-only, so an inherited ACL that "
+    + "grants other users read access will not fail boot. Verify the ACL yourself, or keep "
+    + "secrets in environment variables or a secret manager instead.",
+  );
+}
+
 /** Load persisted quickstart secrets, generating + persisting them on first boot. */
 export async function loadOrCreateQuickstartSecrets(
   opts: QuickstartOptions = {},
@@ -49,6 +63,7 @@ export async function loadOrCreateQuickstartSecrets(
   const dir = opts.dir ?? "./.mcp-sso";
   const secretsPath = join(dir, SECRETS_FILE);
 
+  warnWindowsPermissionGap(dir);
   if (await pathExists(secretsPath)) {
     return loadExisting(dir, secretsPath);
   }
@@ -72,34 +87,6 @@ async function loadExisting(dir: string, secretsPath: string): Promise<Quickstar
     throw new AuthConfigError(`quickstart: ${secretsPath} is not valid JSON (refuse to fall back to ephemeral keys)`);
   }
   return validateSecrets(parsed, secretsPath);
-}
-
-function validateSecrets(parsed: unknown, secretsPath: string): QuickstartSecrets {
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} must be a JSON object`);
-  }
-  const obj = parsed as Record<string, unknown>;
-  const signingPrivateJwk = obj.signingPrivateJwk;
-  const consentSigningSecret = obj.consentSigningSecret;
-  if (typeof consentSigningSecret !== "string" || consentSigningSecret.trim().length < 32) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} consentSigningSecret missing or < 32 chars`);
-  }
-  // Mirror config.ts §5 shape validation so loaded material always passes createBridgeConfig.
-  if (!isValidSigningJwk(signingPrivateJwk)) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} signingPrivateJwk must be an EC P-256 key with d, x, y`);
-  }
-  return { signingPrivateJwk: signingPrivateJwk as JWK, consentSigningSecret };
-}
-
-function isValidSigningJwk(value: unknown): value is JWK {
-  if (typeof value !== "object" || value === null) return false;
-  const jwk = value as Record<string, unknown>;
-  return (
-    jwk.kty === "EC" && jwk.crv === "P-256" &&
-    typeof jwk.d === "string" && jwk.d.length > 0 &&
-    typeof jwk.x === "string" && jwk.x.length > 0 &&
-    typeof jwk.y === "string" && jwk.y.length > 0
-  );
 }
 
 async function generateAndPersist(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
