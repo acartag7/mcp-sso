@@ -362,6 +362,19 @@ Recurrence is process-disciplined, not mechanistically enforced — a future cod
 path added without the sweep could diverge; caught by review + the dedicated
 integration round.
 
+### Row 24 — JSONL permanent-disable signal
+
+An unverified rollback after a positive partial write is deliberately different
+from an ordinary transient sink error. Retrying that instance could append a
+later record to an existing fragment, so the sink permanently disables itself
+and later events do no file work. On the transition it emits exactly one fixed,
+redacted stderr diagnostic and invokes an optional snapshotted `onDisable`
+callback with the closed reason `partial_write_rollback_unverified`. Neither
+channel includes the configured path, event, fragment, or raw error, and a
+throwing callback is contained. The callback is an alert seam, not recovery:
+an operator must inspect and repair or rotate the fragment before replacing the
+sink instance. Lost events while disabled remain the row 24 fail-open residual.
+
 ### Row 42 — persistent SQLite state admission
 
 The database file and its journal/WAL sidecars form one state boundary. File

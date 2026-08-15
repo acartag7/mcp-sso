@@ -54,7 +54,28 @@ reference sink's framing guarantee and require a deployer-selected single
 writer or coordination mechanism. If a retry fails after appending a positive
 prefix, the sink truncates only that verified descriptor tail; if the descriptor
 changed and rollback cannot be verified, it drops later events from that
-instance rather than append another record to the fragment.
+instance rather than append another record to the fragment. That permanent
+transition is an operator-visible state, not an ordinary per-event write error:
+
+```ts
+type JsonlFileAuditDisableReason = "partial_write_rollback_unverified";
+interface JsonlFileAuditOptions {
+  onDisable?: (reason: JsonlFileAuditDisableReason) => void;
+}
+```
+
+`JsonlFileAudit(filePath, options?)` and `createJsonlFileAudit(filePath,
+options?)` emit the fixed stderr diagnostic `[mcp-sso] audit jsonl disabled:
+partial_write_rollback_unverified` exactly once when that instance first
+disables appends, and invoke the snapshotted `onDisable` callback exactly once
+with the same closed reason. Neither signal includes the path, event, fragment,
+or thrown error. A throwing callback is contained and is not retried; it cannot
+reject `writeAuthEvent` or re-enable the sink. Ordinary write failures and a
+partial write whose tail is successfully rolled back do not invoke the hook.
+Later calls return fail-open without more file work or duplicate disable
+signals. A supplied options value must be a non-null, non-array object, and a
+supplied `onDisable` must be a function; malformed values fail at construction
+before any filesystem work.
 
 This contract deliberately does not reject hard-linked regular files. A hard
 link is indistinguishable from a normal regular audit file at this boundary, and
