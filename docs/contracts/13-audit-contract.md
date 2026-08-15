@@ -16,6 +16,17 @@ that serialized audit output never contains raw codes, refresh tokens, or access
 tokens, across every event name (the v0.2 names are exercised by synthetic
 events through each sink; the v0.1 names additionally by the live OAuth flow).
 
+`oauth.revoke` distinguishes an admitted RFC 7009 no-op from an unexpected
+revocation failure without changing either HTTP outcome. An unknown token emits
+`status: "success", reason: "unrecognized_token"`; a known token, including an
+idempotent re-revocation, emits success without that reason. The adapter returns
+200 in both cases. A store lookup or family-revocation failure emits
+`status: "failure", reason: "internal_error"` before the original error is
+re-thrown for the adapter's existing sanitized §9.5 mapping. Neither event
+contains the token, its hash, a family identifier, or the thrown value. A
+limiter denial or adapter/body rejection that never enters the revocation
+use-case emits no `oauth.revoke` event.
+
 The reference sinks satisfy the fail-open port contract: their
 `writeAuthEvent` methods do not reject, and `combineAudit` isolates sibling
 sinks. Every non-transactional use-case audit passes through
