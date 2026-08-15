@@ -734,12 +734,23 @@ earlier "hash stripped" wording; a stripped-then-matched fragment is exactly
 the accept-what-was-never-registered behavior the exact-match rule exists to
 prevent. The §10.0 obligation list owes a rejection test for a presented
 `https://client.test/cb#frag` in both DCR modes. Shared
-built-in defaults for hosted MCP clients (these ADD to any config allowlist):
+built-in defaults for hosted MCP clients (these ADD to any config allowlist
+under the default `redirectAllowlistMode: "extend"`):
 
 ```
 https://claude.ai        // Claude (web) custom connectors
 https://chatgpt.com      // ChatGPT custom connectors
 ```
+
+**The built-ins are a default, not a floor.** A deployment that sets
+`redirectAllowlistMode: "replace"` (§5) trusts *only* its configured entries, so
+an operator running a private MCP server can refuse the hosted clients outright.
+The mode is consulted at every one of the three places this global allowlist is
+read — the DCR write path, the stateless authorize path, and the stored-client
+re-validation leg — so a registration written while the built-ins were trusted
+stops authorizing once an operator drops them. `"replace"` with an empty
+allowlist is refused at boot (§5) rather than starting a bridge that rejects
+every client.
 
 Loopback is deliberately absent from the default set. The §10.1 matcher still
 recognizes all three loopback hosts (`localhost`/`127.0.0.1`/`[::1]`) and applies

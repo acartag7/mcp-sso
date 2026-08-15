@@ -83,11 +83,11 @@ export async function resolveOpaqueRedirect(config: BridgeConfig, clientId: stri
     const client = parseAuthorizationClientRegistration(stored, clientId);
     if (!client) throw new OAuthError("invalid_client", "Malformed stored client registration", 401);
     for (const registeredRedirect of client.redirectUris) {
-      assertAllowedRedirectUri(registeredRedirect, config.redirectAllowlist);
+      assertAllowedRedirectUri(registeredRedirect, config.redirectAllowlist, config.redirectAllowlistMode);
     }
     return assertRedirectAllowedForClient(redirectUri, client);
   }
-  return assertAllowedRedirectUri(redirectUri, config.redirectAllowlist);
+  return assertAllowedRedirectUri(redirectUri, config.redirectAllowlist, config.redirectAllowlistMode);
 }
 
 /** §17.1.6 decision 3, the NEGATIVE class: accumulation runs iff stored-DCR AND

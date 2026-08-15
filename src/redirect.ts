@@ -16,11 +16,27 @@ export const DEFAULT_ALLOWED_REDIRECT_ORIGINS = Object.freeze([
   "https://chatgpt.com",
 ]);
 
-/** Validate a redirect_uri against the global allowlist (built-ins + config).
- *  Returns the unchanged canonical URI. Throws invalid_redirect_uri on rejection. */
-export function assertAllowedRedirectUri(value: unknown, allowlist: readonly unknown[]): string {
+/** How `redirectAllowlist` composes with the built-ins above.
+ *  `"extend"` (default) trusts the built-ins PLUS the configured entries.
+ *  `"replace"` trusts only the configured entries, so a private deployment can
+ *  refuse the hosted clients outright. */
+export type RedirectAllowlistMode = "extend" | "replace";
+
+/** Validate a redirect_uri against the global allowlist.
+ *  Returns the unchanged canonical URI. Throws invalid_redirect_uri on rejection.
+ *
+ *  `mode` defaults to `"extend"` so the exported two-argument form keeps its
+ *  published behavior; every in-tree caller passes `config.redirectAllowlistMode`
+ *  explicitly. Boot rejects `"replace"` with an empty allowlist, so `entries` is
+ *  never empty for a config-derived call. */
+export function assertAllowedRedirectUri(
+  value: unknown,
+  allowlist: readonly unknown[],
+  mode: RedirectAllowlistMode = "extend",
+): string {
   const presented = oauthEntry(value);
-  const entries = [...DEFAULT_ALLOWED_REDIRECT_ORIGINS, ...allowlist]
+  const builtIns = mode === "replace" ? [] : DEFAULT_ALLOWED_REDIRECT_ORIGINS;
+  const entries = [...builtIns, ...allowlist]
     .map((entry) => oauthEntry(entry, true));
   if (!entries.some((entry) => globalMatch(entry, presented))) {
     throw new OAuthError("invalid_redirect_uri", "redirect_uri is not allowed");

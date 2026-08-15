@@ -21,9 +21,18 @@ interface BridgeConfig {
   // Every entry MUST satisfy the §10.0 redirect-entry grammar (canonical origin
   // or exact-URI form). Enforced at boot by createBridgeConfig (§5): the array
   // is snapshotted once, validated, frozen, and published as the same copy.
-  // An EMPTY array is valid — only the hosted-client defaults remain enabled.
-  // Loopback redirects require an explicit entry here.
+  // An EMPTY array is valid under the default mode — only the hosted-client
+  // defaults remain enabled. Loopback redirects require an explicit entry here.
   redirectAllowlist: string[];    // ADDS to the hosted MCP-client defaults
+
+  // How the array above composes with the §10.1 built-in hosted-client origins.
+  // Omitted => "extend" (the published default: built-ins PLUS the entries).
+  // "replace" trusts ONLY the entries above, so a private deployment can refuse
+  // https://claude.ai and https://chatgpt.com outright. Any other value is a
+  // boot failure — a typo must never fall back to trusting the built-ins.
+  // "replace" with an EMPTY redirectAllowlist is a boot failure: no redirect_uri
+  // could ever be accepted, so it is a misconfiguration, not a deny-all posture.
+  redirectAllowlistMode?: "extend" | "replace";
 
   // --- scope contract (see §11); REQUIRED, fail-closed ---
   scopeCatalog: string[];         // the complete set of scopes this resource honors
@@ -124,6 +133,10 @@ interface BridgeConfig {
   multi-resource bridge ships today.
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
+- `redirectAllowlistMode`, when present, is exactly `"extend"` or `"replace"`;
+  any other value — including a near-miss such as `"Replace"` or `""` — is an
+  `AuthConfigError` at boot rather than a silent fall back to `"extend"`.
+  `"replace"` additionally requires at least one `redirectAllowlist` entry.
 - `redirectAllowlist` is an array, and **every entry satisfies the §10.0
   redirect-entry grammar**. `createBridgeConfig` snapshots the array once,
   validates that copy, and publishes the same frozen copy — origin form or canonical exact-URI form, `https`/
