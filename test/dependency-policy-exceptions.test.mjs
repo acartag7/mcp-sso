@@ -217,6 +217,19 @@ function upstreamFetch(policy, {
         ? decodeURIComponent(parsed.pathname.slice("/advisories/".length))
         : parsed.searchParams.get("cve_id");
       assert.ok(advisoryId, `advisory ID present: ${url}`);
+      const transitive = Object.entries(policy.transitivePins)
+        .find(([, record]) => record.advisoryIds.includes(advisoryId));
+      if (transitive) {
+        const [packageName, record] = transitive;
+        return Response.json({
+          ghsa_id: advisoryId.startsWith("GHSA-") ? advisoryId : null,
+          cve_id: advisoryId.startsWith("CVE-") ? advisoryId : null,
+          vulnerabilities: [{
+            package: { ecosystem: "npm", name: packageName },
+            first_patched_version: record.version,
+          }],
+        });
+      }
       return Response.json({
         ghsa_id: advisoryId.startsWith("GHSA-") ? advisoryId : "GHSA-54fx-42gc-7vw4",
         cve_id: advisoryId.startsWith("CVE-") ? advisoryId : null,
@@ -234,7 +247,7 @@ function upstreamFetch(policy, {
       return Response.json({ sha: record.sha, commit: { committer: { date: record.published } } });
     }
     const name = decodeURIComponent(new URL(url).pathname.slice(1));
-    const record = policy.packages[name];
+    const record = policy.packages[name] ?? policy.transitivePins[name];
     assert.ok(record, `known package URL: ${url}`);
     return Response.json({ time: { [record.version]: record.published } });
   };
@@ -295,9 +308,9 @@ test("remote advisory evidence binds the package and first patched version", asy
   await t.test("non-fixing adopted version", async () => {
     await assert.rejects(
       verifyRemoteDependencyPolicy(exceptionPolicy, {
-        fetchImpl: upstreamFetch(policy, { fixedVersion: "999.0.0" }),
+        fetchImpl: upstreamFetch(policy, { fixedVersion: "4.12.99" }),
       }),
-      /hono: advisory GHSA-54fx-42gc-7vw4 first patched version 999\.0\.0 is newer than adopted/,
+      /hono: advisory GHSA-54fx-42gc-7vw4 first patched version 4\.12\.99 is newer than adopted/,
     );
   });
 

@@ -117,18 +117,15 @@ published artifact. Resolution:
 | `find-my-way` (`fastify`) | 9.6.0 | 9.7.0 | GHSA-c96f-x56v-gq3h | ✅ ordinary — 9.7.0 published 2026-07-21 |
 | `ip-address` (SDK → `express-rate-limit`) | 10.2.0 | 10.3.1 | GHSA-mwp4-54f8-5fhr, GHSA-4xrf-jv44-h6hh, GHSA-22jq-vg5j-6vgg | ✅ ordinary — 10.3.1 published 2026-07-25 |
 | `@hono/node-server` (SDK) | 1.19.14 | 1.19.17 | GHSA-frvp-7c67-39w9 | ✅ ordinary — 1.19.17 published 2026-07-27 (≥ the 1.19.15 minimum fix, newest within the SDK's `^1.19.9` and past the floor) |
-| `fast-uri` (`ajv`/`fast-json-stringify` under `fastify` + SDK) | 3.1.2 | — | GHSA-4c8g-83qw-93j6, GHSA-v2hh-gcrm-f6hx, GHSA-7p8r-x3mc-p8w7 | ⏳ pending floor — see below |
+| `fast-uri` (`ajv`/`fast-json-stringify` under `fastify` + SDK) | 3.1.2 | 3.1.5 | GHSA-4c8g-83qw-93j6, GHSA-v2hh-gcrm-f6hx, GHSA-7p8r-x3mc-p8w7 | ✅ ordinary — 3.1.5 published 2026-07-31 |
 
 `fast-uri@3.1.5` is the **minimum version fixing all three** of its
 advisories (`3.1.3` fixes one, `3.1.4` two, so a partial bump would
 leave `pnpm audit` red while reading as "fixed"). It was published
-2026-07-31T09:16Z and crosses the 15-day floor at **2026-08-15T09:16Z** —
-hours after this sweep — so it is deliberately **not** adopted early: the
-recorded-exception machinery bound to direct pins at sweep time (it was
-extended to transitive lockfile resolutions later the same day — see the
-two-rule policy above), and weakening the
-global floor for a same-day wait is exactly what the two-rule policy forbids.
-It becomes eligible for a plain `pnpm update fast-uri` at that timestamp.
+2026-07-31T09:16:56.212Z and crossed the 15-day floor at
+**2026-08-15T09:16:56.212Z**. The exact workspace override keeps every dev-tree
+path on that minimum complete fix. It does not add a published dependency: the
+package still has `jose` as its sole runtime dependency.
 
 ## Optional peer dependencies (not shipped to consumers)
 
@@ -209,6 +206,13 @@ upstream registries.
       "justification": "Inspected Hono v4.12.34 release; it is the minimum published fix for these advisories."
     }
   ],
+  "transitivePins": {
+    "fast-uri": {
+      "version": "3.1.5",
+      "published": "2026-07-31T09:16:56.212Z",
+      "advisoryIds": ["GHSA-4c8g-83qw-93j6", "GHSA-v2hh-gcrm-f6hx", "GHSA-7p8r-x3mc-p8w7"]
+    }
+  },
   "packages": {
     "@fastify/rate-limit": { "version": "11.2.0", "published": "2026-07-29T14:38:39.112Z" },
     "@modelcontextprotocol/sdk": { "version": "1.29.0", "published": "2026-03-30T16:50:42.718Z" },
