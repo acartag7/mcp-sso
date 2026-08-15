@@ -8,6 +8,7 @@ export {
   type ScopeHierarchyPolicy, type ScopeImplication,
   AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin,
 } from "./config.ts";
+export { validateAllowedOrigins } from "./allowed-origin.ts";
 
 export {
   type RedirectTarget, OAuthError, oauthErrorBody, withRedirect,

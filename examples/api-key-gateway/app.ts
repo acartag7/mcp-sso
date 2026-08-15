@@ -54,6 +54,7 @@ import {
 // AND package consumers apply the SAME bar (contracts §15 DX).
 import {
   configFromEnv, defaultListenHost, createOidcUpstreamFromEnv,
+  allowedOriginsFromEnv,
   assertConsolePairingListenHostBeforeState,
   assertUpstreamConfigBeforeState, entraGroupAuthorizationFromEnv,
   assertSingleIdentityProviderSelector, oidcProviderConfigured, productionIdentityConfigured,
@@ -402,6 +403,7 @@ export async function buildGatewayExample(
   const resource = env.OAUTH_RESOURCE ?? `${issuer}/mcp`;
   assertLoopbackStarterBeforeState(issuer, resource);
   assertConsolePairingListenHostBeforeState(env);
+  const allowedOrigins = allowedOriginsFromEnv(env, issuer);
   const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer, resource,
@@ -411,7 +413,7 @@ export async function buildGatewayExample(
     redirectAllowlist: listEnv(env, "OAUTH_REDIRECT_ALLOWLIST", "http://localhost,http://127.0.0.1"),
     scopeCatalog: listEnv(env, "OAUTH_SCOPE_CATALOG", "mcp:read,mcp:write"),
     defaultScopes: listEnv(env, "OAUTH_DEFAULT_SCOPES", "mcp:read"),
-    allowedOrigins: listEnv(env, "OAUTH_ALLOWED_ORIGINS", issuer),
+    allowedOrigins,
     cimd: { enabled: true },
     dcr: { mode: "stateless" },
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,

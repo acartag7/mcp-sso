@@ -65,7 +65,7 @@ for the fetch, redirect, and validation contract.
 | `OAUTH_REDIRECT_ALLOWLIST` | required by these stateless production examples | — | Comma-separated application-specific HTTPS redirect origins or exact URIs for opaque DCR clients (for example `https://client.example/callback`). CIMD redirect URIs come from the fetched document. |
 | `OAUTH_SCOPE_CATALOG` | optional | `mcp:read,mcp:write` | The scopes clients may request. |
 | `OAUTH_DEFAULT_SCOPES` | optional | `mcp:read` | Scopes granted when none requested. |
-| `OAUTH_ALLOWED_ORIGINS` | optional | `OAUTH_ISSUER` | Comma-separated Origin allowlist used by the `/mcp` DNS-rebinding gate and consent-approval Origin/CSRF check (add your browser clients, e.g. `https://claude.ai`). |
+| `OAUTH_ALLOWED_ORIGINS` | optional | `originOf(OAUTH_ISSUER)` | Comma-separated exact canonical HTTP(S) Origin allowlist used by the `/mcp` DNS-rebinding gate and consent-approval Origin/CSRF check (add your browser clients, e.g. `https://claude.ai`). Entries are not trimmed or filtered: whitespace, an empty comma member, paths, trailing slashes, userinfo, wildcards, non-canonical spellings, and the opaque browser value `null` fail at boot. A wholly empty value explicitly selects an empty list. |
 | `OAUTH_ALLOW_INSECURE_LOCALHOST` | optional 🔒 | `false` | `true` permits an `http://` loopback issuer — **dev only**, never in production. |
 | `OAUTH_SQLITE_FILE` | optional | `<MCP_SSO_DIR>/auth.db` | Ordinary sqlite filesystem path. `file:` URI names are rejected. The immediate directory must already satisfy the private state-directory rules below. |
 

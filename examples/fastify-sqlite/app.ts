@@ -36,6 +36,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
 import { AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin, type BridgeConfig } from "../../src/config.ts";
+import { validateAllowedOrigins } from "../../src/allowed-origin.ts";
 import { OAuthError, oauthErrorBody } from "../../src/errors.ts";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { RequestAuthorizer } from "../../src/verifier.ts";
@@ -180,10 +181,10 @@ export async function buildApp(opts: ExampleOptions) {
   // @deprecated, and run INSIDE transport.handleRequest() (after the bearer
   // check), so they can't satisfy "before anything else" (docs/gateway-deployment.md).
   // An ABSENT Origin proceeds (MCP clients are not browsers); a PRESENT Origin must
-  // match config.allowedOrigins (defaults to the issuer) or the server's own origin
-  // originOf(issuer) — which normalizes a trailing-slash/path issuer (mirrors
-  // src/authorize.ts assertOrigin; like it, allowedOrigins entries are matched
-  // exactly, not normalized). The OAuth routes have their own origin handling, so
+  // match config.allowedOrigins (whose env default is originOf(issuer)) or the
+  // server's own originOf(issuer) (mirrors src/authorize.ts assertOrigin). The
+  // boot-validated allowlist entries are matched exactly. The OAuth routes have
+  // their own origin handling, so
   // this hook is scoped to /mcp only.
   app.addHook("onRequest", async (request, reply) => {
     if (!isMcpPath(request.url)) return; // OAuth routes manage their own Origin; isMcpPath parses the pathname (absolute-form-safe)
@@ -283,7 +284,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     redirectAllowlist: (env.OAUTH_REDIRECT_ALLOWLIST ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     scopeCatalog: (env.OAUTH_SCOPE_CATALOG ?? "mcp:read,mcp:write").split(",").map((s) => s.trim()).filter(Boolean),
     defaultScopes: (env.OAUTH_DEFAULT_SCOPES ?? "mcp:read").split(",").map((s) => s.trim()).filter(Boolean),
-    allowedOrigins: (env.OAUTH_ALLOWED_ORIGINS ?? env.OAUTH_ISSUER!).split(",").map((s) => s.trim()).filter(Boolean),
+    allowedOrigins: allowedOriginsFromEnv(env, env.OAUTH_ISSUER!),
     cimd: { enabled: true },
     dcr: { mode: "stateless" },
     dev: env.OAUTH_ALLOW_INSECURE_LOCALHOST === "true" ? { allowInsecureLocalhost: true } : undefined,
@@ -297,6 +298,14 @@ function isLoopback(url: string): boolean {
 }
 function listEnv(env: Record<string, string | undefined>, k: string, def: string): string[] {
   return (env[k] ?? def).split(",").map((s) => s.trim()).filter(Boolean);
+}
+export function allowedOriginsFromEnv(
+  env: Record<string, string | undefined>, issuer: string,
+): string[] {
+  let issuerOrigin = issuer;
+  try { issuerOrigin = originOf(issuer); } catch { /* createBridgeConfig reports the issuer */ }
+  const raw = env.OAUTH_ALLOWED_ORIGINS;
+  return validateAllowedOrigins(raw === "" ? [] : (raw ?? issuerOrigin).split(","));
 }
 function mustEnv(env: Record<string, string | undefined>, k: string): string {
   const v = env[k];
@@ -500,6 +509,7 @@ export async function buildExample(
   const resource = env.OAUTH_RESOURCE ?? `http://localhost:${port}/mcp`;
   assertLoopbackStarterBeforeState(issuer, resource);
   assertConsolePairingListenHostBeforeState(env);
+  const allowedOrigins = allowedOriginsFromEnv(env, issuer);
   const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer,
@@ -510,7 +520,7 @@ export async function buildExample(
     redirectAllowlist: listEnv(env, "OAUTH_REDIRECT_ALLOWLIST", "http://localhost,http://127.0.0.1"),
     scopeCatalog: listEnv(env, "OAUTH_SCOPE_CATALOG", "mcp:read,mcp:write"),
     defaultScopes: listEnv(env, "OAUTH_DEFAULT_SCOPES", "mcp:read"),
-    allowedOrigins: listEnv(env, "OAUTH_ALLOWED_ORIGINS", issuer),
+    allowedOrigins,
     cimd: { enabled: true },
     dcr: { mode: "stateless" },
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,

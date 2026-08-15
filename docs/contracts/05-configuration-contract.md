@@ -37,6 +37,9 @@ interface BridgeConfig {
   };
 
   // --- CSRF/Origin policy for the consent approve step (see §9) ---
+  // Every entry is an exact canonical browser origin (scheme://host[:port]).
+  // Opaque `null` and URL spellings carrying any non-origin component reject
+  // at boot. Runnable defaults derive originOf(issuer), never copy its raw URL.
   allowedOrigins: string[];       // same-origin issuer + any explicitly allowed origins
 
   // --- DCR mode (fix #4; see §9) ---
@@ -131,6 +134,26 @@ interface BridgeConfig {
   valid. The error **names the offending entry** and, for a non-canonical one,
   shows its canonical form — a deployer with several origins configured must not
   have to bisect.
+- `allowedOrigins` is an array of exact canonical WHATWG origin serializations:
+  `http://host[:port]` or `https://host[:port]`, with no trailing slash, path,
+  query, fragment, userinfo, wildcard, whitespace, control character,
+  backslash, or non-canonical spelling. The opaque browser origin string
+  `"null"` is rejected explicitly. Each entry is capped at 2,048 UTF-8 bytes
+  before URL parsing. HTTP origins remain an explicit deployer choice; this
+  grammar does not silently broaden them from an insecure issuer. An empty
+  array is valid because the exact `originOf(issuer)` is always admitted by the
+  request-time gate. Runnable example and generated-starter defaults use that
+  derived issuer origin rather than copying the raw issuer URL, which may carry
+  a path or trailing slash and therefore is not an Origin value. Their
+  `OAUTH_ALLOWED_ORIGINS` parser preserves every comma-separated raw spelling —
+  it never trims whitespace or drops an empty member before this grammar runs.
+  The one explicit exception is a wholly empty environment value, which maps to
+  the supported empty array rather than one empty entry.
+  `validateAllowedOrigins(value)` exposes this exact array snapshot + grammar
+  check for composition roots that must reject env-derived origin policy before
+  signing material or other state exists. It returns the same frozen string
+  shape that `createBridgeConfig` publishes and throws `AuthConfigError` for
+  every malformed container or entry; it does not perform request matching.
 
 **Publication (what boot approves is what requests read).**
 `createBridgeConfig` publishes frozen snapshots of every caller-provided

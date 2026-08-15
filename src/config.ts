@@ -5,6 +5,8 @@
 
 import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
+import { AuthConfigError } from "./config-error.ts";
+import { validateAllowedOrigins } from "./allowed-origin.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
 import { parseRedirectEntry, RedirectEntryError } from "./redirect-entry.ts";
 import { scopeListProblem } from "./scopes.ts";
@@ -17,6 +19,7 @@ import {
 
 export type { CimdOptions } from "./cimd/options.ts";
 export type { ScopeHierarchyPolicy, ScopeImplication } from "./scope-hierarchy.ts";
+export { AuthConfigError } from "./config-error.ts";
 
 export type DcrMode = { mode: "stateless" } | { mode: "stored"; store: ClientStore };
 
@@ -54,10 +57,6 @@ export interface BridgeConfig {
   refreshTokenTtlSeconds: number;
   consentTokenTtlSeconds: number;
   authorizationCodeTtlSeconds: number;
-}
-
-export class AuthConfigError extends Error {
-  readonly code = "invalid_auth_config";
 }
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -155,7 +154,7 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   if (!defaultScopes.every((s) => scopeCatalog.includes(s))) {
     throw new AuthConfigError("defaultScopes must be a subset of scopeCatalog");
   }
-  const allowedOrigins = snapshotStringArray("allowedOrigins", rawAllowedOrigins, makeError);
+  const allowedOrigins = validateAllowedOrigins(rawAllowedOrigins);
   validateTtl(accessTokenTtlSeconds, "accessTokenTtlSeconds");
   validateTtl(refreshTokenTtlSeconds, "refreshTokenTtlSeconds");
   validateTtl(consentTokenTtlSeconds, "consentTokenTtlSeconds");

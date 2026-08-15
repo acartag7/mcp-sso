@@ -43,6 +43,10 @@ they carry no runtime dependency (`node:fs` is built-in; `fetch` is native to No
 `import { JsonlFileAudit } from "mcp-sso"` is the intended consumer shape.
 Quickstart secret persistence (`loadOrCreateQuickstartSecrets`, §17.8) is
 root-exported for the same reason (it depends only on `jose` + node builtins).
+The root also exports `validateAllowedOrigins(value)`, the §5 pure boot
+preflight used by zero-setup composition roots before quickstart persistence;
+`createBridgeConfig` invokes the same function, so early wiring cannot drift
+from the authoritative configuration gate.
 The `./store/sqlite` subpath exports both `openSqliteStore(path)` and the
 `SqliteStore` constructor. Only `openSqliteStore` provides the §12.4 persistent
 filesystem-admission guarantee; `new SqliteStore(callerDatabaseSync)` deliberately

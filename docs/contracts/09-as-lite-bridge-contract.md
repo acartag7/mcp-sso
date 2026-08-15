@@ -218,6 +218,9 @@ one target, while multiple distinct targets follow the existing post-validation
 - **CSRF/`origin`** must be exactly one primitive string equal to the issuer
   origin or a member of `allowedOrigins` — else `invalid_origin` 403 **direct**
   (a foreign origin is never redirected anywhere). `Bridge.handleApprove`
+  receives a `BridgeConfig` whose `allowedOrigins` members already passed the
+  §5 exact canonical-origin grammar at boot; the opaque browser value `"null"`
+  can therefore never become an allowlisted match. `Bridge.handleApprove`
   reads the normalized `NormRequest.headers` through `headerString`; an
   array-valued header or more than one case-insensitive `Origin` key becomes
   absent and fails closed rather than selecting one value. Fastify and Express
@@ -539,7 +542,7 @@ the response. Wiring rules:
   strict check while suppressing the authorize query from cross-origin
   `Referer` headers. `assertApproveOrigin` remains exact: the value must equal
   the issuer origin or an `allowedOrigins` member; no automatic opaque-Origin
-  exception or fallback is introduced.
+  exception or fallback is introduced, and §5 rejects `"null"` as configuration.
 - Framework adapters are optional `peerDependencies` (`fastify`/`express`/`hono`);
   anything added to `devDependencies` for testing gets a `dependency-ledger` entry
   with the ordinary 15-day check or the verified published-advisory exception.
