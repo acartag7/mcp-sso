@@ -1796,7 +1796,8 @@ gate replaces no-gate).
 - **Decision: no new port.** `AuditPort` IS the sink boundary; a second
   `AuditSinkPort` would be indirection with no gain. v0.2 ships reference
   implementations:
-  - `JsonlFileAudit(filePath)` — one `JSON.stringify`d event per line
+  - `JsonlFileAudit(filePath, { onDisable? })` and
+    `createJsonlFileAudit(filePath, { onDisable? })` — one `JSON.stringify`d event per line
     (JSON encoding escapes newlines ⇒ log-injection-safe by construction),
     file created `0600`. On hosts exposing Node's `O_NOFOLLOW`, every append
     opens the final path with `O_APPEND | O_CREAT | O_NONBLOCK | O_NOFOLLOW`,
@@ -1805,7 +1806,16 @@ gate replaces no-gate).
     serialized, so short OS writes cannot splice that instance's records. A
     retry failure after a positive prefix rolls back only a verified descriptor
     tail; if that rollback cannot be verified, the instance drops later events
-    rather than append another record to the fragment.
+    rather than append another record to the fragment. On that one permanent
+    transition it emits the fixed, path- and event-free stderr diagnostic
+    `audit jsonl disabled: partial_write_rollback_unverified` and invokes the
+    optional snapshotted callback exactly once with the closed reason
+    `"partial_write_rollback_unverified"`. A callback throw or returned
+    rejection is swallowed; returned work is not awaited, never retried, and
+    cannot reject the audit port, delay authentication, or re-enable appends;
+    ordinary write failures and verified rollback do not invoke it. Later
+    events do no file work and emit no duplicate disable signal. Malformed
+    options or a non-function callback reject at construction before IO.
     Thus a live or dangling symlink, FIFO, socket,
     device, and directory are rejected without writing through the configured
     path; the sink reports a redacted failure and remains fail-open. It does not

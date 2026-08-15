@@ -57,7 +57,30 @@ cannot splice its records. This is not an interprocess lock: point only one
 your own cross-process coordination. If a short-write retry fails after a
 positive prefix, the sink rolls back only its verified descriptor tail; if it
 cannot verify that rollback, that instance drops later events instead of
-appending to the fragment.
+appending to the fragment. That disable is permanent for the instance: it does
+not auto-retry because a later append could join a fragment and corrupt JSONL
+framing. The transition emits one fixed stderr line containing
+`audit jsonl disabled: partial_write_rollback_unverified`, with no path, event,
+fragment, or raw error. Alert on that exact line. You may also wire the optional
+`onDisable(reason)` callback into your metrics or paging system; it receives
+only the same fixed reason, exactly once. Callback failures are swallowed and
+the callback starts on a detached `setImmediate` turn after the audit write can
+settle, so even synchronous work before its first `await` cannot change or delay
+the fail-open authentication outcome.
+
+```ts
+const audit = new JsonlFileAudit("/var/log/mcp-sso/audit.jsonl", {
+  onDisable(reason) {
+    process.emitWarning(`mcp-sso JSONL audit disabled: ${reason}`, {
+      code: "MCP_SSO_AUDIT_DISABLED",
+    });
+  },
+});
+```
+
+Create a replacement sink instance only after an operator has inspected and
+repaired or rotated the fragment. Do not add automatic retry around the
+disabled instance.
 
 Do not put the configured audit filename in a directory writable by an
 untrusted local user. `O_NOFOLLOW` protects the final symlink component, but a
@@ -130,8 +153,11 @@ The library treats audit as **evidence, not a gate**.
     before anything reaches stderr.
 - **Events CAN be lost under sink outage** — that is the accepted residual
   ([threat-model row 24](./threat-model.md)). A failed `WebhookAudit` POST is
-  gone; a failed `JsonlFileAudit` append is gone (the next event still appends
-  once the filesystem recovers).
+  gone; an ordinary failed `JsonlFileAudit` append is gone and a later event may
+  append once the filesystem recovers. After an unverified partial-write
+  rollback, that instance instead remains disabled and drops every later event;
+  the fixed stderr/callback signal is the operator's cue to repair and replace
+  it.
 - **If your compliance posture requires no lost events**, the file + shipper
   path is the only supported answer. The file is durable across normal process
   exit once the OS has accepted the append; the sink does not `fsync`, so for

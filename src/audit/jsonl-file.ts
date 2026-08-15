@@ -42,6 +42,7 @@ const O_NOFOLLOW: number | undefined = rawNoFollow && rawNoFollow !== 0 ? rawNoF
 const O_NONBLOCK: number = (fsc as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
 const APPEND_FLAGS: number = fsc.O_WRONLY | fsc.O_APPEND | fsc.O_CREAT | O_NONBLOCK;
 const NO_FOLLOW_UNAVAILABLE = "no_follow_unavailable";
+const PARTIAL_ROLLBACK_UNVERIFIED = "partial_write_rollback_unverified";
 // Only operating-system error codes are useful without exposing arbitrary
 // filesystem paths, thrown JSON errors, or event-derived text. Anything else is
 // a fixed reason. This set is closed so a hostile object cannot smuggle a secret
@@ -51,16 +52,32 @@ const SAFE_ERROR_CODES = new Set([
   "EISDIR", "ELOOP", "EMFILE", "ENFILE", "ENOSPC", "ENOTDIR", "ENXIO", "EPERM", "EROFS", "ETXTBSY",
 ]);
 
+export type JsonlFileAuditDisableReason = typeof PARTIAL_ROLLBACK_UNVERIFIED;
+export interface JsonlFileAuditOptions {
+  onDisable?: (reason: JsonlFileAuditDisableReason) => void | Promise<void>;
+}
+
 export class JsonlFileAudit implements AuditPort {
   private readonly filePath: string;
+  private readonly onDisable: JsonlFileAuditOptions["onDisable"];
   private appendTail: Promise<void> = Promise.resolve();
   private appendDisabled = false;
+  private disableReason: JsonlFileAuditDisableReason | undefined;
+  private disableCallbackScheduled = false;
 
-  constructor(filePath: string) {
+  constructor(filePath: string, options: JsonlFileAuditOptions = {}) {
     if (!filePath || typeof filePath !== "string") {
       throw new TypeError("JsonlFileAudit: filePath must be a non-empty string");
     }
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      throw new TypeError("JsonlFileAudit: options must be an object");
+    }
+    const onDisable = options.onDisable;
+    if (onDisable !== undefined && typeof onDisable !== "function") {
+      throw new TypeError("JsonlFileAudit: onDisable must be a function");
+    }
     this.filePath = filePath;
+    this.onDisable = onDisable;
   }
 
   async writeAuthEvent(event: AuthAuditEvent): Promise<void> {
@@ -71,13 +88,11 @@ export class JsonlFileAudit implements AuditPort {
       .catch((error: unknown) => { this.reportFailure(error); });
     this.appendTail = append;
     await append;
+    this.scheduleDisableCallback();
   }
 
   private async appendEvent(event: AuthAuditEvent): Promise<void> {
-    if (this.appendDisabled) {
-      this.reportFailure(new Error("audit append disabled"));
-      return;
-    }
+    if (this.appendDisabled) return;
     try {
       // `undefined` fields are omitted by JSON.stringify; exactly one trailing
       // `\n` makes each event one line and the file parseable as JSONL. Built
@@ -98,7 +113,7 @@ export class JsonlFileAudit implements AuditPort {
         } catch (error) {
           if (error instanceof PartialAuditWriteError
             && !await rollbackPartialLine(fh, st.size, error.bytesWritten)) {
-            this.appendDisabled = true;
+            this.disableAppends(PARTIAL_ROLLBACK_UNVERIFIED);
           }
           throw error;
         }
@@ -131,6 +146,32 @@ export class JsonlFileAudit implements AuditPort {
       // A failed console/logging transport is still audit infrastructure. It must
       // not turn an otherwise fail-open audit write into an authentication error.
     }
+  }
+
+  private disableAppends(reason: JsonlFileAuditDisableReason): void {
+    if (this.appendDisabled) return;
+    this.appendDisabled = true;
+    this.disableReason = reason;
+    try {
+      console.error(`[mcp-sso] audit jsonl disabled: ${reason}`);
+    } catch {
+      // A broken stderr transport cannot suppress the independent callback.
+    }
+  }
+
+  private scheduleDisableCallback(): void {
+    const onDisable = this.onDisable, reason = this.disableReason;
+    if (onDisable === undefined || reason === undefined || this.disableCallbackScheduled) return;
+    this.disableCallbackScheduled = true;
+    try {
+      setImmediate(() => {
+        try {
+          void Promise.resolve(onDisable(reason)).catch(() => {});
+        } catch {
+          // Operator notification is fail-open and one-shot even when its hook fails.
+        }
+      });
+    } catch { /* a broken scheduler cannot reject the audit write */ }
   }
 }
 
@@ -173,6 +214,6 @@ async function rollbackPartialLine(fh: FileHandle, initialSize: number, bytesWri
   }
 }
 
-export function createJsonlFileAudit(filePath: string): JsonlFileAudit {
-  return new JsonlFileAudit(filePath);
+export function createJsonlFileAudit(filePath: string, options?: JsonlFileAuditOptions): JsonlFileAudit {
+  return new JsonlFileAudit(filePath, options);
 }
