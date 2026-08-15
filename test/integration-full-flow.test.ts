@@ -432,14 +432,16 @@ test("integration — /mcp Origin gate: foreign Origin ⇒ 403 before parsing/au
     const base = `http://127.0.0.1:${port}`;
     const allowed = "https://allowed.test";
     const foreign = "https://evil.test";
-    const config = makeConfig({
+    const validated = makeConfig({
       resource: `${base}/mcp`,
       issuer: base,
-      // Deliberately malformed trusted config pins occurrence handling
-      // independently of allowlist matching: the old normalized-header gate
-      // admitted either coalesced duplicate string.
-      allowedOrigins: [`${allowed}, ${foreign}`, `${foreign}, ${allowed}`],
+      allowedOrigins: [],
     });
+    // createBridgeConfig rejects these non-origins. Force the old malformed
+    // trusted shape only to keep the downstream raw-header defense pinned.
+    const config: BridgeConfig = {
+      ...validated, allowedOrigins: [`${allowed}, ${foreign}`, `${foreign}, ${allowed}`],
+    };
     const store = new MemoryStore();
     const { bridge, authorizer } = deps(config, store);
     const mount = await mountFn(bridge, authorizer, config, port);

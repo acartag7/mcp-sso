@@ -237,7 +237,7 @@ test("integration — gateway rejects duplicate /mcp Origin occurrences before a
   const issuer = "http://localhost:3000";
   const allowed = "https://allowed.test";
   const foreign = "https://evil.test";
-  const config = createBridgeConfig({
+  const validated = createBridgeConfig({
     issuer,
     resource: `${issuer}/mcp`,
     consentSigningSecret: "x".repeat(40),
@@ -245,7 +245,7 @@ test("integration — gateway rejects duplicate /mcp Origin occurrences before a
     redirectAllowlist: [],
     scopeCatalog: ["mcp:read"],
     defaultScopes: ["mcp:read"],
-    allowedOrigins: [`${allowed}, ${foreign}`, `${foreign}, ${allowed}`],
+    allowedOrigins: [],
     dcr: { mode: "stateless" },
     dev: { allowInsecureLocalhost: true },
     accessTokenTtlSeconds: 600,
@@ -253,6 +253,11 @@ test("integration — gateway rejects duplicate /mcp Origin occurrences before a
     consentTokenTtlSeconds: 300,
     authorizationCodeTtlSeconds: 300,
   });
+  // createBridgeConfig rejects these non-origins. Force the old malformed
+  // trusted shape only to keep the downstream raw-header defense pinned.
+  const config = {
+    ...validated, allowedOrigins: [`${allowed}, ${foreign}`, `${foreign}, ${allowed}`],
+  };
   const built = await buildGateway({
     config,
     backendUrl: "http://127.0.0.1:9/mcp",

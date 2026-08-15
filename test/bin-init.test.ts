@@ -79,7 +79,7 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.ok(!/[\^~]/.test(Object.values(deps).join(" ")), "no version ranges — exact pins only");
 
     const server = await readFile(join(dir, "server.ts"), "utf8");
-    for (const marker of ['from "mcp-sso"', 'from "mcp-sso/fastify/protected-resource-rate-limit"', "registerOAuthRoutes", "registerProtectedResourceRateLimit", "isMcpPath", "loadOrCreateQuickstartSecrets", "createConsolePairingIdentity", "handlePairingAuthorize"]) {
+    for (const marker of ['from "mcp-sso"', 'from "mcp-sso/fastify/protected-resource-rate-limit"', "registerOAuthRoutes", "registerProtectedResourceRateLimit", "isMcpPath", "loadOrCreateQuickstartSecrets", "validateAllowedOrigins", "createConsolePairingIdentity", "handlePairingAuthorize"]) {
       assert.ok(server.includes(marker), `server.ts composition root includes ${marker}`);
     }
     assert.match(server, /config:\s*\{\s*rateLimit:/, "generated /mcp route enables the mandatory finite budget");
@@ -98,6 +98,10 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
       "generated server persists DCR through its SQLite-backed client store",
     );
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST, "http:\/\/localhost,http:\/\/127\.0\.0\.1"/, "generated local composition explicitly declares loopback callback origins");
+    assert.ok(
+      server.indexOf("validateAllowedOrigins(") < server.indexOf("loadOrCreateQuickstartSecrets("),
+      "generated origin preflight runs before persistent quickstart state",
+    );
     const generatedReadme = await readFile(join(dir, "README.md"), "utf8");
     assert.match(
       generatedReadme,
@@ -544,6 +548,33 @@ test("bin init (spawn): a malformed OAUTH_ISSUER fails BEFORE the state dir is c
     assert.notEqual(code, 0, "a malformed OAUTH_ISSUER fails closed");
     assert.match(stderr, /OAUTH_ISSUER is not a valid URL/);
     assert.equal(existsSync(stateDir), false, "the state dir was NOT created (validation ran before the state-creating helper)");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init (spawn): opaque allowed Origin fails BEFORE the state dir is created", async () => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-null-origin-"));
+  const proj = join(base, "proj");
+  const stateDir = join(base, "state");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: {
+        ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1",
+        OAUTH_ALLOWED_ORIGINS: "null",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    const code = await new Promise<number | null>((resolveP) => child.on("close", resolveP));
+    assert.notEqual(code, 0, "an opaque allowed Origin fails closed");
+    assert.match(stderr, /must not be the opaque browser origin/);
+    assert.equal(existsSync(stateDir), false, "origin preflight ran before quickstart persistence");
   } finally {
     await rm(base, { recursive: true, force: true });
   }
