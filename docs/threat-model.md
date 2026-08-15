@@ -464,7 +464,11 @@ deployer acts on.
     exact-expiry/family-validity predicates. A monotonic sweep watermark is
     committed with deletion and checked by later JTI consumes/approval commits;
     one ahead MySQL replica therefore cannot make a collected replay admissible
-    through a slower replica.
+    through a slower replica. MySQL automatic collection also subtracts a
+    five-minute replica-clock horizon before deleting any record class. Replicas
+    outside that documented bound can fail closed on a record another replica
+    already collected; arbitrary clock divergence is incompatible with bounded
+    garbage collection.
   - Saturation surfaces as a 500 (NOT fail-open — fail-open applies only to
     `RateLimitPort` per [§6.7](./contracts/06-ports.md#67-ratelimitport-fix-7)); wiring
     the Redis `RateLimitPort` is the in-band DoS mitigation.

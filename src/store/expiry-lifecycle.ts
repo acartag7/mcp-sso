@@ -12,10 +12,15 @@ export class StoreExpiryLifecycle {
   private readonly clocks: ClockPort[] = [];
   private readonly aggregateClock: ClockPort = { nowMs: () => this.earliestNowMs() };
   private scheduler: StoreExpiryScheduler | undefined;
+  private readonly collectionLagMs: number;
 
-  constructor(target: ExpirySweepTarget, ready = false) {
+  constructor(target: ExpirySweepTarget, ready = false, collectionLagMs = 0) {
+    if (!Number.isSafeInteger(collectionLagMs) || collectionLagMs < 0) {
+      throw new RangeError("Expiry collection lag must be a non-negative safe integer");
+    }
     this.target = target;
     this.ready = ready;
+    this.collectionLagMs = collectionLagMs;
   }
 
   markReady(): void {
@@ -45,6 +50,6 @@ export class StoreExpiryLifecycle {
     for (let index = 1; index < this.clocks.length; index++) {
       earliest = Math.min(earliest, finiteClockSnapshot(this.clocks[index]!));
     }
-    return earliest;
+    return earliest - this.collectionLagMs;
   }
 }

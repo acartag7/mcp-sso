@@ -91,6 +91,9 @@ same configured clock; `close()` must stop any owned collection.
 Persistent stores also keep §12's monotonic sweep watermark: tombstone deletion
 and watermark advancement are atomic, and later JTI consumption/approval is
 fenced by the original supplied signed expiry.
+Automatic MySQL collection additionally subtracts §12's explicit five-minute
+replica-clock bound from its local aggregate clock before sweeping every record
+class. Direct multi-replica callers of `sweepExpired` own the same coordination.
 Under the 0.3.3 consent correction,
 `consumeConsentJti(jti, expiresAtIso)` receives the canonical verified signed JWT
 expiry from the caller and MUST persist that exact expiry; `sweepExpired` retains

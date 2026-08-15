@@ -8,6 +8,7 @@ import type { ClockPort } from "../src/ports/clock.ts";
 import {
   STORE_EXPIRY_SWEEP_INTERVAL_MS, StoreExpiryScheduler,
 } from "../src/store/expiry-scheduler.ts";
+import { StoreExpiryLifecycle } from "../src/store/expiry-lifecycle.ts";
 import { MysqlStore } from "../src/store/mysql.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { migrateSqliteStore } from "../src/store/sqlite-schema.ts";
@@ -41,6 +42,19 @@ test("expiry scheduler snapshots its configured clock and never overlaps runs", 
   await settleUntil(() => seen.length === 2);
   assert.equal(seen[1], "2026-08-16T12:25:00.000Z");
   await scheduler.stop();
+});
+
+test("expiry lifecycle subtracts its configured collection lag from the bound clock", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: START });
+  const seen: string[] = [];
+  const lifecycle = new StoreExpiryLifecycle({
+    async sweepExpired(nowIso) { seen.push(nowIso); },
+  }, true, STORE_EXPIRY_SWEEP_INTERVAL_MS);
+  lifecycle.start({ nowMs: () => START + STORE_EXPIRY_SWEEP_INTERVAL_MS });
+  t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+  await settleUntil(() => seen.length === 1);
+  assert.deepEqual(seen, [new Date(START).toISOString()]);
+  await lifecycle.stop();
 });
 
 test("expiry scheduler reports a fixed failure and retries at the next interval", async (t) => {

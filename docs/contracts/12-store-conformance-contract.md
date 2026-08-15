@@ -289,6 +289,15 @@ other undersized shape fails boot rather than being silently reinterpreted.
     store with distinct clocks, all are retained and each sweep uses their
     earliest valid snapshot; collection therefore never outruns any Bridge that
     can still accept a signed artifact. An invalid bound clock prevents that run.
+    Separate MySQL replicas cannot observe one another's injected clocks. Their
+    automatic collection therefore subtracts the explicit five-minute
+    `MYSQL_EXPIRY_REPLICA_SKEW_MS` from the earliest locally bound snapshot before
+    calling `sweepExpired`. Replicas in one deployment MUST keep their configured
+    clocks within that bound. This retention horizon covers authorization codes,
+    consent JTIs, and refresh families; a replica at the allowed slow boundary
+    can still consume or rotate an artifact before another replica collects it.
+    Manual `sweepExpired` calls retain their exact supplied-time contract, so a
+    multi-replica caller owns the same horizon subtraction.
 
     `MemoryStore` is ready immediately. `openSqliteStore` completes admission
     and migration, then constructs `SqliteStore` with `{ schemaReady: true }`;
@@ -328,9 +337,11 @@ other undersized shape fails boot rather than being silently reinterpreted.
     is idempotent; no later sweep begins. Therefore eligible auth-code rows,
     consent-JTI tombstones, refresh-token families/members, and empty families
     remain at most one successful sweep interval plus sweep duration after
-    eligibility under a healthy store. A storage outage, invalid snapshot, or
-    backward configured clock can extend retention until recovery/catch-up, but
-    cannot collect a still-valid row. A downstream `StorePort` implementation
+    eligibility under a healthy Memory/SQLite store; MySQL adds its five-minute
+    replica-skew retention. A storage outage, invalid snapshot, or backward
+    configured clock can extend retention until recovery/catch-up, but cannot
+    collect a still-valid row within the declared topology and skew preconditions.
+    A downstream `StorePort` implementation
     owns the same scheduler lifecycle and sweep fence; implementing only the
     callable `sweepExpired` method is no longer conforming for a long-lived store.
 

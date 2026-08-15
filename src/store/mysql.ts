@@ -18,13 +18,15 @@ import {
 } from "./mysql-schema.ts";
 import { StoreExpiryLifecycle } from "./expiry-lifecycle.ts";
 
+export const MYSQL_EXPIRY_REPLICA_SKEW_MS = 300_000;
+
 export class MysqlStore implements StorePort {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
   readonly storedDcrResourceBinding = STORED_DCR_RESOURCE_BINDING;
   private closed = false;
   private readonly pool: Pool;
   private readonly ownsPool: boolean;
-  private readonly expiry = new StoreExpiryLifecycle(this);
+  private readonly expiry = new StoreExpiryLifecycle(this, false, MYSQL_EXPIRY_REPLICA_SKEW_MS);
   constructor(pool: Pool, ownsPool = false) { this.pool = pool; this.ownsPool = ownsPool; }
 
   async getStoreInstanceId(): Promise<string> {

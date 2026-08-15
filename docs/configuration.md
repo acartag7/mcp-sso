@@ -171,6 +171,10 @@ the store retries on its next ordinary interval. Custom `StorePort`
 implementations must own an equivalent lifecycle using the Bridge clock.
 SQLite persists and MySQL shares a monotonic sweep fence, so a later process or
 slower replica cannot re-admit a collected JTI with its original signed expiry.
+Automatic MySQL sweeps also retain every record for an extra five-minute
+replica-clock window. All replicas sharing that database must keep their
+configured `ClockPort`s within five minutes; a manual multi-replica sweeper must
+subtract the same horizon before calling `sweepExpired`.
 
 ## api-key-gateway example (`BACKEND_*`)
 

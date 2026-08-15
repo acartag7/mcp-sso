@@ -82,7 +82,7 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
       // The MySQL target resolves across multiple microtasks. Let the scheduler's
       // finally block install the next timer after the wrapped sweep increments.
       await new Promise<void>((resolve) => setImmediate(resolve));
-      configuredNow += STORE_EXPIRY_SWEEP_INTERVAL_MS * 2;
+      configuredNow += STORE_EXPIRY_SWEEP_INTERVAL_MS * 2 + 2;
       t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
       await settleUntil(() => sweeps === 2);
       assert.equal(

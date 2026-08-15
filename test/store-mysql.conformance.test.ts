@@ -13,7 +13,8 @@ import { createHash } from "node:crypto";
 import { before, after, beforeEach, test } from "node:test";
 import { createPool, type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import { STORED_DCR_GRANT_GENERATION, type StorePort } from "../src/ports/store.ts";
-import { MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
+import { MYSQL_EXPIRY_REPLICA_SKEW_MS, MysqlStore, createMysqlStore } from "../src/store/mysql.ts";
+import { STORE_EXPIRY_SWEEP_INTERVAL_MS } from "../src/store/expiry-scheduler.ts";
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
 import { MYSQL_SUBJECT_CAPACITY } from "../src/store/mysql-subject-schema.ts";
 import { entraIssuer, validateEntraIdToken } from "../src/identity/entra.ts";
@@ -174,6 +175,47 @@ if (RUN) {
     } finally {
       await sweeper.close();
       await slowerReplica.close();
+    }
+  });
+
+  test("MysqlStore: scheduled collection preserves artifacts across the replica-skew boundary", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
+    const ahead = await createMysqlStore(MYSQL_URL as string);
+    const slower = await createMysqlStore(MYSQL_URL as string);
+    const slowExpiry = new Date(Date.parse(NOW) + 1).toISOString();
+    const codeHash = sha256Hex("replica-skew-auth-code");
+    const tokenHash = sha256Hex("replica-skew-refresh");
+    let scheduledNow: string | undefined;
+    const sweepExpired = ahead.sweepExpired.bind(ahead);
+    ahead.sweepExpired = async (nowIso) => { scheduledNow = nowIso; };
+    try {
+      await ahead.saveAuthCode({
+        codeHash, clientId: "client", subject: "subject",
+        redirectUri: "https://client.test/callback", resource: "https://api.test/mcp",
+        scopes: ["mcp:read"], codeChallenge: "challenge", codeChallengeMethod: "S256",
+        expiresAt: slowExpiry,
+      });
+      await ahead.saveRefreshToken(refresh(
+        "replica-skew-refresh", "replica-skew-family", null, slowExpiry,
+      ));
+      ahead.startExpiryCollection({
+        nowMs: () => Date.parse(NOW) + MYSQL_EXPIRY_REPLICA_SKEW_MS,
+      });
+      t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
+      await settleUntil(() => scheduledNow !== undefined);
+      assert.equal(scheduledNow, NOW, "the production MySQL scheduler must subtract the replica horizon");
+      if (scheduledNow === undefined) assert.fail("the production MySQL scheduler did not run");
+      await sweepExpired(scheduledNow);
+
+      assert.equal((await slower.consumeAuthCode(codeHash, NOW))?.codeHash, codeHash);
+      assert.equal((await slower.rotateRefreshToken(
+        tokenHash,
+        refresh("replica-skew-successor", "replica-skew-family", tokenHash, FUTURE),
+        NOW,
+      ))?.tokenHash, tokenHash);
+    } finally {
+      await ahead.close();
+      await slower.close();
     }
   });
 
@@ -796,4 +838,11 @@ function refresh(rawToken: string, familyId: string, previousTokenHash: string |
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function settleUntil(done: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 100 && !done(); turn++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(done(), true, "scheduled work did not settle");
 }
