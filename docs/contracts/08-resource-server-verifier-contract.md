@@ -91,8 +91,9 @@ custom increment result's `current` and `ttl` fields inside its sanitized error
 boundary and never reads either field more than once; validation and the value
 returned to the plugin use only those snapshots. A result is healthy only when
 the snapshotted `current` is a positive safe integer and `ttl` is a non-negative
-safe integer. A throwing accessor or malformed snapshot returns the same fixed
-503. The existing foreign-
+safe integer. A throwing accessor, malformed snapshot, or a rejected thenable from a custom
+`incr` (an `async` method that throws before the callback) returns the same
+fixed 503. The existing foreign-
 `Origin` gate remains first: rejected cross-origin traffic is 403 without
 consuming the protected-resource budget; admitted traffic is rate-limited
 before body parsing, bearer verification/audit, MCP SDK construction, backend

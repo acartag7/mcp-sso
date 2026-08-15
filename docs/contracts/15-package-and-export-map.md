@@ -91,7 +91,8 @@ closed options object (`max` integer 1..10,000; `timeWindowMs` integer
 caller places in each protected route's `config.rateLimit`. The examples group
 each method-specific route under the fixed `mcp-protected-resource` id; the
 finite in-memory default is per process and per method route. A supplied custom store is wrapped so
-synchronous throws, callback errors, duplicate callbacks, and malformed
+synchronous throws, rejected thenables from `incr`, callback errors, duplicate
+callbacks, and malformed
 counter results become one fixed 503 error before the route handler. A valid
 increment result is observed once: the wrapper snapshots `current` and `ttl`
 inside the fixed-error boundary, never re-reads either field, and validates and

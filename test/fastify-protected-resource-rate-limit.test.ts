@@ -4,6 +4,7 @@ import Fastify from "fastify";
 import type {
   FastifyRateLimitOptions,
   FastifyRateLimitStore,
+  FastifyRateLimitStoreCtor,
 } from "@fastify/rate-limit";
 import { AuthConfigError } from "../src/config.ts";
 import {
@@ -57,6 +58,55 @@ test("Fastify protected resource limiter: custom-store failure is a fixed 503 be
     assert.equal(effects, 0);
     assert.match(response.body, /Protected resource rate limiter unavailable/);
     assert.doesNotMatch(response.body, new RegExp(privateDetail), "store internals never reach the client");
+  } finally {
+    await app.close();
+  }
+});
+
+test("Fastify protected resource limiter: rejected incr thenable is a fixed 503 before handler effects", async () => {
+  const privateDetail = "async store failed at a private address";
+  class RejectingStore {
+    constructor(_options: FastifyRateLimitOptions) {}
+    incr(): Promise<never> { return Promise.reject(new Error(privateDetail)); }
+    child(): FastifyRateLimitStore { return this as unknown as FastifyRateLimitStore; }
+  }
+  const app = Fastify();
+  let effects = 0;
+  try {
+    const policy = await registerProtectedResourceRateLimit(app, { store: RejectingStore as unknown as FastifyRateLimitStoreCtor });
+    app.post("/mcp", routePolicy(policy), async () => { effects += 1; return { ok: true }; });
+    const response = await app.inject({ method: "POST", url: "/mcp" });
+    assert.equal(response.statusCode, 503);
+    assert.equal(effects, 0);
+    assert.match(response.body, /Protected resource rate limiter unavailable/);
+    assert.doesNotMatch(response.body, new RegExp(privateDetail));
+  } finally {
+    await app.close();
+  }
+});
+
+test("Fastify protected resource limiter: child rejected incr thenable is a fixed 503", async () => {
+  class ChildRejectingStore implements FastifyRateLimitStore {
+    constructor(_options: FastifyRateLimitOptions) {}
+    incr(_key: string, callback: (error: Error | null, result?: { current: number; ttl: number }) => void): void {
+      callback(null, { current: 1, ttl: 60_000 });
+    }
+    child(): FastifyRateLimitStore {
+      return {
+        incr() { return Promise.reject(new Error("child async store detail")); },
+        child() { return this; },
+      } as FastifyRateLimitStore;
+    }
+  }
+  const app = Fastify();
+  let effects = 0;
+  try {
+    const policy = await registerProtectedResourceRateLimit(app, { store: ChildRejectingStore });
+    app.post("/mcp", routePolicy(policy), async () => { effects += 1; return { ok: true }; });
+    const response = await app.inject({ method: "POST", url: "/mcp" });
+    assert.equal(response.statusCode, 503);
+    assert.equal(effects, 0);
+    assert.doesNotMatch(response.body, /child async store detail/);
   } finally {
     await app.close();
   }

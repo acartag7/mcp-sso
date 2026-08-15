@@ -121,8 +121,7 @@ function failClosedStore(Store: FastifyRateLimitStoreCtor): FastifyRateLimitStor
         }
         callback(null, checked);
       };
-      try { this.inner.incr(key, finish, timeWindow, max); }
-      catch { finish(unavailable()); }
+      invokeIncr(this.inner, key, finish, timeWindow, max);
     }
 
     child(routeOptions: Parameters<FastifyRateLimitStore["child"]>[0]): FastifyRateLimitStore {
@@ -130,6 +129,25 @@ function failClosedStore(Store: FastifyRateLimitStoreCtor): FastifyRateLimitStor
       catch { throw unavailable(); }
     }
   };
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === "object" && value !== null && typeof (value as PromiseLike<unknown>).then === "function";
+}
+
+function invokeIncr(
+  store: FastifyRateLimitStore,
+  key: string,
+  finish: (error: Error | null, result?: { current: number; ttl: number }) => void,
+  timeWindow: number,
+  max: number,
+): void {
+  try {
+    const returned = store.incr(key, finish, timeWindow, max) as unknown;
+    if (isThenable(returned)) returned.then(undefined, () => finish(unavailable()));
+  } catch {
+    finish(unavailable());
+  }
 }
 
 function wrapStore(inner: FastifyRateLimitStore): FastifyRateLimitStore {
@@ -143,8 +161,7 @@ function wrapStore(inner: FastifyRateLimitStore): FastifyRateLimitStore {
         if (error || !checked) callback(unavailable());
         else callback(null, checked);
       };
-      try { inner.incr(key, finish, timeWindow, max); }
-      catch { finish(unavailable()); }
+      invokeIncr(inner, key, finish, timeWindow, max);
     },
     child(routeOptions) {
       try { return wrapStore(inner.child(routeOptions)); }
