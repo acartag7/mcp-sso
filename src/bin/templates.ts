@@ -1,8 +1,6 @@
 // File templates for `mcp-sso init` (contracts §15 "Init CLI"). Dep-free (node builtins); ships in dist/bin.
-/** fastify + the MCP SDK are pinned to the versions mcp-sso is TESTED against (the
- *  repo's devDependencies). The published package cannot read the repo's devDeps at
- *  runtime, so these are fixed here + recorded in docs/dependency-ledger.md; bump them
- *  with the repo's devDeps (exact pins, no ^/~, per the supply-chain rules). */
+/** Fastify, its limiter, and the MCP SDK use the exact tested devDependency pins.
+ *  Keep these ledger-recorded constants in sync when the repo pins move. */
 const FASTIFY_VERSION = "5.8.5"; const FASTIFY_RATE_LIMIT_VERSION = "11.2.0";
 const MCP_SDK_VERSION = "1.29.0";
 
