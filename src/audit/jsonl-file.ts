@@ -62,6 +62,8 @@ export class JsonlFileAudit implements AuditPort {
   private readonly onDisable: JsonlFileAuditOptions["onDisable"];
   private appendTail: Promise<void> = Promise.resolve();
   private appendDisabled = false;
+  private disableReason: JsonlFileAuditDisableReason | undefined;
+  private disableCallbackScheduled = false;
 
   constructor(filePath: string, options: JsonlFileAuditOptions = {}) {
     if (!filePath || typeof filePath !== "string") {
@@ -86,6 +88,7 @@ export class JsonlFileAudit implements AuditPort {
       .catch((error: unknown) => { this.reportFailure(error); });
     this.appendTail = append;
     await append;
+    this.scheduleDisableCallback();
   }
 
   private async appendEvent(event: AuthAuditEvent): Promise<void> {
@@ -148,16 +151,27 @@ export class JsonlFileAudit implements AuditPort {
   private disableAppends(reason: JsonlFileAuditDisableReason): void {
     if (this.appendDisabled) return;
     this.appendDisabled = true;
+    this.disableReason = reason;
     try {
       console.error(`[mcp-sso] audit jsonl disabled: ${reason}`);
     } catch {
       // A broken stderr transport cannot suppress the independent callback.
     }
+  }
+
+  private scheduleDisableCallback(): void {
+    const onDisable = this.onDisable, reason = this.disableReason;
+    if (onDisable === undefined || reason === undefined || this.disableCallbackScheduled) return;
+    this.disableCallbackScheduled = true;
     try {
-      void Promise.resolve(this.onDisable?.(reason)).catch(() => {});
-    } catch {
-      // Operator notification is fail-open and one-shot even when its hook fails.
-    }
+      setImmediate(() => {
+        try {
+          void Promise.resolve(onDisable(reason)).catch(() => {});
+        } catch {
+          // Operator notification is fail-open and one-shot even when its hook fails.
+        }
+      });
+    } catch { /* a broken scheduler cannot reject the audit write */ }
   }
 }
 

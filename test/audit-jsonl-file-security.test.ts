@@ -313,8 +313,10 @@ test("JsonlFileAudit: drops later events when a partial-line rollback is unverif
     };
     const disableReasons: string[] = [];
     let replacementCalls = 0;
+    let writeSettled = false;
     const options: JsonlFileAuditOptions = {
       async onDisable(reason: string) {
+        assert.equal(writeSettled, true, "the hook began on the authentication promise path");
         disableReasons.push(reason);
         throw new Error("operator hook failed");
       },
@@ -324,8 +326,10 @@ test("JsonlFileAudit: drops later events when a partial-line rollback is unverif
       const sink = createJsonlFileAudit(path, options);
       options.onDisable = () => { replacementCalls += 1; };
       await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "event-field-first" }));
+      writeSettled = true;
       const afterPartial = await readFile(path, "utf8");
       await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "event-field-later" }));
+      await new Promise<void>((resolve) => setImmediate(resolve));
       assert.equal(await readFile(path, "utf8"), afterPartial, "a later event extended the partial record");
       assert.equal(writeCalls, 2, "a disabled sink performed later file work");
       assert.deepEqual(disableReasons, ["partial_write_rollback_unverified"]);
