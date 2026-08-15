@@ -109,7 +109,7 @@ test("fastify OAuth POST routes enforce the shared budget for every content-type
 });
 
 test("fastify OAuth parser scope preserves caller parsing on unrelated routes", async () => {
-  const { bridge, calls } = bridgeHarness();
+  const { bridge, calls, requests } = bridgeHarness();
   const app = Fastify();
   let unrelatedBody: unknown;
   app.addContentTypeParser("*", { parseAs: "string" }, (_req, body, done) => {
@@ -129,6 +129,24 @@ test("fastify OAuth parser scope preserves caller parsing on unrelated routes", 
     });
     assert.equal(oauth.statusCode, 413);
     assert.deepEqual(calls, []);
+    // A caller wildcard cannot be detected (hasContentTypeParser("*") is dead on
+    // Fastify 5.x), so the adapter's exact form parser is installed anyway and
+    // wins by precedence — OAuth form routes keep parsing fields on wildcard
+    // hosts, and the caller's own urlencoded routes see the adapter parser.
+    const oauthForm = await app.inject({
+      method: "POST", url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: "grant_type=client_credentials&client_id=a&client_secret=b",
+    });
+    assert.equal(oauthForm.statusCode, 200, "OAuth form routes must still parse on a wildcard host");
+    assert.deepEqual(requests.at(-1)?.body, {
+      grant_type: "client_credentials", client_id: "a", client_secret: "b",
+    });
+    const callerForm = await app.inject({
+      method: "POST", url: "/other", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: "a=1",
+    });
+    assert.deepEqual(callerForm.json(), { ok: true });
+    assert.deepEqual(unrelatedBody, { a: "1" }, "the exact form parser overrides the caller wildcard for urlencoded");
   } finally {
     await app.close();
   }

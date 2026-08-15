@@ -396,7 +396,11 @@ the response. Wiring rules:
   body bytes. JSON, URL-encoded, multipart, and unknown content types share the
   same pre-parse bound, but the adapter parses only the exact
   `application/json` and `application/x-www-form-urlencoded` media-type
-  essences. A stream read/framing failure before downstream parsing
+  essences. Duplicate `Content-Type` fields arrive coalesced (`a, a`) and match
+  no essence, so Hono leaves such bodies unparsed — a known, fail-closed
+  cross-adapter differential: Fastify and Express parsers still accept a
+  duplicated form content type. A stream read/framing failure before downstream
+  parsing
   returns a fixed direct 400 `invalid_request` response without logging the raw
   throwable or invoking downstream work. Below-cap parser failures retain the
   existing fail-closed parser-error path. A caller that uses `skipAuthorize` to
@@ -413,15 +417,24 @@ the response. Wiring rules:
   Fastify plugin scope, so the catch-all cannot replace a caller-owned parser on
   unrelated routes. When `skipAuthorize` leaves POST `/oauth/authorize` to the
   caller, `registerOAuthRoutes` preserves the existing automatic URL-encoded
-  form behavior in the caller's scope: it installs the shared form parser only
-  when that scope has neither an exact form parser nor a caller-owned wildcard,
-  and it adds a route-registration hook that clamps the later exact pairing POST
-  to the lesser of its declared `bodyLimit` and the shared budget. JSON, form,
+  form behavior in the caller's scope: it installs the shared form parser when
+  that scope has no exact form parser — Fastify exposes no working wildcard
+  detection (`hasContentTypeParser("*")` returns false on every 5.x even after
+  a wildcard is registered), so a caller-owned wildcard is deliberately not
+  guarded: the exact parser is installed and, by exact-match precedence, takes
+  urlencoded bodies in that scope away from that wildcard (a caller wanting
+  wildcard-only semantics must register their own exact form parser, which IS
+  detected and honored). It also adds a route-registration hook that clamps the
+  later exact pairing POST to the lesser of its declared `bodyLimit` and the
+  shared budget; a pairing POST registered before `registerOAuthRoutes` returns
+  is not clamped — it still receives the form parser, but keeps its own route
+  limit. JSON, form,
   and caller-parsed unknown media therefore cannot regain Fastify's larger
   default or widen the OAuth cap, while a caller's stricter route limit and
-  existing parser semantics remain intact. The hook does not alter other paths
-  or methods. `addOAuthFormContentTypeParser` is idempotent for inherited/existing
-  form or wildcard parsers and remains exported with
+  existing exact-parser semantics remain intact. The hook does not alter other paths
+  or methods. `addOAuthFormContentTypeParser` is idempotent for an inherited or
+  existing exact form parser (a wildcard cannot be detected; see above) and
+  remains exported with
   `OAUTH_POST_BODY_MAX_BYTES` for explicit custom composition. An over-cap
   request receives Fastify's direct 413 response before the pairing handler or
   Bridge runs.

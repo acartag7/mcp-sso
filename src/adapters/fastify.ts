@@ -46,7 +46,14 @@ export interface FastifyAdapterOptions {
 }
 
 export function addOAuthFormContentTypeParser(app: FastifyInstance): void {
-  if (app.hasContentTypeParser(OAUTH_FORM_CONTENT_TYPE) || app.hasContentTypeParser("*")) return;
+  // Only an exact form parser is guarded: hasContentTypeParser("*") is dead on
+  // every Fastify 5.x (wildcards are stored under a key the lookup never
+  // produces), so a caller-owned wildcard is deliberately NOT detected — the
+  // exact parser is installed and, by exact-match precedence, takes urlencoded
+  // bodies in this scope away from that wildcard. Never add a wildcard check
+  // back: if it ever worked, the parser would be skipped and the OAuth routes
+  // would fall to the child-scope Buffer catch-all, 400ing every form client.
+  if (app.hasContentTypeParser(OAUTH_FORM_CONTENT_TYPE)) return;
   app.addContentTypeParser(OAUTH_FORM_CONTENT_TYPE, { parseAs: "string" }, (_req, body, done) => {
     done(null, Object.fromEntries(new URLSearchParams(String(body))));
   });
