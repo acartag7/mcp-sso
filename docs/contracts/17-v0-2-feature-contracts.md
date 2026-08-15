@@ -1586,11 +1586,16 @@ gate replaces no-gate).
   not eliminate the exposure. **Deployment envelope: single-operator/personal
   deployments with operator-private console output + LOOPBACK binding.** A host
   example binds the pairing authorize surface to `127.0.0.1` by default
-  (`defaultListenHost`); a non-loopback bind (or tunneling the loopback
-  listener publicly) exposes the surface + the attempt budget to the network and
-  is an explicit envelope breach — public/networked deployments must use a real
-  IdP port (Cloudflare Access, etc.), not pairing. The printed banner and docs
-  say exactly this.
+  (`defaultListenHost`). Both runnable examples reject a no-IdP non-loopback
+  `HOST` before quickstart secrets, the state directory, audit file, or SQLite
+  state. Only exact `localhost`, `127.0.0.1`, and `::1` binds are admitted. The
+  deliberately unsafe escape hatch
+  `MCP_SSO_UNSAFE_ALLOW_NON_LOOPBACK_PAIRING=true` permits the bind with a loud
+  pre-state warning; it does not relax the separate loopback issuer/resource
+  requirement. Tunneling a loopback listener publicly remains outside this
+  host-level control. Either escape exposes the surface + attempt budget to the
+  network and breaches the envelope — public/networked deployments must use a
+  real IdP port (Cloudflare Access, etc.), not pairing.
 - Audit: `oauth.pairing.attempt` (success/failure — brute-force evidence).
 
 ## 17.6 `GenericOidcIdentity` + Google preset + dedicated GitHub port

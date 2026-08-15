@@ -55,6 +55,12 @@ persists DCR registrations in SQLite, and adds loopback redirect trust
 explicitly instead of receiving it from library defaults. The pairing code is
 the identity check, so keep console output private.
 
+The repository's two runnable examples enforce the same no-IdP bind boundary:
+`HOST=0.0.0.0` now fails before creating state. The deliberately unsafe
+`MCP_SSO_UNSAFE_ALLOW_NON_LOOPBACK_PAIRING=true` escape exists only for explicit
+temporary testing and prints a loud warning; it does not make console pairing a
+production identity provider. See the [runtime configuration](docs/configuration.md#runtime).
+
 ### Internet-facing, with real users
 
 Use a real identity provider, a persistent conforming store, and a real request

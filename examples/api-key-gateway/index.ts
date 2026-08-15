@@ -19,10 +19,21 @@ import {
   defaultListenHost,
   productionIdentityConfigured,
 } from "./app.ts";
-import { assertSingleIdentityProviderSelector } from "../fastify-sqlite/app.ts";
+import {
+  assertConsolePairingListenHostBeforeState,
+  assertSingleIdentityProviderSelector,
+  UNSAFE_NON_LOOPBACK_PAIRING_ENV,
+} from "../fastify-sqlite/app.ts";
 
 async function main(): Promise<void> {
   assertSingleIdentityProviderSelector(process.env);
+  if (!productionIdentityConfigured(process.env)
+    && process.env[UNSAFE_NON_LOOPBACK_PAIRING_ENV] !== "true") {
+    // The gateway has a second listener. Reject the public pairing bind before
+    // even reading backend config or starting that backend. The exact unsafe
+    // escape is warned by buildGatewayExample before state or the public listener.
+    assertConsolePairingListenHostBeforeState(process.env);
+  }
   // Read the backend credential ONCE, behind a closure. Missing = boot failure.
   // NEVER place this in createBridgeConfig: (1) it would be rejected as an unknown
   // key with a boot AuthConfigError (contracts §5), and (2) even if accepted it
@@ -39,28 +50,21 @@ async function main(): Promise<void> {
   }
   const getBackendCredential = (): string => backendApiKey;
 
-  // Start the token-only stub backend on a local port. In production this is YOUR
-  // internal MCP server / API that only accepts a static credential; bind it to
-  // loopback (or behind a NetworkPolicy) so only the gateway can reach it — then the
-  // static credential is useless even to someone who finds the backend's address.
+  // Derive the trusted backend URL without starting a listener. The entrypoint
+  // preflight above rejects an unsafe public bind before this backend side effect;
+  // the explicit escape is warned later by the builder before state creation.
   const backendPort = Number(process.env.BACKEND_PORT ?? 8788);
   const backendHost = process.env.BACKEND_HOST ?? "127.0.0.1";
-  const backend = await buildBackend({ apiKey: backendApiKey });
-  await backend.app.listen({ port: backendPort, host: backendHost });
   const backendUrl = `http://${backendHost}:${backendPort}/mcp`;
 
-  // Build + listen the gateway (identity branch selected by env, same as fastify-sqlite).
+  // The public-host preflight above must win before this listener. Once it passes,
+  // bind the backend before the stateful gateway builder so an invalid or occupied
+  // backend bind cannot leave quickstart state behind.
+  const backend = await buildBackend({ apiKey: backendApiKey });
+  await backend.app.listen({ port: backendPort, host: backendHost });
   const { app, config } = await buildGatewayExample(process.env, { backendUrl, getBackendCredential });
   const port = Number(process.env.PORT ?? 3000);
   const host = process.env.HOST ?? defaultListenHost(process.env);
-  // Warn if console pairing (single-operator envelope) is bound off-loopback.
-  if (!productionIdentityConfigured(process.env) && host !== "127.0.0.1" && host !== "localhost") {
-    console.error(
-      `[mcp-sso-gateway] WARNING: console pairing is bound to ${host} (non-loopback). The pairing code is the identity gate — ` +
-        "anyone who can reach this port can attempt it. Pairing is for single-operator / private-console deployments only; " +
-        "use a real IdP path for network-exposed deployments.",
-    );
-  }
   await app.listen({ port, host });
 
   const mode = process.env.ENTRA_TENANT_ID !== undefined ? "Entra redirect" : process.env.CF_ACCESS_AUDIENCE !== undefined ? "Cloudflare Access" : process.env.GOOGLE_CLIENT_ID !== undefined ? "Google" : process.env.OIDC_ISSUER !== undefined ? "generic OIDC" : "console pairing";

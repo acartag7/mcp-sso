@@ -138,7 +138,14 @@ See [`identity/generic-oidc.md`](identity/generic-oidc.md).
 |---|---|---|---|
 | `MCP_SSO_DIR` | optional | `./.mcp-sso` | State directory (sqlite + audit + quickstart secrets). |
 | `PORT` | optional | `3000` | Listen port. |
-| `HOST` | optional | by mode | Console pairing binds loopback; a real identity binds `0.0.0.0`. Override here. |
+| `HOST` | optional | by mode | Console pairing admits only exact `localhost`, `127.0.0.1`, or `::1`; a real identity binds `0.0.0.0`. A no-IdP non-loopback value is a pre-state boot error. |
+| `MCP_SSO_UNSAFE_ALLOW_NON_LOOPBACK_PAIRING` | optional ⚠️ | unset | Example-only break-glass override. Exact `true` permits a no-IdP non-loopback `HOST` and prints a loud warning before state creation. It does not permit non-loopback issuer/resource URLs. Use a real IdP instead for network exposure. |
+
+This is a breaking change for the old zero-setup invocation
+`HOST=0.0.0.0 node examples/.../index.ts`: it now fails before creating the
+state directory, quickstart secrets, audit file, or SQLite database. The escape
+hatch exists for deliberate, temporary private-network testing; it does not
+make console pairing a supported multi-user or internet-facing identity mode.
 
 `openSqliteStore` does not create the `OAUTH_SQLITE_FILE` parent. The runnable
 examples create/validate `MCP_SSO_DIR` first; a custom composition root must do
