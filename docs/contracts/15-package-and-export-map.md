@@ -52,13 +52,20 @@ consumer can mount the pairing surface alongside the `skipAuthorize` adapter
 option. A Hono consumer also imports `honoOAuthBodyLimit` from `mcp-sso/hono`
 and mounts it before parsing the caller-owned pairing POST; the four built-in
 Hono OAuth POST routes apply it automatically. A Fastify consumer mounts a
-caller-owned pairing POST in its own plugin scope, imports
-`addOAuthFormContentTypeParser` and `OAUTH_POST_BODY_MAX_BYTES` from
-`mcp-sso/fastify`, and applies both there; `registerOAuthRoutes` encapsulates the
-built-in parsers so it does not change unrelated caller routes. The in-repo
-example imports the framework-free helpers from source; package consumers import
-them from the root entry. The framework-free `Bridge` class — the central object
-a consumer constructs and passes to a framework adapter — is root-exported
+caller-owned pairing POST in its own plugin scope and imports
+`addOAuthFormContentTypeParser`, `OAUTH_POST_BODY_MAX_BYTES`, and
+`FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT` from `mcp-sso/fastify`. The last export is
+route metadata that exactly mirrors §17.5's mandatory framework-free gate; the
+generated starter and both in-repo Fastify examples attach it to pairing GET and
+POST. `registerOAuthRoutes` encapsulates the built-in parsers so it does not
+change unrelated caller routes. The in-repo example imports the framework-free
+helpers from source; package consumers import them from the root entry. The
+Express adapter path-scopes bounded parsing to its four built-in POST routes and
+caller-owned pairing POST `/oauth/authorize`; the
+`mcp-sso/express` subpath retains `EXPRESS_OAUTH_BODY_MAX_BYTES` as an exact
+compatibility alias of the shared budget. The framework-free `Bridge` class —
+the central object a consumer constructs and passes to a framework adapter — is
+root-exported
 (`import { Bridge, RequestAuthorizer } from "mcp-sso"`). `isMcpPath(requestUrl)` —
 the `/mcp` Streamable-HTTP path check a consumer's `onRequest` Origin-gate hook uses
 to scope DNS-rebinding protection to MCP paths (it robustly handles the

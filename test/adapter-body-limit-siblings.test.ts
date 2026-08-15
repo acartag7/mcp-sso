@@ -54,13 +54,15 @@ test("OAuth POST body budget has one shared declaration imported by every adapte
   assert.equal(OAUTH_POST_BODY_MAX_BYTES, 256 * 1024);
   for (const adapter of ["fastify", "express", "hono"]) {
     const source = readFileSync(fileURLToPath(new URL(`../src/adapters/${adapter}.ts`, import.meta.url)), "utf8");
+    const declarations = adapter === "express"
+      ? source.replace(/export const EXPRESS_OAUTH_BODY_MAX_BYTES = OAUTH_POST_BODY_MAX_BYTES;/, "") : source;
     assert.match(
-      source,
+      declarations,
       /import\s*\{[^}]*\bOAUTH_POST_BODY_MAX_BYTES\b[^}]*\}\s*from "\.\/http\.ts";/s,
       `${adapter} imports the shared budget`,
     );
     assert.doesNotMatch(
-      source,
+      declarations,
       /\b(?:export\s+)?const\s+\w*(?:BODY_MAX_BYTES|BODY_LIMIT_BYTES|BODY_BYTE_LIMIT)\w*\s*=/i,
       `${adapter} must not declare a local body-budget constant`,
     );
@@ -109,16 +111,18 @@ test("fastify OAuth POST routes enforce the shared budget for every content-type
 test("fastify OAuth parser scope preserves caller parsing on unrelated routes", async () => {
   const { bridge, calls } = bridgeHarness();
   const app = Fastify();
+  let unrelatedBody: unknown;
   app.addContentTypeParser("*", { parseAs: "string" }, (_req, body, done) => {
     done(null, { source: "caller", body });
   });
-  app.post("/other", async (request) => request.body);
+  app.post("/other", async (request) => { unrelatedBody = request.body; return { ok: true }; });
   await registerOAuthRoutes(app, { bridge, skipAuthorize: true });
   try {
     const unrelated = await app.inject({
       method: "POST", url: "/other", headers: { "content-type": "application/octet-stream" }, payload: "caller-body",
     });
-    assert.deepEqual(unrelated.json(), { source: "caller", body: "caller-body" });
+    assert.deepEqual(unrelated.json(), { ok: true });
+    assert.deepEqual(unrelatedBody, { source: "caller", body: "caller-body" });
     const oauth = await app.inject({
       method: "POST", url: "/oauth/register", headers: { "content-type": "application/octet-stream" },
       payload: Buffer.alloc(OAUTH_POST_BODY_MAX_BYTES + 1),
@@ -223,8 +227,12 @@ test("express OAuth POST routes enforce the shared budget for every content type
 test("express OAuth parser scope preserves later caller parsing on unrelated routes", async () => {
   const { bridge, calls } = bridgeHarness();
   const app = express();
+  let unrelatedBody: unknown;
   app.use("/", createOAuthRouter({ bridge, skipAuthorize: true }));
-  app.post("/other", express.text({ type: () => true }), (request, response) => response.json({ body: request.body }));
+  app.post("/other", express.text({ type: () => true }), (request, response) => {
+    unrelatedBody = request.body;
+    response.json({ ok: true });
+  });
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
@@ -234,7 +242,8 @@ test("express OAuth parser scope preserves later caller parsing on unrelated rou
     const unrelated = await fetch(`${base}/other`, {
       method: "POST", headers: { "content-type": "application/octet-stream" }, body: "caller-body",
     });
-    assert.deepEqual(await unrelated.json(), { body: "caller-body" });
+    assert.deepEqual(await unrelated.json(), { ok: true });
+    assert.equal(unrelatedBody, "caller-body");
     const oauth = await fetch(`${base}/oauth/register`, {
       method: "POST", headers: { "content-type": "application/octet-stream" },
       body: "x".repeat(OAUTH_POST_BODY_MAX_BYTES + 1),

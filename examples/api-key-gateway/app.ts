@@ -36,7 +36,9 @@ import {
   headersFromDistinct, isMcpPath, OAUTH_POST_BODY_MAX_BYTES, readHeader as readSecurityHeader,
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
-import { addOAuthFormContentTypeParser, registerOAuthRoutes } from "../../src/adapters/fastify.ts";
+import {
+  addOAuthFormContentTypeParser, FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, registerOAuthRoutes,
+} from "../../src/adapters/fastify.ts";
 import {
   assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
 } from "../../src/deployment-guard.ts";
@@ -131,10 +133,15 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
     const pairing = createConsolePairingIdentity({ ...opts.pairing, audit });
     await app.register(async (pairingApp) => {
       addOAuthFormContentTypeParser(pairingApp);
-      pairingApp.get("/oauth/authorize", async (req, reply) => {
+      pairingApp.get("/oauth/authorize", {
+        config: { rateLimit: FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT },
+      }, async (req, reply) => {
         await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "GET", toNorm(req as never)));
       });
-      pairingApp.post("/oauth/authorize", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => {
+      pairingApp.post("/oauth/authorize", {
+        bodyLimit: OAUTH_POST_BODY_MAX_BYTES,
+        config: { rateLimit: FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT },
+      }, async (req, reply) => {
         await sendNorm(reply, await handlePairingAuthorize({ bridge, pairing }, "POST", toNorm(req as never)));
       });
     });

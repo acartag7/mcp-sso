@@ -40,6 +40,22 @@ const PAIRING_HEADERS: Record<string, string> = {
   "referrer-policy": "no-referrer",
 };
 
+export const PAIRING_AUTHORIZE_WINDOW_MS = 60_000;
+export const PAIRING_AUTHORIZE_MAX_REQUESTS = 60;
+const pairingAuthorizeWindows = new WeakMap<ConsolePairingIdentity, { startedAtMs: number; requests: number }>();
+
+function pairingAuthorizeRateLimitAllows(pairing: ConsolePairingIdentity): boolean {
+  const now = Date.now();
+  const window = pairingAuthorizeWindows.get(pairing);
+  if (!window || now - window.startedAtMs >= PAIRING_AUTHORIZE_WINDOW_MS) {
+    pairingAuthorizeWindows.set(pairing, { startedAtMs: now, requests: 1 });
+    return true;
+  }
+  if (now < window.startedAtMs || window.requests >= PAIRING_AUTHORIZE_MAX_REQUESTS) return false;
+  window.requests += 1;
+  return true;
+}
+
 export interface PairingAuthorizeDeps {
   bridge: Bridge;
   pairing: ConsolePairingIdentity;
@@ -51,6 +67,9 @@ export async function handlePairingAuthorize(
   req: NormRequest,
 ): Promise<NormResponse> {
   const { bridge, pairing } = deps;
+  if (!pairingAuthorizeRateLimitAllows(pairing)) {
+    return oauthErrorResponse(bridge.config, new OAuthError("temporarily_unavailable", "Too many requests", 429));
+  }
   if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0) {
     return oauthErrorResponse(bridge.config, new OAuthError("invalid_request", "duplicate request parameters"));
   }

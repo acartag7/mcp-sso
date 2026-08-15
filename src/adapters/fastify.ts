@@ -14,8 +14,17 @@ import {
   type NormRequest, type NormResponse,
 } from "./http.ts";
 import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
+import {
+  PAIRING_AUTHORIZE_MAX_REQUESTS, PAIRING_AUTHORIZE_WINDOW_MS,
+} from "./pairing-flow.ts";
 
 export { OAUTH_POST_BODY_MAX_BYTES };
+
+/** Route metadata matching handlePairingAuthorize's mandatory hard gate. */
+export const FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT = Object.freeze({
+  max: PAIRING_AUTHORIZE_MAX_REQUESTS,
+  timeWindow: PAIRING_AUTHORIZE_WINDOW_MS,
+});
 
 export interface FastifyAdapterOptions {
   bridge: Bridge;

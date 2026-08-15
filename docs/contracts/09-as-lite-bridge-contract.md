@@ -362,8 +362,11 @@ the response. Wiring rules:
   `Bridge.resolveIdentity`, which checks
   `RateLimitPort("authorize:<ip>")` before `IdentityPort.verify`, its audit, or
   `prepare`. Limiter denial is a direct 429 with no redirect; limiter failure
-  remains fail-open (§6.7). Upstream redirect, console pairing, and CIMD retain
-  their independent budgets rather than receiving a second adapter-level check.
+  remains fail-open (§6.7). Upstream redirect and CIMD retain their independent
+  budgets rather than receiving a second adapter-level check. Console pairing
+  applies §17.5's mandatory shared 60-request/60-second in-process authorize
+  gate before request-specific pairing work, plus its existing code-attempt
+  controls.
 - **OAuth POST body bound (all framework adapters):** before request-body parsing
   or any Bridge invocation, Fastify, Express, and Hono apply the same fixed
   **262,144-byte (256 KiB)** raw-body budget to `/oauth/register`,
@@ -416,7 +419,10 @@ the response. Wiring rules:
 - **Express OAuth POST body enforcement:** the returned Express router installs
   `express.json` and `express.urlencoded` with the shared limit, followed by a
   bounded raw fallback for every otherwise unmatched content type, scoped to
-  the four exact OAuth POST paths before their handlers. These parsers do not
+  the four built-in OAuth POST paths plus caller-owned POST `/oauth/authorize`
+  before their handlers. The pairing path is parser-only when `skipAuthorize`
+  is used: after bounded parsing it falls through to the caller's handler.
+  These parsers do not
   consume unrelated routes mounted after the returned router. The fallback
   enforces the raw budget; it does not interpret an
   unsupported media type as OAuth fields. The router therefore admits the bounded
@@ -427,7 +433,9 @@ the response. Wiring rules:
   Malformed JSON/form input is a direct sanitized 400 instead of Express's
   default development stack response/logging path. An application that mounts a
   different parser earlier on the same OAuth paths owns that parser's behavior;
-  parsers for unrelated routes should be path-scoped.
+  parsers for unrelated routes should be path-scoped. The `mcp-sso/express`
+  subpath retains `EXPRESS_OAUTH_BODY_MAX_BYTES` as an exact compatibility alias
+  of the shared `OAUTH_POST_BODY_MAX_BYTES` value.
 - **Hono over-cap response and ordering:** a body-bound rejection is direct HTTP
   **413** with the fixed plain-text body `Payload Too Large`; it contains no raw
   request material, has no `Location`, and reveals nothing about token

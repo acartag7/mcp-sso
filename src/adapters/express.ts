@@ -14,8 +14,12 @@ import {
 import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import { OAuthError } from "../errors.ts";
 
+/** Published compatibility name; the shared value is authoritative (§9.6). */
+export const EXPRESS_OAUTH_BODY_MAX_BYTES = OAUTH_POST_BODY_MAX_BYTES;
+
 const OAUTH_POST_PATHS = [
   "/oauth/register",
+  "/oauth/authorize",
   "/oauth/authorize/approve",
   "/oauth/token",
   "/oauth/revoke",
