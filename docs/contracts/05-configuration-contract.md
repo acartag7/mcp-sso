@@ -144,7 +144,11 @@ interface BridgeConfig {
   array is valid because the exact `originOf(issuer)` is always admitted by the
   request-time gate. Runnable example and generated-starter defaults use that
   derived issuer origin rather than copying the raw issuer URL, which may carry
-  a path or trailing slash and therefore is not an Origin value.
+  a path or trailing slash and therefore is not an Origin value. Their
+  `OAUTH_ALLOWED_ORIGINS` parser preserves every comma-separated raw spelling —
+  it never trims whitespace or drops an empty member before this grammar runs.
+  The one explicit exception is a wholly empty environment value, which maps to
+  the supported empty array rather than one empty entry.
   `validateAllowedOrigins(value)` exposes this exact array snapshot + grammar
   check for composition roots that must reject env-derived origin policy before
   signing material or other state exists. It returns the same frozen string
