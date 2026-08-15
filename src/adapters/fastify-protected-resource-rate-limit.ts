@@ -82,10 +82,13 @@ function unavailable(): Error & { statusCode: number } {
 }
 
 function checkedCounter(result: { current: number; ttl: number } | undefined): { current: number; ttl: number } | undefined {
+  if (!result) return undefined;
   try {
-    if (!result || !Number.isSafeInteger(result.current) || !Number.isSafeInteger(result.ttl)
-      || result.current < 1 || result.ttl < 0) return undefined;
-    return { current: result.current, ttl: result.ttl };
+    const current = result.current;
+    const ttl = result.ttl;
+    if (!Number.isSafeInteger(current) || !Number.isSafeInteger(ttl)
+      || current < 1 || ttl < 0) return undefined;
+    return { current, ttl };
   } catch {
     return undefined;
   }

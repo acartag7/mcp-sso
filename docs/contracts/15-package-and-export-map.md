@@ -93,11 +93,14 @@ each method-specific route under the fixed `mcp-protected-resource` id; the
 finite in-memory default is per process and per method route. A supplied custom store is wrapped so
 synchronous throws, callback errors, duplicate callbacks, and malformed
 counter results become one fixed 503 error before the route handler. A valid
-increment result has a positive safe-integer `current` (the current request is
-already counted) and a non-negative safe-integer `ttl`; zero, negative,
-fractional, unsafe, wrongly typed, missing, or accessor-throwing values reject,
-never a
-fail-open request or a raw backend-error leak. A normal budget denial is 429.
+increment result is observed once: the wrapper snapshots `current` and `ttl`
+inside the fixed-error boundary, never re-reads either field, and validates and
+returns only those snapshots. The snapshotted `current` is a positive safe
+integer (the current request is already counted) and `ttl` is a non-negative
+safe integer. Post-snapshot accessor changes cannot alter the decision or
+returned result. Zero, negative, fractional, unsafe, wrongly typed, missing, or
+accessor-throwing values reject, never a fail-open request or a raw backend-error
+leak. A normal budget denial is 429.
 The two runnable example factories take an optional `trustedProxies` array and
 the production env compositions parse `MCP_SSO_TRUSTED_PROXIES` into that same
 shape. Absence is explicit Fastify `trustProxy: false`: an untrusted socket
