@@ -189,7 +189,7 @@ async function pairingToken(app: { inject(args: unknown): Promise<unknown> }, ca
     process.stderr.write = originalWrite;
   }
 
-  const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: pairingNonce }).toString() }) as unknown as InjectResult;
+  const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded", origin: "http://localhost:3000" }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: pairingNonce }).toString() }) as unknown as InjectResult;
   captured.push(consentPage.body);
   assert.equal(consentPage.statusCode, 200);
   const consentToken = extractValue(consentPage.body, "consent_token");

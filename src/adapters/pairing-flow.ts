@@ -14,10 +14,11 @@
 
 import type { Bridge } from "./bridge.ts";
 import { asOAuth } from "./bridge-internals.ts";
+import { assertApproveOrigin } from "../authorize-internals.ts";
 import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
 import { OAuthError } from "../errors.ts";
-import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
-import { formField, oauthErrorResponse, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
+import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, PAIRING_BODY_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
+import { formField, headerString, oauthErrorResponse, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
 
 // Pairing keeps its page-specific `form-action`: Continue terminates on this
@@ -52,8 +53,13 @@ export async function handlePairingAuthorize(
   req: NormRequest,
 ): Promise<NormResponse> {
   const { bridge, pairing } = deps;
-  if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0) {
+  if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0
+    || (method === "POST" && findDuplicatedKeys(req.body, PAIRING_BODY_SINGLETON_PARAM_KEYS).length > 0)) {
     return oauthErrorResponse(bridge.config, new OAuthError("invalid_request", "duplicate request parameters"));
+  }
+  if (method === "POST") {
+    try { assertApproveOrigin(bridge.config, headerString(req.headers, "origin")); }
+    catch (error) { return oauthErrorResponse(bridge.config, asOAuth(error)); }
   }
   try {
     await bridge.guardPairingAuthorize(req.ip);

@@ -112,7 +112,8 @@ async function main(): Promise<void> {
   const bridge = new Bridge({ config, store, clock, audit });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
   const toNorm = (req: FastifyRequest): NormRequest => ({
-    query: req.query as NormRequest["query"], body: req.body, headers: req.headers as NormRequest["headers"], ip: req.ip,
+    query: req.query as NormRequest["query"], body: req.body, ip: req.ip,
+    headers: Object.fromEntries(Object.entries(req.raw.headersDistinct ?? {}).flatMap(([k, v]) => !v?.length ? [] : [[k.toLowerCase(), v.length === 1 ? v[0]! : [...v]]])),
   });
   const sendNorm = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
     for (const [key, value] of Object.entries(res.headers)) reply.header(key, value);

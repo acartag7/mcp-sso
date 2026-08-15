@@ -10,7 +10,7 @@ import { OAuthError } from "../errors.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, headersFromDistinct, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
-import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
+import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 
 export interface FastifyAdapterOptions {
   bridge: Bridge;
@@ -33,7 +33,7 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
 
   app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_req, body, done) => {
-    done(null, Object.fromEntries(new URLSearchParams(String(body))));
+    done(null, formOccurrencesFromUrlEncoded(String(body)));
   });
 
   const toNorm = (req: FastifyRequest): NormRequest => ({

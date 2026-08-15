@@ -844,7 +844,7 @@ test("integration — zero-setup branch: full flow through the entry (pairing co
       }
 
       // POST the pasted code + nonce → consent page.
-      const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: pairingNonce }).toString() });
+      const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: pairingNonce }).toString() });
       assert.equal(consentPage.statusCode, 200);
       assert.match(consentPage.body, /Authorize access/);
       const consentToken = extractValue(consentPage.body, "consent_token");
@@ -1069,6 +1069,52 @@ test("integration — runnable example rejects duplicate /mcp Origin occurrences
       assert.equal(response.status, 403, "raw duplicate fields reject even when their coalesced string is allowlisted");
       assert.doesNotMatch(response.headers["www-authenticate"] ?? "", /resource_metadata=/, "bearer authorization did not run");
     }
+  } finally {
+    await built.app.close();
+    await built.close();
+  }
+});
+
+test("integration — pairing POST rejects last-wins redirect_uri and foreign Origin before consent", async () => {
+  const issuer = "http://127.0.0.1:9";
+  const good = "http://127.0.0.1/cb";
+  const evil = "https://evil.test/cb";
+  const config = createBridgeConfig({
+    issuer, resource: `${issuer}/mcp`,
+    consentSigningSecret: "x".repeat(40), signingPrivateJwk: jwk(),
+    redirectAllowlist: [good, evil], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
+    allowedOrigins: [issuer], dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 600,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  const built = await buildApp({
+    config, pairing: { output: { write() {} } }, acknowledgeUnsafeStatelessDefaults: true,
+  });
+  await built.app.listen({ port: 0, host: "127.0.0.1" });
+  const port = (built.app.server.address() as AddressInfo).port;
+  try {
+    const challenge = pkceChallenge("v-12345678901234567890123456789012345678");
+    const lastWins = new URLSearchParams([
+      ["response_type", "code"], ["client_id", "c"],
+      ["code_challenge", challenge], ["code_challenge_method", "S256"],
+      ["scope", "mcp:read"], ["redirect_uri", good], ["redirect_uri", evil],
+    ]).toString();
+    const dup = await rawOccurrenceCall(
+      port, "POST", "/oauth/authorize",
+      [["Content-Type", "application/x-www-form-urlencoded"], ["Origin", issuer]],
+      lastWins,
+    );
+    const csrf = await rawOccurrenceCall(
+      port, "POST", "/oauth/authorize",
+      [["Content-Type", "application/x-www-form-urlencoded"], ["Origin", "https://attacker.test"]],
+      new URLSearchParams({ response_type: "code", client_id: "c", redirect_uri: evil, code_challenge: challenge, code_challenge_method: "S256" }).toString(),
+    );
+    assert.equal(dup.status, 400);
+    assert.match(dup.body, /"error":"invalid_request"/);
+    assert.doesNotMatch(dup.body, /Pair this device|Authorize access/);
+    assert.equal(csrf.status, 403);
+    assert.match(csrf.body, /"error":"invalid_origin"/);
   } finally {
     await built.app.close();
     await built.close();

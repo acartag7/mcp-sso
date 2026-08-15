@@ -120,4 +120,31 @@ export function runAdapterHeaderFlow(
       await client.close?.();
     }
   });
+
+  test(`${name} adapter: duplicate approved form fields reject before last-wins approve`, async () => {
+    const client = await mount(makeBridge(), { async verify() { return { ok: true, identity: { subject: "op" } }; } });
+    try {
+      const registered = await client.postJson("/oauth/register", { redirect_uris: [REDIRECT] });
+      const clientId = JSON.parse(registered.body).client_id as string;
+      const authorize = await client.get(`/oauth/authorize?${new URLSearchParams({
+        response_type: "code", client_id: clientId, redirect_uri: REDIRECT,
+        code_challenge: "A".repeat(43), code_challenge_method: "S256",
+      })}`, { [IDENTITY_HEADER]: STUB_TOKEN });
+      const consentToken = /name="consent_token" value="([^"]+)"/.exec(authorize.body)?.[1];
+      assert.ok(consentToken);
+      const body = new URLSearchParams([
+        ["consent_token", consentToken],
+        ["approved", "false"],
+        ["approved", "true"],
+      ]).toString();
+      const response = await client.requestOccurrences("POST", "/oauth/authorize/approve",
+        [["Content-Type", "application/x-www-form-urlencoded"], ["Origin", "https://auth.test"]], body);
+      assert.equal(response.status, 400);
+      assert.equal(response.headers.location, undefined);
+      assert.match(response.body, /"error":"invalid_request"/);
+      assert.doesNotMatch(response.body, /code=/);
+    } finally {
+      await client.close?.();
+    }
+  });
 }

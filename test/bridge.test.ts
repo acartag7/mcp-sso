@@ -342,6 +342,34 @@ test("bridge: approve limiter denies before approval input or consent-state work
   assert.equal(approveCalls, 0);
 });
 
+test("bridge: duplicate approved or consent_token is invalid_request, not last-wins approve", async () => {
+  const ctx = setup();
+  const verifier = "v-12345678901234567890123456789012345678";
+  const page = await ctx.bridge.handleAuthorize(req({ query: {
+    response_type: "code", client_id: "c", redirect_uri: REDIRECT,
+    code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", state: "dup",
+  } }), { subject: SUBJECT });
+  const consentToken = extractConsentToken(String(page.body));
+  for (const body of [
+    { consent_token: consentToken, approved: ["false", "true"] },
+    { consent_token: [consentToken, "other"], approved: "true" },
+  ]) {
+    const res = await ctx.bridge.handleApprove(req({
+      body, headers: { origin: "https://auth.test" },
+    }));
+    assert.equal(res.status, 400);
+    assert.equal((res.body as { error: string }).error, "invalid_request");
+    assert.equal(res.redirect, undefined);
+    assert.equal(res.headers.location, undefined);
+  }
+  const ok = await ctx.bridge.handleApprove(req({
+    body: { consent_token: consentToken, approved: "true" },
+    headers: { origin: "https://auth.test" },
+  }));
+  assert.equal(ok.status, 302);
+  assert.ok(new URL(ok.headers.location as string).searchParams.get("code"));
+});
+
 test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Redis outage must not lock out auth)", async () => {
   const boom: RateLimitPort = { async check(): Promise<boolean> { throw new Error("redis down"); } };
   const ctx = setup(boom);
@@ -422,6 +450,7 @@ test("bridge: successful pairing authorize charges authorize exactly once", asyn
         code_challenge: pkceChallenge(verifier), code_challenge_method: "S256",
       },
       body: { pairing_code: "BBBBBBBBBBBB", pairing_nonce: "nonce" },
+      headers: { origin: "https://auth.test" },
     }),
   );
   assert.equal(response.status, 200);
@@ -443,6 +472,36 @@ test("bridge: pairing duplicate-query rejection precedes its authorize charge", 
     req({ query: { redirect_uri: [REDIRECT, "https://other.test/callback"] } }),
   );
   assert.equal(response.status, 400);
+  assert.deepEqual(keys, []);
+  assert.equal(beginCalls, 0);
+});
+
+test("bridge: pairing POST body duplicate and foreign Origin precede the authorize charge", async () => {
+  const keys: string[] = [];
+  const ctx = setup({ async check(key) { keys.push(key); return true; } });
+  let beginCalls = 0;
+  const pairing: ConsolePairingIdentity = {
+    async beginSession() { beginCalls += 1; return { nonce: "unused", expiresAt: new Date(NOW_MS + 60_000).toISOString() }; },
+    async verify() { throw new Error("must not verify"); },
+  };
+  const dup = await handlePairingAuthorize(
+    { bridge: ctx.bridge, pairing },
+    "POST",
+    req({
+      headers: { origin: "https://auth.test" },
+      body: { redirect_uri: [REDIRECT, "https://evil.test/cb"], pairing_code: "BBBBBBBBBBBB", pairing_nonce: "n" },
+    }),
+  );
+  const foreign = await handlePairingAuthorize(
+    { bridge: ctx.bridge, pairing },
+    "POST",
+    req({
+      headers: { origin: "https://attacker.test" },
+      body: { pairing_code: "BBBBBBBBBBBB", pairing_nonce: "n" },
+    }),
+  );
+  assert.equal(dup.status, 400);
+  assert.equal(foreign.status, 403);
   assert.deepEqual(keys, []);
   assert.equal(beginCalls, 0);
 });

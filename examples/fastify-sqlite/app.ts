@@ -59,6 +59,7 @@ import {
   headersFromDistinct, isMcpPath, readHeader,
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
+import { queryOccurrencesFromUrl } from "../../src/adapters/authorize-params.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 import {
   registerProtectedResourceRateLimit,
@@ -117,10 +118,10 @@ export async function buildApp(opts: ExampleOptions) {
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
 
-  const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string }): NormRequest => ({
-    query: req.query as NormRequest["query"],
+  const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string; raw?: { url?: string; headersDistinct?: Record<string, string[] | undefined> } }): NormRequest => ({
+    query: req.raw?.url !== undefined ? queryOccurrencesFromUrl(req.raw.url) : req.query as NormRequest["query"],
     body: req.body,
-    headers: req.headers as NormRequest["headers"],
+    headers: headersFromDistinct(req.raw?.headersDistinct, req.headers as NormRequest["headers"]),
     ip: req.ip,
   });
   const sendNorm = async (reply: FastifyReply, res: NormResponse): Promise<void> => {

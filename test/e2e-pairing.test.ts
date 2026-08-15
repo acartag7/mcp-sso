@@ -131,7 +131,7 @@ test("S1b.8: pairing flow (buildApp pairing mode) — code → consent → token
     // 2. POST /oauth/authorize with the pasted code → consent page.
     const consentPage = await app.inject({
       method: "POST", url: "/oauth/authorize",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN },
       payload: new URLSearchParams({
         ...Object.fromEntries(oauthQuery), pairing_code: code, pairing_nonce: pairingNonce,
       }).toString(),
@@ -212,7 +212,7 @@ test("S1b: a wrong pairing code re-renders the pairing page (not a 401, not the 
 
     const wrong = await app.inject({
       method: "POST", url: "/oauth/authorize",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN },
       payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: "BBBBBBBBBBBB", pairing_nonce: nonce }).toString(),
     });
     assert.equal(wrong.statusCode, 200);
@@ -295,7 +295,7 @@ test("S1b.8 (zero-config boot): quickstart secrets (NO env config) drive the pai
     const page = await app.inject({ method: "GET", url: `/oauth/authorize?${q}` });
     const nonce = extractValue(page.body, "pairing_nonce");
     const code = extractCode(outputChunks.join(""));
-    const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: nonce }).toString() });
+    const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: nonce }).toString() });
     const consentToken = extractValue(consentPage.body, "consent_token");
     const approve = await app.inject({ method: "POST", url: "/oauth/authorize/approve", headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN }, payload: new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString() });
     const authCode = new URL(approve.headers.location as string).searchParams.get("code");

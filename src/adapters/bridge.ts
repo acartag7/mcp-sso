@@ -14,8 +14,8 @@ import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "..
 import { OAuthError } from "../errors.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
 import { renderConsentPage } from "./consent-page.ts";
-import { OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
-import { asOAuth, assertUnambiguousAuthorization, consentCookie, hasBasicAuthorization, parseApproved, resolveIdentityWithAudit } from "./bridge-internals.ts";
+import { APPROVE_SINGLETON_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
+import { asOAuth, assertUnambiguousAuthorization, consentCookie, hasBasicAuthorization, parseApproved, requireSingletonForm, resolveIdentityWithAudit } from "./bridge-internals.ts";
 export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
@@ -180,6 +180,7 @@ export class Bridge {
     try {
       await this.guard("approve", req.ip);
       const body = formObject(req.body);
+      requireSingletonForm(body, APPROVE_SINGLETON_PARAM_KEYS);
       const consentToken = formField(body, "consent_token") ?? consentCookie(req);
       const result = await this.auth.approve({
         consentToken,

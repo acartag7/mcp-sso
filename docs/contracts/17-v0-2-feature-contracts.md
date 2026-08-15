@@ -1569,20 +1569,30 @@ gate replaces no-gate).
   as `Bridge.handleAuthorize` and §17.11 upstream authorize. If any of
   `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
   `code_challenge_method`, `scope`, or `state` has more than one nonempty
-  occurrence in the normalized authorize query, it returns direct 400 `invalid_request` with
-  no `Location`. This check runs before selecting any OAuth value and before
-  `beginSession`, pairing-code output, `verify`, hidden-field rendering,
-  `bridge.handleAuthorize`, consent preparation/rendering, store mutation, or
-  success audit. The generated pairing form round-trips one snapshotted value
-  per key; duplicate form-body handling remains an adapter-body contract, not a
-  guarantee of this query-occurrence guard. Single-valued GET and POST pairing
-  flows are unchanged.
+  occurrence in the normalized authorize **query**, or — on POST — in the
+  normalized authorize **form body**, it returns direct 400 `invalid_request`
+  with no `Location`. POST also rejects a repeated `pairing_code` or
+  `pairing_nonce`. These checks run before selecting any OAuth or pairing-form
+  value and before `beginSession`, pairing-code output, `verify`, hidden-field
+  rendering, `bridge.handleAuthorize`, consent preparation/rendering, store
+  mutation, success audit, or the `authorize:<ip>` charge. The generated pairing
+  form still round-trips one snapshotted value per key. Fastify and Hono
+  reconstruct form-body occurrences instead of first/last-wins collapsing them
+  (§9.6); Express already preserves arrays. A caller that pre-selects one
+  occurrence before `handlePairingAuthorize` has erased the evidence.
+- **Pairing POST Origin:** every POST — code submission or a no-code re-render —
+  requires exactly one primitive `Origin` equal to the issuer origin or an
+  `allowedOrigins` member, using the same `assertApproveOrigin` gate as §9.3
+  Approve. Missing, foreign, array-valued, case-duplicated, or (on Fetch/Hono)
+  comma-coalesced `Origin` is direct 403 `invalid_origin` with no pairing
+  session, verification, hidden-field rewrite, or `authorize:<ip>` charge. GET
+  pairing does not require `Origin` (a first navigation may omit it).
 - **Rate limiting:** the attempt cap is built-in and in-process — it cannot be
   misconfigured away. In addition, `handlePairingAuthorize` charges the
   Bridge-owned `RateLimitPort` hook (`authorize:<ip>`) once per GET or POST after
-  the duplicate-query occurrence check and before OAuth value selection,
-  `beginSession`, code output, `verify`, consent preparation, store work, or
-  audit. A denial is a direct 429 and does not print, validate, or consume a
+  the duplicate-query, duplicate-body, and POST Origin checks and before OAuth
+  value selection, `beginSession`, code output, `verify`, consent preparation,
+  store work, or audit. A denial is a direct 429 and does not print, validate, or consume a
   pairing code. Pairing does not call `Bridge.resolveIdentity`; after successful
   code verification it calls `Bridge.handleAuthorize` without a second
   `authorize:<ip>` charge. The identity port's in-process attempt cap and its

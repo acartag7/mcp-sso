@@ -287,7 +287,7 @@ test("bin init (spawn): registration restart → pairing → token → SDK callT
 
       // POST the code → consent page; approve → auth code; exchange → access token
       const consentPage = await fetchBounded(`${origin}/oauth/authorize`, {
-        method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+        method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin },
         body: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: nonce }).toString(),
       });
       assert.equal(consentPage.status, 200, "code accepted → consent page");

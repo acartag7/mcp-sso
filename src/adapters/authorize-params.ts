@@ -10,6 +10,14 @@ export const OAUTH_PARAM_KEYS = [
  * permits `resource` to repeat, so unsupported resource sets use invalid_target. */
 export const OAUTH_SINGLETON_PARAM_KEYS = OAUTH_PARAM_KEYS.filter((key) => key !== "resource");
 
+/** Approve form fields that must occur at most once after valueless omissions. */
+export const APPROVE_SINGLETON_PARAM_KEYS = ["consent_token", "approved"] as const;
+
+/** Pairing POST body singletons: authorize params plus the pairing session fields. */
+export const PAIRING_BODY_SINGLETON_PARAM_KEYS = [
+  ...OAUTH_SINGLETON_PARAM_KEYS, "pairing_code", "pairing_nonce",
+] as const;
+
 /** RFC 6749 §3.1 duplicate-param check after valueless occurrences are omitted. */
 export function findDuplicatedKeys(input: unknown, keys: readonly string[]): string[] {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return [];
@@ -35,12 +43,21 @@ export function hasDuplicatedAuthorizeParams(query: unknown): boolean {
 
 /** Reconstruct raw query occurrences independently of framework parser policy. */
 export function queryOccurrencesFromUrl(rawUrl: string): Record<string, string | string[]> {
-  const query = Object.create(null) as Record<string, string | string[]>;
-  for (const [key, value] of new URL(rawUrl, "http://localhost").searchParams.entries()) {
-    const existing = query[key];
-    if (existing === undefined) query[key] = value;
+  return collectOccurrences(new URL(rawUrl, "http://localhost").searchParams);
+}
+
+/** Reconstruct URL-encoded form occurrences (same rules as the query snapshot). */
+export function formOccurrencesFromUrlEncoded(raw: string): Record<string, string | string[]> {
+  return collectOccurrences(new URLSearchParams(raw));
+}
+
+function collectOccurrences(params: URLSearchParams): Record<string, string | string[]> {
+  const out = Object.create(null) as Record<string, string | string[]>;
+  for (const [key, value] of params) {
+    const existing = out[key];
+    if (existing === undefined) out[key] = value;
     else if (Array.isArray(existing)) existing.push(value);
-    else query[key] = [existing, value];
+    else out[key] = [existing, value];
   }
-  return query;
+  return out;
 }

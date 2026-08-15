@@ -467,7 +467,8 @@ already-revoked token retains RFC 7009's HTTP 200 existence-hiding behavior.
 Upstream redirect and CIMD keep their separate `upstream:<ip>` and `cimd:<ip>`
 budgets. The console-pairing orchestrator calls
 `Bridge.guardPairingAuthorize(ip)` to charge the `authorize:<ip>` guard once per
-GET or POST authorize request, after the duplicate-query occurrence check and
+GET or POST authorize request, after the duplicate-query occurrence check, the
+POST body-occurrence check, and the POST Origin gate, and
 before OAuth value selection, pairing
 session/code work, verification, consent preparation, store work, or audit. It
 does not call `resolveIdentity`, and

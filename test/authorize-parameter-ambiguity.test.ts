@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 import type { JWK } from "jose";
-import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, queryOccurrencesFromUrl } from "../src/adapters/authorize-params.ts";
+import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, formOccurrencesFromUrlEncoded, queryOccurrencesFromUrl } from "../src/adapters/authorize-params.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import type { NormRequest } from "../src/adapters/http.ts";
 import { handlePairingAuthorize } from "../src/adapters/pairing-flow.ts";
@@ -96,8 +96,12 @@ function validParams(): Record<(typeof OAUTH_PARAM_KEYS)[number], string> {
   };
 }
 
-function request(query: NormRequest["query"], body: unknown = undefined): NormRequest {
-  return { query, body, headers: {}, ip: "203.0.113.9" };
+function request(query: NormRequest["query"], body: unknown = undefined, headers: NormRequest["headers"] = {}): NormRequest {
+  return { query, body, headers, ip: "203.0.113.9" };
+}
+
+function pairingPost(query: NormRequest["query"], body: unknown): NormRequest {
+  return request(query, body, { origin: ISSUER });
 }
 
 function assertDirectDuplicate(response: Awaited<ReturnType<Bridge["handleAuthorize"]>>, attacker?: string): void {
@@ -135,6 +139,13 @@ test("raw query snapshots keep inherited names as inert own data", () => {
   assert.equal(Object.getPrototypeOf(query), null);
   assert.deepEqual(query.__proto__, ["first", "third"]);
   assert.equal(query.toString, "second");
+});
+
+test("formOccurrencesFromUrlEncoded preserves repeats without first/last-wins collapse", () => {
+  const body = formOccurrencesFromUrlEncoded("approved=false&approved=true&redirect_uri=https://a.test/cb&redirect_uri=https://b.test/cb");
+  assert.equal(Object.getPrototypeOf(body), null);
+  assert.deepEqual(body.approved, ["false", "true"]);
+  assert.deepEqual(body.redirect_uri, ["https://a.test/cb", "https://b.test/cb"]);
 });
 
 test("Bridge.handleAuthorize maps repeated RFC 8707 resource indicators to invalid_target", async () => {
@@ -207,7 +218,7 @@ test("handlePairingAuthorize preserves repeated resource input for invalid_targe
   const params = validParams();
   const response = await handlePairingAuthorize(
     { bridge: h.bridge, pairing: h.pairing }, "POST",
-    request({ resource: [params.resource, "https://other.test/mcp"] }, {
+    pairingPost({ resource: [params.resource, "https://other.test/mcp"] }, {
       ...params, resource: undefined, pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce",
     }),
   );
@@ -222,7 +233,7 @@ test("handlePairingAuthorize treats valueless resource occurrences as omitted", 
     const h = harness();
     const response = await handlePairingAuthorize(
       { bridge: h.bridge, pairing: h.pairing }, "POST",
-      request({ resource }, {
+      pairingPost({ resource }, {
         ...validParams(), resource: undefined, pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce",
       }),
     );
@@ -243,10 +254,49 @@ test("handlePairingAuthorize preserves adjacent valid single-value GET and POST 
   const postHarness = harness();
   const post = await handlePairingAuthorize(
     { bridge: postHarness.bridge, pairing: postHarness.pairing }, "POST",
-    request({}, { ...validParams(), pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce" }),
+    pairingPost({}, { ...validParams(), pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce" }),
   );
   assert.equal(post.status, 200);
   assert.equal(postHarness.pairing.verifyCalls, 1);
   assert.equal(postHarness.pairing.beginCalls, 0);
   assert.match(String(post.body), /name="consent_token"/);
+});
+
+test("handlePairingAuthorize POST rejects duplicated singleton form keys before session/verify", async (t) => {
+  for (const key of [...OAUTH_SINGLETON_PARAM_KEYS, "pairing_code", "pairing_nonce"] as const) {
+    await t.test(key, async () => {
+      const h = harness();
+      const params = validParams();
+      const first = key === "pairing_code" ? "BBBB-BBBB-BBBB"
+        : key === "pairing_nonce" ? "pairing-nonce"
+        : params[key];
+      const second = key === "redirect_uri" ? ATTACKER_REDIRECT : `attacker-${key}`;
+      const response = await handlePairingAuthorize(
+        { bridge: h.bridge, pairing: h.pairing }, "POST",
+        pairingPost({}, {
+          ...params, pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce",
+          [key]: [first, second],
+        }),
+      );
+      assertDirectDuplicate(response, key === "redirect_uri" ? ATTACKER_REDIRECT : undefined);
+      assert.equal(h.pairing.beginCalls, 0);
+      assert.equal(h.pairing.verifyCalls, 0);
+      assertNoAuthorizeSideEffects(h);
+    });
+  }
+});
+
+test("handlePairingAuthorize POST missing or foreign Origin is direct 403 before pairing work", async () => {
+  const h = harness();
+  const body = { ...validParams(), pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce" };
+  for (const headers of [{}, { origin: "https://evil.test" }, { origin: [ISSUER, "https://evil.test"] }]) {
+    const response = await handlePairingAuthorize(
+      { bridge: h.bridge, pairing: h.pairing }, "POST", request({}, body, headers),
+    );
+    assert.equal(response.status, 403);
+    assert.equal((response.body as { error?: unknown }).error, "invalid_origin");
+    assert.equal(response.redirect, undefined);
+    assert.equal(h.pairing.beginCalls, 0);
+    assert.equal(h.pairing.verifyCalls, 0);
+  }
 });

@@ -11,7 +11,7 @@ import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import { headerString, oauthErrorResponse, type NormRequest, type NormResponse } from "./http.ts";
-import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
+import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import { OAuthError } from "../errors.ts";
 
 export interface HonoAdapterOptions {
@@ -124,7 +124,8 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
     let body: unknown;
     try {
       if (ct.includes("application/json")) body = await c.req.json();
-      else if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) body = await c.req.parseBody();
+      else if (ct.includes("application/x-www-form-urlencoded")) body = formOccurrencesFromUrlEncoded(await c.req.text());
+      else if (ct.includes("multipart/form-data")) body = await c.req.parseBody();
     } catch { body = undefined; }
     const headers: NormRequest["headers"] = {};
     c.req.raw.headers.forEach((value, key) => { headers[key] = value; });
