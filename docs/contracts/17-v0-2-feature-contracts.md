@@ -1581,13 +1581,21 @@ gate replaces no-gate).
   instead of first/last-wins collapsing them (§9.6); Express already preserves
   arrays. A caller that pre-selects one occurrence before
   `handlePairingAuthorize` has erased the evidence.
-  RFC 8707 `resource` is not a singleton: repeated query or form-body
-  indicators are passed through `resourceParam` onto the synthetic authorize
-  query after a successful pairing so distinct values still reach
-  `invalid_target`. `formField` must not drop a body array and let
-  `prepare` default to `config.resource`. Identical nonempty indicators still
-  collapse to one target. The pairing HTML omits the internal unsupported-set
-  sentinel from hidden fields and display.
+  RFC 8707 `resource` is not a singleton: query and form-body indicators
+  are combined through `resourceParam` — either side an unsupported set, or
+  two different single values, is `INVALID_RESOURCE`. That combined value is
+  placed on the synthetic authorize query after a successful pairing so
+  distinct indicators still reach `invalid_target`. A single valid query
+  value must not hide a distinct or repeated body value (or the reverse).
+  `formField` must not drop a body array and let `prepare` default to
+  `config.resource`. Identical nonempty indicators still collapse to one
+  target. Pairing HTML never emits the internal unsupported-set sentinel as
+  a hidden field or visible text. Distinct raw string occurrences are
+  round-tripped as repeated hidden `resource` fields so a later POST (code
+  submission, a no-code re-render, or a wrong-code re-render) still
+  presents the same set. An unsupported resource that cannot be represented
+  as string occurrences is rejected before `beginSession` / pairing HTML
+  and does not default to `config.resource`.
 - **Pairing POST Origin:** every POST — code submission or a no-code re-render —
   requires exactly one primitive `Origin` equal to the issuer origin or an
   `allowedOrigins` member, using the same `assertApproveOrigin` gate as §9.3

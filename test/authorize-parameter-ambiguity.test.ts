@@ -59,13 +59,16 @@ class State extends MemoryStore {
 class Pairing implements ConsolePairingIdentity {
   beginCalls = 0;
   verifyCalls = 0;
+  ok = true;
   async beginSession() {
     this.beginCalls += 1;
     return { nonce: "pairing-nonce", expiresAt: "2026-08-13T12:10:00.000Z" };
   }
   async verify() {
     this.verifyCalls += 1;
-    return { ok: true as const, identity: { subject: "operator" } };
+    return this.ok
+      ? { ok: true as const, identity: { subject: "operator" } }
+      : { ok: false as const, reason: "invalid" };
   }
 }
 
@@ -246,16 +249,96 @@ test("handlePairingAuthorize preserves repeated body resource indicators for inv
   assert.doesNotMatch(String(response.body), /consent_token/);
 });
 
-test("handlePairingAuthorize omits the unsupported-resource sentinel from the pairing page", async () => {
+function hiddenValues(html: string, name: string): string[] {
+  return [...html.matchAll(new RegExp(`<input type="hidden" name="${name}" value="([^"]*)">`, "g"))]
+    .map((match) => match[1]!);
+}
+
+function assertInvalidTarget(response: { status: number; headers: Record<string, string>; body?: unknown }): void {
+  assert.equal(response.status, 302);
+  assert.equal(new URL(response.headers.location as string).searchParams.get("error"), "invalid_target");
+  assert.doesNotMatch(String(response.body), /consent_token/);
+}
+
+test("handlePairingAuthorize round-trips distinct resources through the pairing page", async () => {
   const h = harness();
   const params = validParams();
+  const resources = [params.resource, "https://other.test/mcp"];
+  const page = await handlePairingAuthorize(
+    { bridge: h.bridge, pairing: h.pairing }, "GET", request({ ...params, resource: resources }),
+  );
+  assert.equal(page.status, 200);
+  assert.match(String(page.body), /Pair this device/);
+  assert.doesNotMatch(String(page.body), /invalid-resource/);
+  assert.doesNotMatch(String(page.body), /Authorizing access to/);
+  assert.deepEqual(hiddenValues(String(page.body), "resource"), resources);
+  assert.equal(h.pairing.beginCalls, 1);
+
+  const consent = await handlePairingAuthorize(
+    { bridge: h.bridge, pairing: h.pairing }, "POST",
+    pairingPost({}, {
+      ...params, resource: hiddenValues(String(page.body), "resource"),
+      pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce",
+    }),
+  );
+  assertInvalidTarget(consent);
+  assert.equal(h.pairing.verifyCalls, 1);
+});
+
+test("handlePairingAuthorize wrong-code re-render keeps distinct body resources", async () => {
+  const h = harness();
+  const params = validParams();
+  const resources = [params.resource, "https://other.test/mcp"];
+  h.pairing.ok = false;
   const response = await handlePairingAuthorize(
     { bridge: h.bridge, pairing: h.pairing }, "POST",
-    pairingPost({}, { ...params, resource: [params.resource, "https://other.test/mcp"] }),
+    pairingPost({}, { ...params, resource: resources, pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce" }),
   );
   assert.equal(response.status, 200);
   assert.match(String(response.body), /Pair this device/);
   assert.doesNotMatch(String(response.body), /invalid-resource/);
+  assert.deepEqual(hiddenValues(String(response.body), "resource"), resources);
+});
+
+test("handlePairingAuthorize no-code POST round-trips distinct body resources", async () => {
+  const h = harness();
+  const params = validParams();
+  const resources = [params.resource, "https://other.test/mcp"];
+  const response = await handlePairingAuthorize(
+    { bridge: h.bridge, pairing: h.pairing }, "POST",
+    pairingPost({}, { ...params, resource: resources }),
+  );
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(String(response.body), /invalid-resource/);
+  assert.deepEqual(hiddenValues(String(response.body), "resource"), resources);
+  assert.equal(h.pairing.verifyCalls, 0);
+});
+
+test("handlePairingAuthorize query resource cannot hide a distinct body resource", async () => {
+  const h = harness();
+  const params = validParams();
+  const response = await handlePairingAuthorize(
+    { bridge: h.bridge, pairing: h.pairing }, "POST",
+    pairingPost({ resource: params.resource }, {
+      ...params, resource: "https://other.test/mcp",
+      pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "pairing-nonce",
+    }),
+  );
+  assertInvalidTarget(response);
+  assert.equal(h.pairing.verifyCalls, 1);
+});
+
+test("handlePairingAuthorize rejects a non-string resource before pairing HTML", async () => {
+  const h = harness();
+  const response = await handlePairingAuthorize(
+    { bridge: h.bridge, pairing: h.pairing }, "POST",
+    pairingPost({}, { ...validParams(), resource: { not: "a-string" } }),
+  );
+  assert.equal(response.status, 400);
+  assert.equal((response.body as { error?: unknown }).error, "invalid_target");
+  assert.doesNotMatch(String(response.body), /Pair this device/);
+  assert.doesNotMatch(String(response.body), /consent_token/);
+  assert.equal(h.pairing.beginCalls, 0);
   assert.equal(h.pairing.verifyCalls, 0);
 });
 

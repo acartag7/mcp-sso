@@ -88,6 +88,7 @@ export async function handlePairingAuthorize(
   const gathered = gatherOAuthParams(req);
   const oauthParams = gathered.page;
   const submittedCode = method === "POST" ? formField(req.body, "pairing_code") : undefined;
+  const lostInvalidResource = gathered.query.resource === INVALID_RESOURCE && oauthParams.resource === undefined;
 
   if (submittedCode) {
     const nonce = formField(req.body, "pairing_nonce") ?? "";
@@ -102,6 +103,7 @@ export async function handlePairingAuthorize(
       };
       return bridge.handleAuthorize(synthetic, { subject: result.identity.subject, allowedScopes: result.identity.allowedScopes });
     }
+    if (lostInvalidResource) return lostResourceResponse(bridge);
     // Failure: the code may be invalidated (expiry / attempts exhausted), so
     // beginSession() reprints a fresh one when needed; the form round-trips so
     // the operator can retry without losing the OAuth context.
@@ -109,6 +111,7 @@ export async function handlePairingAuthorize(
     return pairingPage(session, oauthParams, "Invalid or expired pairing code — check the server console and try again.");
   }
 
+  if (lostInvalidResource) return lostResourceResponse(bridge);
   // Initial render. beginSession() generates + prints the code on first need and
   // reuses the live one on repeat visits (one active code per process).
   const session = await pairing.beginSession();
@@ -120,21 +123,52 @@ function formMember(body: unknown, name: string): unknown {
   return Object.hasOwn(body, name) ? (body as Record<string, unknown>)[name] : undefined;
 }
 
-function gatherOAuthParams(req: NormRequest): { page: Record<string, string>; query: Record<string, string> } {
-  const page: Record<string, string> = {};
+function resourceOccurrences(value: unknown): string[] {
+  if (typeof value === "string") return value.length > 0 ? [value] : [];
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+function combinedResource(queryValue: unknown, bodyValue: unknown): string | undefined {
+  const query = resourceParam(queryValue);
+  const body = resourceParam(bodyValue);
+  if (query === undefined) return body;
+  if (body === undefined) return query;
+  if (query === INVALID_RESOURCE || body === INVALID_RESOURCE || query !== body) return INVALID_RESOURCE;
+  return query;
+}
+
+function gatherOAuthParams(req: NormRequest): {
+  page: Record<string, string | string[]>;
+  query: Record<string, string>;
+} {
+  const page: Record<string, string | string[]> = {};
   for (const key of OAUTH_PARAM_KEYS) {
     if (key === "resource") continue;
     const v = queryString(req.query, key) ?? formField(req.body, key);
     if (typeof v === "string") page[key] = v;
   }
-  const resource = resourceParam(req.query.resource) ?? resourceParam(formMember(req.body, "resource"));
-  if (resource !== undefined && resource !== INVALID_RESOURCE) page.resource = resource;
-  return { page, query: resource === undefined ? page : { ...page, resource } };
+  const queryValue = req.query.resource;
+  const bodyValue = formMember(req.body, "resource");
+  const resource = combinedResource(queryValue, bodyValue);
+  const raw = [...resourceOccurrences(queryValue), ...resourceOccurrences(bodyValue)];
+  if (raw.length === 1) page.resource = raw[0]!;
+  else if (raw.length > 1) page.resource = raw;
+  const query: Record<string, string> = {};
+  for (const [key, value] of Object.entries(page)) {
+    if (key !== "resource" && typeof value === "string") query[key] = value;
+  }
+  if (resource !== undefined) query.resource = resource;
+  return { page, query };
+}
+
+function lostResourceResponse(bridge: Bridge): NormResponse {
+  return oauthErrorResponse(bridge.config, new OAuthError("invalid_target", "Unknown OAuth resource"));
 }
 
 function pairingPage(
   session: { nonce: string; expiresAt: string },
-  oauthParams: Record<string, string>,
+  oauthParams: Record<string, string | string[]>,
   error?: string,
 ): NormResponse {
   return {
