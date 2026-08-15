@@ -447,8 +447,11 @@ the response. Wiring rules:
   types, and any application parser that delegates raw accounting to Fastify. The
   catch-all enforces the byte boundary without turning unsupported bytes into
   OAuth fields. The adapter registers its parsers and routes in an encapsulated
-  Fastify plugin scope, so the catch-all cannot replace a caller-owned parser on
-  unrelated routes. When `skipAuthorize` leaves POST `/oauth/authorize` to the
+  Fastify plugin scope. That scope removes any inherited exact URL-encoded
+  parser and installs the occurrence-preserving parser for the four built-in
+  POST routes; the parent parser and unrelated routes remain unchanged. This is
+  required because an inherited first/last-wins parser would erase duplicate
+  evidence before `NormRequest.formBody` is built. When `skipAuthorize` leaves POST `/oauth/authorize` to the
   caller, `registerOAuthRoutes` preserves the existing automatic URL-encoded
   form behavior in the caller's scope: it installs the shared form parser when
   that scope has no exact form parser — Fastify exposes no working wildcard
