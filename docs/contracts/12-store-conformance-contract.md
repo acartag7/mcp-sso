@@ -279,6 +279,34 @@ other undersized shape fails boot rather than being silently reinterpreted.
     one transaction, and MySQL keeps both under `SELECT ... FOR UPDATE` until the
     transaction commits.
 
+12. **Self-running expiry collection:** a live store MUST arrange periodic calls
+    to its own `sweepExpired` without requiring a Bridge, adapter, example, or
+    deployer timer. `MemoryStore`, `SqliteStore`, and `MysqlStore` each start the
+    shared reference scheduler at construction. Its first run is delayed by the
+    fixed five-minute `STORE_EXPIRY_SWEEP_INTERVAL_MS`; each later run is
+    scheduled only after the prior sweep settles, so one store instance never
+    overlaps sweeps. The timer is `unref()`'d and cannot keep an otherwise-idle
+    process alive. Each run derives one canonical UTC ISO timestamp from the
+    system clock and invokes the existing conformance boundary; it does not add
+    a second deletion policy. The `< now` predicates in invariants 2 and 5
+    remain authoritative, including the 0.3.3 consent tombstone's signed `exp`
+    and the exact-expiry retention boundary.
+
+    A sweep failure is contained, emits only the fixed stderr diagnostic
+    `[mcp-sso] store expiry sweep failed`, and schedules the next ordinary run;
+    it never echoes a store error, record, path, or connection string. This
+    retry is safe because each store's sweep is already idempotent and
+    transactional/critical-section bounded. `close()` cancels a pending timer,
+    waits for an in-flight sweep before closing the database or owned pool, and
+    is idempotent; no later sweep begins. Therefore eligible auth-code rows,
+    consent-JTI tombstones, refresh-token families/members, and empty families
+    remain at most one successful sweep interval plus sweep duration after
+    eligibility under a healthy store. A storage outage or backward system
+    clock can extend retention until recovery/catch-up, but cannot collect a
+    still-valid row. A downstream `StorePort` implementation owns the same
+    scheduler lifecycle; implementing only the callable `sweepExpired` method
+    is no longer conforming for a long-lived store.
+
 ## 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`) — in-process maps; dev/test only, labeled loud.
   Not HA; single-process.

@@ -435,7 +435,13 @@ deployer acts on.
   DB. Under concurrent `/oauth/token` load a fixed-size pool can be saturated:
   - Pool sizing is the deployer's job. Provision `mysql2` `connectionLimit`
     (default 10) for peak token-refresh arrival rate × per-request latency, plus
-    headroom for refresh bursts AND the periodic `sweepExpired`.
+    headroom for refresh bursts AND the store-owned periodic `sweepExpired`.
+    Memory, SQLite, and MySQL start one unref'd, non-overlapping five-minute
+    scheduler per store instance and stop it during `close()`; a fixed redacted
+    diagnostic reports a failed run and the next interval retries. Without a
+    successful run during a storage outage, expired codes, signed-expiry JTI
+    tombstones, and dead refresh families remain until recovery; the scheduler
+    never weakens the existing exact-expiry/family-validity predicates.
   - Saturation surfaces as a 500 (NOT fail-open — fail-open applies only to
     `RateLimitPort` per [§6.7](./contracts/06-ports.md#67-ratelimitport-fix-7)); wiring
     the Redis `RateLimitPort` is the in-band DoS mitigation.

@@ -156,6 +156,15 @@ existing database must be owned by that user with exact mode `0600` and one
 link. On Windows, use a deployer-controlled private directory ACL; POSIX mode
 bits do not enforce Windows access control.
 
+The three reference OAuth stores collect expired state themselves. Each store
+starts one unref'd, non-overlapping five-minute sweep and stops it during
+`close()`; you do not need an application `setInterval`. Collection keeps the
+existing signed-expiry and refresh-family boundaries: a consent JTI or refresh
+family with any member valid at the sweep timestamp remains. A fixed
+`[mcp-sso] store expiry sweep failed` diagnostic means collection could not run;
+the store retries on its next ordinary interval. Custom `StorePort`
+implementations must own an equivalent lifecycle.
+
 ## api-key-gateway example (`BACKEND_*`)
 
 Only for [`examples/api-key-gateway`](../examples/api-key-gateway) (SSO in front of
