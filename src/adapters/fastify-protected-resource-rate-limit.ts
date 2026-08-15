@@ -84,7 +84,7 @@ function unavailable(): Error & { statusCode: number } {
 function checkedCounter(result: { current: number; ttl: number } | undefined): { current: number; ttl: number } | undefined {
   try {
     if (!result || !Number.isSafeInteger(result.current) || !Number.isSafeInteger(result.ttl)
-      || result.current < 0 || result.ttl < 0) return undefined;
+      || result.current < 1 || result.ttl < 0) return undefined;
     return { current: result.current, ttl: result.ttl };
   } catch {
     return undefined;

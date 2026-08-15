@@ -86,7 +86,9 @@ installs the real `@fastify/rate-limit` plugin through
 `mcp-sso/fastify/protected-resource-rate-limit`. The route config applies a
 finite per-IP budget (default **60 requests per 60 seconds**) at `onRequest`;
 `skipOnError` is fixed `false`, so a backing-store error fails closed instead
-of running `RequestAuthorizer` or the protected handler. The existing foreign-
+of running `RequestAuthorizer` or the protected handler. A custom increment
+result is healthy only when `current` is a positive safe integer and `ttl` is a
+non-negative safe integer; malformed results return the same fixed 503. The existing foreign-
 `Origin` gate remains first: rejected cross-origin traffic is 403 without
 consuming the protected-resource budget; admitted traffic is rate-limited
 before body parsing, bearer verification/audit, MCP SDK construction, backend

@@ -87,14 +87,40 @@ test("Fastify protected resource limiter: child-store failure is a fixed 503", a
   }
 });
 
+test("Fastify protected resource limiter: zero increment state is a fixed 503 before handler effects", async () => {
+  class ZeroCounterStore implements FastifyRateLimitStore {
+    constructor(_options: FastifyRateLimitOptions) {}
+    incr(
+      _key: string,
+      callback: (error: Error | null, result?: { current: number; ttl: number }) => void,
+    ): void { callback(null, { current: 0, ttl: 60_000 }); }
+    child(): FastifyRateLimitStore { return this; }
+  }
+  const app = Fastify();
+  let effects = 0;
+  try {
+    const policy = await registerProtectedResourceRateLimit(app, { store: ZeroCounterStore });
+    app.post("/mcp", routePolicy(policy), async () => { effects += 1; return { ok: true }; });
+    const response = await app.inject({ method: "POST", url: "/mcp" });
+    assert.equal(response.statusCode, 503);
+    assert.equal(effects, 0, "zero-valued increment state never enters the protected handler");
+  } finally {
+    await app.close();
+  }
+});
+
 test("Fastify protected resource limiter: malformed counters fail closed", async () => {
   const malformed = [
+    undefined,
+    { ttl: 1_000 },
+    { current: -1, ttl: 1_000 },
     { current: 1.5, ttl: 1_000 },
     { current: 1, ttl: 1.5 },
     { current: Number.MAX_SAFE_INTEGER + 1, ttl: 1_000 },
     { current: "1", ttl: 1_000 },
     { current: 1, ttl: null },
     Object.defineProperty({}, "current", { get() { throw new Error("counter getter detail"); } }),
+    Object.defineProperty({ current: 1 }, "ttl", { get() { throw new Error("ttl getter detail"); } }),
   ];
   for (const result of malformed) {
     class MalformedStore implements FastifyRateLimitStore {
@@ -110,7 +136,7 @@ test("Fastify protected resource limiter: malformed counters fail closed", async
       app.post("/mcp", routePolicy(policy), async () => ({ ok: true }));
       const response = await app.inject({ method: "POST", url: "/mcp" });
       assert.equal(response.statusCode, 503);
-      assert.doesNotMatch(response.body, /counter getter detail/);
+      assert.doesNotMatch(response.body, /counter getter detail|ttl getter detail/);
     } finally {
       await app.close();
     }

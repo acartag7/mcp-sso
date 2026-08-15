@@ -92,7 +92,11 @@ caller places in each protected route's `config.rateLimit`. The examples group
 each method-specific route under the fixed `mcp-protected-resource` id; the
 finite in-memory default is per process and per method route. A supplied custom store is wrapped so
 synchronous throws, callback errors, duplicate callbacks, and malformed
-counter results become one fixed 503 error before the route handler, never a
+counter results become one fixed 503 error before the route handler. A valid
+increment result has a positive safe-integer `current` (the current request is
+already counted) and a non-negative safe-integer `ttl`; zero, negative,
+fractional, unsafe, wrongly typed, missing, or accessor-throwing values reject,
+never a
 fail-open request or a raw backend-error leak. A normal budget denial is 429.
 The helper is a separate subpath so importing `mcp-sso/fastify` for OAuth route
 wiring does not force the plugin on existing consumers; consumers of the new
