@@ -538,14 +538,20 @@ the response. Wiring rules:
   `urlencoded({ extended: false })` already yields arrays for repeats. Each
   adapter records that exact parsed object separately on `NormRequest.formBody`
   only for the URL-encoded media type, so Bridge can distinguish repeated form
-  occurrences from legitimate JSON arrays. A duplicated, array-valued,
+  occurrences from legitimate JSON arrays. For compatibility with custom
+  adapters built against the earlier `NormRequest` shape, a framework-free
+  form handler whose optional `formBody` is absent reconstructs the same
+  decision from `body` plus the normalized `Content-Type`; omission therefore
+  cannot bypass duplicate or ambiguous-header rejection. A duplicated, array-valued,
   case-duplicated, or comma-coalesced `Content-Type` is instead recorded as an
   ambiguous form snapshot; the four built-in Bridge POST routes reject it as
   direct 400 `invalid_request` rather than dropping provenance and trusting a
   framework-selected parser result. `handlePairingAuthorize`,
   `Bridge.handleApprove`, `Bridge.handleToken`, `Bridge.handleRevoke`, and
   `Bridge.handleRegister` reject recognized singleton-key multiplicity on the
-  form snapshot; they must not see a first- or last-wins string. The four Bridge
+  form snapshot; they must not see a first- or last-wins string. Pairing uses
+  that checked snapshot for every subsequent field read rather than returning
+  to the parser-selected `body`. The four Bridge
   POST routes charge their existing limiter first, then reject before field
   selection, grant routing, durable state, or endpoint audit. Unknown form
   members remain ignored. Multipart remains outside this reconstruct (OAuth
