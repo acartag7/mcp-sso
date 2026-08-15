@@ -10,7 +10,7 @@ import { OAuthError } from "../errors.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import {
-  headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
+  formBodySnapshot, headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
   type NormRequest, type NormResponse,
 } from "./http.ts";
 import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
@@ -81,17 +81,25 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
 async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
 
+  // This encapsulated scope owns duplicate-preserving semantics for the four
+  // built-in POST routes. Removing an inherited exact parser here does not
+  // change the parent's unrelated routes (§9.6).
+  if (app.hasContentTypeParser(OAUTH_FORM_CONTENT_TYPE)) {
+    app.removeContentTypeParser(OAUTH_FORM_CONTENT_TYPE);
+  }
   addOAuthFormContentTypeParser(app);
   app.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
     done(null, body);
   });
 
-  const toNorm = (req: FastifyRequest): NormRequest => ({
-    query: queryOccurrencesFromUrl(req.raw.url ?? ""),
-    body: req.body,
-    headers: headersFromDistinct(req.raw.headersDistinct, req.headers as NormRequest["headers"]),
-    ip: req.ip,
-  });
+  const toNorm = (req: FastifyRequest): NormRequest => {
+    const headers = headersFromDistinct(req.raw.headersDistinct, req.headers as NormRequest["headers"]);
+    const body = req.body;
+    return {
+      query: queryOccurrencesFromUrl(req.raw.url ?? ""), body,
+      formBody: formBodySnapshot(body, headers), headers, ip: req.ip,
+    };
+  };
   const send = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
     for (const [key, value] of Object.entries(res.headers)) reply.header(key, value);
     if (res.redirect) { await reply.redirect(res.redirect, res.status); return; }

@@ -13,6 +13,8 @@ export const OAUTH_POST_BODY_MAX_BYTES = 256 * 1024;
 export interface NormRequest {
   query: Record<string, string | string[] | undefined>;
   body: unknown;
+  /** Exact parsed URL-encoded occurrence snapshot; JSON arrays are not forms. */
+  formBody?: unknown;
   headers: Record<string, string | string[] | undefined>;
   /** Best-effort client identifier for rate-limiting (IP). */
   ip?: string;
@@ -84,6 +86,12 @@ export function readHeader(headers: NormRequest["headers"], name: string): Heade
 
 export function headerString(headers: NormRequest["headers"], name: string): string | undefined {
   return readHeader(headers, name).value;
+}
+
+/** Retain form provenance so Bridge can distinguish repeats from JSON arrays. */
+export function formBodySnapshot(body: unknown, headers: NormRequest["headers"]): unknown {
+  const contentType = headerString(headers, "content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  return contentType === "application/x-www-form-urlencoded" ? body : undefined;
 }
 
 export function queryString(query: NormRequest["query"], name: string): string | undefined {

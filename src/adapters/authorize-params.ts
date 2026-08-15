@@ -10,8 +10,16 @@ export const OAUTH_PARAM_KEYS = [
  * permits `resource` to repeat, so unsupported resource sets use invalid_target. */
 export const OAUTH_SINGLETON_PARAM_KEYS = OAUTH_PARAM_KEYS.filter((key) => key !== "resource");
 
-/** Approve form fields that must occur at most once after valueless omissions. */
+/** Recognized OAuth form fields that must occur at most once on the wire. */
 export const APPROVE_SINGLETON_PARAM_KEYS = ["consent_token", "approved"] as const;
+export const REGISTER_SINGLETON_PARAM_KEYS = [
+  "redirect_uris", "application_type", "token_endpoint_auth_method", "grant_types",
+] as const;
+export const TOKEN_SINGLETON_PARAM_KEYS = [
+  "grant_type", "code", "redirect_uri", "client_id", "code_verifier",
+  "refresh_token", "client_secret", "scope", "resource",
+] as const;
+export const REVOKE_SINGLETON_PARAM_KEYS = ["token", "token_type_hint"] as const;
 
 /** Pairing POST body singletons: authorize params plus the pairing session fields. */
 export const PAIRING_BODY_SINGLETON_PARAM_KEYS = [

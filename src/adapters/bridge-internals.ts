@@ -8,8 +8,8 @@ import { isBasicAttempt } from "../client-auth.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
-import { headerString, type NormRequest } from "./http.ts";
-import { findDuplicatedKeys } from "./authorize-params.ts";
+import { formObject, headerString, type NormRequest } from "./http.ts";
+import { findRepeatedKeys } from "./authorize-params.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
 
 export function hasBasicAuthorization(headers: NormRequest["headers"]): boolean {
@@ -80,11 +80,12 @@ export function parseApproved(raw: unknown): boolean {
   return raw === true || raw === "true"; // fail-closed (§9.3): absent/malformed never auto-approves
 }
 
-/** Reject singleton form keys that arrived as more than one nonempty occurrence. */
-export function requireSingletonForm(body: unknown, keys: readonly string[]): void {
-  if (findDuplicatedKeys(body, keys).length > 0) {
+/** Reject repeated recognized form keys, then return the ordinary parsed body. */
+export function checkedFormObject(req: NormRequest, keys: readonly string[]): Record<string, unknown> {
+  if (findRepeatedKeys(req.formBody, keys).length > 0) {
     throw new OAuthError("invalid_request", "duplicate request parameters");
   }
+  return formObject(req.body);
 }
 
 export function stringArray(value: unknown): string[] {
