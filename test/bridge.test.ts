@@ -106,17 +106,39 @@ test("bridge: handleRevoke maps an unexpected store throw to the §9.5 500 body 
   const secret = "TOP_SECRET_INTERNAL_DETAIL";
   const store = new MemoryStore();
   store.findRefreshToken = async () => { throw new Error(secret); };
-  const bridge = new Bridge({ config: config(), store, clock: new FakeClock(NOW_MS), audit: new MemoryAudit() });
+  const audit = new MemoryAudit();
+  const bridge = new Bridge({ config: config(), store, clock: new FakeClock(NOW_MS), audit });
   const res = await bridge.handleRevoke(req({ body: { token: "rt_anything" } }));
   assert.equal(res.status, 500);
   const body = res.body as Record<string, unknown>;
   assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
   assert.equal(body.error, "internal_error");
   assert.ok(!JSON.stringify(body).includes(secret), "thrown message must not leak into the response");
+  assert.deepEqual(audit.events, [{
+    occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.revoke",
+    status: "failure", reason: "internal_error",
+  }]);
 
   // RFC 7009 semantics unchanged by the catch: an unrecognized token is still 200.
   const unrecognized = await setup().bridge.handleRevoke(req({ body: { token: "rt_unknown" } }));
   assert.equal(unrecognized.status, 200);
+});
+
+test("bridge: revoke-family store failure keeps the 500 mapping and emits a failure audit", async () => {
+  const store = new MemoryStore();
+  const token = await saveRevocableToken(store);
+  store.revokeRefreshTokenFamily = async () => { throw new Error("database unavailable"); };
+  const audit = new MemoryAudit();
+  const bridge = new Bridge({ config: config(), store, clock: new FakeClock(NOW_MS), audit });
+
+  const response = await bridge.handleRevoke(req({ body: { token } }));
+
+  assert.equal(response.status, 500);
+  assert.equal((response.body as { error: string }).error, "internal_error");
+  assert.deepEqual(audit.events, [{
+    occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.revoke",
+    status: "failure", reason: "internal_error",
+  }]);
 });
 
 test("bridge: revoke limiter denies before token extraction, use case, store, or audit work", async () => {
@@ -184,7 +206,11 @@ test("bridge: admitted unknown and already-revoked tokens retain RFC 7009 HTTP 2
   assert.equal(alreadyRevoked.status, 200);
   assert.deepEqual(keys, ["revoke:1.2.3.4", "revoke:1.2.3.4", "revoke:1.2.3.4"]);
   assert.equal(revocationCalls, 2);
-  assert.equal(audit.events.filter((event) => event.event === "oauth.revoke").length, 3);
+  assert.deepEqual(audit.events.map(({ event, status, reason }) => ({ event, status, reason })), [
+    { event: "oauth.revoke", status: "success", reason: "unrecognized_token" },
+    { event: "oauth.revoke", status: "success", reason: undefined },
+    { event: "oauth.revoke", status: "success", reason: undefined },
+  ]);
 });
 
 test("bridge: a throwing revoke limiter fails open and revocation proceeds", async () => {
