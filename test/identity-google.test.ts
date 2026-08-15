@@ -84,8 +84,8 @@ const GOOGLE_DOC = {
   id_token_signing_alg_values_supported: ["RS256"],
   code_challenge_methods_supported: ["S256"],
 };
-function googleDiscovery(): DiscoveryTransport {
-  return { async get() { return { status: 200, async json() { return GOOGLE_DOC; } }; } };
+function googleDiscovery(overrides: Record<string, unknown> = {}): DiscoveryTransport {
+  return { async get() { return { status: 200, async json() { return { ...GOOGLE_DOC, ...overrides }; } }; } };
 }
 
 test("createGoogleIdentity: clientSecret required at boot; builds via discovery", async () => {
@@ -95,6 +95,19 @@ test("createGoogleIdentity: clientSecret required at boot; builds via discovery"
   assert.equal(id.redirectUri, REDIRECT_URI);
   assert.match(id.getAuthorizationUrl({ state: "s", nonce: "n", codeChallenge: "c" }), /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
   assert.equal((await id.verify(undefined)).ok, false); // non-string — no JWKS fetch
+});
+
+test("createGoogleIdentity: only the fixed per-field discovery hosts are accepted", async () => {
+  for (const [field, value] of [
+    ["authorization_endpoint", "https://login.googleapis.com/o/oauth2/v2/auth"],
+    ["token_endpoint", "https://attacker.googleapis.com/token"],
+    ["jwks_uri", "https://keys.googleapis.com/oauth2/v3/certs"],
+  ] as const) {
+    await assert.rejects(
+      createGoogleIdentity(CONFIG, { discoveryFetch: googleDiscovery({ [field]: value }) }),
+      /generic_oidc_discovery_endpoint_host_mismatch/,
+    );
+  }
 });
 
 test("verifyGoogleIdToken: RS256 accept + Google hd/email_verified shaping", async () => {

@@ -648,12 +648,13 @@ test("integration — Google/generic env wiring defaults to the shipped producti
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: URL | Request | string): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const issuer = url.startsWith("https://accounts.google.com/") ? "https://accounts.google.com" : "https://issuer.test";
+    const isGoogle = url.startsWith("https://accounts.google.com/");
+    const issuer = isGoogle ? "https://accounts.google.com" : "https://issuer.test";
     return new Response(JSON.stringify({
       issuer,
       authorization_endpoint: `${issuer}/authorize`,
-      token_endpoint: `${issuer}/token`,
-      jwks_uri: `${issuer}/jwks`,
+      token_endpoint: isGoogle ? "https://oauth2.googleapis.com/token" : `${issuer}/token`,
+      jwks_uri: isGoogle ? "https://www.googleapis.com/oauth2/v3/certs" : `${issuer}/jwks`,
       code_challenge_methods_supported: ["S256"],
       id_token_signing_alg_values_supported: ["RS256"],
       token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
