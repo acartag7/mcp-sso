@@ -14,14 +14,14 @@ import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "..
 import { OAuthError } from "../errors.ts";
 import { buildBasicClientChallenge } from "../challenge.ts";
 import { renderConsentPage } from "./consent-page.ts";
-import { APPROVE_SINGLETON_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
-import { asOAuth, assertUnambiguousAuthorization, consentCookie, hasBasicAuthorization, parseApproved, requireSingletonForm, resolveIdentityWithAudit } from "./bridge-internals.ts";
+import { APPROVE_SINGLETON_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, REGISTER_JSON_ARRAY_PARAM_KEYS, REGISTER_SINGLETON_PARAM_KEYS, REVOKE_SINGLETON_PARAM_KEYS, TOKEN_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
+import { asOAuth, assertUnambiguousAuthorization, checkedFormObject, consentCookie, hasBasicAuthorization, parseApproved, resolveIdentityWithAudit } from "./bridge-internals.ts";
 export { asOAuth, asDirectOAuth } from "./bridge-internals.ts";
 import { CimdResolver } from "../cimd/resolve.ts";
 import type { CimdRegistration } from "../cimd/registration.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
 import { assertSafeDeploymentCombination, snapshotRateLimit } from "../deployment-guard.ts";
-import { formField, formObject, headerString, noStoreHeaders, oauthErrorResponse, queryString, readHeader, resourceParam,
+import { formField, headerString, noStoreHeaders, oauthErrorResponse, queryString, readHeader, resourceParam,
   type NormRequest, type NormResponse,
 } from "./http.ts";
 import type { BridgeDeps } from "./bridge-deps.ts";
@@ -101,7 +101,7 @@ export class Bridge {
   async handleRegister(req: NormRequest): Promise<NormResponse> {
     try {
       await this.guard("register", req.ip);
-      const body = formObject(req.body);
+      const body = checkedFormObject(req, REGISTER_SINGLETON_PARAM_KEYS, REGISTER_JSON_ARRAY_PARAM_KEYS);
       // All DCR metadata crosses as raw unknown values. registerClient owns the
       // container → member → grammar checks and snapshots arrays before use.
       const redirectUris = Object.hasOwn(body, "redirect_uris") ? body.redirect_uris : undefined;
@@ -179,8 +179,7 @@ export class Bridge {
   async handleApprove(req: NormRequest): Promise<NormResponse> {
     try {
       await this.guard("approve", req.ip);
-      const body = formObject(req.body);
-      requireSingletonForm(body, APPROVE_SINGLETON_PARAM_KEYS);
+      const body = checkedFormObject(req, APPROVE_SINGLETON_PARAM_KEYS);
       const consentToken = formField(body, "consent_token") ?? consentCookie(req);
       const result = await this.auth.approve({
         consentToken,
@@ -196,11 +195,11 @@ export class Bridge {
   async handleToken(req: NormRequest): Promise<NormResponse> {
     let basicAttempted = false;
     try {
+      await this.guard("token", req.ip);
+      const body = checkedFormObject(req, TOKEN_SINGLETON_PARAM_KEYS);
       const { value: authorization, ambiguous } = readHeader(req.headers, "authorization");
       basicAttempted = hasBasicAuthorization(req.headers);
-      const body = formObject(req.body);
       const grantType = formField(body, "grant_type");
-      await this.guard("token", req.ip);
       await assertUnambiguousAuthorization(ambiguous, grantType, formField(body, "client_id"), this.audit, this.clock);
       let response: UserTokenResponse | MachineTokenResponse;
       if (grantType === "refresh_token") {
@@ -234,7 +233,7 @@ export class Bridge {
     // §9.5 body like every other route — never a framework-shaped error.
     try {
       await this.guard("revoke", req.ip);
-      await this.token.revoke(formField(formObject(req.body), "token"));
+      await this.token.revoke(formField(checkedFormObject(req, REVOKE_SINGLETON_PARAM_KEYS), "token"));
       return { status: 200, headers: { "cache-control": "no-store" }, body: {} };
     } catch (error) {
       return oauthErrorResponse(this.config, asOAuth(error));

@@ -16,6 +16,7 @@ import type { IdentityPort } from "../../src/ports/identity.ts";
 import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
 import { runAdapterHeaderFlow } from "./adapter-header-flow.ts";
+import { runAdapterFormOccurrenceFlow } from "./adapter-form-occurrence-flow.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
 const REDIRECT = "https://client.test/callback";
@@ -270,4 +271,5 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
   });
 
   runAdapterHeaderFlow(name, mount, makeBridge);
+  runAdapterFormOccurrenceFlow(name, mount, makeBridge);
 }

@@ -38,6 +38,13 @@ places the `MUST` to send an appropriate `application_type` on MCP clients. The
 bridge remains tolerant of omission for backwards compatibility and applies the
 OIDC default of `"web"`. Other client metadata is ignored, as RFC 7591 §2
 requires; it is never persisted or reflected by this AS-lite endpoint.
+JSON arrays remain the representation for array-valued DCR metadata. In an
+`application/x-www-form-urlencoded` registration, each recognized metadata key
+(`redirect_uris`, `application_type`, `token_endpoint_auth_method`, and
+`grant_types`) may occur at most once; a repeated key is a direct 400
+`invalid_request` before metadata selection, client persistence, or registration
+audit. A form-encoded scalar does not become an array, so clients sending
+`redirect_uris` or `grant_types` use JSON rather than repeated form members.
 `redirect_uris` is client-supplied untrusted input and carries the same hard
 caps §10.0 states: **1..16 entries** (the same bound §17.1.5 rule 19 puts on a
 CIMD document's array, same rationale — it bounds the authorize-time
@@ -251,7 +258,8 @@ one target, while multiple distinct targets follow the existing post-validation
   case an approval — a fail-open default on the consent decision.)*
   After `RateLimitPort("approve:<ip>")` and before `parseApproved` / consent-token
   work, `Bridge.handleApprove` rejects a form body in which `approved` or
-  `consent_token` has more than one nonempty occurrence with direct 400
+  `consent_token` has more than one occurrence, including an empty occurrence,
+  with direct 400
   `invalid_request` (no Deny redirect, no JTI consumption). Fastify and Hono
   reconstruct URL-encoded form occurrences as arrays so last-wins collapse
   cannot hide a second `approved=true`; Express already preserves arrays.
@@ -283,6 +291,13 @@ one target, while multiple distinct targets follow the existing post-validation
 `exchangeAuthorizationCode`/`refresh`/device. The `client_credentials` grant
 (§17.2, shipped S3b) returns `MachineTokenResponse`: identical except it has NO
 `refresh_token` member at all — not an optional one.)*
+- **Form occurrence gate:** after `RateLimitPort("token:<ip>")` but before
+  selecting `grant_type`, resolving client authentication, dispatching a grant,
+  store work, token signing, or token audit, every recognized token form key may
+  occur at most once: `grant_type`, `code`, `redirect_uri`, `client_id`,
+  `code_verifier`, `refresh_token`, `client_secret`, `scope`, and `resource`.
+  Any repeated occurrence, including an empty occurrence, is direct 400
+  `invalid_request`; no first or last value selects the grant path.
 - **Finite operation clock:** each of the authorization-code, refresh, and
   client-credentials issuance operations takes exactly one §6.1 snapshot before
   grant/authentication/store work and reuses it for every token, expiry,
@@ -335,10 +350,13 @@ one target, while multiple distinct targets follow the existing post-validation
   hashing, use-case, store, revocation, or audit work; a thrown limiter error is
   fail-open under §6.7. The limiter is not an adapter body-parser gate: malformed
   or over-cap input can return the adapter's fixed 400/413 response before this
-  call. Once admitted, revocation **always returns 200**; an unknown or
-  already-revoked token is a **no-op** (never 4xx — RFC 7009 §2.2 forbids leaking
-  token existence via the response). It looks up the family by hash and revokes
-  it; a guessed family id revokes nothing.
+  call. Once admitted and before selecting a token, repeated `token` or
+  `token_type_hint` form members — including an empty occurrence — return direct
+  400 `invalid_request`, with no token hashing, store, revocation, or audit work.
+  A singleton request then reaches revocation, which **always returns 200**; an
+  unknown or already-revoked token is a **no-op** (never 4xx — RFC 7009 §2.2
+  forbids leaking token existence via the response). It looks up the family by
+  hash and revokes it; a guessed family id revokes nothing.
 - **Audit containment:** every `OAuthTokenUseCase` audit emission goes through
   `writeTokenAudit`. A synchronous throw or rejected promise from a nonconforming
   custom `AuditPort` is ignored, so it cannot replace an OAuth error, suppress a
@@ -373,7 +391,8 @@ the response. Wiring rules:
   `/oauth/token` → `exchangeAuthorizationCode`/`refresh` (behind `RateLimitPort`);
   POST `/oauth/revoke` → adapter body boundary → `revoke` (behind
   `RateLimitPort("revoke:<ip>")` before Bridge body normalization; after
-  admission it retains RFC 7009's always-200 behavior).
+  admission and the form-occurrence gate, a singleton request retains RFC 7009's
+  always-200 behavior).
 - **Direct-authorize ordering:** the header-identity GET `/oauth/authorize`
   path rejects duplicate singleton parameters before identity work, then calls
   `Bridge.resolveIdentity`, which checks
@@ -418,10 +437,10 @@ the response. Wiring rules:
   same pre-parse bound, but the adapter parses only the exact
   `application/json` and `application/x-www-form-urlencoded` media-type
   essences. Duplicate `Content-Type` fields arrive coalesced (`a, a`) and match
-  no essence, so Hono leaves such bodies unparsed — a known, fail-closed
-  cross-adapter differential: Fastify and Express parsers still accept a
-  duplicated form content type. A stream read/framing failure before downstream
-  parsing
+  no essence, so Hono leaves such bodies unparsed. The normalized occurrence
+  snapshot marks that header ambiguous, and the same Bridge form gate used by
+  Fastify and Express returns direct 400 after the route limiter and before field
+  selection. A stream read/framing failure before downstream parsing
   returns a fixed direct 400 `invalid_request` response without logging the raw
   throwable or invoking downstream work. Below-cap parser failures retain the
   existing fail-closed parser-error path. A caller that uses `skipAuthorize` to
@@ -435,8 +454,11 @@ the response. Wiring rules:
   types, and any application parser that delegates raw accounting to Fastify. The
   catch-all enforces the byte boundary without turning unsupported bytes into
   OAuth fields. The adapter registers its parsers and routes in an encapsulated
-  Fastify plugin scope, so the catch-all cannot replace a caller-owned parser on
-  unrelated routes. When `skipAuthorize` leaves POST `/oauth/authorize` to the
+  Fastify plugin scope. That scope removes any inherited exact URL-encoded
+  parser and installs the occurrence-preserving parser for the four built-in
+  POST routes; the parent parser and unrelated routes remain unchanged. This is
+  required because an inherited first/last-wins parser would erase duplicate
+  evidence before `NormRequest.formBody` is built. When `skipAuthorize` leaves POST `/oauth/authorize` to the
   caller, `registerOAuthRoutes` preserves the existing automatic URL-encoded
   form behavior in the caller's scope: it installs the shared form parser when
   that scope has no exact form parser — Fastify exposes no working wildcard
@@ -520,11 +542,29 @@ the response. Wiring rules:
   Hono's `toNorm` reconstruct `application/x-www-form-urlencoded` members with
   the same occurrence rules as `queryOccurrencesFromUrl` (single values stay
   strings; repeats become arrays; the record is null-prototype). Express
-  `urlencoded({ extended: false })` already yields arrays for repeats.
-  `handlePairingAuthorize` and `Bridge.handleApprove` reject singleton-key
-  multiplicity on that snapshot; they must not see a first- or last-wins
-  string. Multipart remains outside this reconstruct (OAuth POSTs are
-  URL-encoded).
+  `urlencoded({ extended: false })` already yields arrays for repeats. Each
+  adapter records that exact parsed object separately on `NormRequest.formBody`
+  only for the URL-encoded media type, so Bridge can distinguish repeated form
+  occurrences from legitimate JSON arrays. For compatibility with custom
+  adapters built against the earlier `NormRequest` shape, a framework-free
+  form handler whose optional `formBody` is absent reconstructs the same
+  decision from `body` plus the normalized `Content-Type`; omission therefore
+  cannot bypass duplicate or ambiguous-header rejection. Supplying `formBody`
+  also cannot bypass the header check: every framework-free form handler
+  independently re-reads the normalized `Content-Type` occurrence before using
+  either body snapshot. A duplicated, array-valued, case-duplicated, or
+  comma-coalesced `Content-Type` is recorded as ambiguous and rejected as direct
+  400 `invalid_request` rather than dropping provenance and trusting a
+  framework-selected parser result. `handlePairingAuthorize`,
+  `Bridge.handleApprove`, `Bridge.handleToken`, `Bridge.handleRevoke`, and
+  `Bridge.handleRegister` reject recognized singleton-key multiplicity on the
+  form snapshot; they must not see a first- or last-wins string. Pairing uses
+  that checked snapshot for every subsequent field read rather than returning
+  to the parser-selected `body`. The four Bridge
+  POST routes charge their existing limiter first, then reject before field
+  selection, grant routing, durable state, or endpoint audit. Unknown form
+  members remain ignored. Multipart remains outside this reconstruct (OAuth
+  POSTs are URL-encoded).
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src

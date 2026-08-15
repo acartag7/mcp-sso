@@ -13,6 +13,8 @@ export const OAUTH_POST_BODY_MAX_BYTES = 256 * 1024;
 export interface NormRequest {
   query: Record<string, string | string[] | undefined>;
   body: unknown;
+  /** Exact parsed URL-encoded occurrence snapshot; JSON arrays are not forms. */
+  formBody?: unknown;
   headers: Record<string, string | string[] | undefined>;
   /** Best-effort client identifier for rate-limiting (IP). */
   ip?: string;
@@ -84,6 +86,20 @@ export function readHeader(headers: NormRequest["headers"], name: string): Heade
 
 export function headerString(headers: NormRequest["headers"], name: string): string | undefined {
   return readHeader(headers, name).value;
+}
+
+const AMBIGUOUS_FORM_CONTENT_TYPE = Symbol("ambiguous-form-content-type");
+
+/** Retain form provenance so Bridge can distinguish repeats from JSON arrays. */
+export function formBodySnapshot(body: unknown, headers: NormRequest["headers"]): unknown {
+  const { value, ambiguous } = readHeader(headers, "content-type");
+  if (ambiguous) return AMBIGUOUS_FORM_CONTENT_TYPE;
+  const contentType = value?.split(";", 1)[0]?.trim().toLowerCase();
+  return contentType === "application/x-www-form-urlencoded" ? body : undefined;
+}
+
+export function isAmbiguousFormContentType(value: unknown): boolean {
+  return value === AMBIGUOUS_FORM_CONTENT_TYPE;
 }
 
 export function queryString(query: NormRequest["query"], name: string): string | undefined {

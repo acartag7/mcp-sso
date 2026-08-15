@@ -13,7 +13,7 @@
 // the synthetic request's `query` — bridge.handleAuthorize reads query, not body.
 
 import type { Bridge } from "./bridge.ts";
-import { asOAuth } from "./bridge-internals.ts";
+import { asOAuth, checkedFormObject } from "./bridge-internals.ts";
 import { assertApproveOrigin } from "../authorize-internals.ts";
 import type { ConsolePairingIdentity } from "../identity/console-pairing.ts";
 import { OAuthError } from "../errors.ts";
@@ -72,12 +72,15 @@ export async function handlePairingAuthorize(
   if (!pairingAuthorizeRateLimitAllows(pairing)) {
     return oauthErrorResponse(bridge.config, new OAuthError("temporarily_unavailable", "Too many requests", 429));
   }
-  if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0
-    || (method === "POST" && findDuplicatedKeys(req.body, PAIRING_BODY_SINGLETON_PARAM_KEYS).length > 0)) {
+  if (findDuplicatedKeys(req.query, OAUTH_SINGLETON_PARAM_KEYS).length > 0) {
     return oauthErrorResponse(bridge.config, new OAuthError("invalid_request", "duplicate request parameters"));
   }
+  let body = req.body;
   if (method === "POST") {
-    try { assertApproveOrigin(bridge.config, headerString(req.headers, "origin")); }
+    try {
+      body = checkedFormObject(req, PAIRING_BODY_SINGLETON_PARAM_KEYS);
+      assertApproveOrigin(bridge.config, headerString(req.headers, "origin"));
+    }
     catch (error) { return oauthErrorResponse(bridge.config, asOAuth(error)); }
   }
   try {
@@ -85,13 +88,13 @@ export async function handlePairingAuthorize(
   } catch (error) {
     return oauthErrorResponse(bridge.config, asOAuth(error));
   }
-  const gathered = gatherOAuthParams(req);
+  const gathered = gatherOAuthParams(req, body);
   const oauthParams = gathered.page;
-  const submittedCode = method === "POST" ? formField(req.body, "pairing_code") : undefined;
+  const submittedCode = method === "POST" ? formField(body, "pairing_code") : undefined;
   const lostInvalidResource = gathered.query.resource === INVALID_RESOURCE && oauthParams.resource === undefined;
 
   if (submittedCode) {
-    const nonce = formField(req.body, "pairing_nonce") ?? "";
+    const nonce = formField(body, "pairing_nonce") ?? "";
     const result = await pairing.verify({ code: submittedCode, nonce, ip: req.ip });
     if (result.ok) {
       // bridge.handleAuthorize validates the params and renders the consent page
@@ -138,18 +141,18 @@ function combinedResource(queryValue: unknown, bodyValue: unknown): string | und
   return query;
 }
 
-function gatherOAuthParams(req: NormRequest): {
+function gatherOAuthParams(req: NormRequest, body: unknown): {
   page: Record<string, string | string[]>;
   query: Record<string, string>;
 } {
   const page: Record<string, string | string[]> = {};
   for (const key of OAUTH_PARAM_KEYS) {
     if (key === "resource") continue;
-    const v = queryString(req.query, key) ?? formField(req.body, key);
+    const v = queryString(req.query, key) ?? formField(body, key);
     if (typeof v === "string") page[key] = v;
   }
   const queryValue = req.query.resource;
-  const bodyValue = formMember(req.body, "resource");
+  const bodyValue = formMember(body, "resource");
   const resource = combinedResource(queryValue, bodyValue);
   const raw = [...resourceOccurrences(queryValue), ...resourceOccurrences(bodyValue)];
   if (raw.length === 1) page.resource = raw[0]!;

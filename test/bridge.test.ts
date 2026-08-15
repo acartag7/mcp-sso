@@ -38,7 +38,10 @@ function setup(rateLimit?: RateLimitPort, redirectAllowlist?: string[]): Ctx {
   return { bridge: new Bridge({ config: config(redirectAllowlist), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit, rateLimit }), audit };
 }
 function req(partial: Partial<NormRequest> & { query?: NormRequest["query"]; body?: unknown }): NormRequest {
-  return { query: partial.query ?? {}, body: partial.body, headers: partial.headers ?? {}, ip: partial.ip ?? "1.2.3.4" };
+  return {
+    query: partial.query ?? {}, body: partial.body, formBody: partial.formBody,
+    headers: partial.headers ?? {}, ip: partial.ip ?? "1.2.3.4",
+  };
 }
 function extractConsentToken(html: string): string {
   const m = /name="consent_token" value="([^"]+)"/.exec(html);
@@ -381,7 +384,7 @@ test("bridge: duplicate approved or consent_token is invalid_request, not last-w
     { consent_token: [consentToken, "other"], approved: "true" },
   ]) {
     const res = await ctx.bridge.handleApprove(req({
-      body, headers: { origin: "https://auth.test" },
+      body, formBody: body, headers: { origin: "https://auth.test" },
     }));
     assert.equal(res.status, 400);
     assert.equal((res.body as { error: string }).error, "invalid_request");
@@ -394,6 +397,127 @@ test("bridge: duplicate approved or consent_token is invalid_request, not last-w
   }));
   assert.equal(ok.status, 302);
   assert.ok(new URL(ok.headers.location as string).searchParams.get("code"));
+});
+
+test("bridge: every recognized OAuth form key rejects strict repetition before endpoint audit", async (t) => {
+  const routes = [
+    {
+      label: "register",
+      keys: ["redirect_uris", "application_type", "token_endpoint_auth_method", "grant_types"],
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRegister(request),
+    },
+    {
+      label: "approve", keys: ["consent_token", "approved"],
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleApprove(request),
+    },
+    {
+      label: "token",
+      keys: [
+        "grant_type", "code", "redirect_uri", "client_id", "code_verifier",
+        "refresh_token", "client_secret", "scope", "resource",
+      ],
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleToken(request),
+    },
+    {
+      label: "revoke", keys: ["token", "token_type_hint"],
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRevoke(request),
+    },
+  ] as const;
+  for (const route of routes) {
+    for (const key of route.keys) {
+      await t.test(`${route.label} ${key}`, async () => {
+        const ctx = setup();
+        const body = { [key]: ["", "must-not-be-selected"] };
+        const response = await route.call(ctx.bridge, req({ body, formBody: body }));
+        assert.equal(response.status, 400);
+        assert.equal((response.body as { error: string }).error, "invalid_request");
+        assert.equal(response.headers.location, undefined);
+        assert.deepEqual(ctx.audit.events, [], "duplicate rejection precedes endpoint audit work");
+      });
+    }
+  }
+});
+
+test("bridge: custom adapters cannot bypass form repetition by omitting formBody", async (t) => {
+  const routes = [
+    {
+      label: "register", key: "redirect_uris",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRegister(request),
+    },
+    {
+      label: "approve", key: "approved",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleApprove(request),
+    },
+    {
+      label: "token", key: "grant_type",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleToken(request),
+    },
+    {
+      label: "revoke", key: "token",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRevoke(request),
+    },
+  ] as const;
+  for (const route of routes) {
+    await t.test(route.label, async () => {
+      const ctx = setup();
+      const body = { [route.key]: ["first", "last"] };
+      const response = await route.call(ctx.bridge, req({
+        body,
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+      }));
+      assert.equal(response.status, 400);
+      assert.equal((response.body as { error: string }).error, "invalid_request");
+      assert.equal(response.headers.location, undefined);
+      assert.deepEqual(ctx.audit.events, [], "fallback rejection precedes endpoint audit work");
+    });
+  }
+});
+
+test("bridge: supplied formBody cannot bypass ambiguous Content-Type rejection", async (t) => {
+  const routes = [
+    {
+      label: "register",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRegister(request),
+    },
+    {
+      label: "approve",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleApprove(request),
+    },
+    {
+      label: "token",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleToken(request),
+    },
+    {
+      label: "revoke",
+      call: (bridge: Bridge, request: NormRequest) => bridge.handleRevoke(request),
+    },
+    {
+      label: "pairing",
+      call: (bridge: Bridge, request: NormRequest) => handlePairingAuthorize({
+        bridge,
+        pairing: {
+          async beginSession() { throw new Error("ambiguous Content-Type must reject before pairing"); },
+          async verify() { throw new Error("ambiguous Content-Type must reject before verification"); },
+        },
+      }, "POST", request),
+    },
+  ] as const;
+  for (const route of routes) {
+    await t.test(route.label, async () => {
+      const ctx = setup();
+      const response = await route.call(ctx.bridge, req({
+        body: {},
+        formBody: {},
+        headers: { "content-type": ["application/x-www-form-urlencoded", "application/json"] },
+      }));
+      assert.equal(response.status, 400);
+      assert.deepEqual(response.body, {
+        error: "invalid_request",
+        error_description: "duplicate request parameters",
+      });
+      assert.deepEqual(ctx.audit.events, [], "header rejection precedes endpoint work");
+    });
+  }
 });
 
 test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Redis outage must not lock out auth)", async () => {

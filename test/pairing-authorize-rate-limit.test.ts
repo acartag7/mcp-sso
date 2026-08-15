@@ -26,6 +26,53 @@ function request(ip: string, body: unknown = undefined): NormRequest {
   return { query: {}, body, headers: {}, ip };
 }
 
+test("pairing authorize reads only the checked form occurrence snapshot", async () => {
+  const pairing = new Pairing();
+  const bridge = {
+    config: {
+      issuer: "https://auth.test",
+      resource: "https://api.test/mcp",
+      allowedOrigins: ["https://auth.test"],
+    },
+    guardPairingAuthorize: async () => {},
+  } as unknown as Bridge;
+  const response = await handlePairingAuthorize({ bridge, pairing }, "POST", {
+    query: {},
+    body: { pairing_code: "last", pairing_nonce: "pairing-nonce" },
+    formBody: { pairing_code: ["first", "last"], pairing_nonce: "pairing-nonce" },
+    headers: { origin: "https://auth.test", "content-type": "application/x-www-form-urlencoded" },
+    ip: "192.0.2.10",
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(response.body, {
+    error: "invalid_request", error_description: "duplicate request parameters",
+  });
+  assert.equal(pairing.verifyCalls, 0);
+  assert.equal(pairing.beginCalls, 0);
+});
+
+test("pairing authorize reconstructs omitted custom-adapter form provenance", async () => {
+  const pairing = new Pairing();
+  const bridge = {
+    config: {
+      issuer: "https://auth.test",
+      resource: "https://api.test/mcp",
+      allowedOrigins: ["https://auth.test"],
+    },
+    guardPairingAuthorize: async () => {},
+  } as unknown as Bridge;
+  const response = await handlePairingAuthorize({ bridge, pairing }, "POST", {
+    query: {},
+    body: { pairing_code: ["first", "last"], pairing_nonce: "pairing-nonce" },
+    headers: { origin: "https://auth.test", "content-type": "application/x-www-form-urlencoded" },
+    ip: "192.0.2.11",
+  });
+  assert.equal(response.status, 400);
+  assert.equal((response.body as { error: string }).error, "invalid_request");
+  assert.equal(pairing.verifyCalls, 0);
+  assert.equal(pairing.beginCalls, 0);
+});
+
 test("pairing authorize hard cap covers GET and POST before pairing or Bridge effects", async () => {
   assert.deepEqual(FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, {
     max: PAIRING_AUTHORIZE_MAX_REQUESTS, timeWindow: PAIRING_AUTHORIZE_WINDOW_MS,

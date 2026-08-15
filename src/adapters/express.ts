@@ -8,7 +8,7 @@ import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import {
-  headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
+  formBodySnapshot, headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
   type NormRequest, type NormResponse,
 } from "./http.ts";
 import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
@@ -59,12 +59,14 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   );
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
 
-  const toNorm = (req: Request): NormRequest => ({
-    query: queryOccurrencesFromUrl(req.originalUrl),
-    body: req.body,
-    headers: headersFromDistinct(req.headersDistinct, req.headers as NormRequest["headers"]),
-    ip: req.ip,
-  });
+  const toNorm = (req: Request): NormRequest => {
+    const headers = headersFromDistinct(req.headersDistinct, req.headers as NormRequest["headers"]);
+    const body = req.body;
+    return {
+      query: queryOccurrencesFromUrl(req.originalUrl), body,
+      formBody: formBodySnapshot(body, headers), headers, ip: req.ip,
+    };
+  };
   const send = (res: Response, r: NormResponse): void => {
     for (const [key, value] of Object.entries(r.headers)) res.set(key, value);
     if (r.redirect) { res.redirect(r.status, r.redirect); return; }
