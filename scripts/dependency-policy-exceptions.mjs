@@ -240,10 +240,17 @@ export async function verifyAdvisoryExceptionEvidence(records, fetchJson, fetchI
         const parsedFixes = matching.map((vulnerability) => parseStableVersion(
           vulnerability.first_patched_version,
         ));
+        if (adoptedVersion === null || parsedFixes.some((fixedVersion) => fixedVersion === null)) {
+          errors.push(
+            `${record.package}: advisory ${id} has no stable first patched version for the adopted pin`,
+          );
+          hasInvalidEvidence = true;
+          return;
+        }
         const releaseLineFixes = adoptedVersion === null ? [] : parsedFixes.filter(
           (fixedVersion) => fixedVersion !== null && sameReleaseLine(fixedVersion, adoptedVersion),
         );
-        if (adoptedVersion === null || releaseLineFixes.length === 0) {
+        if (releaseLineFixes.length === 0) {
           errors.push(
             `${record.package}: advisory ${id} has no stable first patched version for the adopted pin`,
           );
