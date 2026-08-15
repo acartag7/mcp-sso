@@ -10,7 +10,9 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { JsonlFileAudit } from "../src/audit/jsonl-file.ts";
+import {
+  createJsonlFileAudit, JsonlFileAudit, type JsonlFileAuditOptions,
+} from "../src/audit/jsonl-file.ts";
 import type { AuthAuditEvent } from "../src/ports/audit.ts";
 
 const hasNoFollow = typeof (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW === "number" && fsc.O_NOFOLLOW !== 0;
@@ -269,12 +271,14 @@ test("JsonlFileAudit: rolls back a partial line when its short-write retry fails
       return original.call(this, data, offset, length, position);
     };
     try {
-      const sink = new JsonlFileAudit(path);
+      let disableCalls = 0;
+      const sink = new JsonlFileAudit(path, { onDisable: () => { disableCalls += 1; } });
       await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "partial" }));
       await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "complete" }));
       const lines = (await readFile(path, "utf8")).trim().split("\n");
       assert.equal(lines.length, 1, "the partial prefix was not rolled back");
       assert.equal((JSON.parse(lines[0]!) as AuthAuditEvent).clientId, "complete");
+      assert.equal(disableCalls, 0, "a verified rollback must not disable the sink");
     } finally {
       prototype.write = original;
     }
@@ -307,16 +311,42 @@ test("JsonlFileAudit: drops later events when a partial-line rollback is unverif
       if (writeCalls === 2) throw new Error("retry failed");
       return originalWrite.call(this, data, offset, length, position);
     };
+    const disableReasons: string[] = [];
+    let replacementCalls = 0;
+    const options: JsonlFileAuditOptions = {
+      async onDisable(reason: string) {
+        disableReasons.push(reason);
+        throw new Error("operator hook failed");
+      },
+    };
+    const captured = captureConsoleError();
     try {
-      const sink = new JsonlFileAudit(path);
-      await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "partial" }));
+      const sink = createJsonlFileAudit(path, options);
+      options.onDisable = () => { replacementCalls += 1; };
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "event-field-first" }));
       const afterPartial = await readFile(path, "utf8");
-      await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "must-drop" }));
+      await assert.doesNotReject(() => sink.writeAuthEvent({ ...event, clientId: "event-field-later" }));
       assert.equal(await readFile(path, "utf8"), afterPartial, "a later event extended the partial record");
+      assert.equal(writeCalls, 2, "a disabled sink performed later file work");
+      assert.deepEqual(disableReasons, ["partial_write_rollback_unverified"]);
+      assert.equal(replacementCalls, 0, "the constructor did not snapshot the callback");
     } finally {
+      captured.restore();
       prototype.stat = originalStat;
       prototype.write = originalWrite;
     }
+    const stderr = captured.messages.join("\n");
+    assert.equal(
+      captured.messages.filter((message) => message.includes(
+        "[mcp-sso] audit jsonl disabled: partial_write_rollback_unverified",
+      )).length,
+      1,
+      "the permanent transition did not emit exactly one alertable diagnostic",
+    );
+    assert.equal(stderr.includes(path), false);
+    assert.equal(stderr.includes("event-field-first"), false);
+    assert.equal(stderr.includes("event-field-later"), false);
+    assert.equal(stderr.includes("operator hook failed"), false);
   });
 });
 

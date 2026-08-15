@@ -87,7 +87,10 @@ export { type ClockPort, SystemClock } from "./ports/clock.ts";
 export { type AuditPort, type AuthAuditEvent, type AuthAuditStatus, type AuthAuditEventName, noopAudit } from "./ports/audit.ts";
 // v0.2 reference audit sinks (§17.7). Dep-free (node:fs + global fetch), so they
 // ship from the main entry — no subpath/peer-dep isolation needed.
-export { JsonlFileAudit, createJsonlFileAudit } from "./audit/jsonl-file.ts";
+export {
+  JsonlFileAudit, createJsonlFileAudit,
+  type JsonlFileAuditDisableReason, type JsonlFileAuditOptions,
+} from "./audit/jsonl-file.ts";
 export { WebhookAudit, createWebhookAudit, type WebhookAuditOptions } from "./audit/webhook.ts";
 export { combineAudit } from "./audit/combine.ts";
 // Quickstart secret persistence (§17.8) — dep-free boot helper (jose + node

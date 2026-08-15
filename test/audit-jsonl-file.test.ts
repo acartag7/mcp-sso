@@ -107,8 +107,12 @@ test("JsonlFileAudit: never rejects (fail-open) on an unwritable path", async ()
     // opened/created — appendFile rejects. The sink must swallow it.
     const blockingFile = join(dir, "iamfile");
     await writeFile(blockingFile, "x");
-    const sink = new JsonlFileAudit(join(blockingFile, "audit.jsonl"));
+    let disableCalls = 0;
+    const sink = new JsonlFileAudit(join(blockingFile, "audit.jsonl"), {
+      onDisable: () => { disableCalls += 1; },
+    });
     await assert.doesNotReject(() => sink.writeAuthEvent({ ...baseEvent }));
+    assert.equal(disableCalls, 0, "an ordinary IO failure must not disable the sink");
   });
 });
 
@@ -153,6 +157,12 @@ test("JsonlFileAudit: constructor rejects a non-string / empty filePath", () => 
   assert.throws(() => new JsonlFileAudit(""));
   // @ts-expect-error — runtime guard against a non-string
   assert.throws(() => new JsonlFileAudit(undefined));
+  // @ts-expect-error — runtime guard against a non-object options value
+  assert.throws(() => new JsonlFileAudit("audit.jsonl", null));
+  // @ts-expect-error — runtime guard against an array options value
+  assert.throws(() => new JsonlFileAudit("audit.jsonl", []));
+  // @ts-expect-error — runtime guard against a non-function callback
+  assert.throws(() => new JsonlFileAudit("audit.jsonl", { onDisable: "alert" }));
 });
 
 test("JsonlFileAudit: a FIFO at the audit path does not hang (open nonblocking → fail-open)", async () => {
