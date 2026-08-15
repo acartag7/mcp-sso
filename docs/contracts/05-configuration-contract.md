@@ -145,6 +145,11 @@ interface BridgeConfig {
   request-time gate. Runnable example and generated-starter defaults use that
   derived issuer origin rather than copying the raw issuer URL, which may carry
   a path or trailing slash and therefore is not an Origin value.
+  `validateAllowedOrigins(value)` exposes this exact array snapshot + grammar
+  check for composition roots that must reject env-derived origin policy before
+  signing material or other state exists. It returns the same frozen string
+  shape that `createBridgeConfig` publishes and throws `AuthConfigError` for
+  every malformed container or entry; it does not perform request matching.
 
 **Publication (what boot approves is what requests read).**
 `createBridgeConfig` publishes frozen snapshots of every caller-provided
