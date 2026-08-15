@@ -7,6 +7,7 @@ import {
   verifyAdvisoryExceptionEvidence,
   workspaceCooldownConfig,
 } from "./dependency-policy-exceptions.mjs";
+import { lockfilePackageVersions } from "./dependency-policy-lockfile.mjs";
 
 const START = "<!-- dependency-policy:start -->";
 const END = "<!-- dependency-policy:end -->";
@@ -145,11 +146,13 @@ export async function verifyLocalDependencyPolicy(root = process.cwd(), now = ne
     errors.push(`pnpm-workspace.yaml minimumReleaseAge ${workspace.minimumAgeMinutes} != ledger ${expectedWorkspaceAge}`);
   }
   const pins = await packagePins(root);
+  const lockfileVersions = await lockfilePackageVersions(root);
   errors.push(...validateExceptionBindings({
     byPackage: exceptions,
     excludedPackages: workspace.excludedPackages,
     pins,
     packages: policy.packages,
+    lockfileVersions,
     now,
   }));
   const packageNames = new Set([...Object.keys(pins), ...Object.keys(policy.packages)]);

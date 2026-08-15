@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const RECORD_KEYS = new Set([
+  "kind",
   "package",
   "advisoryIds",
   "adoptedVersion",
@@ -56,6 +57,9 @@ export function validateAdvisoryExceptionRecords(value) {
     }
     for (const key of Object.keys(entry)) {
       if (!RECORD_KEYS.has(key)) errors.push(`${label}: unknown field ${key}`);
+    }
+    if (entry.kind !== "direct" && entry.kind !== "transitive") {
+      errors.push(`${label}: kind must be "direct" or "transitive"`);
     }
     if (!validPackageName(entry.package)) errors.push(`${label}: package is invalid`);
     if (!Array.isArray(entry.advisoryIds) || entry.advisoryIds.length === 0) {
@@ -118,7 +122,14 @@ export async function workspaceCooldownConfig(root) {
   return { minimumAgeMinutes: Number(ageMatch[1]), excludedPackages: new Set(exclusions) };
 }
 
-export function validateExceptionBindings({ byPackage, excludedPackages, pins, packages, now }) {
+export function validateExceptionBindings({
+  byPackage,
+  excludedPackages,
+  pins,
+  packages,
+  lockfileVersions,
+  now,
+}) {
   const errors = [];
   for (const name of excludedPackages) {
     if (!byPackage.has(name)) errors.push(`${name}: workspace age exclusion has no advisory exception record`);
@@ -126,16 +137,36 @@ export function validateExceptionBindings({ byPackage, excludedPackages, pins, p
   for (const [name, record] of byPackage) {
     if (!excludedPackages.has(name)) errors.push(`${name}: advisory exception is missing from minimumReleaseAgeExclude`);
     if (name === "pnpm") errors.push("pnpm: package-manager pin is not eligible for a package advisory exception");
-    if (!(name in pins)) errors.push(`${name}: advisory exception package is not directly pinned`);
-    if (!(name in packages)) errors.push(`${name}: advisory exception package is missing from the ledger`);
-    if (pins[name] !== undefined && record.adoptedVersion !== pins[name]) {
-      errors.push(`${name}: adopted version ${record.adoptedVersion} != package pin ${pins[name]}`);
-    }
-    if (packages[name]?.version !== undefined && record.adoptedVersion !== packages[name].version) {
-      errors.push(`${name}: adopted version ${record.adoptedVersion} != ledger ${packages[name].version}`);
-    }
     if (Date.parse(`${record.adoptedAt}T00:00:00Z`) > now.getTime()) {
       errors.push(`${name}: advisory exception adoption date is in the future`);
+    }
+    if (record.kind === "transitive") {
+      if (name in pins) errors.push(`${name}: transitive advisory exception must not name a directly pinned package`);
+      if (name in packages) errors.push(`${name}: transitive advisory exception must not have a ledger package row`);
+      const resolved = lockfileVersions?.get(name);
+      if (resolved === undefined) {
+        errors.push(`${name}: transitive advisory exception package is missing from the lockfile`);
+      } else if (resolved.size !== 1) {
+        errors.push(
+          `${name}: lockfile resolves ${resolved.size} versions; a transitive exception requires exactly one`,
+        );
+      } else {
+        const [resolvedVersion] = resolved;
+        if (record.adoptedVersion !== resolvedVersion) {
+          errors.push(
+            `${name}: adopted version ${record.adoptedVersion} != lockfile resolution ${resolvedVersion}`,
+          );
+        }
+      }
+    } else {
+      if (!(name in pins)) errors.push(`${name}: advisory exception package is not directly pinned`);
+      if (!(name in packages)) errors.push(`${name}: advisory exception package is missing from the ledger`);
+      if (pins[name] !== undefined && record.adoptedVersion !== pins[name]) {
+        errors.push(`${name}: adopted version ${record.adoptedVersion} != package pin ${pins[name]}`);
+      }
+      if (packages[name]?.version !== undefined && record.adoptedVersion !== packages[name].version) {
+        errors.push(`${name}: adopted version ${record.adoptedVersion} != ledger ${packages[name].version}`);
+      }
     }
   }
   return errors;
