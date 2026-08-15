@@ -92,18 +92,34 @@ test("a transitive advisory exception binds to a single lockfile resolution", as
     await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /kind must be "direct" or "transitive"/);
   });
 
-  await t.test("an alias-resolved second version cannot hide from the parser", async () => {
-    const root = await fixture();
-    await makeTransitiveException(root);
-    await replace(
-      join(root, "pnpm-lock.yaml"),
-      "  fast-uri@3.1.5: {}",
-      "  'evil-alias@npm:fast-uri@3.1.2': {}",
-    );
-    await assert.rejects(
-      verifyLocalDependencyPolicy(root, NOW),
-      /unsupported package key shape: 'evil-alias@npm:fast-uri@3\.1\.2'/,
-    );
+  await t.test("an alias-resolved second version cannot hide from the parser", async (t) => {
+    await t.test("bare alias key", async () => {
+      const root = await fixture();
+      await makeTransitiveException(root);
+      await replace(
+        join(root, "pnpm-lock.yaml"),
+        "  fast-uri@3.1.5: {}",
+        "  'evil-alias@npm:fast-uri@3.1.2': {}",
+      );
+      await assert.rejects(
+        verifyLocalDependencyPolicy(root, NOW),
+        /unsupported package entry: 'evil-alias@npm:fast-uri@3\.1\.2'/,
+      );
+    });
+
+    await t.test("alias key carrying an inline mapping", async () => {
+      const root = await fixture();
+      await makeTransitiveException(root);
+      await replace(
+        join(root, "pnpm-lock.yaml"),
+        "  fast-uri@3.1.5:\n",
+        "  'evil-alias@npm:fast-uri@3.1.2': {resolution: {integrity: sha512-x}}\n",
+      );
+      await assert.rejects(
+        verifyLocalDependencyPolicy(root, NOW),
+        /unsupported package entry: 'evil-alias@npm:fast-uri@3\.1\.2'/,
+      );
+    });
   });
 });
 

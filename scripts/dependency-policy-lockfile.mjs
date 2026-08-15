@@ -8,14 +8,16 @@ import { resolve } from "node:path";
 // Anything between the version and the terminal quote/colon — peer groups
 // (single, repeated, or nested) and patch hashes — identifies build variants
 // of one resolution, not distinct versions, so it is accepted and ignored.
-// Unrecognized package-key shapes are NOT ignored: an alias key such as
-// 'foo@npm:bar@1.0.0' resolves bar@1.0.0 into the tree under another name, so
-// silently skipping it would hide a second resolution of bar and let a
-// transitive record for a different bar version pass while an affected build
-// still executes. Any key-shaped line the parser cannot classify fails closed.
+// Classification is deny-by-default: every non-blank, non-comment entry line
+// in the packages:/snapshots: sections must match PACKAGE_KEY or the whole
+// parse fails. An alias key such as 'foo@npm:bar@1.0.0' resolves bar@1.0.0
+// into the tree under another name, so silently skipping ANY unrecognized
+// entry — bare, with an inline mapping, or with a trailing comment — would
+// hide a resolution and let a transitive record pass while an affected build
+// still executes.
 const SECTION_KEY = /^([A-Za-z][A-Za-z0-9]*):/;
 const PACKAGE_KEY = /^ {2}'?((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)[^':]*'?:/;
-const KEY_LINE = /^ {2}\S.*:\s*(?:\{\}\s*)?$/;
+const BLANK_OR_COMMENT = /^\s*(?:#.*)?$/;
 
 /**
  * Every package version the committed lockfile resolves, as a Map from package
@@ -37,12 +39,13 @@ export async function lockfilePackageVersions(root = process.cwd()) {
       continue;
     }
     if (section !== "packages" && section !== "snapshots") continue;
+    if (BLANK_OR_COMMENT.test(line)) continue;
     const keyMatch = PACKAGE_KEY.exec(line);
     if (!keyMatch) {
-      if (KEY_LINE.test(line)) {
+      if (/^ {2}\S/.test(line)) {
         throw new Error(
-          `pnpm-lock.yaml ${section} contains an unsupported package key shape: ${line.trim()};`
-          + " transitive advisory bindings fail closed on keys the parser cannot classify",
+          `pnpm-lock.yaml ${section} contains an unsupported package entry: ${line.trim()};`
+          + " transitive advisory bindings fail closed on entries the parser cannot classify",
         );
       }
       continue;
