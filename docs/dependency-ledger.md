@@ -162,7 +162,11 @@ pinned to a SHA whose tag is ≥15 days old at pin time):
 
 - `actions/checkout` — shallow checkout.
 - `actions/setup-node` — Node 24 with the pnpm cache enabled on ephemeral
-  GitHub-hosted CI runners.
+  GitHub-hosted CI runners. The reviewed v7 major migrates the action's internal
+  bundle to ESM, retains the existing workflow inputs and Node 24 action runtime,
+  adds cache-key outputs that this repository does not consume, and stops
+  exporting a dummy `NODE_AUTH_TOKEN` when none was supplied. The latter is
+  compatible with this repository's tokenless OIDC trusted-publishing job.
 - `pnpm/action-setup` — pnpm via corepack (matches `packageManager`).
 - `actions/upload-artifact` / `actions/download-artifact` — transfer the single
   packed tarball from the read-only build job into the dry-run or isolated OIDC
@@ -226,9 +230,9 @@ upstream registries.
       "published": "2026-07-20T15:10:05Z"
     },
     "actions/setup-node": {
-      "sha": "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
-      "tag": "v6.4.0",
-      "published": "2026-04-20T02:57:28Z"
+      "sha": "820762786026740c76f36085b0efc47a31fe5020",
+      "tag": "v7.0.0",
+      "published": "2026-07-14T02:46:05Z"
     },
     "pnpm/action-setup": {
       "sha": "0ebf47130e4866e96fce0953f49152a61190b271",
