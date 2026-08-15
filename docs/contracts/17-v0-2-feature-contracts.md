@@ -1569,19 +1569,45 @@ gate replaces no-gate).
   as `Bridge.handleAuthorize` and §17.11 upstream authorize. If any of
   `response_type`, `client_id`, `redirect_uri`, `code_challenge`,
   `code_challenge_method`, `scope`, or `state` has more than one nonempty
-  occurrence in the normalized authorize query, it returns direct 400 `invalid_request` with
-  no `Location`. This check runs before selecting any OAuth value and before
-  `beginSession`, pairing-code output, `verify`, hidden-field rendering,
-  `bridge.handleAuthorize`, consent preparation/rendering, store mutation, or
-  success audit. The generated pairing form round-trips one snapshotted value
-  per key; duplicate form-body handling remains an adapter-body contract, not a
-  guarantee of this query-occurrence guard. Single-valued GET and POST pairing
-  flows are unchanged.
+  occurrence in the normalized authorize **query**, or — on POST — in the
+  normalized authorize **form body**, it returns direct 400 `invalid_request`
+  with no `Location`. POST also rejects a repeated `pairing_code` or
+  `pairing_nonce`. These checks run after the mandatory in-process authorize
+  gate and before selecting any OAuth or pairing-form value, `beginSession`,
+  pairing-code output, `verify`, hidden-field rendering, `bridge.handleAuthorize`,
+  consent preparation/rendering, store mutation, success audit, or the
+  `authorize:<ip>` charge. The generated pairing form still round-trips one
+  snapshotted value per key. Fastify and Hono reconstruct form-body occurrences
+  instead of first/last-wins collapsing them (§9.6); Express already preserves
+  arrays. A caller that pre-selects one occurrence before
+  `handlePairingAuthorize` has erased the evidence.
+  RFC 8707 `resource` is not a singleton: query and form-body indicators
+  are combined through `resourceParam` — either side an unsupported set, or
+  two different single values, is `INVALID_RESOURCE`. That combined value is
+  placed on the synthetic authorize query after a successful pairing so
+  distinct indicators still reach `invalid_target`. A single valid query
+  value must not hide a distinct or repeated body value (or the reverse).
+  `formField` must not drop a body array and let `prepare` default to
+  `config.resource`. Identical nonempty indicators still collapse to one
+  target. Pairing HTML never emits the internal unsupported-set sentinel as
+  a hidden field or visible text. Distinct raw string occurrences are
+  round-tripped as repeated hidden `resource` fields so a later POST (code
+  submission, a no-code re-render, or a wrong-code re-render) still
+  presents the same set. An unsupported resource that cannot be represented
+  as string occurrences is rejected before `beginSession` / pairing HTML
+  and does not default to `config.resource`.
+- **Pairing POST Origin:** every POST — code submission or a no-code re-render —
+  requires exactly one primitive `Origin` equal to the issuer origin or an
+  `allowedOrigins` member, using the same `assertApproveOrigin` gate as §9.3
+  Approve. Missing, foreign, array-valued, case-duplicated, or (on Fetch/Hono)
+  comma-coalesced `Origin` is direct 403 `invalid_origin` with no pairing
+  session, verification, hidden-field rewrite, or `authorize:<ip>` charge. GET
+  pairing does not require `Origin` (a first navigation may omit it).
 - **Rate limiting:** `handlePairingAuthorize` applies a mandatory in-process
   fixed-window gate shared by GET and POST: **60 requests per 60 seconds per
   `ConsolePairingIdentity` instance**, across all client IPs. The check runs
-  before duplicate/query selection, `beginSession`, code output, body-field
-  selection, `verify`, hidden-field rendering, `Bridge`, store work, or success
+  before duplicate/query/body selection, Origin, `beginSession`, code output,
+  `verify`, hidden-field rendering, `Bridge`, store work, or success
   audit. Denial is a fixed direct 429 `temporarily_unavailable` response. The
   state is weakly keyed by the identity instance, so discarded identities do
   not accumulate process memory; a spoofed IP cannot create a fresh bucket. The
@@ -1597,9 +1623,15 @@ gate replaces no-gate).
   limits who can exercise it. The bucket admits again at exactly 60 seconds.
   A wall-clock rollback fails closed and admits nothing until the original
   window start plus 60 seconds is reached.
-  Separately, the five-wrong-code attempt cap is built-in and in-process — it
-  cannot be misconfigured away — and the `RateLimitPort` hook (`pairing:<ip>`)
-  adds defense-in-depth for submitted-code verification.
+  After that hard gate, `handlePairingAuthorize` charges the Bridge-owned
+  `RateLimitPort` hook (`authorize:<ip>`) once per GET or POST before OAuth
+  value selection, `beginSession`, code output, `verify`, consent preparation,
+  store work, or audit. A denial is a direct 429 and does not print, validate,
+  or consume a pairing code. Pairing does not call `Bridge.resolveIdentity`;
+  after successful code verification it calls `Bridge.handleAuthorize` without
+  a second `authorize:<ip>` charge. The five-wrong-code attempt cap is built-in
+  and in-process — it cannot be misconfigured away — and the identity port's
+  optional submitted-code `pairing:<ip>` hook remains an independent backstop.
 - **Trust boundary (threat model):** whoever can read the process's stderr IS
   the operator. Log pipelines (docker logs, CloudWatch, Loki) EXTEND that
   boundary — codes land in them; TTL + single-use + attempt cap bound but do
@@ -1858,6 +1890,19 @@ gate replaces no-gate).
 - Express + Hono equivalents of `examples/fastify-sqlite` — execution only,
   no new contract surface. Examples use console pairing (17.5) or a real IdP;
   the `DEV_STUB_SUBJECT` pattern is removed.
+- **Protected-resource request budget.** Both runnable Fastify examples and the
+  generated starter install `@fastify/rate-limit` for `/mcp` through the
+  §8.4/§15 helper. It is a mandatory finite `onRequest` budget (default 60 per
+  60 seconds per Fastify `request.ip`), not the optional/fail-open §6.7 OAuth
+  hook. The foreign-Origin gate stays earlier; after it admits a request,
+  normal denial (429) or counter-store failure (fixed 503) precedes body
+  parsing, bearer verification/audit, MCP SDK/server construction, backend-key
+  access, and backend fetch. POST/GET/DELETE gateway routes carry the same fixed
+  group id. The local store is bounded, per-process, and per-method-route; shared public replicas
+  need a conforming shared store or aggregate trusted-edge budget. The private
+  token-only stub backend is not double-charged: it is reachable only through
+  the already-budgeted gateway in the documented loopback/NetworkPolicy
+  topology, and retains its independent static-credential gate.
 - **API-key-gateway example** (mcp-sso as the SSO front door for a backend
   that only accepts a static API key): the backend key lives in an env var
   (`BACKEND_API_KEY`), read once at boot into a closure — never logged, never

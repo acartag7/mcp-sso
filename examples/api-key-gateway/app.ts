@@ -36,9 +36,14 @@ import {
   headersFromDistinct, isMcpPath, OAUTH_POST_BODY_MAX_BYTES, readHeader as readSecurityHeader,
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
+import { queryOccurrencesFromUrl } from "../../src/adapters/authorize-params.ts";
 import {
   addOAuthFormContentTypeParser, FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, registerOAuthRoutes,
 } from "../../src/adapters/fastify.ts";
+import {
+  registerProtectedResourceRateLimit,
+  type ProtectedResourceRateLimitOptions,
+} from "../../src/adapters/fastify-protected-resource-rate-limit.ts";
 import {
   assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
 } from "../../src/deployment-guard.ts";
@@ -55,6 +60,7 @@ import {
   type OidcIdentityFactories,
 } from "../fastify-sqlite/app.ts";
 import { ensureStateDir } from "../../src/state-dir.ts";
+import { trustedProxiesFromEnv, trustedProxiesFromOptions } from "../fastify-sqlite/trusted-proxy.ts";
 
 export interface GatewayOptions {
   config: BridgeConfig;
@@ -76,6 +82,10 @@ export interface GatewayOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer (+ pairing). Default noopAudit. */
   audit?: AuditPort;
+  /** Mandatory `/mcp` Fastify budget. Defaults to 60 requests / 60 seconds / IP. */
+  protectedResourceRateLimit?: ProtectedResourceRateLimitOptions;
+  /** Exact proxy IP/CIDR allowlist for Fastify request.ip. Absent means trustProxy:false. */
+  trustedProxies?: readonly string[];
   /** Local starter only: explicitly acknowledge the unsafe default combination. */
   acknowledgeUnsafeStatelessDefaults?: true;
 }
@@ -104,7 +114,14 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
     config,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
   }, { emitAcknowledgementWarning: false });
-  const app = Fastify();
+  const trustedProxies = trustedProxiesFromOptions(opts);
+  const app = Fastify({ trustProxy: trustedProxies ?? false });
+  const protectedRateLimit = await registerProtectedResourceRateLimit(app, opts.protectedResourceRateLimit);
+  const protectedRoute = { config: { rateLimit: {
+    max: protectedRateLimit.max,
+    timeWindow: protectedRateLimit.timeWindowMs,
+    groupId: protectedRateLimit.groupId,
+  } } };
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
@@ -112,8 +129,11 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
 
-  const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string }): NormRequest => ({
-    query: req.query as NormRequest["query"], body: req.body, headers: req.headers as NormRequest["headers"], ip: req.ip,
+  const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string; raw?: { url?: string; headersDistinct?: Record<string, string[] | undefined> } }): NormRequest => ({
+    query: req.raw?.url !== undefined ? queryOccurrencesFromUrl(req.raw.url) : req.query as NormRequest["query"],
+    body: req.body,
+    headers: headersFromDistinct(req.raw?.headersDistinct, req.headers as NormRequest["headers"]),
+    ip: req.ip,
   });
   const sendNorm = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
     for (const [key, value] of Object.entries(res.headers)) reply.header(key, value);
@@ -195,7 +215,12 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   // subject on success, or null once the challenge response has been sent.
   const authorizeOrChallenge = async (request: FastifyRequest, reply: FastifyReply): Promise<RequestAuthResult | null> => {
     try {
-      return await authorizer.authorize({ authorization: request.headers.authorization });
+      return await authorizer.authorize({
+        authorization: headersFromDistinct(
+          request.raw.headersDistinct,
+          request.headers as NormRequest["headers"],
+        ).authorization,
+      });
     } catch (error) {
       const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
       reply.header("www-authenticate", buildUnauthorizedChallenge(config, { scope: config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
@@ -271,15 +296,15 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   // All three methods sit behind the SAME Origin + bearer gate. POST and GET are
   // forwarded; DELETE returns an explicit 405 (the stub backend has no session
   // termination) rather than being silently dropped (docs/gateway-deployment.md).
-  app.post("/mcp", async (request, reply) => {
+  app.post("/mcp", protectedRoute, async (request, reply) => {
     if (!(await authorizeOrChallenge(request, reply))) return;
     await forward("POST", request, reply);
   });
-  app.get("/mcp", async (request, reply) => {
+  app.get("/mcp", protectedRoute, async (request, reply) => {
     if (!(await authorizeOrChallenge(request, reply))) return;
     await forward("GET", request, reply);
   });
-  app.delete("/mcp", async (request, reply) => {
+  app.delete("/mcp", protectedRoute, async (request, reply) => {
     if (!(await authorizeOrChallenge(request, reply))) return;
     reply.code(405).send({ jsonrpc: "2.0", error: { code: -32001, message: "DELETE /mcp not supported (backend has no session termination)" }, id: null });
   });
@@ -321,6 +346,7 @@ export async function buildGatewayExample(
   deps: { backendUrl: string; getBackendCredential: () => string; identityFactories?: OidcIdentityFactories },
 ): Promise<{ app: FastifyInstance; store: ReturnType<typeof openSqliteStore>; config: BridgeConfig; dir: string }> {
   assertSingleIdentityProviderSelector(env);
+  const trustedProxies = trustedProxiesFromEnv(env);
   const dir = env.MCP_SSO_DIR ?? "./.mcp-sso";
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
   const audit = new JsonlFileAudit(join(dir, "audit.jsonl"));
@@ -341,7 +367,7 @@ export async function buildGatewayExample(
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
     assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
-    const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, upstream: { identity, callbackPath }, audit, sqliteFile });
+    const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, upstream: { identity, callbackPath }, audit, sqliteFile, trustedProxies });
     return { app, store, config, dir };
   }
   if (env.CF_ACCESS_AUDIENCE !== undefined) {
@@ -354,7 +380,7 @@ export async function buildGatewayExample(
     });
     assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
-    const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, identity, audit, sqliteFile });
+    const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, identity, audit, sqliteFile, trustedProxies });
     return { app, store, config, dir };
   }
   if (oidcProviderConfigured(env)) {
@@ -365,7 +391,7 @@ export async function buildGatewayExample(
     await ensureStateDir(dir);
     const { app, store } = await buildGateway({
       config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential,
-      upstream, audit, sqliteFile,
+      upstream, audit, sqliteFile, trustedProxies,
     });
     return { app, store, config, dir };
   }
@@ -392,6 +418,6 @@ export async function buildGatewayExample(
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl,
-    getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile });
+    getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile, trustedProxies });
   return { app, store, config, dir };
 }

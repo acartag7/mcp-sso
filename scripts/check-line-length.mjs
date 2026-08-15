@@ -29,7 +29,10 @@ const LIMIT = 250;
  *  things that belong together. An exception whose file drops back under the
  *  default is STALE and fails — return the allowance when the reason expires. */
 const EXCEPTIONS = {
-  // (empty — add entries as `"adapters/bridge.ts": { limit: 280, reason: "..." }`)
+  "adapters/bridge.ts": {
+    limit: 255,
+    reason: "The pairing admission seam belongs beside Bridge's snapshotted limiter and endpoint guards; splitting would separate one policy owner.",
+  },
 };
 
 if (!existsSync(ROOT)) {

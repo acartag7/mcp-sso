@@ -448,12 +448,15 @@ locked in **§17.1**.
 interface RateLimitPort { check(key: string): Promise<boolean>; }
 const noopRateLimit: RateLimitPort = { async check(): Promise<boolean> { return true; } };
 ```
-Optional DoS defense for unauthenticated registration, token exchange,
-revocation, and direct header-based identity verification (threat-model #8).
-`Bridge` calls `check("register:<ip>")` / `check("token:<ip>")` before those
-use-cases, and `check("revoke:<ip>")` at the start of `Bridge.handleRevoke`,
-before its `formObject` normalization, token hashing, store access or mutation,
-and audit work. Shipped adapters first apply their own request-body boundary and
+Optional DoS defense for unauthenticated registration, approval, token exchange,
+revocation, and identity resolution (threat-model #8). `Bridge` calls
+`check("register:<ip>")` / `check("approve:<ip>")` /
+`check("token:<ip>")` before those use-cases, and
+`check("revoke:<ip>")` at the start of `Bridge.handleRevoke`, before its
+`formObject` normalization, token hashing, store access or mutation, and audit
+work. `Bridge.handleApprove` likewise checks `approve:<ip>` before normalizing or
+reading the approval body, validating Origin, or consuming consent state.
+Shipped adapters first apply their own request-body boundary and
 then call `Bridge`, so revocation admission is not an adapter body-parser gate:
 Hono's 256 KiB body cap remains earlier and an over-cap request returns 413
 without consuming a revocation-limit slot.
@@ -461,8 +464,18 @@ without consuming a revocation-limit slot.
 `IdentityPort.verify`; `false` ⇒ **429 Too Many Requests**. A denied revocation
 does no token-use-case, store, or audit work; an admitted unknown or
 already-revoked token retains RFC 7009's HTTP 200 existence-hiding behavior.
-Upstream redirect, console pairing, and CIMD keep their separate
-`upstream:<ip>`, `pairing:<ip>`, and `cimd:<ip>` budgets.
+Upstream redirect and CIMD keep their separate `upstream:<ip>` and `cimd:<ip>`
+budgets. The console-pairing orchestrator calls
+`Bridge.guardPairingAuthorize(ip)` to charge the `authorize:<ip>` guard once per
+GET or POST authorize request, after the duplicate-query occurrence check, the
+POST body-occurrence check, and the POST Origin gate, and
+before OAuth value selection, pairing
+session/code work, verification, consent preparation, store work, or audit. It
+does not call `resolveIdentity`, and
+`Bridge.handleAuthorize` does not add an `authorize:<ip>` charge; direct
+header-based authorization already charges that budget in `resolveIdentity`.
+The console-pairing identity's optional submitted-code `pairing:<ip>` hook stays
+an independent defense-in-depth budget.
 When the same port is supplied to both `Bridge` and an upstream redirect flow,
 the bound boot snapshot retains the source port's identity. The shared CIMD
 resolver therefore charges that counting port once for the request's
@@ -470,6 +483,16 @@ resolver therefore charges that counting port once for the request's
 The default `noopRateLimit` allows everything (rate-limiting is advisory, not a
 hard gate). A thrown error is treated as **fail-open** (allow) — a rate-limiter
 outage must not lock out all auth; this is defense-in-depth, not a security boundary.
+
+This advisory OAuth-port policy does **not** govern the protected resource
+itself. A Fastify host mounts `/mcp` through the separately exported
+`mcp-sso/fastify/protected-resource-rate-limit` helper (§8.4/§15): that helper
+registers the real `@fastify/rate-limit` middleware with a mandatory finite
+per-IP budget, `onRequest` admission, and `skipOnError: false`. A counter-store
+failure therefore rejects before bearer verification or protected handler work;
+it is never converted into the `RateLimitPort` fail-open outcome. Keeping the
+two policies distinct avoids silently inheriting an availability-oriented OAuth
+default at the resource boundary.
 **`req.ip` behind a proxy:** the adapter keys on the framework's `req.ip`, which
 behind a reverse proxy/tunnel is the proxy's address, not the client's. The
 composition root MUST configure the framework to trust the proxy hop

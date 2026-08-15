@@ -1,10 +1,7 @@
 // File templates for `mcp-sso init` (contracts §15 "Init CLI"). Dep-free (node builtins); ships in dist/bin.
-
-/** fastify + the MCP SDK are pinned to the versions mcp-sso is TESTED against (the
- *  repo's devDependencies). The published package cannot read the repo's devDeps at
- *  runtime, so these are fixed here + recorded in docs/dependency-ledger.md; bump them
- *  with the repo's devDeps (exact pins, no ^/~, per the supply-chain rules). */
-const FASTIFY_VERSION = "5.8.5";
+/** Fastify, its limiter, and the MCP SDK use the exact tested devDependency pins.
+ *  Keep these ledger-recorded constants in sync when the repo pins move. */
+const FASTIFY_VERSION = "5.8.5"; const FASTIFY_RATE_LIMIT_VERSION = "11.2.0";
 const MCP_SDK_VERSION = "1.29.0";
 
 export interface TemplateVars {
@@ -40,6 +37,7 @@ import {
   type ClientRegistration, type ClientStore,
 } from "mcp-sso";
 import { addOAuthFormContentTypeParser, FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, OAUTH_POST_BODY_MAX_BYTES, registerOAuthRoutes } from "mcp-sso/fastify";
+import { registerProtectedResourceRateLimit } from "mcp-sso/fastify/protected-resource-rate-limit";
 import { openSqliteStore } from "mcp-sso/store/sqlite";
 import { createConsolePairingIdentity } from "mcp-sso/identity/console-pairing";
 // The normalized request/response shapes the framework-free surface speaks. Inlined
@@ -108,12 +106,14 @@ async function main(): Promise<void> {
   store = openSqliteStore(\`\${DIR}/auth.db\`);
   const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
 
-  const app = Fastify();
+  const app = Fastify({ trustProxy: false }); const protectedRateLimit = await registerProtectedResourceRateLimit(app);
+  const protectedRoute = { config: { rateLimit: { max: protectedRateLimit.max, timeWindow: protectedRateLimit.timeWindowMs, groupId: protectedRateLimit.groupId } } };
   const clock = new SystemClock();
   const bridge = new Bridge({ config, store, clock, audit });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
   const toNorm = (req: FastifyRequest): NormRequest => ({
-    query: req.query as NormRequest["query"], body: req.body, headers: req.headers as NormRequest["headers"], ip: req.ip,
+    query: req.query as NormRequest["query"], body: req.body, ip: req.ip,
+    headers: Object.fromEntries(Object.entries(req.raw.headersDistinct ?? {}).flatMap(([k, v]) => !v?.length ? [] : [[k.toLowerCase(), v.length === 1 ? v[0]! : [...v]]])),
   });
   const sendNorm = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
     for (const [key, value] of Object.entries(res.headers)) reply.header(key, value);
@@ -142,10 +142,10 @@ async function main(): Promise<void> {
   });
 
   // Protected /mcp: verify the bridge-minted access token, then delegate to an MCP server.
-  app.post("/mcp", async (request, reply) => {
+  app.post("/mcp", protectedRoute, async (request, reply) => {
     let auth;
     try {
-      auth = await authorizer.authorize({ authorization: request.headers.authorization });
+      auth = await authorizer.authorize({ authorization: request.raw.headersDistinct.authorization });
     } catch (error) {
       const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
       reply.header("www-authenticate", buildUnauthorizedChallenge(config, { scope: config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
@@ -181,6 +181,7 @@ function packageJson(vars: TemplateVars): string {
     engines: { node: ">=24" },
     dependencies: {
       "mcp-sso": vars.mcpSsoVersion,
+      "@fastify/rate-limit": FASTIFY_RATE_LIMIT_VERSION,
       fastify: FASTIFY_VERSION,
       "@modelcontextprotocol/sdk": MCP_SDK_VERSION,
     },
@@ -197,7 +198,6 @@ const GITIGNORE = `node_modules/
 // this is the safe default; remove the line only if a dep you've vetted needs a script.
 const NPMRC = `ignore-scripts=true
 `;
-
 function readme(vars: TemplateVars): string {
   return `# ${vars.name}
 

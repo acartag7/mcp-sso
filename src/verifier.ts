@@ -67,6 +67,9 @@ export function createRequestAuthorizer(deps: RequestAuthDeps): RequestAuthorize
 }
 
 function bearerToken(header: string | string[] | undefined): string {
+  if (Array.isArray(header) && header.length !== 1) {
+    throw new OAuthError("invalid_token", "Authorization header must occur exactly once", 401);
+  }
   const value = Array.isArray(header) ? header[0] : header;
   if (!value) throw new OAuthError("invalid_token", "Bearer token is required", 401);
   // Capture a whitespace-free token68 (RFC 6750 §2.1: `Bearer 1*SP b64token`). The

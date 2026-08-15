@@ -13,7 +13,7 @@ import {
   headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
   type NormRequest, type NormResponse,
 } from "./http.ts";
-import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
+import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import {
   PAIRING_AUTHORIZE_MAX_REQUESTS, PAIRING_AUTHORIZE_WINDOW_MS,
 } from "./pairing-flow.ts";
@@ -55,7 +55,7 @@ export function addOAuthFormContentTypeParser(app: FastifyInstance): void {
   // would fall to the child-scope Buffer catch-all, 400ing every form client.
   if (app.hasContentTypeParser(OAUTH_FORM_CONTENT_TYPE)) return;
   app.addContentTypeParser(OAUTH_FORM_CONTENT_TYPE, { parseAs: "string" }, (_req, body, done) => {
-    done(null, Object.fromEntries(new URLSearchParams(String(body))));
+    done(null, formOccurrencesFromUrlEncoded(String(body)));
   });
 }
 

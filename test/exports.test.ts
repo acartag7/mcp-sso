@@ -142,6 +142,15 @@ test("exports: renderPairingPage emits the nonce + round-tripped OAuth params, n
   assert.match(html, /name="client_id" value="c1"/);
   assert.match(html, /name="scope" value="mcp:read"/);
   assert.match(html, /Pair this device/);
+  const multi = renderPairingPage({
+    nonce: "NONCE_ABC",
+    expiresAt: "2026-07-05T12:00:00.000Z",
+    oauthParams: { resource: ["https://api.test/mcp", "https://other.test/mcp"] },
+  });
+  assert.match(multi, /name="resource" value="https:\/\/api\.test\/mcp"/);
+  assert.match(multi, /name="resource" value="https:\/\/other\.test\/mcp"/);
+  assert.doesNotMatch(multi, /Authorizing access to/);
+  assert.doesNotMatch(multi, /invalid-resource/);
 });
 
 test("exports: the ./identity/console-pairing subpath is mapped to its source-of-truth", () => {

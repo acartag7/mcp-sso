@@ -13,8 +13,9 @@ export interface PairingPageInput {
   nonce: string;
   /** ISO expiry of the active code, shown so the operator knows the window. */
   expiresAt: string;
-  /** Round-tripped OAuth authorize params (client_id, redirect_uri, ...). */
-  oauthParams: Record<string, string>;
+  /** Round-tripped OAuth authorize params (client_id, redirect_uri, ...).
+   *  `resource` may be repeated so a later POST still presents the same set. */
+  oauthParams: Record<string, string | string[]>;
   /** Optional failure message from a rejected previous submission. */
   error?: string;
 }
@@ -24,9 +25,11 @@ const esc = (v: string): string =>
 
 export function renderPairingPage(input: PairingPageInput): string {
   const hidden = Object.entries(input.oauthParams)
-    .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
+    .flatMap(([k, v]) => (Array.isArray(v) ? v : [v])
+      .map((val) => `<input type="hidden" name="${esc(k)}" value="${esc(val)}">`))
     .join("");
-  const resource = input.oauthParams.resource;
+  const shown = input.oauthParams.resource;
+  const resource = typeof shown === "string" ? shown : undefined;
   const errorBlock = input.error
     ? `<p class="error" role="alert">${esc(input.error)}</p>`
     : `<p class="hint">A one-time code has been printed to the server console. Paste it to continue.</p>`;

@@ -81,7 +81,7 @@ async function prepareConsent(server: GeneratedServer, clientId: string, verifie
   const pairingNonce = hidden(await pairingPage.text(), "pairing_nonce");
   const pairingCode = newestPairingCode(server.stderr());
   const consent = await fetchBounded(`${server.origin}/oauth/authorize`, { method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
+    headers: { "content-type": "application/x-www-form-urlencoded", origin: server.origin },
     body: new URLSearchParams({ ...Object.fromEntries(query), pairing_code: pairingCode, pairing_nonce: pairingNonce }).toString() });
   assert.equal(consent.status, 200);
   const consentToken = hidden(await consent.text(), "consent_token");

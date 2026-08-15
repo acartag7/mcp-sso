@@ -43,8 +43,9 @@ async function writeStandaloneLock(source: string, target: string): Promise<void
   const importersAt = lock.indexOf("importers:\n"); assert.notEqual(importersAt, -1); assert.notEqual(packagesAt, -1);
   const importer = lock.slice(lock.indexOf("  .:\n", importersAt), packagesAt);
   const sdk = lockEntry(importer, "@modelcontextprotocol/sdk"); const fastify = lockEntry(importer, "fastify");
+  const fastifyRateLimit = lockEntry(importer, "@fastify/rate-limit");
   const mcp = lockEntry(importer, "mcp-sso").replace("specifier: file:./", "specifier: file:../");
-  const standalone = `importers:\n\n  .: {}\n\n  generated:\n    dependencies:\n${sdk}${fastify}${mcp}`;
+  const standalone = `importers:\n\n  .: {}\n\n  generated:\n    dependencies:\n${sdk}${fastifyRateLimit}${fastify}${mcp}`;
   await writeFile(target, lock.slice(0, importersAt) + standalone + lock.slice(packagesAt));
 }
 
@@ -89,6 +90,7 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
         jose: `file:./${joseTarball}`,
         zod: `file:./${zodTarball}`,
         "@modelcontextprotocol/sdk": repoPkg.devDependencies["@modelcontextprotocol/sdk"],
+        "@fastify/rate-limit": repoPkg.devDependencies["@fastify/rate-limit"],
         fastify: repoPkg.devDependencies.fastify, express: repoPkg.devDependencies.express, hono: repoPkg.devDependencies.hono,
         mysql2: repoPkg.devDependencies.mysql2, ioredis: repoPkg.devDependencies.ioredis,
       },
@@ -114,6 +116,7 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
     const generatedPkg = JSON.parse(await readFile(join(generated, "package.json"), "utf8")) as { dependencies: Record<string, string> };
     assert.equal(generatedPkg.dependencies["mcp-sso"], repoPkg.version);
     assert.equal(generatedPkg.dependencies.fastify, repoPkg.devDependencies.fastify);
+    assert.equal(generatedPkg.dependencies["@fastify/rate-limit"], repoPkg.devDependencies["@fastify/rate-limit"]);
     assert.equal(generatedPkg.dependencies["@modelcontextprotocol/sdk"], repoPkg.devDependencies["@modelcontextprotocol/sdk"]);
     assert.equal(Object.values(generatedPkg.dependencies).some((version) => /^[~^]/.test(version)), false, "generated versions stay exact");
 
@@ -133,6 +136,7 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
         `standalone scaffold cannot borrow consumer-only dependency ${undeclared}`);
     }
     const imports = ["mcp-sso", "mcp-sso/store/memory", "mcp-sso/store/sqlite", "mcp-sso/store/mysql", "mcp-sso/rate-limit/redis",
+      "mcp-sso/fastify/protected-resource-rate-limit",
       "mcp-sso/fastify", "mcp-sso/express", "mcp-sso/hono", "mcp-sso/identity/cloudflare-access", "mcp-sso/identity/entra",
       "mcp-sso/identity/console-pairing", "mcp-sso/identity/generic-oidc", "mcp-sso/identity/google"];
     const importCheck = await run(process.execPath, ["--input-type=module", "-e", `await Promise.all(${JSON.stringify(imports)}.map((id)=>import(id)))`], generated);

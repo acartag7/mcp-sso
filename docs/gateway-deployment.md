@@ -230,6 +230,13 @@ Each gateway is a small Deployment + Service + Ingress + Secret.
   never `emptyDir` (refresh tokens are long-lived sessions; losing the file logs
   everyone out). For ≥2 replicas or clean rolling updates, use `/store/mysql` (+
   `/rate-limit/redis` so limits are shared).
+- **Proxy trust × per-client budgets**: leave `MCP_SSO_TRUSTED_PROXIES` unset
+  when clients connect directly. Behind an Ingress/tunnel, set it only to the
+  concrete IP/CIDR addresses of proxy peers that actually connect to Fastify;
+  Fastify/proxy-addr then chooses the nearest untrusted client address. Never
+  list client networks or trust every forwarded header. An untrusted socket's
+  `X-Forwarded-For` is ignored for limiter buckets, and malformed config fails
+  before either example opens state or starts its public listener.
 - **Stored DCR needs shared registration state.** `SqliteStore` implements both
   `StorePort` and the user-registration `ClientStore`, so a one-replica SQLite
   bridge passes the same instance to `Bridge` and `dcr.store`. `/store/mysql`

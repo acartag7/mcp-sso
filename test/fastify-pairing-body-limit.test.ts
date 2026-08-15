@@ -29,7 +29,8 @@ test("Fastify preserves automatic bounded form parsing for a caller-owned pairin
       payload: "pairing_code=BBBB-BBBB-BBBB&pairing_nonce=nonce",
     });
     assert.equal(admitted.statusCode, 204);
-    assert.deepEqual(body, { pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "nonce" });
+    assert.equal(Object.getPrototypeOf(body), null);
+    assert.deepEqual({ ...(body as object) }, { pairing_code: "BBBB-BBBB-BBBB", pairing_nonce: "nonce" });
 
     const denied = await app.inject({
       method: "POST", url: "/oauth/authorize",

@@ -70,6 +70,47 @@ Extracts the bearer token, verifies it, enforces `requiredScope` if given using
 the exact-resource `config.scopeHierarchy` when present, audits the outcome,
 and rethrows `OAuthError` on failure. The adapter maps the thrown
 `OAuthError` to a 401/403 with the challenge from §8.2/§8.3. **No bypass path.**
+An array-valued `authorization` input preserves distinct header occurrences:
+exactly one element is processed as the bearer value, while zero elements or
+more than one element fail closed as `invalid_token` 401 before any first/last-value
+selection or token verification. This keeps a one-element array produced by a
+normalized-header boundary valid without allowing duplicate Authorization
+input to choose the credential that reaches enforcement.
+Every shipped `/mcp` composition root (both examples and the generated starter)
+passes the raw `Authorization` occurrence array into `RequestAuthorizer`; it must
+not select Fastify's or Node's normalized first value before this check. The
+release-stack composition harnesses follow the same rule so their real-socket
+evidence exercises the shipped boundary rather than a weaker stand-in.
+Before that bearer call, every shipped Fastify `/mcp` composition root also
+installs the real `@fastify/rate-limit` plugin through
+`mcp-sso/fastify/protected-resource-rate-limit`. The route config applies a
+finite per-IP budget (default **60 requests per 60 seconds**) at `onRequest`;
+`skipOnError` is fixed `false`, so a backing-store error fails closed instead
+of running `RequestAuthorizer` or the protected handler. The helper snapshots a
+custom increment result's `current` and `ttl` fields inside its sanitized error
+boundary and never reads either field more than once; validation and the value
+returned to the plugin use only those snapshots. A result is healthy only when
+the snapshotted `current` is a positive safe integer and `ttl` is a non-negative
+safe integer. A throwing accessor, malformed snapshot, or a rejected thenable from a custom
+`incr` (an `async` method that throws before the callback) returns the same
+fixed 503. The existing foreign-
+`Origin` gate remains first: rejected cross-origin traffic is 403 without
+consuming the protected-resource budget; admitted traffic is rate-limited
+before body parsing, bearer verification/audit, MCP SDK construction, backend
+credential access, or proxy fetch. A denial is 429. Fastify's `request.ip` is
+the key. The two runnable Fastify example factories default to explicit
+`trustProxy: false`; their optional `trustedProxies`/`MCP_SSO_TRUSTED_PROXIES`
+allowlist accepts only validated concrete proxy IP/CIDR entries and is handed to
+Fastify's proxy-addr chain resolver. An untrusted socket's `X-Forwarded-For`
+therefore cannot select a bucket, while a configured trusted socket resolves to
+the nearest untrusted client address. Malformed proxy trust is a pre-state boot
+failure. The generated loopback-only starter remains fixed at `trustProxy: false`
+rather than exposing a forwarded-header escape.
+The helper's in-memory default is bounded per process and per method route; a multi-replica public
+deployment supplies a conforming shared store or enforces an aggregate budget
+at its trusted edge. This is composition-root admission, not a new field on
+`RequestAuthInput`: the framework-free verifier intentionally has no authority
+to infer a client IP.
 `RequestAuthorizer.authorize` returns the `credentialKind` produced by
 `verifyAccessToken`; `VerifiedAccessToken`, `AuthorizedSubject`, and the
 `RequestAuthResult` alias all expose the same required field.

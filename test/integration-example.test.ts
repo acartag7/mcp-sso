@@ -13,6 +13,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import type { FastifyRateLimitOptions, FastifyRateLimitStore } from "@fastify/rate-limit";
 import { exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -28,7 +29,8 @@ import {
   entraGroupAuthorizationFromEnv,
   UNSAFE_NON_LOOPBACK_PAIRING_ENV,
 } from "../examples/fastify-sqlite/app.ts";
-import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
+import { buildGateway, buildGatewayExample } from "../examples/api-key-gateway/app.ts";
+import { TRUSTED_PROXIES_ENV } from "../examples/fastify-sqlite/trusted-proxy.ts";
 import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 function jwk(): JWK {
@@ -842,7 +844,7 @@ test("integration — zero-setup branch: full flow through the entry (pairing co
       }
 
       // POST the pasted code + nonce → consent page.
-      const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: pairingNonce }).toString() });
+      const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: pairingNonce }).toString() });
       assert.equal(consentPage.statusCode, 200);
       assert.match(consentPage.body, /Authorize access/);
       const consentToken = extractValue(consentPage.body, "consent_token");
@@ -866,6 +868,21 @@ test("integration — zero-setup branch: full flow through the entry (pairing co
       // default; this injects the allowlisted one to exercise the gate's admit
       // path, not only the absent-Origin path every other call proves).
       await callProtectedMcp(app, config.resource, accessToken, "console-operator", { origin: ORIGIN });
+
+      const port = (app.server.address() as AddressInfo).port;
+      const init = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: {
+        protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "duplicate-bearer", version: "0" },
+      }, id: 1 });
+      for (const authorization of [
+        [["Authorization", `Bearer ${accessToken}`], ["authorization", "Bearer attacker"]],
+        [["authorization", "Bearer attacker"], ["Authorization", `Bearer ${accessToken}`]],
+      ] as const) {
+        const response = await rawOccurrenceCall(
+          port, "POST", "/mcp", [["Content-Type", "application/json"], ...authorization], init,
+        );
+        assert.equal(response.status, 401, "runnable example rejects duplicate bearer field lines");
+        assert.match(response.headers["www-authenticate"] ?? "", /^Bearer resource_metadata=/);
+      }
 
       // Refresh rotates.
       const refreshed = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId }).toString() });
@@ -1058,6 +1075,52 @@ test("integration — runnable example rejects duplicate /mcp Origin occurrences
   }
 });
 
+test("integration — pairing POST rejects last-wins redirect_uri and foreign Origin before consent", async () => {
+  const issuer = "http://127.0.0.1:9";
+  const good = "http://127.0.0.1/cb";
+  const evil = "https://evil.test/cb";
+  const config = createBridgeConfig({
+    issuer, resource: `${issuer}/mcp`,
+    consentSigningSecret: "x".repeat(40), signingPrivateJwk: jwk(),
+    redirectAllowlist: [good, evil], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
+    allowedOrigins: [issuer], dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 600,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  const built = await buildApp({
+    config, pairing: { output: { write() {} } }, acknowledgeUnsafeStatelessDefaults: true,
+  });
+  await built.app.listen({ port: 0, host: "127.0.0.1" });
+  const port = (built.app.server.address() as AddressInfo).port;
+  try {
+    const challenge = pkceChallenge("v-12345678901234567890123456789012345678");
+    const lastWins = new URLSearchParams([
+      ["response_type", "code"], ["client_id", "c"],
+      ["code_challenge", challenge], ["code_challenge_method", "S256"],
+      ["scope", "mcp:read"], ["redirect_uri", good], ["redirect_uri", evil],
+    ]).toString();
+    const dup = await rawOccurrenceCall(
+      port, "POST", "/oauth/authorize",
+      [["Content-Type", "application/x-www-form-urlencoded"], ["Origin", issuer]],
+      lastWins,
+    );
+    const csrf = await rawOccurrenceCall(
+      port, "POST", "/oauth/authorize",
+      [["Content-Type", "application/x-www-form-urlencoded"], ["Origin", "https://attacker.test"]],
+      new URLSearchParams({ response_type: "code", client_id: "c", redirect_uri: evil, code_challenge: challenge, code_challenge_method: "S256" }).toString(),
+    );
+    assert.equal(dup.status, 400);
+    assert.match(dup.body, /"error":"invalid_request"/);
+    assert.doesNotMatch(dup.body, /Pair this device|Authorize access/);
+    assert.equal(csrf.status, 403);
+    assert.match(csrf.body, /"error":"invalid_origin"/);
+  } finally {
+    await built.app.close();
+    await built.close();
+  }
+});
+
 test("integration — /mcp Origin gate admits the issuer origin even when allowedOrigins carries the raw (un-normalized) issuer (trailing slash)", async () => {
   // Regression for the normalization gap: allowedOrigins defaults to the RAW
   // OAUTH_ISSUER string, but a browser serializes Origin to scheme://host[:port]
@@ -1084,6 +1147,207 @@ test("integration — /mcp Origin gate admits the issuer origin even when allowe
     } finally {
       await app.close();
       await store.close();
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — runnable /mcp budget denies before bearer audit and does not charge a rejected Origin", async () => {
+  const issuer = "http://localhost:3000";
+  const config = createBridgeConfig({
+    issuer, resource: `${issuer}/mcp`, consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: jwk(), redirectAllowlist: [], scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"], allowedOrigins: [issuer], dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true }, accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300,
+    authorizationCodeTtlSeconds: 300,
+  });
+  const auditEvents: string[] = [];
+  let limiterIncrements = 0;
+  class CountingStore implements FastifyRateLimitStore {
+    constructor(_options: FastifyRateLimitOptions) {}
+    incr(
+      _key: string,
+      callback: (error: Error | null, result?: { current: number; ttl: number }) => void,
+      timeWindow: number,
+    ): void {
+      limiterIncrements += 1;
+      callback(null, { current: limiterIncrements, ttl: timeWindow });
+    }
+    child(): FastifyRateLimitStore { return this; }
+  }
+  const built = await buildApp({
+    config,
+    identity: { async verify() { return { ok: false, reason: "unused" }; } },
+    audit: { async writeAuthEvent(event) { auditEvents.push(event.event); } },
+    protectedResourceRateLimit: { max: 1, timeWindowMs: 60_000, store: CountingStore },
+    acknowledgeUnsafeStatelessDefaults: true,
+  });
+  const request = { method: "POST" as const, url: "/mcp", headers: { "content-type": "application/json" }, payload: "{}" };
+  try {
+    const foreign = await built.app.inject({ ...request, headers: { ...request.headers, origin: "https://evil.test" } });
+    assert.equal(foreign.statusCode, 403, "Origin rejects before the limiter and does not consume its budget");
+    assert.equal(limiterIncrements, 0, "foreign Origin causes zero limiter-store increments");
+    const admitted = await built.app.inject(request);
+    assert.equal(admitted.statusCode, 401, "the first allowed request reaches bearer verification");
+    assert.equal(limiterIncrements, 1, "the admitted request consumes exactly one limiter-store increment");
+    assert.equal(auditEvents.filter((event) => event === "auth.request").length, 1);
+    const denied = await built.app.inject(request);
+    assert.equal(denied.statusCode, 429);
+    assert.equal(auditEvents.filter((event) => event === "auth.request").length, 1,
+      "over-budget denial occurs before RequestAuthorizer audit effects");
+  } finally {
+    await built.app.close();
+    await built.close();
+  }
+});
+
+test("integration — example proxy trust keeps untrusted forwarded IPs in one bucket and separates trusted clients", async () => {
+  const issuer = "http://localhost:3000";
+  const config = createBridgeConfig({
+    issuer, resource: `${issuer}/mcp`, consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: jwk(), redirectAllowlist: [], scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"], allowedOrigins: [issuer], dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true }, accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300,
+    authorizationCodeTtlSeconds: 300,
+  });
+  const identity = { async verify() { return { ok: false as const, reason: "unused" }; } };
+  const factories = [
+    {
+      name: "fastify-sqlite",
+      build: (trustedProxies?: readonly string[]) => buildApp({
+        config, identity, trustedProxies,
+        protectedResourceRateLimit: { max: 1, timeWindowMs: 60_000 },
+        acknowledgeUnsafeStatelessDefaults: true,
+      }),
+    },
+    {
+      name: "api-key-gateway",
+      build: (trustedProxies?: readonly string[]) => buildGateway({
+        config, identity, trustedProxies,
+        backendUrl: "http://127.0.0.1:1/mcp",
+        getBackendCredential: () => { throw new Error("bearer gate was bypassed"); },
+        protectedResourceRateLimit: { max: 1, timeWindowMs: 60_000 },
+        acknowledgeUnsafeStatelessDefaults: true,
+      }),
+    },
+  ];
+  const remoteAddress = "203.0.113.10";
+  const request = (forwarded: string) => ({
+    method: "POST" as const, url: "/mcp", remoteAddress,
+    headers: { "content-type": "application/json", "x-forwarded-for": forwarded },
+    payload: "{}",
+  });
+
+  for (const factory of factories) {
+    for (const [mode, trustedProxies] of [
+      ["default-off", undefined],
+      ["untrusted-socket", ["192.0.2.10"]],
+    ] as const) {
+      const built = await factory.build(trustedProxies);
+      try {
+        assert.equal((await built.app.inject(request("198.51.100.1"))).statusCode, 401);
+        assert.equal(
+          (await built.app.inject(request("198.51.100.2"))).statusCode,
+          429,
+          `${factory.name}/${mode}: an untrusted socket cannot rotate X-Forwarded-For into a fresh bucket`,
+        );
+      } finally {
+        await built.app.close();
+        await built.close();
+      }
+    }
+
+    const built = await factory.build(["203.0.113.0/24"]);
+    try {
+      assert.equal((await built.app.inject(request("198.51.100.1"))).statusCode, 401);
+      assert.equal(
+        (await built.app.inject(request("198.51.100.2"))).statusCode,
+        401,
+        `${factory.name}: distinct clients behind the configured proxy receive distinct buckets`,
+      );
+      assert.equal(
+        (await built.app.inject(request("198.51.100.1"))).statusCode,
+        429,
+        `${factory.name}: the first trusted client remains bounded in its own bucket`,
+      );
+    } finally {
+      await built.app.close();
+      await built.close();
+    }
+  }
+});
+
+test("integration — malformed trusted-proxy config fails before example state and SQLite effects", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-trusted-proxy-invalid-"));
+  const throwing = new Proxy(["127.0.0.1"], {
+    get(target, property, receiver) {
+      if (property === "0") throw new Error("raw proxy getter detail");
+      return Reflect.get(target, property, receiver) as unknown;
+    },
+  });
+  const malformed: unknown[] = [true, [], ["loopback"], ["0.0.0.0/0"], ["127.0.0.1", "127.0.0.1"], throwing];
+  const config = createBridgeConfig({
+    issuer: "http://localhost:3000", resource: "http://localhost:3000/mcp",
+    consentSigningSecret: "x".repeat(40), signingPrivateJwk: jwk(), redirectAllowlist: [],
+    scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"], allowedOrigins: ["http://localhost:3000"],
+    dcr: { mode: "stateless" }, dev: { allowInsecureLocalhost: true }, accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  try {
+    for (const [index, trustedProxies] of malformed.entries()) {
+      for (const target of ["fastify", "gateway"] as const) {
+        const sqliteFile = join(base, `${target}-${index}.db`);
+        const common = {
+          config, sqliteFile, trustedProxies: trustedProxies as readonly string[],
+          identity: { async verify() { return { ok: false as const, reason: "unused" }; } },
+          acknowledgeUnsafeStatelessDefaults: true as const,
+        };
+        const boot = target === "fastify"
+          ? buildApp(common)
+          : buildGateway({
+            ...common, backendUrl: "http://127.0.0.1:1/mcp",
+            getBackendCredential: () => "unused",
+          });
+        await assert.rejects(boot, /trusted proxies must be 1\.\.32 unique IP or CIDR entries/);
+        assert.equal(existsSync(sqliteFile), false, `${target}/${index}: rejected config did not open SQLite`);
+      }
+    }
+
+    for (const target of ["fastify", "gateway"] as const) {
+      const sqliteFile = join(base, `${target}-option-getter.db`);
+      const options = {
+        config, sqliteFile,
+        identity: { async verify() { return { ok: false as const, reason: "unused" }; } },
+        acknowledgeUnsafeStatelessDefaults: true as const,
+        ...(target === "gateway" ? {
+          backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+        } : {}),
+      };
+      Object.defineProperty(options, "trustedProxies", {
+        get() { throw new Error("raw option getter detail"); },
+      });
+      const boot = target === "fastify"
+        ? buildApp(options)
+        : buildGateway(options as Parameters<typeof buildGateway>[0]);
+      await assert.rejects(boot, /trusted proxies must be 1\.\.32 unique IP or CIDR entries/);
+      assert.equal(existsSync(sqliteFile), false, `${target}: throwing option getter did not open SQLite`);
+    }
+
+    for (const [index, raw] of ["", "not-an-ip", "127.0.0.1,", "0.0.0.0/0"].entries()) {
+      for (const target of ["fastify", "gateway"] as const) {
+        const dir = join(base, `env-${target}-${index}`);
+        const env = { MCP_SSO_DIR: dir, [TRUSTED_PROXIES_ENV]: raw };
+        const boot = target === "fastify"
+          ? buildExample(env)
+          : buildGatewayExample(env, {
+            backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
+          });
+        await assert.rejects(boot, /trusted proxies must be 1\.\.32 unique IP or CIDR entries/);
+        assert.equal(existsSync(dir), false, `${target}/${index}: malformed env created no state directory`);
+      }
     }
   } finally {
     rmSync(base, { recursive: true, force: true });

@@ -139,14 +139,17 @@ test("fastify OAuth parser scope preserves caller parsing on unrelated routes", 
       payload: "grant_type=client_credentials&client_id=a&client_secret=b",
     });
     assert.equal(oauthForm.statusCode, 200, "OAuth form routes must still parse on a wildcard host");
-    assert.deepEqual(requests.at(-1)?.body, {
+    const oauthFormBody = requests.at(-1)?.body;
+    assert.equal(Object.getPrototypeOf(oauthFormBody), null);
+    assert.deepEqual({ ...(oauthFormBody as object) }, {
       grant_type: "client_credentials", client_id: "a", client_secret: "b",
     });
     const callerForm = await app.inject({
       method: "POST", url: "/other", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: "a=1",
     });
     assert.deepEqual(callerForm.json(), { ok: true });
-    assert.deepEqual(unrelatedBody, { a: "1" }, "the exact form parser overrides the caller wildcard for urlencoded");
+    assert.equal(Object.getPrototypeOf(unrelatedBody), null, "the exact form parser overrides the caller wildcard for urlencoded");
+    assert.deepEqual({ ...(unrelatedBody as object) }, { a: "1" }, "the exact form parser overrides the caller wildcard for urlencoded");
   } finally {
     await app.close();
   }

@@ -246,6 +246,12 @@ one target, while multiple distinct targets follow the existing post-validation
   source's unreachable Deny path; the UI button is Phase 3. Hardened 2026-07-07:
   the original text keyed Deny on `approved === false`, which made the ABSENT
   case an approval — a fail-open default on the consent decision.)*
+  After `RateLimitPort("approve:<ip>")` and before `parseApproved` / consent-token
+  work, `Bridge.handleApprove` rejects a form body in which `approved` or
+  `consent_token` has more than one nonempty occurrence with direct 400
+  `invalid_request` (no Deny redirect, no JTI consumption). Fastify and Hono
+  reconstruct URL-encoded form occurrences as arrays so last-wins collapse
+  cannot hide a second `approved=true`; Express already preserves arrays.
 - **Validate scope state before consuming consent:** on approval, the signed
   consent `scope` claim and the loaded stored-DCR prior scopes must satisfy §11
   and the current `scopeCatalog`; a carried `allowed_scopes` ceiling must also
@@ -352,7 +358,8 @@ the response. Wiring rules:
   its path-inserted form → `protectedResourceMetadata` (§9.1); GET `/oauth/jwks` →
   `jwks`; POST `/oauth/register` → `registerClient` (behind `RateLimitPort`,
   §6.7); GET `/oauth/authorize` → resolve subject via `IdentityPort` → `prepare`,
-  render the consent page; POST `/oauth/authorize/approve` → `approve`; POST
+  render the consent page; POST `/oauth/authorize/approve` →
+  `RateLimitPort("approve:<ip>")` → `approve`; POST
   `/oauth/token` → `exchangeAuthorizationCode`/`refresh` (behind `RateLimitPort`);
   POST `/oauth/revoke` → adapter body boundary → `revoke` (behind
   `RateLimitPort("revoke:<ip>")` before Bridge body normalization; after
@@ -365,8 +372,12 @@ the response. Wiring rules:
   remains fail-open (§6.7). Upstream redirect and CIMD retain their independent
   budgets rather than receiving a second adapter-level check. Console pairing
   applies §17.5's mandatory shared 60-request/60-second in-process authorize
-  gate before request-specific pairing work, plus its existing code-attempt
-  controls.
+  gate first. After that gate, `handlePairingAuthorize` rejects duplicate query
+  and POST body singleton parameters, applies the POST Origin gate, then charges
+  `RateLimitPort("authorize:<ip>")` before pairing session, code verification, or
+  consent work; it then calls `Bridge.handleAuthorize` without an additional
+  `authorize:<ip>` charge. Its identity port's optional submitted-code
+  `pairing:<ip>` hook remains a separate defense-in-depth budget.
 - **OAuth POST body bound (all framework adapters):** before request-body parsing
   or any Bridge invocation, Fastify, Express, and Hono apply the same fixed
   **262,144-byte (256 KiB)** raw-body budget to `/oauth/register`,
@@ -495,6 +506,15 @@ the response. Wiring rules:
   `Bridge.handleAuthorize`, `handlePairingAuthorize`, and the upstream redirect
   flow use one shared pure duplicate check and one singleton-key definition;
   no adapter may select a first or last occurrence before that check.
+- **OAuth form-body occurrence snapshot:** Fastify's URL-encoded parser and
+  Hono's `toNorm` reconstruct `application/x-www-form-urlencoded` members with
+  the same occurrence rules as `queryOccurrencesFromUrl` (single values stay
+  strings; repeats become arrays; the record is null-prototype). Express
+  `urlencoded({ extended: false })` already yields arrays for repeats.
+  `handlePairingAuthorize` and `Bridge.handleApprove` reject singleton-key
+  multiplicity on that snapshot; they must not see a first- or last-wins
+  string. Multipart remains outside this reconstruct (OAuth POSTs are
+  URL-encoded).
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
   with **Approve AND Deny** buttons; Deny POSTs `approved=false`, which the core
   redirects as `access_denied` (§9.3). CSP `default-src 'none'; style-src

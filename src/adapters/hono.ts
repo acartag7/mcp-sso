@@ -14,7 +14,7 @@ import {
   headerString, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
   type NormRequest, type NormResponse,
 } from "./http.ts";
-import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
+import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import { OAuthError } from "../errors.ts";
 
 export interface HonoAdapterOptions {
@@ -126,7 +126,7 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
     let body: unknown;
     try {
       if (ct === "application/json") body = await c.req.json();
-      else if (ct === "application/x-www-form-urlencoded") body = await c.req.parseBody();
+      else if (ct === "application/x-www-form-urlencoded") body = formOccurrencesFromUrlEncoded(await c.req.text());
     } catch { body = undefined; }
     const headers: NormRequest["headers"] = {};
     c.req.raw.headers.forEach((value, key) => { headers[key] = value; });

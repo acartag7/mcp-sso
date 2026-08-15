@@ -22,15 +22,19 @@
 //    as an unknown key with a boot AuthConfigError — contracts §5).
 
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Socket, type AddressInfo } from "node:net";
 import { test } from "node:test";
+import type { FastifyRateLimitOptions, FastifyRateLimitStore } from "@fastify/rate-limit";
+import type { JWK } from "jose";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { pkceChallenge } from "../src/crypto.ts";
+import { pkceChallenge, signAccessToken } from "../src/crypto.ts";
 import { AuthConfigError, createBridgeConfig } from "../src/config.ts";
+import { SystemClock } from "../src/ports/clock.ts";
 import { buildBackend, type BackendReceived } from "../examples/api-key-gateway/backend.ts";
 import { buildGateway, buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 
@@ -38,6 +42,11 @@ const FLOW_REDIRECT = "http://localhost:4321/callback";
 // A distinctive sentinel for the backend credential so the no-leak probe can grep
 // for THIS exact string across response bodies, the audit log, and process output.
 const BACKEND_KEY = "bk_LEAKMARKER_a91f3c7e_0123456789abcdef";
+
+function signingJwk(): JWK {
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  return { ...privateKey.export({ format: "jwk" }) } as JWK;
+}
 
 function extractValue(html: string, name: string): string {
   const m = new RegExp(`name="${name}" value="([^"]+)"`).exec(html);
@@ -107,7 +116,12 @@ function sdkFetchShim(app: { inject(args: unknown): Promise<unknown> }, captured
 }
 
 interface Harness {
-  app: { inject(args: unknown): Promise<unknown>; close(): Promise<void> };
+  app: {
+    inject(args: unknown): Promise<unknown>;
+    listen(opts: { port: number; host: string }): Promise<string>;
+    server: { address(): AddressInfo | string | null };
+    close(): Promise<void>;
+  };
   backend: { close(): Promise<void> };
   backendUrl: string;
   received: BackendReceived[];
@@ -175,7 +189,7 @@ async function pairingToken(app: { inject(args: unknown): Promise<unknown> }, ca
     process.stderr.write = originalWrite;
   }
 
-  const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: pairingNonce }).toString() }) as unknown as InjectResult;
+  const consentPage = await app.inject({ method: "POST", url: "/oauth/authorize", headers: { "content-type": "application/x-www-form-urlencoded", origin: "http://localhost:3000" }, payload: new URLSearchParams({ ...Object.fromEntries(q), pairing_code: code, pairing_nonce: pairingNonce }).toString() }) as unknown as InjectResult;
   captured.push(consentPage.body);
   assert.equal(consentPage.statusCode, 200);
   const consentToken = extractValue(consentPage.body, "consent_token");
@@ -276,6 +290,30 @@ test("integration — gateway: full proxied round trip (pairing→token→SDK cl
   const h = await buildHarness();
   try {
     const { accessToken } = await pairingToken(h.app as never, captured);
+
+    await h.app.listen({ port: 0, host: "127.0.0.1" });
+    const gatewayPort = (h.app.server.address() as AddressInfo).port;
+    const receivedBeforeDuplicates = h.received.length;
+    const duplicateInit = JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: {
+      protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "duplicate-bearer", version: "0" },
+    }, id: 1 });
+    for (const authorization of [
+      [["Authorization", `Bearer ${accessToken}`], ["authorization", "Bearer attacker"]],
+      [["authorization", "Bearer attacker"], ["Authorization", `Bearer ${accessToken}`]],
+    ] as const) {
+      const duplicate = await sendRaw(gatewayPort, [
+        "POST /mcp HTTP/1.1",
+        `Host: 127.0.0.1:${gatewayPort}`,
+        "Content-Type: application/json",
+        ...authorization.map(([name, value]) => `${name}: ${value}`),
+        `Content-Length: ${Buffer.byteLength(duplicateInit)}`,
+        "Connection: close",
+        "", duplicateInit,
+      ]);
+      assert.equal(duplicate.status, 401, "gateway rejects duplicate bearer field lines");
+      assert.match(duplicate.raw, /\r\nwww-authenticate:\s*Bearer resource_metadata=/i);
+    }
+    assert.equal(h.received.length, receivedBeforeDuplicates, "duplicate bearer input never reached the backend");
 
     // Capture process stderr for EVERY forward-path operation (the path that calls
     // getBackendCredential) — the backend credential must never be logged. Installed
@@ -389,6 +427,103 @@ test("integration — gateway two-path separation: the backend credential never 
     } as never),
     AuthConfigError,
   );
+});
+
+test("integration — gateway /mcp budget denies before bearer audit, credential access, and backend fetch", async () => {
+  const issuer = "http://localhost:3000";
+  const config = createBridgeConfig({
+    issuer, resource: `${issuer}/mcp`, consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: signingJwk(), redirectAllowlist: [], scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"], allowedOrigins: [issuer], dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true }, accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300,
+    authorizationCodeTtlSeconds: 300,
+  });
+  const auditEvents: string[] = [];
+  let credentialReads = 0;
+  let limiterIncrements = 0;
+  class CountingStore implements FastifyRateLimitStore {
+    constructor(_options: FastifyRateLimitOptions) {}
+    incr(
+      _key: string,
+      callback: (error: Error | null, result?: { current: number; ttl: number }) => void,
+      timeWindow: number,
+    ): void {
+      limiterIncrements += 1;
+      callback(null, { current: limiterIncrements, ttl: timeWindow });
+    }
+    child(): FastifyRateLimitStore { return this; }
+  }
+  const built = await buildGateway({
+    config, backendUrl: "http://127.0.0.1:1/mcp",
+    getBackendCredential: () => { credentialReads += 1; return BACKEND_KEY; },
+    identity: { async verify() { return { ok: false, reason: "unused" }; } },
+    audit: { async writeAuthEvent(event) { auditEvents.push(event.event); } },
+    protectedResourceRateLimit: { max: 1, timeWindowMs: 60_000, store: CountingStore },
+    acknowledgeUnsafeStatelessDefaults: true,
+  });
+  try {
+    const foreign = await built.app.inject({
+      method: "POST", url: "/mcp",
+      headers: { "content-type": "application/json", origin: "https://evil.test" }, payload: "{}",
+    });
+    assert.equal(foreign.statusCode, 403);
+    assert.equal(limiterIncrements, 0, "gateway foreign-Origin rejection does not consume a limiter increment");
+    const first = await built.app.inject({ method: "POST", url: "/mcp", headers: { "content-type": "application/json" }, payload: "{}" });
+    assert.equal(first.statusCode, 401);
+    assert.equal(limiterIncrements, 1, "gateway admitted request consumes exactly one limiter increment");
+    const token = await signAccessToken(
+      { subject: "rate-limited", clientId: "client", scopes: ["mcp:read"] }, config, new SystemClock(),
+    );
+    const denied = await built.app.inject({
+      method: "POST", url: "/mcp",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, payload: "{}",
+    });
+    assert.equal(denied.statusCode, 429);
+    assert.equal(auditEvents.filter((event) => event === "auth.request").length, 1,
+      "over-budget request never reaches bearer verification");
+    assert.equal(credentialReads, 0, "over-budget request never reads or forwards the backend credential");
+  } finally {
+    await built.app.close();
+    await built.close();
+  }
+});
+
+test("integration — gateway POST, GET, and DELETE /mcp each carry a finite route budget", async () => {
+  const issuer = "http://localhost:3000";
+  const config = createBridgeConfig({
+    issuer, resource: `${issuer}/mcp`, consentSigningSecret: "x".repeat(40),
+    signingPrivateJwk: signingJwk(), redirectAllowlist: [], scopeCatalog: ["mcp:read"],
+    defaultScopes: ["mcp:read"], allowedOrigins: [issuer], dcr: { mode: "stateless" },
+    dev: { allowInsecureLocalhost: true }, accessTokenTtlSeconds: 600,
+    refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300,
+    authorizationCodeTtlSeconds: 300,
+  });
+  const auditEvents: string[] = [];
+  let credentialReads = 0;
+  const built = await buildGateway({
+    config, backendUrl: "http://127.0.0.1:1/mcp",
+    getBackendCredential: () => { credentialReads += 1; return BACKEND_KEY; },
+    identity: { async verify() { return { ok: false, reason: "unused" }; } },
+    audit: { async writeAuthEvent(event) { auditEvents.push(event.event); } },
+    protectedResourceRateLimit: { max: 1, timeWindowMs: 60_000 },
+    acknowledgeUnsafeStatelessDefaults: true,
+  });
+  try {
+    for (const method of ["POST", "GET", "DELETE"] as const) {
+      const post = method === "POST" ? { headers: { "content-type": "application/json" }, payload: "{}" } : {};
+      const first = await built.app.inject({ method, url: "/mcp", ...post });
+      assert.equal(first.statusCode, 401, `${method} first request reaches bearer verification`);
+      const denied = await built.app.inject({ method, url: "/mcp", ...post });
+      assert.equal(denied.statusCode, 429, `${method} second request is rate-limited`);
+    }
+    assert.equal(auditEvents.filter((event) => event === "auth.request").length, 3,
+      "one bearer-verifier effect per admitted method and none for denials");
+    assert.equal(credentialReads, 0);
+  } finally {
+    await built.app.close();
+    await built.close();
+  }
 });
 
 test("integration — gateway: an absolute-form request-target cannot redirect the forward (SSRF / backend-credential exfiltration guard)", async () => {

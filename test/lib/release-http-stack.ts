@@ -72,7 +72,11 @@ function allowedOrigin(config: BridgeConfig, rawHeaders: IncomingMessage["header
 
 async function serveMcp(req: IncomingMessage, res: ServerResponse, parsedBody: unknown, authorizer: RequestAuthorizer, config: BridgeConfig): Promise<void> {
   let subject: string;
-  try { subject = (await authorizer.authorize({ authorization: req.headers.authorization })).subject; }
+  try {
+    subject = (await authorizer.authorize({
+      authorization: headersFromDistinct(req.headersDistinct, req.headers).authorization,
+    })).subject;
+  }
   catch (error) {
     const oauth = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
     res.writeHead(oauth.status, { "content-type": "application/json", "www-authenticate": buildUnauthorizedChallenge(config, {
