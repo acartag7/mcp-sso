@@ -8,12 +8,14 @@ import { resolve } from "node:path";
 // Anything between the version and the terminal quote/colon — peer groups
 // (single, repeated, or nested) and patch hashes — identifies build variants
 // of one resolution, not distinct versions, so it is accepted and ignored.
-// Known blind shape: alias keys (foo@npm:bar@1.0.0) never start the version
-// with a digit and stay invisible to this parser; this repository uses no
-// aliases, and a transitive record naming such a package fails closed as
-// "missing from the lockfile".
+// Unrecognized package-key shapes are NOT ignored: an alias key such as
+// 'foo@npm:bar@1.0.0' resolves bar@1.0.0 into the tree under another name, so
+// silently skipping it would hide a second resolution of bar and let a
+// transitive record for a different bar version pass while an affected build
+// still executes. Any key-shaped line the parser cannot classify fails closed.
 const SECTION_KEY = /^([A-Za-z][A-Za-z0-9]*):/;
 const PACKAGE_KEY = /^ {2}'?((?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*)@(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)[^':]*'?:/;
+const KEY_LINE = /^ {2}\S.*:\s*(?:\{\}\s*)?$/;
 
 /**
  * Every package version the committed lockfile resolves, as a Map from package
@@ -36,7 +38,15 @@ export async function lockfilePackageVersions(root = process.cwd()) {
     }
     if (section !== "packages" && section !== "snapshots") continue;
     const keyMatch = PACKAGE_KEY.exec(line);
-    if (!keyMatch) continue;
+    if (!keyMatch) {
+      if (KEY_LINE.test(line)) {
+        throw new Error(
+          `pnpm-lock.yaml ${section} contains an unsupported package key shape: ${line.trim()};`
+          + " transitive advisory bindings fail closed on keys the parser cannot classify",
+        );
+      }
+      continue;
+    }
     const target = section === "packages" ? packages : snapshots;
     const resolved = target.get(keyMatch[1]) ?? new Set();
     resolved.add(keyMatch[2]);

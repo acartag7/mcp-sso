@@ -165,8 +165,11 @@ would need a library secret-free `validateConfig` (deferred).
 second `with.version` value. `pnpm-workspace.yaml` sets
 `minimumReleaseAge: 21600` (**minutes** = 15 days — the install-time floor and
 the `docs/dependency-ledger.md` ordinary-pin curation rule are the same
-standard). A published GHSA/CVE fix for a direct npm pin may use only the
-ledger's verified per-package exception; it does not lower the global floor;
+standard). A published GHSA/CVE fix for a direct npm pin or a transitive
+lockfile resolution may use only the ledger's verified per-package exception
+(`kind: "direct"` binds to the pin + ledger row; `kind: "transitive"` binds
+to a single lockfile resolution of a never-directly-pinned package and
+rejects a second resolved version); it does not lower the global floor;
 the dependency-policy gate requires that value to equal the machine-readable
 `minimumAgeDays * 1440`. CI actions are pinned by SHA; npm publish uses
 `--provenance` from GitHub Actions OIDC only (no local publishes). Every pin is
@@ -175,7 +178,13 @@ recorded in `docs/dependency-ledger.md` with version + publish date.
 **Dependency-policy gate:** the ledger contains one machine-readable record
 for every direct npm package and GitHub Action pin.
 `check:deps` compares those records with `package.json` and every workflow
-`uses:` entry: missing, extra, unpinned, or mismatched entries reject. Each
+`uses:` entry: missing, extra, unpinned, or mismatched entries reject.
+Advisory-exception records carry a required `kind` — `direct` binds to the
+direct pin and ledger row, `transitive` binds to a single matching lockfile
+resolution (the lockfile parser rejects unrecognized key shapes, so an
+alias-resolved second version cannot hide) — and upstream advisory
+existence, package naming, and minimum-fixing-version evidence is verified
+in the `--verify-remote` CI and pre-publish runs. Each
 third-party Action record binds its immutable commit SHA to the recorded
 release tag and publication date and must be at least 15 days old; the
 first-party `acartag7/engineering-os` exception remains explicit and

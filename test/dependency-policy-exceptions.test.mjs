@@ -91,6 +91,20 @@ test("a transitive advisory exception binds to a single lockfile resolution", as
     );
     await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /kind must be "direct" or "transitive"/);
   });
+
+  await t.test("an alias-resolved second version cannot hide from the parser", async () => {
+    const root = await fixture();
+    await makeTransitiveException(root);
+    await replace(
+      join(root, "pnpm-lock.yaml"),
+      "  fast-uri@3.1.5: {}",
+      "  'evil-alias@npm:fast-uri@3.1.2': {}",
+    );
+    await assert.rejects(
+      verifyLocalDependencyPolicy(root, NOW),
+      /unsupported package key shape: 'evil-alias@npm:fast-uri@3\.1\.2'/,
+    );
+  });
 });
 
 test("workspace and ledger advisory-exception layers cannot diverge", async (t) => {
