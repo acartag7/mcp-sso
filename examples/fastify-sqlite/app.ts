@@ -304,7 +304,8 @@ export function allowedOriginsFromEnv(
 ): string[] {
   let issuerOrigin = issuer;
   try { issuerOrigin = originOf(issuer); } catch { /* createBridgeConfig reports the issuer */ }
-  return validateAllowedOrigins(listEnv(env, "OAUTH_ALLOWED_ORIGINS", issuerOrigin));
+  const raw = env.OAUTH_ALLOWED_ORIGINS;
+  return validateAllowedOrigins(raw === "" ? [] : (raw ?? issuerOrigin).split(","));
 }
 function mustEnv(env: Record<string, string | undefined>, k: string): string {
   const v = env[k];

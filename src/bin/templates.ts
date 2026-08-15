@@ -15,7 +15,6 @@ export interface TemplateFile {
   path: string;
   content: string;
 }
-
 /** The generated server — the zero-setup console-pairing composition root, built from
  *  package exports (root + the ./fastify, ./store/sqlite, ./identity/console-pairing
  *  subpaths). Mirrors examples/fastify-sqlite's buildApp + index.ts, minus the env-
@@ -66,6 +65,7 @@ let ISSUER = env("OAUTH_ISSUER", \`http://\${DEFAULT_LOOPBACK_HOST}:\${PORT}\`);
 while (ISSUER.endsWith("/")) ISSUER = ISSUER.slice(0, -1); // trim a trailing / so the derived resource is /mcp, not //mcp
 const RESOURCE = env("OAUTH_RESOURCE", \`\${ISSUER}/mcp\`);
 const list = (v: string | undefined, def: string): string[] => (v ?? def).split(",").map((s) => s.trim()).filter(Boolean);
+const originList = (v: string | undefined, def: string): string[] => v === "" ? [] : (v ?? def).split(",");
 // Strip control chars before logging an env-derived value (no log-line injection on the operator's console; a char class is linear → no ReDoS).
 const oneLine = (s: unknown): string => String(s).replace(/[\\x00-\\x1f\\x7f]/g, "");
 // allowInsecureLocalhost lets an http:// loopback issuer boot for local dev (the
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   requireUrl("OAUTH_RESOURCE", RESOURCE);
   if (HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") throw new Error("The generated starter is localhost-only: HOST must be a loopback address. Use the production example with a real identity provider and rate limiter for an internet-facing deployment.");
   if (new URL(RESOURCE).pathname !== "/mcp") throw new Error("OAUTH_RESOURCE pathname must be /mcp (the server mounts /mcp); set OAUTH_RESOURCE to <issuer>/mcp or edit server.ts for a custom path."); if (!isLoopback(ISSUER) || !isLoopback(RESOURCE)) throw new Error("The generated starter is localhost-only: OAUTH_ISSUER and OAUTH_RESOURCE must use loopback hosts. Use the production example for an internet-facing deployment.");
-  const allowedOrigins = validateAllowedOrigins(list(process.env.OAUTH_ALLOWED_ORIGINS, new URL(ISSUER).origin));
+  const allowedOrigins = validateAllowedOrigins(originList(process.env.OAUTH_ALLOWED_ORIGINS, new URL(ISSUER).origin));
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
   let store: ReturnType<typeof openSqliteStore> | undefined;
   const clientStore: ClientStore = {

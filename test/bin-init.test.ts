@@ -553,28 +553,35 @@ test("bin init (spawn): a malformed OAUTH_ISSUER fails BEFORE the state dir is c
   }
 });
 
-test("bin init (spawn): opaque allowed Origin fails BEFORE the state dir is created", async () => {
+test("bin init (spawn): raw malformed allowed Origins fail BEFORE the state dir is created", async () => {
   await ensureDist();
   const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-null-origin-"));
   const proj = join(base, "proj");
-  const stateDir = join(base, "state");
   try {
     await spawnScaffold(proj);
     await linkDeps(proj);
-    const child = spawn("node", ["server.ts"], {
-      cwd: proj,
-      env: {
-        ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1",
-        OAUTH_ALLOWED_ORIGINS: "null",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-    const code = await new Promise<number | null>((resolveP) => child.on("close", resolveP));
-    assert.notEqual(code, 0, "an opaque allowed Origin fails closed");
-    assert.match(stderr, /must not be the opaque browser origin/);
-    assert.equal(existsSync(stateDir), false, "origin preflight ran before quickstart persistence");
+    for (const [index, raw] of ["null", " http://localhost:3000", "http://localhost:3000,"].entries()) {
+      const stateDir = join(base, `state-${index}`);
+      const child = spawn("node", ["server.ts"], {
+        cwd: proj,
+        env: {
+          ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1",
+          OAUTH_ALLOWED_ORIGINS: raw,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stderr = "";
+      child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+      const outcome = await new Promise<{ code: number | null; timedOut: boolean }>((resolveP) => {
+        let timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, 2_000);
+        child.on("close", (code) => { clearTimeout(timer); resolveP({ code, timedOut }); });
+      });
+      assert.equal(outcome.timedOut, false, `${JSON.stringify(raw)} must fail instead of booting`);
+      assert.notEqual(outcome.code, 0, `${JSON.stringify(raw)} fails closed`);
+      assert.match(stderr, /opaque browser origin|whitespace|must not be empty/);
+      assert.equal(existsSync(stateDir), false, "origin preflight ran before quickstart persistence");
+    }
   } finally {
     await rm(base, { recursive: true, force: true });
   }

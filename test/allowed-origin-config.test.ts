@@ -8,7 +8,7 @@ import { AuthConfigError, createBridgeConfig } from "../src/config.ts";
 import { validateAllowedOrigins } from "../src/allowed-origin.ts";
 import { assertApproveOrigin } from "../src/authorize-internals.ts";
 import {
-  buildExample, configFromEnv,
+  allowedOriginsFromEnv, buildExample, configFromEnv,
 } from "../examples/fastify-sqlite/app.ts";
 import { buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 
@@ -100,6 +100,23 @@ test("env composition derives the issuer origin and preserves an explicit empty 
   };
   assert.deepEqual(configFromEnv(required).allowedOrigins, ["https://auth.test"]);
   assert.deepEqual(configFromEnv({ ...required, OAUTH_ALLOWED_ORIGINS: "" }).allowedOrigins, []);
+  assert.deepEqual(
+    configFromEnv({ ...required, OAUTH_ALLOWED_ORIGINS: "https://one.test,https://two.test" }).allowedOrigins,
+    ["https://one.test", "https://two.test"],
+  );
+});
+
+test("env composition validates raw allowed-origin spellings before normalization", () => {
+  for (const raw of [
+    " https://trusted.test", "https://trusted.test ", "https://trusted.test,",
+    ",https://trusted.test", "https://one.test,,https://two.test", " ",
+  ]) {
+    assert.throws(
+      () => allowedOriginsFromEnv({ OAUTH_ALLOWED_ORIGINS: raw }, "https://auth.test/tenant/"),
+      AuthConfigError,
+      `${JSON.stringify(raw)} must not be trimmed or filtered into a valid allowlist`,
+    );
+  }
 });
 
 test("both zero-setup examples reject malformed origin config before state creation", async () => {
