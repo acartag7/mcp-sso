@@ -30,7 +30,11 @@ class MemoryAudit implements AuditPort {
   async writeAuthEvent(event: AuthAuditEvent): Promise<void> { this.events.push(event); }
 }
 
-function makeBridge(rateLimit?: RateLimitPort, audit: AuditPort = new MemoryAudit()): Bridge {
+function makeBridge(
+  rateLimit?: RateLimitPort,
+  audit: AuditPort = new MemoryAudit(),
+  store = new MemoryStore(),
+): Bridge {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const signingPrivateJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK;
   const config = createBridgeConfig({
@@ -41,7 +45,7 @@ function makeBridge(rateLimit?: RateLimitPort, audit: AuditPort = new MemoryAudi
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   return new Bridge({
-    config, store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit,
+    config, store, clock: new FakeClock(NOW_MS), audit,
     ...(rateLimit === undefined ? {} : { rateLimit }),
   });
 }
@@ -168,6 +172,36 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       assert.equal(JSON.parse(response.body).error, "temporarily_unavailable");
       assert.deepEqual(keys, [name === "hono" ? "revoke:unknown" : "revoke:127.0.0.1"]);
       assert.equal(audit.events.length, 0, "denial reaches no revoke audit work");
+    } finally {
+      await client.close?.();
+    }
+  });
+
+  test(`${name} adapter: unsupported revoke media cannot become OAuth fields`, async () => {
+    const store = new MemoryStore();
+    const originalFind = store.findRefreshToken.bind(store);
+    let findCalls = 0;
+    store.findRefreshToken = async (tokenHash) => {
+      findCalls += 1;
+      return originalFind(tokenHash);
+    };
+    const audit = new MemoryAudit();
+    const client = await mount(makeBridge(undefined, audit, store), stubIdentity);
+    const body = "token=rt_must_not_be_parsed";
+    try {
+      const unsupported = await client.requestOccurrences(
+        "POST",
+        "/oauth/revoke",
+        [["Content-Type", "text/plain"]],
+        body,
+      );
+      assert.equal(unsupported.status, 200);
+      assert.equal(findCalls, 0, "unsupported bytes never select a token field");
+      assert.equal(audit.events.at(-1)?.reason, "unrecognized_token");
+
+      const form = await client.postForm("/oauth/revoke", { token: "rt_must_be_selected" });
+      assert.equal(form.status, 200);
+      assert.equal(findCalls, 1, "the adjacent URL-encoded path still selects its token field");
     } finally {
       await client.close?.();
     }
