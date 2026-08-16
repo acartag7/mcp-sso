@@ -29,8 +29,9 @@ selects the public response.** A store is caller-supplied code, and `OAuthError`
 is a published export, so a store returning an `OAuthError`-shaped failure would
 otherwise pass `asOAuth` verbatim and its status/message would answer the
 request — breaking RFC 7009's always-200 rule and making the store's internal
-text an oracle on token existence. The re-cast happens at every pluggable-port
-call site (`callPort`), never at the use-case catch, because the library's own
+text an oracle on token existence. The re-cast happens at every
+public-response-owning pluggable-port call site (`callPort`), never at the
+use-case catch, because the library's own
 `invalid_grant`/`invalid_client`/`invalid_consent` MUST still reach the client.
 The original is carried on `PortFailureError.cause` for local logging only.
 For response-owning returned data, the boundary includes selected property and

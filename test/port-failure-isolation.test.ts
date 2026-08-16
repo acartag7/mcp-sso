@@ -312,6 +312,26 @@ test("returned port accessors are read inside the provenance boundary", async (t
     ), "verifyResult");
   });
 
+  await t.test("stored granted-scope array", async () => {
+    const registration: ClientRegistration = {
+      clientId: "stored-client", redirectUris: [REDIRECT], applicationType: "web", issuedAtEpoch: 1_700_000_000,
+    };
+    const clients: ClientStore = { async save() {}, async find() { return registration; } };
+    const store = new MemoryStore();
+    store.findGrantedScopes = async () => new Proxy(["mcp:read"], {
+      get(target, property, receiver) {
+        if (property === "length") return portBoom();
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const auth = new OAuthAuthorizationUseCase({ config: config(clients), store, clock, audit: quietAudit });
+    await expectPortFailure(() => auth.prepare({
+      subject: "operator", clientId: "stored-client", redirectUri: REDIRECT,
+      responseType: "code", codeChallenge: pkceChallenge(VERIFIER), codeChallengeMethod: "S256",
+      scope: "mcp:read",
+    }), "findGrantedScopes");
+  });
+
   await t.test("authorization-code record", async () => {
     const store = new MemoryStore();
     const record = {
