@@ -139,6 +139,48 @@ test("stored native loopback any-port survives the approve-time policy recheck",
   }
 });
 
+test("stored consent is rejected when the current client drops its redirect", async () => {
+  const clientId = "stored-client";
+  for (const approved of [true, false]) {
+    const store = new MemoryStore();
+    let registration: ClientRegistration = {
+      clientId,
+      redirectUris: [BUILT_IN],
+      applicationType: "web",
+      issuedAtEpoch: Math.floor(NOW_MS / 1000),
+    };
+    const clientStore: ClientStore = {
+      async save(): Promise<void> {},
+      async find(candidate): Promise<ClientRegistration | null> {
+        return candidate === clientId ? registration : null;
+      },
+    };
+    const storedConfig = createBridgeConfig({
+      ...config("extend"),
+      dcr: { mode: "stored", store: clientStore },
+    });
+    const useCase = new OAuthAuthorizationUseCase({ config: storedConfig, store, clock, audit });
+    const prepared = await useCase.prepare({
+      clientId, redirectUri: BUILT_IN, responseType: "code",
+      codeChallenge: pkceChallenge("correct-horse-battery-staple-0123456789abcdef0123"),
+      codeChallengeMethod: "S256", scope: "mcp:read", state: "state-1", subject: SUBJECT,
+    });
+    registration = { ...registration, redirectUris: [OWN] };
+
+    await assert.rejects(
+      () => useCase.approve({
+        consentToken: prepared.consentToken, approved, origin: "https://auth.test",
+      }),
+      (error: unknown) => {
+        assert.match(String((error as Error).message), /redirect_uri is not registered/);
+        assert.equal((error as { redirect?: unknown }).redirect, undefined);
+        return true;
+      },
+    );
+    await store.close();
+  }
+});
+
 // --- what must NOT change ---------------------------------------------------
 
 test("a carried consent for a still-trusted origin approves normally", async () => {
