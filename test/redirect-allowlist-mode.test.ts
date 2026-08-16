@@ -5,11 +5,12 @@
 // document and never reads this allowlist, so the mode alone does not exclude
 // a hosted client — that also needs `cimd.enabled` off.
 //
-// The sibling axis here is the THREE places the global allowlist is consulted —
-// DCR write, stateless authorize, and the stored-client re-validation leg. A
-// mode threaded into one and missed in another is exactly this repo's recurring
-// defect, so each leg gets its own behavioral proof rather than one unit test
-// of the helper.
+// The sibling axis here is the FOUR places the global allowlist is consulted —
+// DCR write, stateless authorize, stored-client re-validation, and approve-time
+// signed-consent carryover. A mode threaded into one and missed in another is
+// exactly this repo's recurring defect, so each leg gets its own behavioral
+// proof (the fourth lives in redirect-mode-consent-carryover.test.ts) rather
+// than one unit test of the helper.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 

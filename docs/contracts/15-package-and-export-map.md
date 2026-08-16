@@ -228,8 +228,10 @@ OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffold
 default — the done-bar is the pairing round-trip, not a production deploy. **Config-
 validation ordering (benign residual):** the generated server pre-validates the
 `OAUTH_ISSUER`/`OAUTH_RESOURCE` URLs, raw allowed Origins, and the complete
-`OAUTH_REDIRECT_ALLOWLIST_MODE` rule (known value plus non-empty list for
-`replace`) before the state-creating helper. The mode is still passed to
+redirect policy — every `OAUTH_REDIRECT_ALLOWLIST` entry through the §10.0
+parser plus the `OAUTH_REDIRECT_ALLOWLIST_MODE` rule (known value and non-empty
+list for `replace`) — before the state-creating helper. The validated list and
+mode are still passed to
 `createBridgeConfig`, so request-time policy cannot drift from the preflight.
 Deeper
 config validation (`createBridgeConfig` — scheme, scope shapes) runs *after*

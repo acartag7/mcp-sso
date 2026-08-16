@@ -75,6 +75,13 @@ test("approve refuses a carried consent for an origin dropped by the mode change
       return true;
     },
   );
+
+  // The rejected bridge must not consume the JTI or store a code. Retry the
+  // exact signed consent against the original policy/store: moving the current
+  // redirect gate below commitConsentApproval makes this fail.
+  const originalPolicy = new OAuthAuthorizationUseCase({ config: config("extend"), store, clock, audit });
+  const retried = await originalPolicy.approve({ consentToken, approved: true, origin: "https://auth.test" });
+  assert.ok(retried.code, "policy rejection occurred before JTI/code mutation");
 });
 
 test("the Deny exit is covered too, not just approval", async () => {
