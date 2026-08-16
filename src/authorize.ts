@@ -22,7 +22,8 @@ import { assertAllowedScopesCeiling, normalizeScopes, storedScopes } from "./sco
 import { buildAuthorizationErrorRedirect } from "./challenge.ts";
 import type { CimdResolver } from "./cimd/resolve.ts";
 import type { CimdRegistration } from "./cimd/registration.ts";
-import { assertOAuthRedirectEntry } from "./redirect.ts";
+import { isCimdClientId } from "./cimd/registration.ts";
+import { assertAllowedRedirectUri, assertOAuthRedirectEntry } from "./redirect.ts";
 import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, newGrantGeneration } from "./stored-dcr-generation.ts";
 import {
   accumulationAllowed, approvalCommitClock, assertApproveCimdGate, assertApproveOrigin,
@@ -199,6 +200,12 @@ export class OAuthAuthorizationUseCase {
       // Scheme/claim gate runs before Deny, jti consume, or storage (§17.1.6 decision 3).
       assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
       assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard
+      // Stored-state sibling of the entry-point mode guard: a consent token minted
+      // under "extend" outlives a restart into "replace", so re-check before BOTH
+      // exits below or a flow begun just before the change still delivers a code —
+      // or a Deny redirect — to the removed origin. CIMD clients are governed by
+      // their document (§17.1), not this allowlist. Rejection stays a DIRECT error.
+      if (!isCimdClientId(consent.clientId)) assertAllowedRedirectUri(consent.redirectUri, this.config.redirectAllowlist, this.config.redirectAllowlistMode);
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
       if (input.approved !== true) {
         const redirectTo = buildAuthorizationErrorRedirect(this.config, consent.redirectUri, "access_denied", consent.state);

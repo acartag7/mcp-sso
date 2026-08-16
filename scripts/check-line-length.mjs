@@ -29,6 +29,10 @@ const LIMIT = 250;
  *  things that belong together. An exception whose file drops back under the
  *  default is STALE and fails — return the allowance when the reason expires. */
 const EXCEPTIONS = {
+  "authorize.ts": {
+    limit: 257,
+    reason: "One use-case class whose prepare/approve both depend on its private auditSuccess/auditFailure guards; splitting either method away from those wrappers separates each failure path from the audit that accounts for it, and extracting the two 3-line helpers leaves a fragment.",
+  },
   "adapters/bridge.ts": {
     limit: 255,
     reason: "The pairing admission seam belongs beside Bridge's snapshotted limiter and endpoint guards; splitting would separate one policy owner.",
