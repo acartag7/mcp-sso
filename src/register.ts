@@ -99,7 +99,7 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
     await writeAuditBestEffort(audit, {
       occurredAt: new Date(finiteClockSnapshot(operationClock)).toISOString(),
       event: "oauth.register", status: "failure",
-      reason: error instanceof OAuthError ? error.code : "invalid_request",
+      reason: error instanceof OAuthError ? error.code : "internal_error",
     });
     throw error;
   }

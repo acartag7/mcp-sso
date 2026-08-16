@@ -4,6 +4,7 @@ import type { StorePort } from "./ports/store.ts";
 import { sha256Hex } from "./crypto.ts";
 import { writeTokenAudit } from "./token-audit.ts";
 import { callPort } from "./port-failure.ts";
+import { snapshotRefreshTokenRecord } from "./port-result.ts";
 
 interface RevokeDeps {
   store: StorePort;
@@ -18,7 +19,8 @@ export async function revokeRefreshToken(deps: RevokeDeps, refreshToken: string 
   try {
     let revoked = false;
     if (refreshToken) {
-      const existing = await callPort("StorePort", "findRefreshToken", () => deps.store.findRefreshToken(sha256Hex(refreshToken)));
+      const existing = await callPort("StorePort", "findRefreshToken", async () =>
+        snapshotRefreshTokenRecord(await deps.store.findRefreshToken(sha256Hex(refreshToken))));
       if (existing?.resource === deps.resource) {
         await callPort("StorePort", "revokeRefreshTokenFamily", () => deps.store.revokeRefreshTokenFamily(existing.familyId, occurredAt, deps.resource));
         revoked = true;

@@ -57,7 +57,7 @@ export async function signFlowToken(args: {
    *  signing the document would carry attacker-controlled members). */
   cimd?: CimdRegistration;
 }): Promise<string> {
-  const now = Math.floor(finiteClockSnapshot(args.clock) / 1000);
+  const now = Math.floor(finiteClockSnapshot(args.clock, args.ttlSeconds * 1000) / 1000);
   return await new SignJWT({
     jti: args.jti, state: args.state, nonce: args.nonce,
     code_verifier: args.codeVerifier, params: args.params,

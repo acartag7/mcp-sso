@@ -31,6 +31,7 @@ import {
   type CimdConsentDisplay,
 } from "./authorize-internals.ts";
 import { callPort } from "./port-failure.ts";
+import { readGrantedScopeSnapshot } from "./port-result.ts";
 export interface OAuthAuthorizationDeps {
   config: BridgeConfig;
   store: StorePort;
@@ -74,7 +75,6 @@ export interface PreparedConsent extends ConsentRequestClaims {
   /** Display-only CIMD fields (§17.1.4); absent for non-CIMD flows. */
   cimd?: CimdConsentDisplay;
 }
-
 export interface ApproveInput {
   consentToken?: string;
   approved?: boolean;
@@ -170,12 +170,11 @@ export class OAuthAuthorizationUseCase {
 
       // §17.1.6 decision 3 (NEGATIVE class): accumulate iff stored-DCR AND NOT
       // scheme-shaped. Never keyed on cimd_verified.
-      // Hoisted: TS drops guard narrowing across the callPort closure boundary.
       const priorSubject = input.subject, priorClientId = accumulationAllowed(this.config, clientId) ? clientId : undefined;
       const priorNowIso = priorClientId === undefined
         ? undefined : new Date(finiteClockSnapshot(this.clock)).toISOString();
       const rawPrior = priorClientId !== undefined && priorNowIso !== undefined
-        ? await callPort("StorePort", "findGrantedScopes", () => this.store.findGrantedScopes(priorSubject, priorClientId, priorNowIso, expectedStoredDcrGrantGeneration(this.config), this.config.resource))
+        ? await readGrantedScopeSnapshot(this.store, priorSubject, priorClientId, priorNowIso, expectedStoredDcrGrantGeneration(this.config), this.config.resource)
         : [];
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
       const priorScopes = storedScopes(rawPrior, this.config.scopeCatalog);
@@ -212,7 +211,8 @@ export class OAuthAuthorizationUseCase {
       const consentScopes = storedScopes(consent.scopes, this.config.scopeCatalog);
       const allowedScopes = assertAllowedScopesCeiling(consent.allowedScopes);
       const priorScopes = storedScopes(accumulationAllowed(this.config, consent.clientId)
-        ? await callPort("StorePort", "findGrantedScopes", () => this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(finiteClockSnapshot(operationClock)).toISOString(), expectedStoredDcrGrantGeneration(this.config), this.config.resource)) : [], this.config.scopeCatalog);
+        ? await readGrantedScopeSnapshot(this.store, consent.subject, consent.clientId, new Date(finiteClockSnapshot(operationClock)).toISOString(), expectedStoredDcrGrantGeneration(this.config), this.config.resource)
+        : [], this.config.scopeCatalog);
       const union = dedupe([...consentScopes, ...priorScopes]);
       // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
       const scopes = allowedScopes ? union.filter((s) => allowedScopes.includes(s)) : union;

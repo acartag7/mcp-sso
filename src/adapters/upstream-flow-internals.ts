@@ -4,15 +4,17 @@
 // here except jose (HS256 sign/verify) and node:crypto (timing-safe compare);
 // the clock is passed in (no ambient time). Everything is framework-free.
 
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { AuthConfigError, type BridgeConfig } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
 import { buildAuthorizationErrorRedirect } from "../challenge.ts";
-import { headerString, type NormRequest, type NormResponse } from "./http.ts";
+import { headerString, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
+import { OAUTH_PARAM_KEYS } from "./authorize-params.ts";
 
 // Re-export the shared authorize occurrence boundary so existing internal
 // importers keep the same surface while direct and pairing use the same source.
-export { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys, findRepeatedKeys } from "./authorize-params.ts";
+export { OAUTH_PARAM_KEYS };
+export { OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys, findRepeatedKeys } from "./authorize-params.ts";
 
 // The flow JWT moved to its own module (250-line limit); re-exported here so
 // every existing importer of these names keeps working unchanged.
@@ -124,6 +126,28 @@ export function timingSafeStringEqual(a: string, b: string): boolean {
 }
 
 export const CALLBACK_DUP_KEYS_EXPORT = CALLBACK_DUP_KEYS;
+
+export function randomFlowToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function gatherOAuthParams(req: NormRequest): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of OAUTH_PARAM_KEYS) {
+    const value = key === "resource" ? resourceParam(req.query[key]) : queryString(req.query, key);
+    if (typeof value === "string") out[key] = value;
+  }
+  return out;
+}
+
+export function pickOAuthParams(params: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of OAUTH_PARAM_KEYS) {
+    const value = params[key];
+    if (typeof value === "string") out[key] = value;
+  }
+  return out;
+}
 
 // --- response builders (failure-table rows) ---
 

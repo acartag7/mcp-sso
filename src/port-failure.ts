@@ -38,7 +38,8 @@ export class PortFailureError extends Error {
 /** Invoke a pluggable-port operation. Any throw becomes a `PortFailureError`, so
  *  a port can never select the public response. A REJECTION is a failure; a
  *  returned value — including a sentinel like `"replayed"` — is control flow and
- *  passes through untouched. */
+ *  passes through untouched. Response owners that consume returned object
+ *  fields project them inside `invoke`, so accessor failures are covered too. */
 export async function callPort<T>(
   port: string,
   operation: string,

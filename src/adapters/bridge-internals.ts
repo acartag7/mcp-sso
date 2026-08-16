@@ -12,6 +12,7 @@ import { formBodySnapshot, formObject, headerString, isAmbiguousFormContentType,
 import { findRepeatedKeys } from "./authorize-params.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
 import { PortFailureError, callPort } from "../port-failure.ts";
+import { snapshotIdentityResult } from "../port-result.ts";
 
 // Audit is a public security surface. Only fixed reason codes emitted by the
 // shipped identity implementations may cross this boundary; a custom port's
@@ -34,6 +35,11 @@ const IDENTITY_FAILURE_REASONS = new Set([
   "pairing_invalid_input", "pairing_rate_limited", "pairing_no_active_code",
   "pairing_expired", "pairing_wrong_code",
 ]);
+
+export function normalizedIdentityFailureReason(value: unknown): string {
+  return typeof value === "string" && IDENTITY_FAILURE_REASONS.has(value)
+    ? value : "identity_rejected";
+}
 
 export function hasBasicAuthorization(headers: NormRequest["headers"]): boolean {
   return Object.entries(headers).some(([key, raw]) =>
@@ -70,10 +76,13 @@ export async function resolveIdentityWithAudit(
 ): Promise<{ subject: string; allowedScopes?: string[] }> {
   let result: IdentityResult;
   try {
-    result = await callPort("IdentityPort", "verify", () => identity.verify(input));
+    const returned = await callPort("IdentityPort", "verify", () => identity.verify(input));
+    result = await callPort("IdentityPort", "verifyResult", async () => snapshotIdentityResult(returned));
   } catch (error) {
     const cause = error instanceof PortFailureError ? error.cause : error;
-    const portRejected = cause instanceof OAuthError
+    const portRejected = error instanceof PortFailureError
+      && error.operation === "verify"
+      && cause instanceof OAuthError
       && (cause.status === 401 || cause.status === 403);
     await emit("failure", cause instanceof OAuthError ? "port_error" : "internal_error", undefined, ip);
     // A deployment port may distinguish authentication-required from a verified
@@ -85,7 +94,7 @@ export async function resolveIdentityWithAudit(
     throw error;
   }
   if (!result.ok) {
-    const reason = IDENTITY_FAILURE_REASONS.has(result.reason) ? result.reason : "identity_rejected";
+    const reason = normalizedIdentityFailureReason(result.reason);
     await emit("failure", reason, undefined, ip);
     throw new OAuthError("access_denied", "Identity rejected", 401);
   }

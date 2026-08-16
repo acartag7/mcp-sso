@@ -30,7 +30,9 @@ import type { AuditPort } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { StorePort } from "../src/ports/store.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
+import type { IdentityPort } from "../src/ports/identity.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { resolveIdentityWithAudit } from "../src/adapters/bridge-internals.ts";
 
 const clock: ClockPort = { nowMs: () => 1_700_000_000_000 };
 const REDIRECT = "https://client.test/callback";
@@ -158,10 +160,12 @@ test("PortFailureError keeps the original for local logging only", () => {
 test("every response-owning store/client-store call re-casts a port-authored OAuthError", async (t) => {
   await t.test("registration save", async () => {
     const clients: ClientStore = { async save() { portBoom(); }, async find() { return null; } };
+    const { audit, events } = recordingAudit();
     await expectPortFailure(
-      () => registerClient({ config: config(clients), clock, audit: quietAudit }, { redirectUris: [REDIRECT] }),
+      () => registerClient({ config: config(clients), clock, audit }, { redirectUris: [REDIRECT] }),
       "save",
     );
+    assert.equal(events.at(-1)?.reason, "internal_error");
   });
 
   await t.test("stored-client authorization lookup", async () => {
@@ -186,6 +190,24 @@ test("every response-owning store/client-store call re-casts a port-authored OAu
       subject: "operator", clientId: "stored-client", redirectUri: REDIRECT,
       responseType: "code", codeChallenge: pkceChallenge(VERIFIER), codeChallengeMethod: "S256",
       scope: "mcp:read",
+    }), "findGrantedScopes");
+  });
+
+  await t.test("approval stored grant lookup", async () => {
+    const registration: ClientRegistration = {
+      clientId: "stored-client", redirectUris: [REDIRECT], applicationType: "web", issuedAtEpoch: 1_700_000_000,
+    };
+    const clients: ClientStore = { async save() {}, async find() { return registration; } };
+    const store = new MemoryStore();
+    const auth = new OAuthAuthorizationUseCase({ config: config(clients), store, clock, audit: quietAudit });
+    const prepared = await auth.prepare({
+      subject: "operator", clientId: "stored-client", redirectUri: REDIRECT,
+      responseType: "code", codeChallenge: pkceChallenge(VERIFIER), codeChallengeMethod: "S256",
+      scope: "mcp:read",
+    });
+    store.findGrantedScopes = async () => portBoom();
+    await expectPortFailure(() => auth.approve({
+      consentToken: prepared.consentToken, approved: true, origin: "https://auth.test",
     }), "findGrantedScopes");
   });
 
@@ -253,6 +275,19 @@ test("every response-owning store/client-store call re-casts a port-authored OAu
     }), "revokeRefreshTokenFamily");
   });
 
+  await t.test("revoke endpoint family mutation", async () => {
+    const store = new MemoryStore();
+    store.findRefreshToken = async () => ({
+      tokenHash: "a".repeat(64), familyId: "family-abcdefghijkl", previousTokenHash: null,
+      clientId: "client", subject: "operator", resource: RESOURCE,
+      scopes: ["mcp:read"], expiresAt: "2027-01-01T00:00:00.000Z",
+    });
+    store.revokeRefreshTokenFamily = async () => portBoom();
+    await expectPortFailure(() => revokeRefreshToken(
+      { store, clock, audit: quietAudit, resource: RESOURCE }, "raw-refresh-token",
+    ), "revokeRefreshTokenFamily");
+  });
+
   await t.test("machine-client authentication lookup", async () => {
     const clients: ClientStore = { async save() {}, async find() { return portBoom(); } };
     const token = new OAuthTokenUseCase({ config: config(clients, true), store: new MemoryStore(), clock, audit: quietAudit });
@@ -260,5 +295,80 @@ test("every response-owning store/client-store call re-casts a port-authored OAu
       grantType: "client_credentials", clientId: "mcc_service", clientSecret: "presented-secret",
       scope: "mcp:read",
     }), "find");
+  });
+});
+
+test("returned port accessors are read inside the provenance boundary", async (t) => {
+  await t.test("identity result", async () => {
+    const result = new Proxy({ ok: true, identity: { subject: "operator" } }, {
+      get(target, property, receiver) {
+        if (property === "ok") return portBoom();
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const identity: IdentityPort = { async verify() { return result; } } as IdentityPort;
+    await expectPortFailure(() => resolveIdentityWithAudit(
+      identity, "credential", undefined, async () => {},
+    ), "verifyResult");
+  });
+
+  await t.test("authorization-code record", async () => {
+    const store = new MemoryStore();
+    const record = {
+      codeHash: "a".repeat(64), clientId: "client", subject: "operator", redirectUri: REDIRECT,
+      resource: RESOURCE, scopes: ["mcp:read"], codeChallenge: pkceChallenge(VERIFIER),
+      codeChallengeMethod: "S256" as const, expiresAt: "2027-01-01T00:00:00.000Z",
+    };
+    store.consumeAuthCode = async () => new Proxy(record, {
+      get(target, property, receiver) {
+        if (property === "resource") return portBoom();
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const token = new OAuthTokenUseCase({ config: config(), store, clock, audit: quietAudit });
+    await expectPortFailure(() => token.exchangeAuthorizationCode({
+      grantType: "authorization_code", code: "raw-code", redirectUri: REDIRECT,
+      clientId: "client", codeVerifier: VERIFIER,
+    }), "consumeAuthCode");
+  });
+
+  await t.test("refresh lookup record", async () => {
+    const store = new MemoryStore();
+    const record = {
+      tokenHash: "a".repeat(64), familyId: "family-abcdefghijkl", previousTokenHash: null,
+      clientId: "client", subject: "operator", resource: RESOURCE,
+      scopes: ["mcp:read"], expiresAt: "2027-01-01T00:00:00.000Z",
+    };
+    store.findRefreshToken = async () => new Proxy(record, {
+      get(target, property, receiver) {
+        if (property === "resource") return portBoom();
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    await expectPortFailure(() => revokeRefreshToken(
+      { store, clock, audit: quietAudit, resource: RESOURCE }, "raw-refresh-token",
+    ), "findRefreshToken");
+  });
+
+  await t.test("rotated refresh record", async () => {
+    const store = new MemoryStore();
+    let compensationCalls = 0;
+    const record = {
+      tokenHash: "b".repeat(64), familyId: "family-abcdefghijkl", previousTokenHash: "a".repeat(64),
+      clientId: "client", subject: "operator", resource: RESOURCE,
+      scopes: ["mcp:read"], expiresAt: "2027-01-01T00:00:00.000Z",
+    };
+    store.rotateRefreshToken = async () => new Proxy(record, {
+      get(target, property, receiver) {
+        if (property === "resource") return portBoom();
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    store.revokeRefreshTokenFamily = async () => { compensationCalls += 1; };
+    const token = new OAuthTokenUseCase({ config: config(), store, clock, audit: quietAudit });
+    await expectPortFailure(() => token.refresh({
+      grantType: "refresh_token", refreshToken: generateRefreshToken("family-abcdefghijkl"), clientId: "client",
+    }), "rotateRefreshToken");
+    assert.equal(compensationCalls, 1, "an unreadable post-rotation result revokes the family");
   });
 });

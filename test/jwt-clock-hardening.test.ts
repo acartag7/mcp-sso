@@ -12,6 +12,7 @@ import type { AuthAuditEvent, AuditPort } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { RequestAuthorizer } from "../src/verifier.ts";
+import { signFlowToken } from "../src/adapters/upstream-flow-internals.ts";
 
 const NOW_MS = Date.parse("2026-07-26T12:00:00.000Z");
 const MIN_CANONICAL_MS = Date.parse("0000-01-01T00:00:00.000Z");
@@ -133,6 +134,21 @@ async function consentTokenAt(nowMs: number): Promise<string> {
   }, config, { nowMs: () => nowMs });
 }
 
+async function flowTokenAt(nowMs: number): Promise<string> {
+  return await signFlowToken({
+    secret: config.consentSigningSecret,
+    issuer: config.issuer,
+    callbackPath: "/oauth/callback",
+    clock: { nowMs: () => nowMs },
+    jti: "upf_clock_boundary",
+    state: "state",
+    nonce: "nonce",
+    codeVerifier: "v".repeat(43),
+    params: { client_id: "client-1" },
+    ttlSeconds: 1,
+  });
+}
+
 test("verifyAccessToken rejects an expired JWT under a NaN clock", async () => {
   const clock = new ScriptedClock([Number.NaN]);
   await assert.rejects(
@@ -209,13 +225,14 @@ test("JWT verifiers accept their latest canonical upper-bound mint times", async
   assert.equal(consentClock.reads, 1);
 });
 
-test("public JWT signers require canonical mint and expiry times", async () => {
+test("JWT signers require canonical mint and expiry times", async () => {
   for (const invalidTime of [MIN_CANONICAL_MS - 1, MAX_CANONICAL_MS + 1, Number.MAX_SAFE_INTEGER]) {
     await assert.rejects(accessTokenAt(invalidTime), RangeError);
     await assert.rejects(consentTokenAt(invalidTime), RangeError);
   }
   await accessTokenAt(MAX_CANONICAL_MS - config.accessTokenTtlSeconds * 1000);
   await consentTokenAt(MAX_CANONICAL_MS - config.consentTokenTtlSeconds * 1000);
+  await flowTokenAt(MAX_CANONICAL_MS - 1_000);
   await assert.rejects(
     accessTokenAt(MAX_CANONICAL_MS - config.accessTokenTtlSeconds * 1000 + 1),
     RangeError,
@@ -224,6 +241,7 @@ test("public JWT signers require canonical mint and expiry times", async () => {
     consentTokenAt(MAX_CANONICAL_MS - config.consentTokenTtlSeconds * 1000 + 1),
     RangeError,
   );
+  await assert.rejects(flowTokenAt(MAX_CANONICAL_MS - 999), RangeError);
 });
 
 test("RequestAuthorizer reuses one snapshot for expiry rejection and audit", async () => {
