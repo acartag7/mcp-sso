@@ -21,6 +21,7 @@ import {
 } from "./app.ts";
 import {
   assertConsolePairingListenHostBeforeState,
+  redirectAllowlistPolicyFromEnv,
   assertSingleIdentityProviderSelector,
   UNSAFE_NON_LOOPBACK_PAIRING_ENV,
 } from "../fastify-sqlite/app.ts";
@@ -29,6 +30,13 @@ import { trustedProxiesFromEnv } from "../fastify-sqlite/trusted-proxy.ts";
 async function main(): Promise<void> {
   assertSingleIdentityProviderSelector(process.env);
   trustedProxiesFromEnv(process.env);
+  // Parse the redirect trust policy before either listener. Production paths
+  // have no implicit operator entries; the local pairing composition retains
+  // its explicit loopback defaults. The builder repeats this check before state.
+  redirectAllowlistPolicyFromEnv(
+    process.env,
+    productionIdentityConfigured(process.env) ? "" : "http://localhost,http://127.0.0.1",
+  );
   if (!productionIdentityConfigured(process.env)
     && process.env[UNSAFE_NON_LOOPBACK_PAIRING_ENV] !== "true") {
     // The gateway has a second listener. Reject the public pairing bind before

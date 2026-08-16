@@ -26,7 +26,7 @@ import { assertOAuthRedirectEntry } from "./redirect.ts";
 import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, newGrantGeneration } from "./stored-dcr-generation.ts";
 import {
   accumulationAllowed, approvalCommitClock, assertApproveCimdGate, assertApproveOrigin,
-  assertConsentUnexpiredAt, cimdDisplay, dedupe, hostOf, redirectWithCode,
+  assertConsentUnexpiredAt, assertCurrentConsentRedirect, cimdDisplay, dedupe, hostOf, redirectWithCode,
   requiredStr, resolveAuthorizeClient,
   type CimdConsentDisplay,
 } from "./authorize-internals.ts";
@@ -196,9 +196,9 @@ export class OAuthAuthorizationUseCase {
       const consent = await verifyConsentToken(token, this.config, operationClock);
       if (consent.resource !== this.config.resource) throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
       if (consent.storeInstanceId !== await storeInstanceId(this.store)) throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
-      // Scheme/claim gate runs before Deny, jti consume, or storage (§17.1.6 decision 3).
       assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
       assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard
+      await assertCurrentConsentRedirect(this.config, consent.clientId, consent.redirectUri);
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
       if (input.approved !== true) {
         const redirectTo = buildAuthorizationErrorRedirect(this.config, consent.redirectUri, "access_denied", consent.state);

@@ -4,6 +4,9 @@
 
 import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
+import { AuthConfigError } from "./config-error.ts";
+import { parseRedirectEntry, RedirectEntryError } from "./redirect-entry.ts";
+import type { RedirectAllowlistMode } from "./redirect.ts";
 import type {
   BridgeConfig, ClientCredentialsOptions, DcrMode, DevOptions,
 } from "./config.ts";
@@ -180,4 +183,42 @@ function isClientStore(value: unknown): value is ClientStore {
   } catch {
     return false;
   }
+}
+
+export function snapshotRedirectAllowlist(value: unknown, makeError: MakeError): string[] {
+  const snapshot = snapshotArray("redirectAllowlist", value, makeError);
+  for (const entry of snapshot) {
+    try {
+      parseRedirectEntry(entry, { allowOmittedRootSlash: true });
+    } catch (error) {
+      const message = error instanceof RedirectEntryError ? error.message : "redirect entry is invalid";
+      throw new AuthConfigError(`redirectAllowlist ${message}`);
+    }
+  }
+  return snapshot as string[];
+}
+
+/** Resolve `redirectAllowlistMode`. Omission keeps the published default
+ *  (`"extend"`); anything outside the two known modes is rejected rather than
+ *  coerced, so a typo can never silently widen trust back to the built-ins.
+ *
+ *  `"replace"` with an empty allowlist would leave NO acceptable redirect at
+ *  all — every authorize and every DCR write would fail at runtime. That is
+ *  fail-closed but useless, and it is certainly a misconfiguration, so it is a
+ *  boot failure instead of a deployment that starts and rejects every client. */
+export function snapshotRedirectAllowlistMode(
+  value: unknown,
+  redirectAllowlist: readonly string[],
+): RedirectAllowlistMode {
+  if (value === undefined) return "extend";
+  if (value !== "extend" && value !== "replace") {
+    throw new AuthConfigError('redirectAllowlistMode must be "extend" or "replace"');
+  }
+  if (value === "replace" && redirectAllowlist.length === 0) {
+    throw new AuthConfigError(
+      'redirectAllowlistMode "replace" requires at least one redirectAllowlist entry; '
+      + "with none, no redirect_uri could ever be accepted",
+    );
+  }
+  return value;
 }

@@ -21,9 +21,23 @@ interface BridgeConfig {
   // Every entry MUST satisfy the §10.0 redirect-entry grammar (canonical origin
   // or exact-URI form). Enforced at boot by createBridgeConfig (§5): the array
   // is snapshotted once, validated, frozen, and published as the same copy.
-  // An EMPTY array is valid — only the hosted-client defaults remain enabled.
-  // Loopback redirects require an explicit entry here.
-  redirectAllowlist: string[];    // ADDS to the hosted MCP-client defaults
+  // An EMPTY array is valid under the default mode — only the hosted-client
+  // defaults remain enabled. Loopback redirects require an explicit entry here.
+  redirectAllowlist: string[];    // ADDS to the hosted defaults under "extend"
+                                  // (the default); under "replace" it IS the whole list
+
+  // How the array above composes with the §10.1 built-in hosted-client origins.
+  // Omitted => "extend" (the published default: built-ins PLUS the entries).
+  // "replace" trusts ONLY the entries above, dropping https://claude.ai and
+  // https://chatgpt.com — for OPAQUE/DCR client ids, the only ids that read
+  // this allowlist. A CIMD client is matched against its fetched document
+  // instead and is unaffected by the mode (§10.1 scope limit), so refusing the
+  // hosted clients entirely also needs cimd.enabled off or a deployer CIMD host
+  // policy. Any other value is a
+  // boot failure — a typo must never fall back to trusting the built-ins.
+  // "replace" with an EMPTY redirectAllowlist is a boot failure: no redirect_uri
+  // could ever be accepted, so it is a misconfiguration, not a deny-all posture.
+  redirectAllowlistMode?: "extend" | "replace";
 
   // --- scope contract (see §11); REQUIRED, fail-closed ---
   scopeCatalog: string[];         // the complete set of scopes this resource honors
@@ -124,6 +138,15 @@ interface BridgeConfig {
   multi-resource bridge ships today.
 - Every TTL is a positive integer.
 - `dcr.mode` is `"stateless"` or `"stored"`; stored mode requires a `ClientStore`.
+- `redirectAllowlistMode`, when present, is exactly `"extend"` or `"replace"`;
+  any other value — including a near-miss such as `"Replace"` or `""` — is an
+  `AuthConfigError` at boot rather than a silent fall back to `"extend"`.
+  `"replace"` additionally requires at least one `redirectAllowlist` entry.
+  Every shipped zero-setup composition root computes the redirect-entry list,
+  validates every entry with the same §10.0 parser, and applies both mode checks
+  **before** `loadOrCreateQuickstartSecrets`; a rejected entry or mode therefore
+  creates no state directory, ignore file, signing material, or listener.
+  `createBridgeConfig` repeats the authoritative checks after secrets are loaded.
 - `redirectAllowlist` is an array, and **every entry satisfies the §10.0
   redirect-entry grammar**. `createBridgeConfig` snapshots the array once,
   validates that copy, and publishes the same frozen copy — origin form or canonical exact-URI form, `https`/
@@ -131,7 +154,9 @@ interface BridgeConfig {
   character, backslash, or malformed percent-escape. Each rule is checked on the
   RAW entry as well as any parsed field (§10.0 explains why: WHATWG
   normalization erases the syntax the decision depends on). An empty array is
-  valid. The error **names the offending entry** and, for a non-canonical one,
+  valid **only under omitted/`"extend"` mode**; with `"replace"` it is a boot
+  failure, per the mode rule above (no built-ins remain, so no redirect_uri
+  could ever be accepted). The error **names the offending entry** and, for a non-canonical one,
   shows its canonical form — a deployer with several origins configured must not
   have to bisect.
 - `allowedOrigins` is an array of exact canonical WHATWG origin serializations:

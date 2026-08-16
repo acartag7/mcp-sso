@@ -1,4 +1,5 @@
 // File templates for `mcp-sso init` (contracts §15 "Init CLI"). Dep-free (node builtins); ships in dist/bin.
+import { generatedReadme } from "./template-readme.ts";
 /** Fastify, its limiter, and the MCP SDK use the exact tested devDependency pins.
  *  Keep these ledger-recorded constants in sync when the repo pins move. */
 const FASTIFY_VERSION = "5.8.5"; const FASTIFY_RATE_LIMIT_VERSION = "11.2.0";
@@ -30,7 +31,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   Bridge, RequestAuthorizer, createBridgeConfig, originOf, isMcpPath, validateAllowedOrigins,
-  loadOrCreateQuickstartSecrets, handlePairingAuthorize,
+  assertRedirectAllowlistEntries, loadOrCreateQuickstartSecrets, handlePairingAuthorize,
   SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
   type ClientRegistration, type ClientStore,
 } from "mcp-sso";
@@ -66,6 +67,18 @@ while (ISSUER.endsWith("/")) ISSUER = ISSUER.slice(0, -1); // trim a trailing / 
 const RESOURCE = env("OAUTH_RESOURCE", \`\${ISSUER}/mcp\`);
 const list = (v: string | undefined, def: string): string[] => (v ?? def).split(",").map((s) => s.trim()).filter(Boolean);
 const originList = (v: string | undefined, def: string): string[] => v === "" ? [] : (v ?? def).split(",");
+const redirectAllowlistModeFromEnv = (
+  raw: string | undefined, redirectAllowlist: readonly string[],
+): "extend" | "replace" | undefined => {
+  if (raw === undefined) return undefined;
+  if (raw !== "extend" && raw !== "replace") {
+    throw new Error('redirectAllowlistMode must be "extend" or "replace"');
+  }
+  if (raw === "replace" && redirectAllowlist.length === 0) {
+    throw new Error('redirectAllowlistMode "replace" requires at least one redirectAllowlist entry');
+  }
+  return raw;
+};
 // Strip control chars before logging an env-derived value (no log-line injection on the operator's console; a char class is linear → no ReDoS).
 const oneLine = (s: unknown): string => String(s).replace(/[\\x00-\\x1f\\x7f]/g, "");
 // allowInsecureLocalhost lets an http:// loopback issuer boot for local dev (the
@@ -84,6 +97,10 @@ async function main(): Promise<void> {
   if (HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") throw new Error("The generated starter is localhost-only: HOST must be a loopback address. Use the production example with a real identity provider and rate limiter for an internet-facing deployment.");
   if (new URL(RESOURCE).pathname !== "/mcp") throw new Error("OAUTH_RESOURCE pathname must be /mcp (the server mounts /mcp); set OAUTH_RESOURCE to <issuer>/mcp or edit server.ts for a custom path."); if (!isLoopback(ISSUER) || !isLoopback(RESOURCE)) throw new Error("The generated starter is localhost-only: OAUTH_ISSUER and OAUTH_RESOURCE must use loopback hosts. Use the production example for an internet-facing deployment.");
   const allowedOrigins = validateAllowedOrigins(originList(process.env.OAUTH_ALLOWED_ORIGINS, new URL(ISSUER).origin));
+  const redirectAllowlist = assertRedirectAllowlistEntries(
+    list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
+  );
+  const redirectAllowlistMode = redirectAllowlistModeFromEnv(process.env.OAUTH_REDIRECT_ALLOWLIST_MODE, redirectAllowlist);
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
   let store: ReturnType<typeof openSqliteStore> | undefined;
   const clientStore: ClientStore = {
@@ -93,7 +110,8 @@ async function main(): Promise<void> {
   const config = createBridgeConfig({
       issuer: ISSUER, resource: RESOURCE, consentSigningSecret: secrets.consentSigningSecret,
       signingPrivateJwk: secrets.signingPrivateJwk,
-      redirectAllowlist: list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
+      redirectAllowlist,
+      redirectAllowlistMode,
       scopeCatalog: list(process.env.OAUTH_SCOPE_CATALOG, "mcp:read,mcp:write"),
       defaultScopes: list(process.env.OAUTH_DEFAULT_SCOPES, "mcp:read"),
       allowedOrigins,
@@ -197,45 +215,6 @@ const GITIGNORE = `node_modules/
 // this is the safe default; remove the line only if a dep you've vetted needs a script.
 const NPMRC = `ignore-scripts=true
 `;
-function readme(vars: TemplateVars): string {
-  return `# ${vars.name}
-
-An [mcp-sso](https://github.com/acartag7/mcp-sso) MCP server — OAuth 2.1 for a remote
-MCP server, zero-setup (console pairing: no identity provider, no keys to generate).
-
-## Run
-
-\`\`\`bash
-# LOCALHOST-ONLY. Do not expose this generated server to the internet.
-npm install
-
-# Terminal 1 — the server (stays foreground):
-npm start
-
-# Terminal 2 — once the server is up (it prints a one-time code ONLY when a client connects):
-claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp
-# → the server prints the code to Terminal 1; a browser opens — paste the code, approve.
-\`\`\`
-
-\`npm install\` creates \`package-lock.json\` — commit it. The top-level pins above are
-exact (the versions mcp-sso is tested against); the lockfile fixes the transitive graph.
-
-The server binds loopback (127.0.0.1) by default — the printed pairing code is the
-identity gate, so it must not be exposed to the network. You may change PORT or select
-another loopback HOST; the server rejects an internet-facing HOST, issuer, or resource
-before it creates persistent state.
-
-## Production identity provider
-
-Console pairing is for single-operator / private-console use. For a real identity
-provider (Cloudflare Access, Microsoft Entra ID, Google, or a generic OIDC issuer),
-graduate to the env-driven composition root in
-[examples/fastify-sqlite](https://github.com/acartag7/mcp-sso/tree/main/examples/fastify-sqlite)
-and follow [docs/gateway-deployment.md](https://github.com/acartag7/mcp-sso/blob/main/docs/gateway-deployment.md)
-+ [docs/live-verification.md](https://github.com/acartag7/mcp-sso/blob/main/docs/live-verification.md).
-`;
-}
-
 /** Every file \`mcp-sso init\` writes, in write-order. */
 export function templateFiles(vars: TemplateVars): TemplateFile[] {
   return [
@@ -243,6 +222,6 @@ export function templateFiles(vars: TemplateVars): TemplateFile[] {
     { path: "server.ts", content: SERVER_TS },
     { path: ".gitignore", content: GITIGNORE },
     { path: ".npmrc", content: NPMRC },
-    { path: "README.md", content: readme(vars) },
+    { path: "README.md", content: generatedReadme(vars.name) },
   ];
 }

@@ -148,7 +148,7 @@ wiring does not force the plugin on existing consumers; consumers of the new
 subpath install its optional peer. This does not change the root package's
 `jose`-only runtime graph.
 
-**Consumer-facing example helpers (DX):** five symbols the in-repo example leans on
+**Consumer-facing example helpers (DX):** six symbols the in-repo example leans on
 to implement the recommended patterns are root-exported, so a package consumer
 replicating those patterns imports them from `mcp-sso` instead of reimplementing
 them (and re-opening the footguns they centralize): the normalized request/response
@@ -175,7 +175,10 @@ with `createUpstreamRedirectFlow`. It validates the PATH only — the
 `identity.redirectUri === issuerOrigin + callbackPath` equality is enforced
 separately, at mount, by `createUpstreamRedirectFlow` (and mirrored by the example's
 `assertUpstreamConfigBeforeState`); a consumer doing early-fail boot validation
-pairs `assertCallbackPath` with its own redirectUri equality check. All five are
+pairs `assertCallbackPath` with its own redirectUri equality check; and
+`assertRedirectAllowlistEntries` (the §10.0 snapshot/parser used before
+quickstart state or listener effects, with `createBridgeConfig` repeating the
+authoritative check). All six are
 dep-free (node builtins / pure string logic), so root-exporting them does not widen
 the `jose`-only runtime posture.
 
@@ -228,7 +231,13 @@ server is the zero-setup pairing path; a real IdP (Cloudflare Access / Entra / G
 OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded
 default — the done-bar is the pairing round-trip, not a production deploy. **Config-
 validation ordering (benign residual):** the generated server pre-validates the
-`OAUTH_ISSUER`/`OAUTH_RESOURCE` URLs before the state-creating helper, but the deeper
+`OAUTH_ISSUER`/`OAUTH_RESOURCE` URLs, raw allowed Origins, and the complete
+redirect policy — every `OAUTH_REDIRECT_ALLOWLIST` entry through the §10.0
+parser plus the `OAUTH_REDIRECT_ALLOWLIST_MODE` rule (known value and non-empty
+list for `replace`) — before the state-creating helper. The validated list and
+mode are still passed to
+`createBridgeConfig`, so request-time policy cannot drift from the preflight.
+Deeper
 config validation (`createBridgeConfig` — scheme, scope shapes) runs *after*
 `loadOrCreateQuickstartSecrets`, so a malformed env value leaves a `secrets.json`. That
 file is owner-only on POSIX (`0600` in a `0700` gitignored dir; on Windows those
