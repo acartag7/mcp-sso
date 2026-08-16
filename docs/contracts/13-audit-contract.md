@@ -22,8 +22,17 @@ token emits
 `status: "success", reason: "unrecognized_token"`; a known token, including an
 idempotent re-revocation, emits success without that reason. The adapter returns
 200 in both cases. A store lookup or family-revocation failure emits
-`status: "failure", reason: "internal_error"` before the original error is
-re-thrown for the adapter's existing sanitized §9.5 mapping. Neither event
+`status: "failure", reason: "internal_error"` before a `PortFailureError` is
+thrown in the original's place, for the adapter's existing sanitized §9.5
+mapping. **The value a pluggable port threw is never re-thrown and never
+selects the public response.** A store is caller-supplied code, and `OAuthError`
+is a published export, so a store returning an `OAuthError`-shaped failure would
+otherwise pass `asOAuth` verbatim and its status/message would answer the
+request — breaking RFC 7009's always-200 rule and making the store's internal
+text an oracle on token existence. The re-cast happens at every pluggable-port
+call site (`callPort`), never at the use-case catch, because the library's own
+`invalid_grant`/`invalid_client`/`invalid_consent` MUST still reach the client.
+The original is carried on `PortFailureError.cause` for local logging only. Neither event
 contains the token, its hash, a family identifier, or the thrown value. A
 limiter denial or adapter/body rejection that never enters the revocation
 use-case emits no `oauth.revoke` event.
