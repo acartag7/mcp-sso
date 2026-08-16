@@ -519,7 +519,16 @@ enforced. Node does not expose `O_NOFOLLOW`/`O_NONBLOCK` on Windows. There,
 and identity checks, exclusive creation, and the single-link rule, but makes no
 claim that POSIX mode/UID checks enforce Windows ACL policy. The deployer MUST
 place SQLite state in a private, deployer-controlled directory whose ACL denies
-untrusted writers. No Windows ACL dependency is added.
+untrusted writers. No Windows ACL dependency is added. On the first Windows call
+in a process to any of `openSqliteStore` with a persistent path,
+`loadOrCreateQuickstartSecrets`, or `ensureStateDir` — the three state-dir paths
+§17.8's parity rule names, each of which skips the POSIX mode/UID gates on
+win32 — the shared helper emits one fixed warning that
+the library has not verified DACL privacy. It never includes the configured path
+or another externally influenced value, contains failures from a throwing logging transport,
+and does not repeat on later opens. Exact `:memory:` and caller-owned
+`new SqliteStore(database)` perform no library filesystem admission and emit no
+warning by themselves.
 
 Admission failures use the fixed `sqlite: unsafe persistent state:` prefix and
 allowlisted reasons/remediation. They never include file contents, SQLite rows,

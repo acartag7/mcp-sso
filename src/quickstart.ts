@@ -12,25 +12,25 @@
 //   - Unwritable dir / partial write / unparseable / bad-shape ⇒ AuthConfigError.
 //     NEVER an ephemeral fallback (silent key rotation masks misconfiguration).
 //
-// Plaintext key material on disk is bounded by the OS user account; production
-// belongs in env/secret managers.
+// Plaintext key material on disk. On POSIX the boundary is the OS user account,
+// enforced by the mode/ownership gates above. On Windows those gates are absent
+// and no DACL is read or set, so the readers are whichever principals the
+// inherited ACL admits — unmeasured here (issue #219). Production belongs in
+// env/secret managers on both.
 
 import { chmod, constants as fsc, lstat, mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { exportJWK, generateKeyPair, type JWK } from "jose";
 import { AuthConfigError } from "./config.ts";
+import { validateSecrets, type QuickstartSecrets } from "./quickstart-shape.ts";
+import { warnWindowsPermissionGap } from "./windows-permission-warning.ts";
+
+export type { QuickstartSecrets } from "./quickstart-shape.ts";
 
 // O_NOFOLLOW refuses symlinks; O_NONBLOCK stops a FIFO/special file hanging open.
 const O_NOFOLLOW: number | undefined = (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW;
 const O_NONBLOCK: number = (fsc as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
-
-export interface QuickstartSecrets {
-  /** EC P-256 private JWK (kty/crv/d/x/y) — passes `createBridgeConfig`'s §5 check. */
-  signingPrivateJwk: JWK;
-  /** >=32-char HS256 consent secret (base64url of 48 random bytes). */
-  consentSigningSecret: string;
-}
 
 export interface QuickstartOptions {
   /** Directory holding `secrets.json` + `.gitignore`. Default `./.mcp-sso`. */
@@ -49,6 +49,7 @@ export async function loadOrCreateQuickstartSecrets(
   const dir = opts.dir ?? "./.mcp-sso";
   const secretsPath = join(dir, SECRETS_FILE);
 
+  warnWindowsPermissionGap();
   if (await pathExists(secretsPath)) {
     return loadExisting(dir, secretsPath);
   }
@@ -72,34 +73,6 @@ async function loadExisting(dir: string, secretsPath: string): Promise<Quickstar
     throw new AuthConfigError(`quickstart: ${secretsPath} is not valid JSON (refuse to fall back to ephemeral keys)`);
   }
   return validateSecrets(parsed, secretsPath);
-}
-
-function validateSecrets(parsed: unknown, secretsPath: string): QuickstartSecrets {
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} must be a JSON object`);
-  }
-  const obj = parsed as Record<string, unknown>;
-  const signingPrivateJwk = obj.signingPrivateJwk;
-  const consentSigningSecret = obj.consentSigningSecret;
-  if (typeof consentSigningSecret !== "string" || consentSigningSecret.trim().length < 32) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} consentSigningSecret missing or < 32 chars`);
-  }
-  // Mirror config.ts §5 shape validation so loaded material always passes createBridgeConfig.
-  if (!isValidSigningJwk(signingPrivateJwk)) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} signingPrivateJwk must be an EC P-256 key with d, x, y`);
-  }
-  return { signingPrivateJwk: signingPrivateJwk as JWK, consentSigningSecret };
-}
-
-function isValidSigningJwk(value: unknown): value is JWK {
-  if (typeof value !== "object" || value === null) return false;
-  const jwk = value as Record<string, unknown>;
-  return (
-    jwk.kty === "EC" && jwk.crv === "P-256" &&
-    typeof jwk.d === "string" && jwk.d.length > 0 &&
-    typeof jwk.x === "string" && jwk.x.length > 0 &&
-    typeof jwk.y === "string" && jwk.y.length > 0
-  );
 }
 
 async function generateAndPersist(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
