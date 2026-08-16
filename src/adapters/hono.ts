@@ -34,10 +34,12 @@ export interface HonoAdapterOptions {
    *  Hono has no framework-validated `req.ip` (fastify/express key on theirs,
    *  gated by trustProxy config), so the deployer supplies one wired to their
    *  actual topology — e.g. the rightmost trusted X-Forwarded-For hop, or the
-   *  runtime's connection info. Default: no IP — every request shares the one
-   *  "unknown" rate-limit bucket (collectively throttled, never bypassable) and
-   *  audit events omit `ip`. The adapter NEVER reads X-Forwarded-For on its
-   *  own: an attacker-chosen header must not select the rate-limit bucket.
+   *  runtime's connection info. Default: no IP — every request uses the one
+   *  "unknown" rate-limit key and audit events omit `ip`. With a real limiter,
+   *  client-controlled headers therefore cannot spread traffic across buckets;
+   *  the no-op limiter default still permits every request. The adapter NEVER
+   *  reads X-Forwarded-For on its own: an attacker-chosen header must not select
+   *  the rate-limit bucket.
    *  Request own-property extensions survive POST body guarding. Extractors
    *  needing prototype-only/private runtime state must use stable `Context`
    *  environment data instead of relying on raw Request identity. */

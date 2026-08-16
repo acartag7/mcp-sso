@@ -533,7 +533,8 @@ traffic is attributed to one IP and the limiter is ineffective.
 attacker-controlled header must not select the rate-limit bucket
 (bucket-per-request = limiter bypass) or forge the audit `ip`. Without
 `clientIp`, requests carry no IP: the limiter keys everything into the one
-shared `unknown` bucket (collectively throttled, never bypassable) and audit
-events omit `ip`. A deployer behind a trusted proxy supplies an extractor
-wired to their actual topology (e.g. the rightmost trusted `X-Forwarded-For`
+shared `unknown` key and audit events omit `ip`. With a real limiter this
+prevents a client-controlled header from spreading traffic across buckets; the
+no-op limiter default still permits every request. A deployer behind a trusted
+proxy supplies an extractor wired to their actual topology (e.g. the rightmost trusted `X-Forwarded-For`
 hop, or the runtime's connection info).
