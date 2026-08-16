@@ -27,9 +27,12 @@ const config = createBridgeConfig({
 });
 ```
 
-`configFromEnv`, `buildExample`, and `buildGatewayExample` retain stateless DCR;
-the generated server supplies its `SqliteStore` as `dcr.store`. There is no CIMD
-environment variable or secret. `authorizationServerMetadata` advertises both
+`configFromEnv` and both runnable examples retain stateless DCR by default. The
+Fastify/SQLite production entry accepts `OAUTH_DCR_MODE=stored` and backs client
+registrations with its existing `SqliteStore`; the API-key gateway keeps its
+stateless environment wiring. The generated server also supplies its
+`SqliteStore` as `dcr.store`. There is no CIMD environment variable or secret.
+`authorizationServerMetadata` advertises both
 `client_id_metadata_document_supported: true` and `registration_endpoint`, so
 clients can select the method they implement.
 
@@ -64,11 +67,12 @@ and a non-root path:
 Use that exact URL as the OAuth `client_id`. The document's `client_id` must be
 an exact character-for-character match. `client_name` must be non-empty, and
 `redirect_uris` must contain 1–16 valid redirect URIs. HTTPS redirects match
-exactly. A loopback HTTP redirect may vary only its port, and only when the
-document declares exact `application_type: "native"`; the scheme, host, path,
-and search remain fixed. A document declaring `"web"`, or omitting
-`application_type`, uses exact raw-string matching. Any other present value is
-rejected. See the [conformance matrix](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix).
+exactly. A registered loopback HTTP redirect may vary only its port; the scheme,
+host, path, and search remain fixed. This narrow loopback rule also applies when
+the document declares `application_type: "web"` or omits the optional member,
+because a portless HTTP loopback callback is a native-client shape regardless
+of that declaration. Any other present `application_type` value is rejected.
+See the [conformance matrix](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix).
 
 The client-id URL cannot contain query, fragment, or userinfo. IP-literal,
 trailing-dot, and punycode (`xn--`) hosts are rejected. The bridge fetches the
@@ -86,6 +90,24 @@ The complete URL-admission, SSRF, size, timeout, redirect, document, cache, and
 error contract is [§17.1](contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract).
 
 ## DCR compatibility
+
+Codex CLI uses DCR and binds an ephemeral loopback callback such as
+`http://localhost:1455/auth/callback`. A Fastify/SQLite production deployment
+that serves native CLI clients must use stored DCR plus explicit portless
+loopback origins:
+
+```dotenv
+OAUTH_DCR_MODE=stored
+OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
+```
+
+Do not put a bare loopback origin into the stateless production composition.
+The boot guard rejects that reusable trust shape by design, even when the same
+additive allowlist also contains an application-specific HTTPS callback. Stored
+DCR narrows the runtime decision back to the concrete callback saved for each
+native client. The API-key gateway example does not consume `OAUTH_DCR_MODE`;
+give a custom gateway composition its own shared `ClientStore` when it needs the
+same client class.
 
 Use stateless DCR when a deployment does not need registrations to survive a
 restart. For a single-process deployment, `SqliteStore` implements both

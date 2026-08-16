@@ -240,3 +240,15 @@ listener before invoking the stateful gateway builder. An invalid or occupied
 backend bind therefore leaves no quickstart state behind.
 The generated starter additionally rejects non-loopback issuer or resource URLs
 before creating its state directory, signing keys, audit file, or SQLite database.
+
+**Fastify/SQLite production DCR selection.** The
+`examples/fastify-sqlite` production branches accept an exact
+`OAUTH_DCR_MODE` value of `"stateless"` or `"stored"`; omission preserves the
+published stateless default, while a blank or unknown value is a pre-state boot
+failure. Stored mode binds `dcr.store` to a `ClientStore` adapter backed by the
+same `SqliteStore` instance that owns the bridge's OAuth state. This is the
+supported composition for native CLI clients whose ephemeral loopback callback
+needs a portless loopback origin in
+`OAUTH_REDIRECT_ALLOWLIST`: the existing stateless-DCR composition guard remains
+unchanged and still rejects that broadly reusable origin. The API-key gateway
+example retains its existing stateless-only environment wiring.

@@ -17,6 +17,13 @@ How mcp-sso proves a release actually works.
 > member and the runtime supplies an ephemeral port. Current source restores
 > the registered-loopback any-port rule; a patch release decision remains.
 >
+> **Published v0.3.5's production Fastify/SQLite example cannot register Codex
+> CLI.** Codex presents an ephemeral callback such as
+> `http://localhost:1455/auth/callback`; stateless DCR cannot safely boot with
+> the portless loopback origin needed to admit that changing path and port.
+> Current source exposes the already-supported stored-DCR/SQLite composition as
+> `OAUTH_DCR_MODE=stored`. This does not relax the stateless deployment guard.
+>
 > The post-v0.3.5 line hardens the shipped OAuth composition rather than adding
 > a new protocol profile. It host-binds generic-OIDC discovery endpoints; rejects
 > opaque browser origins, ambiguous bearer input, duplicate OAuth form members,
@@ -884,6 +891,9 @@ row. Published v0.3.5 packages that work without making a published-artifact
 conformance claim; published v0.3.4 retains its earlier baseline. The
 post-v0.3.5 status is canonicalized at the top of this document and does not
 upgrade the dated live evidence.
-Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
-showed an RFC 9207 `iss` callback regression on 2026-07-28; current
-compatibility awaits upstream resolution and retest.
+Historical Codex CLI success remains recorded. Installed Codex CLI 0.144.1
+showed an RFC 9207 `iss` callback regression on 2026-07-28, and published
+v0.3.5's production Fastify/SQLite composition does not expose the stored-DCR
+mode required by current ephemeral loopback callbacks. Current compatibility
+therefore awaits both an upstream callback retest and live verification of the
+unreleased stored-DCR example wiring.

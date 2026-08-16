@@ -49,16 +49,28 @@ coding agent ──OAuth (CIMD or DCR + PKCE)──▶ gateway ──▶ upstrea
 
 ## Client registration at the gateway
 
-The 0.3.0 examples enable CIMD and retain stateless DCR. Recommend CIMD to
-clients that support it; DCR remains the compatibility path. The bridge does
-not negotiate or automatically fall back:
+The examples enable CIMD and retain DCR. Recommend CIMD to clients that support
+it; DCR remains the compatibility path. The bridge does not negotiate or
+automatically fall back:
 an HTTPS-shaped `client_id` selects CIMD, while a client that uses DCR first
 obtains an opaque id from `/oauth/register`. Neither path changes the upstream
 identity provider.
 
-See [client-registration.md](client-registration.md) for the document shape and
-custom composition-root config. No CIMD environment variable or shared
-`ClientStore` is required.
+Codex CLI uses DCR with an ephemeral loopback callback. For the production
+Fastify/SQLite example, enable its existing stored-client capability explicitly:
+
+```dotenv
+OAUTH_DCR_MODE=stored
+OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
+```
+
+That setting is intentionally not a relaxation of the stateless deployment
+guard: stored DCR records each native client's concrete callback in SQLite. The
+API-key gateway's environment builder remains stateless; a custom gateway that
+needs native CLI DCR must supply a shared `ClientStore` itself. See
+[client-registration.md](client-registration.md) for the document shape and
+complete registration guidance. CIMD itself needs no environment variable or
+shared `ClientStore`.
 
 ## The login leg: how the user actually signs in
 
