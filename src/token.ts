@@ -191,7 +191,9 @@ export class OAuthTokenUseCase {
   /** RFC 7009: always succeeds (the adapter returns 200). An unknown or
    *  already-revoked token is a no-op — it never leaks existence via 4xx. */
   async revoke(refreshToken: string | undefined): Promise<void> {
-    await revokeRefreshToken({ store: this.store, clock: this.clock, audit: this.audit }, refreshToken);
+    await revokeRefreshToken({
+      store: this.store, clock: this.clock, audit: this.audit, resource: this.config.resource,
+    }, refreshToken);
   }
 
   private async consumeValidCode(input: AuthorizationCodeGrantInput, clock: ClockPort): Promise<AuthCodeRecord> {

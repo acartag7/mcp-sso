@@ -2,7 +2,7 @@ import { createPool, type Pool, type PoolConnection, type PoolOptions, type RowD
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertRefreshResource, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
@@ -125,10 +125,11 @@ export class MysqlStore implements StorePort {
       return refreshTokenFromRow(row);
     });
   }
-  async revokeRefreshTokenFamily(familyId: string, revokedAtIso: string): Promise<void> {
+  async revokeRefreshTokenFamily(familyId: string, revokedAtIso: string, expectedResource?: string): Promise<void> {
     this.ensureOpen();
     assertUtcIsoTimestamp(revokedAtIso, "revokedAtIso");
-    await this.transaction(async (conn) => { await revokeFamily(conn, familyId, revokedAtIso); });
+    if (expectedResource !== undefined) assertRefreshResource(expectedResource, "expectedResource");
+    await this.transaction(async (conn) => { await revokeFamily(conn, familyId, revokedAtIso, expectedResource); });
   }
 
   async findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {

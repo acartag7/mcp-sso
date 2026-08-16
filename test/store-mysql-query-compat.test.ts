@@ -90,4 +90,13 @@ test("MysqlStore family upserts bind incoming values without row aliases", async
   );
   assert.ok(revokeQuery);
   assert.deepEqual(revokeQuery.values, [REVOKED, "family"]);
+
+  const resourceBound = recordingStore();
+  await resourceBound.store.revokeRefreshTokenFamily("family", REVOKED, "https://api.example/mcp");
+  const resourceQuery = resourceBound.queries.find(({ sql }) =>
+    sql.startsWith("UPDATE oauth_refresh_token_families")
+  );
+  assert.ok(resourceQuery);
+  assert.match(resourceQuery.sql, /AND resource = \?$/);
+  assert.deepEqual(resourceQuery.values, [REVOKED, "family", "https://api.example/mcp"]);
 });

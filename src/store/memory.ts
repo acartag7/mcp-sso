@@ -131,11 +131,13 @@ export class MemoryStore implements StorePort {
     return toRecord(current);
   }
 
-  async revokeRefreshTokenFamily(familyId: string, revokedAtIso: string): Promise<void> {
+  async revokeRefreshTokenFamily(familyId: string, revokedAtIso: string, expectedResource?: string): Promise<void> {
     this.ensureOpen();
     assertUtcIsoTimestamp(revokedAtIso, "revokedAtIso");
+    if (expectedResource !== undefined) assertRefreshResource(expectedResource, "expectedResource");
     const family = this.families.get(familyId);
-    if (family && family.revokedAt === null) family.revokedAt = revokedAtIso;
+    if (family && family.revokedAt === null
+      && (expectedResource === undefined || family.resource === expectedResource)) family.revokedAt = revokedAtIso;
   }
 
   async findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {

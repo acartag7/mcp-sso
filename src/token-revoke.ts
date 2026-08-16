@@ -8,6 +8,7 @@ interface RevokeDeps {
   store: StorePort;
   clock: ClockPort;
   audit: AuditPort;
+  resource: string;
 }
 
 /** RFC 7009 keeps the response non-oracular while audit distinguishes outage. */
@@ -17,8 +18,8 @@ export async function revokeRefreshToken(deps: RevokeDeps, refreshToken: string 
     let revoked = false;
     if (refreshToken) {
       const existing = await deps.store.findRefreshToken(sha256Hex(refreshToken));
-      if (existing) {
-        await deps.store.revokeRefreshTokenFamily(existing.familyId, occurredAt);
+      if (existing?.resource === deps.resource) {
+        await deps.store.revokeRefreshTokenFamily(existing.familyId, occurredAt, deps.resource);
         revoked = true;
       }
     }
