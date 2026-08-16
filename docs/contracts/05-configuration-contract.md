@@ -272,12 +272,17 @@ This route control closes a composition-root gap; it does not change
 `assertSafeDeploymentCombination`. The root cause is explicit in
 `src/deployment-guard.ts`: after validating a supplied limiter, the guard
 returns immediately for every DCR mode other than `"stateless"`. Stored DCR has
-therefore never been covered by that unbounded-registration boot guard, and the
-Fastify/SQLite example's new stored mode was the first shipped composition to
-make anonymous durable registration writes reachable through the exemption.
+therefore never been covered by that unbounded-registration boot guard. The
+generated starter already makes anonymous durable registration writes reachable
+through this exemption, but its enforced loopback-only deployment envelope limits
+the exposure to the local host. Adding stored mode to the production
+Fastify/SQLite example would make the same gap reachable in an internet-facing
+composition, so this hotfix adds the example-owned route limiter before doing so.
 Extending the guard to stored DCR can newly refuse existing deployments. Owner
 decision **B1** was approved on 2026-08-17: stored DCR will require a bounded
 `RateLimitPort`, with no acknowledgement escape hatch. That deliberate
 boot-breaking library change lands separately with its own version call. This
 hotfix leaves the guard unchanged and supplies the finite, fail-closed control
-only at the example route; it does not close the library-wide class.
+only at the production example route. The generated starter remains an existing
+loopback-only residual; neither its network confinement nor the production
+example's route limiter closes the library-wide class.

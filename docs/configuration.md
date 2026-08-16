@@ -106,10 +106,10 @@ The Fastify/SQLite example also places a fixed fail-closed Fastify budget on
 `POST /oauth/register` in both DCR modes: 30 requests per 60 seconds per derived
 client IP. Exhaustion returns 429 before a registration is written; failure of
 the optional custom limiter store returns a fixed 503 before body parsing or
-SQLite work. Its default limiter store is per process. Multi-replica public
-deployments must provide a conforming shared Fastify limiter store or enforce an
-equivalent aggregate budget at a trusted edge. This route control does not alter
-the library deployment guard. The separate owner-approved B1 change will make
+registration persistence. Its default limiter store is per process. Multi-replica
+public deployments must provide a conforming shared Fastify limiter store or
+enforce an equivalent aggregate budget at a trusted edge. This route control
+does not alter the library deployment guard. The separate owner-approved B1 change will make
 stored DCR without a bounded core `RateLimitPort` a boot failure, with no escape
 hatch; it is intentionally not part of this non-breaking interop hotfix.
 
