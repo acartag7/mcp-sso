@@ -398,14 +398,19 @@ filled the framework's body slot, so unsupported below-cap media remain absent
 rather than becoming OAuth fields **even when the application mounted its own
 parser for that media type earlier on the same OAuth path** — that parser still
 owns its byte accounting and error handling (see the Express bullet), but its
-output cannot be selected as OAuth input. Absent and ambiguous `Content-Type`
-fail closed the same way. Endpoint logic
-then handles those empty fields: register and token return their existing
+output cannot be selected as OAuth input. When `Content-Type` is absent or has
+one unsupported media essence, endpoint logic handles the resulting empty
+fields: register and token return their existing
 required-input errors; approve retains its consent-cookie/body and deny rules;
 revoke keeps RFC 7009's HTTP 200 response for the resulting
-fieldless/unrecognized-token request. Duplicate or ambiguous `Content-Type` is
-different: the shared Bridge form gate rejects it directly with 400 before field
-selection. The IP is trusted only when the proxy or extractor satisfies the
+fieldless/unrecognized-token request. Duplicate or otherwise ambiguous
+`Content-Type` also loses its semantic body, but is not treated as fieldless:
+the normalized form-provenance sentinel retains the ambiguity and the shared
+Bridge form gate rejects it directly with 400 before field selection. A shipped
+composition root that constructs `NormRequest` itself for
+a caller-owned OAuth route uses this same gate too: both runnable examples and
+the generated starter apply `semanticOAuthBody` to their console-pairing
+normalizer before `handlePairingAuthorize`. The IP is trusted only when the proxy or extractor satisfies the
 deployment preconditions in §6.4. Wiring rules:
 - **Endpoints:** GET `/.well-known/oauth-authorization-server` →
   `authorizationServerMetadata`; GET `/.well-known/oauth-protected-resource` AND
