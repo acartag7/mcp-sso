@@ -1674,6 +1674,20 @@ gate replaces no-gate).
   boot-time fetching), `scopes?` (default `openid profile email`),
   `subjectAllowlist?` (matches `sub`), `allowEmailAllowlist?` (opt-in; only
   matches when `email_verified === true`).
+- **`claims.name` (optional, display only).** Present ONLY when
+  `email_verified === true` AND `payload.name` is a string whose trimmed length
+  is non-zero and whose raw length is at most **256** characters; otherwise the
+  key is ABSENT. An over-long value is omitted, never truncated — truncation
+  would publish a string the IdP never issued. The value is surfaced RAW: the
+  emptiness test is not a normalization, and no caller may treat it as a
+  canonical form. `name` is **never** a subject, never an authorization input,
+  and never trim-folded for matching; it exists so a host driving
+  `RedirectIdentityPort` can render a person without parsing the id_token
+  itself. It is attacker-influenced (end users edit their own IdP profile
+  name), so a consumer rendering it into HTML MUST encode it. The gate lives in
+  the shared pure validator, so **the Google preset inherits it by delegation**;
+  no new scope is requested (`profile` is already in the default set). Google
+  keeps `sub` raw and the generic port keeps its issuer-namespaced subject.
 - **Discovery** (`endpoints: "discover"`): fetched ONCE at boot from
   `${issuer}/.well-known/openid-configuration`; the document's `issuer` MUST
   exactly equal the configured issuer (OIDC Discovery §4.3; RFC 8414 §3.3:
