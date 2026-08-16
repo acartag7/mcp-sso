@@ -76,7 +76,7 @@ export function isPositiveInteger(value: number): boolean {
 
 export function epochSeconds(clock: ClockPort): number {
   const epoch = Math.floor(finiteClockSnapshot(clock) / 1000);
-  if (epoch < 0) throw new RangeError("ClockPort.nowMs() must not precede the Unix epoch for machine-client records");
+  if (epoch < 0) throw new RangeError("ClockPort timestamp must not precede the Unix epoch for machine-client records");
   return epoch;
 }
 
