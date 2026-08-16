@@ -1,6 +1,7 @@
-// Hono adapter (contracts §9.6). Thin wiring over the framework-free Bridge; all
-// OAuth logic stays in the core. Returns a Hono instance. Form bodies are parsed
-// via parseBody; NormResponse maps to c.redirect (302) or c.json/c.body otherwise.
+// Hono transport adapter (contracts §9.6). OAuth domain decisions stay in the
+// framework-free core; this layer enforces Hono-specific request boundaries.
+// Returns a Hono instance. NormResponse maps to c.redirect (302) or
+// c.json/c.body otherwise.
 
 import { Hono } from "hono";
 import type { Context } from "hono";

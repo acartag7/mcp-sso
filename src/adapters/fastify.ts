@@ -1,7 +1,8 @@
-// Fastify adapter (contracts §9.6). Thin wiring over the framework-free Bridge; all
-// OAuth logic stays in the core. Maps NormResponse to Fastify (302 for redirects,
-// status+body otherwise). The consumer supplies a Bridge + an IdentityPort; the
-// adapter resolves the subject from `identityHeader` (default Cf-Access-Jwt-Assertion).
+// Fastify transport adapter (contracts §9.6). OAuth domain decisions stay in the
+// framework-free core; this layer enforces Fastify-specific request boundaries
+// and maps NormResponse to Fastify (302 for redirects, status+body otherwise).
+// The consumer supplies a Bridge + an IdentityPort; the adapter resolves the
+// subject from `identityHeader` (default Cf-Access-Jwt-Assertion).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityPort } from "../ports/identity.ts";

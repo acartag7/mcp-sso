@@ -377,10 +377,13 @@ The **JSON-RPC `/mcp` surface** uses a separate envelope (built by the framework
 adapter, Phase 3): `{ jsonrpc:"2.0", error:{ code:-32001, message:"<oauth-code>:
 <message>" }, id:null }`, with the `WWW-Authenticate` challenge on 401 (§8.2).
 
-## 9.6 Framework adapters *(Phase 3 — thin wiring)*
-The `/fastify`, `/express`, `/hono` adapters are **thin**: all logic stays in the
-core use-cases; an adapter only parses the request, calls the use-case, and shapes
-the response. Wiring rules:
+## 9.6 Framework adapters *(Phase 3 — transport boundary)*
+The `/fastify`, `/express`, `/hono` adapters keep OAuth domain decisions in the
+core use-cases. They own framework-specific transport enforcement: normalize
+and bound the request, reject unsupported media types and ambiguous inputs,
+carry framework- or deployer-derived client-IP data, call the use-case, and
+shape the response. The IP is trusted only when the proxy or extractor satisfies
+the deployment preconditions in §6.4. Wiring rules:
 - **Endpoints:** GET `/.well-known/oauth-authorization-server` →
   `authorizationServerMetadata`; GET `/.well-known/oauth-protected-resource` AND
   its path-inserted form → `protectedResourceMetadata` (§9.1); GET `/oauth/jwks` →

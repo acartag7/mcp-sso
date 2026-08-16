@@ -57,7 +57,7 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 | --- | --- |
 | `src/` (root) | **Pure core** — use-cases + ports, no infra imports. `verifier.ts`, `authorize.ts`, `token.ts`, `register.ts`, `challenge.ts`, `client-auth.ts`, `machine-client.ts`, `metadata.ts`, `redirect.ts`, `scopes.ts`, `config.ts`, `crypto.ts`, `errors.ts`, `quickstart.ts`, `index.ts`. |
 | `src/ports/` | **Ports (interfaces):** `store.ts`, `client-store.ts`, `identity.ts`, `audit.ts`, `clock.ts`, `fetcher.ts`, `rate-limit.ts`. |
-| `src/adapters/` | **Thin framework adapters:** `fastify.ts` / `express.ts` / `hono.ts` (route wiring only), plus `bridge.ts`, `http.ts`, `consent-page.ts`, `upstream-flow.ts`, `upstream-flow-internals.ts`, `pairing-flow.ts`, `pairing-page.ts`. All logic lives in the core. |
+| `src/adapters/` | **Framework adapters:** `fastify.ts` / `express.ts` / `hono.ts` wire routes and enforce framework-specific transport boundaries (body, media type, ambiguity, headers, and client-IP plumbing). Client-IP trust depends on the deployed proxy or extractor configuration. OAuth domain decisions stay in the core. The directory also contains `bridge.ts`, `http.ts`, `consent-page.ts`, `upstream-flow.ts`, `upstream-flow-internals.ts`, `pairing-flow.ts`, and `pairing-page.ts`. |
 | `src/store/` | **Stores:** `memory.ts`, `sqlite.ts` (+ `sqlite-schema.ts`), `mysql.ts` (+ `mysql-schema.ts`). Parity is enforced by the **shared conformance suite**, never a store-specific test. |
 | `src/identity/` | **Identity adapters:** `cloudflare-access.ts`, `entra.ts`, `entra-redirect.ts`, `entra-groups.ts`, `console-pairing.ts`. |
 | `src/audit/`, `src/rate-limit/` | Reference sinks (`jsonl-file.ts`, `webhook.ts`, `combine.ts`) and `redis.ts` rate limiter. |
