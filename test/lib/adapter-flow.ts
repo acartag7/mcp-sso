@@ -197,11 +197,15 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
     }
   });
 
-  test(`${name} adapter: identity throws OAuthError ⇒ same 401 access_denied body`, async () => {
-    // verification.md T1.HF.2: IdentityPort.verify() throws an OAuthError. Must
-    // surface identically to the { ok:false } path — direct 401 with the §9.5
-    // body — not a framework-shaped response.
-    const throwing: IdentityPort = { async verify() { throw new OAuthError("access_denied", "identity blocked", 401); } };
+  test(`${name} adapter: identity throws OAuthError ⇒ 401 with a library-authored description`, async () => {
+    // verification.md T1.HF.2 (amended): IdentityPort.verify() throws an OAuthError.
+    // It surfaces identically to the { ok:false } path — direct 401 with the §9.5
+    // body, not a framework-shaped response — and "identically" now includes the
+    // DESCRIPTION. The port keeps the outcome it chose (status + OAuth code, so it
+    // can still distinguish 401 access_denied from 403); it does not author the
+    // text. A deployer debugging a membership rule puts the offending user or
+    // group in that message, and unchanged it answers unauthenticated requests.
+    const throwing: IdentityPort = { async verify() { throw new OAuthError("access_denied", "alice@corp not in group Finance", 401); } };
     const client = await mount(makeBridge(), throwing);
     try {
       const auth = await client.get(`/oauth/authorize?${new URLSearchParams({
@@ -212,8 +216,10 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       assert.equal(auth.headers.location, undefined);
       const body = JSON.parse(auth.body);
       assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
-      assert.equal(body.error, "access_denied");
-      assert.equal(body.error_description, "identity blocked");
+      assert.equal(body.error, "access_denied", "the port's chosen OAuth code is preserved");
+      assert.equal(body.error_description, "Identity rejected: port_error");
+      assert.ok(!auth.body.includes("alice@corp"), "the port's own text must never reach the client");
+      assert.ok(!auth.body.includes("Finance"), "nor the group it named");
     } finally {
       await client.close?.();
     }
@@ -238,7 +244,7 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       const body = JSON.parse(auth.body);
       assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
       assert.equal(body.error, "access_denied");
-      assert.equal(body.error_description, "identity blocked");
+      assert.equal(body.error_description, "Identity rejected: port_error");
       assert.ok(!auth.body.includes("evil.test"));
     } finally {
       await client.close?.();

@@ -11,7 +11,17 @@ const MAX_CANONICAL_MS = 253_402_300_799_999; // 9999-12-31T23:59:59.999Z
 
 /** Read once; require canonical store/audit time plus any operation-owned future offset. */
 export function finiteClockSnapshot(clock: ClockPort, futureOffsetMs = 0): number {
-  const nowMs = clock.nowMs();
+  // ClockPort is caller-supplied, so a throwing nowMs() is untrusted input on the
+  // error channel. Every operation reads the clock BEFORE the use-case try, so an
+  // OAuthError raised here would reach asOAuth and select the public response.
+  // Re-cast to the same RangeError an out-of-range value produces: one failure
+  // shape for "the clock is unusable", whatever the port did (§6.1, §13).
+  let nowMs: number;
+  try {
+    nowMs = clock.nowMs();
+  } catch {
+    throw new RangeError("ClockPort.nowMs() must fit the canonical UTC timestamp range");
+  }
   if (!Number.isSafeInteger(nowMs) || !Number.isSafeInteger(futureOffsetMs)
     || futureOffsetMs < 0 || nowMs < MIN_CANONICAL_MS
     || nowMs > MAX_CANONICAL_MS - futureOffsetMs) {

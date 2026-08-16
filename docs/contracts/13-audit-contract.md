@@ -32,7 +32,23 @@ request — breaking RFC 7009's always-200 rule and making the store's internal
 text an oracle on token existence. The re-cast happens at every pluggable-port
 call site (`callPort`), never at the use-case catch, because the library's own
 `invalid_grant`/`invalid_client`/`invalid_consent` MUST still reach the client.
-The original is carried on `PortFailureError.cause` for local logging only. Neither event
+The original is carried on `PortFailureError.cause` for local logging only.
+
+**Two ports state their boundary explicitly, because neither re-casts to
+`PortFailureError`.** A `ClockPort` whose `nowMs()` throws is re-cast to the same
+`RangeError` an out-of-range value produces, so "the clock is unusable" has ONE
+failure shape whatever the port did (§6.1); every operation reads the clock
+before its use-case `try`, so an un-contained throw would select the response.
+An `IdentityPort` that throws an `OAuthError` keeps the **outcome** it chose —
+status and OAuth code, so a port can still distinguish `401 access_denied` from
+`403` — but never authors the `error_description`, which is replaced with the
+library's `Identity rejected: port_error`. Any port-supplied redirect is dropped
+with it. This makes the throw path identical to the `{ ok: false }` path it was
+always specified to match (T1.HF.2), rather than identical in shape only: a
+deployer debugging a membership rule writes the offending user or group into
+that message, and unchanged it answers unauthenticated `/oauth/authorize`
+requests. Every shipped identity port already returns `{ ok: false, reason }`
+with a controlled reason code, so no shipped configuration changes. Neither event
 contains the token, its hash, a family identifier, or the thrown value. A
 limiter denial or adapter/body rejection that never enters the revocation
 use-case emits no `oauth.revoke` event.

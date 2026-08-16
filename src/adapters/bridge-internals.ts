@@ -49,6 +49,17 @@ export async function resolveIdentityWithAudit(
     result = await identity.verify(input);
   } catch (error) {
     await emit("failure", error instanceof OAuthError ? error.code : "internal_error", undefined, ip);
+    // §13 / T1.HF.2: an IdentityPort is deployment-supplied code. It keeps the
+    // OUTCOME it chose — status and OAuth code, so a port can still distinguish
+    // 401 access_denied from 403 — but never authors the description. A deployer
+    // debugging a membership rule writes the offending user or group into that
+    // message; unchanged, it answers unauthenticated /oauth/authorize requests.
+    // The `{ ok: false }` sibling below already emits a library-authored
+    // description, and every shipped port takes that path. Any port-supplied
+    // redirect is dropped with it — a rejected identity never steers the browser.
+    if (error instanceof OAuthError) {
+      throw new OAuthError(error.code, "Identity rejected: port_error", error.status);
+    }
     throw error;
   }
   if (!result.ok) {
