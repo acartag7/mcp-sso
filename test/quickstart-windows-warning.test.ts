@@ -108,7 +108,7 @@ test("POSIX use stays silent and a throwing warning transport cannot break Windo
 });
 
 test("ensureStateDir emits the same one-shot warning without its path", () => {
-  // §17.8 parity: this is the third state-dir path. A consumer that manages its
+  // §17.8 parity: this is the third storage path among four public calls. A consumer that manages its
   // own directory and keeps database state elsewhere reaches neither the
   // quickstart nor the SQLite warning, so without this call it is silently
   // unprotected on Windows — the gap review caught on the first two-path fix.

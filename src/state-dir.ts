@@ -30,8 +30,8 @@ import { warnWindowsPermissionGap } from "./windows-permission-warning.ts";
  *  whole repo — the exact outcome the internal protocol prevents. Fail-safe by
  *  construction (contracts §15 DX). */
 export async function ensureStateDir(dir: string): Promise<void> {
-  // Third member of §17.8's parity rule, alongside loadOrCreateQuickstartSecrets
-  // and the sqlite store: this helper also skips the POSIX mode gate on win32
+  // Third storage path in §17.8's four-call parity rule (which also includes the
+  // standalone assertRealDir export): this helper skips the POSIX mode gate on win32
   // (both the chmod below and assertRealDir's mode check) and inspects no DACL.
   // A consumer using this path with external database state would otherwise
   // reach neither of the other two warnings and be silently unprotected.

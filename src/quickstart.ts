@@ -6,9 +6,10 @@
 //   - Dir 0700, secrets file 0600 (O_EXCL — never clobbers), `.gitignore` of `*`
 //     is the only ignore trusted. A group/other-accessible dir or secrets file is
 //     a BOOT FAILURE (skipped on Windows).
-//   - FOLLOW-THE-LINK closed everywhere: dir/secrets.json/.gitignore must be REAL
-//     (lstat/O_NOFOLLOW refuse symlinks); reads use open(O_NOFOLLOW)+fstat+read-fd
-//     (no lstat→readFile race).
+//   - On supported POSIX hosts, trusted reads use open(O_NOFOLLOW)+fstat+read-fd
+//     (no lstat→readFile race). Windows/no-O_NOFOLLOW uses a symlink/type lstat
+//     precheck followed by a pathname read; the private directory ACL is the
+//     boundary against replacement in that residual window.
 //   - Unwritable dir / partial write / unparseable / bad-shape ⇒ AuthConfigError.
 //     NEVER an ephemeral fallback (silent key rotation masks misconfiguration).
 //
@@ -60,8 +61,8 @@ async function loadExisting(dir: string, secretsPath: string): Promise<Quickstar
   // Reload: dir + .gitignore must already be ours (we never create either here).
   await assertRealDir(dir);
   await ensureGitignore(dir, false);
-  // Atomic read (O_NOFOLLOW + fstat + read-fd): refuses a symlink AND can't be
-  // raced (lstat→readFile would let a swap-to-symlink slip in between).
+  // Descriptor-atomic on supported POSIX hosts. Windows/no-O_NOFOLLOW uses the
+  // documented lstat+pathname-read fallback inside readOwnedFile.
   const { content: raw, mode } = await readOwnedFile(secretsPath);
   if (process.platform !== "win32" && mode & 0o077) {
     throw new AuthConfigError(`quickstart: ${secretsPath} is group/other-accessible (mode ${(mode & 0o777).toString(8).padStart(3, "0")}); run: chmod 600 ${secretsPath}`);
@@ -143,8 +144,9 @@ export async function ensureGitignore(dir: string, canCreate: boolean): Promise<
       }
     }
   }
-  // Exists (or just appeared) — verify it is OURS via an atomic read (O_NOFOLLOW
-  // refuses a symlink; read-fd can't be raced). Require the exact `*\n` content.
+  // Exists (or just appeared) — verify it is OURS. Supported POSIX hosts use an
+  // atomic no-follow descriptor read; Windows/no-O_NOFOLLOW has the documented
+  // lstat+pathname-read residual. Require the exact `*\n` content.
   const { content: existing } = await readOwnedFile(path);
   if (existing !== GITIGNORE_CONTENT) {
     throw new AuthConfigError(
@@ -177,7 +179,8 @@ export async function assertRealDir(dir: string): Promise<void> {
   }
 }
 
-/** O_NOFOLLOW + fstat + read-fd: atomic, refuses symlinks/FIFOs (O_NONBLOCK). Windows → lstat+read. */
+/** Supported POSIX: atomic O_NOFOLLOW+fstat+read-fd. Windows/no flag:
+ *  lstat symlink/type precheck + pathname read (private-directory boundary). */
 async function readOwnedFile(path: string): Promise<{ content: string; mode: number }> {
   // The explicit platform branch makes the production Windows fallback
   // exercisable by the fake-win child probes even when they run on POSIX.

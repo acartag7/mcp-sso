@@ -1912,15 +1912,20 @@ gate replaces no-gate).
   env/secret managers on both. (`npx mcp-sso init` is now implemented — §15 "Init CLI" —
   scaffolding a server that uses this helper; the function remains the contract.)
 - **Filesystem-trust bar (the quickstart reference — every state-dir code path
-  meets this):** writes are `0600` (files) / `0700` (dirs) with `O_EXCL` for
-  create-don't-clobber; reads of trusted content go through `open(O_NOFOLLOW |
-  O_NONBLOCK)` + `fstat` + read-fd (atomic: refuses a symlink, won't hang on a
-  FIFO/special file, no lstat→readFile race) + a perm check (`mode & 0o077`
-  fails closed, POSIX); a pre-existing dir is `assertRealDir`'d (reject symlink
+  meets its platform-applicable part):** writes are `0600` (files) / `0700`
+  (dirs) with `O_EXCL` for create-don't-clobber. On supported POSIX hosts, reads
+  of trusted content go through `open(O_NOFOLLOW | O_NONBLOCK)` + `fstat` +
+  read-fd (atomic: refuses a symlink, won't hang on a FIFO/special file, no
+  lstat→readFile race) + a perm check (`mode & 0o077` fails closed); a
+  pre-existing dir is `assertRealDir`'d (reject symlink
   + group/other-accessible mode); the `.gitignore` is the managed `*\n` (write
-  into a dir we created, require exact in a pre-existing one). On Windows the
-  mode/UID gates are absent and no DACL is read or set; the warning makes that
-  limitation visible but is not an admission decision.
+  into a dir we created, require exact in a pre-existing one). On Windows or a
+  host without `O_NOFOLLOW`, trusted-file reads instead lstat-reject a symlink
+  or non-regular object and then read the pathname; replacement between those
+  calls remains possible. The deployer-private directory/ACL is the boundary
+  against a lower-privileged swap. Windows mode/UID gates are absent and no DACL
+  is read or set; the warning makes that limitation visible but is not an
+  admission decision.
 - **Parity rule:** EVERY code path that creates, reads, or admits the state dir —
   `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, the example's
   Cloudflare Access branch (`ensureStateDir`), and the sqlite store
