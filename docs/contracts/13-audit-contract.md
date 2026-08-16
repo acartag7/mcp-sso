@@ -17,7 +17,8 @@ tokens, across every event name (the v0.2 names are exercised by synthetic
 events through each sink; the v0.1 names additionally by the live OAuth flow).
 
 `oauth.revoke` distinguishes an admitted RFC 7009 no-op from an unexpected
-revocation failure without changing either HTTP outcome. An unknown token emits
+revocation failure without changing either token-existence outcome. An unknown
+token emits
 `status: "success", reason: "unrecognized_token"`; a known token, including an
 idempotent re-revocation, emits success without that reason. The adapter returns
 200 in both cases. A store lookup or family-revocation failure emits

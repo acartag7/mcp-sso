@@ -17,7 +17,7 @@
 | Refresh rotation + family replay revocation | ✅ v0.1 | §7.4, §12 |
 | RFC 6749 §6 refresh client-binding | ✅ v0.1 | §7.4 |
 | RFC 6749 §4.1.2.1 error-redirect channels | ✅ v0.1 | §9.3, §14 |
-| RFC 7009 revocation (always 200; unknown = no-op) | ✅ v0.1 | §9.4 |
+| RFC 7009 revocation (known/unknown token outcomes return 200; unknown = no-op; operational failures use the generic error channel) | ✅ v0.1 | §9.4, §13 |
 | Hashed single-use codes/tokens; single-use consent JTI | ✅ v0.1 | §7, §12 |
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
