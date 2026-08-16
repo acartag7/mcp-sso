@@ -249,6 +249,33 @@ selected MySQL rows cover real migration and concurrent rotation, while real Red
 covers a shared window and the error path consumed by the bridge's fail-open policy.
 The release command rejects absent MySQL or Redis configuration before running rows.
 
+### RM.11 — Redirect allowlist mode
+
+`redirectAllowlistMode: "replace"` refuses a built-in hosted-client origin at
+every reader the shipped Fastify routes expose: the DCR write path rejects the
+registration, and authorize rejects a presented built-in origin **directly** —
+never by redirecting to the origin under dispute. The operator's own configured
+origin still registers and still reaches the consent page, so the row proves the
+mode narrows trust rather than disabling the flow. A second row pins that
+omitting the option keeps the published `"extend"` behavior, which is this
+feature's entire compatibility promise; a third pins that `"replace"` with an
+empty allowlist is a boot failure rather than a bridge that starts and rejects
+every client.
+
+The mode has FOUR readers — DCR write, stateless authorize, stored-client
+re-validation, and consent approve. That count is four rather than three because
+review found `approve` unguarded after the sweep was declared complete, which is
+why this row exists at the release gate instead of relying on the sweep.
+
+### RM.12 — Identity display name
+
+Both shipped OIDC ports surface `claims.name` for a verified identity, drop it
+when `email_verified` is not exactly `true`, and omit an over-long value rather
+than truncating it into a string the IdP never issued. The Google preset reaches
+this gate only by delegating to the generic validator, so the row also pins that
+neither port's subject is affected by the claim: Google keeps its raw `sub`, the
+generic port keeps its issuer-namespaced subject.
+
 ## Harness helpers
 
 The current shared helpers are:
