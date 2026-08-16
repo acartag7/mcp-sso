@@ -448,6 +448,15 @@ test("positive round trips hold for stored web/native, stateless, and CIMD", asy
   assert.throws(() => projectCimdRegistration({ ...doc, redirect_uris: ["https://a.test/cb?"] }), CimdError);
   assert.equal(cimdRedirectMatches("https://a.test/", projected), true);
   assert.equal(cimdRedirectMatches("http://[::1]:7777/", projected), true);
+  assert.equal(cimdRedirectMatches("http://[::1]:7777/", {
+    redirect_uris: ["http://[::1]:9/"], application_type: "web",
+  }), false);
+  assert.equal(cimdRedirectMatches("http://[::1]:9/", {
+    redirect_uris: ["http://[::1]:9/"], application_type: "web",
+  }), true);
+  assert.equal(cimdRedirectMatches("http://[::1]:7777/", {
+    redirect_uris: ["http://[::1]:9/"],
+  }), true);
   for (const [registered, presented] of [["https://a.test/cb%2F", "https://a.test/cb%2f"], ["https://a.test/cb%2f", "https://a.test/cb%2F"]] as const) {
     assert.throws(() => assertAllowedRedirectUri(presented, [registered]), OAuthError);
     assert.throws(() => assertRedirectAllowedForClient(presented, {

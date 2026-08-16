@@ -67,11 +67,10 @@ and a non-root path:
 Use that exact URL as the OAuth `client_id`. The document's `client_id` must be
 an exact character-for-character match. `client_name` must be non-empty, and
 `redirect_uris` must contain 1–16 valid redirect URIs. HTTPS redirects match
-exactly. A registered loopback HTTP redirect may vary only its port; the scheme,
-host, path, and search remain fixed. This narrow loopback rule also applies when
-the document declares `application_type: "web"` or omits the optional member,
-because a portless HTTP loopback callback is a native-client shape regardless
-of that declaration. Any other present `application_type` value is rejected.
+exactly. A registered loopback HTTP redirect may vary only its port when
+`application_type` is omitted or `"native"`; the scheme, host, path, and search
+remain fixed. An explicit `application_type: "web"` declaration keeps exact
+matching. Any other present `application_type` value is rejected.
 See the [conformance matrix](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix).
 
 The client-id URL cannot contain query, fragment, or userinfo. IP-literal,

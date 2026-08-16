@@ -97,7 +97,7 @@ so the classification can be re-checked rather than taken on trust.
 | D00-4.4.4 | §4.4 AS **MUST NOT** cache error responses. AS-applicable. | C | Only `fetchAndCache` success reaches `cache.set`: `src/cimd/resolve.ts:232-240` | Frozen `s6b-cache.test.ts:167-184`; a failed first resolution is fetched again, then a valid success caches. |
 | D00-4.4.5 | §4.4 AS **MUST NOT** cache invalid/malformed documents. AS-applicable. | C | Validation precedes projection/cache: `src/cimd/guarded-fetcher.ts:104-108`; `src/cimd/resolve.ts:232-240` | Frozen `s6b-cache.test.ts:176-184`; mismatched documents are rejected and fetched on every attempt. |
 | D00-4.5.1 | §4.5 AS **MUST** require redirect registration; the validated document supplies it. AS-applicable. | C | `src/cimd/document.ts:28-34`; `src/cimd/registration.ts:101-124`; `src/cimd/resolve.ts:178-183` | Frozen `s6b-redirect.test.ts:177-217` and `s6b-cache.test.ts:279-322`; an absent/nonmatching URI fails on misses and hits. |
-| D00-4.5.2 | §4.5: "According to [RFC9700], the authorization server … **MUST** ensure that the redirect URI in a request is an exact match of a registered redirect URI." The rule is delegated to RFC 9700, whose sole exception is native-app loopback ports. CIMD does not require `application_type`; a validated loopback `http` registration is the operational native-app signal. | C | Type validation `src/cimd/document.ts:26-54`; projection, strict claim parse, and shared matcher `src/cimd/registration.ts:39-124`; direct resolve `src/cimd/resolve.ts:178-183`; callback `src/adapters/upstream-flow-cimd.ts:69-80`; prepare `src/authorize-internals.ts:47-66`; signed carry `src/adapters/upstream-flow-jwt.ts:47-78,85-115` | Active frozen `test/acceptance/cimd/native-loopback-policy.test.ts:105-243` pins Claude Code's literal published document (port-less loopback entries, no `application_type`) plus document miss/hit, upstream carry, prepare, and signed callback behavior for declared native/web/absent/malformed types. Negative rows prove that HTTPS, scheme, host, path, and query differences get no elasticity and rejected claims precede JTI consumption. `test/acceptance/phases.json:6` activates the six groups. |
+| D00-4.5.2 | §4.5: "According to [RFC9700], the authorization server … **MUST** ensure that the redirect URI in a request is an exact match of a registered redirect URI." The rule is delegated to RFC 9700, whose sole exception is native-app loopback ports. CIMD does not require `application_type`; a validated loopback `http` registration is the operational native-app signal when the type is omitted or exact `"native"`. Explicit `"web"` stays exact-match. | C | Type validation `src/cimd/document.ts:26-54`; projection, strict claim parse, and shared matcher `src/cimd/registration.ts:39-126`; direct resolve `src/cimd/resolve.ts:178-183`; callback `src/adapters/upstream-flow-cimd.ts:69-80`; prepare `src/authorize-internals.ts:47-66`; signed carry `src/adapters/upstream-flow-jwt.ts:47-78,85-115` | Active frozen `test/acceptance/cimd/native-loopback-policy.test.ts` pins Claude Code's literal published document (port-less loopback entries, no `application_type`) plus document miss/hit, upstream carry, prepare, and signed callback behavior: native/absent any-port, explicit web exact, malformed fail-closed. Negative rows prove that HTTPS, scheme, host, path, and query differences get no elasticity and rejected claims precede JTI consumption. `test/acceptance/phases.json:6` activates the six groups. |
 | D00-5.1 | §5 an AS publishing RFC 8414 metadata **MUST** include the CIMD support property. AS-applicable. | C | `src/metadata.ts:17-39`; Bridge route `src/adapters/bridge.ts:95-97`; all adapters mount that handler | Frozen `s6b-metadata.test.ts:35-45` proves the builder pair; `test/cimd-adapter-evidence.test.ts:181-196` asserts the served flag is `true` through each Fastify, Express, and Hono metadata route before its direct CIMD authorization cell. |
 | D00-5.2 | §5 `client_id_metadata_document_supported` is an **OPTIONAL** registered field generally; supporting deployments publish `true`. AS-applicable. | C | `src/metadata.ts:36-39` | Frozen `s6b-metadata.test.ts:35-45`; enabled=`true`, disabled=absent, and `none` remains advertised. |
 | D00-6.1.1 | §6.1 AS **MAY** impose restrictions or relationships **between** `redirect_uris` and `client_id`/`client_uri` (e.g. same-origin). Optional policy **not** exercised. | N/A | No such comparison exists anywhere in `src/cimd/` | Verified by absence and by positive test: `document.test.ts:145-149` accepts `https://app.example.com/cb` for client id host `cdn.example.com`. The §10.0 per-entry hygiene mcp-sso does apply constrains each redirect URI on its own; it is **not** a relationship to the client identifier, and is scored under D00-4.2.1 instead. |
@@ -127,10 +127,11 @@ items stay listed below as the review graph that closed the final status.
    `application/scim+json`.
 2. **Completed runtime correction — loopback-port interoperability
    (D00-4.5.2, P1).** The validated type remains carried through projection,
-   cache, signed flow state, callback, and prepare, but it is not the port-policy
-   selector. The any-port exception is keyed on the registered entry being
-   loopback `http`, with exact scheme/host/path/search and only the port free.
-   The active frozen phase pins the literal Claude Code document and the narrow
+   cache, signed flow state, callback, and prepare. The any-port exception is
+   keyed on the registered entry being loopback `http` **and** the type being
+   omitted or exact `"native"`, with exact scheme/host/path/search and only the
+   port free. Explicit `"web"` stays exact. The active frozen phase pins the
+   literal Claude Code document, the web exact-match sibling, and the narrow
    negative boundary.
 4. **Completed test PR — symmetric client-auth declarations (closed
    D00-4.1.5, P2).** `test/cimd-client-auth-methods.test.ts` rejects
@@ -200,11 +201,11 @@ diff, and every cited source and test line. Their corrections are applied above:
   broke Claude Code: its real document registers port-less `localhost` and
   `127.0.0.1` callbacks without `application_type`, then binds an ephemeral
   port at runtime. D00-4.5.2 permits the native-app exception but does not make
-  that optional metadata member its precondition. The corrected contract uses
-  the validated loopback `http` registration as the operational native-app
-  signal, preserves scheme/host/path/search exactly, and frees only the port.
-  Present native/web values remain validated and carried; they do not select
-  the match rule.
+  that optional metadata member its precondition. The first correction keyed
+  any-port on loopback `http` alone, including explicit `"web"`. That reopened
+  the fail-open probe: a web document plus an attacker-chosen local port.
+  The synthesis is omit-or-native any-port, explicit-web exact, scheme/host/path/search
+  preserved, only the port free on the native-shaped path.
 - **D00-4.4.2 was closed after implementing and mutation-testing shared-cache
   semantics.** The cache now refuses private/no-cache/no-store/Vary-star and
   malformed metadata, gives s-maxage precedence, accounts for Age/Date/delay in
@@ -260,7 +261,7 @@ so neither inventory absorbs the other.
 | **MUST** clearly display the redirect URI hostname | C | `src/authorize-internals.ts:114-115`; `src/adapters/consent-page.ts:26-28`; frozen `s6b-consent.test.ts:116-122` asserts both hosts render, and `test/consent-page.test.ts:26-48` pins host prominence over the self-reported name. |
 | **SHOULD** display an additional warning for localhost-only redirects | Implemented, unproven | `src/adapters/consent-page.ts:21-23` renders the warning when `allRedirectsLoopback`; `src/cimd/registration.ts:126-138` computes it. The frozen suite **deliberately declines** to assert it (`s6b-consent.test.ts:124-126`) because no warning marker was contracted. Follow-up: contract a stable marker, then assert it positively on direct and carried/upstream consent. |
 | **MUST** validate the fetched `client_id` matches the URL exactly | C | Same evidence as D00-4.1.2. |
-| **MUST** validate redirect URIs against the document | C | Registration and membership are enforced (D00-4.5.1). Across direct, upstream, callback, and prepare paths, a registered loopback `http` entry may vary only its port; all other components and all non-loopback entries remain exact. The dedicated D00-4.5.2 frozen phase is active. |
+| **MUST** validate redirect URIs against the document | C | Registration and membership are enforced (D00-4.5.1). Across direct, upstream, callback, and prepare paths, a registered loopback `http` entry may vary only its port when the type is omitted or native; explicit web and all non-loopback entries remain exact. The dedicated D00-4.5.2 frozen phase is active. |
 | **MUST** validate document structure and required fields | C | Same evidence as D00-4.1.1 and the `client_name`/`redirect_uris` checks at `src/cimd/document.ts:26-29`. |
 | **SHOULD** cache respecting HTTP cache headers | C | The shared-cache rules in D00-4.4.2 are enforced and regression-tested. |
 

@@ -287,8 +287,9 @@ decision. Everything else in the pipeline still runs under the flag.
   restatement, and not a per-site re-derivation: the CIMD matcher previously
   accepted `*`, `javascript:`, and non-canonical entries that §10.1 refused).
   https entries exact-match at authorize (draft §4.5 / RFC 9700); a registered
-  loopback `http` entry matches RFC 8252 any-port regardless of whether the
-  optional `application_type` member is `"native"`, `"web"`, or absent — see
+  loopback `http` entry matches RFC 8252 any-port when `application_type` is
+  omitted or exact `"native"`. Explicit `"web"` stays exact raw-string
+  membership — see
   the §17.1.6 decision-1 shared matcher for the canonical rule and its
   **IMPLEMENTED; FROZEN SUITE ACTIVE
   (D00-4.5.2)** status. If present:
@@ -572,21 +573,23 @@ active.
     disagree. Only the
     `http:` case is loopback. **IMPLEMENTED; FROZEN SUITE ACTIVE
     (D00-4.5.2, §16.1):** RFC 9700 — which draft `-00` §4.5 delegates to —
-    permits varying loopback ports for native apps, but neither D00-4.5.2 nor
+    permits varying loopback ports for native apps only. Neither D00-4.5.2 nor
     the CIMD document profile requires a document to declare
     `application_type`. A port-less `http://localhost/callback` or
-    `http://127.0.0.1/callback` registration is itself a native-client shape: a
-    remotely hosted web callback cannot receive it, while the native client
-    must bind a runtime-selected local port. Gating the exception on an
-    optional metadata label makes the permitted flow unusable for real clients
-    whose documents omit that label. The shared matcher therefore keys the
-    exception on the validated registered URI being loopback `http`, not on
-    `application_type`. A present type is still validated as exact `"native"`
-    or `"web"`, carried through projection/cache/signed state, and malformed
-    direct or signed state still fails closed; the type does not widen or
-    narrow redirect membership.
+    `http://127.0.0.1/callback` registration with the member omitted is the
+    operational native-client signal: a remotely hosted web callback cannot
+    receive it, while the native client must bind a runtime-selected local
+    port. Gating the exception on a required `"native"` label makes the
+    permitted flow unusable for real clients whose documents omit that label
+    (Claude Code). An explicit `"web"` declaration is the opposite signal and
+    must not inherit the native-only exception. The shared matcher therefore
+    keys any-port on a validated loopback `http` entry **and**
+    `application_type` omitted or exact `"native"`. A present type is still
+    validated as exact `"native"` or `"web"`, carried through
+    projection/cache/signed state, and malformed direct or signed state still
+    fails closed.
     The authorize-time (S6b) loopback any-port match
-    uses `src/cimd/registration.ts:113-119` — scheme,
+    uses `src/cimd/registration.ts:115-121` — scheme,
     hostname, pathname, and search equal; port ignored; fragment already rejected
     at validation — resolving the looser "origin" wording elsewhere.
 
@@ -691,24 +694,27 @@ consult a stored client): an https registration entry matches by **exact raw-str
 `presented === registered` (rule 20 / the raw-string identity rule — no normalization
 AT MATCH TIME, port included; sound because §10.0 already required the registered entry
 to be canonical); a loopback `http` entry matches RFC 8252 **any-port** using the compare
-semantics of `src/cimd/registration.ts:113-119` (scheme, host, path, and search equal; port
-ignored; fragment already rejected), regardless of the optional carried
-`application_type`. It is NOT array `∈`/`includes` (that rejects a
+semantics of `src/cimd/registration.ts:115-121` (scheme, host, path, and search equal; port
+ignored; fragment already rejected) when the optional carried `application_type`
+is omitted or exact `"native"`. Explicit `"web"` stays exact raw-string
+membership. It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and
 `prepare`'s re-check MUST call this SAME matcher.
 **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2, §16.1) — this rule is the canonical
 definition the other any-port statements defer to:** RFC 9700 permits a varying
 port for native-app loopback redirects, but the CIMD profile does not require the
-optional `application_type` member. The registered URI supplies the enforceable
-signal: a validated loopback `http` entry is local/native in operation, including
-the port-less form whose client selects a port only when it binds. The any-port
-branch therefore depends only on that registered entry and preserves exact
+optional `application_type` member. Omission plus a validated loopback `http`
+entry is the enforceable native-app signal, including the port-less form whose
+client selects a port only when it binds. The any-port branch therefore depends
+on that registered entry **and** a non-`web` type, and preserves exact
 scheme, host, path, and search equality; **only the port is free**. A declared
-`"native"` or `"web"` value is still validated and carried but does not change
-this match. Absence is accepted, and malformed runtime discriminants still
-reject before matching or JTI consumption. This deliberately restores
-interoperability with deployed clients such as Claude Code whose published
-document registers port-less loopback callbacks without `application_type`.
+`"native"` value is validated, carried, and keeps any-port. A declared `"web"`
+value is validated, carried, and keeps exact match. Absence is accepted as the
+native-shaped path, and malformed runtime discriminants still reject before
+matching or JTI consumption. This restores interoperability with deployed
+clients such as Claude Code whose published document registers port-less
+loopback callbacks without `application_type`, without treating an explicit
+web registration as native.
 
 *1a. Shape-first three-way dispatch; CIMD REPLACES §10 for CIMD ids.* Client_id
 shape is classified identically at BOTH the authorize resolve (`upstream-flow.ts:99`)
