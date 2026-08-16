@@ -36,6 +36,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
 import { AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin, type BridgeConfig } from "../../src/config.ts";
+import type { RedirectAllowlistMode } from "../../src/redirect.ts";
 import { validateAllowedOrigins } from "../../src/allowed-origin.ts";
 import { OAuthError, oauthErrorBody } from "../../src/errors.ts";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
@@ -268,6 +269,24 @@ export function assertConsolePairingListenHostBeforeState(
   );
 }
 
+/** `redirectAllowlistMode` from env (contracts §5, §10.1). UNSET leaves the field
+ *  `undefined`, which `createBridgeConfig` resolves to the published `"extend"`
+ *  default — wiring this through therefore changes no existing deployment.
+ *
+ *  Any value that IS set is forwarded verbatim, including `""` and a near-miss
+ *  such as `"Replace"`: `snapshotRedirectAllowlistMode` accepts exactly
+ *  `"extend"`/`"replace"` and throws `AuthConfigError` on anything else
+ *  (`src/config-snapshot.ts`). The cast hands an unvalidated string to that boot
+ *  validator deliberately — mapping an unrecognized value onto a mode here is
+ *  the `value || undefined` shape that would silently restore the built-in
+ *  hosted origins an operator set out to drop. */
+export function redirectAllowlistModeFromEnv(
+  env: Record<string, string | undefined>,
+): RedirectAllowlistMode | undefined {
+  const raw = env.OAUTH_REDIRECT_ALLOWLIST_MODE;
+  return raw === undefined ? undefined : (raw as RedirectAllowlistMode);
+}
+
 /** Read config from env (the production path; standalone index.ts uses quickstart
  *  secrets instead). Accepts an env object so the wiring is testable without
  *  mutating the real process.env. */
@@ -282,6 +301,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     signingPrivateJwk: JSON.parse(env.OAUTH_SIGNING_PRIVATE_JWK!) as never,
     signingKeyId: env.OAUTH_SIGNING_KEY_ID || undefined,
     redirectAllowlist: (env.OAUTH_REDIRECT_ALLOWLIST ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    redirectAllowlistMode: redirectAllowlistModeFromEnv(env),
     scopeCatalog: (env.OAUTH_SCOPE_CATALOG ?? "mcp:read,mcp:write").split(",").map((s) => s.trim()).filter(Boolean),
     defaultScopes: (env.OAUTH_DEFAULT_SCOPES ?? "mcp:read").split(",").map((s) => s.trim()).filter(Boolean),
     allowedOrigins: allowedOriginsFromEnv(env, env.OAUTH_ISSUER!),
@@ -518,6 +538,9 @@ export async function buildExample(
     signingPrivateJwk: secrets.signingPrivateJwk,
     // Explicit local-composition default; an explicitly empty env value removes it.
     redirectAllowlist: listEnv(env, "OAUTH_REDIRECT_ALLOWLIST", "http://localhost,http://127.0.0.1"),
+    // Same env seam as the production branch above — the quickstart path is the
+    // sibling that used to get missed when a config option was threaded once.
+    redirectAllowlistMode: redirectAllowlistModeFromEnv(env),
     scopeCatalog: listEnv(env, "OAUTH_SCOPE_CATALOG", "mcp:read,mcp:write"),
     defaultScopes: listEnv(env, "OAUTH_DEFAULT_SCOPES", "mcp:read"),
     allowedOrigins,
