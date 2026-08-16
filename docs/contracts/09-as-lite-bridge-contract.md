@@ -385,11 +385,19 @@ adapter, Phase 3): `{ jsonrpc:"2.0", error:{ code:-32001, message:"<oauth-code>:
 
 ## 9.6 Framework adapters *(Phase 3 — transport boundary)*
 The `/fastify`, `/express`, `/hono` adapters keep OAuth domain decisions in the
-core use-cases. They own framework-specific transport enforcement: normalize
-and bound the request, reject unsupported media types and ambiguous inputs,
-carry framework- or deployer-derived client-IP data, call the use-case, and
-shape the response. The IP is trusted only when the proxy or extractor satisfies
-the deployment preconditions in §6.4. Wiring rules:
+core use-cases. They own framework-specific transport work: apply the raw-body
+budget, normalize headers and supported bodies, preserve duplicate and ambiguous
+input evidence for Bridge rejection, carry framework- or deployer-derived
+client-IP data, call the use-case, and shape the response. Their built-in
+semantic formats are JSON and URL-encoded forms. Unsupported below-cap media
+remain absent or non-object rather than becoming OAuth fields. Endpoint logic
+then handles those empty fields: register and token return their existing
+required-input errors; approve retains its consent-cookie/body and deny rules;
+revoke keeps RFC 7009's HTTP 200 response for the resulting
+fieldless/unrecognized-token request. Duplicate or ambiguous `Content-Type` is
+different: the shared Bridge form gate rejects it directly with 400 before field
+selection. The IP is trusted only when the proxy or extractor satisfies the
+deployment preconditions in §6.4. Wiring rules:
 - **Endpoints:** GET `/.well-known/oauth-authorization-server` →
   `authorizationServerMetadata`; GET `/.well-known/oauth-protected-resource` AND
   its path-inserted form → `protectedResourceMetadata` (§9.1); GET `/oauth/jwks` →

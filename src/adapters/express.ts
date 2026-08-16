@@ -1,6 +1,6 @@
 // Express transport adapter (contracts §9.6). OAuth domain decisions stay in
-// the framework-free core; this layer enforces Express-specific request boundaries.
-// The returned Router owns bounded OAuth JSON/form parsing. Maps NormResponse → Express.
+// the framework-free core; this layer owns bounded OAuth JSON/form parsing and
+// request normalization. Maps NormResponse → Express.
 
 import { json, raw, Router, urlencoded } from "express";
 import type { NextFunction, Request, Response } from "express";

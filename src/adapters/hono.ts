@@ -1,6 +1,6 @@
 // Hono transport adapter (contracts §9.6). OAuth domain decisions stay in the
-// framework-free core; this layer enforces Hono-specific request boundaries.
-// Returns a Hono instance. NormResponse maps to c.redirect (302) or
+// framework-free core; this layer applies body/framing limits and normalizes
+// request data. Returns a Hono instance. NormResponse maps to c.redirect (302) or
 // c.json/c.body otherwise.
 
 import { Hono } from "hono";
