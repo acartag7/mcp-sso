@@ -155,7 +155,8 @@ rules, follow [authorization](docs/authorization.md), the
   pairing.
 - **Client registration:** CIMD recommended; stateless or stored DCR retained
   for clients that use it.
-- **Frameworks:** fastify, express, hono — thin adapters; all logic is in the
+- **Frameworks:** fastify, express, hono — transport adapters enforce each
+  framework's request boundary; OAuth domain decisions stay in the
   framework-free core.
 - **Stores:** `node:sqlite` (recommended, zero-ops), `mysql2`, in-memory — one
   shared conformance suite.
