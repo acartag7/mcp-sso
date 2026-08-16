@@ -6,31 +6,32 @@
 //   - Dir 0700, secrets file 0600 (O_EXCL — never clobbers), `.gitignore` of `*`
 //     is the only ignore trusted. A group/other-accessible dir or secrets file is
 //     a BOOT FAILURE (skipped on Windows).
-//   - FOLLOW-THE-LINK closed everywhere: dir/secrets.json/.gitignore must be REAL
-//     (lstat/O_NOFOLLOW refuse symlinks); reads use open(O_NOFOLLOW)+fstat+read-fd
-//     (no lstat→readFile race).
+//   - On supported POSIX hosts, trusted reads use open(O_NOFOLLOW)+fstat+read-fd
+//     (no lstat→readFile race). Windows/no-O_NOFOLLOW uses a symlink/type lstat
+//     precheck followed by a pathname read; the private directory ACL is the
+//     boundary against replacement in that residual window.
 //   - Unwritable dir / partial write / unparseable / bad-shape ⇒ AuthConfigError.
 //     NEVER an ephemeral fallback (silent key rotation masks misconfiguration).
 //
-// Plaintext key material on disk is bounded by the OS user account; production
-// belongs in env/secret managers.
+// Plaintext key material on disk. On POSIX the boundary is the OS user account,
+// enforced by the mode/ownership gates above. On Windows those gates are absent
+// and no DACL is read or set, so the readers are whichever principals the
+// inherited ACL admits — unmeasured here (issue #219). Production belongs in
+// env/secret managers on both.
 
 import { chmod, constants as fsc, lstat, mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { exportJWK, generateKeyPair, type JWK } from "jose";
 import { AuthConfigError } from "./config.ts";
+import { validateSecrets, type QuickstartSecrets } from "./quickstart-shape.ts";
+import { warnWindowsPermissionGap } from "./windows-permission-warning.ts";
+
+export type { QuickstartSecrets } from "./quickstart-shape.ts";
 
 // O_NOFOLLOW refuses symlinks; O_NONBLOCK stops a FIFO/special file hanging open.
 const O_NOFOLLOW: number | undefined = (fsc as { O_NOFOLLOW?: number }).O_NOFOLLOW;
 const O_NONBLOCK: number = (fsc as { O_NONBLOCK?: number }).O_NONBLOCK ?? 0;
-
-export interface QuickstartSecrets {
-  /** EC P-256 private JWK (kty/crv/d/x/y) — passes `createBridgeConfig`'s §5 check. */
-  signingPrivateJwk: JWK;
-  /** >=32-char HS256 consent secret (base64url of 48 random bytes). */
-  consentSigningSecret: string;
-}
 
 export interface QuickstartOptions {
   /** Directory holding `secrets.json` + `.gitignore`. Default `./.mcp-sso`. */
@@ -49,6 +50,7 @@ export async function loadOrCreateQuickstartSecrets(
   const dir = opts.dir ?? "./.mcp-sso";
   const secretsPath = join(dir, SECRETS_FILE);
 
+  warnWindowsPermissionGap();
   if (await pathExists(secretsPath)) {
     return loadExisting(dir, secretsPath);
   }
@@ -59,8 +61,8 @@ async function loadExisting(dir: string, secretsPath: string): Promise<Quickstar
   // Reload: dir + .gitignore must already be ours (we never create either here).
   await assertRealDir(dir);
   await ensureGitignore(dir, false);
-  // Atomic read (O_NOFOLLOW + fstat + read-fd): refuses a symlink AND can't be
-  // raced (lstat→readFile would let a swap-to-symlink slip in between).
+  // Descriptor-atomic on supported POSIX hosts. Windows/no-O_NOFOLLOW uses the
+  // documented lstat+pathname-read fallback inside readOwnedFile.
   const { content: raw, mode } = await readOwnedFile(secretsPath);
   if (process.platform !== "win32" && mode & 0o077) {
     throw new AuthConfigError(`quickstart: ${secretsPath} is group/other-accessible (mode ${(mode & 0o777).toString(8).padStart(3, "0")}); run: chmod 600 ${secretsPath}`);
@@ -72,34 +74,6 @@ async function loadExisting(dir: string, secretsPath: string): Promise<Quickstar
     throw new AuthConfigError(`quickstart: ${secretsPath} is not valid JSON (refuse to fall back to ephemeral keys)`);
   }
   return validateSecrets(parsed, secretsPath);
-}
-
-function validateSecrets(parsed: unknown, secretsPath: string): QuickstartSecrets {
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} must be a JSON object`);
-  }
-  const obj = parsed as Record<string, unknown>;
-  const signingPrivateJwk = obj.signingPrivateJwk;
-  const consentSigningSecret = obj.consentSigningSecret;
-  if (typeof consentSigningSecret !== "string" || consentSigningSecret.trim().length < 32) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} consentSigningSecret missing or < 32 chars`);
-  }
-  // Mirror config.ts §5 shape validation so loaded material always passes createBridgeConfig.
-  if (!isValidSigningJwk(signingPrivateJwk)) {
-    throw new AuthConfigError(`quickstart: ${secretsPath} signingPrivateJwk must be an EC P-256 key with d, x, y`);
-  }
-  return { signingPrivateJwk: signingPrivateJwk as JWK, consentSigningSecret };
-}
-
-function isValidSigningJwk(value: unknown): value is JWK {
-  if (typeof value !== "object" || value === null) return false;
-  const jwk = value as Record<string, unknown>;
-  return (
-    jwk.kty === "EC" && jwk.crv === "P-256" &&
-    typeof jwk.d === "string" && jwk.d.length > 0 &&
-    typeof jwk.x === "string" && jwk.x.length > 0 &&
-    typeof jwk.y === "string" && jwk.y.length > 0
-  );
 }
 
 async function generateAndPersist(dir: string, secretsPath: string): Promise<QuickstartSecrets> {
@@ -170,8 +144,9 @@ export async function ensureGitignore(dir: string, canCreate: boolean): Promise<
       }
     }
   }
-  // Exists (or just appeared) — verify it is OURS via an atomic read (O_NOFOLLOW
-  // refuses a symlink; read-fd can't be raced). Require the exact `*\n` content.
+  // Exists (or just appeared) — verify it is OURS. Supported POSIX hosts use an
+  // atomic no-follow descriptor read; Windows/no-O_NOFOLLOW has the documented
+  // lstat+pathname-read residual. Require the exact `*\n` content.
   const { content: existing } = await readOwnedFile(path);
   if (existing !== GITIGNORE_CONTENT) {
     throw new AuthConfigError(
@@ -183,6 +158,10 @@ export async function ensureGitignore(dir: string, canCreate: boolean): Promise<
 /** Reject a symlink, a non-directory, or (POSIX) a group/other-accessible mode —
  *  a world-writable state dir lets another user swap secrets.json for their key. */
 export async function assertRealDir(dir: string): Promise<void> {
+  // This helper is root-exported for standalone use. On Windows it omits the
+  // POSIX mode admission just like its quickstart/ensureStateDir callers, so it
+  // must surface the same fixed limitation even when neither caller is used.
+  warnWindowsPermissionGap();
   let st;
   try {
     st = await lstat(dir);
@@ -200,12 +179,25 @@ export async function assertRealDir(dir: string): Promise<void> {
   }
 }
 
-/** O_NOFOLLOW + fstat + read-fd: atomic, refuses symlinks/FIFOs (O_NONBLOCK). Windows → lstat+read. */
+/** Supported POSIX: atomic O_NOFOLLOW+fstat+read-fd. Windows/no flag:
+ *  lstat symlink/type precheck + pathname read (private-directory boundary). */
 async function readOwnedFile(path: string): Promise<{ content: string; mode: number }> {
-  if (O_NOFOLLOW === undefined) {
-    const st = await lstat(path);
+  // The explicit platform branch makes the production Windows fallback
+  // exercisable by the fake-win child probes even when they run on POSIX.
+  if (process.platform === "win32" || O_NOFOLLOW === undefined) {
+    let st;
+    try {
+      st = await lstat(path);
+    } catch (error) {
+      throw new AuthConfigError(`quickstart: cannot stat ${path}: ${errMsg(error)}`);
+    }
     if (st.isSymbolicLink()) throw new AuthConfigError(`quickstart: ${path} is a symlink`);
-    return { content: await readFile(path, "utf8"), mode: st.mode };
+    if (!st.isFile()) throw new AuthConfigError(`quickstart: ${path} is not a regular file`);
+    try {
+      return { content: await readFile(path, "utf8"), mode: st.mode };
+    } catch (error) {
+      throw new AuthConfigError(`quickstart: cannot read ${path}: ${errMsg(error)}`);
+    }
   }
   let fh;
   try {
