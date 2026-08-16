@@ -29,7 +29,28 @@ export type GenericOidcIdTokenPayload = JWTPayload & {
   /** OIDC: a boolean. Validated with strict `=== true` (string `"true"` is NOT
    *  accepted) wherever it gates a decision. */
   email_verified?: unknown;
+  /** OIDC `profile` display name. DISPLAY ONLY — deliberately `unknown`: it is
+   *  attacker-influenced (an IdP profile field the end user often edits), so it
+   *  is never a subject, never an authorization input, and never trim-folded
+   *  for matching. */
+  name?: unknown;
 };
+
+/** Hard cap on the surfaced display name. An over-long value is OMITTED, never
+ *  truncated: truncating silently publishes a different string than the IdP
+ *  issued, and this claim exists only so a host can render something. */
+const MAX_NAME_LENGTH = 256;
+
+/** Surface `name` only for a verified identity, as a non-empty bounded string.
+ *  Returned RAW (never trimmed) — the emptiness check must not become a
+ *  normalization that callers could mistake for a canonical form. */
+function displayName(payload: GenericOidcIdTokenPayload): string | undefined {
+  if (payload.email_verified !== true) return undefined;
+  const value = payload.name;
+  if (typeof value !== "string") return undefined;
+  if (value.trim().length === 0 || value.length > MAX_NAME_LENGTH) return undefined;
+  return value;
+}
 
 /** The subset of config the pure validator consumes (the full `GenericOidcConfig`
  *  in generic-oidc.ts satisfies this). Kept here to avoid a runtime cycle. */
@@ -138,6 +159,7 @@ export function validateGenericOidcIdToken(
   // reach subjectAllowedGeneric's .trim() and throw ⇒ exchange_failed; coerce to
   // string|undefined before matching or surfacing it.
   const email = typeof payload.email === "string" ? payload.email : undefined;
+  const name = displayName(payload);
   if (config.subjectAllowlist && config.subjectAllowlist.length > 0) {
     if (!subjectAllowedGeneric(payload.sub, email, payload.email_verified === true, config.subjectAllowlist, config.allowEmailAllowlist === true)) {
       return { ok: false, reason: "generic_oidc_subject_not_allowed" };
@@ -155,6 +177,10 @@ export function validateGenericOidcIdToken(
       claims: {
         email,
         emailVerified: payload.email_verified === true,
+        // Absent unless verified + a bounded non-empty string, so a consumer can
+        // treat presence as "safe to render" without re-checking emailVerified.
+        // Google inherits this gate: validateGoogleIdToken delegates here.
+        ...(name === undefined ? {} : { name }),
         issuer: config.issuer,
         expiresAt: payload.exp,
         issuedAt: payload.iat,
