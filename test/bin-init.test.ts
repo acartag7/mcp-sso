@@ -79,7 +79,7 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.ok(!/[\^~]/.test(Object.values(deps).join(" ")), "no version ranges — exact pins only");
 
     const server = await readFile(join(dir, "server.ts"), "utf8");
-    for (const marker of ['from "mcp-sso"', 'from "mcp-sso/fastify/protected-resource-rate-limit"', "registerOAuthRoutes", "registerProtectedResourceRateLimit", "isMcpPath", "loadOrCreateQuickstartSecrets", "validateAllowedOrigins", "createConsolePairingIdentity", "handlePairingAuthorize"]) {
+    for (const marker of ['from "mcp-sso"', 'from "mcp-sso/fastify/protected-resource-rate-limit"', "registerOAuthRoutes", "registerProtectedResourceRateLimit", "semanticOAuthBody", "isMcpPath", "loadOrCreateQuickstartSecrets", "validateAllowedOrigins", "createConsolePairingIdentity", "handlePairingAuthorize"]) {
       assert.ok(server.includes(marker), `server.ts composition root includes ${marker}`);
     }
     assert.match(server, /config:\s*\{\s*rateLimit:/, "generated /mcp route enables the mandatory finite budget");
@@ -91,6 +91,11 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.doesNotMatch(server, /request\.headers\.origin/, "generated /mcp gate never selects a normalized Origin");
     assert.match(server, /request\.raw\.headersDistinct\.authorization/, "generated /mcp bearer gate preserves raw Authorization occurrences");
     assert.doesNotMatch(server, /request\.headers\.authorization/, "generated /mcp bearer gate never selects a normalized Authorization value");
+    assert.match(
+      server,
+      /body:\s*semanticOAuthBody\(req\.body,\s*headers\)/,
+      "generated pairing normalizer gates inherited parser output by Content-Type",
+    );
     assert.match(server, /cimd:\s*\{\s*enabled:\s*true\s*\}/, "generated server enables CIMD");
     assert.match(
       server,

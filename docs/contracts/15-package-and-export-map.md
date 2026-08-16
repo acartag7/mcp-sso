@@ -64,8 +64,9 @@ Hono OAuth POST routes apply it automatically. A Fastify consumer mounts a
 caller-owned pairing POST after `registerOAuthRoutes(..., { skipAuthorize: true })`;
 that registration automatically supplies bounded URL-encoded form parsing and
 clamps the later exact POST `/oauth/authorize` route to the shared budget.
-`addOAuthFormContentTypeParser` and `OAUTH_POST_BODY_MAX_BYTES` remain exported
-from `mcp-sso/fastify` for explicit custom composition, and
+`addOAuthFormContentTypeParser`, `OAUTH_POST_BODY_MAX_BYTES`, and the shared
+`semanticOAuthBody` media gate remain exported from `mcp-sso/fastify` for
+explicit custom composition, including a caller-owned pairing normalizer, and
 `FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT` is route metadata that exactly mirrors
 §17.5's mandatory framework-free gate. The generated starter and both in-repo
 Fastify examples attach that metadata to pairing GET and POST.

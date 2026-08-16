@@ -102,7 +102,9 @@ test("fastify OAuth POST routes enforce the shared budget for every content-type
       payload: "--example\r\ncontent-disposition: form-data; name=redirect_uris\r\n\r\nhttps://client.test/callback\r\n--example--",
     });
     assert.equal(unsupported.statusCode, 400);
-    assert.ok(Buffer.isBuffer(requests.at(-1)?.body), "unsupported media reaches Bridge only as non-object bytes");
+    // Tightened with the §9.6 media gate: the adapter no longer forwards the
+    // catch-all Buffer either. Nothing selectable reaches field selection.
+    assert.equal(requests.at(-1)?.body, undefined, "unsupported media reaches Bridge with no selectable body");
   } finally {
     await app.close();
   }
@@ -271,7 +273,9 @@ test("express OAuth POST routes enforce the shared budget for every content type
     multipartBody.set("redirect_uris", "https://client.test/callback");
     const unsupported = await fetch(`${base}/oauth/register`, { method: "POST", body: multipartBody });
     assert.equal(unsupported.status, 400);
-    assert.ok(Buffer.isBuffer(requests.at(-1)?.body), "unsupported media reaches Bridge only as non-object bytes");
+    // Tightened with the §9.6 media gate: the adapter no longer forwards the
+    // catch-all Buffer either. Nothing selectable reaches field selection.
+    assert.equal(requests.at(-1)?.body, undefined, "unsupported media reaches Bridge with no selectable body");
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

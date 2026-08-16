@@ -1,7 +1,8 @@
-// Fastify adapter (contracts §9.6). Thin wiring over the framework-free Bridge; all
-// OAuth logic stays in the core. Maps NormResponse to Fastify (302 for redirects,
-// status+body otherwise). The consumer supplies a Bridge + an IdentityPort; the
-// adapter resolves the subject from `identityHeader` (default Cf-Access-Jwt-Assertion).
+// Fastify transport adapter (contracts §9.6). OAuth domain decisions stay in the
+// framework-free core; this layer applies route body budgets, normalizes request
+// data, and maps NormResponse to Fastify (302 for redirects, status+body otherwise).
+// The consumer supplies a Bridge + an IdentityPort; the adapter resolves the
+// subject from `identityHeader` (default Cf-Access-Jwt-Assertion).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IdentityPort } from "../ports/identity.ts";
@@ -11,14 +12,14 @@ import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import {
   formBodySnapshot, headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
-  type NormRequest, type NormResponse,
+  semanticOAuthBody, type NormRequest, type NormResponse,
 } from "./http.ts";
 import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import {
   PAIRING_AUTHORIZE_MAX_REQUESTS, PAIRING_AUTHORIZE_WINDOW_MS,
 } from "./pairing-flow.ts";
 
-export { OAUTH_POST_BODY_MAX_BYTES };
+export { OAUTH_POST_BODY_MAX_BYTES, semanticOAuthBody };
 
 /** Route metadata matching handlePairingAuthorize's mandatory hard gate. */
 export const FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT = Object.freeze({
@@ -94,7 +95,10 @@ async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdap
 
   const toNorm = (req: FastifyRequest): NormRequest => {
     const headers = headersFromDistinct(req.raw.headersDistinct, req.headers as NormRequest["headers"]);
-    const body = req.body;
+    // Keyed on the request's Content-Type, not on which content-type parser ran:
+    // an inherited application parser for an unsupported media type still runs
+    // under the route bodyLimit, but its output never becomes OAuth fields (§9.6).
+    const body = semanticOAuthBody(req.body, headers);
     return {
       query: queryOccurrencesFromUrl(req.raw.url ?? ""), body,
       formBody: formBodySnapshot(body, headers), headers, ip: req.ip,

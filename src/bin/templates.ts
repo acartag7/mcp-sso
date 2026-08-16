@@ -34,7 +34,7 @@ import {
   SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
   type ClientRegistration, type ClientStore,
 } from "mcp-sso";
-import { addOAuthFormContentTypeParser, FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, OAUTH_POST_BODY_MAX_BYTES, registerOAuthRoutes } from "mcp-sso/fastify";
+import { addOAuthFormContentTypeParser, FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, OAUTH_POST_BODY_MAX_BYTES, registerOAuthRoutes, semanticOAuthBody } from "mcp-sso/fastify";
 import { registerProtectedResourceRateLimit } from "mcp-sso/fastify/protected-resource-rate-limit";
 import { openSqliteStore } from "mcp-sso/store/sqlite";
 import { createConsolePairingIdentity } from "mcp-sso/identity/console-pairing";
@@ -111,10 +111,9 @@ async function main(): Promise<void> {
   const clock = new SystemClock();
   const bridge = new Bridge({ config, store, clock, audit });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
-  const toNorm = (req: FastifyRequest): NormRequest => ({
-    query: req.query as NormRequest["query"], body: req.body, ip: req.ip,
-    headers: Object.fromEntries(Object.entries(req.raw.headersDistinct ?? {}).flatMap(([k, v]) => !v?.length ? [] : [[k.toLowerCase(), v.length === 1 ? v[0]! : [...v]]])),
-  });
+  const toNorm = (req: FastifyRequest): NormRequest => { const headers = Object.fromEntries(Object.entries(req.raw.headersDistinct ?? {}).flatMap(([k, v]) => !v?.length ? [] : [[k.toLowerCase(), v.length === 1 ? v[0]! : [...v]]]));
+    return { query: req.query as NormRequest["query"], body: semanticOAuthBody(req.body, headers), headers, ip: req.ip };
+  };
   const sendNorm = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
     for (const [key, value] of Object.entries(res.headers)) reply.header(key, value);
     if (res.redirect) { await reply.redirect(res.redirect, res.status); return; }
