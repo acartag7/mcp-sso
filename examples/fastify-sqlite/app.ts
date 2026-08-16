@@ -75,6 +75,7 @@ import {
 import {
   assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
 } from "../../src/deployment-guard.ts";
+import { installDcrRegistrationRateLimit } from "./registration-rate-limit.ts";
 import { trustedProxiesFromEnv, trustedProxiesFromOptions } from "./trusted-proxy.ts";
 
 export interface ExampleOptions {
@@ -113,6 +114,7 @@ export async function buildApp(opts: ExampleOptions) {
   const trustedProxies = trustedProxiesFromOptions(opts);
   const app = Fastify({ trustProxy: trustedProxies ?? false });
   const protectedRateLimit = await registerProtectedResourceRateLimit(app, opts.protectedResourceRateLimit);
+  installDcrRegistrationRateLimit(app);
   const protectedRoute = { config: { rateLimit: {
     max: protectedRateLimit.max,
     timeWindow: protectedRateLimit.timeWindowMs,

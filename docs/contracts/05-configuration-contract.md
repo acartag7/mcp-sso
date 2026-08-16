@@ -252,3 +252,32 @@ needs a portless loopback origin in
 `OAUTH_REDIRECT_ALLOWLIST`: the existing stateless-DCR composition guard remains
 unchanged and still rejects that broadly reusable origin. The API-key gateway
 example retains its existing stateless-only environment wiring.
+
+**Fastify/SQLite registration admission.** Every `POST /oauth/register` mounted
+by `examples/fastify-sqlite` carries a fixed Fastify `onRequest` budget of 30
+requests per 60 seconds per derived client IP, under the separate
+`oauth-client-registration` group. The route uses the same installed
+`@fastify/rate-limit` instance and optional custom store as the example's
+mandatory `/mcp` limiter, but its finite max/window are not inherited from or
+disabled by the `/mcp` route options. The budget applies in both stateless and
+stored DCR modes. Normal exhaustion returns 429; a custom limiter-store throw,
+rejection, callback error, or malformed counter fails closed with the helper's
+fixed 503 before body parsing, `Bridge.handleRegister`, `ClientStore.save`, or a
+registration success audit. The example's validated Fastify proxy trust policy
+selects the IP used for both route budgets. The built-in store remains
+per-process, so a public multi-replica deployment needs a conforming shared
+Fastify limiter store or equivalent trusted-edge admission control.
+
+This route control closes a composition-root gap; it does not change
+`assertSafeDeploymentCombination`. The root cause is explicit in
+`src/deployment-guard.ts`: after validating a supplied limiter, the guard
+returns immediately for every DCR mode other than `"stateless"`. Stored DCR has
+therefore never been covered by that unbounded-registration boot guard, and the
+Fastify/SQLite example's new stored mode was the first shipped composition to
+make anonymous durable registration writes reachable through the exemption.
+Extending the guard to stored DCR can newly refuse existing deployments. Owner
+decision **B1** was approved on 2026-08-17: stored DCR will require a bounded
+`RateLimitPort`, with no acknowledgement escape hatch. That deliberate
+boot-breaking library change lands separately with its own version call. This
+hotfix leaves the guard unchanged and supplies the finite, fail-closed control
+only at the example route; it does not close the library-wide class.

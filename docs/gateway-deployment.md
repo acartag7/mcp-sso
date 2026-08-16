@@ -66,6 +66,9 @@ OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http
 
 That setting is intentionally not a relaxation of the stateless deployment
 guard: stored DCR records each native client's concrete callback in SQLite. The
+Fastify/SQLite example also puts a fixed fail-closed 30-request/60-second per-IP
+budget on `/oauth/register` before parsing or persistence; its in-memory counter
+is per process unless a shared Fastify limiter store is supplied. The
 API-key gateway's environment builder remains stateless; a custom gateway that
 needs native CLI DCR must supply a shared `ClientStore` itself. See
 [client-registration.md](client-registration.md) for the document shape and
