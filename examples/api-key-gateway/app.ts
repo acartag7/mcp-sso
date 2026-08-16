@@ -34,7 +34,7 @@ import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
 import {
   headersFromDistinct, isMcpPath, OAUTH_POST_BODY_MAX_BYTES, readHeader as readSecurityHeader,
-  type NormRequest, type NormResponse,
+  semanticOAuthBody, type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
 import { queryOccurrencesFromUrl } from "../../src/adapters/authorize-params.ts";
 import {
@@ -130,12 +130,18 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
 
-  const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string; raw?: { url?: string; headersDistinct?: Record<string, string[] | undefined> } }): NormRequest => ({
-    query: req.raw?.url !== undefined ? queryOccurrencesFromUrl(req.raw.url) : req.query as NormRequest["query"],
-    body: req.body,
-    headers: headersFromDistinct(req.raw?.headersDistinct, req.headers as NormRequest["headers"]),
-    ip: req.ip,
-  });
+  const toNorm = (req: { query: unknown; body: unknown; headers: unknown; ip?: string; raw?: { url?: string; headersDistinct?: Record<string, string[] | undefined> } }): NormRequest => {
+    const headers = headersFromDistinct(req.raw?.headersDistinct, req.headers as NormRequest["headers"]);
+    return {
+      query: req.raw?.url !== undefined ? queryOccurrencesFromUrl(req.raw.url) : req.query as NormRequest["query"],
+      // Same media gate the built-in adapters apply (contracts §9.6): a body a
+      // content-type parser produced for an unsupported media type must not reach
+      // OAuth field selection on this caller-owned pairing route.
+      body: semanticOAuthBody(req.body, headers),
+      headers,
+      ip: req.ip,
+    };
+  };
   const sendNorm = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
     for (const [key, value] of Object.entries(res.headers)) reply.header(key, value);
     if (res.redirect) { await reply.redirect(res.redirect, res.status); return; }

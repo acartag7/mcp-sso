@@ -89,13 +89,34 @@ export function headerString(headers: NormRequest["headers"], name: string): str
 }
 
 const AMBIGUOUS_FORM_CONTENT_TYPE = Symbol("ambiguous-form-content-type");
+const FORM_MEDIA_TYPE = "application/x-www-form-urlencoded";
+const JSON_MEDIA_TYPE = "application/json";
+
+/** Lower-cased media-type essence of a single unambiguous `Content-Type`. */
+function contentTypeEssence(headers: NormRequest["headers"]): { essence?: string; ambiguous: boolean } {
+  const { value, ambiguous } = readHeader(headers, "content-type");
+  if (ambiguous) return { ambiguous: true };
+  return { essence: value?.split(";", 1)[0]?.trim().toLowerCase(), ambiguous: false };
+}
 
 /** Retain form provenance so Bridge can distinguish repeats from JSON arrays. */
 export function formBodySnapshot(body: unknown, headers: NormRequest["headers"]): unknown {
-  const { value, ambiguous } = readHeader(headers, "content-type");
+  const { essence, ambiguous } = contentTypeEssence(headers);
   if (ambiguous) return AMBIGUOUS_FORM_CONTENT_TYPE;
-  const contentType = value?.split(";", 1)[0]?.trim().toLowerCase();
-  return contentType === "application/x-www-form-urlencoded" ? body : undefined;
+  return essence === FORM_MEDIA_TYPE ? body : undefined;
+}
+
+/** Adapter-owned media gate (§9.6). An adapter hands the core a parsed body ONLY
+ *  for the two media types it interprets semantically, keyed on the request's own
+ *  `Content-Type` rather than on which parser happened to fill the framework's
+ *  body slot. So a value produced by a parser the application mounted earlier on
+ *  the same path — `express.json({ type: "text/plain" })`, a Fastify `text/plain`
+ *  parser returning an object — is dropped here, before any OAuth field selection.
+ *  Absent, ambiguous, and unsupported `Content-Type` all fail closed to absent. */
+export function semanticOAuthBody(body: unknown, headers: NormRequest["headers"]): unknown {
+  const { essence, ambiguous } = contentTypeEssence(headers);
+  if (ambiguous || essence === undefined) return undefined;
+  return essence === JSON_MEDIA_TYPE || essence === FORM_MEDIA_TYPE ? body : undefined;
 }
 
 export function isAmbiguousFormContentType(value: unknown): boolean {

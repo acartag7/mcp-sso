@@ -13,7 +13,7 @@ import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import {
   formBodySnapshot, headerString, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
-  type NormRequest, type NormResponse,
+  semanticOAuthBody, type NormRequest, type NormResponse,
 } from "./http.ts";
 import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import { OAuthError } from "../errors.ts";
@@ -138,7 +138,11 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
     // duplicate-param checks (contracts §17.11 authorize step 2 / callback row 1).
     // Single-valued params stay strings (unchanged behavior for every other route).
     const query = queryOccurrencesFromUrl(c.req.raw.url);
-    return { query, body, formBody: formBodySnapshot(body, headers), headers, ip: clientIp?.(c) };
+    // Same media gate the other two adapters apply. Hono parses only the two
+    // essences above, so this re-states that invariant in one shared place rather
+    // than leaving it implicit in this function's branches (§9.6).
+    const gated = semanticOAuthBody(body, headers);
+    return { query, body: gated, formBody: formBodySnapshot(gated, headers), headers, ip: clientIp?.(c) };
   };
   // Build a standard Response directly: hono route handlers accept a Response,
   // and this sidesteps hono's strict RedirectStatusCode/ContentfulStatusCode unions

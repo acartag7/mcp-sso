@@ -12,7 +12,7 @@ import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import {
   formBodySnapshot, headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
-  type NormRequest, type NormResponse,
+  semanticOAuthBody, type NormRequest, type NormResponse,
 } from "./http.ts";
 import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import {
@@ -95,7 +95,10 @@ async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdap
 
   const toNorm = (req: FastifyRequest): NormRequest => {
     const headers = headersFromDistinct(req.raw.headersDistinct, req.headers as NormRequest["headers"]);
-    const body = req.body;
+    // Keyed on the request's Content-Type, not on which content-type parser ran:
+    // an inherited application parser for an unsupported media type still runs
+    // under the route bodyLimit, but its output never becomes OAuth fields (§9.6).
+    const body = semanticOAuthBody(req.body, headers);
     return {
       query: queryOccurrencesFromUrl(req.raw.url ?? ""), body,
       formBody: formBodySnapshot(body, headers), headers, ip: req.ip,
