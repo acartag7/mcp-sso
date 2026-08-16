@@ -194,10 +194,11 @@ export async function insertRefreshToken(conn: PoolConnection, input: SaveRefres
   );
 }
 
-export async function revokeFamily(conn: PoolConnection, familyId: string, revokedAtIso: string): Promise<void> {
+export async function revokeFamily(conn: PoolConnection, familyId: string, revokedAtIso: string, expectedResource?: string): Promise<void> {
+  const resourceClause = expectedResource === undefined ? "" : " AND resource = ?";
   await conn.query(
-    `UPDATE oauth_refresh_token_families SET revoked_at = COALESCE(revoked_at, ?) WHERE family_id = ?`,
-    [revokedAtIso, familyId],
+    `UPDATE oauth_refresh_token_families SET revoked_at = COALESCE(revoked_at, ?) WHERE family_id = ?${resourceClause}`,
+    expectedResource === undefined ? [revokedAtIso, familyId] : [revokedAtIso, familyId, expectedResource],
   );
 }
 

@@ -245,7 +245,8 @@ other undersized shape fails boot rather than being silently reinterpreted.
 
 11. **Resource predicates (patch-compatible extensions):** the
     optional trailing `expectedResource` argument is supplied by
-    `OAuthTokenUseCase` in every authorization-code exchange and refresh rotation.
+    `OAuthTokenUseCase` in every authorization-code exchange, refresh rotation,
+    and explicit refresh-family revocation.
     For codes, Memory checks it in the map critical section, SQLite checks it
     inside `BEGIN IMMEDIATE`, and MySQL checks it while holding the selected row
     `FOR UPDATE`; a mismatch commits no delete. For refreshes, the reference
@@ -256,7 +257,12 @@ other undersized shape fails boot rather than being silently reinterpreted.
     replay still revokes the current family successor. The successor authoritative-
     copies the selected row's exact resource, and `saveRefreshToken` rejects an
     attempt to introduce a different or missing family resource. Comparison is
-    exact string equality over stored resource strings.
+    exact string equality over stored resource strings. Explicit family
+    revocation checks the family resource inside the same map critical section or
+    SQL update; a mismatch changes no revocation timestamp. The use-case also
+    checks the found token record before calling that mutation, so a
+    wrong-resource token follows the same non-oracular response and audit path as
+    an unrecognized token.
     `findGrantedScopes` applies the same exact predicate to both active rows
     before returning their scopes.
 

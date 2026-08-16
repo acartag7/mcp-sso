@@ -355,8 +355,11 @@ one target, while multiple distinct targets follow the existing post-validation
   400 `invalid_request`, with no token hashing, store, revocation, or audit work.
   A singleton request then reaches revocation, which **always returns 200**; an
   unknown or already-revoked token is a **no-op** (never 4xx — RFC 7009 §2.2
-  forbids leaking token existence via the response). It looks up the family by
-  hash and revokes it; a guessed family id revokes nothing.
+  forbids leaking token existence via the response). It looks up the token by
+  hash, treats a record not bound to the exact configured resource as
+  unrecognized, and supplies that resource to the store's atomic family
+  revocation predicate. A guessed family id or wrong-resource token revokes
+  nothing.
 - **Audit containment:** every `OAuthTokenUseCase` audit emission goes through
   `writeTokenAudit`. A synchronous throw or rejected promise from a nonconforming
   custom `AuditPort` is ignored, so it cannot replace an OAuth error, suppress a

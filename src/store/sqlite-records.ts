@@ -41,10 +41,11 @@ export function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow):
   };
 }
 
-export function revokeFamily(db: DatabaseSync, familyId: string, revokedAtIso: string): void {
+export function revokeFamily(db: DatabaseSync, familyId: string, revokedAtIso: string, expectedResource?: string): void {
+  const resourceClause = expectedResource === undefined ? "" : " AND resource = ?";
   db.prepare(
-    `UPDATE oauth_refresh_token_families SET revoked_at = COALESCE(revoked_at, ?) WHERE family_id = ?`,
-  ).run(revokedAtIso, familyId);
+    `UPDATE oauth_refresh_token_families SET revoked_at = COALESCE(revoked_at, ?) WHERE family_id = ?${resourceClause}`,
+  ).run(...(expectedResource === undefined ? [revokedAtIso, familyId] : [revokedAtIso, familyId, expectedResource]));
 }
 
 export function validateAuthCode(input: SaveAuthCodeInput): void {

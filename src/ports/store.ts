@@ -122,8 +122,9 @@ export interface StorePort {
     expectedGrantGeneration?: number,
     expectedResource?: string,
   ): Promise<RefreshTokenRecord | null>;
-  /** Revoke every token in the family. Replay-detection path. */
-  revokeRefreshTokenFamily(familyId: string, revokedAtIso: string): Promise<void>;
+  /** Revoke every token in the family. A supplied expectedResource mutates only
+   *  an exact-bound family; omitted retains replay/compensation semantics. */
+  revokeRefreshTokenFamily(familyId: string, revokedAtIso: string, expectedResource?: string): Promise<void>;
   /** Find a refresh token by its hash, or null if it does not exist. */
   findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null>;
   /** Bind a consent token to a single use. true on first use, false on replay. */
