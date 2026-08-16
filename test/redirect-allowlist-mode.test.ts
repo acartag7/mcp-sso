@@ -168,3 +168,27 @@ test("extend still authorizes that same stored client", async () => {
   const config = createBridgeConfig(baseInput({ dcr: { mode: "stored", store } }));
   assert.equal(await resolveOpaqueRedirect(config, "legacy-1", BUILT_IN), BUILT_IN);
 });
+
+// --- the public matcher's own boundary --------------------------------------
+
+test("the exported matcher rejects a malformed mode instead of coercing it", () => {
+  // assertAllowedRedirectUri is root-exported and takes unvalidated public
+  // input, so it cannot lean on boot validation. Coercing an unknown mode to
+  // "extend" would silently restore the built-in origins a JS or cast-TS caller
+  // was trying to drop — the widening this feature exists to prevent.
+  for (const bad of ["Replace", "replace ", "", "none", null, true, 0]) {
+    assert.throws(
+      () => assertAllowedRedirectUri(OWN, [OWN], bad as never),
+      (error: unknown) => {
+        assert.ok(error instanceof AuthConfigError, `expected AuthConfigError for ${JSON.stringify(bad)}`);
+        assert.match(error.message, /mode must be "extend" or "replace"/);
+        return true;
+      },
+      `expected mode ${JSON.stringify(bad)} to be rejected`,
+    );
+  }
+  // The two-argument published form still works, and both known modes pass.
+  assert.equal(assertAllowedRedirectUri(BUILT_IN, []), BUILT_IN);
+  assert.equal(assertAllowedRedirectUri(BUILT_IN, [], "extend"), BUILT_IN);
+  assert.equal(assertAllowedRedirectUri(OWN, [OWN], "replace"), OWN);
+});

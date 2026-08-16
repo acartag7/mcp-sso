@@ -3,6 +3,7 @@
 
 import type { AuthorizationClientRegistration } from "./client-registration.ts";
 import type { ClientRegistration } from "./ports/client-store.ts";
+import { AuthConfigError } from "./config-error.ts";
 import { OAuthError } from "./errors.ts";
 import {
   isLoopbackRedirect, parseRedirectEntry, RedirectEntryError,
@@ -27,13 +28,22 @@ export type RedirectAllowlistMode = "extend" | "replace";
  *
  *  `mode` defaults to `"extend"` so the exported two-argument form keeps its
  *  published behavior; every in-tree caller passes `config.redirectAllowlistMode`
- *  explicitly. Boot rejects `"replace"` with an empty allowlist, so `entries` is
- *  never empty for a config-derived call. */
+ *  explicitly. An explicitly-passed mode outside the two known values is
+ *  REJECTED, never coerced (see below). Boot rejects `"replace"` with an empty
+ *  allowlist, so `entries` is never empty for a config-derived call. */
 export function assertAllowedRedirectUri(
   value: unknown,
   allowlist: readonly unknown[],
   mode: RedirectAllowlistMode = "extend",
 ): string {
+  // This helper is root-exported and deliberately accepts unvalidated public
+  // input, so it cannot lean on the boot check the way the in-tree callers do.
+  // A `mode === "replace" ? ... : ...` test would treat every malformed value —
+  // `"Replace"`, `""`, `null`, `true` — as "extend" and silently restore the
+  // built-in origins a caller was trying to drop. Reject instead of coercing.
+  if (mode !== "extend" && mode !== "replace") {
+    throw new AuthConfigError('assertAllowedRedirectUri mode must be "extend" or "replace"');
+  }
   const presented = oauthEntry(value);
   const builtIns = mode === "replace" ? [] : DEFAULT_ALLOWED_REDIRECT_ORIGINS;
   const entries = [...builtIns, ...allowlist]
