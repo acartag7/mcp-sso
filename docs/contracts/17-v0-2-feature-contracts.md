@@ -1568,6 +1568,15 @@ gate replaces no-gate).
   success); invalidated by expiry (600 s) or by `maxAttempts` (5) wrong
   submissions, after which the next request prints a fresh code. **Never
   persisted** — process-memory only; restart = clean slate (fail-closed).
+- **Port failure boundary:** `handlePairingAuthorize` invokes both
+  `beginSession()` and `verify()` through `callPort` and selects every returned
+  field before that boundary closes. A session result must contain a nonempty
+  nonce of at most 256 UTF-8 bytes and a canonical UTC expiry with exactly three
+  millisecond digits; the identity result uses the same known-field snapshot as
+  `Bridge.resolveIdentity`. A direct throw, accessor/Proxy trap, or malformed
+  return becomes a fixed direct 500 `internal_error` `NormResponse` before any
+  later pairing or Bridge effect. Port-owned OAuth code, description, status,
+  redirect, reason, and object identity never reach the response.
 - **Session binding:** the code is single-use and bound to the pairing *session*
   (a random nonce in the form) and to the operator who pastes it — not to the
   specific OAuth request parameters (`client_id`, `redirect_uri`, `scope`, …),

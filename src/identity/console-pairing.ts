@@ -46,7 +46,9 @@ export interface ConsolePairingOptions {
 
 /** A live pairing session: the form nonce + the code's expiry. */
 export interface PairingSession {
+  /** Nonempty form nonce, at most 256 UTF-8 bytes. */
   nonce: string;
+  /** Canonical UTC ISO timestamp with exactly three millisecond digits. */
   expiresAt: string;
 }
 

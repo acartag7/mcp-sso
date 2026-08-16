@@ -37,8 +37,9 @@ The original is carried on `PortFailureError.cause` for local logging only.
 For response-owning returned data, the boundary includes selected property and
 array-slot reads, not only the awaited method call. Identity results,
 redirect-identity results, authorization-code records, refresh-token records,
-stored-grant scope arrays, and the upstream consent-JTI boolean are projected or
-type-checked into library-owned values inside `callPort`; an accessor or Proxy
+stored-grant scope arrays, console-pairing session/identity results, and the
+upstream consent-JTI boolean are projected or type-checked into library-owned
+values inside `callPort`; an accessor or Proxy
 trap that throws is therefore re-cast before a later OAuth mapper or audit
 classifier can observe it. Plain malformed
 store records fail closed through the existing library-owned grant errors.
