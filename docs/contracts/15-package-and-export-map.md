@@ -155,10 +155,12 @@ them (and re-opening the footguns they centralize): the normalized request/respo
 shapes `NormRequest` and `NormResponse` (co-exported with `isMcpPath` — the types
 the already-exported `handlePairingAuthorize` and `createUpstreamRedirectFlow`
 take/return, so a consumer mounting the pairing surface or an upstream callback can
-type-check them); the state-dir security controls `ensureStateDir` (the ATOMIC
-helper — `mkdir 0o700` + `assertRealDir` + the managed `*` `.gitignore`, which a
-consumer on the Cloudflare/Entra/gateway path — managing its own state dir — applies
-for the SAME bar the example does; it derives whether the `.gitignore` may be created
+type-check them); the state-dir security controls `ensureStateDir` (the aggregate
+helper — POSIX atomic restrictive `mkdir 0o700` + `assertRealDir` + the managed
+`*` `.gitignore`; on Windows creation inherits and relies on the deployer-private
+parent ACL. A consumer on the Cloudflare/Entra/gateway path managing its own state
+dir applies it for the SAME platform-applicable bar the example does. It derives
+whether the `.gitignore` may be created
 from `mkdir`'s return, so a caller cannot drop a `*` ignore into a pre-existing tree)
 and `assertRealDir` (the fs-trust bar alone — rejects a symlink on every
 platform and, on POSIX, a group/other-accessible state dir so another local user

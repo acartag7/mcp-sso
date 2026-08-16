@@ -1,4 +1,4 @@
-// The atomic state-dir setup helper a consumer applies when it manages its OWN state
+// The aggregate state-dir setup helper a consumer applies when it manages its OWN state
 // dir (the Cloudflare/Entra/gateway path that does NOT use loadOrCreateQuickstartSecrets).
 // Promoted from the in-repo example so package consumers get the SAME setup the
 // examples do, instead of reimplementing it (contracts §15 DX).
@@ -15,14 +15,16 @@ import { warnWindowsPermissionGap } from "./windows-permission-warning.ts";
  *  relies on the deployer-private ACL. Then `ensureGitignore` writes the managed `*`
  *  `.gitignore` so auth.db / audit.jsonl cannot be committed.
  *
- *  Boundary: the dir is CREATED restrictive (mkdir mode `0o700` — atomic, no
- *  world-writable race window between create and chmod; the retained chmod verifies).
- *  This polices the state dir's OWN mode + symlink-ness + .gitignore, NOT any
+ *  POSIX boundary: the dir is CREATED restrictive (mkdir mode `0o700` — atomic,
+ *  with no world-writable race window between create and chmod; the retained chmod
+ *  enforces the mode). On Windows, Node's mode is not DACL enforcement; creation
+ *  inherits the parent ACL and the deployer-private ACL remains the boundary.
+ *  This polices the state dir's OWN POSIX mode + symlink-ness + .gitignore, NOT any
  *  pre-existing ancestors — the deployer must place the state dir under a trusted
  *  parent (as with any secret store), since a group/other-writable, non-sticky parent
  *  that pre-dates this call would let another local user rename/replace the state dir
- *  after it returns. (Same scope `loadOrCreateQuickstartSecrets` has; both now create
- *  atomically restrictive — sibling sweep of this race window.)
+ *  after it returns. (Same scope `loadOrCreateQuickstartSecrets` has; both create
+ *  atomically restrictive directories on POSIX.)
  *
  *  This aggregate helper — not the raw `ensureGitignore(dir, canCreate)` — is the
  *  public surface, because it DERIVES whether creating the `.gitignore` is safe from
@@ -37,7 +39,8 @@ export async function ensureStateDir(dir: string): Promise<void> {
   // A consumer using this path with external database state would otherwise
   // reach neither of the other two warnings and be silently unprotected.
   warnWindowsPermissionGap();
-  const created = await mkdir(dir, { recursive: true, mode: 0o700 }); // atomic restrictive create (no world-writable window)
+  // Atomic restrictive creation on POSIX; Windows inherits the private parent ACL.
+  const created = await mkdir(dir, { recursive: true, mode: 0o700 });
   if (created !== undefined) {
     if (process.platform !== "win32") await chmod(dir, 0o700);
   } else {
