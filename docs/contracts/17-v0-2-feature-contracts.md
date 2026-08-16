@@ -1874,7 +1874,10 @@ gate replaces no-gate).
 - If `${dir}/secrets.json` exists: load, validate shape (§5 boot checks), and
   on POSIX **reject group/other-readable files** (`mode & 0o077` ⇒ boot error
   with the exact `chmod 600` remediation; the check is skipped on Windows,
-  documented). If absent: generate (EC P-256 keypair via jose; consent secret
+  documented). The first Windows quickstart or persistent library-opened SQLite
+  use in a process emits one fixed, path-free warning that DACL privacy was not
+  verified; later uses do not repeat it, and a throwing warning transport cannot
+  replace the boot result. If absent: generate (EC P-256 keypair via jose; consent secret
   = base64url(48 bytes)), `mkdir` `0700`, write `0600` with `O_EXCL`, and
   write `${dir}/.gitignore` containing `*` so the directory can never be
   committed.
@@ -1894,7 +1897,9 @@ gate replaces no-gate).
   FIFO/special file, no lstat→readFile race) + a perm check (`mode & 0o077`
   fails closed, POSIX); a pre-existing dir is `assertRealDir`'d (reject symlink
   + group/other-accessible mode); the `.gitignore` is the managed `*\n` (write
-  into a dir we created, require exact in a pre-existing one).
+  into a dir we created, require exact in a pre-existing one). On Windows the
+  mode/UID gates are absent and no DACL is read or set; the warning makes that
+  limitation visible but is not an admission decision.
 - **Parity rule:** EVERY code path that creates or reads the state dir —
   `loadOrCreateQuickstartSecrets`, the example's Cloudflare Access branch
   (`ensureStateDir`), and the sqlite store ([§12.4](12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission)) —

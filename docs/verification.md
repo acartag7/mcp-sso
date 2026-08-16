@@ -375,6 +375,7 @@ Notes:
 | SQ.7 | Restart and store siblings | Existing SQLite authorization-code, refresh-family, stored-scope, replay, schema-migration, and restart rows remain green; Memory/MySQL behavior is unchanged. |
 | SQ.8 | Packed artifact (manual release proof) | Produce/install the real tarball and run new-file, reopen, URI-rejection, and hostile-directory smokes through `mcp-sso/store/sqlite`; this is not a committed CI job. |
 | SQ.9 | Platform contract | Ubuntu CI proves POSIX no-follow/UID/`0600`/directory controls. Windows-specific skips name unavailable primitives, but no Windows CI runner exists; Windows ACL/private-directory guarantees remain deployer-owned and must not be reported as CI-proven. |
+| SQ.10 | Windows permission-gap signal | Child-process wiring probes force the Windows branch and prove the first quickstart or persistent SQLite open emits one fixed, path-free warning for the process; `:memory:`, POSIX use, and later opens stay silent, and a throwing warning transport cannot change the boot result. |
 
 ### T1.S2a — core `allowedScopes` ceiling
 

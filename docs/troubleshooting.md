@@ -32,7 +32,9 @@ The store never chmods, deletes, truncates, or migrates a rejected existing
 object. A symlink, hard link, FIFO, socket, device, directory, unsafe ancestor,
 or attacker-writable immediate directory must be replaced with a real private
 directory and regular owner-only file. On Windows, apply an equivalent private
-directory ACL; the library does not claim POSIX permission enforcement there.
+directory ACL. The library does not inspect that ACL and prints one fixed warning
+on the first quickstart or persistent SQLite open in each Windows process; it
+does not claim POSIX permission enforcement there.
 
 ## Codex CLI 0.144.1 callback regression
 
