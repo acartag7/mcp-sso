@@ -198,7 +198,7 @@ export class OAuthAuthorizationUseCase {
       if (consent.storeInstanceId !== await storeInstanceId(this.store)) throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
       assertApproveCimdGate(this.config, consent.clientId, consent.cimdVerified);
       assertOAuthRedirectEntry(consent.redirectUri); // §10.0 pre-upgrade token guard
-      assertCurrentConsentRedirect(this.config, consent.clientId, consent.redirectUri);
+      await assertCurrentConsentRedirect(this.config, consent.clientId, consent.redirectUri);
       // Fail-closed (§9.3): only approved===true proceeds; else Deny WITHOUT consuming the JTI (fix #5).
       if (input.approved !== true) {
         const redirectTo = buildAuthorizationErrorRedirect(this.config, consent.redirectUri, "access_denied", consent.state);

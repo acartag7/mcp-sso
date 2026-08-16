@@ -112,11 +112,15 @@ export function assertApproveCimdGate(config: BridgeConfig, clientId: string, ci
   if (cimdVerified === true) throw invalidConsent(); // provenance bit on a non-CIMD id
 }
 
-/** Reapply current opaque-client redirect trust to signed consent state before
- * either approve exit. CIMD redirects remain governed by their document. */
-export function assertCurrentConsentRedirect(config: BridgeConfig, clientId: string, redirectUri: string): void {
+/** Reapply the current mode-appropriate opaque-client policy to signed consent
+ * state before either approve exit. CIMD remains document-governed. */
+export async function assertCurrentConsentRedirect(
+  config: BridgeConfig,
+  clientId: string,
+  redirectUri: string,
+): Promise<void> {
   if (!isCimdClientId(clientId)) {
-    assertAllowedRedirectUri(redirectUri, config.redirectAllowlist, config.redirectAllowlistMode);
+    await resolveOpaqueRedirect(config, clientId, redirectUri);
   }
 }
 

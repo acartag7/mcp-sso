@@ -257,8 +257,12 @@ one target, while multiple distinct targets follow the existing post-validation
   Deny-redirected to its attacker `redirect_uri`).
 - **Approve-time current redirect policy gate:** immediately after the scheme
   gate and before the Deny branch, JTI consumption, scope lookup, code storage,
-  success audit, or any redirect, reapply the current global allowlist and
-  `redirectAllowlistMode` to every opaque client's signed `redirect_uri`.
+  success audit, or any redirect, reapply the current mode-appropriate opaque
+  policy to the signed `redirect_uri`. Stateless mode reapplies the global
+  allowlist directly. Stored mode reloads the current registration, reapplies
+  the global allowlist/mode to every registered entry, then applies the §10.2
+  per-client matcher to the presented redirect (including native loopback
+  any-port semantics).
   A consent token minted while an entry was trusted is not grandfathered after
   an operator removes it; failure is direct `invalid_redirect_uri`. CIMD
   redirects remain governed by their verified client document instead.

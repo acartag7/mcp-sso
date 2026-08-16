@@ -773,8 +773,11 @@ apply its own CIMD host policy.
 The mode is consulted at all four places this global allowlist is read — the
 DCR write path, the stateless authorize path, the stored-client re-validation
 leg, and the approve-time recheck of an opaque client's signed consent
-carryover — so neither a stored registration nor a consent token minted while
-the built-ins were trusted is grandfathered after an operator drops them.
+carryover. In stored mode that approval recheck reloads the current
+registration, validates every registered entry globally, and then preserves
+the §10.2 per-client/native-loopback matcher for the presented redirect. Thus
+neither a stored registration nor a consent token minted while the built-ins
+were trusted is grandfathered after an operator drops them.
 `"replace"` with an empty
 allowlist is refused at boot (§5) rather than starting a bridge that rejects
 every client.

@@ -19,6 +19,7 @@ import { MemoryStore } from "../src/store/memory.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import type { AuditPort } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
+import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 
 const BUILT_IN = "https://claude.ai/cb";
 const OWN = "https://private.test/cb";
@@ -97,6 +98,45 @@ test("the Deny exit is covered too, not just approval", async () => {
       return true;
     },
   );
+});
+
+test("stored native loopback any-port survives the approve-time policy recheck", async () => {
+  const clientId = "native-client";
+  const registered = "http://127.0.0.1:3000/callback";
+  const presented = "http://127.0.0.1:43123/callback";
+
+  for (const approved of [true, false]) {
+    const store = new MemoryStore();
+    const registration: ClientRegistration = {
+      clientId,
+      redirectUris: [registered],
+      applicationType: "native",
+      issuedAtEpoch: Math.floor(NOW_MS / 1000),
+    };
+    const clientStore: ClientStore = {
+      async save(): Promise<void> {},
+      async find(candidate): Promise<ClientRegistration | null> {
+        return candidate === clientId ? registration : null;
+      },
+    };
+    const storedConfig = createBridgeConfig({
+      ...config("extend"),
+      redirectAllowlist: [registered],
+      dcr: { mode: "stored", store: clientStore },
+    });
+    const useCase = new OAuthAuthorizationUseCase({ config: storedConfig, store, clock, audit });
+    const prepared = await useCase.prepare({
+      clientId, redirectUri: presented, responseType: "code",
+      codeChallenge: pkceChallenge("correct-horse-battery-staple-0123456789abcdef0123"),
+      codeChallengeMethod: "S256", scope: "mcp:read", state: "state-1", subject: SUBJECT,
+    });
+    const result = await useCase.approve({
+      consentToken: prepared.consentToken, approved, origin: "https://auth.test",
+    });
+    assert.match(result.redirectTo, /^http:\/\/127\.0\.0\.1:43123\/callback/);
+    assert.equal(typeof result.code === "string", approved, `approved=${approved}`);
+    await store.close();
+  }
 });
 
 // --- what must NOT change ---------------------------------------------------
