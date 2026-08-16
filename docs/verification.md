@@ -293,6 +293,28 @@ failure of the row rather than swallowed, because the sink logs and continues.
 The webhook transport is injected, so the row makes no network call; what it
 proves is the wiring and the payload.
 
+### RM.14 — CIMD and DCR coexistence
+
+Every dispatch cell is covered individually elsewhere; this is the combination
+that was never run. One bridge with `cimd.enabled` AND stored DCR serves both
+client kinds for the SAME subject against ONE granted-scope store, because the
+two carry deliberately opposite rules: a stored-DCR opaque client accumulates
+granted scopes across sessions, while a CIMD client stands alone (§9.3,
+§17.1.6). The row proves the opaque client accumulates, the CIMD client does
+not, and neither inherits the other's grants in either direction — cross-kind
+inheritance here would be silent privilege escalation across a profile boundary
+that no single-kind test could see.
+
+A third case pins the property that keeps the profiles separate at all: with
+CIMD switched off and DCR still enabled, an HTTPS-shaped `client_id` is refused
+outright and never reaches the DCR client store. There is no fallback between
+the two paths, by design.
+
+Grants are banked through a real token exchange rather than stopping at approve:
+`findGrantedScopes` is derived from active refresh records (§12.3, "no grant
+table"), so an approve-only row would report empty accumulation and pass
+vacuously.
+
 ## Harness helpers
 
 The current shared helpers are:

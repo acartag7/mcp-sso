@@ -235,6 +235,24 @@
           "name": "RM.13 both shipped audit sinks receive a real flow through combineAudit without leaking credentials"
         }
       ]
+    },
+    {
+      "id": "RM.14",
+      "title": "CIMD and DCR coexistence",
+      "evidence": [
+        {
+          "file": "test/release-cimd-dcr-coexistence.test.ts",
+          "name": "RM.14 an opaque stored-DCR client accumulates while a CIMD client in the same deployment does not"
+        },
+        {
+          "file": "test/release-cimd-dcr-coexistence.test.ts",
+          "name": "RM.14 neither client kind inherits the other's grants for the same subject"
+        },
+        {
+          "file": "test/release-cimd-dcr-coexistence.test.ts",
+          "name": "RM.14 dispatch cannot be crossed: an HTTPS client id never falls back to DCR"
+        }
+      ]
     }
   ]
 }
