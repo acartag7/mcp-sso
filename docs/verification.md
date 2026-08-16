@@ -271,7 +271,7 @@ Run before S2.
 | # | Scenario | Assert |
 |---|---|---|
 | HF.1 | `IdentityPort` returns `{ ok: false }` on authorize | All adapters return HTTP 401 with RFC-shaped `{ error: "access_denied", error_description: ... }`. |
-| HF.2 | `IdentityPort` throws `OAuthError("access_denied", 401)` | Same HTTP 401 body on Fastify, Express, and Hono. |
+| HF.2 | `IdentityPort` throws an `OAuthError` | Fastify, Express, and Hono preserve only allowlisted 401/403 status, fix code/description/audit reason, drop redirects, and map every other status to generic 500. |
 | HF.3 | Non-OAuth error thrown inside a handler | 500 with a top-level string error body, never a framework-specific envelope. |
 
 ### T1.TC — token-operation clock snapshots

@@ -1,5 +1,6 @@
 import type { StorePort } from "./ports/store.ts";
 import { assertStoreInstanceId } from "./ports/store.ts";
+import { callPort } from "./port-failure.ts";
 
 export function assertStoreInstanceCapability(store: StorePort): asserts store is StorePort & {
   getStoreInstanceId(): Promise<string>;
@@ -17,8 +18,13 @@ export function assertStoreInstanceCapability(store: StorePort): asserts store i
 }
 
 export async function storeInstanceId(store: StorePort): Promise<string> {
-  assertStoreInstanceCapability(store);
-  const value = await store.getStoreInstanceId();
+  // The capability probe READS three properties. An accessor- or Proxy-backed
+  // store can throw from the read itself, which happens before the method call —
+  // so the probe belongs inside the same provenance boundary, not in front of it.
+  const value = await callPort("StorePort", "getStoreInstanceId", async () => {
+    assertStoreInstanceCapability(store);
+    return await store.getStoreInstanceId();
+  });
   assertStoreInstanceId(value);
   return value;
 }

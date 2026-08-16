@@ -46,9 +46,31 @@ the earlier
 single snapshot that supplied the larger of the consent-JTI and authorization-
 code TTL offsets.
 
-This amendment is deliberately limited to the proven access/consent JWT class.
-Console-pairing expiry remains the separate §17.5/B2-F6 slice; unrelated clock
-consumers are not refactored here.
+The original amendment was limited to the proven access/consent JWT class.
+**0.3.6 correction:** every library read of a caller-supplied `ClockPort` now
+routes through the clock boundary in `ports/clock.ts`; no use-case, identity
+adapter, resolver, audit formatter, or helper calls the underlying `nowMs()`
+directly. `integerClockSnapshot` performs that single read, rejects a non-safe-
+integer result, and re-casts a throw to a library-owned `RangeError` so a port
+cannot select an OAuth status, code, description, or redirect.
+`finiteClockSnapshot` additionally enforces the canonical UTC range for every
+timestamp, expiry, store, verification, and audit use. The sole lossy consumer
+is CIMD shared-cache observation: as already required by §17.1.4 rule 25 and
+§17.1.6 decision 4, an invalid or throwing cache-timing observation becomes a
+non-finite observation, clears temporal cache state, and fails toward re-fetch;
+it does not turn an otherwise valid fetched document into an authorization
+failure. A later audit timestamp still requires `finiteClockSnapshot`.
+
+This does not force one snapshot across an entire multi-step flow: operation
+owners that require a stable timestamp still take one validated value and pass
+a `fixedClockSnapshot`, while components whose contract requires fresh reads
+keep their existing read cadence through the boundary. A read for which no
+canonical timestamp exists emits no fabricated timestamped audit event. The
+public low-level JWT signers independently require both their mint time and the
+configured TTL offset to fit the canonical range; token-exchange owners also
+supply a fixed canonical operation snapshot, and authorization owners
+independently validate every later store or audit timestamp before returning the
+signed consent token.
 
 **Token-issuance amendment.** Each `OAuthTokenUseCase` issuance owner —
 authorization-code exchange, refresh rotation, and client credentials — takes
@@ -61,7 +83,8 @@ and success or failure audit construction. No later step reads the underlying
 port. An invalid initial snapshot or overflowing future offset escapes as an
 internal failure before state or audit work; the Bridge maps it to its sanitized
 500 `internal_error`, because no valid timestamp exists for an honest audit
-event. Revocation is not an issuance path and retains its single timestamp read.
+event. Revocation is not an issuance path and retains one validated timestamp
+snapshot for its complete lookup, mutation, and audit sequence.
 
 ## 6.2 `AuditPort`
 ```ts
@@ -388,6 +411,16 @@ root calls an `IdentityPort` to obtain it (or fails closed). Implementations:
   usable `oid` fails closed with `entra_no_subject`. `preferred_username` and
   `email` never select the stored grant subject. The bridge then issues its OWN
   audience-bound tokens (no passthrough).
+
+The throw channel is untrusted. A thrown `OAuthError` may preserve only an exact
+401 or 403 status; the Bridge replaces its code with `access_denied`, its
+description with `Identity rejected: port_error`, its audit reason with
+`port_error`, and drops any redirect. Every other thrown status and every
+non-OAuth throw is a `PortFailureError` and therefore reaches HTTP only as the
+generic direct 500 channel. A returned `{ ok:false }` remains the normal shipped
+identity-rejection path: exact shipped reason codes are allowlisted for audit,
+an unknown custom reason collapses to `identity_rejected`, and the public
+description is the fixed `Identity rejected`.
 
 `GenericOidcIdentity` and the Google preset ship as `RedirectIdentityPort`s
 (S4a); the dedicated GitHub port and the console-pairing port are covered in

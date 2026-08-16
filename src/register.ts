@@ -5,13 +5,14 @@
 // (§10.1) at registration time; stored-mode authorize-time then applies the
 // per-type policy (§10.2, RC item b).
 
-import type { ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { ApplicationType } from "./ports/client-store.ts";
 import type { BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri, assertRegistrationRedirectPolicy } from "./redirect.ts";
 import { writeAuditBestEffort } from "./audit/best-effort.ts";
+import { callPort } from "./port-failure.ts";
 
 const MAX_GRANT_TYPES = 32;
 const MAX_GRANT_TYPE_BYTES = 256;
@@ -48,6 +49,7 @@ export interface RegisteredClient {
 
 export async function registerClient(deps: RegisterDeps, input: RegisterInput): Promise<RegisteredClient> {
   const { config, clock, audit } = deps;
+  const operationClock = fixedClockSnapshot(finiteClockSnapshot(clock));
   try {
     // §17.2: reject machine-shaped registrations FIRST. Open DCR must never mint
     // a secret-bearing (machine) client — only out-of-band provisioning can.
@@ -82,19 +84,20 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
       return uri;
     });
     const clientId = `mcpdc_${cryptoRandom()}`;
-    const issuedAt = Math.floor(clock.nowMs() / 1000);
+    const issuedAt = Math.floor(finiteClockSnapshot(operationClock) / 1000);
     if (config.dcr.mode === "stored") {
-      await config.dcr.store.save({ clientId, redirectUris, applicationType, issuedAtEpoch: issuedAt });
+      const clientStore = config.dcr.store;
+      await callPort("ClientStore", "save", () => clientStore.save({ clientId, redirectUris, applicationType, issuedAtEpoch: issuedAt }));
     }
     await writeAuditBestEffort(audit, {
-      occurredAt: new Date(clock.nowMs()).toISOString(),
+      occurredAt: new Date(finiteClockSnapshot(operationClock)).toISOString(),
       event: "oauth.register", status: "success",
       redirectHost: redirectUris[0] ? hostOf(redirectUris[0]) : undefined,
     });
     return { client_id: clientId, client_id_issued_at: issuedAt, redirect_uris: redirectUris, token_endpoint_auth_method: "none" };
   } catch (error) {
     await writeAuditBestEffort(audit, {
-      occurredAt: new Date(clock.nowMs()).toISOString(),
+      occurredAt: new Date(finiteClockSnapshot(operationClock)).toISOString(),
       event: "oauth.register", status: "failure",
       reason: error instanceof OAuthError ? error.code : "invalid_request",
     });

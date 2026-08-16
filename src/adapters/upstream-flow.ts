@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 import type { Bridge } from "./bridge.ts";
 import type { RedirectIdentityPort } from "../ports/identity.ts";
 import type { StorePort } from "../ports/store.ts";
-import type { ClockPort } from "../ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
@@ -149,7 +149,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
     const cookiePresent = cookieValue !== undefined;
     const clear = (res: NormResponse): NormResponse => cookiePresent ? { ...res, headers: noStoreHeaders({ ...res.headers, "set-cookie": clearCookieValue(cookieProfile) }) } : res;
     let nowIso: string;
-    try { nowIso = new Date(clock.nowMs()).toISOString(); }
+    try { nowIso = new Date(finiteClockSnapshot(clock)).toISOString(); }
     catch { return clear(directErrorResponse("internal_error", "OAuth request failed", 500)); }
     const finish = async (res: NormResponse, status: AuthAuditStatus, reason: string | undefined, clientId?: string): Promise<NormResponse> => {
       const response = clear(res);
@@ -165,7 +165,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       let claims: FlowClaims;
       try { claims = await verifyFlowToken(cookieValue as string, secret, issuer, callbackPath); } catch { return finish(directErrorResponse("invalid_request", "flow cookie invalid"), "failure", "flow_cookie_invalid"); } // row 3
       clientId = claims.params.client_id;
-      if (claims.exp > 0 && claims.exp * 1000 <= clock.nowMs()) return finish(directErrorResponse("invalid_request", "flow expired"), "failure", "flow_expired", clientId); // row 4
+      if (claims.exp > 0 && claims.exp * 1000 <= finiteClockSnapshot(clock)) return finish(directErrorResponse("invalid_request", "flow expired"), "failure", "flow_expired", clientId); // row 4
       const clientRedirectUri = claims.params.redirect_uri; const clientState = claims.params.state;
       if (!clientRedirectUri) return finish(directErrorResponse("invalid_request", "flow cookie invalid"), "failure", "flow_cookie_invalid");
       try { assertOAuthRedirectEntry(clientRedirectUri); } catch {

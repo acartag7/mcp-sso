@@ -88,7 +88,7 @@ export function pkceChallenge(verifier: string): string {
 }
 
 export async function signConsentToken(claims: ConsentRequestClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
-  const now = nowSeconds(clock);
+  const now = nowSeconds(clock, config.consentTokenTtlSeconds);
   const storeInstanceId = claims.storeInstanceId ?? await consentStoreInstanceId(config);
   const token = await new SignJWT({
     typ: CONSENT_TYP,
@@ -136,7 +136,7 @@ export async function verifyConsentToken(token: string, config: BridgeConfig, cl
 }
 
 export async function signAccessToken(claims: AccessTokenClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
-  const now = nowSeconds(clock);
+  const now = nowSeconds(clock, config.accessTokenTtlSeconds);
   const key = await signKey(config);
   return await new SignJWT({ client_id: claims.clientId, scope: scopeString(claims.scopes), ...(claims.machine ? { gty: "client_credentials" } : {}) })
     .setProtectedHeader({ alg: "ES256", kid: keyId(config), typ: "JWT" })
@@ -170,7 +170,7 @@ export function publicJwk(config: BridgeConfig): JWK {
 }
 
 export function expiresAtIso(clock: ClockPort, ttlSeconds: number): string {
-  return new Date(clock.nowMs() + ttlSeconds * 1000).toISOString();
+  return new Date(finiteClockSnapshot(clock, ttlSeconds * 1000) + ttlSeconds * 1000).toISOString();
 }
 
 function keyId(config: BridgeConfig): string | undefined {
@@ -239,9 +239,9 @@ function primitiveString(value: unknown, label: string): string {
 function stringClaim(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
-
-function nowSeconds(clock: ClockPort): number {
-  return Math.floor(clock.nowMs() / 1000);
+function nowSeconds(clock: ClockPort, ttlSeconds: number): number {
+  // Public signers require both mint and expiry to fit the canonical UTC domain.
+  return Math.floor(finiteClockSnapshot(clock, ttlSeconds * 1000) / 1000);
 }
 
 function base64url(bytes: Buffer): string {

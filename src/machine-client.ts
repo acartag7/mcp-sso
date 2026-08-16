@@ -7,7 +7,7 @@ import type {
   MachineClientStore,
   VersionedMachineClientRegistration,
 } from "./ports/client-store.ts";
-import type { ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort, AuthAuditEvent } from "./ports/audit.ts";
 import { OAuthError } from "./errors.ts";
 import { writeAuditBestEffort } from "./audit/best-effort.ts";
@@ -196,7 +196,7 @@ function mutationAudit(
   client: VersionedMachineClientRegistration,
 ): MachineClientMutationAudit {
   return {
-    occurredAt: new Date(clock.nowMs()).toISOString(),
+    occurredAt: new Date(finiteClockSnapshot(clock)).toISOString(),
     event,
     clientId: client.clientId,
     scopes: [...client.allowedScopes],
@@ -224,7 +224,7 @@ function failureAudit(
   clientId?: string,
 ): AuthAuditEvent {
   return {
-    occurredAt: new Date(clock.nowMs()).toISOString(),
+    occurredAt: new Date(finiteClockSnapshot(clock)).toISOString(),
     event,
     status: "failure",
     clientId,

@@ -180,9 +180,8 @@ test("JWT verifiers reject every non-finite or non-canonical snapshot", async ()
   const consentToken = await expiredConsentToken();
   for (const invalidTime of invalidTimes) {
     const testedAccessToken = invalidTime === MAX_CANONICAL_MS + 1
-      ? await accessTokenAt(invalidTime) : accessToken;
-    const testedConsentToken = invalidTime === MAX_CANONICAL_MS + 1
-      ? await consentTokenAt(invalidTime) : consentToken;
+      ? await accessTokenWithExpiry(Math.floor(invalidTime / 1000) + 1) : accessToken;
+    const testedConsentToken = consentToken;
     const accessClock = new ScriptedClock([invalidTime]);
     const consentClock = new ScriptedClock([invalidTime]);
     await assert.rejects(
@@ -199,14 +198,32 @@ test("JWT verifiers reject every non-finite or non-canonical snapshot", async ()
 });
 
 test("JWT verifiers accept their latest canonical upper-bound mint times", async () => {
+  const latestAccessMintMs = MAX_CANONICAL_MS - config.accessTokenTtlSeconds * 1000;
   const latestConsentMintMs = MAX_CANONICAL_MS - config.consentTokenTtlSeconds * 1000;
-  const accessClock = new ScriptedClock([MAX_CANONICAL_MS]);
+  const accessClock = new ScriptedClock([latestAccessMintMs]);
   const consentClock = new ScriptedClock([latestConsentMintMs]);
-  await verifyAccessToken(await accessTokenAt(MAX_CANONICAL_MS), config, accessClock);
+  await verifyAccessToken(await accessTokenAt(latestAccessMintMs), config, accessClock);
   const verifiedConsent = await verifyConsentToken(await consentTokenAt(latestConsentMintMs), config, consentClock);
   assert.equal(verifiedConsent.expiresAt, "9999-12-31T23:59:59.000Z");
   assert.equal(accessClock.reads, 1);
   assert.equal(consentClock.reads, 1);
+});
+
+test("public JWT signers require canonical mint and expiry times", async () => {
+  for (const invalidTime of [MIN_CANONICAL_MS - 1, MAX_CANONICAL_MS + 1, Number.MAX_SAFE_INTEGER]) {
+    await assert.rejects(accessTokenAt(invalidTime), RangeError);
+    await assert.rejects(consentTokenAt(invalidTime), RangeError);
+  }
+  await accessTokenAt(MAX_CANONICAL_MS - config.accessTokenTtlSeconds * 1000);
+  await consentTokenAt(MAX_CANONICAL_MS - config.consentTokenTtlSeconds * 1000);
+  await assert.rejects(
+    accessTokenAt(MAX_CANONICAL_MS - config.accessTokenTtlSeconds * 1000 + 1),
+    RangeError,
+  );
+  await assert.rejects(
+    consentTokenAt(MAX_CANONICAL_MS - config.consentTokenTtlSeconds * 1000 + 1),
+    RangeError,
+  );
 });
 
 test("RequestAuthorizer reuses one snapshot for expiry rejection and audit", async () => {

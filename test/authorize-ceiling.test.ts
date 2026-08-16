@@ -19,6 +19,7 @@ import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { OAuthError } from "../src/errors.ts";
+import { PortFailureError } from "../src/port-failure.ts";
 import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
 import { pkceChallenge, signConsentToken, verifyConsentToken } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
@@ -190,10 +191,53 @@ test("identity.verify: failure is recorded with the port's reason and resolve th
   assert.equal(ev.ip, IP, "failure events carry the source IP (forensic — §17.7)");
 });
 
-test("identity.verify: a thrown non-OAuth error records internal_error and propagates raw (HF.3)", async () => {
+test("identity.verify: a custom returned reason cannot inject public or audit content", async () => {
+  const ctx = setup();
+  const port: IdentityPort = {
+    async verify() { return { ok: false, reason: "tenant_alice_at_corp_finance" }; },
+  };
+  await assert.rejects(
+    ctx.bridge.resolveIdentity(port, ID_GOOD, IP),
+    (error: unknown) => error instanceof OAuthError
+      && error.code === "access_denied"
+      && error.message === "Identity rejected",
+  );
+  assert.equal(ctx.audit.identity()[0]?.reason, "identity_rejected");
+  assert.doesNotMatch(JSON.stringify(ctx.audit.events), /tenant_alice/);
+});
+
+test("identity.verify: thrown OAuth fields are fixed before response and audit", async () => {
+  for (const status of [401, 403] as const) {
+    const ctx = setup();
+    const port: IdentityPort = {
+      async verify() { throw new OAuthError("tenant_alice_at_corp_finance", "alice@corp denied", status); },
+    };
+    await assert.rejects(
+      ctx.bridge.resolveIdentity(port, ID_GOOD, IP),
+      (error: unknown) => error instanceof OAuthError
+        && error.code === "access_denied"
+        && error.status === status
+        && error.message === "Identity rejected: port_error",
+    );
+    assert.equal(ctx.audit.identity()[0]?.reason, "port_error");
+    assert.doesNotMatch(JSON.stringify(ctx.audit.events), /tenant_alice|alice@corp/);
+  }
+});
+
+test("identity.verify: a non-rejection OAuth status uses the generic failure channel", async () => {
+  const ctx = setup();
+  const port: IdentityPort = {
+    async verify() { throw new OAuthError("tenant_alice_at_corp_finance", "alice@corp denied", 200); },
+  };
+  await assert.rejects(ctx.bridge.resolveIdentity(port, ID_GOOD, IP), PortFailureError);
+  assert.equal(ctx.audit.identity()[0]?.reason, "port_error");
+  assert.doesNotMatch(JSON.stringify(ctx.audit.events), /tenant_alice|alice@corp/);
+});
+
+test("identity.verify: a thrown non-OAuth error records internal_error and becomes a port failure (HF.3)", async () => {
   const ctx = setup();
   const port: IdentityPort = { async verify() { throw new Error("boom"); } };
-  await assert.rejects(ctx.bridge.resolveIdentity(port, ID_GOOD, IP), (e: unknown) => e instanceof Error && e.message === "boom");
+  await assert.rejects(ctx.bridge.resolveIdentity(port, ID_GOOD, IP), PortFailureError);
   const id = ctx.audit.identity();
   assert.equal(id.length, 1);
   const ev = id[0]!;

@@ -39,7 +39,7 @@ export class RequestAuthorizer {
     let operationClock: ClockPort;
     try { operationClock = fixedClockSnapshot(finiteClockSnapshot(this.clock)); }
     catch { throw new OAuthError("invalid_token", "Bearer token is invalid", 401); }
-    const occurredAt = new Date(operationClock.nowMs()).toISOString();
+    const occurredAt = new Date(finiteClockSnapshot(operationClock)).toISOString();
     try {
       const token = bearerToken(input.authorization);
       const verified = await verifyAccessToken(token, this.config, operationClock);

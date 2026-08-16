@@ -6,7 +6,7 @@
 // authorize — so a cross-mode repeat of one raw client_id is ONE fetch.
 
 import type { BridgeConfig } from "../config.ts";
-import type { ClockPort } from "../ports/clock.ts";
+import { cacheClockObservation, finiteClockSnapshot, type ClockPort } from "../ports/clock.ts";
 import type { AuditPort } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit, rateLimitIdentity } from "../ports/rate-limit.ts";
@@ -207,7 +207,7 @@ export class CimdResolver {
   }
 
   async #registrationFor(rawClientId: string, fetcher: GuardedFetcher): Promise<{ registration: CimdRegistration; fetched: boolean }> {
-    const hit = this.#cache.get(rawClientId, this.#clock.nowMs());
+    const hit = this.#cache.get(rawClientId, cacheClockObservation(this.#clock));
     if (hit !== undefined) return { registration: hit, fetched: false };
     const existing = this.#inFlight.get(rawClientId);
     // A coalesced follower consumes no FETCH slot (rule 24) but IS bounded
@@ -230,9 +230,9 @@ export class CimdResolver {
   }
 
   async #fetchAndCache(rawClientId: string, fetcher: GuardedFetcher): Promise<CimdRegistration> {
-    const t0Ms = this.#clock.nowMs();
+    const t0Ms = cacheClockObservation(this.#clock);
     const result = await fetcher.fetch(rawClientId);
-    const t1Ms = this.#clock.nowMs();
+    const t1Ms = cacheClockObservation(this.#clock);
     // Project BEFORE caching: a raw CimdDocument is never cached or signed.
     const registration = projectCimdRegistration(result.document);
     const expiresAtMs = computeCacheExpiryMs(result.cacheView, this.#cacheTtlCapSeconds, t0Ms, t1Ms);
@@ -242,7 +242,7 @@ export class CimdResolver {
 
   async #emit(status: "success" | "failure", reason: string | undefined, clientId: string, ip?: string): Promise<void> {
     await writeAuditBestEffort(this.#audit, {
-      occurredAt: new Date(this.#clock.nowMs()).toISOString(),
+      occurredAt: new Date(finiteClockSnapshot(this.#clock)).toISOString(),
       event: "oauth.cimd.fetch", status, reason, clientId, ip,
     });
   }
