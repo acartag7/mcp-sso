@@ -249,7 +249,9 @@
 >      — the ASCII form of the Cyrillic host above), `http://[::1]:9`; their
 >      canonical spellings; `https://a.test/cb%2F..%2Fadmin` (canonical,
 >      inert); **and an EMPTY array** (the hosted defaults cover the common
->      case — §10.0's "empty is valid" rule lives here and only here).
+>      case — §10.0's "empty is valid" rule lives here and only here, and
+>      only under omitted/`"extend"` mode: with `"replace"` no built-in
+>      remains, so an empty array is a boot failure (§5)).
 >    - *Stored DCR, `web`* (setup: `a.test` configured): `https://a.test/` and
 >      `https://a.test/cb%2F..%2Fadmin` — https, canonical, 1..16 entries.
 >      NOT `http://[::1]:9/` (web is https-only) and not an empty array.

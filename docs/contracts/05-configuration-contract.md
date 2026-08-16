@@ -23,7 +23,8 @@ interface BridgeConfig {
   // is snapshotted once, validated, frozen, and published as the same copy.
   // An EMPTY array is valid under the default mode — only the hosted-client
   // defaults remain enabled. Loopback redirects require an explicit entry here.
-  redirectAllowlist: string[];    // ADDS to the hosted MCP-client defaults
+  redirectAllowlist: string[];    // ADDS to the hosted defaults under "extend"
+                                  // (the default); under "replace" it IS the whole list
 
   // How the array above composes with the §10.1 built-in hosted-client origins.
   // Omitted => "extend" (the published default: built-ins PLUS the entries).
