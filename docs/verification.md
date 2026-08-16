@@ -4,12 +4,11 @@ How mcp-sso proves a release actually works.
 
 ## Current status
 
-> Status: **unreleased main after v0.3.5**. The published npm package and tag
-> remain v0.3.5; its release input was exact implementation commit
-> `bfdd7b562cafce91c000c5d17c160aa289d5bee6`. Current `main` is an unreleased
-> hardening line under release review. Its package metadata deliberately remains `0.3.5`
-> until a separate version-bump PR, so a source checkout must not be mistaken
-> for the published artifact.
+> Status: **v0.3.6, version-bumped and awaiting tag**. Package metadata reads
+> `0.3.6`; the published npm `latest` is still v0.3.5 until the tag triggers
+> `publish.yml`, so until then a source checkout must not be mistaken for the
+> published artifact. The previous release input was exact implementation commit
+> `bfdd7b562cafce91c000c5d17c160aa289d5bee6` (v0.3.5).
 >
 > The post-v0.3.5 line hardens the shipped OAuth composition rather than adding
 > a new protocol profile. It host-binds generic-OIDC discovery endpoints; rejects
@@ -20,7 +19,7 @@ How mcp-sso proves a release actually works.
 > disablement and revocation-store failures observable; and runs bounded,
 > clock-bound expiry collection in all three reference stores. Trusted-proxy,
 > pairing, limiter-wrapper, and dependency-policy corrections are also included.
-> Published v0.3.5 does not contain these post-tag changes.
+> Published v0.3.5 does not contain any of these changes.
 >
 > The previous silent Windows permission-gap blocker is closed in this source
 > line: the first call in each Node worker/runtime instance to
