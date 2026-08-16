@@ -1887,8 +1887,12 @@ gate replaces no-gate).
   every outstanding token while masking the misconfiguration.
 - Env-var configuration remains the primary production path; this is the
   zero-setup path (same audience as 17.5). Threat-model entry: plaintext key
-  material on disk, boundary = the OS user account; production belongs in
-  env/secret managers. (`npx mcp-sso init` is now implemented — §15 "Init CLI" —
+  material on disk. **On POSIX the boundary is the OS user account** (the mode
+  and ownership gates below enforce it). **On Windows there is no such boundary
+  claim:** those gates are skipped and no DACL is read or set, so the readers are
+  every principal the inherited directory/file ACL admits — unmeasured, because
+  the library does not inspect ACLs (issue #219). Production belongs in
+  env/secret managers on both. (`npx mcp-sso init` is now implemented — §15 "Init CLI" —
   scaffolding a server that uses this helper; the function remains the contract.)
 - **Filesystem-trust bar (the quickstart reference — every state-dir code path
   meets this):** writes are `0600` (files) / `0700` (dirs) with `O_EXCL` for

@@ -12,8 +12,11 @@
 //   - Unwritable dir / partial write / unparseable / bad-shape ⇒ AuthConfigError.
 //     NEVER an ephemeral fallback (silent key rotation masks misconfiguration).
 //
-// Plaintext key material on disk is bounded by the OS user account; production
-// belongs in env/secret managers.
+// Plaintext key material on disk. On POSIX the boundary is the OS user account,
+// enforced by the mode/ownership gates above. On Windows those gates are absent
+// and no DACL is read or set, so the readers are whichever principals the
+// inherited ACL admits — unmeasured here (issue #219). Production belongs in
+// env/secret managers on both.
 
 import { chmod, constants as fsc, lstat, mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
