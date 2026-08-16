@@ -30,6 +30,7 @@ export {
 export {
   DEFAULT_ALLOWED_REDIRECT_ORIGINS,
   assertAllowedRedirectUri, assertRedirectAllowedForClient,
+  type RedirectAllowlistMode,
   assertRegistrationRedirectPolicy,
 } from "./redirect.ts";
 

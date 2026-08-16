@@ -36,6 +36,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
 import { AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin, type BridgeConfig } from "../../src/config.ts";
+import type { RedirectAllowlistMode } from "../../src/redirect.ts";
 import { validateAllowedOrigins } from "../../src/allowed-origin.ts";
 import { OAuthError, oauthErrorBody } from "../../src/errors.ts";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
@@ -274,6 +275,43 @@ export function assertConsolePairingListenHostBeforeState(
   );
 }
 
+/** Parse the redirect trust mode before any quickstart persistence. This mirrors
+ *  `snapshotRedirectAllowlistMode`; `createBridgeConfig` remains the authoritative
+ *  second check once signing material exists. Keeping unknown values as errors
+ *  avoids the `value || undefined` shape that silently restores built-in trust. */
+export function redirectAllowlistModeFromEnv(
+  env: Record<string, string | undefined>,
+  redirectAllowlist: readonly string[],
+): RedirectAllowlistMode | undefined {
+  const raw = env.OAUTH_REDIRECT_ALLOWLIST_MODE;
+  if (raw === undefined) return undefined;
+  if (raw !== "extend" && raw !== "replace") {
+    throw new AuthConfigError('redirectAllowlistMode must be "extend" or "replace"');
+  }
+  if (raw === "replace" && redirectAllowlist.length === 0) {
+    throw new AuthConfigError(
+      'redirectAllowlistMode "replace" requires at least one redirectAllowlist entry; '
+      + "with none, no redirect_uri could ever be accepted",
+    );
+  }
+  return raw;
+}
+
+/** Parse the allowlist and its composition mode as one boot policy. Callers
+ *  choose the composition-root default, but cannot accidentally validate the
+ *  mode against a different list from the one they later install. */
+export function redirectAllowlistPolicyFromEnv(
+  env: Record<string, string | undefined>,
+  defaultEntries: string,
+): { redirectAllowlist: string[]; redirectAllowlistMode: RedirectAllowlistMode | undefined } {
+  const redirectAllowlist = (env.OAUTH_REDIRECT_ALLOWLIST ?? defaultEntries)
+    .split(",").map((entry) => entry.trim()).filter(Boolean);
+  return {
+    redirectAllowlist,
+    redirectAllowlistMode: redirectAllowlistModeFromEnv(env, redirectAllowlist),
+  };
+}
+
 /** Read config from env (the production path; standalone index.ts uses quickstart
  *  secrets instead). Accepts an env object so the wiring is testable without
  *  mutating the real process.env. */
@@ -281,13 +319,15 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const required = ["OAUTH_ISSUER", "OAUTH_RESOURCE", "OAUTH_CONSENT_SIGNING_SECRET", "OAUTH_SIGNING_PRIVATE_JWK"];
   const missing = required.filter((k) => !env[k]);
   if (missing.length) throw new Error(`Missing env: ${missing.join(", ")}`);
+  const { redirectAllowlist, redirectAllowlistMode } = redirectAllowlistPolicyFromEnv(env, "");
   return createBridgeConfig({
     issuer: env.OAUTH_ISSUER!,
     resource: env.OAUTH_RESOURCE!,
     consentSigningSecret: env.OAUTH_CONSENT_SIGNING_SECRET!,
     signingPrivateJwk: JSON.parse(env.OAUTH_SIGNING_PRIVATE_JWK!) as never,
     signingKeyId: env.OAUTH_SIGNING_KEY_ID || undefined,
-    redirectAllowlist: (env.OAUTH_REDIRECT_ALLOWLIST ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    redirectAllowlist,
+    redirectAllowlistMode,
     scopeCatalog: (env.OAUTH_SCOPE_CATALOG ?? "mcp:read,mcp:write").split(",").map((s) => s.trim()).filter(Boolean),
     defaultScopes: (env.OAUTH_DEFAULT_SCOPES ?? "mcp:read").split(",").map((s) => s.trim()).filter(Boolean),
     allowedOrigins: allowedOriginsFromEnv(env, env.OAUTH_ISSUER!),
@@ -516,6 +556,9 @@ export async function buildExample(
   assertLoopbackStarterBeforeState(issuer, resource);
   assertConsolePairingListenHostBeforeState(env);
   const allowedOrigins = allowedOriginsFromEnv(env, issuer);
+  const { redirectAllowlist, redirectAllowlistMode } = redirectAllowlistPolicyFromEnv(
+    env, "http://localhost,http://127.0.0.1",
+  );
   const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer,
@@ -523,7 +566,10 @@ export async function buildExample(
     consentSigningSecret: secrets.consentSigningSecret,
     signingPrivateJwk: secrets.signingPrivateJwk,
     // Explicit local-composition default; an explicitly empty env value removes it.
-    redirectAllowlist: listEnv(env, "OAUTH_REDIRECT_ALLOWLIST", "http://localhost,http://127.0.0.1"),
+    redirectAllowlist,
+    // Same env seam as the production branch above — the quickstart path is the
+    // sibling that used to get missed when a config option was threaded once.
+    redirectAllowlistMode,
     scopeCatalog: listEnv(env, "OAUTH_SCOPE_CATALOG", "mcp:read,mcp:write"),
     defaultScopes: listEnv(env, "OAUTH_DEFAULT_SCOPES", "mcp:read"),
     allowedOrigins,

@@ -63,6 +63,7 @@ for the fetch, redirect, and validation contract.
 | `OAUTH_SIGNING_PRIVATE_JWK` | required 🔒 | — | ES256 access-token signing key, as a JSON JWK. |
 | `OAUTH_SIGNING_KEY_ID` | optional | — | `kid` for the signing JWK. |
 | `OAUTH_REDIRECT_ALLOWLIST` | required by these stateless production examples | — | Comma-separated application-specific HTTPS redirect origins or exact URIs for opaque DCR clients (for example `https://client.example/callback`). CIMD redirect URIs come from the fetched document. |
+| `OAUTH_REDIRECT_ALLOWLIST_MODE` | optional | `extend` | How the allowlist above composes with the built-in hosted-client origins `https://claude.ai` + `https://chatgpt.com`. `extend` keeps them and adds your entries; `replace` trusts your entries alone. Unset means `extend`, so leaving this out changes nothing. Any other value — including an empty value or `Replace` — fails at boot rather than falling back to `extend`. See the note below for what `replace` does and does not cover. |
 | `OAUTH_SCOPE_CATALOG` | optional | `mcp:read,mcp:write` | The scopes clients may request. |
 | `OAUTH_DEFAULT_SCOPES` | optional | `mcp:read` | Scopes granted when none requested. |
 | `OAUTH_ALLOWED_ORIGINS` | optional | `originOf(OAUTH_ISSUER)` | Comma-separated exact canonical HTTP(S) Origin allowlist used by the `/mcp` DNS-rebinding gate and consent-approval Origin/CSRF check (add your browser clients, e.g. `https://claude.ai`). Entries are not trimmed or filtered: whitespace, an empty comma member, paths, trailing slashes, userinfo, wildcards, non-canonical spellings, and the opaque browser value `null` fail at boot. A wholly empty value explicitly selects an empty list. |
@@ -80,6 +81,35 @@ or a generic loopback origin does not satisfy that boot guard. A custom
 composition root may instead use stored DCR or supply a real limiter. Do not
 add a placeholder callback: configure the exact callback used by your opaque
 DCR client.
+
+### What `OAUTH_REDIRECT_ALLOWLIST_MODE=replace` covers
+
+Setting `replace` drops `https://claude.ai` and `https://chatgpt.com` from the
+allowlist that **opaque / DCR client ids** are matched against. It applies at
+all four places that allowlist is read — the DCR registration write
+(`registerClient`, `src/register.ts`), stateless authorize, the re-validation
+of an already-stored client's entries, and the approve-time recheck of signed
+consent carryover (`src/authorize-internals.ts`) — so neither a client
+registered nor a consent token minted while the built-ins were trusted is
+grandfathered after the switch.
+
+**It does not cover CIMD clients.** Both runnable examples set
+`cimd: { enabled: true }`, and a CIMD client is matched against its own fetched
+client document; `resolveAuthorizeClient` returns on that branch before the
+global allowlist is consulted (`src/authorize-internals.ts`). A hosted client
+presenting an HTTPS-shaped client id with a valid document therefore still
+redirects under `replace`. To exclude hosted clients from an example
+deployment entirely you also have to turn CIMD off in your composition root, or
+add your own CIMD host policy.
+
+Two boot rules back the setting, both in `snapshotRedirectAllowlistMode`
+(`src/config-snapshot.ts`): a value outside `extend`/`replace` is an
+`AuthConfigError` instead of a fallback to `extend`, and `replace` with an empty
+`OAUTH_REDIRECT_ALLOWLIST` is an `AuthConfigError` too, because no `redirect_uri`
+could then ever be accepted.
+The two runnable zero-setup examples and the `mcp-sso init` starter apply those
+same two checks before quickstart secrets or any other persistent state is
+created; `createBridgeConfig` rechecks them when it builds the final config.
 
 ## Cloudflare Access (`CF_ACCESS_*`)
 

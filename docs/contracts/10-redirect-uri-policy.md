@@ -249,7 +249,9 @@
 >      — the ASCII form of the Cyrillic host above), `http://[::1]:9`; their
 >      canonical spellings; `https://a.test/cb%2F..%2Fadmin` (canonical,
 >      inert); **and an EMPTY array** (the hosted defaults cover the common
->      case — §10.0's "empty is valid" rule lives here and only here).
+>      case — §10.0's "empty is valid" rule lives here and only here, and
+>      only under omitted/`"extend"` mode: with `"replace"` no built-in
+>      remains, so an empty array is a boot failure (§5)).
 >    - *Stored DCR, `web`* (setup: `a.test` configured): `https://a.test/` and
 >      `https://a.test/cb%2F..%2Fadmin` — https, canonical, 1..16 entries.
 >      NOT `http://[::1]:9/` (web is https-only) and not an empty array.
@@ -712,10 +714,15 @@ whose text no longer describes the deployed policy, and the same rewrite applied
 to an entry the deployer *intended* differently is an undetectable widening. The
 error names the offending entry and shows its canonical form to paste back.
 
-**Empty is valid — for `redirectAllowlist` ONLY.** An empty `redirectAllowlist`
+**Empty is valid — for `redirectAllowlist` under `"extend"` ONLY.** With
+`redirectAllowlistMode` omitted or `"extend"`, an empty `redirectAllowlist`
 is correct configuration (the hosted defaults below cover the common case),
 while loopback redirects require an explicit entry;
-only *entries* can be invalid, never emptiness. This does NOT generalize: DCR
+only *entries* can be invalid, never emptiness. **Under `"replace"` that no
+longer holds:** the built-ins are not trusted, so an empty allowlist would
+leave no acceptable redirect at all and is a boot failure (§5). Emptiness is
+therefore mode-dependent here, and unconditionally invalid everywhere else.
+This does NOT generalize: DCR
 `redirect_uris` and a CIMD document's array both require **1..16 entries**
 (§9.2 / §17.1.5 rule 19), so emptiness there is a rejection. The obligation-7
 positive list is partitioned per consumer for exactly this reason.
@@ -734,12 +741,35 @@ earlier "hash stripped" wording; a stripped-then-matched fragment is exactly
 the accept-what-was-never-registered behavior the exact-match rule exists to
 prevent. The §10.0 obligation list owes a rejection test for a presented
 `https://client.test/cb#frag` in both DCR modes. Shared
-built-in defaults for hosted MCP clients (these ADD to any config allowlist):
+built-in defaults for hosted MCP clients (these ADD to any config allowlist
+under the default `redirectAllowlistMode: "extend"`):
 
 ```
 https://claude.ai        // Claude (web) custom connectors
 https://chatgpt.com      // ChatGPT custom connectors
 ```
+
+**The built-ins are a default, not a floor — for clients this allowlist
+governs.** A deployment that sets `redirectAllowlistMode: "replace"` (§5) trusts
+*only* its configured entries for **opaque/DCR client IDs**.
+
+**Scope limit, stated because the mode is easy to over-read:** a CIMD client is
+NOT governed by this allowlist at all. `resolveAuthorizeClient`
+(`src/authorize-internals.ts`) returns on the CIMD branches before reaching
+`resolveOpaqueRedirect`, so an HTTPS-shaped client ID with a valid document
+redirects per §17.1 document matching regardless of the mode. `"replace"`
+therefore does not stop a CIMD-registered hosted client, and a deployment that
+must exclude hosted clients entirely also has to leave `cimd.enabled` off or
+apply its own CIMD host policy.
+
+The mode is consulted at all four places this global allowlist is read — the
+DCR write path, the stateless authorize path, the stored-client re-validation
+leg, and the approve-time recheck of an opaque client's signed consent
+carryover — so neither a stored registration nor a consent token minted while
+the built-ins were trusted is grandfathered after an operator drops them.
+`"replace"` with an empty
+allowlist is refused at boot (§5) rather than starting a bridge that rejects
+every client.
 
 Loopback is deliberately absent from the default set. The §10.1 matcher still
 recognizes all three loopback hosts (`localhost`/`127.0.0.1`/`[::1]`) and applies

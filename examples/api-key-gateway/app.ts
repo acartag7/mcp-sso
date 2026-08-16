@@ -54,7 +54,7 @@ import {
 // AND package consumers apply the SAME bar (contracts §15 DX).
 import {
   configFromEnv, defaultListenHost, createOidcUpstreamFromEnv,
-  allowedOriginsFromEnv,
+  allowedOriginsFromEnv, redirectAllowlistPolicyFromEnv,
   assertConsolePairingListenHostBeforeState,
   assertUpstreamConfigBeforeState, entraGroupAuthorizationFromEnv,
   assertSingleIdentityProviderSelector, oidcProviderConfigured, productionIdentityConfigured,
@@ -410,13 +410,19 @@ export async function buildGatewayExample(
   assertLoopbackStarterBeforeState(issuer, resource);
   assertConsolePairingListenHostBeforeState(env);
   const allowedOrigins = allowedOriginsFromEnv(env, issuer);
+  const { redirectAllowlist, redirectAllowlistMode } = redirectAllowlistPolicyFromEnv(
+    env, "http://localhost,http://127.0.0.1",
+  );
   const secrets = await loadOrCreateQuickstartSecrets({ dir });
   const config = createBridgeConfig({
     issuer, resource,
     consentSigningSecret: secrets.consentSigningSecret,
     signingPrivateJwk: secrets.signingPrivateJwk,
     // Explicit local-composition default; an explicitly empty env value removes it.
-    redirectAllowlist: listEnv(env, "OAUTH_REDIRECT_ALLOWLIST", "http://localhost,http://127.0.0.1"),
+    redirectAllowlist,
+    // Mirror of the fastify-sqlite quickstart branch; the gateway's production
+    // branch inherits the same seam through the shared configFromEnv above.
+    redirectAllowlistMode,
     scopeCatalog: listEnv(env, "OAUTH_SCOPE_CATALOG", "mcp:read,mcp:write"),
     defaultScopes: listEnv(env, "OAUTH_DEFAULT_SCOPES", "mcp:read"),
     allowedOrigins,
