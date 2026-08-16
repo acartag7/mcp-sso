@@ -154,7 +154,9 @@ the same (for example with `ensureStateDir`). On POSIX the immediate directory
 must be owned by the service user with no group/other permissions, and an
 existing database must be owned by that user with exact mode `0600` and one
 link. On Windows, use a deployer-controlled private directory ACL; POSIX mode
-bits do not enforce Windows access control.
+bits do not enforce Windows access control. The first quickstart or persistent
+library-opened SQLite use prints a fixed warning once per Windows process because
+the library did not verify that ACL; the warning is not an admission check.
 
 The three reference OAuth stores collect expired state themselves. After boot
 validation, `Bridge` binds each ready store to its exact configured `ClockPort`;

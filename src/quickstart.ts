@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { exportJWK, generateKeyPair, type JWK } from "jose";
 import { AuthConfigError } from "./config.ts";
 import { validateSecrets, type QuickstartSecrets } from "./quickstart-shape.ts";
+import { warnWindowsPermissionGap } from "./windows-permission-warning.ts";
 
 export type { QuickstartSecrets } from "./quickstart-shape.ts";
 
@@ -38,24 +39,6 @@ const GITIGNORE_FILE = ".gitignore";
 const FILE_MODE = 0o600;
 const DIR_MODE = 0o700;
 
-/** The POSIX mode and ownership gates below (`0700` dir, `0600` file, owning
- *  uid) have no Windows equivalent here: `process.platform === "win32"` skips
- *  each one, and this library does not read or set DACLs. Windows still gets
- *  `O_EXCL` creation, symlink/junction refusal, and the regular-file check, but
- *  a permissive inherited ACL is NOT detected and is therefore NOT a boot
- *  failure. Warn once, loudly, rather than let the threat model's unconditional
- *  promise stand on a platform that cannot keep it (issue #219 tracks real DACL
- *  admission). */
-function warnWindowsPermissionGap(dir: string): void {
-  if (process.platform !== "win32") return;
-  console.warn(
-    `[mcp-sso] quickstart secrets in ${dir} are NOT permission-checked on Windows: `
-    + "file/directory mode and ownership gates are POSIX-only, so an inherited ACL that "
-    + "grants other users read access will not fail boot. Verify the ACL yourself, or keep "
-    + "secrets in environment variables or a secret manager instead.",
-  );
-}
-
 /** Load persisted quickstart secrets, generating + persisting them on first boot. */
 export async function loadOrCreateQuickstartSecrets(
   opts: QuickstartOptions = {},
@@ -63,7 +46,7 @@ export async function loadOrCreateQuickstartSecrets(
   const dir = opts.dir ?? "./.mcp-sso";
   const secretsPath = join(dir, SECRETS_FILE);
 
-  warnWindowsPermissionGap(dir);
+  warnWindowsPermissionGap();
   if (await pathExists(secretsPath)) {
     return loadExisting(dir, secretsPath);
   }
