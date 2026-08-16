@@ -3,10 +3,11 @@
 // a security diagnostic, while repeated opens must not flood stderr.
 
 const WINDOWS_PERMISSION_WARNING =
-  "[mcp-sso] Windows filesystem permissions are not verified: quickstart secrets "
-  + "and persistent SQLite state skip POSIX mode/ownership gates, and mcp-sso does "
-  + "not inspect DACLs. Use a private ACL-controlled directory; use environment "
-  + "variables or a secret manager for signing keys.";
+  "[mcp-sso] Windows filesystem permissions are not verified: quickstart secrets, "
+  + "managed state directories, and persistent SQLite state all skip POSIX "
+  + "mode/ownership gates, and mcp-sso does not inspect DACLs. Use a private "
+  + "ACL-controlled directory; use environment variables or a secret manager for "
+  + "signing keys.";
 
 let warned = false;
 

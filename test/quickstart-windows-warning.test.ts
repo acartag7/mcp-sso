@@ -1,4 +1,5 @@
-// Windows skips the quickstart and persistent-SQLite POSIX permission gates.
+// Windows skips the quickstart, managed state-dir, and persistent-SQLite POSIX
+// permission gates.
 // These child-process probes preserve real production wiring while isolating
 // the process-wide one-shot signal and the process.platform override.
 import assert from "node:assert/strict";
@@ -8,6 +9,7 @@ import { test } from "node:test";
 const WARNING = "[mcp-sso] Windows filesystem permissions are not verified:";
 const quickstartUrl = new URL("../src/quickstart.ts", import.meta.url).href;
 const sqliteUrl = new URL("../src/store/sqlite.ts", import.meta.url).href;
+const stateDirUrl = new URL("../src/state-dir.ts", import.meta.url).href;
 
 function run(script: string) {
   return spawnSync(process.execPath, ["--input-type=module", "-e", script], {
@@ -102,4 +104,41 @@ test("POSIX use stays silent and a throwing warning transport cannot break Windo
     finally { rmSync(base, { recursive: true, force: true }); }
   `);
   assert.equal(contained.status, 0, contained.stderr);
+});
+
+test("ensureStateDir emits the same one-shot warning without its path", () => {
+  // §17.8 parity: this is the third state-dir path. A consumer that manages its
+  // own directory and keeps database state elsewhere reaches neither the
+  // quickstart nor the SQLite warning, so without this call it is silently
+  // unprotected on Windows — the gap review caught on the first two-path fix.
+  const marker = "operator-controlled-state-path";
+  const result = run(`
+    import { mkdtempSync, rmSync } from "node:fs";
+    import { tmpdir } from "node:os";
+    import { join } from "node:path";
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const { ensureStateDir } = await import(${JSON.stringify(stateDirUrl)});
+    const base = mkdtempSync(join(tmpdir(), "mcp-sso-win-statedir-"));
+    const dir = join(base, ${JSON.stringify(marker)});
+    try { await ensureStateDir(dir); await ensureStateDir(dir); }
+    finally { rmSync(base, { recursive: true, force: true }); }
+  `);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(warningCount(result.stderr), 1, result.stderr);
+  assert.doesNotMatch(result.stderr, new RegExp(marker));
+  assert.match(result.stderr, /managed state directories/);
+});
+
+test("ensureStateDir stays silent on POSIX, where the gates are enforced", () => {
+  const result = run(`
+    import { mkdtempSync, rmSync } from "node:fs";
+    import { tmpdir } from "node:os";
+    import { join } from "node:path";
+    const { ensureStateDir } = await import(${JSON.stringify(stateDirUrl)});
+    const base = mkdtempSync(join(tmpdir(), "mcp-sso-posix-statedir-"));
+    try { await ensureStateDir(join(base, "state")); }
+    finally { rmSync(base, { recursive: true, force: true }); }
+  `);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(warningCount(result.stderr), 0, result.stderr);
 });
