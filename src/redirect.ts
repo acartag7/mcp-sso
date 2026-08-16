@@ -19,8 +19,14 @@ export const DEFAULT_ALLOWED_REDIRECT_ORIGINS = Object.freeze([
 
 /** How `redirectAllowlist` composes with the built-ins above.
  *  `"extend"` (default) trusts the built-ins PLUS the configured entries.
- *  `"replace"` trusts only the configured entries, so a private deployment can
- *  refuse the hosted clients outright. */
+ *  `"replace"` trusts only the configured entries.
+ *
+ *  Scope limit (contracts §10.1): this governs THIS allowlist, which is read
+ *  only for opaque/DCR client ids. A CIMD client never reaches it —
+ *  `resolveAuthorizeClient` returns on its CIMD branches before calling
+ *  `resolveOpaqueRedirect` (`src/authorize-internals.ts`) — so `"replace"` on
+ *  its own does not keep a hosted client out; that also needs `cimd.enabled`
+ *  off or a deployer-supplied CIMD host policy. */
 export type RedirectAllowlistMode = "extend" | "replace";
 
 /** Validate a redirect_uri against the global allowlist.

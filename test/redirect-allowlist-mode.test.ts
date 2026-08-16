@@ -1,6 +1,9 @@
 // `redirectAllowlistMode` (contracts §5, §10.1). The built-in hosted-client
 // origins are a convenience default, not a fixed part of the trust base: an
-// operator running a private deployment can refuse them outright.
+// operator running a private deployment can drop them for opaque/DCR client
+// ids. Scope limit, per §10.1: a CIMD client is matched against its fetched
+// document and never reads this allowlist, so the mode alone does not exclude
+// a hosted client — that also needs `cimd.enabled` off.
 //
 // The sibling axis here is the THREE places the global allowlist is consulted —
 // DCR write, stateless authorize, and the stored-client re-validation leg. A

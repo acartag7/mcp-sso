@@ -28,8 +28,12 @@ interface BridgeConfig {
 
   // How the array above composes with the §10.1 built-in hosted-client origins.
   // Omitted => "extend" (the published default: built-ins PLUS the entries).
-  // "replace" trusts ONLY the entries above, so a private deployment can refuse
-  // https://claude.ai and https://chatgpt.com outright. Any other value is a
+  // "replace" trusts ONLY the entries above, dropping https://claude.ai and
+  // https://chatgpt.com — for OPAQUE/DCR client ids, the only ids that read
+  // this allowlist. A CIMD client is matched against its fetched document
+  // instead and is unaffected by the mode (§10.1 scope limit), so refusing the
+  // hosted clients entirely also needs cimd.enabled off or a deployer CIMD host
+  // policy. Any other value is a
   // boot failure — a typo must never fall back to trusting the built-ins.
   // "replace" with an EMPTY redirectAllowlist is a boot failure: no redirect_uri
   // could ever be accepted, so it is a misconfiguration, not a deny-all posture.
