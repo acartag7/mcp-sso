@@ -155,13 +155,17 @@ them (and re-opening the footguns they centralize): the normalized request/respo
 shapes `NormRequest` and `NormResponse` (co-exported with `isMcpPath` — the types
 the already-exported `handlePairingAuthorize` and `createUpstreamRedirectFlow`
 take/return, so a consumer mounting the pairing surface or an upstream callback can
-type-check them); the state-dir security controls `ensureStateDir` (the ATOMIC
-helper — `mkdir 0o700` + `assertRealDir` + the managed `*` `.gitignore`, which a
-consumer on the Cloudflare/Entra/gateway path — managing its own state dir — applies
-for the SAME bar the example does; it derives whether the `.gitignore` may be created
+type-check them); the state-dir security controls `ensureStateDir` (the aggregate
+helper — POSIX atomic restrictive `mkdir 0o700` + `assertRealDir` + the managed
+`*` `.gitignore`; on Windows creation inherits and relies on the deployer-private
+parent ACL. A consumer on the Cloudflare/Entra/gateway path managing its own state
+dir applies it for the SAME platform-applicable bar the example does. It derives
+whether the `.gitignore` may be created
 from `mkdir`'s return, so a caller cannot drop a `*` ignore into a pre-existing tree)
-and `assertRealDir` (the fs-trust bar alone — rejects a symlink or
-group/other-accessible state dir so another local user cannot replace `auth.db`),
+and `assertRealDir` (the fs-trust bar alone — rejects a symlink on every
+platform and, on POSIX, a group/other-accessible state dir so another local user
+cannot replace `auth.db`; on Windows its first call in a Node worker/runtime
+instance emits the shared permission-gap warning),
 co-exported with `loadOrCreateQuickstartSecrets` (the raw `ensureGitignore(dir,
 canCreate)` stays internal — its caller-asserted boolean is a footgun); and `assertCallbackPath` (the upstream callback-PATH
 validator — a pure check that the pathname starts with `/`, is plain (no
@@ -227,7 +231,8 @@ validation ordering (benign residual):** the generated server pre-validates the
 `OAUTH_ISSUER`/`OAUTH_RESOURCE` URLs before the state-creating helper, but the deeper
 config validation (`createBridgeConfig` — scheme, scope shapes) runs *after*
 `loadOrCreateQuickstartSecrets`, so a malformed env value leaves a `secrets.json`. That
-file is owner-only (`0600` in a `0700` gitignored dir), holds secrets generated
+file is owner-only on POSIX (`0600` in a `0700` gitignored dir; on Windows those
+mode gates are skipped and the deployer owns the ACL — §12, issue #219), holds secrets generated
 independently of the rejected config (so they are valid, not bad), and is reused verbatim
 on the next (fixed) boot — no leak, no exposed/bad/committed state; full pre-validation
 would need a library secret-free `validateConfig` (deferred).

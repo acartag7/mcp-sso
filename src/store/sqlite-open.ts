@@ -3,6 +3,7 @@ import {
   openSync, realpathSync, statSync, type BigIntStats,
 } from "node:fs";
 import { dirname, join, parse, resolve, sep } from "node:path";
+import { warnWindowsPermissionGap } from "../windows-permission-warning.ts";
 import { isSqliteAncestorReplaceable } from "./sqlite-open-policy.ts";
 
 const ERROR_PREFIX = "sqlite: unsafe persistent state:";
@@ -44,6 +45,7 @@ export function sqlitePath(filename: unknown): ":memory:" | string {
 }
 
 export function admitSqliteFile(path: string): AdmittedSqliteFile {
+  warnWindowsPermissionGap();
   assertTrustedDirectory(dirname(path));
   let existing: BigIntStats | undefined;
   try {
