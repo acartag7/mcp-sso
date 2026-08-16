@@ -4,7 +4,7 @@
 // signed flow cookie (projected to the named fields client_id, client_name,
 // redirect_uris, and optional application_type — no key material), consume it
 // at callback with NO re-fetch. Shared redirect matcher (https exact raw-string;
-// explicit-native loopback RFC 9700 any-port). Callback row 5a
+// registered-loopback RFC 9700 any-port). Callback row 5a
 // claim/mode/redirect matrix ⇒ direct 400 invalid_request + audit
 // `flow_cookie_invalid`, AFTER state match and BEFORE jti-consume/exchange/any 302.
 // Cookie-oversize residual ⇒ generic invalid_client audited as failure `oversize`.
@@ -175,7 +175,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(JSON.stringify(claims.cimd).includes("ATTACKER_MEMBER_SECRET"), false, "no attacker-controlled member rides the cookie");
   });
 
-  // ---- shared redirect matcher (rule 20): https exact; explicit-native loopback any-port ----
+  // ---- shared redirect matcher (rule 20): https exact; registered-loopback any-port ----
   test("matcher: an https redirect exact raw-string matching a doc entry succeeds", async () => {
     const { flow } = makeFlow({ cimdTransport: transport(() => docResult()), cimdResolver: resolver() });
     const res = await flow.handleAuthorize(req(authQ({ redirect_uri: CIMD_REDIRECT })));
@@ -199,7 +199,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     const res = await flow.handleAuthorize(req(authQ({ redirect_uri: "https://app.example.com:8443/cb" })));
     assert.equal(res.status, 302);
   });
-  test("matcher: an explicit-native loopback entry matches ANY port (RFC 9700) but not a host/path/localhost difference", async () => {
+  test("matcher: a native-declared loopback entry matches ANY port but not a host/path/localhost difference", async () => {
     const doc = cimdDoc({ application_type: "native", redirect_uris: ["http://127.0.0.1:5000/cb"] });
     const mk = () => makeFlow({ cimdTransport: transport(() => docResult({ doc })), cimdResolver: resolver() });
     assert.equal((await mk().flow.handleAuthorize(req(authQ({ redirect_uri: "http://127.0.0.1:7000/cb" })))).status, 302, "any loopback port");
@@ -297,10 +297,10 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(res.status, 200, "passed row 5a → consent page");
   });
 
-  // The shared matcher runs at authorize AND callback AND prepare; prove the explicit-native
+  // The shared matcher runs at authorize AND callback AND prepare; prove the registered
   // loopback any-port case at callback (row 5a + prepare re-check), not only at authorize — an
   // exact `includes` here would pass authorize then fail after the IdP hop.
-  test("callback row 5a: an explicit-native loopback redirect matches ANY port, presented :7000 vs registered :5000 ⇒ 200", async () => {
+  test("callback row 5a: a registered loopback redirect matches ANY port, presented :7000 vs registered :5000 ⇒ 200", async () => {
     const { res } = await callbackWith({
       cimd: { client_id: CIMD_ID, client_name: "Example App", application_type: "native", redirect_uris: ["http://127.0.0.1:5000/cb"] },
       params: baseParams({ redirect_uri: "http://127.0.0.1:7000/cb" }),
@@ -378,7 +378,7 @@ if (phases["s6b-cimd-flow"] !== true) {
     assert.equal(res.status, 200, "consent rendered from the supplied registration with no fetch");
   });
 
-  test("prepare (direct, supplied registration): an explicit-native loopback redirect matches ANY port (shared matcher, not exact includes)", async () => {
+  test("prepare (direct, supplied registration): a registered loopback redirect matches ANY port (shared matcher, not exact includes)", async () => {
     const config = cfg({ enabled: true });
     const b = new Bridge({ config, store: new MemoryStore(), clock: new FakeClock(NOW), audit: new MemoryAudit(), cimdTransport: throwingTransport, cimdResolver: throwingResolver });
     const res = await b.handleAuthorize(req(authQ({ redirect_uri: "http://127.0.0.1:7000/cb" })), { subject: "up@test", registration: { client_id: CIMD_ID, client_name: "Example App", application_type: "native", redirect_uris: ["http://127.0.0.1:5000/cb"] } });

@@ -1,8 +1,7 @@
-// FROZEN acceptance suite — CIMD D00-4.5.2 / RFC 9700 native-app precondition.
-// A differing loopback port is allowed only when the validated document or
-// carried registration explicitly declares application_type "native". Web and
-// absent declarations remain valid clients but match loopback redirects exactly;
-// unknown or malformed declarations fail closed.
+// FROZEN acceptance suite — CIMD D00-4.5.2 loopback-port compatibility.
+// A registered loopback http entry gets the narrow any-port exception whether
+// application_type is native, web, or absent. Scheme, host, path, and query stay
+// exact; unknown or malformed declarations still fail closed.
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -23,9 +22,9 @@ if (phases["cimd-native-loopback-policy"] !== true) {
   const NOW = Date.parse("2026-08-14T12:00:00.000Z");
   const CLIENT_ID = "https://cdn.example.com/client";
   const LOOPBACKS = [
-    { registered: "http://127.0.0.1:5000/cb", differentPort: "http://127.0.0.1:7000/cb" },
-    { registered: "http://localhost:5000/cb", differentPort: "http://localhost:7000/cb" },
-    { registered: "http://[::1]:5000/cb", differentPort: "http://[::1]:7000/cb" },
+    { registered: "http://127.0.0.1/cb", differentPort: "http://127.0.0.1:7000/cb" },
+    { registered: "http://localhost/cb", differentPort: "http://localhost:7000/cb" },
+    { registered: "http://[::1]/cb", differentPort: "http://[::1]:7000/cb" },
   ] as const;
   const REGISTERED = LOOPBACKS[0].registered;
   const DIFFERENT_PORT = LOOPBACKS[0].differentPort;
@@ -33,6 +32,14 @@ if (phases["cimd-native-loopback-policy"] !== true) {
   const OMIT = Symbol("omit");
   const enc = (value: string) => new TextEncoder().encode(value);
   async function* body(value: Uint8Array) { yield value; }
+  const CLAUDE_CODE_DOCUMENT = {
+    client_id: "https://claude.ai/oauth/claude-code-client-metadata",
+    client_name: "Claude Code",
+    redirect_uris: ["http://localhost/callback", "http://127.0.0.1/callback"],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  };
 
   class Clock { nowMs() { return NOW; } }
   class Audit { events: any[] = []; async writeAuthEvent(event: any) { this.events.push(event); } }
@@ -45,7 +52,7 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     return value;
   }
 
-  function context(doc: Record<string, unknown>, suppliedStore?: any) {
+  function context(doc: Readonly<Record<string, unknown>>, suppliedStore?: any) {
     const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const config = createBridgeConfig({
       issuer: "https://auth.test", resource: "https://api.test/mcp",
@@ -65,7 +72,8 @@ if (phases["cimd-native-loopback-policy"] !== true) {
       connectAndGet() {
         fetches += 1;
         return Promise.resolve({
-          status: 200, redirected: false, finalUrl: CLIENT_ID,
+          status: 200, redirected: false,
+          finalUrl: typeof doc.client_id === "string" ? doc.client_id : CLIENT_ID,
           headersDistinct: {
             "content-type": ["application/json"],
             "cache-control": ["public, max-age=600"],
@@ -95,18 +103,26 @@ if (phases["cimd-native-loopback-policy"] !== true) {
   const cookieValue = (header: string) => header.slice(header.indexOf("=") + 1, header.indexOf(";"));
   const errorCode = (response: any) => response.body && typeof response.body === "object" ? response.body.error : undefined;
 
-  test("document path: only explicit native gets a different loopback port", async () => {
+  test("Claude Code's published document resolves an ephemeral loopback port", async () => {
+    const ctx = context(CLAUDE_CODE_DOCUMENT);
+    const response = await ctx.bridge.handleAuthorize(request({
+      ...params("http://localhost:3118/callback"), client_id: CLAUDE_CODE_DOCUMENT.client_id,
+    }), { subject: "user-1" });
+    assert.equal(response.status, 200);
+    assert.equal(ctx.fetches, 1);
+  });
+
+  test("document path: registered loopback http is any-port for native, web, and absent types", async () => {
     for (const loopback of LOOPBACKS) {
-      for (const [applicationType, redirect, expected] of [
-        ["native", loopback.differentPort, 200], ["web", loopback.differentPort, 401],
-        [OMIT, loopback.differentPort, 401], ["web", loopback.registered, 200],
-        [OMIT, loopback.registered, 200],
+      for (const [applicationType, redirect] of [
+        ["native", loopback.differentPort], ["web", loopback.differentPort],
+        [OMIT, loopback.differentPort], ["web", loopback.registered],
+        [OMIT, loopback.registered],
       ] as const) {
         const ctx = context(document(applicationType, loopback.registered));
         for (const pass of ["miss", "hit"] as const) {
           const response = await ctx.bridge.handleAuthorize(request(params(redirect)), { subject: "user-1" });
-          assert.equal(response.status, expected, `${String(applicationType)} ${pass} at ${redirect}`);
-          if (expected === 401) assert.equal(errorCode(response), "invalid_client");
+          assert.equal(response.status, 200, `${String(applicationType)} ${pass} at ${redirect}`);
         }
         assert.equal(ctx.fetches, 1, "the second type decision uses the cached named projection");
       }
@@ -116,6 +132,21 @@ if (phases["cimd-native-loopback-policy"] !== true) {
       const ctx = context(document(malformed));
       const response = await ctx.bridge.handleAuthorize(request(params(REGISTERED)), { subject: "user-1" });
       assert.equal(response.status, 401, `malformed ${JSON.stringify(malformed)}`);
+      assert.equal(errorCode(response), "invalid_client");
+    }
+  });
+
+  test("loopback elasticity changes only the port", async () => {
+    for (const [registered, presented] of [
+      ["https://client.example/cb", "https://client.example:7000/cb"],
+      ["http://localhost/cb", "https://localhost:7000/cb"],
+      ["http://localhost/cb", "http://127.0.0.1:7000/cb"],
+      ["http://localhost/cb", "http://localhost:7000/other"],
+      ["http://localhost/cb", "http://localhost:7000/cb?extra=1"],
+    ] as const) {
+      const ctx = context(document(OMIT, registered));
+      const response = await ctx.bridge.handleAuthorize(request(params(presented)), { subject: "user-1" });
+      assert.equal(response.status, 401, `${registered} must not match ${presented}`);
       assert.equal(errorCode(response), "invalid_client");
     }
   });
@@ -135,9 +166,9 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     assert.equal(ctx.exchanges, 1);
   });
 
-  test("prepare re-check requires explicit native for a different loopback port", async () => {
+  test("prepare re-check accepts declared or absent types for a registered loopback port", async () => {
     for (const loopback of LOOPBACKS) {
-      for (const [applicationType, expected] of [["native", 200], ["web", 401], [OMIT, 401]] as const) {
+      for (const [applicationType, expected] of [["native", 200], ["web", 200], [OMIT, 200]] as const) {
         const ctx = context(document(OMIT));
         const registration: Record<string, unknown> = {
           client_id: CLIENT_ID, client_name: "Carried", redirect_uris: [loopback.registered],
@@ -163,7 +194,7 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     }
   });
 
-  test("signed callback claims reject web, absent, unknown, and malformed types before consumption", async () => {
+  test("signed callback claims accept native, web, and absent types but reject malformed types before consumption", async () => {
     const store = new MemoryStore();
     let consumes = 0;
     const originalConsume = store.consumeConsentJti.bind(store);
@@ -190,8 +221,8 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     for (const loopback of LOOPBACKS) {
       cases.push(
         ["native", loopback.registered, loopback.differentPort, 200, 1],
-        ["web", loopback.registered, loopback.differentPort, 400, 0],
-        [OMIT, loopback.registered, loopback.differentPort, 400, 0],
+        ["web", loopback.registered, loopback.differentPort, 200, 1],
+        [OMIT, loopback.registered, loopback.differentPort, 200, 1],
       );
     }
     cases.push(["web", REGISTERED, REGISTERED, 200, 1], [OMIT, REGISTERED, REGISTERED, 200, 1]);

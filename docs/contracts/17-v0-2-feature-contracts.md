@@ -17,9 +17,9 @@
 artifact both normatively reference draft **-00**. The implementation was built
 against -01's additional SSRF, redirect, and response constraints. The final MCP
 citation is `-00`; §16.1 now carries the complete 44-statement mapping. The
-`+json` media-type mismatch, shared-cache directive handling, and the loopback
-port native-app precondition are implemented. The frozen native-loopback policy
-suite is active, so the implemented public-client profile has no remaining
+`+json` media-type mismatch, shared-cache directive handling, and the narrow
+loopback any-port compatibility rule are implemented. The frozen native-loopback
+policy suite is active, so the implemented public-client profile has no remaining
 draft `-00` runtime or evidence gap. §16.2
 additionally records a
 draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
@@ -286,10 +286,11 @@ decision. Everything else in the pipeline still runs under the flag.
 - `redirect_uris` entries: **§10.0-valid** (that grammar governs — not a
   restatement, and not a per-site re-derivation: the CIMD matcher previously
   accepted `*`, `javascript:`, and non-canonical entries that §10.1 refused).
-  https entries exact-match at authorize (draft §4.5 / RFC 9700); loopback http
-  matches RFC 8252 any-port **only for a document declaring
-  `application_type: "native"`** — see the §17.1.6 decision-1 shared matcher for
-  the canonical rule and its **IMPLEMENTED; FROZEN SUITE ACTIVE
+  https entries exact-match at authorize (draft §4.5 / RFC 9700); a registered
+  loopback `http` entry matches RFC 8252 any-port regardless of whether the
+  optional `application_type` member is `"native"`, `"web"`, or absent — see
+  the §17.1.6 decision-1 shared matcher for the canonical rule and its
+  **IMPLEMENTED; FROZEN SUITE ACTIVE
   (D00-4.5.2)** status. If present:
   `response_types` must include `"code"`; `grant_types` must be an array of
   non-empty strings that includes `"authorization_code"`. Additional grant
@@ -318,8 +319,8 @@ decision. Everything else in the pipeline still runs under the flag.
   MUST NOT distinguish blocked-address from network-failure from invalid-
   document (**SSRF oracle prevention**). The specific reason goes to audit
   only (`oauth.cimd.fetch`, failure, reason code).
-- The presented `redirect_uri` must exact-match a document entry (loopback
-  any-port exception, native-declared documents only — §17.1.6 decision 1,
+- The presented `redirect_uri` must exact-match a document entry (narrow
+  registered-loopback any-port exception — §17.1.6 decision 1,
   **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2)**). The consent page MUST present the client_id host and
   redirect host before the cosmetic name as the primary identity anchors, and
   SHOULD warn when every registered redirect is loopback (the MCP localhost-
@@ -371,8 +372,9 @@ reviewed against `2026-07-28-RC`; the official final artifact was then checked
 on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
 44 normative statements: 29 `C` conformant plus one conformant disclosed caveat,
 two reasoned deviations, 12 not applicable to the implemented public-client
-profile, and no unresolved runtime or evidence row. D00-4.5.2's native-app
-precondition is implemented and its dedicated frozen suite is active.
+profile, and no unresolved runtime or evidence row. D00-4.5.2's narrow
+registered-loopback port rule is implemented and its dedicated frozen suite is
+active.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -569,15 +571,20 @@ precondition is implemented and its dedicated frozen suite is active.
     raw-equality against a non-canonical entry is what made the two matchers
     disagree. Only the
     `http:` case is loopback. **IMPLEMENTED; FROZEN SUITE ACTIVE
-    (D00-4.5.2, §16.1):** RFC 9700 — which
-    draft `-00` §4.5 delegates to — permits varying loopback ports only for
-    **native apps**, and `application_type` is in the IANA client-metadata
-    registry `-00` §4.1 imports, so the signal is available in a CIMD document.
-    The validator rejects every present value except exact `"native"` or
-    `"web"`; the named projection, cache, signed flow claim, callback, and
-    prepare re-check carry that value. The shared matcher gates its any-port
-    branch on exact `"native"`; `"web"`, absence, and malformed direct state
-    remain exact or fail closed.
+    (D00-4.5.2, §16.1):** RFC 9700 — which draft `-00` §4.5 delegates to —
+    permits varying loopback ports for native apps, but neither D00-4.5.2 nor
+    the CIMD document profile requires a document to declare
+    `application_type`. A port-less `http://localhost/callback` or
+    `http://127.0.0.1/callback` registration is itself a native-client shape: a
+    remotely hosted web callback cannot receive it, while the native client
+    must bind a runtime-selected local port. Gating the exception on an
+    optional metadata label makes the permitted flow unusable for real clients
+    whose documents omit that label. The shared matcher therefore keys the
+    exception on the validated registered URI being loopback `http`, not on
+    `application_type`. A present type is still validated as exact `"native"`
+    or `"web"`, carried through projection/cache/signed state, and malformed
+    direct or signed state still fails closed; the type does not widen or
+    narrow redirect membership.
     The authorize-time (S6b) loopback any-port match
     reuses the existing runtime semantics of src/redirect.ts:95-103 — scheme,
     hostname, pathname, and search equal; port ignored; fragment already rejected
@@ -604,7 +611,7 @@ precondition is implemented and its dedicated frozen suite is active.
     disabled/absent, a `https://`-shaped `client_id` is likewise rejected
     `invalid_client`, never treated as a stateless-DCR client.
 23. For a CIMD `client_id`, `prepare`'s redirect validation is the document
-    exact-match (loopback any-port per rule 20, native-declared documents only —
+    exact-match (registered-loopback any-port per rule 20 —
     §17.1.6 decision 1, **IMPLEMENTED; FROZEN SUITE ACTIVE
     (D00-4.5.2)**), REPLACING §9.3 step 2's §10
     global-allowlist check for that client. Non-CIMD flows are unchanged.
@@ -685,20 +692,23 @@ consult a stored client): an https registration entry matches by **exact raw-str
 AT MATCH TIME, port included; sound because §10.0 already required the registered entry
 to be canonical); a loopback `http` entry matches RFC 8252 **any-port** using the compare
 semantics of `src/redirect.ts:95-103` (scheme, host, path, and search equal; port
-ignored; fragment already rejected), and only when the carried
-`application_type` is exact `"native"`. It is NOT array `∈`/`includes` (that rejects a
+ignored; fragment already rejected), regardless of the optional carried
+`application_type`. It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and
 `prepare`'s re-check MUST call this SAME matcher.
-**IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2, §16.1) — this rule is the canonical definition the other
-any-port statements defer to, so the precondition is stated here once:** RFC 9700
-permits varying the loopback port **only for native apps**, and `application_type`
-is in the IANA client-metadata registry draft `-00` §4.1 imports. The any-port
-branch therefore applies only when the validated document declares
-`application_type: "native"`; a document declaring `"web"`, or omitting the
-property, gets exact raw-string matching (fail closed). The shipped matcher
-receives the named registration, rejects malformed runtime discriminants, and
-gates the branch on the carried type. The frozen four-group acceptance suite is
-active.
+**IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2, §16.1) — this rule is the canonical
+definition the other any-port statements defer to:** RFC 9700 permits a varying
+port for native-app loopback redirects, but the CIMD profile does not require the
+optional `application_type` member. The registered URI supplies the enforceable
+signal: a validated loopback `http` entry is local/native in operation, including
+the port-less form whose client selects a port only when it binds. The any-port
+branch therefore depends only on that registered entry and preserves exact
+scheme, host, path, and search equality; **only the port is free**. A declared
+`"native"` or `"web"` value is still validated and carried but does not change
+this match. Absence is accepted, and malformed runtime discriminants still
+reject before matching or JTI consumption. This deliberately restores
+interoperability with deployed clients such as Claude Code whose published
+document registers port-less loopback callbacks without `application_type`.
 
 *1a. Shape-first three-way dispatch; CIMD REPLACES §10 for CIMD ids.* Client_id
 shape is classified identically at BOTH the authorize resolve (`upstream-flow.ts:99`)
