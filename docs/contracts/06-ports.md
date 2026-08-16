@@ -438,7 +438,10 @@ The throw channel is untrusted. A thrown `OAuthError` may preserve only an exact
 description with `Identity rejected: port_error`, its audit reason with
 `port_error`, and drops any redirect. Every other thrown status and every
 non-OAuth throw is a `PortFailureError` and therefore reaches HTTP only as the
-generic direct 500 channel. A returned `{ ok:false }` remains the normal shipped
+generic direct 500 channel. OAuth classification and the status read happen
+inside the port boundary; an accessor failure is an unreadable status and the
+Bridge never re-reads the thrown object. A returned `{ ok:false }` remains the
+normal shipped
 identity-rejection path: exact shipped reason codes are allowlisted for audit,
 an unknown custom reason collapses to `identity_rejected`, and the public
 description is the fixed `Identity rejected`. The discriminant, subject, and

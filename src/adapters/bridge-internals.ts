@@ -79,17 +79,16 @@ export async function resolveIdentityWithAudit(
     const returned = await callPort("IdentityPort", "verify", () => identity.verify(input));
     result = await callPort("IdentityPort", "verifyResult", async () => snapshotIdentityResult(returned));
   } catch (error) {
-    const cause = error instanceof PortFailureError ? error.cause : error;
     const portRejected = error instanceof PortFailureError
       && error.operation === "verify"
-      && cause instanceof OAuthError
-      && (cause.status === 401 || cause.status === 403);
-    await emit("failure", cause instanceof OAuthError ? "port_error" : "internal_error", undefined, ip);
+      && (error.oauthStatusSnapshot === 401 || error.oauthStatusSnapshot === 403);
+    await emit("failure", error instanceof PortFailureError && error.causeIsOAuthError
+      ? "port_error" : "internal_error", undefined, ip);
     // A deployment port may distinguish authentication-required from a verified
     // denial with 401/403. Code, description, redirect, and every other status
     // remain library-owned; a malformed rejection takes the generic 500 path.
     if (portRejected) {
-      throw new OAuthError("access_denied", "Identity rejected: port_error", cause.status);
+      throw new OAuthError("access_denied", "Identity rejected: port_error", error.oauthStatusSnapshot);
     }
     throw error;
   }

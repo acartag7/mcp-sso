@@ -234,6 +234,30 @@ test("identity.verify: a non-rejection OAuth status uses the generic failure cha
   assert.doesNotMatch(JSON.stringify(ctx.audit.events), /tenant_alice|alice@corp/);
 });
 
+test("identity.verify: a thrown status accessor cannot escape the port boundary", async () => {
+  const ctx = setup();
+  const thrown = new Proxy(
+    new OAuthError("tenant_alice_at_corp_finance", "alice@corp denied", 401),
+    {
+      get(target, property, receiver) {
+        if (property === "status") {
+          throw new OAuthError("accessor_selected_code", "accessor selected description", 418);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    },
+  );
+  const port: IdentityPort = { async verify() { throw thrown; } };
+  await assert.rejects(ctx.bridge.resolveIdentity(port, ID_GOOD, IP), (error: unknown) => {
+    assert.ok(error instanceof PortFailureError);
+    assert.equal(error.causeIsOAuthError, true);
+    assert.equal(error.oauthStatusSnapshot, undefined);
+    return true;
+  });
+  assert.equal(ctx.audit.identity()[0]?.reason, "port_error");
+  assert.doesNotMatch(JSON.stringify(ctx.audit.events), /tenant_alice|alice@corp|accessor_selected/);
+});
+
 test("identity.verify: a thrown non-OAuth error records internal_error and becomes a port failure (HF.3)", async () => {
   const ctx = setup();
   const port: IdentityPort = { async verify() { throw new Error("boom"); } };

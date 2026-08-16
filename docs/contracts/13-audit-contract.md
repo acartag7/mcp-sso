@@ -55,8 +55,11 @@ or audit formatter where a port-authored `OAuthError` could select the response.
 An `IdentityPort` that throws an `OAuthError` may preserve only an exact 401 or
 403 status. The Bridge fixes the OAuth code to `access_denied`, the description
 to `Identity rejected: port_error`, and the audit reason to `port_error`; any
-port-supplied redirect is dropped. Every other status and every non-OAuth throw
-uses the generic internal failure channel. A returned `{ ok: false, reason }`
+port-supplied redirect is dropped. OAuth classification and the status read are
+snapshotted inside `callPort`; the Bridge never re-reads the caller-owned thrown
+object. An unreadable status and every other status use the generic 500 response;
+a safely classified OAuth throw retains the fixed `port_error` audit reason,
+while a non-OAuth throw audits `internal_error`. A returned `{ ok: false, reason }`
 is the normal shipped rejection path: exact shipped reason codes are allowlisted
 for audit, every unknown custom reason becomes `identity_rejected`, and the
 public description is the fixed `Identity rejected`. Thus a custom port

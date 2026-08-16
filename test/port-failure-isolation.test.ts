@@ -135,6 +135,22 @@ test("callPort re-casts any thrown value, and passes returns through untouched",
   assert.equal(await callPort("StorePort", "op", () => Promise.resolve(null)), null);
 });
 
+test("callPort contains a hostile throwable prototype trap", async () => {
+  const thrown = new Proxy({}, {
+    getPrototypeOf() { return portBoom(); },
+  });
+  await assert.rejects(
+    () => callPort("StorePort", "op", () => Promise.reject(thrown)),
+    (error: unknown) => {
+      assert.ok(error instanceof PortFailureError);
+      assert.equal(error.cause, thrown);
+      assert.equal(error.causeIsOAuthError, false);
+      assert.equal(error.oauthStatusSnapshot, undefined);
+      return true;
+    },
+  );
+});
+
 test("an already-wrapped failure is not re-wrapped", () => {
   const original = new PortFailureError("StorePort", "find", new Error("root"));
   return assert.rejects(

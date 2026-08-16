@@ -19,19 +19,49 @@
 // non-`OAuthError` as `internal_error`, and `asOAuth` already maps it to the
 // generic 500. This adds one boundary; it does not rewire the error paths.
 
+import { OAuthError } from "./errors.ts";
+
 /** Raised in place of anything a pluggable port threw. Carries the original for
  *  local logging ONLY — it must never reach a response body. */
 export class PortFailureError extends Error {
   readonly port: string;
   readonly operation: string;
   override readonly cause: unknown;
+  readonly causeIsOAuthError: boolean;
+  readonly oauthStatusSnapshot: number | undefined;
 
-  constructor(port: string, operation: string, cause: unknown) {
+  constructor(
+    port: string,
+    operation: string,
+    cause: unknown,
+    causeIsOAuthError = false,
+    oauthStatusSnapshot?: number,
+  ) {
     super(`${port}.${operation} failed`);
     this.name = "PortFailureError";
     this.port = port;
     this.operation = operation;
     this.cause = cause;
+    this.causeIsOAuthError = causeIsOAuthError;
+    this.oauthStatusSnapshot = oauthStatusSnapshot;
+  }
+}
+
+function snapshotOAuthFailure(error: unknown): {
+  causeIsOAuthError: boolean;
+  oauthStatusSnapshot: number | undefined;
+} {
+  let causeIsOAuthError = false;
+  try { causeIsOAuthError = error instanceof OAuthError; } catch { /* hostile Proxy */ }
+  if (!causeIsOAuthError) return { causeIsOAuthError, oauthStatusSnapshot: undefined };
+  try {
+    const status = (error as OAuthError).status;
+    return {
+      causeIsOAuthError,
+      oauthStatusSnapshot: typeof status === "number" ? status : undefined,
+    };
+  } catch {
+    return { causeIsOAuthError, oauthStatusSnapshot: undefined };
   }
 }
 
@@ -48,7 +78,12 @@ export async function callPort<T>(
   try {
     return await invoke();
   } catch (error) {
-    if (error instanceof PortFailureError) throw error;
-    throw new PortFailureError(port, operation, error);
+    let alreadyWrapped = false;
+    try { alreadyWrapped = error instanceof PortFailureError; } catch { /* hostile Proxy */ }
+    if (alreadyWrapped) throw error;
+    const snapshot = snapshotOAuthFailure(error);
+    throw new PortFailureError(
+      port, operation, error, snapshot.causeIsOAuthError, snapshot.oauthStatusSnapshot,
+    );
   }
 }
