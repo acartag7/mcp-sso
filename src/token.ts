@@ -13,6 +13,7 @@ import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 import { writeTokenAudit } from "./token-audit.ts";
 import { revokeRefreshToken } from "./token-revoke.ts";
 import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
+import { callPort } from "./port-failure.ts";
 export interface OAuthTokenDeps {
   config: BridgeConfig;
   store: StorePort;
@@ -88,12 +89,12 @@ export class OAuthTokenUseCase {
       const familyId = parseRefreshFamilyId(refreshToken);
       if (!familyId) throw new OAuthError("server_error", "Refresh token generation failed", 500);
       const prepared = await this.tokenResponse(record, refreshToken, operationClock);
-      await this.store.saveRefreshToken({
+      await callPort("StorePort", "saveRefreshToken", () => this.store.saveRefreshToken({
         tokenHash: sha256Hex(refreshToken), familyId, previousTokenHash: null,
         clientId: record.clientId, subject: record.subject, resource: record.resource, scopes: prepared.scopes,
         expiresAt: expiresAtIso(operationClock, this.config.refreshTokenTtlSeconds),
         grantGeneration: record.grantGeneration,
-      });
+      }));
       await this.auditToken("oauth.token.authorization_code", "success", record, operationClock);
       return prepared.response;
     } catch (error) {
@@ -113,7 +114,7 @@ export class OAuthTokenUseCase {
       const nextRaw = generateRefreshToken(familyId);
       const previousHash = sha256Hex(raw);
       const rotatedAtIso = new Date(operationClock.nowMs()).toISOString();
-      const rotated = await this.store.rotateRefreshToken(
+      const rotated = await callPort("StorePort", "rotateRefreshToken", () => this.store.rotateRefreshToken(
         previousHash,
         {
           tokenHash: sha256Hex(nextRaw), familyId, previousTokenHash: previousHash,
@@ -123,7 +124,7 @@ export class OAuthTokenUseCase {
         rotatedAtIso,
         expectedStoredDcrGrantGeneration(this.config),
         this.config.resource,
-      );
+      ));
       if (!rotated) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       try {
         if (!hasExpectedGrantGeneration(rotated, expectedStoredDcrGrantGeneration(this.config)) || rotated.resource !== this.config.resource) throw new OAuthError("invalid_grant", "Refresh token is invalid");
@@ -135,7 +136,7 @@ export class OAuthTokenUseCase {
         return prepared.response;
       } catch (error) {
         // Preparation stays after replay-authoritative rotation; failures revoke its unreturned successor.
-        await this.store.revokeRefreshTokenFamily(familyId, rotatedAtIso);
+        await callPort("StorePort", "revokeRefreshTokenFamily", () => this.store.revokeRefreshTokenFamily(familyId, rotatedAtIso));
         throw error;
       }
     } catch (error) {
@@ -200,7 +201,7 @@ export class OAuthTokenUseCase {
 
   private async consumeValidCode(input: AuthorizationCodeGrantInput, clock: ClockPort): Promise<AuthCodeRecord> {
     const code = requiredStr(input.code, "code"), expected = expectedStoredDcrGrantGeneration(this.config);
-    const record = await this.store.consumeAuthCode(sha256Hex(code), new Date(clock.nowMs()).toISOString(), expected, this.config.resource);
+    const record = await callPort("StorePort", "consumeAuthCode", () => this.store.consumeAuthCode(sha256Hex(code), new Date(clock.nowMs()).toISOString(), expected, this.config.resource));
     if (!record || !hasExpectedGrantGeneration(record, expected) || record.resource !== this.config.resource) throw new OAuthError("invalid_grant", "Authorization code is invalid");
     const redirectUri = record.redirectUri;
     try { assertOAuthRedirectEntry(redirectUri); } catch { throw new OAuthError("invalid_grant", "Authorization code is invalid"); }

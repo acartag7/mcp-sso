@@ -30,6 +30,7 @@ import {
   requiredStr, resolveAuthorizeClient,
   type CimdConsentDisplay,
 } from "./authorize-internals.ts";
+import { callPort } from "./port-failure.ts";
 export interface OAuthAuthorizationDeps {
   config: BridgeConfig;
   store: StorePort;
@@ -170,8 +171,10 @@ export class OAuthAuthorizationUseCase {
 
       // §17.1.6 decision 3 (NEGATIVE class): accumulate iff stored-DCR AND NOT
       // scheme-shaped. Never keyed on cimd_verified.
-      const rawPrior = accumulationAllowed(this.config, clientId)
-        ? await this.store.findGrantedScopes(input.subject, clientId, new Date(this.clock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), this.config.resource)
+      // Hoisted: TS drops guard narrowing across the callPort closure boundary.
+      const priorSubject = input.subject, priorClientId = accumulationAllowed(this.config, clientId) ? clientId : undefined;
+      const rawPrior = priorClientId !== undefined
+        ? await callPort("StorePort", "findGrantedScopes", () => this.store.findGrantedScopes(priorSubject, priorClientId, new Date(this.clock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), this.config.resource))
         : [];
       // Display-only: ceiling-strip prior grants so they aren't tagged "already granted".
       const priorScopes = storedScopes(rawPrior, this.config.scopeCatalog);
@@ -208,7 +211,7 @@ export class OAuthAuthorizationUseCase {
       const consentScopes = storedScopes(consent.scopes, this.config.scopeCatalog);
       const allowedScopes = assertAllowedScopesCeiling(consent.allowedScopes);
       const priorScopes = storedScopes(accumulationAllowed(this.config, consent.clientId)
-        ? await this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), this.config.resource) : [], this.config.scopeCatalog);
+        ? await callPort("StorePort", "findGrantedScopes", () => this.store.findGrantedScopes(consent.subject, consent.clientId, new Date(operationClock.nowMs()).toISOString(), expectedStoredDcrGrantGeneration(this.config), this.config.resource)) : [], this.config.scopeCatalog);
       const union = dedupe([...consentScopes, ...priorScopes]);
       // Re-intersect the VERIFIED ceiling; prior grants cannot resurrect removed scopes (§17.4).
       const scopes = allowedScopes ? union.filter((s) => allowedScopes.includes(s)) : union;
@@ -218,7 +221,8 @@ export class OAuthAuthorizationUseCase {
       auditClock = commitClock;
       assertConsentUnexpiredAt(consent.expiresAt, commitClock);
       const code = generateAuthorizationCode();
-      const commit = await this.store.commitConsentApproval(consent.storeInstanceId, consent.jti, consent.expiresAt, {
+      const consentStoreInstanceId = consent.storeInstanceId; // hoisted: see above
+      const commit = await callPort("StorePort", "commitConsentApproval", () => this.store.commitConsentApproval(consentStoreInstanceId, consent.jti, consent.expiresAt, {
         codeHash: sha256Hex(code),
         clientId: consent.clientId,
         subject: consent.subject,
@@ -229,7 +233,7 @@ export class OAuthAuthorizationUseCase {
         codeChallengeMethod: "S256",
         expiresAt: expiresAtIso(commitClock, this.config.authorizationCodeTtlSeconds),
         grantGeneration: newGrantGeneration(this.config),
-      });
+      }));
       if (commit === "binding_mismatch") throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
       if (commit === "replayed") throw new OAuthError("invalid_grant", "Consent token has already been used");
       if (commit !== "stored") throw new OAuthError("server_error", "OAuth request failed", 500);

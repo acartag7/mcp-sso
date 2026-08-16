@@ -9,6 +9,7 @@ import {
   parseMachineClientRegistration,
   type ParsedActiveMachineClientRegistration,
 } from "./machine-client-record.ts";
+import { callPort } from "./port-failure.ts";
 
 /** Read and authenticate one immutable machine-client snapshot. */
 export async function authenticateMachineClientSecret(
@@ -20,7 +21,7 @@ export async function authenticateMachineClientSecret(
   const presentedHash = hashMachineClientSecret(presentedSecret);
   const now = Math.floor(deps.clock.nowMs() / 1000);
   const client = parseMachineClientRegistration(
-    await deps.store.find(clientId),
+    await callPort("ClientStore", "find", () => deps.store.find(clientId)),
     clientId,
     now,
   );

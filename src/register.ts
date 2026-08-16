@@ -12,6 +12,7 @@ import type { BridgeConfig } from "./config.ts";
 import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri, assertRegistrationRedirectPolicy } from "./redirect.ts";
 import { writeAuditBestEffort } from "./audit/best-effort.ts";
+import { callPort } from "./port-failure.ts";
 
 const MAX_GRANT_TYPES = 32;
 const MAX_GRANT_TYPE_BYTES = 256;
@@ -84,7 +85,8 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
     const clientId = `mcpdc_${cryptoRandom()}`;
     const issuedAt = Math.floor(clock.nowMs() / 1000);
     if (config.dcr.mode === "stored") {
-      await config.dcr.store.save({ clientId, redirectUris, applicationType, issuedAtEpoch: issuedAt });
+      const clientStore = config.dcr.store;
+      await callPort("ClientStore", "save", () => clientStore.save({ clientId, redirectUris, applicationType, issuedAtEpoch: issuedAt }));
     }
     await writeAuditBestEffort(audit, {
       occurredAt: new Date(clock.nowMs()).toISOString(),

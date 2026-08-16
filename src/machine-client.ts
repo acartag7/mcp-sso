@@ -24,6 +24,7 @@ import {
   isMachineClientResource, parseMachineClientRegistration,
   type ParsedActiveMachineClientRegistration,
 } from "./machine-client-record.ts";
+import { callPort } from "./port-failure.ts";
 export const DEFAULT_ROTATION_GRACE_SECONDS = 86_400;
 export const MAX_ROTATION_GRACE_SECONDS = 86_400;
 export interface MachineClientDeps {
@@ -125,7 +126,7 @@ export async function rotateMachineClientSecret(
     const now = epochSeconds(deps.clock);
     validateExpiryOffset(now, graceSeconds, "graceSeconds");
     const current = requireMutableActive(
-      parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+      parseMachineClientRegistration(await callPort("ClientStore", "find", () => deps.store.find(clientId)), clientId, now),
       resource,
     );
     const clientSecret = mintClientSecret();
@@ -160,7 +161,7 @@ export async function disableMachineClient(
     const store = requireMachineClientStore(deps.store);
     const now = epochSeconds(deps.clock);
     const current = requireMutableActive(
-      parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+      parseMachineClientRegistration(await callPort("ClientStore", "find", () => deps.store.find(clientId)), clientId, now),
       resource,
     );
     const next: VersionedMachineClientRegistration = {
