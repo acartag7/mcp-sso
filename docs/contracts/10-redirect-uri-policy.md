@@ -749,9 +749,19 @@ https://claude.ai        // Claude (web) custom connectors
 https://chatgpt.com      // ChatGPT custom connectors
 ```
 
-**The built-ins are a default, not a floor.** A deployment that sets
-`redirectAllowlistMode: "replace"` (§5) trusts *only* its configured entries, so
-an operator running a private MCP server can refuse the hosted clients outright.
+**The built-ins are a default, not a floor — for clients this allowlist
+governs.** A deployment that sets `redirectAllowlistMode: "replace"` (§5) trusts
+*only* its configured entries for **opaque/DCR client IDs**.
+
+**Scope limit, stated because the mode is easy to over-read:** a CIMD client is
+NOT governed by this allowlist at all. `resolveAuthorizeClient`
+(`src/authorize-internals.ts`) returns on the CIMD branches before reaching
+`resolveOpaqueRedirect`, so an HTTPS-shaped client ID with a valid document
+redirects per §17.1 document matching regardless of the mode. `"replace"`
+therefore does not stop a CIMD-registered hosted client, and a deployment that
+must exclude hosted clients entirely also has to leave `cimd.enabled` off or
+apply its own CIMD host policy.
+
 The mode is consulted at every one of the three places this global allowlist is
 read — the DCR write path, the stateless authorize path, and the stored-client
 re-validation leg — so a registration written while the built-ins were trusted
