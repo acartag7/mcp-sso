@@ -1888,11 +1888,12 @@ gate replaces no-gate).
 - If `${dir}/secrets.json` exists: load, validate shape (§5 boot checks), and
   on POSIX **reject group/other-readable files** (`mode & 0o077` ⇒ boot error
   with the exact `chmod 600` remediation; the check is skipped on Windows,
-  documented). The first Windows call in a process to any of the three parity
-  paths — `loadOrCreateQuickstartSecrets`, `ensureStateDir`, or
-  `openSqliteStore` with a persistent path — emits one shared, fixed, path-free
-  warning that DACL privacy was not verified; later calls do not repeat it, and
-  a throwing warning transport cannot replace the boot result. Exact `:memory:`
+  documented). The first Windows call in each Node worker/runtime instance to
+  `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`,
+  `ensureStateDir`, or `openSqliteStore` with a persistent path emits one
+  shared, fixed, path-free warning that DACL privacy was not verified; later
+  calls in that instance do not repeat it, and a throwing warning transport
+  cannot replace the boot result. Exact `:memory:`
   SQLite does not consume the warning. If absent: generate (EC P-256 keypair via jose; consent secret
   = base64url(48 bytes)), `mkdir` `0700`, write `0600` with `O_EXCL`, and
   write `${dir}/.gitignore` containing `*` so the directory can never be
@@ -1920,9 +1921,10 @@ gate replaces no-gate).
   into a dir we created, require exact in a pre-existing one). On Windows the
   mode/UID gates are absent and no DACL is read or set; the warning makes that
   limitation visible but is not an admission decision.
-- **Parity rule:** EVERY code path that creates or reads the state dir —
-  `loadOrCreateQuickstartSecrets`, the example's Cloudflare Access branch
-  (`ensureStateDir`), and the sqlite store ([§12.4](12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission)) —
+- **Parity rule:** EVERY code path that creates, reads, or admits the state dir —
+  `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, the example's
+  Cloudflare Access branch (`ensureStateDir`), and the sqlite store
+  ([§12.4](12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission)) —
   meets the applicable bar. SQLite additionally requires an already-existing,
   private, effective-user-owned immediate directory; descriptor-first
   exclusive/no-follow/nonblocking admission; regular-file, `0600`, ownership,

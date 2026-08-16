@@ -33,10 +33,10 @@ object. A symlink, hard link, FIFO, socket, device, directory, unsafe ancestor,
 or attacker-writable immediate directory must be replaced with a real private
 directory and regular owner-only file. On Windows, apply an equivalent private
 directory ACL. The library does not inspect that ACL and prints one shared,
-fixed warning on the first call in each Windows process to
-`loadOrCreateQuickstartSecrets`, `ensureStateDir`, or persistent
-`openSqliteStore`; exact `:memory:` does not consume it. The warning does not
-claim POSIX permission enforcement there.
+fixed warning on the first call in each Windows Node worker/runtime instance to
+`loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, `ensureStateDir`,
+or persistent `openSqliteStore`; exact `:memory:` does not consume it. The
+warning does not claim POSIX permission enforcement there.
 
 ## Codex CLI 0.144.1 callback regression
 

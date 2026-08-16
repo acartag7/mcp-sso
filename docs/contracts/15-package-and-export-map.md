@@ -160,8 +160,10 @@ helper — `mkdir 0o700` + `assertRealDir` + the managed `*` `.gitignore`, which
 consumer on the Cloudflare/Entra/gateway path — managing its own state dir — applies
 for the SAME bar the example does; it derives whether the `.gitignore` may be created
 from `mkdir`'s return, so a caller cannot drop a `*` ignore into a pre-existing tree)
-and `assertRealDir` (the fs-trust bar alone — rejects a symlink or
-group/other-accessible state dir so another local user cannot replace `auth.db`),
+and `assertRealDir` (the fs-trust bar alone — rejects a symlink on every
+platform and, on POSIX, a group/other-accessible state dir so another local user
+cannot replace `auth.db`; on Windows its first call in a Node worker/runtime
+instance emits the shared permission-gap warning),
 co-exported with `loadOrCreateQuickstartSecrets` (the raw `ensureGitignore(dir,
 canCreate)` stays internal — its caller-asserted boolean is a footgun); and `assertCallbackPath` (the upstream callback-PATH
 validator — a pure check that the pathname starts with `/`, is plain (no

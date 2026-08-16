@@ -1,6 +1,8 @@
 // Windows has no POSIX mode/UID admission in this library. Keep the warning
-// fixed and process-wide: paths are deployer-controlled input and must not enter
-// a security diagnostic, while repeated opens must not flood stderr.
+// fixed and one-shot per loaded Node worker/runtime instance: paths are
+// deployer-controlled input and must not enter a security diagnostic, while
+// repeated opens through this package instance must not flood stderr. Worker
+// threads have isolated module state and therefore each emit their own warning.
 
 const WINDOWS_PERMISSION_WARNING =
   "[mcp-sso] Windows filesystem permissions are not verified: quickstart secrets, "

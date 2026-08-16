@@ -156,6 +156,10 @@ export async function ensureGitignore(dir: string, canCreate: boolean): Promise<
 /** Reject a symlink, a non-directory, or (POSIX) a group/other-accessible mode —
  *  a world-writable state dir lets another user swap secrets.json for their key. */
 export async function assertRealDir(dir: string): Promise<void> {
+  // This helper is root-exported for standalone use. On Windows it omits the
+  // POSIX mode admission just like its quickstart/ensureStateDir callers, so it
+  // must surface the same fixed limitation even when neither caller is used.
+  warnWindowsPermissionGap();
   let st;
   try {
     st = await lstat(dir);
@@ -175,10 +179,22 @@ export async function assertRealDir(dir: string): Promise<void> {
 
 /** O_NOFOLLOW + fstat + read-fd: atomic, refuses symlinks/FIFOs (O_NONBLOCK). Windows → lstat+read. */
 async function readOwnedFile(path: string): Promise<{ content: string; mode: number }> {
-  if (O_NOFOLLOW === undefined) {
-    const st = await lstat(path);
+  // The explicit platform branch makes the production Windows fallback
+  // exercisable by the fake-win child probes even when they run on POSIX.
+  if (process.platform === "win32" || O_NOFOLLOW === undefined) {
+    let st;
+    try {
+      st = await lstat(path);
+    } catch (error) {
+      throw new AuthConfigError(`quickstart: cannot stat ${path}: ${errMsg(error)}`);
+    }
     if (st.isSymbolicLink()) throw new AuthConfigError(`quickstart: ${path} is a symlink`);
-    return { content: await readFile(path, "utf8"), mode: st.mode };
+    if (!st.isFile()) throw new AuthConfigError(`quickstart: ${path} is not a regular file`);
+    try {
+      return { content: await readFile(path, "utf8"), mode: st.mode };
+    } catch (error) {
+      throw new AuthConfigError(`quickstart: cannot read ${path}: ${errMsg(error)}`);
+    }
   }
   let fh;
   try {
