@@ -95,10 +95,12 @@ export { WebhookAudit, createWebhookAudit, type WebhookAuditOptions } from "./au
 export { combineAudit } from "./audit/combine.ts";
 // Quickstart secret persistence (§17.8) — dep-free boot helper (jose + node
 // builtins), so it ships from the root entry like the audit sinks. assertRealDir is
-// the state-dir fs-trust bar (rejects a symlink / group-writable dir) a consumer may
-// want standalone; the full atomic bar is ensureStateDir below (contracts §15 DX).
+// the state-dir fs-trust bar (rejects a symlink everywhere and a group-writable
+// dir on POSIX; Windows warns and relies on a private ACL) a consumer may want
+// standalone; the aggregate setup bar is ensureStateDir below (contracts §15 DX).
 export { loadOrCreateQuickstartSecrets, assertRealDir, type QuickstartSecrets, type QuickstartOptions } from "./quickstart.ts";
-// ensureStateDir — the atomic state-dir setup helper (mkdir 0o700 + assertRealDir +
+// ensureStateDir — the state-dir setup helper (atomic restrictive mkdir on POSIX
+// + assertRealDir +
 // ensureGitignore), fail-safe by construction: it derives whether the managed `*`
 // .gitignore may be created from mkdir's return, so a caller cannot drop a `*` ignore
 // into a pre-existing tree (the footgun the raw ensureGitignore(dir, canCreate)

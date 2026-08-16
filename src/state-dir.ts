@@ -7,11 +7,12 @@ import { chmod, mkdir } from "node:fs/promises";
 import { assertRealDir, ensureGitignore } from "./quickstart.ts";
 import { warnWindowsPermissionGap } from "./windows-permission-warning.ts";
 
-/** Ensure the state dir exists AND meets the per-directory fs-trust bar — the same
- *  bar the zero-setup branch gets from `loadOrCreateQuickstartSecrets`. Creates the
- *  dir `0o700` if absent; for a pre-existing dir, `assertRealDir` rejects a symlink or
- *  group/other-accessible mode (another local user could otherwise replace auth.db
- *  with state they control). Then `ensureGitignore` writes the managed `*`
+/** Ensure the state dir exists AND meets the platform-applicable per-directory
+ *  fs-trust bar — the same bar the zero-setup branch gets from
+ *  `loadOrCreateQuickstartSecrets`. Creates the dir `0o700` if absent; for a
+ *  pre-existing dir, `assertRealDir` rejects a symlink everywhere and a
+ *  group/other-accessible mode on POSIX. Windows emits the shared warning and
+ *  relies on the deployer-private ACL. Then `ensureGitignore` writes the managed `*`
  *  `.gitignore` so auth.db / audit.jsonl cannot be committed.
  *
  *  Boundary: the dir is CREATED restrictive (mkdir mode `0o700` — atomic, no
@@ -40,7 +41,7 @@ export async function ensureStateDir(dir: string): Promise<void> {
   if (created !== undefined) {
     if (process.platform !== "win32") await chmod(dir, 0o700);
   } else {
-    await assertRealDir(dir); // pre-existing: real dir, not a symlink, not group/other-accessible
+    await assertRealDir(dir); // real/non-symlink; group/other mode is POSIX-only, Windows warns
   }
   await ensureGitignore(dir, created !== undefined);
 }
