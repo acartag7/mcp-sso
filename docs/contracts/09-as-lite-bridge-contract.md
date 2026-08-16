@@ -63,10 +63,13 @@ request shape with metadata this bridge understands fits the Hono boundary in
   token_endpoint_auth_method: "none" }`, and persists nothing. At authorize, any
   non-empty `client_id` is accepted (matches the source). **Redirect policy = the
   global allowlist with no implicit loopback trust**
-  (§10.1) — stateless mode persists no client metadata, so per-client redirect
+  (§10.1, composed per `redirectAllowlistMode` exactly as in stored mode) —
+  stateless mode persists no client metadata, so per-client redirect
   policies cannot apply.
 - **Stored mode (opt-in):** at **registration time** each `redirect_uri` is
-  validated through the **global allowlist (§10.1: built-ins + config)** and then
+  validated through the **global allowlist (§10.1), composed per
+  `redirectAllowlistMode`** — built-ins + config under the default `"extend"`,
+  config entries ALONE under `"replace"` — and then
   recorded on the `ClientRegistration` (with `applicationType`, default
   `"web"`). Each entry MUST be
   §10.0-valid **in fully canonical form** — the omitted-root-slash exemption is
@@ -84,7 +87,11 @@ request shape with metadata this bridge understands fits the Hono boundary in
   the presented `redirect_uri` MUST match that client's **per-type policy (§10.2)**
   — native ⇒ RFC 8252 loopback any-port, web ⇒ https exact. This is the RC-aligned
   path: native and web clients get the right redirect handling by type, instead of
-  loopback-for-everyone.
+  loopback-for-everyone. Registration is not a permanent grant of trust: every
+  STORED entry is re-checked against the mode-composed global allowlist before
+  the per-type policy runs, so a client registered while `"extend"` trusted the
+  built-ins stops authorizing once an operator switches to `"replace"`
+  (`resolveOpaqueRedirect`, `src/authorize-internals.ts`).
 - **Machine-shape rejection (§17.2).** Open registration can NEVER mint a
   secret-bearing (machine) client: a request naming
   `token_endpoint_auth_method` other than `"none"`, or a `grant_types`
