@@ -79,7 +79,7 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
     }
     const applicationType: ApplicationType = rawApplicationType;
     const redirectUris = redirectEntries.map((entry) => {
-      const uri = assertAllowedRedirectUri(entry, config.redirectAllowlist);
+      const uri = assertAllowedRedirectUri(entry, config.redirectAllowlist, config.redirectAllowlistMode);
       if (config.dcr.mode === "stored") assertRegistrationRedirectPolicy(uri, applicationType);
       return uri;
     });

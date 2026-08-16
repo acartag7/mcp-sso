@@ -22,12 +22,14 @@ How mcp-sso proves a release actually works.
 > pairing, limiter-wrapper, and dependency-policy corrections are also included.
 > Published v0.3.5 does not contain these post-tag changes.
 >
-> One platform finding still blocks a release-ready verdict: on Windows,
-> quickstart-secret and persistent-SQLite admission skip their POSIX mode gates,
-> no DACL inspection exists, and current `main` emits no operator warning. The
-> permission boot-failure guarantees are therefore POSIX-only; on Windows,
-> confidentiality depends on which principals the inherited DACL admits. The
-> corrected contract wording and warning remain unmerged.
+> The previous silent Windows permission-gap blocker is closed in this source
+> line: the first call in each Node worker/runtime instance to
+> `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, `ensureStateDir`,
+> or persistent `openSqliteStore` emits one shared, fixed, path-free warning,
+> and warning-transport failure cannot replace the boot result. This is
+> visibility, not DACL enforcement. Permission boot-failure
+> guarantees remain POSIX-only; on Windows, confidentiality still depends on
+> which principals the deployer-controlled inherited DACL admits.
 >
 > Source-tree target: **MCP Authorization 2026-07-28** for the implemented
 > public-client authorization-server profile. The stable artifact was manually
@@ -372,6 +374,7 @@ Notes:
 | SQ.7 | Restart and store siblings | Existing SQLite authorization-code, refresh-family, stored-scope, replay, schema-migration, and restart rows remain green; Memory/MySQL behavior is unchanged. |
 | SQ.8 | Packed artifact (manual release proof) | Produce/install the real tarball and run new-file, reopen, URI-rejection, and hostile-directory smokes through `mcp-sso/store/sqlite`; this is not a committed CI job. |
 | SQ.9 | Platform contract | Ubuntu CI proves POSIX no-follow/UID/`0600`/directory controls. Windows-specific skips name unavailable primitives, but no Windows CI runner exists; Windows ACL/private-directory guarantees remain deployer-owned and must not be reported as CI-proven. |
+| SQ.10 | Windows permission-gap signal | Child-process wiring probes force the Windows branch and prove the first call among quickstart secrets, standalone `assertRealDir`, managed `ensureStateDir`, and persistent SQLite emits one shared, fixed, path-free warning per Node worker/runtime instance; exact `:memory:`, POSIX use, and later calls in that instance stay silent, and a throwing warning transport cannot change the boot result. |
 
 ### T1.S2a — core `allowedScopes` ceiling
 

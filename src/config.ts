@@ -8,13 +8,13 @@ import type { ClientStore } from "./ports/client-store.ts";
 import { AuthConfigError } from "./config-error.ts";
 import { validateAllowedOrigins } from "./allowed-origin.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
-import { parseRedirectEntry, RedirectEntryError } from "./redirect-entry.ts";
+import type { RedirectAllowlistMode } from "./redirect.ts";
 import { scopeListProblem } from "./scopes.ts";
 import { snapshotScopeHierarchy, type ScopeHierarchyPolicy } from "./scope-hierarchy.ts";
 import {
   configOwnKeys, configValue, isArrayValue, isEcP256PrivateJwk, snapshotArray,
   snapshotClientCredentials, snapshotDcr, snapshotDev, snapshotJwk,
-  snapshotStringArray,
+  snapshotRedirectAllowlist, snapshotRedirectAllowlistMode, snapshotStringArray,
 } from "./config-snapshot.ts";
 
 export type { CimdOptions } from "./cimd/options.ts";
@@ -45,6 +45,7 @@ export interface BridgeConfig {
   signingPrivateJwk: JWK;
   signingKeyId?: string;
   redirectAllowlist: string[];
+  redirectAllowlistMode?: RedirectAllowlistMode;
   scopeCatalog: string[];
   defaultScopes: string[];
   scopeHierarchy?: ScopeHierarchyPolicy;
@@ -71,7 +72,7 @@ const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
  *  this set survives" against the source of truth. */
 export const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "issuer", "resource", "consentSigningSecret", "signingPrivateJwk",
-  "signingKeyId", "redirectAllowlist", "scopeCatalog", "defaultScopes",
+  "signingKeyId", "redirectAllowlist", "redirectAllowlistMode", "scopeCatalog", "defaultScopes",
   "scopeHierarchy", "allowedOrigins", "dcr", "dev", "clientCredentials", "cimd",
   "accessTokenTtlSeconds", "refreshTokenTtlSeconds", "consentTokenTtlSeconds",
   "authorizationCodeTtlSeconds",
@@ -115,6 +116,8 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   const signingKeyId = configValue(input, "signingKeyId", makeError);
   const rawRedirectAllowlist = configValue(input, "redirectAllowlist", makeError);
   const redirectAllowlist = snapshotRedirectAllowlist(rawRedirectAllowlist, makeError);
+  const rawRedirectAllowlistMode = configValue(input, "redirectAllowlistMode", makeError);
+  const redirectAllowlistMode = snapshotRedirectAllowlistMode(rawRedirectAllowlistMode, redirectAllowlist);
   const rawScopeCatalog = configValue(input, "scopeCatalog", makeError);
   const rawDefaultScopes = configValue(input, "defaultScopes", makeError);
   const rawScopeHierarchy = configValue(input, "scopeHierarchy", makeError);
@@ -190,23 +193,11 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
   }
   return Object.freeze({
     issuer, resource, consentSigningSecret, signingPrivateJwk, signingKeyId,
-    redirectAllowlist, scopeCatalog, defaultScopes, scopeHierarchy, allowedOrigins, dcr, dev,
+    redirectAllowlist, redirectAllowlistMode,
+    scopeCatalog, defaultScopes, scopeHierarchy, allowedOrigins, dcr, dev,
     clientCredentials, cimd, accessTokenTtlSeconds, refreshTokenTtlSeconds,
     consentTokenTtlSeconds, authorizationCodeTtlSeconds,
   });
-}
-
-function snapshotRedirectAllowlist(value: unknown, makeError: (message: string) => Error): string[] {
-  const snapshot = snapshotArray("redirectAllowlist", value, makeError);
-  for (const entry of snapshot) {
-    try {
-      parseRedirectEntry(entry, { allowOmittedRootSlash: true });
-    } catch (error) {
-      const message = error instanceof RedirectEntryError ? error.message : "redirect entry is invalid";
-      throw new AuthConfigError(`redirectAllowlist ${message}`);
-    }
-  }
-  return snapshot as string[];
 }
 
 function validateUrl(allowInsecureLocalhost: boolean, label: string, value: unknown): void {

@@ -85,11 +85,11 @@ export async function resolveOpaqueRedirect(config: BridgeConfig, clientId: stri
     const client = parseAuthorizationClientRegistration(stored, clientId);
     if (!client) throw new OAuthError("invalid_client", "Malformed stored client registration", 401);
     for (const registeredRedirect of client.redirectUris) {
-      assertAllowedRedirectUri(registeredRedirect, config.redirectAllowlist);
+      assertAllowedRedirectUri(registeredRedirect, config.redirectAllowlist, config.redirectAllowlistMode);
     }
     return assertRedirectAllowedForClient(redirectUri, client);
   }
-  return assertAllowedRedirectUri(redirectUri, config.redirectAllowlist);
+  return assertAllowedRedirectUri(redirectUri, config.redirectAllowlist, config.redirectAllowlistMode);
 }
 
 /** §17.1.6 decision 3, the NEGATIVE class: accumulation runs iff stored-DCR AND
@@ -112,6 +112,18 @@ export function assertApproveCimdGate(config: BridgeConfig, clientId: string, ci
   }
   if (isSchemeShaped(clientId)) throw invalidConsent();
   if (cimdVerified === true) throw invalidConsent(); // provenance bit on a non-CIMD id
+}
+
+/** Reapply the current mode-appropriate opaque-client policy to signed consent
+ * state before either approve exit. CIMD remains document-governed. */
+export async function assertCurrentConsentRedirect(
+  config: BridgeConfig,
+  clientId: string,
+  redirectUri: string,
+): Promise<void> {
+  if (!isCimdClientId(clientId)) {
+    await resolveOpaqueRedirect(config, clientId, redirectUri);
+  }
 }
 
 function invalidConsent(): OAuthError {

@@ -3,6 +3,8 @@
 
 import type { AuthorizationClientRegistration } from "./client-registration.ts";
 import type { ClientRegistration } from "./ports/client-store.ts";
+import { AuthConfigError } from "./config-error.ts";
+import { snapshotRedirectAllowlist } from "./config-snapshot.ts";
 import { OAuthError } from "./errors.ts";
 import {
   isLoopbackRedirect, parseRedirectEntry, RedirectEntryError,
@@ -16,11 +18,49 @@ export const DEFAULT_ALLOWED_REDIRECT_ORIGINS = Object.freeze([
   "https://chatgpt.com",
 ]);
 
-/** Validate a redirect_uri against the global allowlist (built-ins + config).
- *  Returns the unchanged canonical URI. Throws invalid_redirect_uri on rejection. */
-export function assertAllowedRedirectUri(value: unknown, allowlist: readonly unknown[]): string {
+/** How `redirectAllowlist` composes with the built-ins above.
+ *  `"extend"` (default) trusts the built-ins PLUS the configured entries.
+ *  `"replace"` trusts only the configured entries.
+ *
+ *  Scope limit (contracts §10.1): this governs THIS allowlist, which is read
+ *  only for opaque/DCR client ids. A CIMD client never reaches it —
+ *  `resolveAuthorizeClient` returns on its CIMD branches before calling
+ *  `resolveOpaqueRedirect` (`src/authorize-internals.ts`) — so `"replace"` on
+ *  its own does not keep a hosted client out; that also needs `cimd.enabled`
+ *  off or a deployer-supplied CIMD host policy. */
+export type RedirectAllowlistMode = "extend" | "replace";
+
+/** Snapshot and validate an untrusted global allowlist with the authoritative
+ *  §10.0 parser. Shipped composition roots call this before filesystem/listener
+ *  effects; createBridgeConfig repeats it at the configuration boundary. */
+export function assertRedirectAllowlistEntries(value: unknown): string[] {
+  return snapshotRedirectAllowlist(value, (message) => new AuthConfigError(message));
+}
+
+/** Validate a redirect_uri against the global allowlist.
+ *  Returns the unchanged canonical URI. Throws invalid_redirect_uri on rejection.
+ *
+ *  `mode` defaults to `"extend"` so the exported two-argument form keeps its
+ *  published behavior; every in-tree caller passes `config.redirectAllowlistMode`
+ *  explicitly. An explicitly-passed mode outside the two known values is
+ *  REJECTED, never coerced (see below). Boot rejects `"replace"` with an empty
+ *  allowlist, so `entries` is never empty for a config-derived call. */
+export function assertAllowedRedirectUri(
+  value: unknown,
+  allowlist: readonly unknown[],
+  mode: RedirectAllowlistMode = "extend",
+): string {
+  // This helper is root-exported and deliberately accepts unvalidated public
+  // input, so it cannot lean on the boot check the way the in-tree callers do.
+  // A `mode === "replace" ? ... : ...` test would treat every malformed value —
+  // `"Replace"`, `""`, `null`, `true` — as "extend" and silently restore the
+  // built-in origins a caller was trying to drop. Reject instead of coercing.
+  if (mode !== "extend" && mode !== "replace") {
+    throw new AuthConfigError('assertAllowedRedirectUri mode must be "extend" or "replace"');
+  }
   const presented = oauthEntry(value);
-  const entries = [...DEFAULT_ALLOWED_REDIRECT_ORIGINS, ...allowlist]
+  const builtIns = mode === "replace" ? [] : DEFAULT_ALLOWED_REDIRECT_ORIGINS;
+  const entries = [...builtIns, ...allowlist]
     .map((entry) => oauthEntry(entry, true));
   if (!entries.some((entry) => globalMatch(entry, presented))) {
     throw new OAuthError("invalid_redirect_uri", "redirect_uri is not allowed");

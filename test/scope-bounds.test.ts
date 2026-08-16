@@ -102,7 +102,17 @@ test("scope bounds: signer refuses a consent token that cannot fit the approval 
 test("scope bounds: corrupt stored scopes fail before consuming consent", async () => {
   const store = new CorruptPriorStore();
   const checked = createBridgeConfig(config({
-    dcr: { mode: "stored", store: { async save() {}, async find() { return null; } } },
+    dcr: {
+      mode: "stored",
+      store: {
+        async save() {},
+        async find(clientId) {
+          return clientId === "client-1"
+            ? { clientId, redirectUris: ["https://client.test/callback"], applicationType: "web", issuedAtEpoch: 1 }
+            : null;
+        },
+      },
+    },
   }));
   const auth = new OAuthAuthorizationUseCase({
     config: checked, store, clock: { nowMs: () => Date.parse("2026-08-03T12:00:00.000Z") },

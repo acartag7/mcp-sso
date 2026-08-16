@@ -1900,7 +1900,13 @@ gate replaces no-gate).
 - If `${dir}/secrets.json` exists: load, validate shape (§5 boot checks), and
   on POSIX **reject group/other-readable files** (`mode & 0o077` ⇒ boot error
   with the exact `chmod 600` remediation; the check is skipped on Windows,
-  documented). If absent: generate (EC P-256 keypair via jose; consent secret
+  documented). The first Windows call in each Node worker/runtime instance to
+  `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`,
+  `ensureStateDir`, or `openSqliteStore` with a persistent path emits one
+  shared, fixed, path-free warning that DACL privacy was not verified; later
+  calls in that instance do not repeat it, and a throwing warning transport
+  cannot replace the boot result. Exact `:memory:`
+  SQLite does not consume the warning. If absent: generate (EC P-256 keypair via jose; consent secret
   = base64url(48 bytes)), `mkdir` `0700`, write `0600` with `O_EXCL`, and
   write `${dir}/.gitignore` containing `*` so the directory can never be
   committed.
@@ -1910,20 +1916,32 @@ gate replaces no-gate).
   every outstanding token while masking the misconfiguration.
 - Env-var configuration remains the primary production path; this is the
   zero-setup path (same audience as 17.5). Threat-model entry: plaintext key
-  material on disk, boundary = the OS user account; production belongs in
-  env/secret managers. (`npx mcp-sso init` is now implemented — §15 "Init CLI" —
+  material on disk. **On POSIX the boundary is the OS user account** (the mode
+  and ownership gates below enforce it). **On Windows there is no such boundary
+  claim:** those gates are skipped and no DACL is read or set, so the readers are
+  every principal the inherited directory/file ACL admits — unmeasured, because
+  the library does not inspect ACLs (issue #219). Production belongs in
+  env/secret managers on both. (`npx mcp-sso init` is now implemented — §15 "Init CLI" —
   scaffolding a server that uses this helper; the function remains the contract.)
 - **Filesystem-trust bar (the quickstart reference — every state-dir code path
-  meets this):** writes are `0600` (files) / `0700` (dirs) with `O_EXCL` for
-  create-don't-clobber; reads of trusted content go through `open(O_NOFOLLOW |
-  O_NONBLOCK)` + `fstat` + read-fd (atomic: refuses a symlink, won't hang on a
-  FIFO/special file, no lstat→readFile race) + a perm check (`mode & 0o077`
-  fails closed, POSIX); a pre-existing dir is `assertRealDir`'d (reject symlink
+  meets its platform-applicable part):** writes are `0600` (files) / `0700`
+  (dirs) with `O_EXCL` for create-don't-clobber. On supported POSIX hosts, reads
+  of trusted content go through `open(O_NOFOLLOW | O_NONBLOCK)` + `fstat` +
+  read-fd (atomic: refuses a symlink, won't hang on a FIFO/special file, no
+  lstat→readFile race) + a perm check (`mode & 0o077` fails closed); a
+  pre-existing dir is `assertRealDir`'d (reject symlink
   + group/other-accessible mode); the `.gitignore` is the managed `*\n` (write
-  into a dir we created, require exact in a pre-existing one).
-- **Parity rule:** EVERY code path that creates or reads the state dir —
-  `loadOrCreateQuickstartSecrets`, the example's Cloudflare Access branch
-  (`ensureStateDir`), and the sqlite store ([§12.4](12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission)) —
+  into a dir we created, require exact in a pre-existing one). On Windows or a
+  host without `O_NOFOLLOW`, trusted-file reads instead lstat-reject a symlink
+  or non-regular object and then read the pathname; replacement between those
+  calls remains possible. The deployer-private directory/ACL is the boundary
+  against a lower-privileged swap. Windows mode/UID gates are absent and no DACL
+  is read or set; the warning makes that limitation visible but is not an
+  admission decision.
+- **Parity rule:** EVERY code path that creates, reads, or admits the state dir —
+  `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, the example's
+  Cloudflare Access branch (`ensureStateDir`), and the sqlite store
+  ([§12.4](12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission)) —
   meets the applicable bar. SQLite additionally requires an already-existing,
   private, effective-user-owned immediate directory; descriptor-first
   exclusive/no-follow/nonblocking admission; regular-file, `0600`, ownership,

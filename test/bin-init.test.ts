@@ -103,9 +103,19 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
       "generated server persists DCR through its SQLite-backed client store",
     );
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST, "http:\/\/localhost,http:\/\/127\.0\.0\.1"/, "generated local composition explicitly declares loopback callback origins");
+    assert.match(server, /OAUTH_REDIRECT_ALLOWLIST_MODE/, "generated starter exposes the redirect trust mode");
+    assert.match(server, /redirectAllowlistMode,/, "generated starter passes the parsed mode into createBridgeConfig");
     assert.ok(
       server.indexOf("validateAllowedOrigins(") < server.indexOf("loadOrCreateQuickstartSecrets("),
       "generated origin preflight runs before persistent quickstart state",
+    );
+    assert.ok(
+      server.indexOf("const redirectAllowlistMode = redirectAllowlistModeFromEnv(") < server.indexOf("loadOrCreateQuickstartSecrets("),
+      "generated redirect-mode preflight runs before persistent quickstart state",
+    );
+    assert.ok(
+      server.indexOf("const redirectAllowlist = assertRedirectAllowlistEntries(") < server.indexOf("loadOrCreateQuickstartSecrets("),
+      "generated redirect-entry preflight runs before persistent quickstart state",
     );
     const generatedReadme = await readFile(join(dir, "README.md"), "utf8");
     assert.match(
@@ -553,6 +563,65 @@ test("bin init (spawn): a malformed OAUTH_ISSUER fails BEFORE the state dir is c
     assert.notEqual(code, 0, "a malformed OAUTH_ISSUER fails closed");
     assert.match(stderr, /OAUTH_ISSUER is not a valid URL/);
     assert.equal(existsSync(stateDir), false, "the state dir was NOT created (validation ran before the state-creating helper)");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("bin init (spawn): replace mode is preflighted and controls generated DCR", async () => {
+  await ensureDist();
+  const base = await mkdtemp(join(tmpdir(), "mcp-sso-init-redirect-mode-"));
+  const proj = join(base, "proj");
+  try {
+    await spawnScaffold(proj);
+    await linkDeps(proj);
+    const invalidPolicies = [
+      { policy: { OAUTH_REDIRECT_ALLOWLIST_MODE: "" }, error: /redirectAllowlistMode/ },
+      { policy: { OAUTH_REDIRECT_ALLOWLIST_MODE: "Replace" }, error: /redirectAllowlistMode/ },
+      { policy: { OAUTH_REDIRECT_ALLOWLIST_MODE: "replace", OAUTH_REDIRECT_ALLOWLIST: "" }, error: /redirectAllowlistMode/ },
+      { policy: { OAUTH_REDIRECT_ALLOWLIST: "javascript:alert(1)" }, error: /redirectAllowlist/ },
+    ];
+    for (const [index, { policy, error }] of invalidPolicies.entries()) {
+      const stateDir = join(base, `invalid-state-${index}`);
+      const child = spawn("node", ["server.ts"], {
+        cwd: proj,
+        env: { ...process.env, MCP_SSO_DIR: stateDir, PORT: "3000", HOST: "127.0.0.1", ...policy },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stderr = "";
+      child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+      const code = await new Promise<number | null>((resolveP) => child.on("close", resolveP));
+      assert.notEqual(code, 0);
+      assert.match(stderr, error);
+      assert.equal(existsSync(stateDir), false, `invalid policy ${index} created no state`);
+    }
+
+    const port = await freePort();
+    const stateDir = join(base, "valid-state");
+    const origin = `http://127.0.0.1:${port}`;
+    const child = spawn("node", ["server.ts"], {
+      cwd: proj,
+      env: {
+        ...process.env, MCP_SSO_DIR: stateDir, PORT: String(port), HOST: "127.0.0.1",
+        OAUTH_REDIRECT_ALLOWLIST_MODE: "replace", OAUTH_REDIRECT_ALLOWLIST: "http://localhost",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    try {
+      await waitFor(child, new RegExp(`mcp-sso listening on 127\\.0\\.0\\.1:${port}`), 15_000);
+      const hosted = await fetchBounded(`${origin}/oauth/register`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ redirect_uris: ["https://claude.ai/callback"] }),
+      });
+      assert.equal(hosted.status, 400, "replace removes the hosted default in the generated server");
+      const configured = await fetchBounded(`${origin}/oauth/register`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ redirect_uris: ["http://localhost:4321/callback"], application_type: "native" }),
+      });
+      assert.equal(configured.status, 201, "the configured replacement remains usable");
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
   } finally {
     await rm(base, { recursive: true, force: true });
   }
