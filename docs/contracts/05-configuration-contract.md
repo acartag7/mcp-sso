@@ -144,7 +144,9 @@ interface BridgeConfig {
   character, backslash, or malformed percent-escape. Each rule is checked on the
   RAW entry as well as any parsed field (§10.0 explains why: WHATWG
   normalization erases the syntax the decision depends on). An empty array is
-  valid. The error **names the offending entry** and, for a non-canonical one,
+  valid **only under omitted/`"extend"` mode**; with `"replace"` it is a boot
+  failure, per the mode rule above (no built-ins remain, so no redirect_uri
+  could ever be accepted). The error **names the offending entry** and, for a non-canonical one,
   shows its canonical form — a deployer with several origins configured must not
   have to bisect.
 - `allowedOrigins` is an array of exact canonical WHATWG origin serializations:
