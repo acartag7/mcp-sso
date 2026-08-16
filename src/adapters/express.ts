@@ -1,5 +1,6 @@
-// Express adapter (contracts §9.6). Thin wiring over the framework-free Bridge.
-// The returned Router owns bounded OAuth JSON/form parsing. Maps NormResponse → Express.
+// Express transport adapter (contracts §9.6). OAuth domain decisions stay in
+// the framework-free core; this layer owns bounded OAuth JSON/form parsing and
+// request normalization. Maps NormResponse → Express.
 
 import { json, raw, Router, urlencoded } from "express";
 import type { NextFunction, Request, Response } from "express";
@@ -9,7 +10,7 @@ import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import {
   formBodySnapshot, headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
-  type NormRequest, type NormResponse,
+  semanticOAuthBody, type NormRequest, type NormResponse,
 } from "./http.ts";
 import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import { OAuthError } from "../errors.ts";
@@ -61,7 +62,10 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
 
   const toNorm = (req: Request): NormRequest => {
     const headers = headersFromDistinct(req.headersDistinct, req.headers as NormRequest["headers"]);
-    const body = req.body;
+    // Keyed on the request's Content-Type, not on who filled `req.body`: a parser
+    // the application mounted earlier still owns its byte accounting, but its
+    // output never becomes OAuth fields under an unsupported media type (§9.6).
+    const body = semanticOAuthBody(req.body, headers);
     return {
       query: queryOccurrencesFromUrl(req.originalUrl), body,
       formBody: formBodySnapshot(body, headers), headers, ip: req.ip,

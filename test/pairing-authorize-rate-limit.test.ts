@@ -155,7 +155,7 @@ test("pairing authorize window resets exactly and clock rollback fails closed", 
   assert.equal(rollback.beginCalls, 2);
 });
 
-test("every shipped Fastify pairing route attaches the shared rate-limit metadata", () => {
+test("every shipped Fastify pairing route attaches the shared transport guards", () => {
   const files = [
     new URL("../examples/api-key-gateway/app.ts", import.meta.url),
     new URL("../examples/fastify-sqlite/app.ts", import.meta.url),
@@ -164,6 +164,12 @@ test("every shipped Fastify pairing route attaches the shared rate-limit metadat
   for (const file of files) {
     const source = readFileSync(file, "utf8");
     assert.match(source, /import\s*\{[^}]*FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT[^}]*\}\s*from/s);
+    assert.match(source, /import\s*\{[^}]*semanticOAuthBody[^}]*\}\s*from/s);
+    assert.match(
+      source,
+      /body:\s*semanticOAuthBody\(req\.body,\s*headers\)/,
+      `${file.pathname} rejects parser output from unsupported media types`,
+    );
     assert.equal(
       source.match(/config:\s*\{\s*rateLimit:\s*FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT\s*\}/g)?.length,
       2,

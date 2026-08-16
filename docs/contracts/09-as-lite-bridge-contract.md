@@ -383,10 +383,35 @@ The **JSON-RPC `/mcp` surface** uses a separate envelope (built by the framework
 adapter, Phase 3): `{ jsonrpc:"2.0", error:{ code:-32001, message:"<oauth-code>:
 <message>" }, id:null }`, with the `WWW-Authenticate` challenge on 401 (§8.2).
 
-## 9.6 Framework adapters *(Phase 3 — thin wiring)*
-The `/fastify`, `/express`, `/hono` adapters are **thin**: all logic stays in the
-core use-cases; an adapter only parses the request, calls the use-case, and shapes
-the response. Wiring rules:
+## 9.6 Framework adapters *(Phase 3 — transport boundary)*
+The `/fastify`, `/express`, `/hono` adapters keep OAuth domain decisions in the
+core use-cases. They own framework-specific transport work: apply the raw-body
+budget, normalize headers and supported bodies, preserve duplicate and ambiguous
+input evidence for Bridge rejection, carry framework- or deployer-derived
+client-IP data, call the use-case, and shape the response. Their built-in
+semantic formats are JSON and URL-encoded forms, and one shared media gate in
+the adapter HTTP module (`semanticOAuthBody`) decides what reaches the core: each
+adapter normalizes a body into OAuth fields only when the request carries exactly
+one `application/json` or `application/x-www-form-urlencoded` `Content-Type`
+essence. The gate keys on the request's own `Content-Type`, not on which parser
+filled the framework's body slot, so unsupported below-cap media remain absent
+rather than becoming OAuth fields **even when the application mounted its own
+parser for that media type earlier on the same OAuth path** — that parser still
+owns its byte accounting and error handling (see the Express bullet), but its
+output cannot be selected as OAuth input. When `Content-Type` is absent or has
+one unsupported media essence, endpoint logic handles the resulting empty
+fields: register and token return their existing
+required-input errors; approve retains its consent-cookie/body and deny rules;
+revoke keeps RFC 7009's HTTP 200 response for the resulting
+fieldless/unrecognized-token request. Duplicate or otherwise ambiguous
+`Content-Type` also loses its semantic body, but is not treated as fieldless:
+the normalized form-provenance sentinel retains the ambiguity and the shared
+Bridge form gate rejects it directly with 400 before field selection. A shipped
+composition root that constructs `NormRequest` itself for
+a caller-owned OAuth route uses this same gate too: both runnable examples and
+the generated starter apply `semanticOAuthBody` to their console-pairing
+normalizer before `handlePairingAuthorize`. The IP is trusted only when the proxy or extractor satisfies the
+deployment preconditions in §6.4. Wiring rules:
 - **Endpoints:** GET `/.well-known/oauth-authorization-server` →
   `authorizationServerMetadata`; GET `/.well-known/oauth-protected-resource` AND
   its path-inserted form → `protectedResourceMetadata` (§9.1); GET `/oauth/jwks` →
@@ -421,10 +446,12 @@ the response. Wiring rules:
   defined once in the shared adapter HTTP module and applies regardless of the
   request's content type inside the adapter-owned parsing boundary. Fastify's
   per-route enforcement also constrains application-supplied parsers registered
-  in the same scope; an Express parser mounted earlier remains caller-owned as
-  noted below. JSON and URL-encoded forms are the built-in semantic input
-  formats. The adapter-owned multipart and unknown-media handling leaves the
-  body absent or yields non-object bytes rather than OAuth fields. The fixed budget admits a compact
+  in the same scope; the BYTE accounting of an Express parser mounted earlier
+  remains caller-owned as noted below. JSON and URL-encoded forms are the
+  built-in semantic input formats. Multipart and unknown media leave the
+  normalized body absent rather than yielding OAuth fields, whichever parser
+  produced the framework value, because the shared media gate above admits only
+  the two supported essences. The fixed budget admits a compact
   JSON serialization with all recognized DCR field values at their maxima: 16 redirect URIs ×
   2,048 UTF-8 bytes (about 192 KiB when every URI character is legally serialized
   as a JSON `\uXXXX` escape), plus 32 `grant_types` entries × 256 UTF-8 bytes
@@ -463,7 +490,10 @@ the response. Wiring rules:
   OAuth fields. The adapter registers its parsers and routes in an encapsulated
   Fastify plugin scope. That scope removes any inherited exact URL-encoded
   parser and installs the occurrence-preserving parser for the four built-in
-  POST routes; the parent parser and unrelated routes remain unchanged. This is
+  POST routes; the parent parser and unrelated routes remain unchanged. An
+  inherited application parser for some other media type keeps running under the
+  route's `bodyLimit`, but the shared media gate drops whatever it returns, so a
+  `text/plain` parser that yields an object cannot supply OAuth fields. This is
   required because an inherited first/last-wins parser would erase duplicate
   evidence before `NormRequest.formBody` is built. When `skipAuthorize` leaves POST `/oauth/authorize` to the
   caller, `registerOAuthRoutes` preserves the existing automatic URL-encoded
@@ -504,8 +534,14 @@ the response. Wiring rules:
   direct 413 `{error:"invalid_request",error_description:"Request body is too large"}`.
   Malformed JSON/form input is a direct sanitized 400 instead of Express's
   default development stack response/logging path. An application that mounts a
-  different parser earlier on the same OAuth paths owns that parser's behavior;
-  parsers for unrelated routes should be path-scoped. The `mcp-sso/express`
+  different parser earlier on the same OAuth paths owns that parser's byte
+  accounting and its own error responses — Express marks the body consumed, so
+  the router's bounded parsers no longer see those bytes. What that parser
+  produces is still subject to the shared media gate: an
+  `express.json({ type: "text/plain" })` or
+  `express.urlencoded({ type: "text/plain" })` mounted ahead of the router cannot
+  turn a `text/plain` request into `redirect_uris` or a revocation `token`.
+  Parsers for unrelated routes should be path-scoped. The `mcp-sso/express`
   subpath retains `EXPRESS_OAUTH_BODY_MAX_BYTES` as an exact compatibility alias
   of the shared `OAUTH_POST_BODY_MAX_BYTES` value.
 - **Hono over-cap response and ordering:** a body-bound rejection is direct HTTP
