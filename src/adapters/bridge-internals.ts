@@ -6,11 +6,40 @@ import { OAuthError } from "../errors.ts";
 import { assertAllowedScopesCeiling } from "../scopes.ts";
 import { isBasicAttempt } from "../client-auth.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
-import type { ClockPort } from "../ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "../ports/clock.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
 import { formBodySnapshot, formObject, headerString, isAmbiguousFormContentType, type NormRequest } from "./http.ts";
 import { findRepeatedKeys } from "./authorize-params.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
+import { PortFailureError, callPort } from "../port-failure.ts";
+import { snapshotIdentityResult } from "../port-result.ts";
+
+// Audit is a public security surface. Only fixed reason codes emitted by the
+// shipped identity implementations may cross this boundary; a custom port's
+// arbitrary string collapses to one library-owned code.
+const IDENTITY_FAILURE_REASONS = new Set([
+  "access_jwt_missing", "access_jwt_missing_expiry", "access_jwt_email_not_allowed",
+  "access_jwt_expired", "access_jwt_bad_claim", "access_jwt_unsupported_alg",
+  "access_jwt_unknown_key", "access_jwt_invalid", "access_jwt_verify_failed",
+  "entra_bad_tid", "entra_bad_iss", "entra_bad_aud", "entra_bad_nonce",
+  "entra_missing_iat", "entra_missing_exp", "entra_no_subject", "entra_subject_not_allowed",
+  "entra_groups_overage", "entra_no_groups", "entra_no_mapped_groups", "entra_token_expired",
+  "entra_bad_claim", "entra_unsupported_alg", "entra_unknown_key", "entra_verify_failed",
+  "entra_token_invalid", "entra_id_token_missing",
+  "generic_oidc_bad_iss", "generic_oidc_bad_aud", "generic_oidc_multi_audience",
+  "generic_oidc_missing_exp", "generic_oidc_missing_iat", "generic_oidc_bad_nonce",
+  "generic_oidc_bad_at_hash", "generic_oidc_no_subject", "generic_oidc_subject_not_allowed",
+  "generic_oidc_token_expired", "generic_oidc_bad_claim", "generic_oidc_unsupported_alg",
+  "generic_oidc_unknown_key", "generic_oidc_verify_failed", "generic_oidc_token_invalid",
+  "generic_oidc_id_token_missing", "google_bad_hosted_domain", "google_missing_hosted_domain",
+  "pairing_invalid_input", "pairing_rate_limited", "pairing_no_active_code",
+  "pairing_expired", "pairing_wrong_code",
+]);
+
+export function normalizedIdentityFailureReason(value: unknown): string {
+  return typeof value === "string" && IDENTITY_FAILURE_REASONS.has(value)
+    ? value : "identity_rejected";
+}
 
 export function hasBasicAuthorization(headers: NormRequest["headers"]): boolean {
   return Object.entries(headers).some(([key, raw]) =>
@@ -26,7 +55,7 @@ export async function assertUnambiguousAuthorization(
   if (!ambiguous) return;
   if (grantType === "client_credentials") {
     await writeAuditBestEffort(audit, {
-      occurredAt: new Date(clock.nowMs()).toISOString(), event: "oauth.token.client_credentials",
+      occurredAt: new Date(finiteClockSnapshot(clock)).toISOString(), event: "oauth.token.client_credentials",
       status: "failure", clientId, reason: "invalid_client",
     });
   }
@@ -35,8 +64,9 @@ export async function assertUnambiguousAuthorization(
 
 /** Body of `Bridge.resolveIdentity` (§17.4 item 4 / §17.7). Fail-closed:
  *  `{ ok:false }` ⇒ 401 access_denied DIRECT (redirect_uri is untrusted
- *  pre-validation). A thrown port error propagates RAW so the adapter's
- *  direct-error mapping (HF.1–HF.3) is unchanged. A present-but-malformed
+ *  pre-validation). A thrown OAuthError can select only the fixed rejection
+ *  code and an allowlisted 401/403 status; every other throw is a generic port
+ *  failure. A present-but-malformed
  *  `allowedScopes` ceiling fails CLOSED — it must never widen to full access
  *  (threat-model row 22). An empty array is a valid "entitled to nothing"
  *  ceiling; undefined ⇒ no ceiling (v0.1 behavior). */
@@ -46,14 +76,26 @@ export async function resolveIdentityWithAudit(
 ): Promise<{ subject: string; allowedScopes?: string[] }> {
   let result: IdentityResult;
   try {
-    result = await identity.verify(input);
+    const returned = await callPort("IdentityPort", "verify", () => identity.verify(input));
+    result = await callPort("IdentityPort", "verifyResult", async () => snapshotIdentityResult(returned));
   } catch (error) {
-    await emit("failure", error instanceof OAuthError ? error.code : "internal_error", undefined, ip);
+    const portRejected = error instanceof PortFailureError
+      && error.operation === "verify"
+      && (error.oauthStatusSnapshot === 401 || error.oauthStatusSnapshot === 403);
+    await emit("failure", error instanceof PortFailureError && error.causeIsOAuthError
+      ? "port_error" : "internal_error", undefined, ip);
+    // A deployment port may distinguish authentication-required from a verified
+    // denial with 401/403. Code, description, redirect, and every other status
+    // remain library-owned; a malformed rejection takes the generic 500 path.
+    if (portRejected) {
+      throw new OAuthError("access_denied", "Identity rejected: port_error", error.oauthStatusSnapshot);
+    }
     throw error;
   }
   if (!result.ok) {
-    await emit("failure", result.reason, undefined, ip);
-    throw new OAuthError("access_denied", `Identity rejected: ${result.reason}`, 401);
+    const reason = normalizedIdentityFailureReason(result.reason);
+    await emit("failure", reason, undefined, ip);
+    throw new OAuthError("access_denied", "Identity rejected", 401);
   }
   const subject = result.identity.subject;
   let allowedScopes: string[] | undefined;

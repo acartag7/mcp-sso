@@ -20,6 +20,7 @@ import { OAuthError } from "../errors.ts";
 import { OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, PAIRING_BODY_SINGLETON_PARAM_KEYS, findDuplicatedKeys } from "./authorize-params.ts";
 import { formField, headerString, INVALID_RESOURCE, oauthErrorResponse, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
 import { renderPairingPage } from "./pairing-page.ts";
+import { beginPairingSession, verifyPairingIdentity } from "./pairing-flow-port.ts";
 
 // Pairing keeps its page-specific `form-action`: Continue terminates on this
 // origin. It shares consent's frame protections; its referrer policy differs.
@@ -95,7 +96,12 @@ export async function handlePairingAuthorize(
 
   if (submittedCode) {
     const nonce = formField(body, "pairing_nonce") ?? "";
-    const result = await pairing.verify({ code: submittedCode, nonce, ip: req.ip });
+    let result;
+    try {
+      result = await verifyPairingIdentity(pairing, { code: submittedCode, nonce, ip: req.ip });
+    } catch (error) {
+      return oauthErrorResponse(bridge.config, asOAuth(error));
+    }
     if (result.ok) {
       // bridge.handleAuthorize validates the params and renders the consent page
       // (or returns an OAuth error response if they are invalid — its own try/catch).
@@ -110,15 +116,23 @@ export async function handlePairingAuthorize(
     // Failure: the code may be invalidated (expiry / attempts exhausted), so
     // beginSession() reprints a fresh one when needed; the form round-trips so
     // the operator can retry without losing the OAuth context.
-    const session = await pairing.beginSession();
-    return pairingPage(session, oauthParams, "Invalid or expired pairing code — check the server console and try again.");
+    try {
+      const session = await beginPairingSession(pairing);
+      return pairingPage(session, oauthParams, "Invalid or expired pairing code — check the server console and try again.");
+    } catch (error) {
+      return oauthErrorResponse(bridge.config, asOAuth(error));
+    }
   }
 
   if (lostInvalidResource) return lostResourceResponse(bridge);
   // Initial render. beginSession() generates + prints the code on first need and
   // reuses the live one on repeat visits (one active code per process).
-  const session = await pairing.beginSession();
-  return pairingPage(session, oauthParams);
+  try {
+    const session = await beginPairingSession(pairing);
+    return pairingPage(session, oauthParams);
+  } catch (error) {
+    return oauthErrorResponse(bridge.config, asOAuth(error));
+  }
 }
 
 function formMember(body: unknown, name: string): unknown {

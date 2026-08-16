@@ -8,11 +8,10 @@
 // this contract adds NO new Bridge surface; the composition root passes the
 // SAME instances to both.
 
-import { randomBytes } from "node:crypto";
 import type { Bridge } from "./bridge.ts";
 import type { RedirectIdentityPort } from "../ports/identity.ts";
 import type { StorePort } from "../ports/store.ts";
-import type { ClockPort } from "../ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
@@ -20,18 +19,21 @@ import { AuthConfigError, originOf, pathAfterOrigin } from "../config.ts";
 import { OAuthError } from "../errors.ts";
 import { assertOAuthRedirectEntry } from "../redirect.ts";
 import { pkceChallenge } from "../crypto.ts";
-import { noStoreHeaders, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
+import { noStoreHeaders, queryString, type NormRequest, type NormResponse } from "./http.ts";
 import { redactForStderr } from "../audit/util.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import { resolveUpstreamAuthorizeClient, assertCallbackCimdPolicy } from "./upstream-flow-cimd.ts";
 import { isSchemeShaped } from "../cimd/registration.ts";
 import { resolveOpaqueRedirect } from "../authorize-internals.ts";
+import { normalizedIdentityFailureReason } from "./bridge-internals.ts";
+import { buildUpstreamAuthorizationUrl, exchangeUpstreamIdentity } from "./upstream-flow-port.ts";
+import { consumeConsentJtiSnapshot } from "../port-result.ts";
 import {
-  OAUTH_PARAM_KEYS, OAUTH_SINGLETON_PARAM_KEYS, CALLBACK_DUP_KEYS_EXPORT, assertCallbackPath, resolveCookieProfile,
+  OAUTH_SINGLETON_PARAM_KEYS, CALLBACK_DUP_KEYS_EXPORT, assertCallbackPath, resolveCookieProfile,
   setCookieValue, clearCookieValue, readFlowCookie, flowCookieOversized, signFlowToken,
   verifyFlowToken, timingSafeStringEqual, findDuplicatedKeys, findRepeatedKeys, redirectErrorResponse,
-  directErrorResponse, type FlowClaims,
+  directErrorResponse, gatherOAuthParams, pickOAuthParams, randomFlowToken, type FlowClaims,
 } from "./upstream-flow-internals.ts";
 
 export interface UpstreamFlowDeps {
@@ -121,8 +123,8 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
         redirectUri: presentedRedirect, ip: req.ip,
       });
       const params = gatherOAuthParams(req); // step 4
-      const state = randomToken(), nonce = randomToken(), codeVerifier = randomToken();
-      const jti = `upf_${randomToken()}`;
+      const state = randomFlowToken(), nonce = randomFlowToken(), codeVerifier = randomFlowToken();
+      const jti = `upf_${randomFlowToken()}`;
       const flowJwt = await signFlowToken({
         secret, issuer, clock, callbackPath, jti, state, nonce, codeVerifier, params, ttlSeconds: flowTtlSeconds,
         ...(resolved.registration === undefined ? {} : { cimd: resolved.registration }),
@@ -135,7 +137,9 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
         return directErrorResponse("invalid_request", "request parameters too large");
       }
       await resolved.emitSuccess(); // decision 1b: success only AFTER the oversize guard
-      const location = identity.buildAuthorizationUrl({ state, nonce, codeChallenge: pkceChallenge(codeVerifier), codeChallengeMethod: "S256" });
+      const location = await buildUpstreamAuthorizationUrl(identity, {
+        state, nonce, codeChallenge: pkceChallenge(codeVerifier), codeChallengeMethod: "S256",
+      });
       return { status: 302, headers: noStoreHeaders({ location, "set-cookie": setCookieValue(cookieProfile, flowJwt, flowTtlSeconds) }), redirect: location };
     } catch (error) {
       const mapped = error instanceof OAuthError ? error : new OAuthError("internal_error", "OAuth request failed", 500);
@@ -149,7 +153,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
     const cookiePresent = cookieValue !== undefined;
     const clear = (res: NormResponse): NormResponse => cookiePresent ? { ...res, headers: noStoreHeaders({ ...res.headers, "set-cookie": clearCookieValue(cookieProfile) }) } : res;
     let nowIso: string;
-    try { nowIso = new Date(clock.nowMs()).toISOString(); }
+    try { nowIso = new Date(finiteClockSnapshot(clock)).toISOString(); }
     catch { return clear(directErrorResponse("internal_error", "OAuth request failed", 500)); }
     const finish = async (res: NormResponse, status: AuthAuditStatus, reason: string | undefined, clientId?: string): Promise<NormResponse> => {
       const response = clear(res);
@@ -165,7 +169,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       let claims: FlowClaims;
       try { claims = await verifyFlowToken(cookieValue as string, secret, issuer, callbackPath); } catch { return finish(directErrorResponse("invalid_request", "flow cookie invalid"), "failure", "flow_cookie_invalid"); } // row 3
       clientId = claims.params.client_id;
-      if (claims.exp > 0 && claims.exp * 1000 <= clock.nowMs()) return finish(directErrorResponse("invalid_request", "flow expired"), "failure", "flow_expired", clientId); // row 4
+      if (claims.exp > 0 && claims.exp * 1000 <= finiteClockSnapshot(clock)) return finish(directErrorResponse("invalid_request", "flow expired"), "failure", "flow_expired", clientId); // row 4
       const clientRedirectUri = claims.params.redirect_uri; const clientState = claims.params.state;
       if (!clientRedirectUri) return finish(directErrorResponse("invalid_request", "flow cookie invalid"), "failure", "flow_cookie_invalid");
       try { assertOAuthRedirectEntry(clientRedirectUri); } catch {
@@ -193,7 +197,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
         }
       }
       let firstUse: boolean; // row 6: single-use jti — consumed BEFORE the IdP-error branch and the exchange
-      try { firstUse = await store.consumeConsentJti(claims.jti, new Date(claims.exp * 1000).toISOString()); } catch { return finish(directErrorResponse("internal_error", "OAuth request failed", 500), "failure", "internal_error", clientId); }
+      try { firstUse = await consumeConsentJtiSnapshot(store, claims.jti, new Date(claims.exp * 1000).toISOString()); } catch { return finish(directErrorResponse("internal_error", "OAuth request failed", 500), "failure", "internal_error", clientId); }
       if (!firstUse) return finish(directErrorResponse("invalid_request", "flow already used"), "failure", "flow_replayed", clientId);
       const idpError = queryString(req.query, "error"); // rows 7/8: IdP error params are NEVER echoed
       if (idpError) {
@@ -203,10 +207,14 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       const code = queryString(req.query, "code");
       if (!code) return finish(directErrorResponse("invalid_request", "missing authorization code"), "failure", "missing_code", clientId); // row 9
       let exchange; // rows 10/11: exchange + verify (a throw is always exchange_failed)
-      try { exchange = await identity.exchangeAndVerify({ code, codeVerifier: claims.codeVerifier, nonce: claims.nonce }); } catch (e) { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(e)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
+      try {
+        exchange = await exchangeUpstreamIdentity(identity, {
+          code, codeVerifier: claims.codeVerifier, nonce: claims.nonce,
+        });
+      } catch (e) { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(e)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
       if (!exchange.ok) {
         if (exchange.kind === "exchange_failed") { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(exchange.reason)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
-        await emitIdentityVerify("failure", exchange.reason, undefined);
+        await emitIdentityVerify("failure", normalizedIdentityFailureReason(exchange.reason), undefined);
         return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "access_denied", clientState, "upstream identity verification failed"), "failure", "identity_rejected", clientId); // row 11 (§9.3 extension)
       }
       await emitIdentityVerify("success", undefined, exchange.identity.subject); // identity decision reached
@@ -230,20 +238,4 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
   };
 
   return { handleAuthorize, handleCallback, callbackPath };
-}
-
-function randomToken(): string {
-  return randomBytes(32).toString("base64url");
-}
-
-function gatherOAuthParams(req: NormRequest): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const k of OAUTH_PARAM_KEYS) { const v = k === "resource" ? resourceParam(req.query[k]) : queryString(req.query, k);
-    if (typeof v === "string") out[k] = v; }
-  return out;
-}
-function pickOAuthParams(params: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const k of OAUTH_PARAM_KEYS) { const v = params[k]; if (typeof v === "string") out[k] = v; }
-  return out;
 }

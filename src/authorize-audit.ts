@@ -4,7 +4,7 @@
 // side by side, where the success/failure field sets can be compared directly.
 
 import type { AuditPort } from "./ports/audit.ts";
-import type { ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import { OAuthError } from "./errors.ts";
 import { hostOf } from "./authorize-internals.ts";
 import { writeAuditBestEffort } from "./audit/best-effort.ts";
@@ -23,7 +23,7 @@ export async function writeAuthorizeSuccess(
   audit: AuditPort, clock: ClockPort, event: AuthorizeAuditEvent, r: AuthorizeAuditSuccess,
 ): Promise<void> {
   await writeAuditBestEffort(audit, {
-    occurredAt: new Date(clock.nowMs()).toISOString(), event, status: "success",
+    occurredAt: new Date(finiteClockSnapshot(clock)).toISOString(), event, status: "success",
     clientId: r.clientId, subject: r.subject, resource: r.resource, scopes: r.scopes,
     redirectHost: hostOf(r.redirectUri),
   });
@@ -37,7 +37,7 @@ export async function writeAuthorizeFailure(
   clientId?: string, redirectUri?: string, subject?: string,
 ): Promise<void> {
   await writeAuditBestEffort(audit, {
-    occurredAt: new Date(clock.nowMs()).toISOString(), event, status: "failure",
+    occurredAt: new Date(finiteClockSnapshot(clock)).toISOString(), event, status: "failure",
     clientId, subject, redirectHost: redirectUri ? hostOf(redirectUri) : undefined,
     reason: error instanceof OAuthError ? error.code : "internal_error",
   });

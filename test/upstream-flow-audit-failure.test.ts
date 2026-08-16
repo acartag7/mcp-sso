@@ -61,7 +61,7 @@ test("callback audit boundary preserves callback and identity metadata for a wor
   const identity = events.find((event) => event.event === "identity.verify");
   assert.deepEqual(identity, {
     occurredAt: "2026-08-12T12:00:00.000Z", event: "identity.verify",
-    status: "failure", subject: undefined, reason: "policy_denied", ip: "203.0.113.8",
+    status: "failure", subject: undefined, reason: "identity_rejected", ip: "203.0.113.8",
   });
   const callback = events.find((event) => event.event === "oauth.upstream.callback");
   assert.deepEqual(callback, {

@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { ActiveClientSecrets, ClientSecret } from "./ports/client-store.ts";
-import type { ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import { sha256Hex } from "./crypto.ts";
 import { OAuthError } from "./errors.ts";
 import { isScopeToken, snapshotBoundedScopeList } from "./scopes.ts";
@@ -75,7 +75,9 @@ export function isPositiveInteger(value: number): boolean {
 }
 
 export function epochSeconds(clock: ClockPort): number {
-  return Math.floor(clock.nowMs() / 1000);
+  const epoch = Math.floor(finiteClockSnapshot(clock) / 1000);
+  if (epoch < 0) throw new RangeError("ClockPort timestamp must not precede the Unix epoch for machine-client records");
+  return epoch;
 }
 
 export function mintMachineClientId(): string {

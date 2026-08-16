@@ -8,6 +8,7 @@
 
 import { SignJWT, jwtVerify } from "jose";
 import { parseCimdRegistrationClaim, type CimdRegistration } from "../cimd/registration.ts";
+import { finiteClockSnapshot, type ClockPort } from "../ports/clock.ts";
 
 /** Audience PREFIX for the flow JWT — distinct from `mcp-sso/consent` so a flow
  *  token can never be replayed as a consent token (and vice-versa), even though
@@ -45,7 +46,7 @@ function flowSecret(consentSigningSecret: string): Uint8Array {
 }
 
 export async function signFlowToken(args: {
-  secret: string; issuer: string; clock: { nowMs(): number };
+  secret: string; issuer: string; clock: ClockPort;
   /** This flow's `callbackPath` — binds the token to the flow instance
    *  (§17.11). REQUIRED: defaulting it would silently restore the
    *  deployment-wide audience for any caller that forgot to pass it. */
@@ -56,7 +57,7 @@ export async function signFlowToken(args: {
    *  signing the document would carry attacker-controlled members). */
   cimd?: CimdRegistration;
 }): Promise<string> {
-  const now = Math.floor(args.clock.nowMs() / 1000);
+  const now = Math.floor(finiteClockSnapshot(args.clock, args.ttlSeconds * 1000) / 1000);
   return await new SignJWT({
     jti: args.jti, state: args.state, nonce: args.nonce,
     code_verifier: args.codeVerifier, params: args.params,

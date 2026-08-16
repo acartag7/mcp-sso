@@ -8,6 +8,7 @@ import type { BridgeConfig } from "./config.ts";
 import { originOf } from "./config.ts";
 import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import { OAuthError } from "./errors.ts";
+import { callPort } from "./port-failure.ts";
 import { assertAllowedRedirectUri, assertRedirectAllowedForClient } from "./redirect.ts";
 import { parseAuthorizationClientRegistration } from "./client-registration.ts";
 import type { CimdResolver } from "./cimd/resolve.ts";
@@ -78,7 +79,8 @@ export async function resolveAuthorizeClient(args: {
  *  per-client policy (§10.2); stateless applies the global allowlist (§10.1). */
 export async function resolveOpaqueRedirect(config: BridgeConfig, clientId: string, redirectUri: string): Promise<string> {
   if (config.dcr.mode === "stored") {
-    const stored = await config.dcr.store.find(clientId);
+    const clientStore = config.dcr.store;
+    const stored = await callPort("ClientStore", "find", () => clientStore.find(clientId));
     if (!stored) throw new OAuthError("invalid_client", "Unknown client_id", 401);
     const client = parseAuthorizationClientRegistration(stored, clientId);
     if (!client) throw new OAuthError("invalid_client", "Malformed stored client registration", 401);
@@ -158,7 +160,7 @@ export function approvalCommitClock(clock: ClockPort, codeTtlSeconds: number, in
 }
 
 export function assertConsentUnexpiredAt(expiresAt: string, clock: ClockPort): void {
-  if (expiresAt <= new Date(clock.nowMs()).toISOString()) throw invalidConsent();
+  if (expiresAt <= new Date(finiteClockSnapshot(clock)).toISOString()) throw invalidConsent();
 }
 
 export function redirectWithCode(redirectUri: string, code: string, issuer: string, state?: string): string {

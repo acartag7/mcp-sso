@@ -22,11 +22,62 @@ token emits
 `status: "success", reason: "unrecognized_token"`; a known token, including an
 idempotent re-revocation, emits success without that reason. The adapter returns
 200 in both cases. A store lookup or family-revocation failure emits
-`status: "failure", reason: "internal_error"` before the original error is
-re-thrown for the adapter's existing sanitized §9.5 mapping. Neither event
+`status: "failure", reason: "internal_error"` before a `PortFailureError` is
+thrown in the original's place, for the adapter's existing sanitized §9.5
+mapping. **The value a pluggable port threw is never re-thrown and never
+selects the public response.** A store is caller-supplied code, and `OAuthError`
+is a published export, so a store returning an `OAuthError`-shaped failure would
+otherwise pass `asOAuth` verbatim and its status/message would answer the
+request — breaking RFC 7009's always-200 rule and making the store's internal
+text an oracle on token existence. The re-cast happens at every
+public-response-owning pluggable-port call site (`callPort`), never at the
+use-case catch, because the library's own
+`invalid_grant`/`invalid_client`/`invalid_consent` MUST still reach the client.
+The original is carried on `PortFailureError.cause` for local logging only.
+For response-owning returned data, the boundary includes selected property and
+array-slot reads, not only the awaited method call. Identity results,
+redirect-identity results, authorization-code records, refresh-token records,
+stored-grant scope arrays, console-pairing session/identity results, and the
+upstream consent-JTI boolean are projected or type-checked into library-owned
+values inside `callPort`; an accessor or Proxy
+trap that throws is therefore re-cast before a later OAuth mapper or audit
+classifier can observe it. Plain malformed
+store records fail closed through the existing library-owned grant errors.
+Stored-DCR registration and machine-client rows retain their dedicated
+read-once parsers from §6.4. A stored-DCR `ClientStore.save` outage is audited
+as `internal_error`, never misattributed to invalid client metadata.
+
+**Two ports state their specialized boundary explicitly.** A `ClockPort` whose
+`nowMs()` throws is re-cast to the same
+`RangeError` an out-of-range value produces, so "the clock is unusable" has ONE
+failure shape whatever the port did (§6.1). Every underlying clock read uses
+that boundary; no direct read remains in a use-case, resolver, identity adapter,
+or audit formatter where a port-authored `OAuthError` could select the response.
+An `IdentityPort` that throws an `OAuthError` may preserve only an exact 401 or
+403 status. The Bridge fixes the OAuth code to `access_denied`, the description
+to `Identity rejected: port_error`, and the audit reason to `port_error`; any
+port-supplied redirect is dropped. OAuth classification and the status read are
+snapshotted inside `callPort`; the Bridge never re-reads the caller-owned thrown
+object. An unreadable status and every other status use the generic 500 response;
+a safely classified OAuth throw retains the fixed `port_error` audit reason,
+while a non-OAuth throw audits `internal_error`. A returned `{ ok: false, reason }`
+is the normal shipped rejection path: exact shipped reason codes are allowlisted
+for audit, every unknown custom reason becomes `identity_rejected`, and the
+public description is the fixed `Identity rejected`. Thus a custom port
+cannot turn identity rejection into HTTP 200, invent a public OAuth code, or
+write an arbitrary thrown code into audit. Neither event
 contains the token, its hash, a family identifier, or the thrown value. A
 limiter denial or adapter/body rejection that never enters the revocation
 use-case emits no `oauth.revoke` event.
+
+The redirect sibling applies the same ownership rule. A throw or malformed
+return from `buildAuthorizationUrl` cannot select the direct OAuth response;
+the orchestrator returns its fixed generic 500. `exchangeAndVerify` calls and
+their selected returned fields are contained inside the port boundary, while
+the existing callback contract maps every failure to fixed `exchange_failed`
+or `identity_rejected` channels. Returned identity-rejection reasons use the
+same shipped-code allowlist as `IdentityPort.verify`; unknown custom text never
+becomes audit data.
 
 The reference sinks satisfy the fail-open port contract: their
 `writeAuthEvent` methods do not reject, and `combineAudit` isolates sibling

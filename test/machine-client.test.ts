@@ -193,6 +193,19 @@ test("provision: secretTtlSeconds sets the first secret's expiresAtEpoch", async
   assert.equal(record!.secrets[0]!.expiresAtEpoch, Math.floor(NOW_MS / 1000) + 3600);
 });
 
+test("provision: a canonical pre-epoch clock cannot create a parser-invalid record", async () => {
+  const h = harness();
+  const deps = { ...h.deps, clock: new FakeClock(-1) };
+  await assert.rejects(
+    () => provisionMachineClient(deps, { allowedScopes: ["mcp:read"] }),
+    RangeError,
+  );
+  assert.equal(h.store.createCalls, 0);
+  assert.equal(h.store.clients.size, 0);
+  assert.equal(h.store.mutationAudits.length, 0);
+  assert.equal(h.audit.events.at(-1)?.reason, "internal_error");
+});
+
 test("provision: allowedScopes must be a non-empty subset of the catalog (single tokens)", async () => {
   const h = harness();
   for (const bad of [

@@ -1,8 +1,10 @@
 import type { AuditPort } from "./ports/audit.ts";
-import type { ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { StorePort } from "./ports/store.ts";
 import { sha256Hex } from "./crypto.ts";
 import { writeTokenAudit } from "./token-audit.ts";
+import { callPort } from "./port-failure.ts";
+import { snapshotRefreshTokenRecord } from "./port-result.ts";
 
 interface RevokeDeps {
   store: StorePort;
@@ -13,13 +15,14 @@ interface RevokeDeps {
 
 /** RFC 7009 keeps the response non-oracular while audit distinguishes outage. */
 export async function revokeRefreshToken(deps: RevokeDeps, refreshToken: string | undefined): Promise<void> {
-  const occurredAt = new Date(deps.clock.nowMs()).toISOString();
+  const occurredAt = new Date(finiteClockSnapshot(deps.clock)).toISOString();
   try {
     let revoked = false;
     if (refreshToken) {
-      const existing = await deps.store.findRefreshToken(sha256Hex(refreshToken));
+      const existing = await callPort("StorePort", "findRefreshToken", async () =>
+        snapshotRefreshTokenRecord(await deps.store.findRefreshToken(sha256Hex(refreshToken))));
       if (existing?.resource === deps.resource) {
-        await deps.store.revokeRefreshTokenFamily(existing.familyId, occurredAt, deps.resource);
+        await callPort("StorePort", "revokeRefreshTokenFamily", () => deps.store.revokeRefreshTokenFamily(existing.familyId, occurredAt, deps.resource));
         revoked = true;
       }
     }

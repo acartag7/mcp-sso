@@ -14,8 +14,7 @@
 // NON-GOAL (banner): shared-log pipelines extend the boundary — use a real IdP.
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import type { ClockPort } from "../ports/clock.ts";
-import { SystemClock } from "../ports/clock.ts";
+import { finiteClockSnapshot, SystemClock, type ClockPort } from "../ports/clock.ts";
 import type { AuditPort } from "../ports/audit.ts";
 import { noopAudit } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
@@ -47,7 +46,9 @@ export interface ConsolePairingOptions {
 
 /** A live pairing session: the form nonce + the code's expiry. */
 export interface PairingSession {
+  /** Nonempty form nonce, at most 256 UTF-8 bytes. */
   nonce: string;
+  /** Canonical UTC ISO timestamp with exactly three millisecond digits. */
   expiresAt: string;
 }
 
@@ -132,7 +133,7 @@ export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): 
         await emit("failure", "no_active_code", undefined, ip);
         return { ok: false, reason: "pairing_no_active_code" };
       }
-      if (clock.nowMs() >= active.expiresAtMs) {
+      if (finiteClockSnapshot(clock) >= active.expiresAtMs) {
         active = null;
         await emit("failure", "expired", undefined, ip);
         return { ok: false, reason: "pairing_expired" };
@@ -161,7 +162,7 @@ export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): 
 
   function reusableSession(): PairingSession | null {
     if (!active) return null;
-    if (clock.nowMs() >= active.expiresAtMs) return null;
+    if (finiteClockSnapshot(clock) >= active.expiresAtMs) return null;
     if (active.wrongAttempts >= maxAttempts) return null;
     return { nonce: active.nonce, expiresAt: new Date(active.expiresAtMs).toISOString() };
   }
@@ -169,7 +170,7 @@ export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): 
   async function generateFresh(): Promise<PairingSession> {
     const code = generatePairingCode();
     const nonce = randomBytes(18).toString("base64url");
-    const expiresAtMs = clock.nowMs() + codeTtlSeconds * 1000;
+    const expiresAtMs = finiteClockSnapshot(clock, codeTtlSeconds * 1000) + codeTtlSeconds * 1000;
     // Print BEFORE `active`: a write failure (sync throw OR async reject) must prevent publishing.
     await printBanner(code, expiresAtMs);
     active = { code, nonce, expiresAtMs, wrongAttempts: 0 };
@@ -190,7 +191,7 @@ export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): 
   // fail-open (never rejects, §17.7); awaited so the event orders with the response.
   async function emit(status: "success" | "failure", reason: string | undefined, subj: string | undefined, ip?: string): Promise<void> {
     await writeAuditBestEffort(audit, {
-      occurredAt: new Date(clock.nowMs()).toISOString(),
+      occurredAt: new Date(finiteClockSnapshot(clock)).toISOString(),
       event: "oauth.pairing.attempt",
       status,
       subject: subj,

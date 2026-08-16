@@ -25,6 +25,7 @@ import {
 import { createEntraRedirectIdentity } from "../src/identity/entra-redirect.ts";
 import { entraIssuer } from "../src/identity/entra.ts";
 import { createBridgeConfig, originOf, AuthConfigError, type BridgeConfig } from "../src/config.ts";
+import { OAuthError } from "../src/errors.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import Fastify from "fastify";
@@ -322,6 +323,19 @@ test("authorize: missing client_id => direct 400; bad redirect_uri => direct 4xx
   assert.equal(r2.status, 400); assert.equal(r2.headers["set-cookie"], undefined);
 });
 
+test("authorize: redirect port failures cannot author the direct OAuth response", async () => {
+  const c = config(); const id = fakeIdentity(c);
+  id.identity.buildAuthorizationUrl = () => {
+    throw new OAuthError("tenant_internal", "secret identity detail", 418);
+  };
+  const { flow } = makeFlow(c, id);
+  const response = await flow.handleAuthorize(req(authorizeQuery()));
+  assert.equal(response.status, 500);
+  assert.deepEqual(response.body, { error: "internal_error", error_description: "OAuth request failed" });
+  assert.equal(response.headers.location, undefined);
+  assert.doesNotMatch(JSON.stringify(response), /tenant_internal|secret identity detail/);
+});
+
 test("authorize (stored-DCR): step 3 validates redirect_uri PER-CLIENT (§10.2) before signing the flow cookie — closes the cross-client error-redirect gap", async () => {
   // The callback's redirect-channel errors (rows 7/8/10/11) fire before
   // bridge.handleAuthorize→prepare, so the redirect_uri signed into the flow cookie
@@ -499,15 +513,30 @@ test("callback row 6: consent-JTI store failure clears a readable cookie with no
   assertCookieMutationNoStore(res, "store-failure early return");
 });
 
-test("callback: an unexpected in-handler throw clears a readable cookie with no-store", async () => {
+test("callback row 6: a non-boolean consent-JTI result fails closed before exchange", async () => {
+  class MalformedConsentStore extends MemoryStore {
+    override async consumeConsentJti(): Promise<boolean> { return {} as boolean; }
+  }
+  const c = config(); const id = fakeIdentity(c); const store = new MalformedConsentStore();
+  const { flow, audit } = makeFlow(c, id, { store });
+  const { claims, cookieValue } = await initiate(c, flow);
+  const response = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "unused" }));
+  assert.equal(response.status, 500);
+  assert.equal(audit.callback().at(-1)?.reason, "internal_error");
+  assert.equal(id.exchangeCalls(), 0);
+  assertCookieMutationNoStore(response, "malformed JTI result");
+});
+
+test("callback: a returned identity getter stays in the exchange failure channel", async () => {
   const c = config(); const id = fakeIdentity(c);
   id.set({ ok: true, identity: { get subject(): string { throw new Error("unexpected identity getter"); } } });
   const { flow, audit } = makeFlow(c, id);
   const { claims, cookieValue } = await initiate(c, flow);
   const res = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "code" }));
-  assert.equal(res.status, 500);
-  assert.equal(audit.callback().at(-1)?.reason, "internal_error");
-  assertCookieMutationNoStore(res, "unexpected callback failure");
+  assert.equal(res.status, 302);
+  assert.match(hLoc(res), /error=server_error/);
+  assert.equal(audit.callback().at(-1)?.reason, "exchange_failed");
+  assertCookieMutationNoStore(res, "returned identity getter failure");
 });
 
 test("callback: clock failure before handler work still clears a readable cookie with no-store", async () => {
@@ -628,6 +657,26 @@ test("callback row 10: exchange_failed (non-200/timeout/missing id_token) => 302
   assert.equal(a2.identity().length, 0, "a thrown exchange also reaches no identity decision — no identity.verify");
 });
 
+test("callback row 10: a throwing returned accessor stays in the exchange failure channel", async () => {
+  const c = config(); const id = fakeIdentity(c);
+  id.identity.exchangeAndVerify = async () => new Proxy(
+    { ok: true, identity: { subject: "user-1" } },
+    {
+      get(target, property, receiver) {
+        if (property === "ok") throw new OAuthError("tenant_internal", "secret identity detail", 418);
+        return Reflect.get(target, property, receiver);
+      },
+    },
+  ) as RedirectExchangeResult;
+  const { flow, audit } = makeFlow(c, id);
+  const { claims, cookieValue } = await initiate(c, flow);
+  const response = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "c" }));
+  assert.equal(response.status, 302);
+  assert.match(hLoc(response), /error=server_error/);
+  assert.equal(audit.callback().at(-1)?.reason, "exchange_failed");
+  assert.doesNotMatch(audit.json(), /tenant_internal|secret identity detail/);
+});
+
 test("callback row 11: identity_rejected => 302 access_denied + identity.verify failure (with the port reason)", async () => {
   const c = config(); const id = fakeIdentity(c);
   id.set({ ok: false, kind: "identity_rejected", reason: "entra_bad_nonce" });
@@ -643,6 +692,17 @@ test("callback row 11: identity_rejected => 302 access_denied + identity.verify 
   const idv = audit.identity().at(-1);
   assert.equal(idv?.status, "failure");
   assert.equal(idv?.reason, "entra_bad_nonce", "the port's reason lands in identity.verify");
+});
+
+test("callback row 11: a custom redirect-identity reason cannot inject audit content", async () => {
+  const c = config(); const id = fakeIdentity(c);
+  id.set({ ok: false, kind: "identity_rejected", reason: "tenant_alice_at_corp_finance" });
+  const { flow, audit } = makeFlow(c, id);
+  const { claims, cookieValue } = await initiate(c, flow);
+  const response = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "c" }));
+  assert.equal(response.status, 302);
+  assert.equal(audit.identity().at(-1)?.reason, "identity_rejected");
+  assert.doesNotMatch(audit.json(), /tenant_alice/);
 });
 
 test("callback rows 12/13: success => 200 consent page + identity.verify success + oauth.upstream.callback success", async () => {

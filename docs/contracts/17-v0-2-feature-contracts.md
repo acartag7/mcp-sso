@@ -1027,6 +1027,18 @@ bounded rather than open-ended.
 
 ## 17.2 `client_credentials` grant (MCP extension `io.modelcontextprotocol/oauth-client-credentials`)
 
+**Admin-API error boundary (0.3.6).** `provisionMachineClient`,
+`rotateMachineClientSecret`, and `disableMachineClient` return the underlying
+`ClientStore` error to their DIRECT caller by design. These are administrative
+APIs, not endpoints: the library never turns them into an HTTP response, and the
+operator invoking one needs the store's actual cause to diagnose a failed
+provision. That is the opposite of the `/oauth/revoke` rule in §13, and
+deliberately so — there the library owns the response.
+
+**A host that exposes machine-client lifecycle over HTTP MUST map these to a
+sanitized response itself.** The library makes no guarantee at that boundary,
+and a store's message reaching an admin surface is the host's to prevent.
+
 > **SHIPPED.** S3a (PR #16, `0589ed3`) shipped the machine-client records +
 > out-of-band provisioning/rotation primitives + the timing-safe `verify` and
 > the boot/config/DCR/redirect guards. S3b ships the `/oauth/token` grant itself:
@@ -1556,6 +1568,15 @@ gate replaces no-gate).
   success); invalidated by expiry (600 s) or by `maxAttempts` (5) wrong
   submissions, after which the next request prints a fresh code. **Never
   persisted** — process-memory only; restart = clean slate (fail-closed).
+- **Port failure boundary:** `handlePairingAuthorize` invokes both
+  `beginSession()` and `verify()` through `callPort` and selects every returned
+  field before that boundary closes. A session result must contain a nonempty
+  nonce of at most 256 UTF-8 bytes and a canonical UTC expiry with exactly three
+  millisecond digits; the identity result uses the same known-field snapshot as
+  `Bridge.resolveIdentity`. A direct throw, accessor/Proxy trap, or malformed
+  return becomes a fixed direct 500 `internal_error` `NormResponse` before any
+  later pairing or Bridge effect. Port-owned OAuth code, description, status,
+  redirect, reason, and object identity never reach the response.
 - **Session binding:** the code is single-use and bound to the pairing *session*
   (a random nonce in the form) and to the operator who pastes it — not to the
   specific OAuth request parameters (`client_id`, `redirect_uri`, `scope`, …),

@@ -2,7 +2,7 @@
 // requests/responses (contracts §9.6). Each fastify/express/hono adapter is a thin
 // mapper; the adapter resolves the subject before calling handleAuthorize.
 import type { BridgeConfig } from "../config.ts";
-import type { ClockPort } from "../ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "../ports/clock.ts";
 import type { AuditPort, AuthAuditStatus } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
@@ -155,8 +155,9 @@ export class Bridge {
   /** Resolve a verified identity via the IdentityPort and emit the identity.verify
    *  audit event (§17.4 item 4 / §17.7). Fail-closed: { ok:false } ⇒ 401
    *  access_denied DIRECT (redirect_uri is untrusted pre-validation). A thrown
-   *  error propagates RAW so the adapter's direct-error mapping (HF.1–HF.3,
-   *  redirect stripped, no internal leak) is unchanged. The port's `reason` is
+   *  OAuthError can select only an allowlisted 401/403 rejection status; its
+   *  code, description, and redirect are replaced. Every other throw becomes
+   *  a generic 500 through the direct-error mapping. The port's returned `reason` is
    *  carried as the audit reason (Entra-specific reasons land in S2b). The
    *  console-pairing path does NOT use this — it emits oauth.pairing.attempt.
    *  A present-but-malformed or over-bound allowedScopes ceiling (non-array /
@@ -174,7 +175,7 @@ export class Bridge {
     await this.guard("authorize", ip);
   }
   private async emitIdentityVerify(status: AuthAuditStatus, reason: string | undefined, subject: string | undefined, ip: string | undefined): Promise<void> {
-    await writeAuditBestEffort(this.audit, { occurredAt: new Date(this.clock.nowMs()).toISOString(), event: "identity.verify", status, subject, reason, ip });
+    await writeAuditBestEffort(this.audit, { occurredAt: new Date(finiteClockSnapshot(this.clock)).toISOString(), event: "identity.verify", status, subject, reason, ip });
   }
 
   async handleApprove(req: NormRequest): Promise<NormResponse> {

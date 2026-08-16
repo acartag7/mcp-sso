@@ -12,6 +12,7 @@ import { createBridgeConfig } from "../../src/config.ts";
 import { pkceChallenge } from "../../src/crypto.ts";
 import { OAuthError, withRedirect } from "../../src/errors.ts";
 import type { AuditPort, AuthAuditEvent } from "../../src/ports/audit.ts";
+import type { ClockPort } from "../../src/ports/clock.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
 import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
@@ -33,6 +34,7 @@ class MemoryAudit implements AuditPort {
 function makeBridge(
   rateLimit?: RateLimitPort,
   audit: AuditPort = new MemoryAudit(),
+  clock: ClockPort = new FakeClock(NOW_MS),
   store = new MemoryStore(),
 ): Bridge {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -45,7 +47,7 @@ function makeBridge(
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   return new Bridge({
-    config, store, clock: new FakeClock(NOW_MS), audit,
+    config, store, clock, audit,
     ...(rateLimit === undefined ? {} : { rateLimit }),
   });
 }
@@ -186,7 +188,7 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       return originalFind(tokenHash);
     };
     const audit = new MemoryAudit();
-    const client = await mount(makeBridge(undefined, audit, store), stubIdentity);
+    const client = await mount(makeBridge(undefined, audit, undefined, store), stubIdentity);
     const body = "token=rt_must_not_be_parsed";
     try {
       const unsupported = await client.requestOccurrences(
@@ -224,32 +226,41 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       const body = JSON.parse(auth.body);
       assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"], "RFC 6749 §5.2 shape only");
       assert.equal(body.error, "access_denied");
-      assert.equal(typeof body.error_description, "string");
-      assert.ok(body.error_description.length > 0);
+      assert.equal(body.error_description, "Identity rejected");
     } finally {
       await client.close?.();
     }
   });
 
-  test(`${name} adapter: identity throws OAuthError ⇒ same 401 access_denied body`, async () => {
-    // verification.md T1.HF.2: IdentityPort.verify() throws an OAuthError. Must
-    // surface identically to the { ok:false } path — direct 401 with the §9.5
-    // body — not a framework-shaped response.
-    const throwing: IdentityPort = { async verify() { throw new OAuthError("access_denied", "identity blocked", 401); } };
-    const client = await mount(makeBridge(), throwing);
-    try {
-      const auth = await client.get(`/oauth/authorize?${new URLSearchParams({
-        response_type: "code", client_id: "anything", redirect_uri: REDIRECT,
-        code_challenge: pkceChallenge("correct-horse-battery-staple-0123"), code_challenge_method: "S256", scope: "mcp:read",
-      })}`, { [IDENTITY_HEADER]: "anything" });
-      assert.equal(auth.status, 401);
-      assert.equal(auth.headers.location, undefined);
-      const body = JSON.parse(auth.body);
-      assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
-      assert.equal(body.error, "access_denied");
-      assert.equal(body.error_description, "identity blocked");
-    } finally {
-      await client.close?.();
+  test(`${name} adapter: identity OAuthError cannot author code, body, redirect, or arbitrary status`, async () => {
+    // HF.2: only 401/403 rejection status survives. Code, description, redirect,
+    // and every other status are library-owned.
+    for (const [portStatus, expectedStatus, expectedCode] of [
+      [401, 401, "access_denied"],
+      [403, 403, "access_denied"],
+      [200, 500, "internal_error"],
+    ] as const) {
+      const throwing: IdentityPort = {
+        async verify() { throw new OAuthError("tenant_alice_at_corp_finance", "alice@corp not in group Finance", portStatus); },
+      };
+      const client = await mount(makeBridge(), throwing);
+      try {
+        const auth = await client.get(`/oauth/authorize?${new URLSearchParams({
+          response_type: "code", client_id: "anything", redirect_uri: REDIRECT,
+          code_challenge: pkceChallenge("correct-horse-battery-staple-0123"), code_challenge_method: "S256", scope: "mcp:read",
+        })}`, { [IDENTITY_HEADER]: "anything" });
+        assert.equal(auth.status, expectedStatus);
+        assert.equal(auth.headers.location, undefined);
+        const body = JSON.parse(auth.body);
+        assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
+        assert.equal(body.error, expectedCode);
+        if (expectedStatus !== 500) assert.equal(body.error_description, "Identity rejected: port_error");
+        assert.ok(!auth.body.includes("tenant_alice"), "the port's code must never reach the client");
+        assert.ok(!auth.body.includes("alice@corp"), "the port's text must never reach the client");
+        assert.ok(!auth.body.includes("Finance"), "nor the group it named");
+      } finally {
+        await client.close?.();
+      }
     }
   });
 
@@ -272,7 +283,7 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       const body = JSON.parse(auth.body);
       assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
       assert.equal(body.error, "access_denied");
-      assert.equal(body.error_description, "identity blocked");
+      assert.equal(body.error_description, "Identity rejected: port_error");
       assert.ok(!auth.body.includes("evil.test"));
     } finally {
       await client.close?.();
@@ -299,6 +310,25 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       assert.equal(body.error, "internal_error");
       assert.equal(typeof body.error_description, "string");
       assert.ok(!JSON.stringify(body).includes(secret), "thrown message must not leak into the response");
+    } finally {
+      await client.close?.();
+    }
+  });
+
+  test(`${name} adapter: identity-audit ClockPort failure cannot select the public response`, async () => {
+    const secret = "CLOCK_SHARD_INTERNAL_DETAIL";
+    const clock: ClockPort = {
+      nowMs() { throw new OAuthError("invalid_token", secret, 401); },
+    };
+    const client = await mount(makeBridge(undefined, new MemoryAudit(), clock), stubIdentity);
+    try {
+      const auth = await client.get("/oauth/authorize", { [IDENTITY_HEADER]: STUB_TOKEN });
+      assert.equal(auth.status, 500);
+      const body = JSON.parse(auth.body);
+      assert.deepEqual(Object.keys(body).sort(), ["error", "error_description"]);
+      assert.equal(body.error, "internal_error");
+      assert.ok(!auth.body.includes("invalid_token"));
+      assert.ok(!auth.body.includes(secret));
     } finally {
       await client.close?.();
     }

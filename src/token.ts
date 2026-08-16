@@ -13,6 +13,8 @@ import { isBasicAttempt, parseBasicAuth } from "./client-auth.ts";
 import { writeTokenAudit } from "./token-audit.ts";
 import { revokeRefreshToken } from "./token-revoke.ts";
 import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
+import { callPort } from "./port-failure.ts";
+import { rotateRefreshTokenSnapshot, snapshotAuthCodeRecord } from "./port-result.ts";
 export interface OAuthTokenDeps {
   config: BridgeConfig;
   store: StorePort;
@@ -88,12 +90,12 @@ export class OAuthTokenUseCase {
       const familyId = parseRefreshFamilyId(refreshToken);
       if (!familyId) throw new OAuthError("server_error", "Refresh token generation failed", 500);
       const prepared = await this.tokenResponse(record, refreshToken, operationClock);
-      await this.store.saveRefreshToken({
+      await callPort("StorePort", "saveRefreshToken", () => this.store.saveRefreshToken({
         tokenHash: sha256Hex(refreshToken), familyId, previousTokenHash: null,
         clientId: record.clientId, subject: record.subject, resource: record.resource, scopes: prepared.scopes,
         expiresAt: expiresAtIso(operationClock, this.config.refreshTokenTtlSeconds),
         grantGeneration: record.grantGeneration,
-      });
+      }));
       await this.auditToken("oauth.token.authorization_code", "success", record, operationClock);
       return prepared.response;
     } catch (error) {
@@ -112,18 +114,12 @@ export class OAuthTokenUseCase {
       if (!familyId) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       const nextRaw = generateRefreshToken(familyId);
       const previousHash = sha256Hex(raw);
-      const rotatedAtIso = new Date(operationClock.nowMs()).toISOString();
-      const rotated = await this.store.rotateRefreshToken(
-        previousHash,
-        {
-          tokenHash: sha256Hex(nextRaw), familyId, previousTokenHash: previousHash,
-          clientId: input.clientId ?? "", subject: "", resource: this.config.resource, scopes: [],
-          expiresAt: expiresAtIso(operationClock, this.config.refreshTokenTtlSeconds),
-        },
-        rotatedAtIso,
-        expectedStoredDcrGrantGeneration(this.config),
-        this.config.resource,
-      );
+      const rotatedAtIso = new Date(finiteClockSnapshot(operationClock)).toISOString();
+      const rotated = await rotateRefreshTokenSnapshot(this.store, previousHash, {
+        tokenHash: sha256Hex(nextRaw), familyId, previousTokenHash: previousHash,
+        clientId: input.clientId ?? "", subject: "", resource: this.config.resource, scopes: [],
+        expiresAt: expiresAtIso(operationClock, this.config.refreshTokenTtlSeconds),
+      }, rotatedAtIso, expectedStoredDcrGrantGeneration(this.config), this.config.resource, familyId);
       if (!rotated) throw new OAuthError("invalid_grant", "Refresh token is invalid");
       try {
         if (!hasExpectedGrantGeneration(rotated, expectedStoredDcrGrantGeneration(this.config)) || rotated.resource !== this.config.resource) throw new OAuthError("invalid_grant", "Refresh token is invalid");
@@ -135,7 +131,7 @@ export class OAuthTokenUseCase {
         return prepared.response;
       } catch (error) {
         // Preparation stays after replay-authoritative rotation; failures revoke its unreturned successor.
-        await this.store.revokeRefreshTokenFamily(familyId, rotatedAtIso);
+        await callPort("StorePort", "revokeRefreshTokenFamily", () => this.store.revokeRefreshTokenFamily(familyId, rotatedAtIso));
         throw error;
       }
     } catch (error) {
@@ -177,13 +173,13 @@ export class OAuthTokenUseCase {
       if (input.resource !== undefined && input.resource !== this.config.resource) throw new OAuthError("invalid_target", "resource does not match the configured resource");
       const accessToken = await signAccessToken({ subject: clientId, clientId, scopes, machine: true }, this.config, operationClock);
       await writeTokenAudit(this.audit, {
-        occurredAt: new Date(operationClock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "success",
+        occurredAt: new Date(finiteClockSnapshot(operationClock)).toISOString(), event: "oauth.token.client_credentials", status: "success",
         clientId, subject: clientId, scopes, resource: this.config.resource,
       });
       return { access_token: accessToken, token_type: "Bearer", expires_in: this.config.accessTokenTtlSeconds, scope: scopeString(scopes) };
     } catch (error) {
       await writeTokenAudit(this.audit, {
-        occurredAt: new Date(operationClock.nowMs()).toISOString(), event: "oauth.token.client_credentials", status: "failure",
+        occurredAt: new Date(finiteClockSnapshot(operationClock)).toISOString(), event: "oauth.token.client_credentials", status: "failure",
         clientId, reason: error instanceof OAuthError ? error.code : "internal_error",
       });
       throw error;
@@ -200,7 +196,10 @@ export class OAuthTokenUseCase {
 
   private async consumeValidCode(input: AuthorizationCodeGrantInput, clock: ClockPort): Promise<AuthCodeRecord> {
     const code = requiredStr(input.code, "code"), expected = expectedStoredDcrGrantGeneration(this.config);
-    const record = await this.store.consumeAuthCode(sha256Hex(code), new Date(clock.nowMs()).toISOString(), expected, this.config.resource);
+    const record = await callPort("StorePort", "consumeAuthCode", async () =>
+      snapshotAuthCodeRecord(await this.store.consumeAuthCode(
+        sha256Hex(code), new Date(finiteClockSnapshot(clock)).toISOString(), expected, this.config.resource,
+      )));
     if (!record || !hasExpectedGrantGeneration(record, expected) || record.resource !== this.config.resource) throw new OAuthError("invalid_grant", "Authorization code is invalid");
     const redirectUri = record.redirectUri;
     try { assertOAuthRedirectEntry(redirectUri); } catch { throw new OAuthError("invalid_grant", "Authorization code is invalid"); }
@@ -223,14 +222,14 @@ export class OAuthTokenUseCase {
   }
   private async auditToken(event: "oauth.token.authorization_code" | "oauth.token.refresh", status: "success", record: AuthCodeRecord | RefreshTokenRecord, clock: ClockPort): Promise<void> {
     await writeTokenAudit(this.audit, {
-      occurredAt: new Date(clock.nowMs()).toISOString(), event, status,
+      occurredAt: new Date(finiteClockSnapshot(clock)).toISOString(), event, status,
       clientId: record.clientId, subject: record.subject, resource: this.config.resource, scopes: record.scopes,
     });
   }
 
   private async auditFailure(event: "oauth.token.authorization_code" | "oauth.token.refresh", error: unknown, clientId: string | undefined, clock: ClockPort): Promise<void> {
     await writeTokenAudit(this.audit, {
-      occurredAt: new Date(clock.nowMs()).toISOString(), event, status: "failure",
+      occurredAt: new Date(finiteClockSnapshot(clock)).toISOString(), event, status: "failure",
       clientId, reason: error instanceof OAuthError ? error.code : "internal_error",
     });
   }

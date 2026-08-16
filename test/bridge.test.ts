@@ -11,6 +11,7 @@ import { handlePairingAuthorize } from "../src/adapters/pairing-flow.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import type { ConsolePairingIdentity } from "../src/identity/console-pairing.ts";
 import { generateRefreshToken, parseRefreshFamilyId, pkceChallenge, sha256Hex } from "../src/crypto.ts";
+import { OAuthError } from "../src/errors.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { STORE_EXPIRY_SWEEP_INTERVAL_MS } from "../src/store/expiry-scheduler.ts";
 
@@ -145,6 +146,32 @@ test("bridge: handleRevoke maps an unexpected store throw to the §9.5 500 body 
   // RFC 7009 semantics unchanged by the catch: an unrecognized token is still 200.
   const unrecognized = await setup().bridge.handleRevoke(req({ body: { token: "rt_unknown" } }));
   assert.equal(unrecognized.status, 200);
+});
+
+test("bridge: a hostile ClockPort cannot select register or revoke responses", async () => {
+  const secret = "CLOCK_SHARD_INTERNAL_DETAIL";
+  const clock: ClockPort = {
+    nowMs() { throw new OAuthError("invalid_token", secret, 401); },
+  };
+  const store = new MemoryStore();
+  let refreshLookups = 0;
+  store.findRefreshToken = async () => { refreshLookups += 1; return null; };
+  const audit = new MemoryAudit();
+  const bridge = new Bridge({ config: config(), store, clock, audit });
+
+  const register = await bridge.handleRegister(req({ body: { redirect_uris: [REDIRECT] } }));
+  const revoke = await bridge.handleRevoke(req({ body: { token: "rt_unknown" } }));
+
+  for (const response of [register, revoke]) {
+    assert.equal(response.status, 500);
+    assert.deepEqual(response.body, {
+      error: "internal_error",
+      error_description: "OAuth request failed",
+    });
+    assert.ok(!JSON.stringify(response.body).includes(secret));
+  }
+  assert.equal(refreshLookups, 0, "clock rejection precedes revoke store work");
+  assert.deepEqual(audit.events, [], "no canonical timestamp means no fabricated audit event");
 });
 
 test("bridge: revoke-family store failure keeps the 500 mapping and emits a failure audit", async () => {
