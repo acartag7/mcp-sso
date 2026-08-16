@@ -99,6 +99,142 @@ First pass: **7/9 (78%)**. After naming “re-parse ≠ new
 policy” (M2) and “live object to transport ≠ snapshot” (M5):
 **9/9**. Frozen `class-closed` still PASS on the same skill.
 
+## Model bakeoff (2026-08-16)
+
+Same isolated recipe as r5. Five runners.
+Frozen suite = skill calibration (does the method hold).
+Live suite = the bakeoff (does the runner close leftover
+siblings on real hosted-review SHAs). Grade with the frozen
+graders / live gold cells, not the `VERDICT` line alone.
+
+Do not treat `/tmp/ccr-bakeoff/` as durable.
+
+### Runners
+
+| Label | Invocation | Effort |
+|---|---|---|
+| GLM 5.3 | local `glmcode` alias → `claude -p --model glm-5.3[1m]` (z.ai Anthropic-compatible). Claude Code may print `unrecognized_model`; the alias still serves GLM 5.3. Do not wrap the alias in `/usr/bin/time` — `time` cannot see a shell alias. | high |
+| Opus 5 | `claude -p --model claude-opus-5` | high |
+| Terra xhigh | `codex exec --ephemeral -C /tmp/ccr-iso-empty -s read-only --skip-git-repo-check -m gpt-5.6-terra -c 'model_reasoning_effort="xhigh"'` | xhigh |
+| Sol medium | same Codex flags, `-m gpt-5.6-sol -c 'model_reasoning_effort="medium"'` | medium |
+| Grok 4.6 | `grok --cwd /tmp/ccr-iso-empty -m grok-4.6 --effort high --permission-mode dontAsk --disable-web-search --no-subagents --tools "" --prompt-file …` | high |
+
+Shared isolation: empty `/tmp/ccr-iso-empty` (no `.git`, no
+`CLAUDE.md`, no `AGENTS.md`, no `.claude`). Skill + matrices +
+output contract inlined. `--tools ""`. `--setting-sources user`
+and `--no-session-persistence` on Claude. Codex inlines the
+skill in the user prompt (`codex -p` is a profile flag, not
+prompt mode). `claude -p --bare` still unused (skips keychain
+login here).
+
+Opus 5 often writes `VERDICT: **FAIL**` (markdown bold).
+Graders must accept that form.
+
+### Combined score
+
+| Runner | Frozen 7 | Live 9 | Combined | Live median | Live mean |
+|---|---|---|---|---:|---:|
+| Sol medium | 7/7 | **9/9** | **16/16** | 49s | 50s |
+| Terra xhigh | 7/7 | **9/9** | **16/16** | 83s | 70s |
+| Opus 5 | 7/7 | **9/9** | **16/16** | 133s | 127s |
+| Grok 4.6 | 7/7 | **9/9** | **16/16** | 168s | 166s |
+| GLM 5.3 | 7/7 | **7/9** | **14/16** | 181s | 174s |
+
+The frozen suite does **not** separate these runners. All five
+scored 7/7, including the closed-class control (P3 nits only,
+no invented P1/P2). Use the live leftover-sibling heads to
+pick a model.
+
+### What to run locally
+
+- **Default class-closure pass:** Sol medium. It is the only
+  16/16 runner under a minute a case.
+- **Cross-family check before Codex:** Opus 5, Terra xhigh, or
+  Grok 4.6. All three closed every live leftover cell. Terra
+  is the fastest of that set; Grok is the slowest.
+- **Do not use GLM 5.3 as the only local reviewer.** It
+  passed the synthetic suite and seven live heads, then
+  PASSed the two leftover-sibling shapes this skill exists
+  to catch. Those misses match the first Opus 4.8 live pass
+  *before* the M5 wording, and the "factory path is clean so
+  the public constructor is P3" pattern.
+
+### Live leftover-sibling matrix
+
+Gold = Codex inline on that SHA. `hit` = FAIL and names the
+gold cell. `miss` = PASS or wrong cell.
+
+| Case | PR / SHA | Gold | GLM 5.3 | Opus 5 | Terra | Sol | Grok 4.6 |
+|---|---|---|---|---|---|---|---|
+| pr243-wrap-siblings | #243 `62fff35bc8` | M1 | hit | hit | hit | hit | hit |
+| pr183-stored-loopback | #183 `e4c2b2e1ed` | M2 | hit | hit | hit | hit | hit |
+| pr188-prefix-after-ddl | #188 `aac04ec385` | M6 | hit | hit | hit | hit | hit |
+| pr190-guard-after-open | #190 `9b0cdb7f16` | M4 | hit | hit | hit | hit | hit |
+| pr187-header-snapshot | #187 `491235a4c4` | M5 | **PASS (miss)** | hit | hit | hit | hit |
+| pr227-sqlite-scheduler | #227 `91208db69d` | M1/M4 | **PASS (miss)** | hit | hit | hit | hit |
+| pr231-leftover-empty | #231 `67204411b2` | M3 | hit | hit | hit | hit | hit |
+| pr140-leftover-guest | #140 `172a2415cb` | M3 | hit | hit | hit | hit | hit |
+| pr224-dup-content-type | #224 `12e38cf408` | M5 | hit | hit | hit | hit | hit |
+
+### GLM 5.3 misses (the bakeoff findings)
+
+Both misses are the skill's unit of work: the named instance
+looks closed, the class is not. GLM wrote the sibling as a
+P3 and PASSed.
+
+**pr187 — live object ≠ snapshot (M5).** Gold: `this.headers`
+is passed into `fetchImpl` and reread at catch time for the
+scrub list; a transport that mutates the object can drop the
+secret from redaction. GLM treated the constructor
+`{ ...options.headers }` spread as closing the class, then
+downgraded the live `this.headers` alias to P3 ("latent;
+default `fetch` does not mutate; custom `fetchImpl` is
+deployer-trusted"). Opus 5 / Terra / Sol / Grok 4.6 FAILed
+the same lines as an open M5 cell. This is the same miss as
+the first isolated live pass on this SHA, which forced skill
+tweak 5.
+
+**pr227 — public constructor vs factory path (M1/M4).** Gold:
+MySQL now arms the expiry scheduler after migrate; SQLite
+still constructs `StoreExpiryScheduler` in a field
+initializer, so `new SqliteStore` starts collection without
+a migrate gate. GLM closed the class on the two factory
+paths that migrate first, and called the public constructor
+P3 ("invariant held by call-site convention… no violating
+path visible in this excerpt"). The other four FAILed
+`src/store/sqlite.ts:30` as the empty sibling of the MySQL
+fix. The implementer claim was "expiry collection is safe,"
+not "the shown factories migrate first."
+
+### Frozen suite (all 7/7, wall time)
+
+| Runner | leftover | one-call | stored | guard | name | starter | control | median |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| GLM 5.3 | 142s | 56s | 95s | 128s | 165s | 93s | 98s | 98s |
+| Opus 5 | 93s | 78s | 90s | 72s | 112s | 100s | 115s | 93s |
+| Terra xhigh | 31s | 41s | 46s | 111s | 54s | 52s | 62s | 52s |
+| Sol medium | 33s | 32s | 31s | 49s | 48s | 37s | 47s | 37s |
+| Grok 4.6 | 108s | 96s | 93s | 120s | 124s | 104s | 181s | 108s |
+
+### Live suite wall time
+
+| Runner | #243 | #183 | #188 | #190 | #187 | #227 | #231 | #140 | #224 | median |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| GLM 5.3 | 151s | 197s | 190s | 239s | 188s | 129s | 181s | 117s | 174s | 181s |
+| Opus 5 | 119s | 146s | 161s | 140s | 133s | 79s | 152s | 95s | 116s | 133s |
+| Terra xhigh | 55s | 89s | 88s | 97s | 93s | 54s | 83s | 36s | 37s | 83s |
+| Sol medium | 51s | 69s | 67s | 49s | 53s | 37s | 42s | 36s | 48s | 49s |
+| Grok 4.6 | 160s | 168s | 216s | 221s | 165s | 133s | 169s | 93s | 168s | 168s |
+
+### What this bakeoff is not
+
+A claim that Sol medium is the best reviewer in general.
+It is the fastest runner that closed every leftover-sibling
+cell in *this* skill's live gold set. Hosted Codex remains
+the merge-gate reviewer. A new leftover sibling after a
+CLEAN from one of the 16/16 runners should be frozen the
+same day.
+
 ## What this is not
 
 A full-tree `git switch --detach` with tools. These are

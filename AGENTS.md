@@ -171,6 +171,9 @@ That skill is how items 1–4 above are executed: fill the matrices, empty
 cell = do not push, do not re-request Codex. A follow-up PR that is only
 the next sibling of the last merge is a miss of that skill — freeze it
 as an eval case the same day.
+Measured runner bakeoff (Sol medium default; do not use
+GLM 5.3 alone):
+[evals/RESULTS.md](.claude/skills/class-closure-review/evals/RESULTS.md).
 
 ## Verify before claiming done
 

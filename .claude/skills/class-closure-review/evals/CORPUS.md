@@ -34,7 +34,12 @@ Interactive: fresh session, this skill active. Paste
 Live SHA check (2026-08-16): nine first leftover-sibling
 rounds scored against the Codex inline on that SHA. First
 isolated pass 7/9; after the M2/M5 clarifications, 9/9.
-Method and table: `evals/RESULTS.md`.
+
+Five-runner bakeoff on those same heads (2026-08-16):
+Opus 5, Terra xhigh, Sol medium, and Grok 4.6 are 9/9.
+GLM 5.3 is 7/9 — it PASSed #187 (live `this.headers` as
+snapshot) and #227 (public `SqliteStore` constructor as
+P3). Method, matrix, and miss write-ups: `evals/RESULTS.md`.
 
 ## Other repos
 
