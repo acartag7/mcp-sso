@@ -10,8 +10,9 @@
   **error-redirect semantics** (post-validation errors redirect to
   `redirect_uri?error=…&state=…`; pre-validation errors never do) and §6 refresh
   client-binding.
-- **RFC 7009** — Token revocation; the endpoint always returns 200 and treats an
-  unknown token as a no-op.
+- **RFC 7009** — Token revocation; admitted unknown and already-revoked tokens
+  return 200 as no-ops without exposing token existence. Unexpected operational
+  failures retain the generic server-error channel.
 - **RFC 6750** — Bearer token use; `scope`/`error` in `WWW-Authenticate`.
 - **RFC 8707** — Resource Indicators; **audience is fail-closed** (a token
   without a matching `aud` is rejected).

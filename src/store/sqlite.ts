@@ -5,9 +5,8 @@ import type { ClockPort } from "../ports/clock.ts";
 import type {
   AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
-import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
-  grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
+import { STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
+  assertRefreshResource, grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
@@ -133,10 +132,11 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
     });
   }
 
-  async revokeRefreshTokenFamily(familyId: string, revokedAtIso: string): Promise<void> {
+  async revokeRefreshTokenFamily(familyId: string, revokedAtIso: string, expectedResource?: string): Promise<void> {
     this.ensureOpen();
     assertUtcIsoTimestamp(revokedAtIso, "revokedAtIso");
-    this.transaction(() => revokeFamily(this.db, familyId, revokedAtIso));
+    if (expectedResource !== undefined) assertRefreshResource(expectedResource, "expectedResource");
+    this.transaction(() => revokeFamily(this.db, familyId, revokedAtIso, expectedResource));
   }
 
   async findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {
