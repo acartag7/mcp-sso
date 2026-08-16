@@ -154,6 +154,16 @@ ignores the added argument cannot mint a wrong-resource token. The optional
 trailing argument preserves calls that do not yet supply a resource, but legacy
 durable rows without one still fail closed under §12.
 
+**Explicit family-revocation resource predicate.**
+`revokeRefreshTokenFamily` accepts an optional trailing `expectedResource`.
+When supplied, a conforming store changes the family only when its stored
+resource is an exact match inside the same atomic update. `OAuthTokenUseCase.revoke`
+first checks the found token record against `BridgeConfig.resource`, then supplies
+that resource to the store mutation. A missing, legacy, or different resource is
+handled exactly like an unrecognized token: HTTP 200 with no durable mutation.
+Callers that omit the argument retain the replay/compensation behavior for a
+family already selected by a resource-bound rotation.
+
 The TypeScript write shape requires an exact resource string. To keep an old
 untyped JavaScript caller from silently acquiring the current bridge resource,
 reference stores convert an omitted write member to the reserved unbound marker
@@ -533,7 +543,8 @@ traffic is attributed to one IP and the limiter is ineffective.
 attacker-controlled header must not select the rate-limit bucket
 (bucket-per-request = limiter bypass) or forge the audit `ip`. Without
 `clientIp`, requests carry no IP: the limiter keys everything into the one
-shared `unknown` bucket (collectively throttled, never bypassable) and audit
-events omit `ip`. A deployer behind a trusted proxy supplies an extractor
-wired to their actual topology (e.g. the rightmost trusted `X-Forwarded-For`
+shared `unknown` key and audit events omit `ip`. With a real limiter this
+prevents a client-controlled header from spreading traffic across buckets; the
+no-op limiter default still permits every request. A deployer behind a trusted
+proxy supplies an extractor wired to their actual topology (e.g. the rightmost trusted `X-Forwarded-For`
 hop, or the runtime's connection info).

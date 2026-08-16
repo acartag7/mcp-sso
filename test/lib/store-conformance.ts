@@ -445,6 +445,29 @@ export function runStoreConformance(label: string, make: () => StorePort | Promi
     await store.close();
   });
 
+  test(`${label}: explicit family revocation mutates only the expected resource`, async () => {
+    const store = await make();
+    await store.saveRefreshToken(refresh("revoke-resource", "fam-revoke-resource", null, FUTURE, undefined, RESOURCE_A));
+    await store.revokeRefreshTokenFamily("fam-revoke-resource", NOW, RESOURCE_B);
+    const rotated = await store.rotateRefreshToken(
+      sha256Hex("revoke-resource"),
+      refresh("revoke-resource-next", "fam-revoke-resource", sha256Hex("revoke-resource"), FUTURE, undefined, RESOURCE_A),
+      LATER,
+      undefined,
+      RESOURCE_A,
+    );
+    assert.ok(rotated, "wrong-resource revocation left the bound family active");
+    await store.revokeRefreshTokenFamily("fam-revoke-resource", LATER, RESOURCE_A);
+    assert.equal(await store.rotateRefreshToken(
+      sha256Hex("revoke-resource-next"),
+      refresh("revoke-resource-final", "fam-revoke-resource", sha256Hex("revoke-resource-next"), FUTURE, undefined, RESOURCE_A),
+      FUTURE,
+      undefined,
+      RESOURCE_A,
+    ), null, "matching-resource revocation disabled the family");
+    await store.close();
+  });
+
   test(`${label}: rotation backfill ignores caller-supplied identity (fix #3)`, async () => {
     const store = await make();
     await store.saveRefreshToken(refresh("m1", "fam-m", null, FUTURE));

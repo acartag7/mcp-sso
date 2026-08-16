@@ -200,17 +200,21 @@ each added only by the people who need it.
 - Adding backend N+1 is a config change, not a code change: same image, new
   hostname, new resource, new backend credential.
 
-> **Never share a store between bridge instances.** Refresh-token acceptance is
-> entirely store-scoped: the token is an opaque string looked up by hash and
-> rotated, with client binding against the *stored* record — no issuer/resource
-> check, no signature in acceptance. Two bridges sharing one database let a
-> refresh token from gateway A be redeemed at gateway B, which then mints a token
-> **validly signed with B's key for B's audience** — silently defeating the
-> isolation above. Sharing signing material is *not* required for this break;
-> **store separation is the load-bearing control.** One store (file or
-> database/schema) per bridge. (Issuer-scoped records — closing this in code —
-> are candidate hardening; until then the one-store-per-bridge rule is the
-> control.)
+> **Scope store sharing to one logical security boundary.** Replicas of one
+> bridge are expected to share the same MySQL `StorePort`. Distinct-resource
+> bridges may also share durable OAuth state: consent approval, authorization
+> codes, refresh families and members, and stored-scope lookup are bound to the
+> exact configured `resource`; a wrong-resource code or refresh attempt returns
+> `invalid_grant`, while a wrong-resource revocation retains RFC 7009's
+> non-oracular 200 response. None mutates the reference stores. RM.8 exercises
+> those two-bridge shared-store paths through the shipped Fastify routes.
+>
+> Resource binding is not issuer binding. Do not share a `StorePort` between
+> logically different bridges that reuse the same `resource` but have different
+> issuer, signing-key, or consent-secret boundaries. A same-resource refresh row
+> has no stored issuer field, so those deployments still need separate database
+> schemas. Replicas of one logical bridge must use the same issuer, resource, and
+> key material.
 
 ## Kubernetes notes
 
