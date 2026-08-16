@@ -13,6 +13,7 @@ import type { ConsolePairingIdentity } from "../src/identity/console-pairing.ts"
 import { generateRefreshToken, parseRefreshFamilyId, pkceChallenge, sha256Hex } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { STORE_EXPIRY_SWEEP_INTERVAL_MS } from "../src/store/expiry-scheduler.ts";
+import { OAuthError } from "../src/errors.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
 const REDIRECT = "https://client.test/callback";
@@ -147,17 +148,53 @@ test("bridge: handleRevoke maps an unexpected store throw to the §9.5 500 body 
   assert.equal(unrecognized.status, 200);
 });
 
+test("bridge: handleRevoke sanitizes an OAuthError-shaped lookup failure", async () => {
+  const secret = "STORE_SELECTED_RESPONSE";
+  const store = new MemoryStore();
+  store.findRefreshToken = async () => {
+    throw new OAuthError("invalid_client", secret, 401, {
+      redirectUri: "https://attacker.test/callback",
+      state: "store-controlled",
+    });
+  };
+  const audit = new MemoryAudit();
+  const bridge = new Bridge({ config: config(), store, clock: new FakeClock(NOW_MS), audit });
+
+  const response = await bridge.handleRevoke(req({ body: { token: "rt_anything" } }));
+
+  assert.equal(response.status, 500);
+  assert.deepEqual(response.body, {
+    error: "internal_error",
+    error_description: "OAuth request failed",
+  });
+  assert.equal(response.redirect, undefined);
+  assert.equal(response.headers.location, undefined);
+  assert.ok(!JSON.stringify(response).includes(secret));
+  assert.ok(!JSON.stringify(response).includes("attacker.test"));
+  assert.deepEqual(audit.events, [{
+    occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.revoke",
+    status: "failure", reason: "internal_error",
+  }]);
+});
+
 test("bridge: revoke-family store failure keeps the 500 mapping and emits a failure audit", async () => {
   const store = new MemoryStore();
   const token = await saveRevocableToken(store);
-  store.revokeRefreshTokenFamily = async () => { throw new Error("database unavailable"); };
+  const secret = "FAMILY_STORE_DETAIL";
+  store.revokeRefreshTokenFamily = async () => {
+    throw new OAuthError("temporarily_unavailable", secret, 429);
+  };
   const audit = new MemoryAudit();
   const bridge = new Bridge({ config: config(), store, clock: new FakeClock(NOW_MS), audit });
 
   const response = await bridge.handleRevoke(req({ body: { token } }));
 
   assert.equal(response.status, 500);
-  assert.equal((response.body as { error: string }).error, "internal_error");
+  assert.deepEqual(response.body, {
+    error: "internal_error",
+    error_description: "OAuth request failed",
+  });
+  assert.ok(!JSON.stringify(response).includes(secret));
   assert.deepEqual(audit.events, [{
     occurredAt: new Date(NOW_MS).toISOString(), event: "oauth.revoke",
     status: "failure", reason: "internal_error",

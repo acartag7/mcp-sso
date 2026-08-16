@@ -2,6 +2,7 @@ import type { AuditPort } from "./ports/audit.ts";
 import type { ClockPort } from "./ports/clock.ts";
 import type { StorePort } from "./ports/store.ts";
 import { sha256Hex } from "./crypto.ts";
+import { OAuthError } from "./errors.ts";
 import { writeTokenAudit } from "./token-audit.ts";
 
 interface RevokeDeps {
@@ -31,6 +32,9 @@ export async function revokeRefreshToken(deps: RevokeDeps, refreshToken: string 
     await writeTokenAudit(deps.audit, {
       occurredAt, event: "oauth.revoke", status: "failure", reason: "internal_error",
     });
-    throw error;
+    // StorePort is pluggable. Treat every thrown value as untrusted, including
+    // OAuthError-shaped values whose status/message/redirect must not select the
+    // public endpoint response.
+    throw new OAuthError("internal_error", "OAuth request failed", 500);
   }
 }
