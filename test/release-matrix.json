@@ -28,88 +28,212 @@
       "id": "RM.1",
       "title": "Packed generated server",
       "evidence": [
-        { "file": "test/release-packed.test.ts", "name": "RM.1 packed generated server uses the installed npm bin for the complete lifecycle" }
+        {
+          "file": "test/release-packed.test.ts",
+          "name": "RM.1 packed generated server uses the installed npm bin for the complete lifecycle"
+        }
       ]
     },
     {
       "id": "RM.2",
       "title": "Fastify production-style header flow",
       "evidence": [
-        { "file": "test/release-fastify-stack.test.ts", "name": "RM.2 composes Fastify, Cloudflare, SQLite, stored DCR, Redis, SDK, Origin, and restart" }
+        {
+          "file": "test/release-fastify-stack.test.ts",
+          "name": "RM.2 composes Fastify, Cloudflare, SQLite, stored DCR, Redis, SDK, Origin, and restart"
+        }
       ]
     },
     {
       "id": "RM.3",
       "title": "Express redirect flow",
       "evidence": [
-        { "file": "test/release-express-stack.test.ts", "name": "RM.3 composes Express, MySQL, Entra redirect, stored DCR, ceiling, deny, SDK, refresh, replay, and revoke" }
+        {
+          "file": "test/release-express-stack.test.ts",
+          "name": "RM.3 composes Express, MySQL, Entra redirect, stored DCR, ceiling, deny, SDK, refresh, replay, and revoke"
+        }
       ]
     },
     {
       "id": "RM.4",
       "title": "Hono CIMD flow",
       "evidence": [
-        { "file": "test/release-hono-stack.test.ts", "name": "RM.4 composes Hono Request, CIMD, generic OIDC, Memory, SDK, refresh, revoke, and failed-stream bounds" }
+        {
+          "file": "test/release-hono-stack.test.ts",
+          "name": "RM.4 composes Hono Request, CIMD, generic OIDC, Memory, SDK, refresh, revoke, and failed-stream bounds"
+        }
       ]
     },
     {
       "id": "RM.5",
       "title": "Identity sibling proof",
       "evidence": [
-        { "file": "test/release-identity-routes.test.ts", "name": "RM.5 direct, Cloudflare, and Entra header identities traverse a shipped authorization route" },
-        { "file": "test/integration-upstream-redirect.test.ts", "name": "integration — Entra-redirect branch: env group ceiling narrows a full flow; replayed callback rejected with no second exchange; no secrets on disk" },
-        { "file": "test/integration-upstream-redirect.test.ts", "name": "integration — google: buildExample selects branch and completes authorize→callback→consent→token→/mcp with negatives", "sourceName": "integration — ${provider}: buildExample selects branch and completes authorize→callback→consent→token→/mcp with negatives" },
-        { "file": "test/integration-upstream-redirect.test.ts", "name": "integration — generic: buildExample selects branch and completes authorize→callback→consent→token→/mcp with negatives", "sourceName": "integration — ${provider}: buildExample selects branch and completes authorize→callback→consent→token→/mcp with negatives" },
-        { "file": "test/e2e-pairing.test.ts", "name": "S1b.8: pairing flow (buildApp pairing mode) — code → consent → token → /mcp; JSONL audit has events and no secrets" }
+        {
+          "file": "test/release-identity-routes.test.ts",
+          "name": "RM.5 direct, Cloudflare, and Entra header identities traverse a shipped authorization route"
+        },
+        {
+          "file": "test/integration-upstream-redirect.test.ts",
+          "name": "integration \u2014 Entra-redirect branch: env group ceiling narrows a full flow; replayed callback rejected with no second exchange; no secrets on disk"
+        },
+        {
+          "file": "test/integration-upstream-redirect.test.ts",
+          "name": "integration \u2014 google: buildExample selects branch and completes authorize\u2192callback\u2192consent\u2192token\u2192/mcp with negatives",
+          "sourceName": "integration \u2014 ${provider}: buildExample selects branch and completes authorize\u2192callback\u2192consent\u2192token\u2192/mcp with negatives"
+        },
+        {
+          "file": "test/integration-upstream-redirect.test.ts",
+          "name": "integration \u2014 generic: buildExample selects branch and completes authorize\u2192callback\u2192consent\u2192token\u2192/mcp with negatives",
+          "sourceName": "integration \u2014 ${provider}: buildExample selects branch and completes authorize\u2192callback\u2192consent\u2192token\u2192/mcp with negatives"
+        },
+        {
+          "file": "test/e2e-pairing.test.ts",
+          "name": "S1b.8: pairing flow (buildApp pairing mode) \u2014 code \u2192 consent \u2192 token \u2192 /mcp; JSONL audit has events and no secrets"
+        }
       ]
     },
     {
       "id": "RM.6",
       "title": "Three-adapter CIMD route parity",
       "evidence": [
-        { "file": "test/release-cimd-parity.test.ts", "name": "RM.6 HTTPS CIMD authorization reaches the resolver through Fastify, Express, and Hono without DCR state" }
+        {
+          "file": "test/release-cimd-parity.test.ts",
+          "name": "RM.6 HTTPS CIMD authorization reaches the resolver through Fastify, Express, and Hono without DCR state"
+        }
       ]
     },
     {
       "id": "RM.7",
       "title": "Machine credential lifecycle",
       "evidence": [
-        { "file": "test/release-machine-route.test.ts", "name": "RM.7 machine credentials compose through the shipped token route and remain resource-bound" }
+        {
+          "file": "test/release-machine-route.test.ts",
+          "name": "RM.7 machine credentials compose through the shipped token route and remain resource-bound"
+        }
       ]
     },
     {
       "id": "RM.8",
       "title": "Cross-resource OAuth lifecycle",
       "evidence": [
-        { "file": "test/release-cross-resource.test.ts", "name": "RM.8 shared durable OAuth state remains isolated across two shipped Fastify routes" }
+        {
+          "file": "test/release-cross-resource.test.ts",
+          "name": "RM.8 shared durable OAuth state remains isolated across two shipped Fastify routes"
+        }
       ]
     },
     {
       "id": "RM.9",
       "title": "Gateway",
       "evidence": [
-        { "file": "test/integration-gateway.test.ts", "name": "integration — gateway: full proxied round trip (pairing→token→SDK client→backend), stripping/injection, forwarding, DELETE 405, GET SSE, HF.3 no-leak" },
-        { "file": "test/release-gateway-status.test.ts", "name": "RM.9 gateway relays documented backend authorization failures without leaking its credential" },
-        { "file": "test/integration-gateway.test.ts", "name": "integration — gateway /mcp Origin gate + tokenless 401 challenge on ALL methods (POST/GET/DELETE)" },
-        { "file": "test/integration-gateway.test.ts", "name": "integration — gateway two-path separation: the backend credential never enters createBridgeConfig (rejected as an unknown key)" },
-        { "file": "test/integration-gateway.test.ts", "name": "integration — gateway: an absolute-form request-target cannot redirect the forward (SSRF / backend-credential exfiltration guard)" }
+        {
+          "file": "test/integration-gateway.test.ts",
+          "name": "integration \u2014 gateway: full proxied round trip (pairing\u2192token\u2192SDK client\u2192backend), stripping/injection, forwarding, DELETE 405, GET SSE, HF.3 no-leak"
+        },
+        {
+          "file": "test/release-gateway-status.test.ts",
+          "name": "RM.9 gateway relays documented backend authorization failures without leaking its credential"
+        },
+        {
+          "file": "test/integration-gateway.test.ts",
+          "name": "integration \u2014 gateway /mcp Origin gate + tokenless 401 challenge on ALL methods (POST/GET/DELETE)"
+        },
+        {
+          "file": "test/integration-gateway.test.ts",
+          "name": "integration \u2014 gateway two-path separation: the backend credential never enters createBridgeConfig (rejected as an unknown key)"
+        },
+        {
+          "file": "test/integration-gateway.test.ts",
+          "name": "integration \u2014 gateway: an absolute-form request-target cannot redirect the forward (SSRF / backend-credential exfiltration guard)"
+        }
       ]
     },
     {
       "id": "RM.10",
       "title": "Store and service parity",
       "evidence": [
-        { "file": "test/e2e-mcp-sdk.test.ts", "name": "e2e: register -> authorize -> token -> /mcp (official SDK client) -> refresh -> replay-revoke -> revoke" },
-        { "file": "test/integration-full-flow.test.ts", "name": "integration — sqlite FILE store: refresh stays bound across restart/resource cutover" },
-        { "file": "test/sqlite-open-admission.test.ts", "name": "SQLite admission creates 0600 state and reopens an existing private database" },
-        { "file": "test/store-conformance.test.ts", "name": "SqliteStore: resource migration leaves legacy refresh rows unusable without rebinding" },
-        { "file": "test/integration-full-flow.test.ts", "name": "integration — mysql store full /mcp round-trip (isolated from the conformance file via advisory lock)" },
-        { "file": "test/store-mysql.conformance.test.ts", "name": "MysqlStore: actual pre-resource schema migrates legacy null rows that fail closed" },
-        { "file": "test/store-mysql.conformance.test.ts", "name": "MysqlStore: concurrent rotation serializes (FOR UPDATE prevents double-spend) — review H3" },
-        { "file": "test/rate-limit-redis.test.ts", "name": "RedisRateLimit: two clients share a window (distributed limiting — a per-process limiter would NOT pass this)" },
-        { "file": "test/release-fastify-stack.test.ts", "name": "RM.2 composes Fastify, Cloudflare, SQLite, stored DCR, Redis, SDK, Origin, and restart" },
-        { "file": "test/rate-limit-redis.test.ts", "name": "RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws (fail-open) — review M1" },
-        { "file": "test/bridge.test.ts", "name": "bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Redis outage must not lock out auth)" }
+        {
+          "file": "test/e2e-mcp-sdk.test.ts",
+          "name": "e2e: register -> authorize -> token -> /mcp (official SDK client) -> refresh -> replay-revoke -> revoke"
+        },
+        {
+          "file": "test/integration-full-flow.test.ts",
+          "name": "integration \u2014 sqlite FILE store: refresh stays bound across restart/resource cutover"
+        },
+        {
+          "file": "test/sqlite-open-admission.test.ts",
+          "name": "SQLite admission creates 0600 state and reopens an existing private database"
+        },
+        {
+          "file": "test/store-conformance.test.ts",
+          "name": "SqliteStore: resource migration leaves legacy refresh rows unusable without rebinding"
+        },
+        {
+          "file": "test/integration-full-flow.test.ts",
+          "name": "integration \u2014 mysql store full /mcp round-trip (isolated from the conformance file via advisory lock)"
+        },
+        {
+          "file": "test/store-mysql.conformance.test.ts",
+          "name": "MysqlStore: actual pre-resource schema migrates legacy null rows that fail closed"
+        },
+        {
+          "file": "test/store-mysql.conformance.test.ts",
+          "name": "MysqlStore: concurrent rotation serializes (FOR UPDATE prevents double-spend) \u2014 review H3"
+        },
+        {
+          "file": "test/rate-limit-redis.test.ts",
+          "name": "RedisRateLimit: two clients share a window (distributed limiting \u2014 a per-process limiter would NOT pass this)"
+        },
+        {
+          "file": "test/release-fastify-stack.test.ts",
+          "name": "RM.2 composes Fastify, Cloudflare, SQLite, stored DCR, Redis, SDK, Origin, and restart"
+        },
+        {
+          "file": "test/rate-limit-redis.test.ts",
+          "name": "RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws (fail-open) \u2014 review M1"
+        },
+        {
+          "file": "test/bridge.test.ts",
+          "name": "bridge: rate-limit fails OPEN when check() throws (\u00a76.7/\u00a717.10 \u2014 a Redis outage must not lock out auth)"
+        }
+      ]
+    },
+    {
+      "id": "RM.11",
+      "title": "Redirect allowlist mode",
+      "evidence": [
+        {
+          "file": "test/release-redirect-mode.test.ts",
+          "name": "RM.11 replace mode refuses a built-in hosted origin at every shipped reader"
+        },
+        {
+          "file": "test/release-redirect-mode.test.ts",
+          "name": "RM.11 extend remains the default, so an existing deployment is unchanged"
+        },
+        {
+          "file": "test/release-redirect-mode.test.ts",
+          "name": "RM.11 replace with an empty allowlist refuses to boot"
+        }
+      ]
+    },
+    {
+      "id": "RM.12",
+      "title": "Identity display name",
+      "evidence": [
+        {
+          "file": "test/release-identity-name.test.ts",
+          "name": "RM.12 both shipped OIDC ports surface a verified display name and drop an unverified one"
+        }
+      ]
+    },
+    {
+      "id": "RM.13",
+      "title": "Audit sink fan-out",
+      "evidence": [
+        {
+          "file": "test/release-audit-sinks.test.ts",
+          "name": "RM.13 both shipped audit sinks receive a real flow through combineAudit without leaking credentials"
+        }
       ]
     }
   ]

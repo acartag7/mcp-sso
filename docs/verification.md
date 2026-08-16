@@ -250,6 +250,49 @@ selected MySQL rows cover real migration and concurrent rotation, while real Red
 covers a shared window and the error path consumed by the bridge's fail-open policy.
 The release command rejects absent MySQL or Redis configuration before running rows.
 
+### RM.11 — Redirect allowlist mode
+
+`redirectAllowlistMode: "replace"` refuses a built-in hosted-client origin at
+every reader the shipped Fastify routes expose: the DCR write path rejects the
+registration, and authorize rejects a presented built-in origin **directly** —
+never by redirecting to the origin under dispute. The operator's own configured
+origin still registers and still reaches the consent page, so the row proves the
+mode narrows trust rather than disabling the flow. A second row pins that
+omitting the option keeps the published `"extend"` behavior, which is this
+feature's entire compatibility promise; a third pins that `"replace"` with an
+empty allowlist is a boot failure rather than a bridge that starts and rejects
+every client.
+
+The mode has FOUR readers — DCR write, stateless authorize, stored-client
+re-validation, and consent approve. That count is four rather than three because
+review found `approve` unguarded after the sweep was declared complete, which is
+why this row exists at the release gate instead of relying on the sweep.
+
+### RM.12 — Identity display name
+
+Both shipped OIDC ports surface `claims.name` for a verified identity, drop it
+when `email_verified` is not exactly `true`, and omit an over-long value rather
+than truncating it into a string the IdP never issued. The Google preset reaches
+this gate only by delegating to the generic validator, so the row also pins that
+neither port's subject is affected by the claim: Google keeps its raw `sub`, the
+generic port keeps its issuer-namespaced subject.
+
+### RM.13 — Audit sink fan-out
+
+`JsonlFileAudit`, `WebhookAudit`, and `combineAudit` are root-exported public
+API, and the audit trail is a security artifact rather than a convenience — it
+is what an operator reconstructs an incident from. The unit tests cover each
+sink alone; this row drives a real register/authorize flow through the shipped
+Fastify routes and asserts the fan-out survives composition: both sinks receive
+events, and they receive the SAME count, so a partial fan-out cannot read as
+success. It then asserts that neither sink published the consent token, the
+PKCE verifier, the identity header value, the consent signing secret, or the
+webhook's own collector credential. A webhook delivery failure is treated as a
+failure of the row rather than swallowed, because the sink logs and continues.
+
+The webhook transport is injected, so the row makes no network call; what it
+proves is the wiring and the payload.
+
 ## Harness helpers
 
 The current shared helpers are:
