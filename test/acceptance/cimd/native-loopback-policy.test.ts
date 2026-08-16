@@ -143,6 +143,10 @@ if (phases["cimd-native-loopback-policy"] !== true) {
       ["http://localhost/cb", "http://127.0.0.1:7000/cb"],
       ["http://localhost/cb", "http://localhost:7000/other"],
       ["http://localhost/cb", "http://localhost:7000/cb?extra=1"],
+      ["http://localhost/cb", "http://localhost:7000/cb#fragment"],
+      ["http://localhost/cb", "http://localhost:80/cb"],
+      ["http://localhost/cb", "http://localhost:080/cb"],
+      ["http://localhost/cb", "http://localhost:07000/cb"],
     ] as const) {
       const ctx = context(document(OMIT, registered));
       const response = await ctx.bridge.handleAuthorize(request(params(presented)), { subject: "user-1" });

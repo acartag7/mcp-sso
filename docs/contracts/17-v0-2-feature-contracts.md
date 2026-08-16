@@ -586,7 +586,7 @@ active.
     direct or signed state still fails closed; the type does not widen or
     narrow redirect membership.
     The authorize-time (S6b) loopback any-port match
-    reuses the existing runtime semantics of src/redirect.ts:95-103 — scheme,
+    uses `src/cimd/registration.ts:113-119` — scheme,
     hostname, pathname, and search equal; port ignored; fragment already rejected
     at validation — resolving the looser "origin" wording elsewhere.
 
@@ -691,7 +691,7 @@ consult a stored client): an https registration entry matches by **exact raw-str
 `presented === registered` (rule 20 / the raw-string identity rule — no normalization
 AT MATCH TIME, port included; sound because §10.0 already required the registered entry
 to be canonical); a loopback `http` entry matches RFC 8252 **any-port** using the compare
-semantics of `src/redirect.ts:95-103` (scheme, host, path, and search equal; port
+semantics of `src/cimd/registration.ts:113-119` (scheme, host, path, and search equal; port
 ignored; fragment already rejected), regardless of the optional carried
 `application_type`. It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and

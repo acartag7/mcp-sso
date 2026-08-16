@@ -94,9 +94,9 @@ export function parseCimdRegistrationClaim(value: unknown, expectedClientId: unk
 /** THE shared CIMD redirect matcher (§17.1.6 decision 1, rule 20). An https
  *  entry matches by EXACT raw-string equality (no normalization, port
  *  included); a registered loopback `http` entry gets RFC 8252 any-port
- *  matching regardless of the optional application_type, using
- *  src/redirect.ts:95-103 semantics (scheme, host, path, and search equal;
- *  port ignored). Called at authorize, at the callback row-5a gate, and at
+ *  matching regardless of the optional application_type: scheme, host, path,
+ *  and search stay equal while only the port is ignored. Called at authorize,
+ *  at the callback row-5a gate, and at
  *  prepare's defensive re-check — never array `includes`. */
 export function cimdRedirectMatches(
   presented: unknown,
