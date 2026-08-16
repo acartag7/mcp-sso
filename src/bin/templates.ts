@@ -31,7 +31,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   Bridge, RequestAuthorizer, createBridgeConfig, originOf, isMcpPath, validateAllowedOrigins,
-  loadOrCreateQuickstartSecrets, handlePairingAuthorize,
+  assertRedirectAllowlistEntries, loadOrCreateQuickstartSecrets, handlePairingAuthorize,
   SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
   type ClientRegistration, type ClientStore,
 } from "mcp-sso";
@@ -97,7 +97,9 @@ async function main(): Promise<void> {
   if (HOST !== "127.0.0.1" && HOST !== "localhost" && HOST !== "::1") throw new Error("The generated starter is localhost-only: HOST must be a loopback address. Use the production example with a real identity provider and rate limiter for an internet-facing deployment.");
   if (new URL(RESOURCE).pathname !== "/mcp") throw new Error("OAUTH_RESOURCE pathname must be /mcp (the server mounts /mcp); set OAUTH_RESOURCE to <issuer>/mcp or edit server.ts for a custom path."); if (!isLoopback(ISSUER) || !isLoopback(RESOURCE)) throw new Error("The generated starter is localhost-only: OAUTH_ISSUER and OAUTH_RESOURCE must use loopback hosts. Use the production example for an internet-facing deployment.");
   const allowedOrigins = validateAllowedOrigins(originList(process.env.OAUTH_ALLOWED_ORIGINS, new URL(ISSUER).origin));
-  const redirectAllowlist = list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1");
+  const redirectAllowlist = assertRedirectAllowlistEntries(
+    list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
+  );
   const redirectAllowlistMode = redirectAllowlistModeFromEnv(process.env.OAUTH_REDIRECT_ALLOWLIST_MODE, redirectAllowlist);
   const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
   let store: ReturnType<typeof openSqliteStore> | undefined;

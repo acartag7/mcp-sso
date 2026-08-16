@@ -273,7 +273,7 @@ test("integration — gateway entrypoint rejects ambiguous providers before back
   }
 });
 
-test("integration — gateway entrypoint rejects invalid redirect modes before backend listen or state", async () => {
+test("integration — gateway entrypoint rejects invalid redirect policy before backend listen or state", async () => {
   const tmp = await mkdtemp(join(tmpdir(), "mcp-sso-spawn-redirect-mode-"));
   const occupied = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -283,11 +283,16 @@ test("integration — gateway entrypoint rejects invalid redirect modes before b
   const address = occupied.address();
   assert.ok(address && typeof address === "object", "occupied backend has a TCP address");
   try {
-    for (const [label, mode] of [["blank", ""], ["unknown", "Replace"]] as const) {
+    const cases = [
+      { label: "blank-mode", policy: { OAUTH_REDIRECT_ALLOWLIST_MODE: "" }, error: /redirectAllowlistMode/ },
+      { label: "unknown-mode", policy: { OAUTH_REDIRECT_ALLOWLIST_MODE: "Replace" }, error: /redirectAllowlistMode/ },
+      { label: "malformed-entry", policy: { OAUTH_REDIRECT_ALLOWLIST: "javascript:alert(1)" }, error: /redirectAllowlist/ },
+    ] as const;
+    for (const { label, policy, error } of cases) {
       const dir = join(tmp, label);
       const env = childEnv({
         MCP_SSO_DIR: dir,
-        OAUTH_REDIRECT_ALLOWLIST_MODE: mode,
+        ...policy,
         BACKEND_API_KEY: randomBytes(32).toString("base64url"),
         BACKEND_HOST: "127.0.0.1",
         BACKEND_PORT: String(address.port),
@@ -296,9 +301,9 @@ test("integration — gateway entrypoint rejects invalid redirect modes before b
       try {
         const exited = await waitForClose(child, 10_000);
         assert.notEqual(exited.code, 0, `${label}: invalid redirect mode exits nonzero`);
-        assert.match(exited.stderr, /redirectAllowlistMode must be "extend" or "replace"/);
-        assert.doesNotMatch(exited.stderr, /EADDRINUSE/, `${label}: mode validation precedes backend listen`);
-        assert.equal(existsSync(dir), false, `${label}: mode validation precedes state creation`);
+        assert.match(exited.stderr, error);
+        assert.doesNotMatch(exited.stderr, /EADDRINUSE/, `${label}: policy validation precedes backend listen`);
+        assert.equal(existsSync(dir), false, `${label}: policy validation precedes state creation`);
       } finally {
         killHard(child);
       }

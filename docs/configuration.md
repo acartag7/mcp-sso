@@ -102,14 +102,15 @@ redirects under `replace`. To exclude hosted clients from an example
 deployment entirely you also have to turn CIMD off in your composition root, or
 add your own CIMD host policy.
 
-Two boot rules back the setting, both in `snapshotRedirectAllowlistMode`
+Two mode rules back the setting, both in `snapshotRedirectAllowlistMode`
 (`src/config-snapshot.ts`): a value outside `extend`/`replace` is an
 `AuthConfigError` instead of a fallback to `extend`, and `replace` with an empty
 `OAUTH_REDIRECT_ALLOWLIST` is an `AuthConfigError` too, because no `redirect_uri`
 could then ever be accepted.
-The two runnable zero-setup examples and the `mcp-sso init` starter apply those
-same two checks before quickstart secrets or any other persistent state is
-created; `createBridgeConfig` rechecks them when it builds the final config.
+The two runnable zero-setup examples and the `mcp-sso init` starter validate
+every allowlist entry with the same §10 parser and apply those two mode checks
+before quickstart secrets, persistent state, or listeners; `createBridgeConfig`
+rechecks the complete policy when it builds the final config.
 
 ## Cloudflare Access (`CF_ACCESS_*`)
 

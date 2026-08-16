@@ -137,7 +137,7 @@ test("examples — api-key-gateway zero-setup branch honors the mode", async () 
   }
 });
 
-test("examples — every zero-setup root rejects bad mode policy before persistence", async () => {
+test("examples — every zero-setup root rejects bad redirect policy before persistence", async () => {
   const base = mkdtempSync(join(tmpdir(), "mcp-sso-zs-mode-fail-"));
   const roots = [
     ["fastify", (env: Record<string, string | undefined>) => buildExample(env)],
@@ -146,6 +146,7 @@ test("examples — every zero-setup root rejects bad mode policy before persiste
   const cases = [
     { OAUTH_REDIRECT_ALLOWLIST_MODE: "Replace" },
     { OAUTH_REDIRECT_ALLOWLIST_MODE: "replace", OAUTH_REDIRECT_ALLOWLIST: "" },
+    { OAUTH_REDIRECT_ALLOWLIST: "javascript:alert(1)" },
   ];
   try {
     for (const [root, build] of roots) {

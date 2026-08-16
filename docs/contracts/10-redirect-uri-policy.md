@@ -727,6 +727,14 @@ This does NOT generalize: DCR
 (§9.2 / §17.1.5 rule 19), so emptiness there is a rejection. The obligation-7
 positive list is partitioned per consumer for exactly this reason.
 
+**Composition-root preflight.** `assertRedirectAllowlistEntries` snapshots an
+untrusted list and applies this exact grammar before a shipped zero-setup root
+creates quickstart state or starts a listener. Both runnable examples call it
+through their shared `redirectAllowlistPolicyFromEnv`; the generated starter
+calls the root export directly. `createBridgeConfig` repeats the same parser at
+the authoritative configuration boundary. This is ordering, not a second
+grammar: a malformed entry must beat filesystem and socket side effects.
+
 ## The two matching policies
 
 Two policies, by DCR mode. Both consume entries already valid per §10.0, and

@@ -4,6 +4,7 @@
 import type { AuthorizationClientRegistration } from "./client-registration.ts";
 import type { ClientRegistration } from "./ports/client-store.ts";
 import { AuthConfigError } from "./config-error.ts";
+import { snapshotRedirectAllowlist } from "./config-snapshot.ts";
 import { OAuthError } from "./errors.ts";
 import {
   isLoopbackRedirect, parseRedirectEntry, RedirectEntryError,
@@ -28,6 +29,13 @@ export const DEFAULT_ALLOWED_REDIRECT_ORIGINS = Object.freeze([
  *  its own does not keep a hosted client out; that also needs `cimd.enabled`
  *  off or a deployer-supplied CIMD host policy. */
 export type RedirectAllowlistMode = "extend" | "replace";
+
+/** Snapshot and validate an untrusted global allowlist with the authoritative
+ *  §10.0 parser. Shipped composition roots call this before filesystem/listener
+ *  effects; createBridgeConfig repeats it at the configuration boundary. */
+export function assertRedirectAllowlistEntries(value: unknown): string[] {
+  return snapshotRedirectAllowlist(value, (message) => new AuthConfigError(message));
+}
 
 /** Validate a redirect_uri against the global allowlist.
  *  Returns the unchanged canonical URI. Throws invalid_redirect_uri on rejection.

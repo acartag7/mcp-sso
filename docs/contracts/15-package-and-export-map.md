@@ -148,7 +148,7 @@ wiring does not force the plugin on existing consumers; consumers of the new
 subpath install its optional peer. This does not change the root package's
 `jose`-only runtime graph.
 
-**Consumer-facing example helpers (DX):** five symbols the in-repo example leans on
+**Consumer-facing example helpers (DX):** six symbols the in-repo example leans on
 to implement the recommended patterns are root-exported, so a package consumer
 replicating those patterns imports them from `mcp-sso` instead of reimplementing
 them (and re-opening the footguns they centralize): the normalized request/response
@@ -171,7 +171,10 @@ with `createUpstreamRedirectFlow`. It validates the PATH only — the
 `identity.redirectUri === issuerOrigin + callbackPath` equality is enforced
 separately, at mount, by `createUpstreamRedirectFlow` (and mirrored by the example's
 `assertUpstreamConfigBeforeState`); a consumer doing early-fail boot validation
-pairs `assertCallbackPath` with its own redirectUri equality check. All five are
+pairs `assertCallbackPath` with its own redirectUri equality check; and
+`assertRedirectAllowlistEntries` (the §10.0 snapshot/parser used before
+quickstart state or listener effects, with `createBridgeConfig` repeating the
+authoritative check). All six are
 dep-free (node builtins / pure string logic), so root-exporting them does not widen
 the `jose`-only runtime posture.
 

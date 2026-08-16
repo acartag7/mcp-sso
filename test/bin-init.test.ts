@@ -113,6 +113,10 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
       server.indexOf("const redirectAllowlistMode = redirectAllowlistModeFromEnv(") < server.indexOf("loadOrCreateQuickstartSecrets("),
       "generated redirect-mode preflight runs before persistent quickstart state",
     );
+    assert.ok(
+      server.indexOf("const redirectAllowlist = assertRedirectAllowlistEntries(") < server.indexOf("loadOrCreateQuickstartSecrets("),
+      "generated redirect-entry preflight runs before persistent quickstart state",
+    );
     const generatedReadme = await readFile(join(dir, "README.md"), "utf8");
     assert.match(
       generatedReadme,
@@ -572,11 +576,12 @@ test("bin init (spawn): replace mode is preflighted and controls generated DCR",
     await spawnScaffold(proj);
     await linkDeps(proj);
     const invalidPolicies = [
-      { OAUTH_REDIRECT_ALLOWLIST_MODE: "" },
-      { OAUTH_REDIRECT_ALLOWLIST_MODE: "Replace" },
-      { OAUTH_REDIRECT_ALLOWLIST_MODE: "replace", OAUTH_REDIRECT_ALLOWLIST: "" },
+      { policy: { OAUTH_REDIRECT_ALLOWLIST_MODE: "" }, error: /redirectAllowlistMode/ },
+      { policy: { OAUTH_REDIRECT_ALLOWLIST_MODE: "Replace" }, error: /redirectAllowlistMode/ },
+      { policy: { OAUTH_REDIRECT_ALLOWLIST_MODE: "replace", OAUTH_REDIRECT_ALLOWLIST: "" }, error: /redirectAllowlistMode/ },
+      { policy: { OAUTH_REDIRECT_ALLOWLIST: "javascript:alert(1)" }, error: /redirectAllowlist/ },
     ];
-    for (const [index, policy] of invalidPolicies.entries()) {
+    for (const [index, { policy, error }] of invalidPolicies.entries()) {
       const stateDir = join(base, `invalid-state-${index}`);
       const child = spawn("node", ["server.ts"], {
         cwd: proj,
@@ -587,7 +592,7 @@ test("bin init (spawn): replace mode is preflighted and controls generated DCR",
       child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
       const code = await new Promise<number | null>((resolveP) => child.on("close", resolveP));
       assert.notEqual(code, 0);
-      assert.match(stderr, /redirectAllowlistMode/);
+      assert.match(stderr, error);
       assert.equal(existsSync(stateDir), false, `invalid policy ${index} created no state`);
     }
 

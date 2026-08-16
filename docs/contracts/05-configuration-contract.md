@@ -142,9 +142,10 @@ interface BridgeConfig {
   any other value — including a near-miss such as `"Replace"` or `""` — is an
   `AuthConfigError` at boot rather than a silent fall back to `"extend"`.
   `"replace"` additionally requires at least one `redirectAllowlist` entry.
-  Every shipped zero-setup composition root computes the redirect-entry list and
-  applies both mode checks **before** `loadOrCreateQuickstartSecrets`; a rejected
-  mode therefore creates no state directory, ignore file, or signing material.
+  Every shipped zero-setup composition root computes the redirect-entry list,
+  validates every entry with the same §10.0 parser, and applies both mode checks
+  **before** `loadOrCreateQuickstartSecrets`; a rejected entry or mode therefore
+  creates no state directory, ignore file, signing material, or listener.
   `createBridgeConfig` repeats the authoritative checks after secrets are loaded.
 - `redirectAllowlist` is an array, and **every entry satisfies the §10.0
   redirect-entry grammar**. `createBridgeConfig` snapshots the array once,

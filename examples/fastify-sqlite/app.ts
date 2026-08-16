@@ -36,7 +36,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
 import { AuthConfigError, createBridgeConfig, originOf, pathAfterOrigin, type BridgeConfig } from "../../src/config.ts";
-import type { RedirectAllowlistMode } from "../../src/redirect.ts";
+import {
+  assertRedirectAllowlistEntries, type RedirectAllowlistMode,
+} from "../../src/redirect.ts";
 import { validateAllowedOrigins } from "../../src/allowed-origin.ts";
 import { OAuthError, oauthErrorBody } from "../../src/errors.ts";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
@@ -304,8 +306,10 @@ export function redirectAllowlistPolicyFromEnv(
   env: Record<string, string | undefined>,
   defaultEntries: string,
 ): { redirectAllowlist: string[]; redirectAllowlistMode: RedirectAllowlistMode | undefined } {
-  const redirectAllowlist = (env.OAUTH_REDIRECT_ALLOWLIST ?? defaultEntries)
-    .split(",").map((entry) => entry.trim()).filter(Boolean);
+  const redirectAllowlist = assertRedirectAllowlistEntries(
+    (env.OAUTH_REDIRECT_ALLOWLIST ?? defaultEntries)
+      .split(",").map((entry) => entry.trim()).filter(Boolean),
+  );
   return {
     redirectAllowlist,
     redirectAllowlistMode: redirectAllowlistModeFromEnv(env, redirectAllowlist),

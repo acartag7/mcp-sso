@@ -23,6 +23,7 @@ import {
   isMcpPath,
   assertCallbackPath,
   assertRegistrationRedirectPolicy,
+  assertRedirectAllowlistEntries,
   ensureStateDir,
   assertRealDir,
   disableMachineClient,
@@ -63,6 +64,9 @@ test("exports: the S1b + S1a + core surface is reachable from the root entry", (
   assert.equal(typeof isMcpPath, "function", "isMcpPath (/mcp Origin-gate path check) is root-exported");
   assert.equal(typeof assertCallbackPath, "function", "assertCallbackPath (§17.11 callback-path validator) is root-exported");
   assert.equal(typeof assertRegistrationRedirectPolicy, "function", "custom ClientStore registration policy is root-exported");
+  assert.equal(typeof assertRedirectAllowlistEntries, "function", "redirect allowlist preflight is root-exported");
+  assert.deepEqual(assertRedirectAllowlistEntries(["https://client.test/callback"]), ["https://client.test/callback"]);
+  assert.throws(() => assertRedirectAllowlistEntries(["javascript:alert(1)"]), /redirectAllowlist/);
   assert.equal(assertRegistrationRedirectPolicy("https://client.test/callback", "web"), "https://client.test/callback");
   assert.throws(() => assertRegistrationRedirectPolicy("https://client.test/callback", "native"), /must be loopback/);
   assert.equal(typeof ensureStateDir, "function", "ensureStateDir (atomic state-dir setup helper) is root-exported");
