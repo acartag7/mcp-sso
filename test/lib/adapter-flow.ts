@@ -12,6 +12,7 @@ import { createBridgeConfig } from "../../src/config.ts";
 import { pkceChallenge } from "../../src/crypto.ts";
 import { OAuthError, withRedirect } from "../../src/errors.ts";
 import type { AuditPort, AuthAuditEvent } from "../../src/ports/audit.ts";
+import type { ClockPort } from "../../src/ports/clock.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
 import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
@@ -33,6 +34,7 @@ class MemoryAudit implements AuditPort {
 function makeBridge(
   rateLimit?: RateLimitPort,
   audit: AuditPort = new MemoryAudit(),
+  clock: ClockPort = new FakeClock(NOW_MS),
   store = new MemoryStore(),
 ): Bridge {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -45,7 +47,7 @@ function makeBridge(
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   return new Bridge({
-    config, store, clock: new FakeClock(NOW_MS), audit,
+    config, store, clock, audit,
     ...(rateLimit === undefined ? {} : { rateLimit }),
   });
 }
@@ -186,7 +188,7 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       return originalFind(tokenHash);
     };
     const audit = new MemoryAudit();
-    const client = await mount(makeBridge(undefined, audit, store), stubIdentity);
+    const client = await mount(makeBridge(undefined, audit, undefined, store), stubIdentity);
     const body = "token=rt_must_not_be_parsed";
     try {
       const unsupported = await client.requestOccurrences(
