@@ -116,6 +116,17 @@ releaseTest("RM.8 shared durable OAuth state remains isolated across two shipped
     assert.equal(tokenAtA.statusCode, 200, "B did not consume A's code");
     const refresh = tokenAtA.json<{ refresh_token: string }>().refresh_token;
 
+    const beforeRevokeB = durableSnapshot(sqliteFile);
+    const beforeRevokeAudit = auditB.events.length;
+    const revokeAtB = await appB.inject({ method: "POST", url: "/oauth/revoke", headers: {
+      "content-type": "application/x-www-form-urlencoded",
+    }, payload: new URLSearchParams({ token: refresh }).toString() });
+    assert.equal(revokeAtB.statusCode, 200);
+    assert.equal(durableSnapshot(sqliteFile), beforeRevokeB, "resource B revoke did not mutate durable state");
+    assert.deepEqual(auditB.events.slice(beforeRevokeAudit).map(({ event, status, reason }) => ({ event, status, reason })), [
+      { event: "oauth.revoke", status: "success", reason: "unrecognized_token" },
+    ]);
+
     const beforeRefreshB = durableSnapshot(sqliteFile);
     const refreshAtB = await appB.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" },
       payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refresh, client_id: clientId }).toString() });
@@ -134,7 +145,9 @@ releaseTest("RM.8 shared durable OAuth state remains isolated across two shipped
     const successorAtA = await appA.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" },
       payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: successor, client_id: clientId }).toString() });
     assert.equal(successorAtA.statusCode, 400, "A replay revoked A's successor");
-    assert.equal(auditB.events.some((event) => event.status === "success"), false, "resource B emitted no success audit");
+    assert.equal(auditB.events.some((event) => event.status === "success"
+      && !(event.event === "oauth.revoke" && event.reason === "unrecognized_token")), false,
+    "resource B emitted no resource-owning success audit");
   } finally {
     await appA.close(); await appB.close(); await store.close(); await rm(dir, { recursive: true, force: true });
   }

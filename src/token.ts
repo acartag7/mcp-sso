@@ -1,4 +1,6 @@
-// OAuthTokenUseCase — auth-code exchange, refresh rotation, revocation (contracts §9.4). Refresh enforces RFC 6749 §6 client binding (mismatch revokes the family); revoke follows RFC 7009 (always succeeds; unknown token is a no-op).
+// OAuthTokenUseCase — auth-code exchange, refresh rotation, and revocation
+// (contracts §9.4). Refresh enforces RFC 6749 §6 client binding; revocation keeps
+// unknown/already-revoked token outcomes at 200 while store failures remain errors.
 import { finiteClockSnapshot, fixedClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort } from "./ports/audit.ts";
 import type { AuthCodeRecord, RefreshTokenRecord, StorePort } from "./ports/store.ts";
@@ -188,10 +190,12 @@ export class OAuthTokenUseCase {
     }
   }
 
-  /** RFC 7009: always succeeds (the adapter returns 200). An unknown or
-   *  already-revoked token is a no-op — it never leaks existence via 4xx. */
+  /** RFC 7009: an unknown or already-revoked token is a 200 no-op, so token
+   *  existence never leaks via 4xx. Unexpected store failures still throw. */
   async revoke(refreshToken: string | undefined): Promise<void> {
-    await revokeRefreshToken({ store: this.store, clock: this.clock, audit: this.audit }, refreshToken);
+    await revokeRefreshToken({
+      store: this.store, clock: this.clock, audit: this.audit, resource: this.config.resource,
+    }, refreshToken);
   }
 
   private async consumeValidCode(input: AuthorizationCodeGrantInput, clock: ClockPort): Promise<AuthCodeRecord> {

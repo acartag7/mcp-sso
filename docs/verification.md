@@ -4,51 +4,48 @@ How mcp-sso proves a release actually works.
 
 ## Current status
 
-> Status: **v0.3.5**. This package line is based on exact merged implementation
-> commit `bfdd7b562cafce91c000c5d17c160aa289d5bee6`. It carries v0.3.4 forward and
-> packages the source-tree work targeting MCP Authorization 2026-07-28: issuer
-> identifiers on library-owned authorization error redirects, an optional
-> exact-resource scope implication graph, native-only CIMD loopback-port
-> elasticity, and the remaining governed CIMD evidence. It also centralizes
-> release and conformance status, routes the contract index by task, and permits
-> recorded file-limit exceptions. Registry and tag evidence belongs in the
-> release and verification receipts.
+> Status: **unreleased main after v0.3.5**. The published npm package and tag
+> remain v0.3.5; its release input was exact implementation commit
+> `bfdd7b562cafce91c000c5d17c160aa289d5bee6`. Current `main` is an unreleased
+> hardening line under release review. Its package metadata deliberately remains `0.3.5`
+> until a separate version-bump PR, so a source checkout must not be mistaken
+> for the published artifact.
 >
-> The §17 feature contracts are locked; CIMD §17.1, generic OIDC, and the
-> Google preset are implemented. Google has reproducible
-> historical live verification; CIMD was live-verified through exact runtime
-> commit `af2a61f` with Cloudflare Access, Entra ID, and Google on 2026-07-28.
-> A second, non-Google generic-OIDC issuer remains pending. Device flow §17.3 and the
-> dedicated GitHub port in §17.6 remain contract-only. Source-tree spec
-> conformance target: **MCP Authorization 2026-07-28**. Version v0.3.5 packages
-> this work without making a published-artifact conformance claim; published
-> v0.3.4 retains the 2025-11-25 baseline. The official stable
-> [`2026-07-28`](https://github.com/modelcontextprotocol/modelcontextprotocol/releases/tag/2026-07-28)
-> artifact was manually re-verified on 2026-08-02. Its DCR deprecation and
-> client-side DCR `application_type` requirement align with the v0.3.2
-> registration surface. On this source branch, RFC 9207 error redirects include
-> the configured issuer, closing the advertised-support mismatch. The optional,
-> exact-resource scope implication graph closes the scope-hierarchy runtime gap
-> without changing exact behavior when policy is omitted. CIMD D00-4.5.2 gates
-> the loopback port exception on exact `application_type: "native"`, and its
-> dedicated frozen suite is active. The final artifact's referenced draft `-00`
-> is completely mapped; D00-4.1.4 media types, D00-4.4.2 shared-cache handling,
-> and D00-4.5.2 native-app policy are conformant, with no unresolved runtime or
-> evidence row. This is not a published-artifact conformance claim. See the matrix in
-> [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
-> and the completed [spec-release re-verification](#spec-release-re-verification-completed-2026-08-02).
+> The post-v0.3.5 line hardens the shipped OAuth composition rather than adding
+> a new protocol profile. It host-binds generic-OIDC discovery endpoints; rejects
+> opaque browser origins, ambiguous bearer input, duplicate OAuth form members,
+> and ambiguous adapter content types; aligns adapter body-size handling across
+> frameworks; puts approve and revoke behind
+> their admission budgets; snapshots token-issuance clocks; makes permanent JSONL
+> disablement and revocation-store failures observable; and runs bounded,
+> clock-bound expiry collection in all three reference stores. Trusted-proxy,
+> pairing, limiter-wrapper, and dependency-policy corrections are also included.
+> Published v0.3.5 does not contain these post-tag changes.
 >
-> Threat-model delta: v0.3.5 carries the v0.3.4 controls forward. Library-owned
-> authorization error redirects now identify the configured issuer; scope
-> implication is available only through a bounded, boot-validated,
-> exact-resource policy; and a CIMD document receives loopback-port elasticity
-> only when it declares an exact native application type. The client-auth,
-> three-adapter, served-metadata, and inert document-URL evidence closes the four
-> previously incomplete CIMD rows. Existing live-provider evidence and residuals
-> are unchanged: CIMD has dated Cloudflare Access, Entra ID, and Google evidence;
-> a second non-Google generic-OIDC issuer and the Entra deny/ceiling sweep remain
-> pending. Device flow (§17.3) and the dedicated GitHub port (§17.6) remain
-> contract-only.
+> One platform finding still blocks a release-ready verdict: on Windows,
+> quickstart-secret and persistent-SQLite admission skip their POSIX mode gates,
+> no DACL inspection exists, and current `main` emits no operator warning. The
+> permission boot-failure guarantees are therefore POSIX-only; on Windows,
+> confidentiality depends on which principals the inherited DACL admits. The
+> corrected contract wording and warning remain unmerged.
+>
+> Source-tree target: **MCP Authorization 2026-07-28** for the implemented
+> public-client authorization-server profile. The stable artifact was manually
+> re-read on 2026-08-02, and its referenced CIMD draft `-00` has a complete
+> 44-statement mapping: 29 conformant rows, one conformant row with a disclosed
+> environment-scoped caveat, two recorded non-MUST deviations, zero unresolved
+> evidence rows, zero runtime mismatches, and 12 not-applicable rows. RFC 9207
+> error redirects, scope-hierarchy handling, and native-only CIMD loopback-port
+> elasticity are closed in source. This precise mapping is **not a current-head
+> live conformance claim**: the latest live CIMD provider/client run remains exact
+> runtime commit `af2a61f` from 2026-07-28, before the post-v0.3.5 hardening line.
+> See [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
+> and the append-only [spec-release receipt](#spec-release-re-verification-completed-2026-08-02).
+>
+> Device flow §17.3 and the dedicated GitHub port in §17.6 remain contract-only,
+> not release claims. Historical Cloudflare Access, Entra, and Google evidence is
+> retained; a second non-Google generic-OIDC issuer, the Entra deny/ceiling live
+> sweep, and current-head live CIMD re-verification remain pending.
 
 Three tiers:
 
@@ -858,14 +855,16 @@ and all three audit logs contained zero backend-key matches.
 The packed-artifact pre-tag smoke passed at exact clean-main commit `e71a2bb`.
 The published `mcp-sso@0.3.0` artifact repeated the eight peer-free and all-13
 with-peers import smokes, produced both metadata documents, and carried verified
-registry signatures and attestations. The implementation was reviewed against `2026-07-28-RC`, and the official
-stable artifact was manually checked on 2026-08-02. The published release keeps
-the three-gap result in that dated receipt. This source branch closes RFC 9207
-error redirects, scope-hierarchy handling, and the CIMD native-app policy. The
-The source tree therefore targets MCP Authorization 2026-07-28 with no unresolved
-runtime or CIMD evidence row. Version v0.3.5 packages that work without making a
-published-artifact conformance claim; published v0.3.4 retains its earlier
-baseline.
+registry signatures and attestations. The implementation was reviewed against
+`2026-07-28-RC`, and the official stable artifact was manually checked on
+2026-08-02. The published release keeps the three-gap result in that dated
+receipt. This source branch closes RFC 9207 error redirects, scope-hierarchy
+handling, and the CIMD native-app policy. The source tree therefore targets MCP
+Authorization 2026-07-28 with no unresolved runtime or governed CIMD evidence
+row. Published v0.3.5 packages that work without making a published-artifact
+conformance claim; published v0.3.4 retains its earlier baseline. The
+post-v0.3.5 status is canonicalized at the top of this document and does not
+upgrade the dated live evidence.
 Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
 showed an RFC 9207 `iss` callback regression on 2026-07-28; current
 compatibility awaits upstream resolution and retest.
