@@ -220,6 +220,11 @@ the guard and another to runtime initialization. The validated limiter's `check`
 method is also read and bound once; request handling invokes that bound function
 rather than re-reading an accessor-backed method. The check runs before the
 bridge constructs a CIMD resolver or any use-case.
+The root-exported `assertSafeDeploymentCombination` applies the same rule to its
+own input: it reads `config`, `rateLimit`, and the acknowledgement once and
+returns the bound limiter snapshot. A composition root that preflights before a
+stateful factory passes that returned value to `Bridge`, rather than re-reading
+the original dependency after creating state.
 `acknowledgeUnsafeStatelessDefaults: true` on `BridgeDeps` is an explicit,
 temporary stateless-only escape hatch for the localhost-only starter and emits a
 loud boot warning. Any other value is treated as absent. Internet-facing
@@ -234,8 +239,8 @@ Composition roots run this guard before creating a state directory, signing
 keys, audit file, state store, or starting OIDC discovery. The console-pairing branches perform their
 loopback-only preflight from issuer/resource strings before the signing-key
 helper needed to build a complete `BridgeConfig`. Exported factories snapshot
-their config and acknowledgement once and reuse those exact values after
-preflight, including for store and bridge construction.
+their config, limiter, and acknowledgement once and reuse those exact values
+after preflight, including for store and bridge construction.
 The two runnable repository examples do not set the acknowledgement: their
 loopback issuer/resource composition is already admitted by the local-only rule
 above. When no production identity-provider selector is present, they also

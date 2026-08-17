@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { JWK } from "jose";
 import {
-  AuthConfigError, Bridge, createBridgeConfig,
+  assertSafeDeploymentCombination, AuthConfigError, Bridge, createBridgeConfig,
   noopRateLimit, type AuditPort, type BridgeConfig, type RateLimitPort,
 } from "../src/index.ts";
 import { MemoryStore } from "../src/store/memory.ts";
@@ -173,6 +173,41 @@ test("Bridge binds the limiter method that passed boot validation", async () => 
   assert.equal(reads, 1);
 });
 
+test("the public preflight snapshots accessor-backed input and returns its bound limiter", async () => {
+  const stored = config({
+    dcr: { mode: "stored", store: { async save() {}, async find() { return null; } } },
+  });
+  const unsafe = config();
+  let configReads = 0;
+  let limiterReads = 0;
+  let acknowledgementReads = 0;
+  let checkReads = 0;
+  let remaining = 2;
+  const limiter = Object.defineProperty({}, "check", {
+    get() {
+      checkReads += 1;
+      return checkReads === 1 ? async () => remaining-- > 0 : undefined;
+    },
+  });
+  const bound = assertSafeDeploymentCombination({
+    get config() { configReads += 1; return configReads === 1 ? stored : unsafe; },
+    get rateLimit() { limiterReads += 1; return limiter; },
+    get acknowledgeUnsafeStatelessDefaults() {
+      acknowledgementReads += 1;
+      return acknowledgementReads === 1 ? undefined : true;
+    },
+  } as never, { emitAcknowledgementWarning: false });
+
+  assert.equal(configReads, 1);
+  assert.equal(limiterReads, 1);
+  assert.equal(acknowledgementReads, 1);
+  assert.equal(checkReads, 1);
+  assert.equal(await bound!.check("register:198.51.100.1"), true);
+  assert.equal(await bound!.check("register:198.51.100.1"), true);
+  assert.equal(await bound!.check("register:198.51.100.1"), false);
+  assert.equal(checkReads, 1, "the returned snapshot keeps the one bound check method");
+});
+
 test("example factories reject before opening SQLite and do not coerce malformed acknowledgements", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-unsafe-composition-"));
   try {
@@ -196,7 +231,7 @@ test("example factories reject before opening SQLite and do not coerce malformed
   }
 });
 
-test("example factories reuse the config snapshot that passed preflight", async () => {
+test("example factories reuse the config and limiter snapshots that passed preflight", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-factory-snapshot-"));
   try {
     for (const entry of [
@@ -221,9 +256,17 @@ test("example factories reuse the config snapshot that passed preflight", async 
       });
       const permissive = config({ allowedOrigins: ["https://evil.test"] });
       let reads = 0;
+      let checkReads = 0;
+      let remaining = 10_000;
+      const limiter = Object.defineProperty({}, "check", {
+        get() {
+          checkReads += 1;
+          return checkReads === 1 ? async () => remaining-- > 0 : undefined;
+        },
+      });
       const opts = {
         ...entry.extra,
-        rateLimit: boundedTestRateLimit(),
+        rateLimit: limiter,
         sqliteFile: entry.file,
         get config() { reads += 1; return reads === 1 ? safe : permissive; },
       } as Parameters<typeof buildGateway>[0];
@@ -235,6 +278,7 @@ test("example factories reuse the config snapshot that passed preflight", async 
       });
       assert.equal(response.statusCode, 403, "runtime Origin gate uses the boot snapshot");
       assert.equal(reads, 1);
+      assert.equal(checkReads, 1, "factory reuses the check method bound before SQLite opens");
       await result.close();
     }
   } finally {

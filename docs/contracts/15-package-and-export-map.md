@@ -213,7 +213,8 @@ registration and authorization before completing pairing, token exchange, and an
 official-SDK tool call. The generated composition rejects a non-loopback `HOST` before
 creating keys or opening SQLite. It then calls the root-exported
 `assertSafeDeploymentCombination` with its finite registration port before opening
-SQLite, and `Bridge` repeats the guard: stored DCR is intentionally confined to the starter's
+SQLite, retains the returned bound port for `Bridge`, and `Bridge` repeats the
+guard: stored DCR is intentionally confined to the starter's
 single-operator localhost envelope, where an unauthenticated network caller cannot grow
 the persistent client table without first passing the starter's finite process-local
 registration `RateLimitPort`. Internet-facing deployments use the production composition

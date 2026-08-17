@@ -114,7 +114,7 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
 }> {
   const config = opts.config;
   const acknowledged = opts.acknowledgeUnsafeStatelessDefaults === true;
-  assertSafeDeploymentCombination({
+  const rateLimit = assertSafeDeploymentCombination({
     config,
     rateLimit: opts.rateLimit,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
@@ -130,7 +130,7 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
-  const bridge = new Bridge({ config, store, clock, audit, rateLimit: opts.rateLimit,
+  const bridge = new Bridge({ config, store, clock, audit, rateLimit,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
 

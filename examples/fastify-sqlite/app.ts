@@ -112,11 +112,11 @@ export interface ExampleOptions {
 export async function buildApp(opts: ExampleOptions) {
   const config = opts.config;
   const acknowledged = opts.acknowledgeUnsafeStatelessDefaults === true;
-  const rateLimit = opts.rateLimit
+  const rateLimitCandidate = opts.rateLimit
     ?? (config.dcr.mode === "stored" ? createDcrRegistrationRateLimitPort() : undefined);
-  assertSafeDeploymentCombination({
+  const rateLimit = assertSafeDeploymentCombination({
     config,
-    rateLimit,
+    rateLimit: rateLimitCandidate,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
   }, { emitAcknowledgementWarning: false });
   const trustedProxies = trustedProxiesFromOptions(opts);

@@ -126,14 +126,16 @@ async function main(): Promise<void> {
       accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000,
       consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
     });
-  assertSafeDeploymentCombination({ config, rateLimit: registrationRateLimit }, { emitAcknowledgementWarning: false });
+  const rateLimit = assertSafeDeploymentCombination(
+    { config, rateLimit: registrationRateLimit }, { emitAcknowledgementWarning: false },
+  );
   store = openSqliteStore(\`\${DIR}/auth.db\`);
   const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
 
   const app = Fastify({ trustProxy: false }); const protectedRateLimit = await registerProtectedResourceRateLimit(app);
   const protectedRoute = { config: { rateLimit: { max: protectedRateLimit.max, timeWindow: protectedRateLimit.timeWindowMs, groupId: protectedRateLimit.groupId } } };
   const clock = new SystemClock();
-  const bridge = new Bridge({ config, store, clock, audit, rateLimit: registrationRateLimit });
+  const bridge = new Bridge({ config, store, clock, audit, rateLimit });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
   const toNorm = (req: FastifyRequest): NormRequest => { const headers = Object.fromEntries(Object.entries(req.raw.headersDistinct ?? {}).flatMap(([k, v]) => !v?.length ? [] : [[k.toLowerCase(), v.length === 1 ? v[0]! : [...v]]]));
     return { query: req.query as NormRequest["query"], body: semanticOAuthBody(req.body, headers), headers, ip: req.ip };
