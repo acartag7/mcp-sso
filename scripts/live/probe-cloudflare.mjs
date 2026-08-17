@@ -24,6 +24,13 @@ try {
   if (!ok("Cloudflare Access certs endpoint resolves", certs.status === 200, `HTTP ${certs.status}`)) failures++;
   if (!ok("Access publishes real signing keys", (certsJson.keys ?? []).length > 0,
     `${(certsJson.keys ?? []).length} keys`)) failures++;
+  const publishedKey = (certsJson.keys ?? []).find((key) =>
+    key?.kty === "RSA"
+      && (key.alg === undefined || key.alg === "RS256")
+      && typeof key.kid === "string"
+      && key.kid.length > 0);
+  if (!ok("Access publishes an RS256-capable key ID",
+    publishedKey !== undefined)) failures++;
 
   // Register first so the identity negatives cannot pass on an unrelated
   // unknown-client or malformed-authorize rejection.
@@ -52,7 +59,10 @@ try {
 
   const { privateKey } = await generateKeyPair("RS256");
   const forged = await new SignJWT({ email: "attacker@example.test" })
-    .setProtectedHeader({ alg: "RS256", kid: "forged-key" })
+    // Reuse a published key ID so JOSE selects a real Cloudflare key before
+    // rejecting the attacker signature. A nonexistent kid would prove only
+    // the lookup-negative path.
+    .setProtectedHeader({ alg: "RS256", kid: publishedKey?.kid ?? "fixture-no-published-kid" })
     .setIssuer(process.env.CF_ACCESS_ISSUER)
     .setAudience(process.env.CF_ACCESS_AUDIENCE)
     .setIssuedAt()
@@ -140,4 +150,4 @@ try {
 
 console.log(out.join("\n"));
 console.log(`\n${out.filter((line) => line.startsWith("PASS")).length}/${out.length} checks passed`);
-process.exit(failures > 0 ? 1 : 0);
+process.exitCode = failures > 0 ? 1 : 0;

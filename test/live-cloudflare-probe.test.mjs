@@ -14,6 +14,12 @@ test("Cloudflare identity negatives reach verification after a valid client cont
   assert.match(PROBE, /client_id: identityClientId \?\? "fixture-registration-failed"/);
   assert.match(PROBE, /const forgedRes[\s\S]*?url: `\/oauth\/authorize\?\$\{identityQuery\}`/);
   assert.match(PROBE, /forgedRes\.statusCode === 401/);
+  const publishedControlAt = PROBE.indexOf("Access publishes an RS256-capable key ID");
+  const signedAt = PROBE.indexOf(".setProtectedHeader");
+  assert.ok(publishedControlAt >= 0 && publishedControlAt < signedAt);
+  assert.match(PROBE, /key\?\.kty === "RSA"[\s\S]*?typeof key\.kid === "string"/);
+  assert.match(PROBE, /kid: publishedKey\?\.kid \?\? "fixture-no-published-kid"/);
+  assert.doesNotMatch(PROBE, /kid: "forged-key"/);
 });
 
 test("Cloudflare state evidence uses the resolved directory and is platform honest", () => {
@@ -24,4 +30,9 @@ test("Cloudflare state evidence uses the resolved directory and is platform hone
   assert.ok(windowsAt >= 0 && windowsAt < statAt);
   assert.match(PROBE, /INFO  state-directory POSIX mode is not applicable on Windows/);
   assert.match(PROBE, /informational and is deliberately excluded from the evidence count/);
+});
+
+test("Cloudflare probe drains evidence before returning its status", () => {
+  assert.match(PROBE, /process\.exitCode = failures > 0 \? 1 : 0/);
+  assert.doesNotMatch(PROBE, /process\.exit\(/);
 });
