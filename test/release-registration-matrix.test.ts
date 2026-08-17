@@ -181,6 +181,10 @@ for (const c of CONFIGS) {
     } else {
       assert.notEqual(authz.status, 200, "an HTTPS client id must not reach consent with CIMD disabled");
       assert.equal(authz.redirect, undefined, "and must not be answered through the redirect channel");
+      assert.equal(
+        (authz.body as { error?: string }).error, "invalid_client",
+        "CIMD-disabled rejection must come from shape-first dispatch, not a later DCR policy failure",
+      );
     }
     assert.ok(!clients.rows.has(CIMD_DOC.client_id), "an HTTPS id must never enter the DCR client store");
     assert.deepEqual(
