@@ -126,13 +126,15 @@ owner records the observed result and caveat in the matrix.
 
 ### Provisioning — the environment is infrastructure-as-code, not hand-built
 
-The identity providers, hostnames, tunnel ports, and test users these checklists
-need are **provisioned by OpenTofu stacks in a separate private repository**, one
-stack per provider leg. Nothing below is assembled by hand, and no provider
-secret is stored in this repository or read from a developer's shell profile.
+The deployment identity applications, issuer hostnames, tunnel ports, and test
+users these checklists need are **provisioned by OpenTofu stacks in a separate
+private repository**, one stack per provider leg. Google's client credential is
+the explicit out-of-band exception documented below. No provider secret is
+stored in this repository or read from a developer's shell profile.
 
-The run order is always: authenticate to the cloud account once, then read the
-stack outputs, then export them into the checklist's environment.
+The run order is: authenticate to the cloud account once, then invoke the
+documented runner. It validates every required stack/file input before state
+cleanup and probe execution.
 
 | What the checklists need | Where it comes from |
 | --- | --- |

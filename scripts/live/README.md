@@ -6,8 +6,8 @@ a release needs provider-backed proof, or when a client-facing flow changed.
 
 Provider infrastructure is read from OpenTofu stack outputs at run time. The
 Google client credentials are the documented out-of-band exception and come
-from an owner-held JSON file. No hostname, tenant, client id, or secret is
-stored in this repository, and no secret is printed.
+from an owner-held JSON file. No deployment hostname, tenant, client id, or
+secret is stored in this repository, and no secret is printed.
 
 ## Prerequisites
 
