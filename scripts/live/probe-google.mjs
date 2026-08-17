@@ -12,11 +12,6 @@ let failures = 0;
 const disc = await fetch("https://accounts.google.com/.well-known/openid-configuration");
 const dj = await disc.json();
 if (!ok("Google discovery resolves", disc.status === 200 && dj.issuer === "https://accounts.google.com", `issuer ${dj.issuer}`)) failures++;
-const jwks = await fetch(dj.jwks_uri);
-const jj = await jwks.json();
-if (!ok("Google JWKS serves real signing keys", jwks.status === 200 && (jj.keys ?? []).length > 0, `${(jj.keys ?? []).length} keys`)) failures++;
-if (!ok("Google advertises RS256", (dj.id_token_signing_alg_values_supported ?? []).includes("RS256"))) failures++;
-
 const cfg = { clientId: "probe-client", clientSecret: "s", redirectUri: "https://app.test/cb" };
 let builderDiscoveryUrl;
 const liveGoogle = await createGoogleIdentity(cfg, { discoveryFetch: {
@@ -27,6 +22,13 @@ const liveGoogle = await createGoogleIdentity(cfg, { discoveryFetch: {
 } });
 if (!ok("Google production preset requests the canonical discovery document",
   builderDiscoveryUrl === "https://accounts.google.com/.well-known/openid-configuration")) failures++;
+// createGoogleIdentity has now applied the production HTTPS + exact-host checks
+// to every discovered endpoint. Only after that trust decision may the probe
+// follow the document's JWKS URL.
+const jwks = await fetch(dj.jwks_uri);
+const jj = await jwks.json();
+if (!ok("Google JWKS serves real signing keys", jwks.status === 200 && (jj.keys ?? []).length > 0, `${(jj.keys ?? []).length} keys`)) failures++;
+if (!ok("Google advertises RS256", (dj.id_token_signing_alg_values_supported ?? []).includes("RS256"))) failures++;
 const liveAuth = new URL(liveGoogle.getAuthorizationUrl({ state: "probe-state", nonce: "probe-nonce", codeChallenge: "A".repeat(43) }));
 const advertisedAuth = new URL(dj.authorization_endpoint);
 if (!ok("Google production preset accepts and uses the live authorization endpoint",

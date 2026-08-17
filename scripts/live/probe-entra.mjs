@@ -5,6 +5,7 @@
 // No secret is printed. Values arrive through env and only derived facts
 // (host, presence, lengths) are reported.
 import { buildExample } from "../../examples/fastify-sqlite/app.ts";
+import { entraJwksUrl } from "../../src/identity/entra.ts";
 
 const out = [];
 const ok = (label, cond, detail = "") => {
@@ -28,7 +29,11 @@ try {
   const discJson = await disc.json();
   if (!ok("Entra discovery resolves", disc.status === 200 && typeof discJson.jwks_uri === "string", `HTTP ${disc.status}`)) failures++;
 
-  const jwks = await fetch(discJson.jwks_uri);
+  const expectedJwks = entraJwksUrl(tenant);
+  if (discJson.jwks_uri !== expectedJwks) {
+    throw new Error("Entra discovery returned an untrusted JWKS endpoint");
+  }
+  const jwks = await fetch(expectedJwks);
   const jwksJson = await jwks.json();
   const rs256 = (jwksJson.keys ?? []).filter((k) => k.kty === "RSA");
   if (!ok("Entra JWKS serves RSA signing keys", jwks.status === 200 && rs256.length > 0, `${rs256.length} RSA keys`)) failures++;

@@ -101,6 +101,15 @@ test("Entra deny evidence and Google credentials are mandatory inputs", () => {
   assert.match(README, /MCP_SSO_GOOGLE_ENV/);
   assert.match(RUN, /google\)\s+:\s+;;/);
   assert.match(RUN, /\[ "\$LEG" = "google" \] && export GOOGLE_REDIRECT_URI=/);
+  const permissionAt = RUN.indexOf("const { lstatSync }");
+  const sourceAt = RUN.indexOf('set -a; . "$GOOGLE_ENV"; set +a');
+  assert.ok(permissionAt >= 0 && permissionAt < sourceAt,
+    "the credential file is ownership/type/mode checked before sourcing");
+  assert.match(RUN, /!st\.isFile\(\) \|\| !ownerMatches \|\| \(st\.mode & 0o777\) !== 0o600/);
+  assert.match(RUN, /try \{ st = lstatSync\(process\.argv\[1\]\); \} catch \{ process\.exit\(1\); \}/,
+    "credential-file races fail with the fixed shell diagnostic, not a raw path-bearing stack");
+  assert.match(RUN, /Google credential file is required/);
+  assert.match(RUN, /GOOGLE_CLIENT_ID:\?Google credential file must set GOOGLE_CLIENT_ID/);
 });
 
 test("Google live metadata passes through the production preset", () => {
@@ -116,10 +125,29 @@ test("Google live metadata passes through the production preset", () => {
     "the resolved live endpoint is exercised through the production identity");
 });
 
+test("discovered JWKS URLs are trusted before either probe follows them", () => {
+  assert.ok(
+    GOOGLE.indexOf("await createGoogleIdentity") < GOOGLE.indexOf("await fetch(dj.jwks_uri)"),
+    "Google's production discovery validator runs before the JWKS fetch",
+  );
+  assert.match(
+    ENTRA,
+    /const expectedJwks = entraJwksUrl\(tenant\);[\s\S]*?discJson\.jwks_uri !== expectedJwks[\s\S]*?await fetch\(expectedJwks\)/,
+    "Entra pins the discovered JWKS URL to the production tenant endpoint before fetching",
+  );
+});
+
 test("live scripts contain no private infrastructure defaults", () => {
   for (const artifact of [RUN, README]) {
     assert.doesNotMatch(artifact, /\$HOME\/project\//, "no private checkout path is embedded");
   }
   assert.match(RUN, /MCP_SSO_ENTRA_STACK:\?/);
   assert.match(RUN, /MCP_SSO_CLOUDFLARE_STACK:\?/);
+});
+
+test("the runner clears inherited identity selectors before selecting one leg", () => {
+  const clearAt = RUN.indexOf("unset ENTRA_TENANT_ID CF_ACCESS_AUDIENCE GOOGLE_CLIENT_ID OIDC_ISSUER");
+  const switchAt = RUN.indexOf('case "$LEG" in');
+  assert.ok(clearAt >= 0 && clearAt < switchAt,
+    "ambient identity selectors cannot make a requested leg boot ambiguously");
 });

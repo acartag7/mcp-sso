@@ -38,7 +38,10 @@ export CF_ACCESS_CERTS_URL="$(C cf_access_certs_url)"
 export PROBE_CF_ACCESS_AUDIENCE="$(C cf_access_audience)"
 
 # The example boot-refuses more than one identity selector (a real fail-closed
-# gate), so export exactly the chosen leg's selector.
+# gate). Clear inherited shell state first, then export exactly the chosen leg's
+# selector. Provider credentials that are not selectors may remain populated;
+# they cannot activate a second identity path.
+unset ENTRA_TENANT_ID CF_ACCESS_AUDIENCE GOOGLE_CLIENT_ID OIDC_ISSUER
 case "$LEG" in
   cloudflare_access) export CF_ACCESS_AUDIENCE="$PROBE_CF_ACCESS_AUDIENCE" ;;
   entra)             export ENTRA_TENANT_ID="$(E entra_tenant_id)" ;;
@@ -50,12 +53,25 @@ esac
 # Cloud Console). Supply them in a private file outside the repository, mode
 # 0600; it is sourced here and never printed or committed.
 GOOGLE_ENV="${MCP_SSO_GOOGLE_ENV:-$HOME/.mcp-sso-google.env}"
-if [ "$LEG" = "google" ] && [ -f "$GOOGLE_ENV" ]; then
+if [ "$LEG" = "google" ]; then
+  [ -f "$GOOGLE_ENV" ] || { echo "Google credential file is required" >&2; exit 1; }
+  node -e '
+const { lstatSync } = require("node:fs");
+let st;
+try { st = lstatSync(process.argv[1]); } catch { process.exit(1); }
+const ownerMatches = typeof process.getuid !== "function" || st.uid === process.getuid();
+if (!st.isFile() || !ownerMatches || (st.mode & 0o777) !== 0o600) process.exit(1);
+' "$GOOGLE_ENV" || { echo "Google credential file must be an owner-held regular file with mode 0600" >&2; exit 1; }
   set -a; . "$GOOGLE_ENV"; set +a
+  # A private credential file is not a second-selector configuration surface.
+  # Only its Google selector survives.
+  unset ENTRA_TENANT_ID CF_ACCESS_AUDIENCE OIDC_ISSUER
   # The Google preset reads GOOGLE_CLIENT_SECRET; OIDC_CLIENT_SECRET belongs to
   # the generic OIDC path. Accept either name so a file written for one works.
   : "${GOOGLE_CLIENT_SECRET:=${OIDC_CLIENT_SECRET:-}}"
-  export GOOGLE_CLIENT_SECRET
+  : "${GOOGLE_CLIENT_ID:?Google credential file must set GOOGLE_CLIENT_ID}"
+  : "${GOOGLE_CLIENT_SECRET:?Google credential file must set GOOGLE_CLIENT_SECRET or OIDC_CLIENT_SECRET}"
+  export GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
 fi
 
 export OAUTH_ISSUER="$(J "$CLOUDFLARE_STACK" issuer_origins | python3 -c "import json,sys;print(json.load(sys.stdin)['$LEG'])")"

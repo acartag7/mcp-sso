@@ -19,7 +19,9 @@ secret is printed.
    Console because the stacks do not provision them. Put `GOOGLE_CLIENT_ID` and
    `GOOGLE_CLIENT_SECRET` in a private mode-`0600` file at
    `~/.mcp-sso-google.env`, or point `MCP_SSO_GOOGLE_ENV` at an equivalent file.
-   `run.sh` sources it only for the Google leg and never prints its contents.
+   `run.sh` sources it only for the Google leg and never prints its contents. It
+   rejects a missing path, symlink, non-owner file, or any mode other than
+   `0600` before sourcing.
 
 The Cloudflare stack supplies the Access application, per-leg hostnames, and
 tunnel ports. The Entra stack supplies the tenant, application, group mapping,
