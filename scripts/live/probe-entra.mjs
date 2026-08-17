@@ -13,6 +13,10 @@ const ok = (label, cond, detail = "") => {
   out.push(`${cond ? "PASS" : "FAIL"}  ${label}${detail ? " — " + detail : ""}`);
   return cond;
 };
+const control = (label, cond, detail = "") => {
+  out.push(`${cond ? "CONTROL" : "FAIL"}  ${label}${detail ? " — " + detail : ""}`);
+  return cond;
+};
 
 let failures = 0;
 const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -92,13 +96,13 @@ try {
   const normalizedGroups = new Set(groups.map((group) => group.toLowerCase()));
   if (!ok("boot accepted the real group mapping", groups.length >= 2, `${groups.length} real groups mapped`)) failures++;
   if (!ok("every mapped key is a real GUID, not a display name", groups.length > 0 && groups.every((g) => guid.test(g)))) failures++;
-  if (!ok("the unmapped deny-leg group is NOT in the mapping",
-    !normalizedGroups.has(unmappedGroup.toLowerCase()), "no-mapped-group leg stays provable")) failures++;
+  if (!ok("the stack-provided deny-fixture GUID is absent from the mapping",
+    !normalizedGroups.has(unmappedGroup.toLowerCase()), "configuration precondition holds")) failures++;
 
-  // Exercise the shipped redirect identity port with a cryptographically
-  // verified control token carrying only the provisioned unmapped group. Merely
-  // checking that a GUID is absent from the mapping would let an unrelated or
-  // unused fixture pass without proving the deny reason.
+  // Explicitly NON-LIVE control: exercise the shipped redirect identity port
+  // with a locally signed token carrying the stack-provided GUID. This proves
+  // the local mapping/reason path only; it does not claim that the tenant emits
+  // this group in a real token. Browser callback evidence is recorded separately.
   const { privateKey, publicKey } = await generateKeyPair("RS256");
   const now = Math.floor(Date.now() / 1000);
   const denyNonce = "live-unmapped-group-control";
@@ -122,7 +126,7 @@ try {
   const denied = await denyIdentity.exchangeAndVerify({
     code: "live-control", codeVerifier: "V".repeat(43), nonce: denyNonce,
   });
-  if (!ok("identity port rejects a verified token carrying only the unmapped group",
+  if (!control("local identity-port control rejects a signed token carrying only the unmapped group",
     !denied.ok && denied.kind === "identity_rejected" && denied.reason === "entra_no_mapped_groups",
     denied.ok ? "unexpectedly accepted" : `${denied.kind}:${denied.reason}`)) failures++;
 } finally {
@@ -130,5 +134,5 @@ try {
 }
 
 console.log(out.join("\n"));
-console.log(`\n${out.filter((l) => l.startsWith("PASS")).length}/${out.length} checks passed`);
+console.log(`\n${out.filter((l) => l.startsWith("PASS")).length} live checks passed; ${out.filter((l) => l.startsWith("CONTROL")).length} local controls passed`);
 process.exit(failures > 0 ? 1 : 0);

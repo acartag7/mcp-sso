@@ -8,21 +8,26 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const ENTRA = readFileSync(join(ROOT, "scripts/live/probe-entra.mjs"), "utf8");
 const GOOGLE = readFileSync(join(ROOT, "scripts/live/probe-google.mjs"), "utf8");
 
-test("Entra deny evidence is required and exercised through the identity port", () => {
+test("Entra fixture is required and its synthetic denial is labeled as a local control", () => {
   assert.match(ENTRA, /throw new Error\("ENTRA_UNMAPPED_GROUP must provide the deny-fixture GUID"\)/);
   assert.ok(ENTRA.indexOf("ENTRA_UNMAPPED_GROUP must provide the deny-fixture GUID") < ENTRA.indexOf("await buildExample(process.env)"));
   assert.doesNotMatch(ENTRA, /ENTRA_UNMAPPED_GROUP \?\? ""/);
   assert.match(ENTRA, /new Set\(groups\.map\(\(group\) => group\.toLowerCase\(\)\)\)[\s\S]*?!normalizedGroups\.has\(unmappedGroup\.toLowerCase\(\)\)/);
   assert.match(ENTRA, /createEntraRedirectIdentity[\s\S]*?groups: \[unmappedGroup\][\s\S]*?denyIdentity\.exchangeAndVerify/);
   assert.match(ENTRA, /denied\.kind === "identity_rejected" && denied\.reason === "entra_no_mapped_groups"/);
+  assert.match(ENTRA, /Explicitly NON-LIVE control/);
+  assert.match(ENTRA, /if \(!control\("local identity-port control rejects/);
+  assert.doesNotMatch(ENTRA, /ok\("identity port rejects a verified token/);
   assert.match(ENTRA, /advertisedAuthorization[\s\S]*?u\.origin === advertisedAuthorization\.origin && u\.pathname === advertisedAuthorization\.pathname/);
   assert.doesNotMatch(ENTRA, /pathname[^\n]*startsWith\(`\/\$\{tenant\}\//);
 });
 
 test("Google and generic OIDC metadata checks cover each endpoint policy", () => {
   assert.match(GOOGLE, /import \{ createGoogleIdentity, validateGoogleIdToken \}/);
-  assert.match(GOOGLE, /createGoogleIdentity\(cfg, \{ discoveryFetch:[\s\S]*?json: async \(\) => structuredClone\(dj\)/);
-  assert.match(GOOGLE, /builderDiscoveryUrl === "https:\/\/accounts\.google\.com\/\.well-known\/openid-configuration"/);
+  assert.match(GOOGLE, /import \{ defaultDiscoveryTransport \}/);
+  assert.match(GOOGLE, /const liveGoogle = await createGoogleIdentity\(cfg\);/);
+  assert.doesNotMatch(GOOGLE, /createGoogleIdentity\(cfg, \{ discoveryFetch:/);
+  assert.match(GOOGLE, /defaultDiscoveryTransport\.get\("https:\/\/accounts\.google\.com\/\.well-known\/openid-configuration"\)/);
   for (const field of ["authorization_endpoint", "token_endpoint", "jwks_uri"]) {
     assert.match(GOOGLE, new RegExp(`off-issuer [^\\n]*${field.replace("_endpoint", " endpoint").replace("jwks_uri", "JWKS endpoint")}`, "i"));
   }

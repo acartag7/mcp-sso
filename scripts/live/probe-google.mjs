@@ -4,24 +4,18 @@
 // binding. Runs standalone — no stack values required.
 import { createGoogleIdentity, validateGoogleIdToken } from "../../src/identity/google.ts";
 import { createGenericOidcIdentity } from "../../src/identity/generic-oidc.ts";
+import { defaultDiscoveryTransport } from "../../src/identity/generic-oidc-discovery.ts";
 
 const out = [];
 const ok = (l, c, d = "") => { out.push(`${c ? "PASS" : "FAIL"}  ${l}${d ? " — " + d : ""}`); return c; };
 let failures = 0;
 
-const disc = await fetch("https://accounts.google.com/.well-known/openid-configuration");
-const dj = await disc.json();
-if (!ok("Google discovery resolves", disc.status === 200 && dj.issuer === "https://accounts.google.com", `issuer ${dj.issuer}`)) failures++;
 const cfg = { clientId: "probe-client", clientSecret: "s", redirectUri: "https://app.test/cb" };
-let builderDiscoveryUrl;
-const liveGoogle = await createGoogleIdentity(cfg, { discoveryFetch: {
-  async get(url) {
-    builderDiscoveryUrl = url;
-    return { status: disc.status, json: async () => structuredClone(dj) };
-  },
-} });
-if (!ok("Google production preset requests the canonical discovery document",
-  builderDiscoveryUrl === "https://accounts.google.com/.well-known/openid-configuration")) failures++;
+const liveGoogle = await createGoogleIdentity(cfg);
+const disc = await defaultDiscoveryTransport.get("https://accounts.google.com/.well-known/openid-configuration");
+const dj = await disc.json();
+if (!ok("Google production discovery resolves without following redirects",
+  disc.status === 200 && dj.issuer === "https://accounts.google.com", `issuer ${dj.issuer}`)) failures++;
 // createGoogleIdentity has now applied the production HTTPS + exact-host checks
 // to every discovered endpoint. Only after that trust decision may the probe
 // follow the document's JWKS URL.
