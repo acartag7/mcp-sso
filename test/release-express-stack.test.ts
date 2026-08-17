@@ -14,6 +14,7 @@ import type { ClientRegistration, ClientStore } from "../src/ports/client-store.
 import { SystemClock } from "../src/ports/clock.ts";
 import { createMysqlStore } from "../src/store/mysql.ts";
 import { RequestAuthorizer } from "../src/verifier.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 import { attemptCleanup, fetchLoopbackOnly, http, mountStack, sdkPing, type HttpResponse } from "./lib/release-http-stack.ts";
 
 const releaseTest = process.env.RUN_RELEASE_MATRIX === "true" ? test : test.skip;
@@ -81,7 +82,7 @@ releaseTest("RM.3 composes Express, MySQL, Entra redirect, stored DCR, ceiling, 
       redirectUri: `${ISSUER}/oauth/callback`, groupAuthorization: { mapping: { [GROUP]: ["mcp:read"] }, baseScopes: [] } }, {
       scopeCatalog: config.scopeCatalog,
     });
-    const bridge = new Bridge({ config, store, clock, audit });
+    const bridge = new Bridge({ config, store, clock, audit, rateLimit: boundedTestRateLimit() });
     const upstream = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit });
     mounted = await mountStack("express", bridge, new RequestAuthorizer({ config, clock, audit }), config, { upstream });
     const registration = await http.postJson(mounted.base, "/oauth/register", { redirect_uris: [REDIRECT], application_type: "native" });
