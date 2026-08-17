@@ -15,6 +15,8 @@ import Fastify from "fastify";
 import Redis from "ioredis";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Bridge } from "../../src/adapters/bridge.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 import { createBridgeConfig } from "../../src/config.ts";
@@ -113,10 +115,25 @@ const probeRouteLimit = await registerProtectedResourceRateLimit(app, { max: 60,
 
 app.post("/mcp", { config: { rateLimit: { max: probeRouteLimit.max, timeWindow: probeRouteLimit.timeWindowMs } } }, async (req, reply) => {
   const authorizer = new RequestAuthorizer({ config, store, clock, audit });
+  let auth;
   try {
-    const res = await authorizer.authorize({ authorization: req.headers.authorization, ip: req.ip });
-    return reply.send({ jsonrpc: "2.0", id: 1, result: { subject: res.subject, scopes: res.allowedScopes ?? [] } });
-  } catch { return reply.code(401).send({ error: "unauthorized" }); }
+    auth = await authorizer.authorize({ authorization: req.headers.authorization, ip: req.ip });
+  } catch {
+    return reply.code(401).send({ jsonrpc: "2.0", error: { code: -32001, message: "unauthorized" }, id: null });
+  }
+  // A REAL MCP server, mounted the way the shipped example does it. The earlier
+  // version answered hand-written JSON-RPC, so the official SDK client was
+  // imported and never used — an SDK transport, negotiation, or response-shape
+  // regression stayed green while the probe claimed to exercise it.
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+  const mcp = new McpServer({ name: "mcp-sso-live-probe", version: "0.0.1" });
+  mcp.tool("ping", "echo the authenticated subject", async () => ({
+    content: [{ type: "text", text: `pong: ${auth.subject}` }],
+  }));
+  await mcp.connect(transport);
+  reply.hijack();
+  try { await transport.handleRequest(req.raw, reply.raw, req.body); }
+  finally { await mcp.close(); }
 });
 await registerOAuthRoutes(app, { bridge, identity: { async verify() { return { ok: false, reason: "interactive_only" }; } }, identityHeader: "x-id" });
 
@@ -153,21 +170,45 @@ try {
 
   // 5. Drive the OFFICIAL MCP SDK client against /mcp with the real token.
   const base = await app.listen({ host: "127.0.0.1", port: 0 });
-  let sdkOk = false;
+  // Drive the OFFICIAL MCP SDK client — transport, initialize handshake, and
+  // tool call — not a hand-written request.
   try {
-    const res = await fetch(new URL("/mcp", base), { method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }) });
-    const body = await res.json();
-    sdkOk = res.status === 200 && body?.result?.subject === provisioned.clientId;
-    if (!ok("protected /mcp accepts the minted token", sdkOk, `HTTP ${res.status}, subject bound`)) failures++;
-  } catch (e) { if (!ok("protected /mcp accepts the minted token", false, String(e).slice(0, 60))) failures++; }
+    const transport = new StreamableHTTPClientTransport(new URL("/mcp", base), {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+    });
+    const client = new Client({ name: "mcp-sso-live-probe", version: "1" }, { capabilities: {} });
+    try {
+      await client.connect(transport);
+      const result = await client.callTool({ name: "ping", arguments: {} });
+      const text = (result.content ?? []).find((part) => part.type === "text")?.text;
+      if (!ok("official SDK client completes a tool call on protected /mcp",
+        text === `pong: ${provisioned.clientId}`, text ?? "no text content")) failures++;
+    } finally { await client.close(); await transport.close(); }
+  } catch (e) { if (!ok("official SDK client completes a tool call on protected /mcp", false, String(e).slice(0, 80))) failures++; }
 
   const unauth = await fetch(new URL("/mcp", base), { method: "POST",
     headers: { "content-type": "application/json" }, body: "{}" });
   if (!ok("protected /mcp refuses an unauthenticated call", unauth.status === 401, `HTTP ${unauth.status}`)) failures++;
 
-  // 6. Real Redis limiter admits then refuses.
+  // 6. Disable BEFORE saturating the limiter. Run the other way round and the
+  // post-disable request returns 429 from the shared token bucket even if the
+  // credential is still fully active — the probe would then credit rate
+  // limiting as proof that disabling worked.
+  try {
+    await disableMachineClient({ store, clock, audit, catalog: ["mcp:read", "mcp:write"], resource: RESOURCE },
+      { clientId: provisioned.clientId });
+    const afterDisable = await app.inject({ method: "POST", url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" }, payload: form.toString() });
+    const body = String(afterDisable.body);
+    if (!ok("a disabled credential can no longer mint tokens",
+      afterDisable.statusCode >= 400 && afterDisable.statusCode !== 429 && !body.includes("access_token"),
+      `HTTP ${afterDisable.statusCode} (429 would prove nothing here)`)) failures++;
+  } catch (e) {
+    out.push(`SKIP  disable leg — harness store limit, covered by RM.7 (${String(e.message).slice(0, 40)})`);
+  }
+
+  // 7. Real Redis limiter admits then refuses. Deliberately LAST, because it
+  // exhausts the shared bucket for this IP.
   let limited = 0;
   for (let i = 0; i < 12; i += 1) {
     const r = await app.inject({ method: "POST", url: "/oauth/token",
@@ -175,20 +216,6 @@ try {
     if (r.statusCode === 429) limited += 1;
   }
   if (!ok("real Redis limiter refuses past the window budget", limited > 0, `${limited}/12 refused with 429`)) failures++;
-
-  // 7. Disable. This probe's in-memory MachineClientStore does not round-trip a
-  // record the parser will re-accept, so a failure here is a HARNESS limit, not
-  // a library result — reported as SKIP rather than dressed up as a pass. The
-  // disable leg is covered properly by release-matrix row RM.7.
-  try {
-    await disableMachineClient({ store, clock, audit, catalog: ["mcp:read", "mcp:write"], resource: RESOURCE },
-      { clientId: provisioned.clientId });
-    const afterDisable = await app.inject({ method: "POST", url: "/oauth/token",
-      headers: { "content-type": "application/x-www-form-urlencoded" }, payload: form.toString() });
-    if (!ok("a disabled credential can no longer mint tokens", afterDisable.statusCode >= 400, `HTTP ${afterDisable.statusCode}`)) failures++;
-  } catch (e) {
-    out.push(`SKIP  disable leg — harness store limit, covered by RM.7 (${String(e.message).slice(0, 40)})`);
-  }
 
   // 8. Both audit sinks recorded the flow, without secrets. Settle first —
   // the sinks are async and an in-flight JSONL append would otherwise read as a

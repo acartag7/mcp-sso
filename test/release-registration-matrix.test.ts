@@ -28,6 +28,7 @@ import { createBridgeConfig } from "../src/config.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import type { CimdTransport, DnsResolver } from "../src/cimd/transport.ts";
 import type { RateLimitPort } from "../src/ports/rate-limit.ts";
 
 const releaseTest = process.env.RUN_RELEASE_MATRIX === "true" ? test : test.skip;
@@ -48,11 +49,42 @@ const EPHEMERAL = "http://localhost:3118/callback";
 
 class Clients implements ClientStore {
   readonly rows = new Map<string, ClientRegistration>();
+  /** Every id the DCR store was ASKED for. `rows` alone cannot reveal a wrong
+   *  fallback, because a lookup does not mutate it — an HTTPS id could be routed
+   *  to `find()` and a rows-only assertion would still pass. */
+  readonly lookups: string[] = [];
   async save(c: ClientRegistration): Promise<void> { this.rows.set(c.clientId, structuredClone(c)); }
-  async find(id: string): Promise<ClientRegistration | null> { return structuredClone(this.rows.get(id) ?? null); }
+  async find(id: string): Promise<ClientRegistration | null> {
+    this.lookups.push(id);
+    return structuredClone(this.rows.get(id) ?? null);
+  }
 }
 
 const boundedLimiter: RateLimitPort = { async check() { return true; } };
+const resolver: DnsResolver = { async resolve() { return [{ address: "93.184.216.34", family: 4 }]; } };
+/** A CIMD id whose document the deterministic transport below serves. */
+const CIMD_DOC = {
+  client_id: "https://cimd.test/client.json",
+  client_name: "Matrix client",
+  redirect_uris: ["http://localhost/callback"],
+};
+
+/** Deterministic CIMD transport, so a CIMD-enabled cell can require SUCCESS.
+ *  Without it a failed fetch or resolver regression returns some non-200 and a
+ *  "not 200 when disabled" assertion passes as if dispatch still worked. */
+function cimdTransportFor(doc: Record<string, unknown>): CimdTransport {
+  return {
+    async connectAndGet() {
+      async function* body(): AsyncGenerator<Uint8Array> {
+        yield new TextEncoder().encode(JSON.stringify(doc));
+      }
+      return {
+        status: 200, redirected: false, finalUrl: String(doc.client_id),
+        headersDistinct: { "content-type": ["application/json"] }, encodedBody: body(),
+      };
+    },
+  };
+}
 
 function jwk(): JWK {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -79,6 +111,7 @@ function deployment(opts: { cimd: boolean; dcr: "stateless" | "stored" }) {
     config, store: new MemoryStore(), clock: { nowMs: () => Date.parse("2026-08-17T12:00:00Z") },
     audit: { async writeAuthEvent() {} },
     ...(opts.dcr === "stored" ? { rateLimit: boundedLimiter } : {}),
+    ...(opts.cimd ? { cimdTransport: cimdTransportFor(CIMD_DOC), cimdResolver: resolver } : {}),
   });
   return { bridge, clients };
 }
@@ -132,20 +165,52 @@ for (const c of CONFIGS) {
     const { bridge, clients } = deployment(c);
     const authz = await bridge.handleAuthorize({
       query: {
-        response_type: "code", client_id: REAL_CLIENT_DOC.client_id, redirect_uri: EPHEMERAL,
+        response_type: "code", client_id: CIMD_DOC.client_id, redirect_uri: EPHEMERAL,
         code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
         scope: "mcp:read", state: "s",
       },
       body: undefined, headers: {}, ip: "127.0.0.1",
     }, { subject: "matrix-user" });
 
-    // With CIMD off it must be REFUSED — never silently resolved through the
-    // DCR path that is enabled in every one of these deployments.
-    if (!c.cimd) {
+    if (c.cimd) {
+      // Require SUCCESS, not merely "some response": a failed fetch or resolver
+      // regression also returns non-200, and asserting only the disabled case
+      // would let that pass as if dispatch still worked.
+      assert.equal(authz.status, 200, `a CIMD id must resolve and reach consent: ${JSON.stringify(authz.body).slice(0, 200)}`);
+      assert.match(String(authz.body), /consent_token/, "the CIMD client must reach the consent page");
+    } else {
       assert.notEqual(authz.status, 200, "an HTTPS client id must not reach consent with CIMD disabled");
+      assert.equal(authz.redirect, undefined, "and must not be answered through the redirect channel");
     }
-    // In both cases it must never have been treated as an opaque DCR client.
-    assert.ok(!clients.rows.has(REAL_CLIENT_DOC.client_id), "an HTTPS id must never enter the DCR client store");
+    assert.ok(!clients.rows.has(CIMD_DOC.client_id), "an HTTPS id must never enter the DCR client store");
+    assert.deepEqual(
+      clients.lookups.filter((id) => id.startsWith("https://")), [],
+      `an HTTPS id reached the DCR store: ${JSON.stringify(clients.lookups)}`,
+    );
+
+    // POSITIVE CONTROL. An empty `lookups` only means something if the recorder
+    // records at all; otherwise the assertion above passes vacuously. In stored
+    // mode an opaque authorize MUST consult the store.
+    if (c.dcr === "stored") {
+      const reg = await bridge.handleRegister({
+        query: {}, body: { redirect_uris: [OPAQUE_REDIRECT], application_type: "web" },
+        headers: { "content-type": "application/json" }, ip: "127.0.0.1",
+      });
+      const opaqueId = (reg.body as { client_id: string }).client_id;
+      clients.lookups.length = 0;
+      await bridge.handleAuthorize({
+        query: {
+          response_type: "code", client_id: opaqueId, redirect_uri: OPAQUE_REDIRECT,
+          code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+          scope: "mcp:read", state: "s",
+        },
+        body: undefined, headers: {}, ip: "127.0.0.1",
+      }, { subject: "matrix-user" });
+      assert.deepEqual(
+        clients.lookups, [opaqueId],
+        "the lookup recorder must observe an opaque authorize, or the HTTPS assertion is vacuous",
+      );
+    }
   });
 }
 

@@ -71,7 +71,7 @@ function authorizeQuery(clientId: string, redirectUri: string): string {
   }).toString();
 }
 
-releaseTest("RM.11 replace mode refuses a built-in hosted origin at every shipped reader", async () => {
+releaseTest("RM.11 readers 1 and 2: replace refuses a built-in origin at DCR write and stateless authorize", async () => {
   const { app } = await mount("replace");
   try {
     // Reader 1 — DCR write. A hosted origin cannot even register.
