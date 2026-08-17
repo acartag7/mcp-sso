@@ -26,13 +26,20 @@ const config = createBridgeConfig({
   cimd: { enabled: true },
   dcr: { mode: "stored", store: sqliteStore },
 });
+
+const bridge = new Bridge({
+  // other required ports...
+  config,
+  rateLimit: boundedRegistrationRateLimit,
+});
 ```
 
 `configFromEnv` and both runnable examples retain stateless DCR by default. The
 Fastify/SQLite production entry accepts `OAUTH_DCR_MODE=stored` and backs client
 registrations with its existing `SqliteStore`; the API-key gateway keeps its
 stateless environment wiring. The generated server also supplies its
-`SqliteStore` as `dcr.store`. There is no CIMD environment variable or secret.
+`SqliteStore` as `dcr.store`, plus a finite process-local registration
+`RateLimitPort`. There is no CIMD environment variable or secret.
 `authorizationServerMetadata` advertises both
 `client_id_metadata_document_supported: true` and `registration_endpoint`, so
 clients can select the method they implement.
@@ -111,16 +118,13 @@ give a custom gateway composition its own shared `ClientStore` when it needs the
 same client class.
 
 The Fastify/SQLite example bounds `POST /oauth/register` in both modes at 30
-requests per 60 seconds per derived client IP. Its Fastify limiter denies over
-budget with 429 and fails closed with a fixed 503 if a custom limiter store is
-unavailable, before the request can be parsed or stored. The default counter is
-per process; use a conforming shared Fastify limiter store or trusted-edge
-aggregate limit for multiple replicas. This example-level protection does not
-change the library's `RateLimitPort` default or the stored-DCR early return in
-`assertSafeDeploymentCombination`. The owner-approved B1 follow-up will remove
-that early-return gap by requiring a bounded core `RateLimitPort` for every
-stored-DCR deployment, with no acknowledgement escape hatch; that boot-breaking
-library change is deliberately separate from this hotfix.
+requests per 60 seconds per derived client IP before parsing or persistence. In
+stored mode it also supplies a core process-local aggregate budget of 30
+registrations per 60 seconds. Existing custom stored-DCR integrations must add a
+bounded `rateLimit` dependency before upgrading; omission and `noopRateLimit`
+are boot failures, and `acknowledgeUnsafeStatelessDefaults` does not apply. For
+multiple replicas, use shared controls such as the Redis port shipped at
+`mcp-sso/rate-limit/redis`.
 
 Use stateless DCR when a deployment does not need registrations to survive a
 restart. For a single-process deployment, `SqliteStore` implements both

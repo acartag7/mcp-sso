@@ -99,6 +99,40 @@ test("Fastify/SQLite registration limiter bounds both DCR modes before parsing a
   }
 });
 
+test("Fastify/SQLite stored DCR keeps an aggregate core budget behind the route hook", async () => {
+  const saved: ClientRegistration[] = [];
+  const clientStore: ClientStore = {
+    async save(client) { saved.push(client); },
+    async find(clientId) {
+      return saved.find((client) => client.clientId === clientId) ?? null;
+    },
+  };
+  const { config, redirectUri } = configFor("stored", clientStore);
+  const built = await buildApp({
+    config,
+    identity: { async verify() { return { ok: false, reason: "unused" }; } },
+  });
+  try {
+    const statuses: number[] = [];
+    for (let index = 0; index <= FASTIFY_DCR_REGISTER_RATE_LIMIT.max; index++) {
+      const response = await built.bridge.handleRegister({
+        query: {}, headers: {}, ip: `198.51.100.${index + 1}`,
+        body: registrationPayload(redirectUri),
+      });
+      statuses.push(response.status);
+    }
+    assert.deepEqual(
+      statuses.slice(0, FASTIFY_DCR_REGISTER_RATE_LIMIT.max),
+      Array(FASTIFY_DCR_REGISTER_RATE_LIMIT.max).fill(201),
+    );
+    assert.equal(statuses.at(-1), 429);
+    assert.equal(saved.length, FASTIFY_DCR_REGISTER_RATE_LIMIT.max);
+  } finally {
+    await built.app.close();
+    await built.close();
+  }
+});
+
 test("Fastify/SQLite registration limiter store failure is a fixed 503 before durable effects", async () => {
   const privateDetail = "registration limiter backend detail";
   class FailingStore implements FastifyRateLimitStore {

@@ -24,7 +24,9 @@ How mcp-sso proves a release actually works.
 > `http://localhost:1455/auth/callback`; stateless DCR cannot safely boot with
 > the portless loopback origin needed to admit that changing path and port.
 > Current source exposes the already-supported stored-DCR/SQLite composition as
-> `OAUTH_DCR_MODE=stored`. This does not relax the stateless deployment guard.
+> `OAUTH_DCR_MODE=stored`. The example supplies a finite process-local core
+> registration limiter; custom stored-DCR compositions now fail boot without a
+> bounded `RateLimitPort`. This does not relax the stateless deployment guard.
 >
 > The post-v0.3.5 line hardens the shipped OAuth composition rather than adding
 > a new protocol profile. It host-binds generic-OIDC discovery endpoints; rejects

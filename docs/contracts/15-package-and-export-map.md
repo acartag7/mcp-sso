@@ -211,10 +211,13 @@ implements both OAuth state and stored user DCR, so a generated client registrat
 survives a server restart; the shipped-entrypoint integration test restarts between
 registration and authorization before completing pairing, token exchange, and an
 official-SDK tool call. The generated composition rejects a non-loopback `HOST` before
-creating keys or opening SQLite: stored DCR is intentionally confined to the starter's
+creating keys or opening SQLite. It then calls the root-exported
+`assertSafeDeploymentCombination` with its finite registration port before opening
+SQLite, and `Bridge` repeats the guard: stored DCR is intentionally confined to the starter's
 single-operator localhost envelope, where an unauthenticated network caller cannot grow
-the persistent client table. Internet-facing deployments use the production composition
-with a real rate limiter and identity provider. `.gitignore`
+the persistent client table without first passing the starter's finite process-local
+registration `RateLimitPort`. Internet-facing deployments use the production composition
+with a shared bounded rate limiter and identity provider. `.gitignore`
 (`node_modules/` + the `.mcp-sso/` state dir); `.npmrc` (`ignore-scripts=true` —
 dependency lifecycle scripts disabled unless the operator vets one, the project's
 supply-chain posture); and `README.md` (the run steps +

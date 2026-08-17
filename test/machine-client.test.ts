@@ -29,6 +29,7 @@ import { registerClient } from "../src/register.ts";
 import { assertRedirectAllowedForClient } from "../src/redirect.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 import {
   disableMachineClient, provisionMachineClient, rotateMachineClientSecret,
   verifyMachineClientSecret, rotateSecrets, DEFAULT_ROTATION_GRACE_SECONDS,
@@ -934,7 +935,10 @@ test("registerClient: rejects machine-shape signals with invalid_client_metadata
 
 test("Bridge.handleRegister: machine-shape rejection surfaces as the RFC 7591 error body", async () => {
   const h = harness();
-  const bridge = new Bridge({ config: storedConfig(h.store), store: new MemoryStore(), clock: h.clock, audit: h.audit });
+  const bridge = new Bridge({
+    config: storedConfig(h.store), store: new MemoryStore(), clock: h.clock,
+    audit: h.audit, rateLimit: boundedTestRateLimit(),
+  });
   const res = await bridge.handleRegister({ query: {}, headers: {}, body: { redirect_uris: ["https://client.test/callback"], grant_types: ["client_credentials"] } });
   assert.equal(res.status, 400);
   assert.deepEqual(res.body, { error: "invalid_client_metadata", error_description: (res.body as { error_description: string }).error_description });

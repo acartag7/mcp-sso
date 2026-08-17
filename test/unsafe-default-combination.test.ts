@@ -7,11 +7,12 @@ import test from "node:test";
 import type { JWK } from "jose";
 import {
   AuthConfigError, Bridge, createBridgeConfig,
-  noopRateLimit, type AuditPort, type BridgeConfig,
+  noopRateLimit, type AuditPort, type BridgeConfig, type RateLimitPort,
 } from "../src/index.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { buildApp } from "../examples/fastify-sqlite/app.ts";
 import { buildGateway } from "../examples/api-key-gateway/app.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const clock = { nowMs: () => Date.parse("2026-08-13T12:00:00Z") };
 const audit: AuditPort = { async writeAuthEvent() {} };
@@ -36,7 +37,7 @@ function config(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
   });
 }
 
-function construct(cfg: BridgeConfig, rateLimit = undefined as typeof noopRateLimit | undefined): Bridge {
+function construct(cfg: BridgeConfig, rateLimit?: RateLimitPort): Bridge {
   return new Bridge({
     config: cfg,
     store: new MemoryStore(),
@@ -118,7 +119,10 @@ test("Bridge boot accepts each adjacent composition when one unsafe-default cond
     dev: { allowInsecureLocalhost: true },
   })));
   const clients = { async save() {}, async find() { return null; } };
-  assert.doesNotThrow(() => construct(config({ dcr: { mode: "stored", store: clients } })));
+  assert.doesNotThrow(() => construct(
+    config({ dcr: { mode: "stored", store: clients } }),
+    boundedTestRateLimit(),
+  ));
 });
 
 test("an HTTP loopback callback does not mitigate an internet-facing composition", () => {
@@ -219,6 +223,7 @@ test("example factories reuse the config snapshot that passed preflight", async 
       let reads = 0;
       const opts = {
         ...entry.extra,
+        rateLimit: boundedTestRateLimit(),
         sqliteFile: entry.file,
         get config() { reads += 1; return reads === 1 ? safe : permissive; },
       } as Parameters<typeof buildGateway>[0];

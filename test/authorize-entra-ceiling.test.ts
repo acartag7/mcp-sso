@@ -24,6 +24,7 @@ import { OAuthError } from "../src/errors.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { type EntraConfig, entraIssuer, verifyEntraIdToken } from "../src/identity/entra.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
 const NOW_SEC = Math.floor(NOW_MS / 1000);
@@ -74,7 +75,10 @@ function setup(): Ctx {
     groupAuthorization: { mapping: { [READERS]: ["mcp:read"], [WRITERS]: ["mcp:write"], [ADMINS]: ["mcp:admin"] }, baseScopes: [] },
   };
   const noGroupConfig: EntraConfig = { tenantId: TENANT, clientId: ENTRA_CLIENT_ID, redirectUri: "https://bridge.test/oauth/entra/callback" };
-  const bridge = new Bridge({ config: bridgeConfig(clientStore), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit });
+  const bridge = new Bridge({
+    config: bridgeConfig(clientStore), store: new MemoryStore(),
+    clock: new FakeClock(NOW_MS), audit, rateLimit: boundedTestRateLimit(),
+  });
   return { bridge, audit, entraConfig, noGroupConfig };
 }
 

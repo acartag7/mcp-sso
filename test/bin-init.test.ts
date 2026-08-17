@@ -79,7 +79,7 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.ok(!/[\^~]/.test(Object.values(deps).join(" ")), "no version ranges — exact pins only");
 
     const server = await readFile(join(dir, "server.ts"), "utf8");
-    for (const marker of ['from "mcp-sso"', 'from "mcp-sso/fastify/protected-resource-rate-limit"', "registerOAuthRoutes", "registerProtectedResourceRateLimit", "semanticOAuthBody", "isMcpPath", "loadOrCreateQuickstartSecrets", "validateAllowedOrigins", "createConsolePairingIdentity", "handlePairingAuthorize"]) {
+    for (const marker of ['from "mcp-sso"', 'from "mcp-sso/fastify/protected-resource-rate-limit"', "registerOAuthRoutes", "registerProtectedResourceRateLimit", "semanticOAuthBody", "isMcpPath", "loadOrCreateQuickstartSecrets", "validateAllowedOrigins", "createConsolePairingIdentity", "handlePairingAuthorize", "assertSafeDeploymentCombination"]) {
       assert.ok(server.includes(marker), `server.ts composition root includes ${marker}`);
     }
     assert.match(server, /config:\s*\{\s*rateLimit:/, "generated /mcp route enables the mandatory finite budget");
@@ -101,6 +101,15 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
       server,
       /dcr:\s*\{\s*mode:\s*"stored",\s*store:\s*clientStore\s*\}/,
       "generated server persists DCR through its SQLite-backed client store",
+    );
+    assert.match(
+      server,
+      /rateLimit:\s*registrationRateLimit/,
+      "generated stored-DCR starter supplies its finite core registration limiter",
+    );
+    assert.ok(
+      server.indexOf("assertSafeDeploymentCombination({ config") < server.indexOf("openSqliteStore("),
+      "generated stored-DCR guard runs before SQLite opens",
     );
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST, "http:\/\/localhost,http:\/\/127\.0\.0\.1"/, "generated local composition explicitly declares loopback callback origins");
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST_MODE/, "generated starter exposes the redirect trust mode");

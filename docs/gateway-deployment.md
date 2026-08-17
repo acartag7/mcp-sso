@@ -66,11 +66,12 @@ OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http
 
 That setting is intentionally not a relaxation of the stateless deployment
 guard: stored DCR records each native client's concrete callback in SQLite. The
-Fastify/SQLite example also puts a fixed fail-closed 30-request/60-second per-IP
-budget on `/oauth/register` before parsing or persistence; its in-memory counter
-is per process unless a shared Fastify limiter store is supplied. The
-API-key gateway's environment builder remains stateless; a custom gateway that
-needs native CLI DCR must supply a shared `ClientStore` itself. See
+Fastify/SQLite example puts a fixed fail-closed 30-request/60-second per-IP
+budget on `/oauth/register` before parsing or persistence and supplies stored
+mode with a core 30-request/60-second aggregate `RateLimitPort`. Both defaults
+are per process. The API-key gateway's environment builder remains stateless; a
+custom gateway that needs native CLI DCR must supply a shared `ClientStore` and
+a bounded core `RateLimitPort`. See
 [client-registration.md](client-registration.md) for the document shape and
 complete registration guidance. CIMD itself needs no environment variable or
 shared `ClientStore`.
@@ -263,7 +264,10 @@ Each gateway is a small Deployment + Service + Ingress + Secret.
   registrations. On ≥2 replicas, back `ClientStore` with the same shared DB
   through a deployer-supplied adapter; otherwise a client registered on pod A is
   rejected `invalid_client` on pod B. SQLite's client surface deliberately does
-  not implement the atomic `MachineClientStore` lifecycle.
+  not implement the atomic `MachineClientStore` lifecycle. Stored mode also
+  requires a bounded core `RateLimitPort` at boot; for replicas, use the shared
+  Redis implementation at `/rate-limit/redis`. A proxy-only budget and
+  `acknowledgeUnsafeStatelessDefaults` do not satisfy this rule.
 - **CIMD needs no client-registration store.** The client hosts its metadata
   document and the bridge validates it at authorization time. The current
   `BridgeConfig` still requires either stateless or stored DCR and advertises

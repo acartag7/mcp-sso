@@ -57,7 +57,10 @@ Do not work around the boot guard or add a placeholder HTTPS callback. Stored
 DCR preserves the broad admission needed at registration, then binds later
 authorization to the concrete native callback saved for that client. The
 API-key gateway example remains stateless unless its composition root supplies
-a shared `ClientStore`.
+a shared `ClientStore` and a bounded core `RateLimitPort`. The Fastify/SQLite
+example supplies a finite process-local registration port automatically in
+stored mode; multi-replica deployments use a shared port such as
+`mcp-sso/rate-limit/redis`.
 
 ## Codex CLI 0.144.1 callback regression
 

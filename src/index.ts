@@ -108,6 +108,10 @@ export { loadOrCreateQuickstartSecrets, assertRealDir, type QuickstartSecrets, t
 // into a pre-existing tree (the footgun the raw ensureGitignore(dir, canCreate)
 // boolean would expose). The public surface for the CF/Entra/gateway path (§15 DX).
 export { ensureStateDir } from "./state-dir.ts";
+// Pure composition preflight so package consumers can reject an unsafe DCR /
+// limiter combination before opening a store or creating other state. Bridge
+// repeats the same guard at construction.
+export { assertSafeDeploymentCombination } from "./deployment-guard.ts";
 // Console-pairing authorize surface (§17.5) — framework-free, so root-exported.
 // A consumer pairs these with the `./identity/console-pairing` subpath identity
 // and the `skipAuthorize` option on the framework adapters.

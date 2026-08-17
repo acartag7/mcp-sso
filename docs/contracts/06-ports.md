@@ -549,8 +549,11 @@ locked in **§17.1**.
 interface RateLimitPort { check(key: string): Promise<boolean>; }
 const noopRateLimit: RateLimitPort = { async check(): Promise<boolean> { return true; } };
 ```
-Optional DoS defense for unauthenticated registration, approval, token exchange,
-revocation, and identity resolution (threat-model #8). `Bridge` calls
+DoS defense for unauthenticated registration, approval, token exchange,
+revocation, and identity resolution (threat-model #8). A bounded port is
+mandatory at boot for stored DCR because registration creates durable state;
+the no-op default remains available only to §5-admitted stateless
+compositions. `Bridge` calls
 `check("register:<ip>")` / `check("approve:<ip>")` /
 `check("token:<ip>")` before those use-cases, and
 `check("revoke:<ip>")` at the start of `Bridge.handleRevoke`, before its
@@ -585,9 +588,11 @@ When the same port is supplied to both `Bridge` and an upstream redirect flow,
 the bound boot snapshot retains the source port's identity. The shared CIMD
 resolver therefore charges that counting port once for the request's
 `cimd:<ip>` key, while two genuinely distinct ports both apply.
-The default `noopRateLimit` allows everything (rate-limiting is advisory, not a
-hard gate). A thrown error is treated as **fail-open** (allow) — a rate-limiter
-outage must not lock out all auth; this is defense-in-depth, not a security boundary.
+The default `noopRateLimit` allows everything and counts as absent for the
+stored-DCR boot rule. A thrown error is treated as **fail-open** (allow) — a
+rate-limiter outage must not lock out all auth; runtime rate limiting remains
+defense-in-depth, not an authorization boundary. A custom always-allow port is
+nonconforming even though the structural boot check cannot distinguish it.
 
 This advisory OAuth-port policy does **not** govern the protected resource
 itself. A Fastify host mounts `/mcp` through the separately exported

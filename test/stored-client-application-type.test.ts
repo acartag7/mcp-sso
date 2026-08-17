@@ -14,6 +14,7 @@ import type { ClockPort } from "../src/ports/clock.ts";
 import type { RedirectIdentityPort } from "../src/ports/identity.ts";
 import { assertRedirectAllowedForClient } from "../src/redirect.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const NOW = Date.parse("2026-08-12T12:00:00.000Z");
 const ISSUER = "https://auth.test";
@@ -89,7 +90,9 @@ function harness(row: unknown): {
   state.consumeConsentJti = async (...args) => { jtiConsumes += 1; return consume(...args); };
   const saveCode = state.saveAuthCode.bind(state);
   state.saveAuthCode = async (...args) => { codeWrites += 1; return saveCode(...args); };
-  const bridge = new Bridge({ config: cfg, store: state, clock, audit });
+  const bridge = new Bridge({
+    config: cfg, store: state, clock, audit, rateLimit: boundedTestRateLimit(),
+  });
   let identityBuilds = 0; let exchanges = 0;
   const identity: RedirectIdentityPort = {
     redirectUri: `${ISSUER}/oauth/callback`,

@@ -42,10 +42,16 @@ export function assertSafeDeploymentCombination(deps: {
     if (!isLoopbackUrl(deps.config.issuer) || !isLoopbackUrl(deps.config.resource)) {
       throw new AuthConfigError("acknowledgeUnsafeStatelessDefaults is restricted to loopback issuer and resource URLs");
     }
-    if (options.emitAcknowledgementWarning !== false) warnAcknowledgement();
   }
   const bounded = deps.rateLimit !== undefined && deps.rateLimit !== noopRateLimit;
-  if (deps.config.dcr.mode !== "stateless" || bounded) return;
+  if (deps.config.dcr.mode === "stored" && !bounded) {
+    throw new AuthConfigError(
+      "stored DCR requires a bounded RateLimitPort because anonymous registrations create durable state; supply a limiter (mcp-sso/rate-limit/redis ships one)",
+    );
+  }
+  if (deps.acknowledgeUnsafeStatelessDefaults === true
+    && options.emitAcknowledgementWarning !== false) warnAcknowledgement();
+  if (bounded) return;
   const localOnly = deps.config.dev?.allowInsecureLocalhost === true
     && isLoopbackUrl(deps.config.issuer) && isLoopbackUrl(deps.config.resource);
   if (localOnly) return;
@@ -57,7 +63,7 @@ export function assertSafeDeploymentCombination(deps: {
       return;
     }
     throw new AuthConfigError(
-      "stateless DCR with no application-specific HTTPS redirect and no RateLimitPort is unsafe; use stored DCR, configure an application callback, supply a limiter, or explicitly acknowledge the temporary starter risk",
+      "stateless DCR with no application-specific HTTPS redirect and no RateLimitPort is unsafe; configure an application callback, supply a limiter, or explicitly acknowledge the temporary starter risk",
     );
   }
 }
