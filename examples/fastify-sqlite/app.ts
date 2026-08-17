@@ -45,6 +45,7 @@ import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { RequestAuthorizer } from "../../src/verifier.ts";
 import { SystemClock } from "../../src/ports/clock.ts";
 import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
+import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { JsonlFileAudit } from "../../src/audit/jsonl-file.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
 import { loadOrCreateQuickstartSecrets } from "../../src/quickstart.ts";
@@ -55,6 +56,7 @@ import type { GroupAuthorization } from "../../src/identity/entra-groups.ts";
 import { createGoogleRedirectIdentity, type GoogleConfig } from "../../src/identity/google.ts";
 import { createGenericOidcRedirectIdentity, type GenericOidcConfig } from "../../src/identity/generic-oidc.ts";
 import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identity.ts";
+import type { ClientRegistration, ClientStore } from "../../src/ports/client-store.ts";
 import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../src/identity/console-pairing.ts";
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
@@ -74,6 +76,9 @@ import {
 import {
   assertLoopbackStarterBeforeState, assertSafeDeploymentCombination,
 } from "../../src/deployment-guard.ts";
+import {
+  createDcrRegistrationRateLimitPort, installDcrRegistrationRateLimit,
+} from "./registration-rate-limit.ts";
 import { trustedProxiesFromEnv, trustedProxiesFromOptions } from "./trusted-proxy.ts";
 
 export interface ExampleOptions {
@@ -93,6 +98,8 @@ export interface ExampleOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer + pairing. Default noopAudit. */
   audit?: AuditPort;
+  /** Core OAuth limiter. Stored mode receives a finite process-local default. */
+  rateLimit?: RateLimitPort;
   /** Mandatory `/mcp` Fastify budget. Defaults to 60 requests / 60 seconds / IP. */
   protectedResourceRateLimit?: ProtectedResourceRateLimitOptions;
   /** Exact proxy IP/CIDR allowlist for Fastify request.ip. Absent means trustProxy:false. */
@@ -105,13 +112,17 @@ export interface ExampleOptions {
 export async function buildApp(opts: ExampleOptions) {
   const config = opts.config;
   const acknowledged = opts.acknowledgeUnsafeStatelessDefaults === true;
-  assertSafeDeploymentCombination({
+  const rateLimitCandidate = opts.rateLimit
+    ?? (config.dcr.mode === "stored" ? createDcrRegistrationRateLimitPort() : undefined);
+  const rateLimit = assertSafeDeploymentCombination({
     config,
+    rateLimit: rateLimitCandidate,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
   }, { emitAcknowledgementWarning: false });
   const trustedProxies = trustedProxiesFromOptions(opts);
   const app = Fastify({ trustProxy: trustedProxies ?? false });
   const protectedRateLimit = await registerProtectedResourceRateLimit(app, opts.protectedResourceRateLimit);
+  installDcrRegistrationRateLimit(app);
   const protectedRoute = { config: { rateLimit: {
     max: protectedRateLimit.max,
     timeWindow: protectedRateLimit.timeWindowMs,
@@ -120,7 +131,7 @@ export async function buildApp(opts: ExampleOptions) {
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
-  const bridge = new Bridge({ config, store, clock, audit,
+  const bridge = new Bridge({ config, store, clock, audit, rateLimit,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
 
@@ -316,10 +327,50 @@ export function redirectAllowlistPolicyFromEnv(
   };
 }
 
+interface ProductionDcrBinding {
+  dcr: BridgeConfig["dcr"];
+  rateLimit?: RateLimitPort;
+  bind(store: ReturnType<typeof openSqliteStore>): void;
+}
+
+/** Select the production Fastify/SQLite DCR mode before state is opened. Stored
+ * mode publishes a stable ClientStore port immediately, then binds that port to
+ * the example's already-opened SqliteStore before the app is returned. */
+export function fastifySqliteDcrFromEnv(
+  env: Record<string, string | undefined>,
+): ProductionDcrBinding {
+  const mode = env.OAUTH_DCR_MODE ?? "stateless";
+  if (mode === "stateless") {
+    return { dcr: { mode }, bind() {} };
+  }
+  if (mode !== "stored") {
+    throw new AuthConfigError('OAUTH_DCR_MODE must be "stateless" or "stored"');
+  }
+  let sqlite: ReturnType<typeof openSqliteStore> | undefined;
+  const store: ClientStore = Object.freeze({
+    async save(client: ClientRegistration): Promise<void> {
+      if (!sqlite) throw new Error("fastify-sqlite stored DCR store is not ready");
+      await sqlite.save(client);
+    },
+    async find(clientId: string): Promise<ClientRegistration | null> {
+      if (!sqlite) throw new Error("fastify-sqlite stored DCR store is not ready");
+      return await sqlite.find(clientId);
+    },
+  });
+  return {
+    dcr: { mode, store },
+    rateLimit: createDcrRegistrationRateLimitPort(),
+    bind(value) { sqlite = value; },
+  };
+}
+
 /** Read config from env (the production path; standalone index.ts uses quickstart
  *  secrets instead). Accepts an env object so the wiring is testable without
  *  mutating the real process.env. */
-export function configFromEnv(env: Record<string, string | undefined> = process.env): BridgeConfig {
+export function configFromEnv(
+  env: Record<string, string | undefined> = process.env,
+  dcr: BridgeConfig["dcr"] = { mode: "stateless" },
+): BridgeConfig {
   const required = ["OAUTH_ISSUER", "OAUTH_RESOURCE", "OAUTH_CONSENT_SIGNING_SECRET", "OAUTH_SIGNING_PRIVATE_JWK"];
   const missing = required.filter((k) => !env[k]);
   if (missing.length) throw new Error(`Missing env: ${missing.join(", ")}`);
@@ -336,7 +387,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     defaultScopes: (env.OAUTH_DEFAULT_SCOPES ?? "mcp:read").split(",").map((s) => s.trim()).filter(Boolean),
     allowedOrigins: allowedOriginsFromEnv(env, env.OAUTH_ISSUER!),
     cimd: { enabled: true },
-    dcr: { mode: "stateless" },
+    dcr,
     dev: env.OAUTH_ALLOW_INSECURE_LOCALHOST === "true" ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
@@ -492,6 +543,9 @@ export async function buildExample(
   dir: string;
 }> {
   assertSingleIdentityProviderSelector(env);
+  const productionDcr = productionIdentityConfigured(env)
+    ? fastifySqliteDcrFromEnv(env)
+    : undefined;
   const trustedProxies = trustedProxiesFromEnv(env);
   const dir = env.MCP_SSO_DIR ?? "./.mcp-sso";
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
@@ -505,7 +559,7 @@ export async function buildExample(
     // originOf(OAUTH_ISSUER) + callbackPath (a mismatch is silent breakage at the
     // IdP, so it fails closed at boot). The bridge's own signing material still
     // comes from OAUTH_* env (configFromEnv).
-    const config = configFromEnv(env);
+    const config = configFromEnv(env, productionDcr!.dcr);
     const redirectUri = mustEnv(env, "ENTRA_REDIRECT_URI");
     const callbackPath = new URL(redirectUri).pathname;
     const identity = createEntraRedirectIdentity({
@@ -518,37 +572,55 @@ export async function buildExample(
       groupAuthorization: entraGroupAuthorizationFromEnv(env),
     }, { scopeCatalog: config.scopeCatalog });
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
-    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
+    assertSafeDeploymentCombination({
+      config, rateLimit: productionDcr!.rateLimit,
+    }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
-    const { app, store } = await buildApp({ config, upstream: { identity, callbackPath }, audit, sqliteFile, trustedProxies });
+    const { app, store } = await buildApp({
+      config, rateLimit: productionDcr!.rateLimit,
+      upstream: { identity, callbackPath }, audit, sqliteFile, trustedProxies,
+    });
+    productionDcr!.bind(store);
     return { app, store, config, dir };
   }
   if (env.CF_ACCESS_AUDIENCE !== undefined) {
     // PRODUCTION: Cloudflare Access + env signing material. This branch does NOT
     // run the quickstart helper, so create the state dir explicitly (sqlite open +
     // audit append otherwise fail on the missing parent).
-    const config = configFromEnv(env);
+    const config = configFromEnv(env, productionDcr!.dcr);
     const identity = createCloudflareAccessIdentity({
       audience: mustEnv(env, "CF_ACCESS_AUDIENCE"),
       certsUrl: mustEnv(env, "CF_ACCESS_CERTS_URL"),
       issuer: mustEnv(env, "CF_ACCESS_ISSUER"),
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
-    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
+    assertSafeDeploymentCombination({
+      config, rateLimit: productionDcr!.rateLimit,
+    }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
-    const { app, store } = await buildApp({ config, identity, audit, sqliteFile, trustedProxies });
+    const { app, store } = await buildApp({
+      config, rateLimit: productionDcr!.rateLimit,
+      identity, audit, sqliteFile, trustedProxies,
+    });
+    productionDcr!.bind(store);
     return { app, store, config, dir };
   }
   if (oidcProviderConfigured(env)) {
     // §17.6 + §17.11 PRODUCTION: Google or generic OIDC redirect flow. The
     // configured redirect URI's pathname is the mounted callback route; the
     // orchestrator boot-asserts the full URI equals issuerOrigin + callbackPath.
-    const config = configFromEnv(env);
-    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
+    const config = configFromEnv(env, productionDcr!.dcr);
+    assertSafeDeploymentCombination({
+      config, rateLimit: productionDcr!.rateLimit,
+    }, { emitAcknowledgementWarning: false });
     const upstream = await createOidcUpstreamFromEnv(env, config, identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
     await ensureStateDir(dir);
-    const { app, store } = await buildApp({ config, upstream, audit, sqliteFile, trustedProxies });
+    const { app, store } = await buildApp({
+      config, rateLimit: productionDcr!.rateLimit,
+      upstream, audit, sqliteFile, trustedProxies,
+    });
+    productionDcr!.bind(store);
     return { app, store, config, dir };
   }
 

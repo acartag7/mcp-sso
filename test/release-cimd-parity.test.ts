@@ -15,6 +15,7 @@ import { pkceChallenge } from "../src/crypto.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import type { IdentityPort } from "../src/ports/identity.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const CIMD_ID = "https://client-metadata.test/cimd.json";
 const REDIRECT = "https://client.test/callback";
@@ -54,7 +55,8 @@ function runtime(): { bridge: Bridge; clients: CountingClientStore; calls: { dns
       headersDistinct: { "content-type": ["application/json"] }, encodedBody: body() };
   } };
   const bridge = new Bridge({ config, store: new MemoryStore(), clock: { nowMs: () => Date.parse("2026-08-03T12:00:00Z") },
-    audit: { async writeAuthEvent() {} }, cimdTransport: transport, cimdResolver: resolver });
+    audit: { async writeAuthEvent() {} }, cimdTransport: transport, cimdResolver: resolver,
+    rateLimit: boundedTestRateLimit() });
   return { bridge, clients, calls };
 }
 

@@ -7,7 +7,7 @@ import { createUpstreamRedirectFlow } from "../src/adapters/upstream-flow.ts";
 import type { CimdTransport, DnsResolver } from "../src/cimd/transport.ts";
 import { createBridgeConfig } from "../src/config.ts";
 import { pkceChallenge } from "../src/crypto.ts";
-import { noopAudit } from "../src/ports/audit.ts";
+import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 
 const NOW = Date.parse("2026-07-03T12:00:00.000Z");
@@ -22,16 +22,34 @@ const resolver: DnsResolver = {
   async resolve() { return [{ address: "93.184.216.34", family: 4 }]; },
 };
 
-async function* encodedDocument(method: string | undefined): AsyncGenerator<Uint8Array> {
-  yield new TextEncoder().encode(JSON.stringify({
-    client_id: CIMD_ID,
-    client_name: "Example client",
-    redirect_uris: [REDIRECT_URI],
-    ...(method === undefined ? {} : { token_endpoint_auth_method: method }),
-  }));
+const BASE_DOCUMENT = Object.freeze({
+  client_id: CIMD_ID,
+  client_name: "Example client",
+  redirect_uris: [REDIRECT_URI],
+});
+
+const CHATGPT_DOCUMENT = Object.freeze({
+  client_id: "https://chatgpt.com/oauth/AVY7bkwkV--3/client.json",
+  redirect_uris: ["https://chatgpt.com/connector/oauth/AVY7bkwkV--3"],
+  token_endpoint_auth_method: "private_key_jwt",
+  token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+  token_endpoint_auth_signing_alg: "RS256",
+  jwks_uri: "https://chatgpt.com/oauth/jwks.json",
+  grant_types: ["authorization_code", "refresh_token"],
+  response_types: ["code"],
+  client_name: "ChatGPT",
+});
+
+class MemoryAudit implements AuditPort {
+  readonly events: AuthAuditEvent[] = [];
+  async writeAuthEvent(event: AuthAuditEvent): Promise<void> { this.events.push(event); }
 }
 
-function runtime(method: string | undefined) {
+async function* encodedDocument(document: Record<string, unknown>): AsyncGenerator<Uint8Array> {
+  yield new TextEncoder().encode(JSON.stringify(document));
+}
+
+function runtime(document: Record<string, unknown>) {
   const config = createBridgeConfig({
     issuer: "https://auth.example.test",
     resource: "https://resource.example.test/mcp",
@@ -49,21 +67,28 @@ function runtime(method: string | undefined) {
     consentTokenTtlSeconds: 300,
     authorizationCodeTtlSeconds: 300,
   });
+  let transportCalls = 0;
   const transport: CimdTransport = {
     async connectAndGet() {
+      transportCalls += 1;
       return {
         status: 200,
         redirected: false,
-        finalUrl: CIMD_ID,
-        headersDistinct: { "content-type": ["application/json"] },
-        encodedBody: encodedDocument(method),
+        finalUrl: String(document.client_id),
+        headersDistinct: {
+          "content-type": ["application/json"],
+          "cache-control": ["max-age=300"],
+          date: [new Date(NOW).toUTCString()],
+        },
+        encodedBody: encodedDocument(document),
       };
     },
   };
   const store = new MemoryStore();
   const clock = { nowMs: () => NOW };
+  const audit = new MemoryAudit();
   const bridge = new Bridge({
-    config, store, clock, audit: noopAudit,
+    config, store, clock, audit,
     cimdTransport: transport, cimdResolver: resolver,
   });
   let idpHops = 0;
@@ -79,18 +104,22 @@ function runtime(method: string | undefined) {
         return { ok: true as const, identity: { subject: "user@example.test" } };
       },
     },
-    store, clock, audit: noopAudit,
+    store, clock, audit,
     cimdTransport: transport, cimdResolver: resolver,
   });
-  return { bridge, upstream, idpHops: () => idpHops };
+  return {
+    audit, bridge, upstream,
+    idpHops: () => idpHops,
+    transportCalls: () => transportCalls,
+  };
 }
 
-function authorizeRequest() {
+function authorizeRequest(document: Record<string, unknown>) {
   return {
     query: {
       response_type: "code",
-      client_id: CIMD_ID,
-      redirect_uri: REDIRECT_URI,
+      client_id: String(document.client_id),
+      redirect_uri: String((document.redirect_uris as unknown[])[0]),
       code_challenge: pkceChallenge(VERIFIER),
       code_challenge_method: "S256",
       scope: "mcp:read",
@@ -112,10 +141,22 @@ const genericFailure = {
   error_description: "client_id could not be resolved",
 };
 
+function authDocument(
+  method: string | undefined,
+  supported?: unknown,
+): Record<string, unknown> {
+  return {
+    ...BASE_DOCUMENT,
+    ...(method === undefined ? {} : { token_endpoint_auth_method: method }),
+    ...(supported === undefined ? {} : { token_endpoint_auth_methods_supported: supported }),
+  };
+}
+
 test("direct CIMD resolution rejects hostile shared-secret client-auth declarations", async () => {
   for (const method of symmetricMethods) {
-    const rejected = await runtime(method).bridge.handleAuthorize(
-      authorizeRequest(),
+    const document = authDocument(method, [method, "none"]);
+    const rejected = await runtime(document).bridge.handleAuthorize(
+      authorizeRequest(document),
       { subject: "user@example.test" },
     );
     assert.equal(rejected.status, 401, method);
@@ -126,8 +167,9 @@ test("direct CIMD resolution rejects hostile shared-secret client-auth declarati
 
 test("upstream CIMD resolution rejects shared-secret declarations before an IdP hop", async () => {
   for (const method of symmetricMethods) {
-    const subject = runtime(method);
-    const rejected = await subject.upstream.handleAuthorize(authorizeRequest());
+    const document = authDocument(method, [method, "none"]);
+    const subject = runtime(document);
+    const rejected = await subject.upstream.handleAuthorize(authorizeRequest(document));
     assert.equal(rejected.status, 401, method);
     assert.deepEqual(rejected.body, genericFailure, method);
     assert.equal(rejected.redirect, undefined, method);
@@ -138,18 +180,23 @@ test("upstream CIMD resolution rejects shared-secret declarations before an IdP 
 
 test("direct CIMD resolution preserves absent and none client authentication", async () => {
   for (const method of [undefined, "none"]) {
-    const accepted = await runtime(method).bridge.handleAuthorize(
-      authorizeRequest(),
+    const document = authDocument(method);
+    const subject = runtime(document);
+    const accepted = await subject.bridge.handleAuthorize(
+      authorizeRequest(document),
       { subject: "user@example.test" },
     );
     assert.equal(accepted.status, 200, String(method));
+    const success = subject.audit.events.find((event) => event.event === "oauth.cimd.fetch" && event.status === "success");
+    assert.equal(Object.hasOwn(success ?? {}, "selectedClientAuthMethod"), false, "native public auth has no negotiation marker");
   }
 });
 
 test("upstream CIMD resolution preserves absent and none client authentication", async () => {
   for (const method of [undefined, "none"]) {
-    const subject = runtime(method);
-    const accepted = await subject.upstream.handleAuthorize(authorizeRequest());
+    const document = authDocument(method);
+    const subject = runtime(document);
+    const accepted = await subject.upstream.handleAuthorize(authorizeRequest(document));
     assert.equal(accepted.status, 302, String(method));
     assert.match(
       accepted.headers.location ?? "",
@@ -159,4 +206,61 @@ test("upstream CIMD resolution preserves absent and none client authentication",
     assert.ok(accepted.headers["set-cookie"], String(method));
     assert.equal(subject.idpHops(), 1, String(method));
   }
+});
+
+test("ChatGPT's published CIMD negotiates public none and audits direct plus cached upstream success", async () => {
+  const subject = runtime(CHATGPT_DOCUMENT);
+  const direct = await subject.bridge.handleAuthorize(
+    authorizeRequest(CHATGPT_DOCUMENT),
+    { subject: "user@example.test" },
+  );
+  assert.equal(direct.status, 200);
+
+  const upstream = await subject.upstream.handleAuthorize(authorizeRequest(CHATGPT_DOCUMENT));
+  assert.equal(upstream.status, 302);
+  assert.equal(subject.idpHops(), 1);
+  assert.equal(subject.transportCalls(), 1, "upstream resolution reuses the direct-mode cache entry");
+
+  const successes = subject.audit.events.filter(
+    (event) => event.event === "oauth.cimd.fetch" && event.status === "success",
+  );
+  assert.equal(successes.length, 2);
+  assert.deepEqual(
+    successes.map((event) => event.selectedClientAuthMethod),
+    ["none", "none"],
+    "network and cache-hit success both expose the selected public method",
+  );
+});
+
+test("private_key_jwt preference rejects when no client-provided method supported by mcp-sso is advertised", async () => {
+  const document = authDocument("private_key_jwt", ["private_key_jwt"]);
+  const subject = runtime(document);
+  const rejected = await subject.bridge.handleAuthorize(
+    authorizeRequest(document),
+    { subject: "user@example.test" },
+  );
+  assert.equal(rejected.status, 401);
+  assert.deepEqual(rejected.body, genericFailure);
+  assert.ok(subject.audit.events.some(
+    (event) => event.event === "oauth.cimd.fetch" && event.status === "failure" && event.reason === "document_invalid",
+  ));
+  assert.equal(subject.audit.events.some((event) => Object.hasOwn(event, "selectedClientAuthMethod")), false);
+});
+
+test("singular auth method absent rejects when plural choices omit none", async () => {
+  const document = authDocument(undefined, ["private_key_jwt"]);
+  const subject = runtime(document);
+  const rejected = await subject.upstream.handleAuthorize(authorizeRequest(document));
+  assert.equal(rejected.status, 401);
+  assert.deepEqual(rejected.body, genericFailure);
+  assert.equal(subject.idpHops(), 0);
+});
+
+test("singular none rejects when plural choices omit none", async () => {
+  const document = authDocument("none", ["private_key_jwt"]);
+  const subject = runtime(document);
+  const rejected = await subject.upstream.handleAuthorize(authorizeRequest(document));
+  assert.equal(rejected.status, 401);
+  assert.deepEqual(rejected.body, genericFailure);
+  assert.equal(subject.idpHops(), 0);
 });

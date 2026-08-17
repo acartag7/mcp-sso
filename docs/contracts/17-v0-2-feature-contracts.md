@@ -17,13 +17,42 @@
 artifact both normatively reference draft **-00**. The implementation was built
 against -01's additional SSRF, redirect, and response constraints. The final MCP
 citation is `-00`; §16.1 now carries the complete 44-statement mapping. The
-`+json` media-type mismatch, shared-cache directive handling, and the loopback
-port native-app precondition are implemented. The frozen native-loopback policy
-suite is active, so the implemented public-client profile has no remaining
+`+json` media-type mismatch, shared-cache directive handling, and the narrow
+loopback any-port compatibility rule are implemented. The frozen native-loopback
+policy suite is active, so the implemented public-client profile has no remaining
 draft `-00` runtime or evidence gap. §16.2
 additionally records a
 draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
 member.
+
+> **2026-08-17 public-client authentication-choice amendment.** Draft `-00`
+> §4.1 imports the
+> [OAuth Dynamic Client Registration Metadata registry](https://www.iana.org/assignments/oauth-parameters/oauth-parameters.xhtml#client-metadata)
+> and permits additional properties. That registry includes
+> `token_endpoint_auth_methods_supported` through OpenID Connect Relying Party
+> [Metadata Choices 1.0](https://openid.net/specs/openid-connect-rp-metadata-choices-1_0.html#name-client-metadata).
+> When the singular `token_endpoint_auth_method` is also
+> present, that extension requires its value to occur in the plural list; when
+> the singular preference is unsupported but another advertised choice is
+> supported, the AS SHOULD use the compatible choice instead of rejecting the
+> client. mcp-sso remains a public-client-only AS: it selects `"none"` only when
+> the plural list is well-formed and explicitly advertises it. A
+> `private_key_jwt` preference is therefore compatible only when the same list
+> contains both `"private_key_jwt"` and `"none"`; the effective method is
+> `"none"`. This does not implement `private_key_jwt`, authenticate a
+> confidential client, or fetch `jwks_uri`. A shared-symmetric-secret singular
+> method remains invalid under draft `-00` §4.1 even if the plural list also
+> advertises `"none"`. Metadata Choices §4 describes a registration request and
+> an `invalid_client_metadata` registration response; CIMD has no registration
+> response channel. At this boundary, "reject" means
+> `CimdError("document_invalid")`, which the existing decision-2 anti-oracle
+> boundary maps to the fixed `invalid_client` response. A successful override of
+> the singular `"private_key_jwt"` preference is not silent: every successful
+> `oauth.cimd.fetch` event for that resolution, including a cache hit, carries
+> the allowlisted field `selectedClientAuthMethod: "none"`. Natively public
+> documents omit that field, so operators can distinguish explicit method
+> selection from an absent or already-`"none"` singular value without logging
+> attacker-controlled metadata.
 
 > **Draft `-02` (2026-07-06) review — performed 2026-07-10, recorded here
 > 2026-07-16 (closes issue #58).** At that review, the implementation hardening
@@ -48,9 +77,10 @@ member.
 > by 17.1.3's explicit rejection of private/symmetric key material in
 > `jwks`, paired with the public-client-only profile; (6) `-02` §8.2's
 > strengthened client-authentication language (an AS MUST authenticate a
-> `private_key_jwt`-declaring client per RFC 7523) is satisfied vacuously —
-> 17.1.3 rejects any document declaring a `token_endpoint_auth_method`
-> other than absent/`"none"`. `-02` also renumbers sections. Unlabeled
+> client whose effective method is `private_key_jwt` per RFC 7523) remains
+> inapplicable — 17.1.3 either rejects that singular preference or selects an
+> explicitly advertised `"none"` alternative, so mcp-sso never admits a
+> confidential CIMD client. `-02` also renumbers sections. Unlabeled
 > draft citations in this section remain in `-01` numbering; citations
 > explicitly tagged `-02` are already re-pinned. The mapping for the next
 > re-pin: §4.5 → §4.2 (redirect URL registration), §5 → §6 (AS metadata),
@@ -265,12 +295,23 @@ decision. Everything else in the pipeline still runs under the flag.
 - Required members (MCP profile): `client_id`, `client_name` (non-empty
   string, ≤ 256 chars — display data, HTML-escaped at render),
   `redirect_uris` (non-empty array).
-- `token_endpoint_auth_method` MUST be absent or `"none"`. **v0.2 CIMD
-  clients are public clients only** — the draft explicitly sanctions this
-  profile restriction. `private_key_jwt` (confidential CIMD via published
-  JWKS) is DEFERRED, together with 17.2's `private_key_jwt` — one future
-  asymmetric-client-auth unit. `client_secret` /
-  `client_secret_expires_at` present ⇒ reject (draft MUST NOT).
+- **v0.2 CIMD clients are public clients only.** An absent
+  `token_endpoint_auth_method` or the singular value `"none"` selects public
+  client authentication. If `token_endpoint_auth_methods_supported` is
+  present, it MUST be an array of non-empty strings that explicitly contains
+  `"none"`; when the singular member is also present, its value MUST occur in
+  that array. A singular `"private_key_jwt"` preference is accepted only in
+  that choice form, with both `"private_key_jwt"` and `"none"` advertised; the
+  AS selects `"none"` and never enters confidential-client handling. A missing,
+  malformed, or incompatible plural list rejects. Every other non-`"none"`
+  singular method rejects, and draft `-00`'s shared-symmetric-secret methods
+  reject even if their list also offers `"none"`. Actual `private_key_jwt`
+  support (confidential CIMD via published JWKS) remains DEFERRED together with
+  17.2's `private_key_jwt` as one future asymmetric-client-auth unit.
+  `client_secret` / `client_secret_expires_at` present ⇒ reject (draft MUST
+  NOT). `jwks_uri` remains inert and is never fetched. A compatible
+  `private_key_jwt` preference produces the library-owned audit marker
+  `selectedClientAuthMethod: "none"`; the marker is never read from `raw`.
 - **Private or symmetric key material rejects the document** (`-02` §4.1:
   "private key material MUST NOT be included ... only public keys ... are
   permitted" — enforced AS-side as a fail-closed conformance check, even
@@ -286,10 +327,12 @@ decision. Everything else in the pipeline still runs under the flag.
 - `redirect_uris` entries: **§10.0-valid** (that grammar governs — not a
   restatement, and not a per-site re-derivation: the CIMD matcher previously
   accepted `*`, `javascript:`, and non-canonical entries that §10.1 refused).
-  https entries exact-match at authorize (draft §4.5 / RFC 9700); loopback http
-  matches RFC 8252 any-port **only for a document declaring
-  `application_type: "native"`** — see the §17.1.6 decision-1 shared matcher for
-  the canonical rule and its **IMPLEMENTED; FROZEN SUITE ACTIVE
+  https entries exact-match at authorize (draft §4.5 / RFC 9700); a registered
+  loopback `http` entry matches RFC 8252 any-port when the optional
+  `application_type` member is `"native"` or absent; an explicit `"web"`
+  declaration keeps exact raw-string matching — see
+  the §17.1.6 decision-1 shared matcher for the canonical rule and its
+  **IMPLEMENTED; FROZEN SUITE ACTIVE
   (D00-4.5.2)** status. If present:
   `response_types` must include `"code"`; `grant_types` must be an array of
   non-empty strings that includes `"authorization_code"`. Additional grant
@@ -318,8 +361,8 @@ decision. Everything else in the pipeline still runs under the flag.
   MUST NOT distinguish blocked-address from network-failure from invalid-
   document (**SSRF oracle prevention**). The specific reason goes to audit
   only (`oauth.cimd.fetch`, failure, reason code).
-- The presented `redirect_uri` must exact-match a document entry (loopback
-  any-port exception, native-declared documents only — §17.1.6 decision 1,
+- The presented `redirect_uri` must exact-match a document entry (narrow
+  registered-loopback any-port exception — §17.1.6 decision 1,
   **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2)**). The consent page MUST present the client_id host and
   redirect host before the cosmetic name as the primary identity anchors, and
   SHOULD warn when every registered redirect is loopback (the MCP localhost-
@@ -371,8 +414,9 @@ reviewed against `2026-07-28-RC`; the official final artifact was then checked
 on 2026-08-02 and retained CIMD at `SHOULD` with draft `-00`. §16.1 now maps all
 44 normative statements: 29 `C` conformant plus one conformant disclosed caveat,
 two reasoned deviations, 12 not applicable to the implemented public-client
-profile, and no unresolved runtime or evidence row. D00-4.5.2's native-app
-precondition is implemented and its dedicated frozen suite is active.
+profile, and no unresolved runtime or evidence row. D00-4.5.2's narrow
+registered-loopback port rule is implemented and its dedicated frozen suite is
+active.
 
 **A. Admission input + raw pre-parse checks (tightens 17.1.1 step 1).**
 1. The admission argument MUST be a primitive `string`, non-empty, and ≤ 2048
@@ -569,17 +613,22 @@ precondition is implemented and its dedicated frozen suite is active.
     raw-equality against a non-canonical entry is what made the two matchers
     disagree. Only the
     `http:` case is loopback. **IMPLEMENTED; FROZEN SUITE ACTIVE
-    (D00-4.5.2, §16.1):** RFC 9700 — which
-    draft `-00` §4.5 delegates to — permits varying loopback ports only for
-    **native apps**, and `application_type` is in the IANA client-metadata
-    registry `-00` §4.1 imports, so the signal is available in a CIMD document.
-    The validator rejects every present value except exact `"native"` or
-    `"web"`; the named projection, cache, signed flow claim, callback, and
-    prepare re-check carry that value. The shared matcher gates its any-port
-    branch on exact `"native"`; `"web"`, absence, and malformed direct state
-    remain exact or fail closed.
+    (D00-4.5.2, §16.1):** RFC 9700 — which draft `-00` §4.5 delegates to —
+    permits varying loopback ports for native apps, but neither D00-4.5.2 nor
+    the CIMD document profile requires a document to declare
+    `application_type`. A port-less `http://localhost/callback` or
+    `http://127.0.0.1/callback` registration is itself a native-client shape: a
+    remotely hosted web callback cannot receive it, while the native client
+    must bind a runtime-selected local port. Gating the exception on an
+    optional metadata label makes the permitted flow unusable for real clients
+    whose documents omit that label. Omission is therefore treated as the
+    compatibility case for a validated registered loopback `http` URI, while a
+    declared `"native"` type selects the same exception. A declared `"web"`
+    type is an explicit restrictive signal: it retains exact raw-string
+    matching and never receives the native-app port exception. Unknown or
+    malformed direct or signed state still fails closed.
     The authorize-time (S6b) loopback any-port match
-    reuses the existing runtime semantics of src/redirect.ts:95-103 — scheme,
+    uses `src/cimd/registration.ts:113-120` — scheme,
     hostname, pathname, and search equal; port ignored; fragment already rejected
     at validation — resolving the looser "origin" wording elsewhere.
 
@@ -604,7 +653,7 @@ precondition is implemented and its dedicated frozen suite is active.
     disabled/absent, a `https://`-shaped `client_id` is likewise rejected
     `invalid_client`, never treated as a stateless-DCR client.
 23. For a CIMD `client_id`, `prepare`'s redirect validation is the document
-    exact-match (loopback any-port per rule 20, native-declared documents only —
+    exact-match (registered-loopback any-port per rule 20 —
     §17.1.6 decision 1, **IMPLEMENTED; FROZEN SUITE ACTIVE
     (D00-4.5.2)**), REPLACING §9.3 step 2's §10
     global-allowlist check for that client. Non-CIMD flows are unchanged.
@@ -683,22 +732,28 @@ a **single NEW pure matcher** (not the §10 export functions, which strip fragme
 consult a stored client): an https registration entry matches by **exact raw-string**
 `presented === registered` (rule 20 / the raw-string identity rule — no normalization
 AT MATCH TIME, port included; sound because §10.0 already required the registered entry
-to be canonical); a loopback `http` entry matches RFC 8252 **any-port** using the compare
-semantics of `src/redirect.ts:95-103` (scheme, host, path, and search equal; port
-ignored; fragment already rejected), and only when the carried
-`application_type` is exact `"native"`. It is NOT array `∈`/`includes` (that rejects a
+to be canonical); when the optional carried `application_type` is `"native"`
+or absent, a loopback `http` entry matches RFC 8252 **any-port** using the compare
+semantics of `src/cimd/registration.ts:113-120` (scheme, host, path, and search
+equal; port ignored; fragment already rejected). An explicit `"web"`
+declaration uses the
+same exact raw-string rule as every other web redirect. It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and
 `prepare`'s re-check MUST call this SAME matcher.
-**IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2, §16.1) — this rule is the canonical definition the other
-any-port statements defer to, so the precondition is stated here once:** RFC 9700
-permits varying the loopback port **only for native apps**, and `application_type`
-is in the IANA client-metadata registry draft `-00` §4.1 imports. The any-port
-branch therefore applies only when the validated document declares
-`application_type: "native"`; a document declaring `"web"`, or omitting the
-property, gets exact raw-string matching (fail closed). The shipped matcher
-receives the named registration, rejects malformed runtime discriminants, and
-gates the branch on the carried type. The frozen four-group acceptance suite is
-active.
+**IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2, §16.1) — this rule is the canonical
+definition the other any-port statements defer to:** RFC 9700 permits a varying
+port only for native-app loopback redirects, while the CIMD profile does not
+require the optional `application_type` member. A validated port-less loopback
+`http` entry supplies the operational compatibility signal when that member is
+absent, and an explicit `"native"` declaration selects the same exception. The
+any-port branch preserves exact scheme, host, path, and search equality;
+**only the port is free**. An explicit `"web"` declaration keeps exact
+raw-string matching, because ignoring that restrictive signal would apply the
+native-only exception to a client that expressly identifies as web. Malformed
+runtime discriminants still reject before matching or JTI consumption. This
+deliberately restores
+interoperability with deployed clients such as Claude Code whose published
+document registers port-less loopback callbacks without `application_type`.
 
 *1a. Shape-first three-way dispatch; CIMD REPLACES §10 for CIMD ids.* Client_id
 shape is classified identically at BOTH the authorize resolve (`upstream-flow.ts:99`)
@@ -722,7 +777,10 @@ callback re-fetch is forbidden (1d).**
 *1b. Anti-oracle ordering.* Resolve + redirect exact-match complete BEFORE
 `Set-Cookie` / the IdP 302. Any failure ⇒ the decision-2 generic (`invalid_client`
 401) and `oauth.cimd.fetch` (failure, reason); success ⇒ `oauth.cimd.fetch`
-(success). The 4096-byte `Set-Cookie` oversize guard (upstream-flow.ts:104), for a
+(success). A success that selected public `none` over a singular
+`private_key_jwt` preference includes `selectedClientAuthMethod: "none"`; an
+absent or natively public singular value omits it. The 4096-byte `Set-Cookie`
+oversize guard (upstream-flow.ts:104), for a
 CIMD id, maps to the SAME generic `invalid_client` (never `invalid_request`) so it
 is not a content oracle. The `oauth.cimd.fetch` **success** audit is emitted only
 **after the oversize guard passes**: a resolution whose document is valid but whose
@@ -760,6 +818,9 @@ post-authentication late fetch; no TOCTOU; the consent page shows exactly the
 validated document). The consent renderer receives display-only CIMD fields on
 `PreparedConsent` (client_id host, redirect host, `client_name` as unverified text —
 threat row 17); only `cimd_verified` is copied into the consent JWT (decision 3).
+The optional `selectedClientAuthMethod` evidence stays in the resolver's cache
+envelope for success auditing; it is not a `CimdRegistration` member, is not
+signed into the flow cookie, and cannot become client capability.
 
 *1d. Fail-closed consistency (a signed-claim schema check — NOT a capability
 system).* Split across two seams (GLM): **(i)** `verifyFlowToken`
@@ -1888,7 +1949,9 @@ gate replaces no-gate).
   `oauth.device.approve`, `oauth.token.device_code`,
   `oauth.token.client_credentials`, `oauth.client.provision`,
   `oauth.client.rotate_secret`, `oauth.cimd.fetch`. `AuthAuditEvent` gains
-  optional `ip?: string` (adapter-populated; personal data — noted in docs).
+  optional `ip?: string` (adapter-populated; personal data — noted in docs) and
+  the CIMD-success-only, library-owned
+  `selectedClientAuthMethod?: "none"` negotiation evidence from §17.1.
   The §13 metadata-only rule is unchanged and the no-secrets serialization
   test extends to every new event.
 - **Retention: documentation guidance, not a library mechanism.** The library
@@ -1904,13 +1967,36 @@ gate replaces no-gate).
 > no ephemeral fallback under any failure mode.
 
 `loadOrCreateQuickstartSecrets({ dir = "./.mcp-sso" })` →
-`{ signingPrivateJwk, consentSigningSecret }`:
+`{ signingPrivateJwk, consentSigningSecret }`. It is the immediate-persistence
+convenience wrapper over the two-phase composition-root API:
+`prepareQuickstartSecrets({ dir })` →
+`{ secrets, persist(): Promise<void> }`.
+
+- Preparation is read-only with respect to the target path. If secrets exist it
+  loads and validates them. If absent it validates any pre-existing directory and
+  managed `.gitignore`, then generates the key and consent secret in memory.
+  It does not create the directory, `.gitignore`, or `secrets.json`.
+- A composition root builds and validates its complete configuration from
+  `secrets`, then invokes the one-shot `persist()` capability. `persist()` is the
+  only write step and applies the same exclusive-create, permission, symlink,
+  regular-file, and managed-ignore rules as the immediate wrapper. A second call
+  fails closed. Concurrent first boots remain create-don't-clobber: one wins and
+  the other fails with the existing restart instruction.
+- Preparation captures one deeply frozen secret snapshot before returning. The
+  public `secrets` value and the private value later serialized by `persist()` are
+  that same snapshot; callers cannot change signing or consent material between
+  complete-config validation and persistence. The immediate wrapper returns the
+  same immutable snapshot.
+- Existing secrets are never rewritten: their preparation's first `persist()` is
+  a no-op after the read-time admission checks, and a second call still rejects.
+
+Persistence then follows these rules:
 
 - If `${dir}/secrets.json` exists: load, validate shape (§5 boot checks), and
   on POSIX **reject group/other-readable files** (`mode & 0o077` ⇒ boot error
   with the exact `chmod 600` remediation; the check is skipped on Windows,
   documented). The first Windows call in each Node worker/runtime instance to
-  `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`,
+  `prepareQuickstartSecrets`, `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`,
   `ensureStateDir`, or `openSqliteStore` with a persistent path emits one
   shared, fixed, path-free warning that DACL privacy was not verified; later
   calls in that instance do not repeat it, and a throwing warning transport
@@ -1948,7 +2034,7 @@ gate replaces no-gate).
   is read or set; the warning makes that limitation visible but is not an
   admission decision.
 - **Parity rule:** EVERY code path that creates, reads, or admits the state dir —
-  `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, the example's
+  `prepareQuickstartSecrets`, `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, the example's
   Cloudflare Access branch (`ensureStateDir`), and the sqlite store
   ([§12.4](12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission)) —
   meets the applicable bar. SQLite additionally requires an already-existing,

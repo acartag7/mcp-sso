@@ -36,30 +36,37 @@ export function assertSafeDeploymentCombination(deps: {
   config: BridgeConfig;
   rateLimit?: RateLimitPort;
   acknowledgeUnsafeStatelessDefaults?: true;
-}, options: { emitAcknowledgementWarning?: boolean } = {}): void {
-  if (deps.rateLimit !== undefined) snapshotRateLimit(deps.rateLimit);
-  if (deps.acknowledgeUnsafeStatelessDefaults === true) {
-    if (!isLoopbackUrl(deps.config.issuer) || !isLoopbackUrl(deps.config.resource)) {
+}, options: { emitAcknowledgementWarning?: boolean } = {}): RateLimitPort | undefined {
+  const config = deps.config;
+  const rateLimit = snapshotRateLimit(deps.rateLimit);
+  const acknowledged = deps.acknowledgeUnsafeStatelessDefaults === true;
+  const emitAcknowledgementWarning = options.emitAcknowledgementWarning !== false;
+  if (acknowledged) {
+    if (!isLoopbackUrl(config.issuer) || !isLoopbackUrl(config.resource)) {
       throw new AuthConfigError("acknowledgeUnsafeStatelessDefaults is restricted to loopback issuer and resource URLs");
     }
-    if (options.emitAcknowledgementWarning !== false) warnAcknowledgement();
   }
-  const bounded = deps.rateLimit !== undefined && deps.rateLimit !== noopRateLimit;
-  if (deps.config.dcr.mode !== "stateless" || bounded) return;
-  const localOnly = deps.config.dev?.allowInsecureLocalhost === true
-    && isLoopbackUrl(deps.config.issuer) && isLoopbackUrl(deps.config.resource);
-  if (localOnly) return;
-  const retainsGenericLoopback = deps.config.redirectAllowlist.some(isGenericLoopbackRedirect);
-  const hasApplicationSpecificHttps = !retainsGenericLoopback
-    && deps.config.redirectAllowlist.some(isApplicationSpecificHttpsRedirect);
-  if (!hasApplicationSpecificHttps) {
-    if (deps.acknowledgeUnsafeStatelessDefaults === true) {
-      return;
-    }
+  const bounded = rateLimit !== undefined && rateLimit !== noopRateLimit;
+  if (config.dcr.mode === "stored" && !bounded) {
     throw new AuthConfigError(
-      "stateless DCR with no application-specific HTTPS redirect and no RateLimitPort is unsafe; use stored DCR, configure an application callback, supply a limiter, or explicitly acknowledge the temporary starter risk",
+      "stored DCR requires a bounded RateLimitPort because anonymous registrations create durable state; supply a limiter (mcp-sso/rate-limit/redis ships one)",
     );
   }
+  if (acknowledged && emitAcknowledgementWarning) warnAcknowledgement();
+  if (bounded) return rateLimit;
+  const localOnly = config.dev?.allowInsecureLocalhost === true
+    && isLoopbackUrl(config.issuer) && isLoopbackUrl(config.resource);
+  if (localOnly) return rateLimit;
+  const retainsGenericLoopback = config.redirectAllowlist.some(isGenericLoopbackRedirect);
+  const hasApplicationSpecificHttps = !retainsGenericLoopback
+    && config.redirectAllowlist.some(isApplicationSpecificHttpsRedirect);
+  if (!hasApplicationSpecificHttps) {
+    if (acknowledged) return rateLimit;
+    throw new AuthConfigError(
+      "stateless DCR with no application-specific HTTPS redirect and no RateLimitPort is unsafe; configure an application callback, supply a limiter, or explicitly acknowledge the temporary starter risk",
+    );
+  }
+  return rateLimit;
 }
 
 /** Read and bind a RateLimitPort once so an accessor-backed `check` cannot pass

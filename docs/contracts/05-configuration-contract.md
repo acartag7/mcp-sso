@@ -195,16 +195,24 @@ cloned nor frozen.
 A config object is constructed via `createBridgeConfig(input)` (validates +
 freezes). The frozen object is the only thing passed to use-cases.
 
-**Bridge composition boot guard.** `Bridge` rejects the combined deployment
-shape where all three conditions hold: DCR is stateless, no `RateLimitPort` was
+**Bridge composition boot guard.** Stored DCR is admitted only when the bridge
+receives a callable, contractually bounded `RateLimitPort` that bounds
+`register:<ip>` admission. An absent limiter and the exported `noopRateLimit`
+singleton both fail boot in stored mode because each anonymous registration is a
+durable write. This rule applies to loopback and internet-facing deployments
+alike, before any stateless-only carve-out.
+
+Stateless DCR retains its existing composition rule. `Bridge` rejects the shape
+where all three conditions hold: DCR is stateless, no bounded `RateLimitPort` was
 supplied, and `redirectAllowlist` adds no application-specific HTTPS redirect
 trust beyond the hosted defaults and the explicit loopback starter origins
 (`localhost`, `127.0.0.1`, `[::1]`). A bridge whose issuer and resource are both
 loopback URLs under `dev.allowInsecureLocalhost` is local-only and does not need
-that internet-facing mitigation. Each choice remains available separately;
-the unbounded, broadly reusable starter combination is not a valid composition.
-Adding an application callback does not mitigate a generic loopback origin that
-remains in the same additive allowlist; that mixed allowlist is still rejected.
+that internet-facing mitigation. Each stateless choice remains available
+separately; the unbounded, broadly reusable starter combination is not a valid
+composition. Adding an application callback does not mitigate a generic
+loopback origin that remains in the same additive allowlist; that mixed
+allowlist is still rejected.
 `Bridge` snapshots `config`, `rateLimit`, the acknowledgement, and its remaining
 dependencies once, then runs the check and constructs every use-case from that
 same snapshot. Accessor-backed input therefore cannot present one composition to
@@ -212,18 +220,30 @@ the guard and another to runtime initialization. The validated limiter's `check`
 method is also read and bound once; request handling invokes that bound function
 rather than re-reading an accessor-backed method. The check runs before the
 bridge constructs a CIMD resolver or any use-case.
+The root-exported `assertSafeDeploymentCombination` applies the same rule to its
+own input: it reads `config`, `rateLimit`, and the acknowledgement once and
+returns the bound limiter snapshot. A composition root that preflights before a
+stateful factory passes that returned value to `Bridge`, rather than re-reading
+the original dependency after creating state.
 `acknowledgeUnsafeStatelessDefaults: true` on `BridgeDeps` is an explicit,
-temporary escape hatch for the localhost-only starter and emits a loud boot
-warning. Any other value is treated as absent. Internet-facing compositions do
-not set it. The acknowledgement is accepted only when both `issuer` and
-`resource` are loopback URLs. A supplied limiter must expose a callable `check`
-method; malformed limiter values fail at boot rather than counting as a bound.
-Composition roots run this guard before creating a state directory, signing
-keys, audit file, state store, or starting OIDC discovery. The console-pairing branches perform their
+temporary stateless-only escape hatch for the localhost-only starter and emits a
+loud boot warning. Any other value is treated as absent. Internet-facing
+compositions do not set it. The acknowledgement is accepted only when both
+`issuer` and `resource` are loopback URLs. It never admits stored DCR without a
+bounded limiter. A supplied limiter must expose a callable `check` method;
+malformed limiter values fail at boot rather than counting as a bound. The guard
+can distinguish the exported no-op singleton but cannot prove the behavior of a
+custom implementation; a custom port that always allows registration is
+nonconforming.
+Composition roots run this guard before creating a state directory, persisting
+signing keys, creating an audit file or state store, or starting OIDC discovery.
+The generated starter first prepares new signing material in memory, validates
+the complete `BridgeConfig`, retains the guard's bound limiter, and only then
+persists that material. The console-pairing branches perform their
 loopback-only preflight from issuer/resource strings before the signing-key
 helper needed to build a complete `BridgeConfig`. Exported factories snapshot
-their config and acknowledgement once and reuse those exact values after
-preflight, including for store and bridge construction.
+their config, limiter, and acknowledgement once and reuse those exact values
+after preflight, including for store and bridge construction.
 The two runnable repository examples do not set the acknowledgement: their
 loopback issuer/resource composition is already admitted by the local-only rule
 above. When no production identity-provider selector is present, they also
@@ -240,3 +260,45 @@ listener before invoking the stateful gateway builder. An invalid or occupied
 backend bind therefore leaves no quickstart state behind.
 The generated starter additionally rejects non-loopback issuer or resource URLs
 before creating its state directory, signing keys, audit file, or SQLite database.
+
+**Fastify/SQLite production DCR selection.** The
+`examples/fastify-sqlite` production branches accept an exact
+`OAUTH_DCR_MODE` value of `"stateless"` or `"stored"`; omission preserves the
+published stateless default, while a blank or unknown value is a pre-state boot
+failure. Stored mode binds `dcr.store` to a `ClientStore` adapter backed by the
+same `SqliteStore` instance that owns the bridge's OAuth state. This is the
+supported composition for native CLI clients whose ephemeral loopback callback
+needs a portless loopback origin in
+`OAUTH_REDIRECT_ALLOWLIST`: the existing stateless-DCR composition guard remains
+unchanged and still rejects that broadly reusable origin. The API-key gateway
+example retains its existing stateless-only environment wiring.
+
+**Fastify/SQLite registration admission.** Every `POST /oauth/register` mounted
+by `examples/fastify-sqlite` carries a fixed Fastify `onRequest` budget of 30
+requests per 60 seconds per derived client IP, under the separate
+`oauth-client-registration` group. The route uses the same installed
+`@fastify/rate-limit` instance and optional custom store as the example's
+mandatory `/mcp` limiter, but its finite max/window are not inherited from or
+disabled by the `/mcp` route options. The budget applies in both stateless and
+stored DCR modes. Normal exhaustion returns 429; a custom limiter-store throw,
+rejection, callback error, or malformed counter fails closed with the helper's
+fixed 503 before body parsing, `Bridge.handleRegister`, `ClientStore.save`, or a
+registration success audit. The example's validated Fastify proxy trust policy
+selects the IP used for both route budgets. The built-in store remains
+per-process, so a public multi-replica deployment needs a conforming shared
+Fastify limiter store or equivalent trusted-edge admission control.
+
+The same example also supplies a process-local `RateLimitPort` with a fixed
+aggregate registration budget to satisfy the stored-DCR boot contract. The
+Fastify per-IP route budget remains a separate earlier control: it rejects before
+body parsing and can use a shared Fastify limiter store, while the core port
+bounds the aggregate registrations that reach `Bridge` in one process. The
+generated starter supplies the same finite process-local registration budget.
+Custom and multi-replica production compositions supply their own bounded port;
+`mcp-sso/rate-limit/redis` is the shipped distributed implementation.
+
+This is a deliberate boot-breaking change approved by owner decision **B1** on
+2026-08-17. Existing stored-DCR compositions that omit `rateLimit` or pass
+`noopRateLimit` must add a bounded port before upgrading. There is no
+acknowledgement escape hatch and the existing stateless acknowledgement is not
+widened.

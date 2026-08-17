@@ -23,6 +23,7 @@ import { PortFailureError } from "../src/port-failure.ts";
 import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
 import { pkceChallenge, signConsentToken, verifyConsentToken } from "../src/crypto.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const NOW_MS = Date.parse("2026-07-03T12:00:00.000Z");
 const REDIRECT = "https://client.test/callback";
@@ -57,7 +58,10 @@ interface Ctx { bridge: Bridge; audit: MemoryAudit; }
 function setup(defaultScopes: string[] = ["mcp:read"]): Ctx {
   const audit = new MemoryAudit();
   const clientStore = new InMemoryClientStore();
-  const bridge = new Bridge({ config: config(clientStore, defaultScopes), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit });
+  const bridge = new Bridge({
+    config: config(clientStore, defaultScopes), store: new MemoryStore(),
+    clock: new FakeClock(NOW_MS), audit, rateLimit: boundedTestRateLimit(),
+  });
   return { bridge, audit };
 }
 

@@ -23,6 +23,7 @@ import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { RequestAuthorizer, type RequestAuthResult } from "../../src/verifier.ts";
 import { SystemClock } from "../../src/ports/clock.ts";
 import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
+import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { JsonlFileAudit } from "../../src/audit/jsonl-file.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
 import { loadOrCreateQuickstartSecrets } from "../../src/quickstart.ts";
@@ -83,6 +84,8 @@ export interface GatewayOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer (+ pairing). Default noopAudit. */
   audit?: AuditPort;
+  /** Core OAuth limiter. Required when a custom composition selects stored DCR. */
+  rateLimit?: RateLimitPort;
   /** Mandatory `/mcp` Fastify budget. Defaults to 60 requests / 60 seconds / IP. */
   protectedResourceRateLimit?: ProtectedResourceRateLimitOptions;
   /** Exact proxy IP/CIDR allowlist for Fastify request.ip. Absent means trustProxy:false. */
@@ -111,8 +114,9 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
 }> {
   const config = opts.config;
   const acknowledged = opts.acknowledgeUnsafeStatelessDefaults === true;
-  assertSafeDeploymentCombination({
+  const rateLimit = assertSafeDeploymentCombination({
     config,
+    rateLimit: opts.rateLimit,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
   }, { emitAcknowledgementWarning: false });
   const trustedProxies = trustedProxiesFromOptions(opts);
@@ -126,7 +130,7 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
   const clock = new SystemClock();
   const store = openSqliteStore(opts.sqliteFile ?? ":memory:");
   const audit: AuditPort = opts.audit ?? noopAudit;
-  const bridge = new Bridge({ config, store, clock, audit,
+  const bridge = new Bridge({ config, store, clock, audit, rateLimit,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}) });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
 

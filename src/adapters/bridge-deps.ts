@@ -11,7 +11,8 @@ export interface BridgeDeps {
   clock: ClockPort;
   audit: AuditPort;
   /** Optional Bridge/CIMD limiter for register, approve, token, revoke,
-   *  direct identity, and document resolution; no-op if absent. */
+   *  direct identity, and document resolution. Stored DCR requires a bounded
+   *  non-noop port; admitted stateless compositions use no-op if absent. */
   rateLimit?: RateLimitPort;
   /** Temporary localhost-starter escape hatch. Emits a loud boot warning. */
   acknowledgeUnsafeStatelessDefaults?: true;

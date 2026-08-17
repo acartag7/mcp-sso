@@ -34,6 +34,7 @@ import express from "express";
 import { createOAuthRouter } from "../src/adapters/express.ts";
 import { Hono } from "hono";
 import { createOAuthApp } from "../src/adapters/hono.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const NOW_MS = Date.parse("2026-07-06T12:00:00.000Z");
 const IP = "203.0.113.7";
@@ -101,7 +102,10 @@ function makeFlow(c: BridgeConfig, id: FakeId, opts: { clock?: FakeClock; audit?
   const clock = opts.clock ?? new FakeClock(NOW_MS);
   const audit = opts.audit ?? new MemoryAudit();
   const store = opts.store ?? new MemoryStore();
-  const bridge = new Bridge({ config: c, store, clock, audit });
+  const bridge = new Bridge({
+    config: c, store, clock, audit,
+    rateLimit: opts.rateLimit ?? boundedTestRateLimit(),
+  });
   const flow = createUpstreamRedirectFlow({ bridge, identity: id.identity, store, clock, audit, callbackPath: opts.callbackPath ?? CALLBACK_PATH, flowTtlSeconds: opts.flowTtlSeconds, rateLimit: opts.rateLimit });
   return { flow, bridge, store, clock, audit };
 }

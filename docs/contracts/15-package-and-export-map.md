@@ -130,6 +130,16 @@ safe integer. Post-snapshot accessor changes cannot alter the decision or
 returned result. Zero, negative, fractional, unsafe, wrongly typed, missing, or
 accessor-throwing values reject, never a fail-open request or a raw backend-error
 leak. A normal budget denial is 429.
+The Fastify/SQLite example also reuses that installed plugin for every
+`POST /oauth/register`, with a fixed exact-path `onRequest` hook of 30 requests
+per 60 seconds and the separate `oauth-client-registration` group. The hook
+parses the request target's pathname, so absolute-form requests cannot bypass it,
+and is installed before the OAuth adapter registers its encapsulated routes. It
+therefore runs before Fastify body parsing and before the Bridge can persist or
+success-audit a registration. The policy applies to both DCR modes and cannot
+be removed by changing the separately configurable `/mcp` max/window. This is
+a reference-composition control, not an automatic behavior change for consumers
+of `registerOAuthRoutes` or for the API-key gateway example.
 The two runnable example factories take an optional `trustedProxies` array and
 the production env compositions parse `MCP_SSO_TRUSTED_PROXIES` into that same
 shape. Absence is explicit Fastify `trustProxy: false`: an untrusted socket
@@ -148,7 +158,7 @@ wiring does not force the plugin on existing consumers; consumers of the new
 subpath install its optional peer. This does not change the root package's
 `jose`-only runtime graph.
 
-**Consumer-facing example helpers (DX):** six symbols the in-repo example leans on
+**Consumer-facing example helpers (DX):** the symbols the in-repo example leans on
 to implement the recommended patterns are root-exported, so a package consumer
 replicating those patterns imports them from `mcp-sso` instead of reimplementing
 them (and re-opening the footguns they centralize): the normalized request/response
@@ -166,7 +176,8 @@ and `assertRealDir` (the fs-trust bar alone — rejects a symlink on every
 platform and, on POSIX, a group/other-accessible state dir so another local user
 cannot replace `auth.db`; on Windows its first call in a Node worker/runtime
 instance emits the shared permission-gap warning),
-co-exported with `loadOrCreateQuickstartSecrets` (the raw `ensureGitignore(dir,
+co-exported with `loadOrCreateQuickstartSecrets` and the two-phase
+`prepareQuickstartSecrets` (the raw `ensureGitignore(dir,
 canCreate)` stays internal — its caller-asserted boolean is a footgun); and `assertCallbackPath` (the upstream callback-PATH
 validator — a pure check that the pathname starts with `/`, is plain (no
 query/fragment/whitespace/control or dot-segments), normalizes to itself under the
@@ -201,10 +212,17 @@ implements both OAuth state and stored user DCR, so a generated client registrat
 survives a server restart; the shipped-entrypoint integration test restarts between
 registration and authorization before completing pairing, token exchange, and an
 official-SDK tool call. The generated composition rejects a non-loopback `HOST` before
-creating keys or opening SQLite: stored DCR is intentionally confined to the starter's
+creating state. It prepares missing signing material in memory, builds the full
+`BridgeConfig`, then calls the root-exported `assertSafeDeploymentCombination`
+with its finite registration port. Only after both checks pass does it persist
+the same deeply frozen prepared-material snapshot or open SQLite; mutation cannot
+change the later write after validation. It retains the returned bound port for
+`Bridge`, and `Bridge` repeats the
+guard: stored DCR is intentionally confined to the starter's
 single-operator localhost envelope, where an unauthenticated network caller cannot grow
-the persistent client table. Internet-facing deployments use the production composition
-with a real rate limiter and identity provider. `.gitignore`
+the persistent client table without first passing the starter's finite process-local
+registration `RateLimitPort`. Internet-facing deployments use the production composition
+with a shared bounded rate limiter and identity provider. `.gitignore`
 (`node_modules/` + the `.mcp-sso/` state dir); `.npmrc` (`ignore-scripts=true` —
 dependency lifecycle scripts disabled unless the operator vets one, the project's
 supply-chain posture); and `README.md` (the run steps +
@@ -229,22 +247,15 @@ resolution at scaffold time), so the operator's `npm install` creates
 `package-lock.json` (to commit) — locking the transitive graph at first install. The
 server is the zero-setup pairing path; a real IdP (Cloudflare Access / Entra / Google /
 OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded
-default — the done-bar is the pairing round-trip, not a production deploy. **Config-
-validation ordering (benign residual):** the generated server pre-validates the
-`OAUTH_ISSUER`/`OAUTH_RESOURCE` URLs, raw allowed Origins, and the complete
-redirect policy — every `OAUTH_REDIRECT_ALLOWLIST` entry through the §10.0
-parser plus the `OAUTH_REDIRECT_ALLOWLIST_MODE` rule (known value and non-empty
-list for `replace`) — before the state-creating helper. The validated list and
-mode are still passed to
-`createBridgeConfig`, so request-time policy cannot drift from the preflight.
-Deeper
-config validation (`createBridgeConfig` — scheme, scope shapes) runs *after*
-`loadOrCreateQuickstartSecrets`, so a malformed env value leaves a `secrets.json`. That
-file is owner-only on POSIX (`0600` in a `0700` gitignored dir; on Windows those
-mode gates are skipped and the deployer owns the ACL — §12, issue #219), holds secrets generated
-independently of the rejected config (so they are valid, not bad), and is reused verbatim
-on the next (fixed) boot — no leak, no exposed/bad/committed state; full pre-validation
-would need a library secret-free `validateConfig` (deferred).
+default — the done-bar is the pairing round-trip, not a production deploy.
+**Config-validation ordering:** `prepareQuickstartSecrets` reads an existing
+secret file or generates missing material in memory without creating the target
+directory, `.gitignore`, or `secrets.json`. The generated server uses that
+material to run `createBridgeConfig` and the stored-DCR deployment guard. It then
+calls the preparation's one-shot `persist()` capability before SQLite. A rejected
+URL, origin, redirect rule, scope shape, DCR/limiter combination, or other bridge
+configuration therefore creates no new quickstart state. Existing state is read
+and validated but is never rewritten by preparation or `persist()`.
 
 **Supply-chain settings:** `packageManager` is the single pnpm version pin;
 `pnpm/action-setup` reads it and workflow steps MUST NOT override it with a
