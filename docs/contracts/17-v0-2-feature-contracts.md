@@ -2444,11 +2444,14 @@ enumeration:
 | every other recognized reason, plus an unknown/custom-port reason normalized to `identity_rejected` | `upstream identity verification failed` |
 
 The selection never reads a provider-supplied string and no custom port reason
-can author redirect text. The IdP's own `error`/`error_description` values are
-**attacker-influenceable query params and are never echoed** into the redirect,
-response body, or logs. The three Entra values above are instead our own
-post-verification classifications from the closed reason enumeration; exposing
-their fixed descriptions does not relax the non-echo rule.
+can author redirect text. The IdP callback's own `error`/`error_description`
+values are **attacker-influenceable query params and are never echoed** into the
+redirect, response body, or logs. IdP token-endpoint error text can arrive as a
+thrown or returned row-10 exchange-failure reason; the row-10 stderr diagnostic
+is also library-authored and may include only the sanitized client id, never the
+port's thrown or returned detail. The three Entra values above are instead our
+own post-verification classifications from the closed reason enumeration;
+exposing their fixed descriptions does not relax the non-echo rule.
 The final redirect's `state` is the *client's* state from the verified
 `params`, never attacker input. An RFC 9207 `iss` param on the upstream
 callback is not validated in this release (DECIDED): mix-up defense applies to

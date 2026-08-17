@@ -677,6 +677,34 @@ test("callback row 10: exchange_failed (non-200/timeout/missing id_token) => 302
   assert.equal(a2.identity().length, 0, "a thrown exchange also reaches no identity decision — no identity.verify");
 });
 
+test("callback row 10: returned and thrown exchange detail cannot reach redirect, body, audit, or stderr", async () => {
+  for (const mode of ["returned", "thrown"] as const) {
+    const c = config(); const id = fakeIdentity(c);
+    const marker = mode === "returned"
+      ? "CUSTOM_PORT_ATTACKER_REASON_xyz://evil"
+      : "CUSTOM_PORT_THROW_REASON_xyz://evil";
+    if (mode === "returned") {
+      id.set({ ok: false, kind: "exchange_failed", reason: marker });
+    } else {
+      id.identity.exchangeAndVerify = async () => { throw new Error(marker); };
+    }
+    const { flow, audit } = makeFlow(c, id);
+    const { claims, cookieValue } = await initiate(c, flow);
+    const chunks: string[] = [];
+    const original = console.error;
+    console.error = (...values: unknown[]): void => { chunks.push(values.map(String).join(" ")); };
+    try {
+      const response = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "c" }));
+      assert.equal(new URL(hLoc(response)).searchParams.get("error_description"), "upstream identity provider error");
+      assert.doesNotMatch(JSON.stringify(response), new RegExp(marker));
+      assert.doesNotMatch(audit.json(), new RegExp(marker));
+    } finally {
+      console.error = original;
+    }
+    assert.doesNotMatch(chunks.join(""), new RegExp(marker));
+  }
+});
+
 test("callback row 10: a throwing returned accessor stays in the exchange failure channel", async () => {
   const c = config(); const id = fakeIdentity(c);
   id.identity.exchangeAndVerify = async () => new Proxy(

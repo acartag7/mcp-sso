@@ -211,9 +211,9 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
         exchange = await exchangeUpstreamIdentity(identity, {
           code, codeVerifier: claims.codeVerifier, nonce: claims.nonce,
         });
-      } catch (e) { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(e)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
+      } catch { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
       if (!exchange.ok) {
-        if (exchange.kind === "exchange_failed") { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(exchange.reason)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
+        if (exchange.kind === "exchange_failed") { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
         const reason = normalizedIdentityFailureReason(exchange.reason);
         await emitIdentityVerify("failure", reason, undefined);
         return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "access_denied", clientState, identityRejectionDescription(reason)), "failure", "identity_rejected", clientId); // row 11 (§9.3 extension)
