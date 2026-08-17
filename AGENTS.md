@@ -164,6 +164,18 @@ describes:
    `package.json` at the artifact root; the merge gate on reviewed PRs is the
    review bot's "Reviewed commit: \<head sha\>" marker — never a silence window.
 
+**Local exact-head review.** Before opening a PR or pushing a fix after a
+hosted comment, run
+[class-closure-review](.claude/skills/class-closure-review/SKILL.md)
+on the real `merge-base...HEAD`. That skill is how items 1–4 above
+are executed: name the behavior, fill the matrices, empty occupied
+cell = do not push, do not re-request Codex. Do not pick a runner
+from the excerpt bakeoff. Hosted Codex remains the merge gate. A
+follow-up PR that is only the next sibling of the last merge is a
+miss of that skill — freeze it as an eval case the same day.
+Runner budget:
+[runner.md](.claude/skills/class-closure-review/references/runner.md).
+
 ## Verify before claiming done
 
 Run the real flow, not just unit tests: register → authorize (through the
