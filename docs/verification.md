@@ -316,6 +316,52 @@ failure of the row rather than swallowed, because the sink logs and continues.
 The webhook transport is injected, so the row makes no network call; what it
 proves is the wiring and the payload.
 
+### RM.14 — CIMD and DCR coexistence
+
+Every dispatch cell is covered individually elsewhere; this is the combination
+that was never run. One bridge with `cimd.enabled` AND stored DCR serves both
+client kinds for the SAME subject against ONE granted-scope store, because the
+two carry deliberately opposite rules: a stored-DCR opaque client accumulates
+granted scopes across sessions, while a CIMD client stands alone (§9.3,
+§17.1.6). The row proves the opaque client accumulates, the CIMD client does
+not, and neither inherits the other's grants in either direction — cross-kind
+inheritance here would be silent privilege escalation across a profile boundary
+that no single-kind test could see.
+
+A third case pins the property that keeps the profiles separate at all: with
+CIMD switched off and DCR still enabled, an HTTPS-shaped `client_id` is refused
+outright and never reaches the DCR client store. The fixture records reads as
+well as writes, and a stored opaque-client authorize is the positive control
+that proves the lookup recorder is live. There is no fallback between the two
+paths, by design.
+
+Grants are banked through a real token exchange rather than stopping at approve:
+`findGrantedScopes` is derived from active refresh records (§12.3, "no grant
+table"), so an approve-only row would report empty accumulation and pass
+vacuously.
+
+### RM.15 — Registration dispatch matrix
+
+`dcr` is REQUIRED in `BridgeConfig` and no adapter option suppresses the register
+route, so "CIMD only" is not a deployment state — it is a client choice. The real
+configuration axes are `cimd enabled?` × `dcr stateless | stored`, crossed with
+the client kinds a deployment meets. All four deployments accept an opaque DCR
+client and reach consent; a CIMD `client_id` is resolved when CIMD is enabled and
+**refused** when it is not, and in neither case does it enter the DCR client
+store. There is no fallback between the paths, by design.
+
+The row also carries the shape that broke Claude Code in v0.3.5: a real published
+document with port-less loopback redirects and no `application_type`, matched
+against an ephemeral port. Every CIMD fixture in this repository sets that field
+because they were written alongside the rule that required it, so a self-authored
+fixture could not see the regression. Negative cases pin that the elasticity stays
+narrow — same scheme, host, and path, port free — and that a non-loopback `https`
+entry gains none of it.
+
+Stored-DCR deployments here supply a bounded limiter, because B1 makes an
+unbounded anonymous durable-write path a boot failure; the row tests dispatch
+rather than re-testing that guard.
+
 ## Harness helpers
 
 The current shared helpers are:
