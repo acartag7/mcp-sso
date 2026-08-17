@@ -62,7 +62,7 @@ is worth resolving before spending a browser session.
 | D1 | any | Entra | `<NOGROUPS>` | `access_denied` — *Entra returned no groups for this account* |
 | D2 | any | Entra | `<WRONGGROUP>` | `access_denied` — *Entra groups do not authorize this account for this resource* |
 | D3 | any | Entra | `<OVERAGE>` | `access_denied` — *Entra group claims exceed the supported limit; operator configuration is required* |
-| E1 | any | Cloudflare | any account that is **not** `<ADMITTED_EMAIL>` | Cloudflare's own denial page; **no** consent screen, **no** code mail, and **no audit row on our side** |
+| E1 | any | Cloudflare | any account that is **not** `<ADMITTED_EMAIL>` | Cloudflare's own denial page; **no** consent screen, **no** code mail, and the gateway audit count is unchanged from immediately before the attempt |
 | F1–F3 | claude.ai connector | all three | as A1–A3 | consent → tool round-trip |
 
 Client commands:
@@ -101,9 +101,29 @@ Two things the trail catches that a client will not:
   as "connection setup was canceled" with no message, while the audit shows
   `entra_groups_overage` correctly emitted. Absence of a client-side error is not
   absence of a correct server decision.
-- **E1's evidence is an absence.** The Cloudflare edge blocks before the request
-  reaches the gateway, so the correct result is **no audit row at all**. Seeing
-  nothing is the pass condition.
+- **E1's evidence is an unchanged audit count.** Pause every other matrix row,
+  then record the current count immediately before the E1 attempt:
+
+  ```sh
+  E1_AUDIT=.live-state/cloudflare_access/audit.jsonl
+  audit_count() { if [ -f "$1" ]; then wc -l < "$1"; else printf '0\n'; fi; }
+  E1_BEFORE=$(audit_count "$E1_AUDIT")
+  ```
+
+  After Cloudflare shows its denial page, record the count again and require no
+  new gateway event:
+
+  ```sh
+  E1_AFTER=$(audit_count "$E1_AUDIT")
+  test "$E1_AFTER" -eq "$E1_BEFORE" || {
+    printf 'FAIL: E1 added gateway audit rows (%s -> %s)\n' "$E1_BEFORE" "$E1_AFTER" >&2
+    exit 1
+  }
+  ```
+
+  The file may already contain earlier successful rows; absolute emptiness is
+  not the claim. The invariant is that the E1 attempt adds nothing because the
+  Cloudflare edge blocks it before the request reaches the gateway.
 
 Also worth noticing: a matrix round usually exercises `oauth.token.refresh` and
 sometimes `oauth.revoke` without anyone asking for them, because the clients

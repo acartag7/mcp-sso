@@ -16,6 +16,7 @@ const PROBE = readFileSync(join(ROOT, "scripts/live/probe-e2e.mjs"), "utf8");
 const CLOUDFLARE = readFileSync(join(ROOT, "scripts/live/probe-cloudflare.mjs"), "utf8");
 const ENTRA = readFileSync(join(ROOT, "scripts/live/probe-entra.mjs"), "utf8");
 const README = readFileSync(join(ROOT, "scripts/live/README.md"), "utf8");
+const CHECKLIST = readFileSync(join(ROOT, "scripts/live/CHECKLIST.md"), "utf8");
 
 function executable(path, source) {
   writeFileSync(path, source, { mode: 0o700 });
@@ -201,6 +202,10 @@ test("Entra deny evidence and Google credentials are mandatory inputs", () => {
     /throw new Error\("ENTRA_UNMAPPED_GROUP must provide the deny-fixture GUID"\)/,
     "a missing or malformed deny fixture aborts instead of passing an empty-string exclusion",
   );
+  assert.ok(
+    ENTRA.indexOf("ENTRA_UNMAPPED_GROUP must provide the deny-fixture GUID") < ENTRA.indexOf("await buildExample(process.env)"),
+    "the required Entra deny fixture is validated before stateful example construction",
+  );
   assert.doesNotMatch(ENTRA, /ENTRA_UNMAPPED_GROUP \?\? ""/);
   assert.match(README, /~\/\.mcp-sso-google\.env/);
   assert.match(README, /GOOGLE_CLIENT_ID/);
@@ -208,6 +213,16 @@ test("Entra deny evidence and Google credentials are mandatory inputs", () => {
   assert.match(README, /MCP_SSO_GOOGLE_ENV/);
   assert.match(RUN, /google\)\s+:\s+;;/);
   assert.match(RUN, /\[ "\$LEG" = "google" \] && export GOOGLE_REDIRECT_URI=/);
+});
+
+test("Cloudflare edge-denial evidence compares the audit state around E1", () => {
+  const before = CHECKLIST.indexOf("E1_BEFORE=$(audit_count");
+  const after = CHECKLIST.indexOf("E1_AFTER=$(audit_count");
+  const comparison = CHECKLIST.indexOf('test "$E1_AFTER" -eq "$E1_BEFORE"');
+  assert.ok(before >= 0 && before < after && after < comparison,
+    "E1 records an immediate before/after count and fails when it changes");
+  assert.doesNotMatch(CHECKLIST, /no audit row at all/i,
+    "prior matrix rows make absolute audit emptiness an invalid pass condition");
 });
 
 test("live scripts contain no private infrastructure defaults", () => {

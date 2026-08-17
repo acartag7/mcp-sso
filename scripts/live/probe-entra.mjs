@@ -12,14 +12,14 @@ const ok = (label, cond, detail = "") => {
   return cond;
 };
 
-const built = await buildExample(process.env);
-const app = built.app;
 let failures = 0;
 const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const unmappedGroup = process.env.ENTRA_UNMAPPED_GROUP;
 if (typeof unmappedGroup !== "string" || !guid.test(unmappedGroup)) {
   throw new Error("ENTRA_UNMAPPED_GROUP must provide the deny-fixture GUID");
 }
+const built = await buildExample(process.env);
+const app = built.app;
 
 try {
   // 1. Discovery + JWKS must resolve against the real tenant.
