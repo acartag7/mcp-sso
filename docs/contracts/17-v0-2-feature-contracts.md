@@ -2409,7 +2409,7 @@ decision 1) at authorize time; any failure to establish that context is a
 | 8 | IdP `error` param = anything else | **302 redirect** `server_error` | `upstream_error` |
 | 9 | no `code` param (and no `error`) | direct 400 `invalid_request` | `missing_code` |
 | 10 | `exchangeAndVerify` returns `kind: "exchange_failed"` **or throws** (non-200, timeout, malformed body, missing id_token from an id_token-issuing provider) | **302 redirect** `server_error` | `exchange_failed` |
-| 11 | `exchangeAndVerify` returns `kind: "identity_rejected"` (id_token invalid, nonce mismatch, tid/allowlist/group rejection) | **302 redirect** `access_denied` | `identity_rejected` (detail in `identity.verify`) |
+| 11 | `exchangeAndVerify` returns `kind: "identity_rejected"` (id_token invalid, nonce mismatch, tid/allowlist/group rejection) | **302 redirect** `access_denied` with the closed description selection below | `identity_rejected` (detail in `identity.verify`) |
 | 12 | `bridge.handleAuthorize` errors | its own §9.3 channels | unchanged |
 | 13 | success | 200 consent page | — |
 
@@ -2430,11 +2430,28 @@ attempts its callback audit but sends no clearing cookie.
 
 The `jti` is consumed at step 6 — before the IdP `error` branch and before the
 exchange — so a callback URL is single-use as a whole and a replay can never
-trigger a second outbound exchange. Redirect-channel errors carry **fixed**
-`error_description` strings ("upstream identity provider denied the request",
-"upstream identity provider error", "upstream identity verification failed");
-the IdP's own `error`/`error_description` values are **attacker-influenceable
-query params and are never echoed** into the redirect, response body, or logs.
+trigger a second outbound exchange. Redirect-channel errors carry a **closed,
+library-authored** set of `error_description` strings. Rows 7, 8, and 10 use
+"upstream identity provider denied the request" or "upstream identity provider
+error". Row 11 selects only on the normalized library-owned identity-reason
+enumeration:
+
+| Normalized reason | Exact `error_description` |
+|---|---|
+| `entra_no_groups` | `Entra returned no groups for this account` |
+| `entra_no_mapped_groups` | `Entra groups do not authorize this account for this resource` |
+| `entra_groups_overage` | `Entra group claims exceed the supported limit; operator configuration is required` |
+| every other recognized reason, plus an unknown/custom-port reason normalized to `identity_rejected` | `upstream identity verification failed` |
+
+The selection never reads a provider-supplied string and no custom port reason
+can author redirect text. The IdP callback's own `error`/`error_description`
+values are **attacker-influenceable query params and are never echoed** into the
+redirect, response body, or logs. IdP token-endpoint error text can arrive as a
+thrown or returned row-10 exchange-failure reason; the row-10 stderr diagnostic
+is also library-authored and may include only the sanitized client id, never the
+port's thrown or returned detail. The three Entra values above are instead our
+own post-verification classifications from the closed reason enumeration;
+exposing their fixed descriptions does not relax the non-echo rule.
 The final redirect's `state` is the *client's* state from the verified
 `params`, never attacker input. An RFC 9207 `iss` param on the upstream
 callback is not validated in this release (DECIDED): mix-up defense applies to
@@ -2494,8 +2511,10 @@ callback outcome for which the callback established a trustworthy timestamp,
 with `status` success/failure and `reason` from the fixed enum in the failure
 table; optional `clientId` (from `params`) and `ip`. `identity.verify` is
 best-effort submitted whenever an identity **decision was reached** — `ok: true`
-(success) and `kind: "identity_rejected"` (failure, with the port's reason) —
-with the same event metadata as `Bridge.resolveIdentity`'s emission (S2a);
+(success) and `kind: "identity_rejected"` (failure, with the normalized
+library-allowlisted reason; an unknown/custom port reason collapses to
+`identity_rejected`) — with the same event metadata as
+`Bridge.resolveIdentity`'s emission (S2a);
 `exchange_failed` reaches no identity decision, so it emits only the
 `oauth.upstream.callback` failure, never a spurious `identity.verify`. Whether
 the implementation routes through `resolveIdentity` internally or emits
