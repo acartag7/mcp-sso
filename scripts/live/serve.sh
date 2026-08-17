@@ -60,5 +60,20 @@ echo "  Codex CLI:    add the same URL as an HTTP MCP server"
 echo
 PORT="$PORT" "$REPO/scripts/live/run.sh" "$REPO/examples/fastify-sqlite/index.ts" "$LEG" &
 SERVER_PID=$!
-sleep 3
+SERVER_READY=false
+for _ in {1..50}; do
+  if curl --fail --silent --output /dev/null "http://127.0.0.1:${PORT}/.well-known/oauth-protected-resource"; then
+    SERVER_READY=true
+    break
+  fi
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
+  sleep 0.1
+done
+if [[ "$SERVER_READY" != true ]]; then
+  wait "$SERVER_PID"
+  SERVER_STATUS=$?
+  if [[ "$SERVER_STATUS" -eq 0 ]]; then SERVER_STATUS=1; fi
+  echo "example server failed readiness before tunnel startup" >&2
+  exit "$SERVER_STATUS"
+fi
 cloudflared tunnel --config "$CONF" run "$TUNNEL"

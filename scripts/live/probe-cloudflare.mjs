@@ -28,8 +28,24 @@ try {
   if (!ok("Access publishes real signing keys", (certsJson.keys ?? []).length > 0, `${(certsJson.keys ?? []).length} keys`)) failures++;
 
   // --- 2. Identity is fail-closed -------------------------------------------
-  const noHeader = await app.inject({ method: "GET", url: "/oauth/authorize?response_type=code&client_id=x" });
-  if (!ok("authorize without an Access assertion is refused", noHeader.statusCode >= 400, `HTTP ${noHeader.statusCode}`)) failures++;
+  // Use a real registered client and otherwise-valid authorize request. If the
+  // identity gate regresses, this request reaches consent (200) instead of
+  // failing later on an unrelated unknown-client or parameter check.
+  const identityClient = await app.inject({
+    method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" },
+    payload: JSON.stringify({ redirect_uris: [APP], application_type: "web" }),
+  });
+  const identityClientId = identityClient.statusCode === 201 ? identityClient.json().client_id : undefined;
+  if (!ok("identity-negative fixture registers a valid client",
+    identityClient.statusCode === 201 && typeof identityClientId === "string", `HTTP ${identityClient.statusCode}`)) failures++;
+  const identityQuery = new URLSearchParams({
+    response_type: "code", client_id: identityClientId ?? "fixture-registration-failed",
+    redirect_uri: APP, code_challenge: "A".repeat(43), code_challenge_method: "S256",
+    scope: "mcp:read", state: "identity-negative",
+  });
+  const noHeader = await app.inject({ method: "GET", url: `/oauth/authorize?${identityQuery}` });
+  if (!ok("authorize without an Access assertion is refused by identity verification",
+    noHeader.statusCode === 401, `HTTP ${noHeader.statusCode}`)) failures++;
 
   // A token WE mint, with the right issuer and audience, signed by a key
   // Cloudflare never published. Verification runs against the live JWKS, so
@@ -42,10 +58,10 @@ try {
     .setIssuedAt().setExpirationTime("5m")
     .sign(privateKey);
   const forgedRes = await app.inject({
-    method: "GET", url: "/oauth/authorize?response_type=code&client_id=x",
+    method: "GET", url: `/oauth/authorize?${identityQuery}`,
     headers: { "cf-access-jwt-assertion": forged },
   });
-  if (!ok("a self-signed Access assertion is refused by the live JWKS", forgedRes.statusCode >= 400, `HTTP ${forgedRes.statusCode}`)) failures++;
+  if (!ok("a self-signed Access assertion is refused by the live JWKS", forgedRes.statusCode === 401, `HTTP ${forgedRes.statusCode}`)) failures++;
   if (!ok("the refusal does not echo the forged subject", !forgedRes.body.includes("attacker@example.test"))) failures++;
 
   // --- 3. Protected resource challenge (RFC 9728) ---------------------------

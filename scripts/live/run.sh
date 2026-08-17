@@ -99,7 +99,7 @@ export OAUTH_DEFAULT_SCOPES="mcp:read"
 # file and audit sink of any leg already running, and every later store write
 # throws — surfacing as a generic internal_error that looks like a product bug.
 STATE="$REPO/.live-state/$LEG"
-rm -rf "$STATE"
+rm -rf -- "$STATE" || { echo "failed to remove prior live state" >&2; exit 1; }
 export MCP_SSO_DIR="$STATE"
 export OAUTH_SQLITE_FILE="$STATE/auth.db"
 

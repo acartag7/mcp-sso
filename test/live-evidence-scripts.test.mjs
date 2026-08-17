@@ -13,6 +13,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SERVE = readFileSync(join(ROOT, "scripts/live/serve.sh"), "utf8");
 const RUN = readFileSync(join(ROOT, "scripts/live/run.sh"), "utf8");
 const PROBE = readFileSync(join(ROOT, "scripts/live/probe-e2e.mjs"), "utf8");
+const CLOUDFLARE = readFileSync(join(ROOT, "scripts/live/probe-cloudflare.mjs"), "utf8");
 const ENTRA = readFileSync(join(ROOT, "scripts/live/probe-entra.mjs"), "utf8");
 const README = readFileSync(join(ROOT, "scripts/live/README.md"), "utf8");
 
@@ -65,11 +66,12 @@ async function runServeScenario(mode) {
   chmodSync(join(repo, "scripts/live/serve.sh"), 0o700);
   writeFileSync(bystanderJs, `import { appendFileSync, writeFileSync } from "node:fs";\nconst note = (signal) => appendFileSync(process.env.BYSTANDER_SIGNALED, signal + "\\n");\nprocess.on("SIGINT", () => note("SIGINT"));\nprocess.on("SIGTERM", () => note("SIGTERM"));\nwriteFileSync(process.env.BYSTANDER_PID, String(process.pid));\nsetInterval(() => {}, 1_000);\n`);
   writeFileSync(serverJs, `import { spawn } from "node:child_process";\nimport { existsSync, writeFileSync } from "node:fs";\nconst bystander = spawn(process.execPath, [process.env.FAKE_BYSTANDER_JS], { env: process.env, stdio: "ignore" });\nbystander.unref();\nconst stop = () => { writeFileSync(process.env.MARKER, "terminated"); process.exit(0); };\nprocess.on("SIGINT", stop);\nprocess.on("SIGTERM", stop);\nconst ready = setInterval(() => {\n  if (existsSync(process.env.BYSTANDER_PID)) { clearInterval(ready); writeFileSync(process.env.READY, "ready"); }\n}, 10);\nsetInterval(() => {}, 1_000);\n`);
-  executable(join(repo, "scripts/live/run.sh"), `#!/usr/bin/env bash\nexec node "$FAKE_SERVER_JS"\n`);
+  executable(join(repo, "scripts/live/run.sh"), `#!/usr/bin/env bash\nif [[ -n "$STARTUP_EXIT" ]]; then exit "$STARTUP_EXIT"; fi\nexec node "$FAKE_SERVER_JS"\n`);
   executable(join(infra, "scripts/tofu-run.sh"), `#!/usr/bin/env bash\ncase "${'$'}{*: -1}" in\n  issuer_origins) printf '%s\\n' '{"entra":"https://entra.test"}' ;;\n  tunnel_ingress_ports) printf '%s\\n' '{"entra":{"gateway":43123}}' ;;\nesac\n`);
   executable(join(bin, "cloudflared"), `#!/usr/bin/env bash\nif [[ "${'$'}1 ${'$'}2" == "tunnel info" ]]; then\n  printf 'ID 00000000-0000-0000-0000-000000000000\\n'\n  exit 0\nfi\nwhile [[ ! -f "$READY" ]]; do /bin/sleep 0.01; done\nprintf ready > "$TUNNEL_READY"\ncase "$TUNNEL_MODE" in\n  normal) exit 0 ;;\n  failure) exit 7 ;;\n  signal) while [[ ! -f "$RELEASE_TUNNEL" ]]; do /bin/sleep 0.01; done ;;\nesac\n`);
   executable(join(bin, "mktemp"), `#!/usr/bin/env bash\npath="$FAKE_TMPDIR/mcp-sso-tunnel-fixed"\n( set -o noclobber; : > "$path" ) || exit 1\nprintf '%s\\n' "$path"\n`);
-  executable(join(bin, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
+  executable(join(bin, "curl"), "#!/usr/bin/env bash\n[[ -f \"$READY\" ]]\n");
+  executable(join(bin, "sleep"), "#!/usr/bin/env bash\n/bin/sleep 0.05\n");
 
   const child = spawn(join(repo, "scripts/live/serve.sh"), ["entra"], {
     detached: true,
@@ -78,6 +80,7 @@ async function runServeScenario(mode) {
       MCP_SSO_CLOUDFLARE_STACK: "fixture-cloudflare", MCP_SSO_TUNNEL: "fixture-tunnel",
       BYSTANDER_PID: bystanderPid, BYSTANDER_SIGNALED: bystanderSignaled,
       FAKE_SERVER_JS: serverJs, FAKE_BYSTANDER_JS: bystanderJs,
+      STARTUP_EXIT: mode === "startup-failure" ? "23" : "",
       TUNNEL_MODE: mode === "normal" || mode === "failure" ? mode : "signal",
       TUNNEL_READY: tunnelReady, RELEASE_TUNNEL: releaseTunnel,
       FAKE_TMPDIR: fixture,
@@ -95,9 +98,13 @@ async function runServeScenario(mode) {
       writeFileSync(releaseTunnel, "release");
     }
     const result = await waitForExit(child);
-    const expected = { normal: 0, failure: 7, sigint: 130, sigterm: 143 }[mode];
+    const expected = { normal: 0, failure: 7, sigint: 130, sigterm: 143, "startup-failure": 23 }[mode];
     assert.deepEqual(result, { code: expected, signal: null });
-    assert.equal(readFileSync(marker, "utf8"), "terminated", "cleanup terminated the captured server PID");
+    if (mode === "startup-failure") {
+      assert.equal(existsSync(tunnelReady), false, "a failed server never starts the public tunnel");
+    } else {
+      assert.equal(readFileSync(marker, "utf8"), "terminated", "cleanup terminated the captured server PID");
+    }
     const config = /^tunnel config: (.+)$/m.exec(stdout)?.[1];
     assert.ok(config, `serve.sh printed its generated config path: ${stdout}`);
     assert.equal(existsSync(config), false, "cleanup removed the generated tunnel config");
@@ -105,9 +112,11 @@ async function runServeScenario(mode) {
       readdirSync(fixture).filter((name) => name.startsWith("mcp-sso-tunnel-")), [],
       "cleanup left no precursor or configured tunnel tempfile",
     );
-    const unrelatedPid = Number(readFileSync(bystanderPid, "utf8"));
-    assert.doesNotThrow(() => process.kill(unrelatedPid, 0), "an unrelated process in the group survived cleanup");
-    assert.equal(existsSync(bystanderSignaled), false, "cleanup never signaled an unrelated process in the group");
+    if (mode !== "startup-failure") {
+      const unrelatedPid = Number(readFileSync(bystanderPid, "utf8"));
+      assert.doesNotThrow(() => process.kill(unrelatedPid, 0), "an unrelated process in the group survived cleanup");
+      assert.equal(existsSync(bystanderSignaled), false, "cleanup never signaled an unrelated process in the group");
+    }
   } finally {
     if (child.pid) try { process.kill(-child.pid, "SIGKILL"); } catch {}
     rmSync(fixture, { recursive: true, force: true });
@@ -115,13 +124,27 @@ async function runServeScenario(mode) {
 }
 
 test("live serve cleanup owns only its child and generated config on every exit", async (t) => {
-  for (const mode of ["normal", "failure", "sigint", "sigterm"]) {
+  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure"]) {
     await t.test(mode, () => runServeScenario(mode));
   }
   assert.doesNotMatch(SERVE, /kill\s+0\b/, "cleanup must not signal the whole process group");
   assert.match(SERVE, /kill\s+"\$SERVER_PID"/, "cleanup targets the captured server PID");
   assert.ok(SERVE.indexOf("trap cleanup EXIT") < SERVE.indexOf('CONF="$(mktemp'), "cleanup is armed before tempfile creation");
   assert.doesNotMatch(SERVE, /mktemp[^\n]+\)\.yml/, "CONF is the exact exclusively created tempfile");
+});
+
+test("live identity negatives and runner preconditions cannot pass for a later reason", () => {
+  const registerAt = CLOUDFLARE.indexOf("identity-negative fixture registers a valid client");
+  const forgedAt = CLOUDFLARE.indexOf("const forgedRes");
+  assert.ok(registerAt >= 0 && registerAt < forgedAt, "the forged-JWT probe first establishes a valid client control");
+  assert.match(CLOUDFLARE, /const forgedRes[\s\S]*?url: `\/oauth\/authorize\?\$\{identityQuery\}`/,
+    "the forged JWT is exercised against the registered client request");
+  assert.match(CLOUDFLARE, /forgedRes\.statusCode === 401/,
+    "the live-JWKS negative requires the identity-verification response");
+  assert.match(SERVE, /curl --fail --silent --output \/dev\/null[\s\S]*?if \[\[ "\$SERVER_READY" != true \]\][\s\S]*?wait "\$SERVER_PID"[\s\S]*?exit "\$SERVER_STATUS"/,
+    "server readiness is proved and startup failure is propagated before the tunnel starts");
+  assert.match(RUN, /rm -rf -- "\$STATE" \|\| \{[^}]*exit 1;/,
+    "prior-state cleanup is a mandatory successful precondition");
 });
 
 test("live probe labels its machine credential as process-local, not SQLite-persisted", () => {

@@ -15,8 +15,8 @@ secret is printed.
    `MCP_SSO_INFRA_DIR`. Supply its opaque stack handles through
    `MCP_SSO_ENTRA_STACK` and `MCP_SSO_CLOUDFLARE_STACK`; no private repository
    path or stack name is stored here.
-3. `cloudflared` on `PATH` for `serve.sh`, with the named tunnel handle supplied
-   through `MCP_SSO_TUNNEL`.
+3. `cloudflared` and `curl` on `PATH` for `serve.sh`, with the named tunnel
+   handle supplied through `MCP_SSO_TUNNEL`.
 4. The Google leg needs OAuth credentials created out of band in Google Cloud
    Console because the stacks do not provision them. Put `GOOGLE_CLIENT_ID` and
    `GOOGLE_CLIENT_SECRET` in a private mode-`0600` file at
