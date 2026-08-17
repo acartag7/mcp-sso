@@ -508,7 +508,10 @@ deployer acts on.
   the document explicitly advertises it and any singular preference is also a
   member of that list. A `private_key_jwt`-only, malformed, inconsistent, or
   shared-secret declaration rejects; the bridge never authenticates a
-  confidential CIMD client or fetches its `jwks_uri`.
+  confidential CIMD client or fetches its `jwks_uri`. Successful preference
+  overrides are observable as the fixed
+  `selectedClientAuthMethod: "none"` field on `oauth.cimd.fetch`; native public
+  documents omit it, and no attacker-authored method string reaches audit.
 - **Consent and upstream-flow replay detection are store-scoped.** Under the
   0.3.3 consent correction, a surviving store retains a consent JTI
   through the consent JWT's signed expiry even if the configured TTL is later

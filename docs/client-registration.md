@@ -96,7 +96,9 @@ CIMD clients are public clients in 0.3. A document may omit
 malformed choice list, or one that does not advertise `"none"`, is rejected.
 This is public-client method selection, not confidential-client support:
 mcp-sso does not validate a client assertion or fetch `jwks_uri`, and shared
-secret methods and client secrets remain rejected. If `response_types` is
+secret methods and client secrets remain rejected. A negotiated override emits
+`selectedClientAuthMethod: "none"` on the successful `oauth.cimd.fetch` audit
+event; documents that were already public omit that field. If `response_types` is
 present it must include `"code"`; if `grant_types` is present it must include
 `"authorization_code"`. Extra grant declarations do not enable extra bridge
 grant handlers.

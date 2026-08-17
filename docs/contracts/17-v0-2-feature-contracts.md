@@ -42,7 +42,17 @@ member.
 > `"none"`. This does not implement `private_key_jwt`, authenticate a
 > confidential client, or fetch `jwks_uri`. A shared-symmetric-secret singular
 > method remains invalid under draft `-00` §4.1 even if the plural list also
-> advertises `"none"`.
+> advertises `"none"`. Metadata Choices §4 describes a registration request and
+> an `invalid_client_metadata` registration response; CIMD has no registration
+> response channel. At this boundary, "reject" means
+> `CimdError("document_invalid")`, which the existing decision-2 anti-oracle
+> boundary maps to the fixed `invalid_client` response. A successful override of
+> the singular `"private_key_jwt"` preference is not silent: every successful
+> `oauth.cimd.fetch` event for that resolution, including a cache hit, carries
+> the allowlisted field `selectedClientAuthMethod: "none"`. Natively public
+> documents omit that field, so operators can distinguish explicit method
+> selection from an absent or already-`"none"` singular value without logging
+> attacker-controlled metadata.
 
 > **Draft `-02` (2026-07-06) review — performed 2026-07-10, recorded here
 > 2026-07-16 (closes issue #58).** At that review, the implementation hardening
@@ -299,7 +309,9 @@ decision. Everything else in the pipeline still runs under the flag.
   support (confidential CIMD via published JWKS) remains DEFERRED together with
   17.2's `private_key_jwt` as one future asymmetric-client-auth unit.
   `client_secret` / `client_secret_expires_at` present ⇒ reject (draft MUST
-  NOT). `jwks_uri` remains inert and is never fetched.
+  NOT). `jwks_uri` remains inert and is never fetched. A compatible
+  `private_key_jwt` preference produces the library-owned audit marker
+  `selectedClientAuthMethod: "none"`; the marker is never read from `raw`.
 - **Private or symmetric key material rejects the document** (`-02` §4.1:
   "private key material MUST NOT be included ... only public keys ... are
   permitted" — enforced AS-side as a fail-closed conformance check, even
@@ -765,7 +777,10 @@ callback re-fetch is forbidden (1d).**
 *1b. Anti-oracle ordering.* Resolve + redirect exact-match complete BEFORE
 `Set-Cookie` / the IdP 302. Any failure ⇒ the decision-2 generic (`invalid_client`
 401) and `oauth.cimd.fetch` (failure, reason); success ⇒ `oauth.cimd.fetch`
-(success). The 4096-byte `Set-Cookie` oversize guard (upstream-flow.ts:104), for a
+(success). A success that selected public `none` over a singular
+`private_key_jwt` preference includes `selectedClientAuthMethod: "none"`; an
+absent or natively public singular value omits it. The 4096-byte `Set-Cookie`
+oversize guard (upstream-flow.ts:104), for a
 CIMD id, maps to the SAME generic `invalid_client` (never `invalid_request`) so it
 is not a content oracle. The `oauth.cimd.fetch` **success** audit is emitted only
 **after the oversize guard passes**: a resolution whose document is valid but whose
@@ -803,6 +818,9 @@ post-authentication late fetch; no TOCTOU; the consent page shows exactly the
 validated document). The consent renderer receives display-only CIMD fields on
 `PreparedConsent` (client_id host, redirect host, `client_name` as unverified text —
 threat row 17); only `cimd_verified` is copied into the consent JWT (decision 3).
+The optional `selectedClientAuthMethod` evidence stays in the resolver's cache
+envelope for success auditing; it is not a `CimdRegistration` member, is not
+signed into the flow cookie, and cannot become client capability.
 
 *1d. Fail-closed consistency (a signed-claim schema check — NOT a capability
 system).* Split across two seams (GLM): **(i)** `verifyFlowToken`
@@ -1931,7 +1949,9 @@ gate replaces no-gate).
   `oauth.device.approve`, `oauth.token.device_code`,
   `oauth.token.client_credentials`, `oauth.client.provision`,
   `oauth.client.rotate_secret`, `oauth.cimd.fetch`. `AuthAuditEvent` gains
-  optional `ip?: string` (adapter-populated; personal data — noted in docs).
+  optional `ip?: string` (adapter-populated; personal data — noted in docs) and
+  the CIMD-success-only, library-owned
+  `selectedClientAuthMethod?: "none"` negotiation evidence from §17.1.
   The §13 metadata-only rule is unchanged and the no-secrets serialization
   test extends to every new event.
 - **Retention: documentation guidance, not a library mechanism.** The library
