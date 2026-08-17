@@ -11,6 +11,21 @@ How mcp-sso proves a release actually works.
 > until a separate version-bump PR, so a source checkout must not be mistaken
 > for the published artifact.
 >
+> **Published v0.3.5 is broken for Claude Code CIMD authorization.** Its
+> explicit-`application_type: "native"` loopback-port gate rejects Claude
+> Code's published port-less callbacks because that document omits the optional
+> member and the runtime supplies an ephemeral port. Current source restores
+> the registered-loopback any-port rule for native or absent types while
+> retaining exact matching for explicit `"web"`; a patch release decision
+> remains.
+>
+> **Published v0.3.5's production Fastify/SQLite example cannot register Codex
+> CLI.** Codex presents an ephemeral callback such as
+> `http://localhost:1455/auth/callback`; stateless DCR cannot safely boot with
+> the portless loopback origin needed to admit that changing path and port.
+> Current source exposes the already-supported stored-DCR/SQLite composition as
+> `OAUTH_DCR_MODE=stored`. This does not relax the stateless deployment guard.
+>
 > The post-v0.3.5 line hardens the shipped OAuth composition rather than adding
 > a new protocol profile. It host-binds generic-OIDC discovery endpoints; rejects
 > opaque browser origins, ambiguous bearer input, duplicate OAuth form members,
@@ -37,7 +52,7 @@ How mcp-sso proves a release actually works.
 > 44-statement mapping: 29 conformant rows, one conformant row with a disclosed
 > environment-scoped caveat, two recorded non-MUST deviations, zero unresolved
 > evidence rows, zero runtime mismatches, and 12 not-applicable rows. RFC 9207
-> error redirects, scope-hierarchy handling, and native-only CIMD loopback-port
+> error redirects, scope-hierarchy handling, and narrow CIMD loopback-port
 > elasticity are closed in source. This precise mapping is **not a current-head
 > live conformance claim**: the latest live CIMD provider/client run remains exact
 > runtime commit `af2a61f` from 2026-07-28, before the post-v0.3.5 hardening line.
@@ -526,7 +541,7 @@ its enforcement evidence.
 | S6b.2 | Happy path | URL-shaped `client_id` fetches the doc, validates; authorize→token→`/mcp` succeeds. |
 | S6b.3 | Generic client error | Every CIMD failure returns identical client-facing error text. |
 | S6b.4 | Audit detail | `oauth.cimd.fetch` records the specific reason without leaking the document body or secrets. |
-| S6b.5 | Redirect URI match | Exact match required; the loopback any-port exception is gated on a document declaring exact `application_type: "native"`, with `"web"` and absent both matching exactly. **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2).** |
+| S6b.5 | Redirect URI match | Exact match required except that a registered loopback `http` entry may vary only its port when `application_type` is `"native"` or absent; scheme, host, path, and query stay exact, and explicit `"web"` stays exact. The frozen suite pins Claude Code's literal published document without `application_type`, declared native, explicit-web rejection, and narrow negative cases. **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2).** |
 | S6b.6 | Scope accumulation (CIMD deferred) | CIMD ids do NOT accumulate: a genuine CIMD authorization reports `priorScopes = []` and mints only the requested (ceiling-bounded) scopes in BOTH DCR modes; seed an active legacy URL-keyed refresh row with a broader scope and prove it is never unioned. Control: an opaque stored-DCR client still accumulates. (§17.1.6 decision 3.) |
 | S6b.7 | Metadata flag | `client_id_metadata_document_supported` appears only when enabled. |
 | S6b.8 | Cache (freshness) | Cache HIT reuses only a fresh validated document. The shared cache gives valid `s-maxage` priority over `max-age`, rejects `private`, `no-store`, `no-cache`, and `Vary: *`, and includes Age, valid Date apparent age, and observed response delay. It is bounded LRU, per Bridge, raw-client-id keyed, and serves direct-mode prepare plus upstream redirect resolution. |
@@ -811,6 +826,16 @@ checks without adding implied strings to the token. The current remainder is
   active frozen four-group suite. The source tree therefore targets MCP
   Authorization 2026-07-28 with no unresolved runtime or CIMD evidence row.
   Published v0.3.4 retains its earlier baseline.
+- **2026-08-17 loopback interoperability correction:** the 2026-08-14
+  explicit-`native` conclusion above is superseded. Published v0.3.5 shipped
+  that gate and rejects Claude Code's real CIMD document because it registers
+  port-less loopback callbacks without `application_type`, while the runtime
+  presents an ephemeral port. Current source keys the RFC 8252 any-port branch
+  on a validated registered loopback `http` entry when `application_type` is
+  `"native"` or absent; only the port may differ. Explicit `"web"` remains exact,
+  malformed values still reject, and the literal published Claude Code shape is
+  frozen as acceptance evidence. A patch release is required before the npm
+  artifact regains Claude Code compatibility.
 
 ## Done rules
 
@@ -868,6 +893,9 @@ row. Published v0.3.5 packages that work without making a published-artifact
 conformance claim; published v0.3.4 retains its earlier baseline. The
 post-v0.3.5 status is canonicalized at the top of this document and does not
 upgrade the dated live evidence.
-Historical Codex CLI success remains recorded, but installed Codex CLI 0.144.1
-showed an RFC 9207 `iss` callback regression on 2026-07-28; current
-compatibility awaits upstream resolution and retest.
+Historical Codex CLI success remains recorded. Installed Codex CLI 0.144.1
+showed an RFC 9207 `iss` callback regression on 2026-07-28, and published
+v0.3.5's production Fastify/SQLite composition does not expose the stored-DCR
+mode required by current ephemeral loopback callbacks. Current compatibility
+therefore awaits both an upstream callback retest and live verification of the
+unreleased stored-DCR example wiring.

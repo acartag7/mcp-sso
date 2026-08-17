@@ -394,9 +394,9 @@ stated rather than left to inference: under **§10.2** (both `web` and
 by the per-type rule — path included — so an origin-form registration
 authorizes only the origin ROOT path. Measured on HEAD: a `web` client
 registered `https://app.test/` presenting `https://app.test/cb` is REFUSED
-(`src/redirect.ts:86`), while the same entry in `redirectAllowlist` ALLOWS
+(`src/redirect.ts:97-103`), while the same entry in `redirectAllowlist` ALLOWS
 it; a `native` client registered `http://127.0.0.1/` presenting
-`http://127.0.0.1:54321/cb` is likewise refused (`src/redirect.ts:102`
+`http://127.0.0.1:54321/cb` is likewise refused (`src/redirect.ts:145-149`
 compares `pathname`). A client or document that wants a callback path MUST
 register exact-URI form.
 
@@ -863,17 +863,18 @@ after initiation. Each decision uses the parser's fresh read-once snapshot.
   LOOPBACK ORIGIN entry (any port on that origin); stored-`native` and the
   §17.1.6 CIMD loopback-`http` case compare scheme+host+path+search with the
   port ignored — **for CIMD, IMPLEMENTED; FROZEN SUITE ACTIVE
-  (D00-4.5.2, §16.1): only when the
-  validated document declares `application_type: "native"`; a `"web"` or
-  absent declaration matches exactly (fail closed). The CIMD leg carries and
-  validates its type, and its dedicated frozen phase is active** —; and every `https`
+  (D00-4.5.2, §16.1): when the validated registered entry is loopback
+  `http` and the optional `application_type` is `"native"` or absent. An
+  explicit `"web"` declaration keeps exact matching. The CIMD leg carries and
+  validates a present type, and its
+  dedicated frozen phase is active** —; and every `https`
   comparison stays exact raw equality WITH
   the port included (§17.1.5 rule 20's "port included" applies to that case,
   not to loopback `http`). A reader who takes any one of those sentences as
   the general rule derives a different matcher — which is why they are
   enumerated together here. "Origin" appears nowhere in this rule on purpose: the match tuple
   includes the path and query, exactly as §17.1.5 rule 20 and the shipped
-  matcher (`src/redirect.ts:95-103`) define it, so a client registered for
+  matcher (`src/cimd/registration.ts:113-120`) define it, so a client registered for
   `http://127.0.0.1/cb` does not match a presented `http://127.0.0.1/other`.
   Only the port is elastic (lets CLI/desktop clients use ephemeral ports).
 - **`web`** → `https` only, and the presented `redirect_uri` must equal a

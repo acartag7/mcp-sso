@@ -10,6 +10,7 @@ Start from the symptom:
 | Symptom | Go to |
 | --- | --- |
 | SQLite refuses to boot or migrate | [SQLite persistent-state boot rejection](#sqlite-persistent-state-boot-rejection) |
+| DCR returns `invalid_redirect_uri` for an ephemeral localhost callback | [Native CLI registration](#native-cli-registration-needs-stored-dcr) |
 | A client rejects the OAuth callback when `iss` is present | [Codex CLI callback regression](#codex-cli-01441-callback-regression) |
 | A tunnel connects but the public URL returns an edge 404 | [Anonymous quick tunnels](#anonymous-quick-tunnels-404-at-the-edge) or [named-tunnel ingress](#named-tunnels-need-a-config-file-ingress-rule) |
 | A named tunnel loops on authentication | [Default config credential selection](#default-configyml-can-hijack-your-credentials) |
@@ -37,6 +38,26 @@ fixed warning on the first call in each Windows Node worker/runtime instance to
 `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, `ensureStateDir`,
 or persistent `openSqliteStore`; exact `:memory:` does not consume it. The
 warning does not claim POSIX permission enforcement there.
+
+## Native CLI registration needs stored DCR
+
+Codex CLI registers an ephemeral native callback such as
+`http://localhost:1455/auth/callback`. An exact allowlist URI cannot predict its
+runtime port and path, while the required portless `http://localhost` origin is
+deliberately rejected in the stateless production composition. For
+`examples/fastify-sqlite`, use its SQLite-backed stored mode and list both
+loopback hosts explicitly:
+
+```dotenv
+OAUTH_DCR_MODE=stored
+OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
+```
+
+Do not work around the boot guard or add a placeholder HTTPS callback. Stored
+DCR preserves the broad admission needed at registration, then binds later
+authorization to the concrete native callback saved for that client. The
+API-key gateway example remains stateless unless its composition root supplies
+a shared `ClientStore`.
 
 ## Codex CLI 0.144.1 callback regression
 

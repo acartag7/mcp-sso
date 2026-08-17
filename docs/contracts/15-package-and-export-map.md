@@ -130,6 +130,16 @@ safe integer. Post-snapshot accessor changes cannot alter the decision or
 returned result. Zero, negative, fractional, unsafe, wrongly typed, missing, or
 accessor-throwing values reject, never a fail-open request or a raw backend-error
 leak. A normal budget denial is 429.
+The Fastify/SQLite example also reuses that installed plugin for every
+`POST /oauth/register`, with a fixed exact-path `onRequest` hook of 30 requests
+per 60 seconds and the separate `oauth-client-registration` group. The hook
+parses the request target's pathname, so absolute-form requests cannot bypass it,
+and is installed before the OAuth adapter registers its encapsulated routes. It
+therefore runs before Fastify body parsing and before the Bridge can persist or
+success-audit a registration. The policy applies to both DCR modes and cannot
+be removed by changing the separately configurable `/mcp` max/window. This is
+a reference-composition control, not an automatic behavior change for consumers
+of `registerOAuthRoutes` or for the API-key gateway example.
 The two runnable example factories take an optional `trustedProxies` array and
 the production env compositions parse `MCP_SSO_TRUSTED_PROXIES` into that same
 shape. Absence is explicit Fastify `trustProxy: false`: an untrusted socket

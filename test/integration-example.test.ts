@@ -229,6 +229,81 @@ test("integration — Cloudflare Access branch: buildExample creates the state d
   }
 });
 
+test("integration — production Fastify/SQLite stored DCR registers Codex CLI loopback callbacks", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-codex-dcr-"));
+  const dir = join(base, "state");
+  try {
+    const built = await buildExample({
+      MCP_SSO_DIR: dir,
+      CF_ACCESS_AUDIENCE: "cf-audience",
+      CF_ACCESS_CERTS_URL: "https://cf.test/certs",
+      CF_ACCESS_ISSUER: "https://cf.test",
+      OAUTH_ISSUER: "http://localhost:3000",
+      OAUTH_RESOURCE: "http://localhost:3000/mcp",
+      OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+      OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+      OAUTH_ALLOW_INSECURE_LOCALHOST: "true",
+      OAUTH_DCR_MODE: "stored",
+      OAUTH_REDIRECT_ALLOWLIST: "https://app.test/cb,http://localhost,http://127.0.0.1",
+    });
+    try {
+      assert.equal(built.config.dcr.mode, "stored");
+      for (const redirectUri of [
+        "http://localhost:1455/auth/callback",
+        "http://127.0.0.1:1455/auth/callback",
+        "http://localhost:52341/cb",
+      ]) {
+        const response = await built.app.inject({
+          method: "POST",
+          url: "/oauth/register",
+          headers: { "content-type": "application/json" },
+          payload: {
+            client_name: "Codex CLI",
+            application_type: "native",
+            redirect_uris: [redirectUri],
+            grant_types: ["authorization_code", "refresh_token"],
+            response_types: ["code"],
+            token_endpoint_auth_method: "none",
+          },
+        });
+        assert.equal(response.statusCode, 201, response.body);
+        const clientId = (response.json() as { client_id: string }).client_id;
+        const stored = await built.store.find(clientId);
+        assert.deepEqual(stored && "redirectUris" in stored ? stored.redirectUris : undefined, [redirectUri]);
+      }
+    } finally {
+      await built.app.close();
+      await built.store.close();
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("integration — production Fastify/SQLite rejects malformed DCR modes before state", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-int-dcr-mode-"));
+  try {
+    for (const mode of ["", "Stored", "unknown"]) {
+      const dir = join(base, mode || "blank");
+      await assert.rejects(buildExample({
+        MCP_SSO_DIR: dir,
+        CF_ACCESS_AUDIENCE: "cf-audience",
+        CF_ACCESS_CERTS_URL: "https://cf.test/certs",
+        CF_ACCESS_ISSUER: "https://cf.test",
+        OAUTH_ISSUER: "https://bridge.test",
+        OAUTH_RESOURCE: "https://bridge.test/mcp",
+        OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+        OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(jwk()),
+        OAUTH_DCR_MODE: mode,
+        OAUTH_REDIRECT_ALLOWLIST: "https://app.test/cb",
+      }), /OAUTH_DCR_MODE must be "stateless" or "stored"/);
+      assert.equal(existsSync(dir), false, `${JSON.stringify(mode)} did not create state`);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("integration — Cloudflare Access branch rejects a group/other-accessible pre-existing state dir", async () => {
   // A world-writable MCP_SSO_DIR lets another local user replace auth.db with
   // OAuth state they control. The CF branch must mirror quickstart's assertRealDir.
