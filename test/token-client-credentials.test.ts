@@ -20,7 +20,7 @@ import type {
   VersionedMachineClientRegistration,
 } from "../src/ports/client-store.ts";
 import type { NormRequest } from "../src/adapters/http.ts";
-import { Bridge } from "../src/adapters/bridge.ts";
+import { Bridge as CoreBridge } from "../src/adapters/bridge.ts";
 import { RequestAuthorizer } from "../src/verifier.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { verifyAccessToken, sha256Hex } from "../src/crypto.ts";
@@ -33,6 +33,13 @@ import {
   disableMachineClient, provisionMachineClient, rotateMachineClientSecret,
   type MachineClientDeps,
 } from "../src/machine-client.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
+
+class Bridge extends CoreBridge {
+  constructor(deps: ConstructorParameters<typeof CoreBridge>[0]) {
+    super({ ...deps, rateLimit: deps.rateLimit ?? boundedTestRateLimit() });
+  }
+}
 
 const NOW_MS = Date.parse("2026-07-06T12:00:00.000Z");
 const CATALOG = ["mcp:read", "mcp:write", "mcp:admin"];

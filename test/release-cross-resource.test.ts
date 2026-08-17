@@ -15,6 +15,7 @@ import type { AuthAuditEvent, AuditPort } from "../src/ports/audit.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import { STORED_DCR_GRANT_GENERATION } from "../src/ports/store.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const ISSUER = "http://localhost";
 const RESOURCE_A = "http://localhost/mcp";
@@ -70,8 +71,12 @@ releaseTest("RM.8 shared durable OAuth state remains isolated across two shipped
   const configA = config(RESOURCE_A, clients, key);
   const configB = config(RESOURCE_B, clients, key);
   const clock = { nowMs: () => Date.now() };
-  const bridgeA = new Bridge({ config: configA, store, clock, audit: auditA });
-  const bridgeB = new Bridge({ config: configB, store, clock, audit: auditB });
+  const bridgeA = new Bridge({
+    config: configA, store, clock, audit: auditA, rateLimit: boundedTestRateLimit(),
+  });
+  const bridgeB = new Bridge({
+    config: configB, store, clock, audit: auditB, rateLimit: boundedTestRateLimit(),
+  });
   const identity = { async verify() { return { ok: true as const, identity: { subject: SUBJECT } }; } };
   const appA = Fastify(); const appB = Fastify();
   await registerOAuthRoutes(appA, { bridge: bridgeA, identity, identityHeader: "x-release" });

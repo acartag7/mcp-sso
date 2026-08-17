@@ -12,6 +12,7 @@ import type { ConsolePairingIdentity } from "../src/identity/console-pairing.ts"
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const NOW = Date.parse("2026-08-13T12:00:00.000Z");
 const ISSUER = "https://auth.test";
@@ -86,7 +87,10 @@ function harness(): { bridge: Bridge; clients: Clients; state: State; audit: Aud
     authorizationCodeTtlSeconds: 300,
   });
   return {
-    bridge: new Bridge({ config, store: state, clock: { nowMs: () => NOW }, audit }),
+    bridge: new Bridge({
+      config, store: state, clock: { nowMs: () => NOW }, audit,
+      rateLimit: boundedTestRateLimit(),
+    }),
     clients, state, audit, pairing: new Pairing(),
   };
 }

@@ -25,8 +25,8 @@ export function recordRateLimitSnapshot(snapshot: RateLimitPort, source: RateLim
   RATE_LIMIT_IDENTITIES.set(snapshot, rateLimitIdentity(source));
 }
 
-/** Default no-op limiter: allows everything. Inject a real implementation
- *  (e.g. a per-IP token bucket) at the composition root. */
+/** Default no-op limiter: allows everything. It is valid only in compositions
+ *  admitted by the deployment guard; stored DCR requires a bounded port. */
 export const noopRateLimit: RateLimitPort = {
   async check(): Promise<boolean> {
     return true;

@@ -81,10 +81,9 @@ The API-key gateway and the Fastify/SQLite example's default DCR mode remain
 stateless and do not wire a core `RateLimitPort`. In those stateless production
 compositions, the deployment guard requires at least one application-specific
 HTTPS callback in `OAUTH_REDIRECT_ALLOWLIST`. An empty value, a hosted-client
-default, or a generic loopback origin does not satisfy that boot guard. A
-custom composition root may instead use stored DCR or supply a real limiter.
-Do not add a placeholder callback: configure the exact callback used by your
-opaque DCR client.
+default, or a generic loopback origin does not satisfy that boot guard. Supply a
+real limiter or configure the exact callback used by your opaque DCR client; do
+not add a placeholder callback.
 
 The Fastify/SQLite production example exposes that stored composition directly.
 Native CLI clients such as Codex choose an ephemeral loopback port and callback
@@ -95,23 +94,45 @@ OAUTH_DCR_MODE=stored
 OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
 ```
 
-Stored mode is what makes this broad loopback trust compatible with the existing
-deployment guard; it does not relax the stateless rule. Keep an actual HTTPS
-application callback in the list only when that application uses it. The
-loopback origins permit any path and port on their exact host, while stored DCR
-still records each native client's concrete callback and rechecks it during
-authorization.
+Stored mode makes this broad loopback trust compatible with the stateless
+redirect rule, but it has its own boot requirement: every stored-DCR bridge must
+receive a bounded, non-noop `RateLimitPort`. Keep an actual HTTPS application
+callback in the list only when that application uses it. The loopback origins
+permit any path and port on their exact host, while stored DCR records each
+native client's concrete callback and rechecks it during authorization.
 
-The Fastify/SQLite example also places a fixed fail-closed Fastify budget on
-`POST /oauth/register` in both DCR modes: 30 requests per 60 seconds per derived
-client IP. Exhaustion returns 429 before a registration is written; failure of
-the optional custom limiter store returns a fixed 503 before body parsing or
-registration persistence. Its default limiter store is per process. Multi-replica
-public deployments must provide a conforming shared Fastify limiter store or
-enforce an equivalent aggregate budget at a trusted edge. This route control
-does not alter the library deployment guard. The separate owner-approved B1 change will make
-stored DCR without a bounded core `RateLimitPort` a boot failure, with no escape
-hatch; it is intentionally not part of this non-breaking interop hotfix.
+The Fastify/SQLite example supplies two controls. Its fixed fail-closed Fastify
+budget applies to `POST /oauth/register` in both modes: 30 requests per 60
+seconds per derived client IP, before body parsing or persistence. Stored mode
+also receives a core process-local aggregate budget of 30 registrations per 60
+seconds, which satisfies the boot guard and returns 429 from `Bridge` when
+exhausted. Both default counters are per process. Multi-replica public
+deployments must supply shared controls; use a conforming shared Fastify limiter
+store for the route and a shared core port such as
+`mcp-sso/rate-limit/redis` for the bridge.
+
+### Migrating an existing stored-DCR deployment
+
+This release deliberately stops stored-DCR compositions from booting when
+`rateLimit` is absent or is the exported `noopRateLimit`. The
+`acknowledgeUnsafeStatelessDefaults` flag cannot bypass the rule, including on
+loopback. Supply a bounded port to the same `Bridge` that receives the stored
+configuration:
+
+```ts
+import { RedisRateLimit } from "mcp-sso/rate-limit/redis";
+
+const rateLimit = new RedisRateLimit(redis, {
+  windowSeconds: 60,
+  limit: 30,
+});
+const bridge = new Bridge({ ...deps, config, rateLimit });
+```
+
+Choose the window and limit for the deployment. The bridge can detect the known
+no-op singleton but cannot prove a custom port is finite; an always-allow custom
+implementation does not satisfy the contract. A trusted-edge or Fastify-only
+limit remains useful but does not replace the required core port.
 
 ### What `OAUTH_REDIRECT_ALLOWLIST_MODE=replace` covers
 

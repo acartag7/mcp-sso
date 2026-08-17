@@ -6,7 +6,7 @@ import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import type { RedirectExchangeResult } from "../src/ports/identity.ts";
-import { Bridge } from "../src/adapters/bridge.ts";
+import { Bridge as CoreBridge } from "../src/adapters/bridge.ts";
 import { createUpstreamRedirectFlow } from "../src/adapters/upstream-flow.ts";
 import { signFlowToken } from "../src/adapters/upstream-flow-internals.ts";
 import { validateCimdDocument } from "../src/cimd/document.ts";
@@ -21,6 +21,13 @@ import {
   DEFAULT_ALLOWED_REDIRECT_ORIGINS, assertAllowedRedirectUri, assertRedirectAllowedForClient,
 } from "../src/redirect.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
+
+class Bridge extends CoreBridge {
+  constructor(deps: ConstructorParameters<typeof CoreBridge>[0]) {
+    super({ ...deps, rateLimit: deps.rateLimit ?? boundedTestRateLimit() });
+  }
+}
 import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
 import { OAuthTokenUseCase } from "../src/token.ts";
 

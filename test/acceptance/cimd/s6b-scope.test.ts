@@ -14,6 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { generateKeyPairSync } from "node:crypto";
+import { boundedTestRateLimit } from "../../support/bounded-rate-limit.ts";
 
 const phases = JSON.parse(readFileSync(new URL("../phases.json", import.meta.url), "utf8"));
 
@@ -23,7 +24,10 @@ if (phases["s6b-cimd-flow"] !== true) {
   const CFG = "../../../src/config.ts";
   const { createBridgeConfig } = (await import(CFG)) as any;
   const BRIDGE = "../../../src/adapters/bridge.ts";
-  const { Bridge } = (await import(BRIDGE)) as any;
+  const { Bridge: CoreBridge } = (await import(BRIDGE)) as any;
+  class Bridge extends CoreBridge {
+    constructor(deps: any) { super({ ...deps, rateLimit: deps.rateLimit ?? boundedTestRateLimit() }); }
+  }
   const STORE = "../../../src/store/memory.ts";
   const { MemoryStore } = (await import(STORE)) as any;
   const CRYPTO = "../../../src/crypto.ts";

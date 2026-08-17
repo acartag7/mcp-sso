@@ -13,6 +13,7 @@ import type { ClientRegistration, ClientStore } from "../src/ports/client-store.
 import { SystemClock } from "../src/ports/clock.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { RequestAuthorizer } from "../src/verifier.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 import { http, mountStack, sdkPing, type HttpResponse } from "./lib/release-http-stack.ts";
 
 const releaseTest = process.env.RUN_RELEASE_MATRIX === "true" ? test : test.skip;
@@ -81,7 +82,10 @@ releaseTest("RM.4 composes Hono Request, CIMD, generic OIDC, Memory, SDK, refres
       return { status: 200, text: async () => JSON.stringify({ id_token: idToken, access_token: upstreamAccess }) };
     } },
   });
-  const bridge = new Bridge({ config, store, clock, audit, cimdTransport, cimdResolver: resolver });
+  const bridge = new Bridge({
+    config, store, clock, audit, cimdTransport, cimdResolver: resolver,
+    rateLimit: boundedTestRateLimit(),
+  });
   let tokenHandlerCalls = 0;
   const handleToken = bridge.handleToken.bind(bridge);
   bridge.handleToken = async (request) => { tokenHandlerCalls++; return handleToken(request); };

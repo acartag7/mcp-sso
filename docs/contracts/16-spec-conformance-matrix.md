@@ -21,7 +21,7 @@
 | Hashed single-use codes/tokens; single-use consent JTI | ✅ v0.1 | §7, §12 |
 | Fail-closed boot + no identity bypass | ✅ v0.1 | §5, §9.3 |
 | Consent Deny + error redirects | ✅ v0.1 core + adapter UI | §9.3, §9.6 |
-| Rate-limit hook port — no-op default | ✅ v0.1 | §6.7 |
+| Rate-limit hook port — no-op default only in §5-admitted compositions; stored DCR requires a bounded non-noop port | ✅ v0.1 | §5, §6.7 |
 | CIMD (`draft-ietf-oauth-client-id-metadata-document-00`) | ✅ complete 44-statement mapping below: 30 conformant (1 with a disclosed caveat), 2 reasoned deviations, no unresolved runtime or evidence row, 12 not applicable. Frozen suites `s6b-cimd-flow` and `cimd-native-loopback-policy` are active | §6.6, §17.1, §16.1 |
 | Framework adapters (`/fastify` `/express` `/hono`) | ✅ Phase 3 | §9.6, §15 |
 | Identity ports (Cloudflare Access, Entra) | ✅ Phase 3 | §6.5 |

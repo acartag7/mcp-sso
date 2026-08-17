@@ -8,9 +8,9 @@ import { AuthConfigError } from "./config-error.ts";
 
 export interface QuickstartSecrets {
   /** EC P-256 private JWK (kty/crv/d/x/y) — passes `createBridgeConfig`'s §5 check. */
-  signingPrivateJwk: JWK;
+  readonly signingPrivateJwk: JWK;
   /** >=32-char HS256 consent secret (base64url of 48 random bytes). */
-  consentSigningSecret: string;
+  readonly consentSigningSecret: string;
 }
 
 export function validateSecrets(parsed: unknown, secretsPath: string): QuickstartSecrets {

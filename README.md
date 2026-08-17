@@ -65,8 +65,10 @@ production identity provider. See the [runtime configuration](docs/configuration
 
 Use a real identity provider, a persistent conforming store, and a real request
 budget. The repository example demonstrates identity-provider wiring; it is not
-a complete production topology because it uses local SQLite and does not wire a
-`RateLimitPort`.
+a complete production topology because it uses local SQLite. Its default
+stateless mode does not wire a core `RateLimitPort`; stored mode wires only a
+process-local registration budget. Multi-replica deployments use the shipped
+Redis port.
 
 Start from an **mcp-sso repository checkout** (not the generated
 `my-mcp-server` directory), copy
@@ -238,12 +240,13 @@ full pattern, topology, and Kubernetes notes in
   non-integer or non-canonical custom `ClockPort` values and preserves the
   existing typed OAuth failure through the production request and
   approval paths ([threat-model row 39](docs/threat-model.md)).
-- **Optional request budgets** — `RateLimitPort` runs before registration,
+- **Request budgets** — `RateLimitPort` runs before registration,
   consent approval, token exchange, revocation, and direct header-based identity
   verification (`Bridge.resolveIdentity`). Upstream redirect, CIMD, and console
-  pairing keep their separate named budgets. The port default is intentionally
-  no-op, so production deployments wire the Redis adapter or a trusted
-  rate-limiting proxy.
+  pairing keep their separate named budgets. Stored DCR requires a bounded,
+  non-noop port at boot; the no-op default remains available only where the
+  stateless deployment guard admits it. Multi-replica deployments wire the Redis
+  adapter.
 - **Reference `/mcp` Origin gates reject ambiguity** — the runnable examples use
   `headersFromDistinct` plus `readHeader`, and the generated server checks
   `request.raw.headersDistinct.origin` inline, before parsing or bearer

@@ -12,6 +12,7 @@ import { pkceChallenge } from "../src/crypto.ts";
 import type { ClientRegistration } from "../src/ports/client-store.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
 import { runClientStoreConformance } from "./lib/client-store-conformance.ts";
+import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const WEB: ClientRegistration = {
   clientId: "mcpdc_0123456789abcdef0123456789abcdef",
@@ -199,7 +200,10 @@ test("integration: a DCR registration survives restart and completes authorizati
   });
   try {
     const first = openSqliteStore(file);
-    const firstBridge = new Bridge({ config: makeConfig(first), store: first, clock, audit });
+    const firstBridge = new Bridge({
+      config: makeConfig(first), store: first, clock, audit,
+      rateLimit: boundedTestRateLimit(),
+    });
     const registration = await firstBridge.handleRegister({
       query: {}, headers: {}, body: { redirect_uris: [redirectUri], application_type: "native" },
     });
@@ -208,7 +212,10 @@ test("integration: a DCR registration survives restart and completes authorizati
     await first.close();
 
     const reopened = openSqliteStore(file);
-    const bridge = new Bridge({ config: makeConfig(reopened), store: reopened, clock, audit });
+    const bridge = new Bridge({
+      config: makeConfig(reopened), store: reopened, clock, audit,
+      rateLimit: boundedTestRateLimit(),
+    });
     const verifier = "sqlite-client-verifier-0123456789abcdef012345678901";
     const authorize = await bridge.handleAuthorize({
       query: {

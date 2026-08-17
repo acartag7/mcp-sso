@@ -31,9 +31,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   Bridge, RequestAuthorizer, createBridgeConfig, originOf, isMcpPath, validateAllowedOrigins,
-  assertRedirectAllowlistEntries, loadOrCreateQuickstartSecrets, handlePairingAuthorize,
-  SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
-  type ClientRegistration, type ClientStore,
+  assertRedirectAllowlistEntries, prepareQuickstartSecrets, handlePairingAuthorize,
+  assertSafeDeploymentCombination, SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
+  type ClientRegistration, type ClientStore, type RateLimitPort,
 } from "mcp-sso";
 import { addOAuthFormContentTypeParser, FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, OAUTH_POST_BODY_MAX_BYTES, registerOAuthRoutes, semanticOAuthBody } from "mcp-sso/fastify";
 import { registerProtectedResourceRateLimit } from "mcp-sso/fastify/protected-resource-rate-limit";
@@ -85,6 +85,11 @@ const oneLine = (s: unknown): string => String(s).replace(/[\\x00-\\x1f\\x7f]/g,
 // bridge mints real tokens; never set this for a non-loopback / production issuer).
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]); const isLoopback = (url: string): boolean => { try { const u = new URL(url); return (u.protocol === "http:" || u.protocol === "https:") && LOOPBACK.has(u.hostname); } catch { return false; } };
 const isHttpLoopback = (url: string): boolean => { try { const u = new URL(url); return u.protocol === "http:" && LOOPBACK.has(u.hostname); } catch { return false; } };
+const registrationRateLimit: RateLimitPort = (() => { let startedAt: number | undefined; let remaining = 30; return { async check(key) {
+  if (!key.startsWith("register:")) return true; const now = Date.now(); if (!Number.isFinite(now)) return false;
+  if (startedAt === undefined || now - startedAt >= 60_000) { startedAt = now; remaining = 29; return true; }
+  if (now < startedAt || remaining === 0) return false; remaining -= 1; return true;
+} }; })();
 
 async function main(): Promise<void> {
   // Validate URLs before state creation; errors never echo credential-bearing input.
@@ -101,7 +106,8 @@ async function main(): Promise<void> {
     list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
   );
   const redirectAllowlistMode = redirectAllowlistModeFromEnv(process.env.OAUTH_REDIRECT_ALLOWLIST_MODE, redirectAllowlist);
-  const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
+  const preparedSecrets = await prepareQuickstartSecrets({ dir: DIR });
+  const secrets = preparedSecrets.secrets;
   let store: ReturnType<typeof openSqliteStore> | undefined;
   const clientStore: ClientStore = {
     async save(client: ClientRegistration): Promise<void> { if (!store) throw new Error("mcp-sso: client store is not ready"); await store.save(client); },
@@ -121,13 +127,17 @@ async function main(): Promise<void> {
       accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000,
       consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
     });
+  const rateLimit = assertSafeDeploymentCombination(
+    { config, rateLimit: registrationRateLimit }, { emitAcknowledgementWarning: false },
+  );
+  await preparedSecrets.persist();
   store = openSqliteStore(\`\${DIR}/auth.db\`);
   const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
 
   const app = Fastify({ trustProxy: false }); const protectedRateLimit = await registerProtectedResourceRateLimit(app);
   const protectedRoute = { config: { rateLimit: { max: protectedRateLimit.max, timeWindow: protectedRateLimit.timeWindowMs, groupId: protectedRateLimit.groupId } } };
   const clock = new SystemClock();
-  const bridge = new Bridge({ config, store, clock, audit });
+  const bridge = new Bridge({ config, store, clock, audit, rateLimit });
   const authorizer = new RequestAuthorizer({ config, clock, audit });
   const toNorm = (req: FastifyRequest): NormRequest => { const headers = Object.fromEntries(Object.entries(req.raw.headersDistinct ?? {}).flatMap(([k, v]) => !v?.length ? [] : [[k.toLowerCase(), v.length === 1 ? v[0]! : [...v]]]));
     return { query: req.query as NormRequest["query"], body: semanticOAuthBody(req.body, headers), headers, ip: req.ip };
