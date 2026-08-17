@@ -146,6 +146,19 @@ function callbackReq(c: BridgeConfig, cookieValue: string | undefined, query: No
   return req(query, headers);
 }
 
+async function assertIdentityRejectionDescription(reason: string, description: string): Promise<void> {
+  const c = config(); const id = fakeIdentity(c);
+  id.set({ ok: false, kind: "identity_rejected", reason });
+  const { flow, audit } = makeFlow(c, id);
+  const { claims, cookieValue } = await initiate(c, flow);
+  const response = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "c" }));
+  assert.equal(response.status, 302);
+  const location = new URL(hLoc(response));
+  assert.equal(location.searchParams.get("error"), "access_denied");
+  assert.equal(location.searchParams.get("error_description"), description);
+  assert.equal(audit.identity().at(-1)?.reason, reason);
+}
+
 // ============================================================================
 // Boot validation (all AuthConfigError, fail-closed — §17.11)
 // ============================================================================
@@ -613,12 +626,15 @@ test("callback rows 7/8: IdP error/error_description are NEVER echoed into the r
     let f = makeFlow(c, fakeIdentity(c)); let i = await initiate(c, f.flow);
     let res = await f.flow.handleCallback(callbackReq(c, i.cookieValue, { state: i.claims.state, error: "access_denied", error_description: POISON_DESC }));
     assert.equal(hLoc(res).includes(encodeURIComponent(POISON_DESC)), false, "row 7: poison desc not in redirect");
+    assert.equal((JSON.stringify(res.body) ?? "").includes(POISON_DESC), false, "row 7: poison desc not in body");
     assert.equal(f.audit.json().includes(POISON_DESC), false, "row 7: poison desc not in audit");
     // row 8: poison BOTH the error value and the description (an unrecognized error code).
     f = makeFlow(c, fakeIdentity(c)); i = await initiate(c, f.flow);
     res = await f.flow.handleCallback(callbackReq(c, i.cookieValue, { state: i.claims.state, error: POISON_ERR, error_description: POISON_DESC }));
     assert.equal(hLoc(res).includes(encodeURIComponent(POISON_ERR)), false, "row 8: poison error value not in redirect");
     assert.equal(hLoc(res).includes(encodeURIComponent(POISON_DESC)), false, "row 8: poison desc not in redirect");
+    assert.equal((JSON.stringify(res.body) ?? "").includes(POISON_ERR), false, "row 8: poison error value not in body");
+    assert.equal((JSON.stringify(res.body) ?? "").includes(POISON_DESC), false, "row 8: poison desc not in body");
     assert.match(hLoc(res), /error=server_error/, "row 8: only the FIXED server_error code is emitted");
     assert.equal(f.audit.json().includes(POISON_ERR), false, "row 8: poison error value not in audit");
     assert.equal(f.audit.json().includes(POISON_DESC), false, "row 8: poison desc not in audit");
@@ -661,6 +677,38 @@ test("callback row 10: exchange_failed (non-200/timeout/missing id_token) => 302
   assert.equal(a2.identity().length, 0, "a thrown exchange also reaches no identity decision — no identity.verify");
 });
 
+test("callback row 10: returned and thrown exchange detail cannot reach redirect, body, audit, or fixed stderr diagnostic", async () => {
+  for (const mode of ["returned", "thrown"] as const) {
+    const c = config(); const id = fakeIdentity(c);
+    const marker = mode === "returned"
+      ? "CUSTOM_PORT_ATTACKER_REASON_xyz://evil"
+      : "CUSTOM_PORT_THROW_REASON_xyz://evil";
+    if (mode === "returned") {
+      id.set({ ok: false, kind: "exchange_failed", reason: marker });
+    } else {
+      id.identity.exchangeAndVerify = async () => { throw new Error(marker); };
+    }
+    const { flow, audit } = makeFlow(c, id);
+    const { claims, cookieValue } = await initiate(c, flow);
+    const calls: unknown[][] = [];
+    const original = console.error;
+    console.error = (...values: unknown[]): void => { calls.push(values); };
+    try {
+      const response = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "c" }));
+      assert.equal(new URL(hLoc(response)).searchParams.get("error_description"), "upstream identity provider error");
+      assert.doesNotMatch(JSON.stringify(response), new RegExp(marker));
+      assert.doesNotMatch(audit.json(), new RegExp(marker));
+    } finally {
+      console.error = original;
+    }
+    assert.deepEqual(calls, [[
+      "[mcp-sso] upstream exchange failed (exchange_failed)",
+      "client-1",
+    ]], `${mode}: stderr has only the fixed diagnostic and sanitized client id`);
+    assert.doesNotMatch(JSON.stringify(calls), new RegExp(marker));
+  }
+});
+
 test("callback row 10: a throwing returned accessor stays in the exchange failure channel", async () => {
   const c = config(); const id = fakeIdentity(c);
   id.identity.exchangeAndVerify = async () => new Proxy(
@@ -681,7 +729,7 @@ test("callback row 10: a throwing returned accessor stays in the exchange failur
   assert.doesNotMatch(audit.json(), /tenant_internal|secret identity detail/);
 });
 
-test("callback row 11: identity_rejected => 302 access_denied + identity.verify failure (with the port reason)", async () => {
+test("callback row 11: identity_rejected => 302 access_denied + identity.verify failure with a normalized reason", async () => {
   const c = config(); const id = fakeIdentity(c);
   id.set({ ok: false, kind: "identity_rejected", reason: "entra_bad_nonce" });
   const { flow, audit } = makeFlow(c, id);
@@ -695,7 +743,28 @@ test("callback row 11: identity_rejected => 302 access_denied + identity.verify 
   assert.equal(audit.callback().at(-1)?.reason, "identity_rejected");
   const idv = audit.identity().at(-1);
   assert.equal(idv?.status, "failure");
-  assert.equal(idv?.reason, "entra_bad_nonce", "the port's reason lands in identity.verify");
+  assert.equal(idv?.reason, "entra_bad_nonce", "an allowlisted reason lands in identity.verify");
+});
+
+test("callback row 11: entra_no_groups selects its exact fixed description", async () => {
+  await assertIdentityRejectionDescription(
+    "entra_no_groups",
+    "Entra returned no groups for this account",
+  );
+});
+
+test("callback row 11: entra_no_mapped_groups selects its exact fixed description", async () => {
+  await assertIdentityRejectionDescription(
+    "entra_no_mapped_groups",
+    "Entra groups do not authorize this account for this resource",
+  );
+});
+
+test("callback row 11: entra_groups_overage names the operator configuration problem", async () => {
+  await assertIdentityRejectionDescription(
+    "entra_groups_overage",
+    "Entra group claims exceed the supported limit; operator configuration is required",
+  );
 });
 
 test("callback row 11: a custom redirect-identity reason cannot inject audit content", async () => {
@@ -707,6 +776,34 @@ test("callback row 11: a custom redirect-identity reason cannot inject audit con
   assert.equal(response.status, 302);
   assert.equal(audit.identity().at(-1)?.reason, "identity_rejected");
   assert.doesNotMatch(audit.json(), /tenant_alice/);
+});
+
+test("callback row 11: IdP error_description and custom-port text cannot reach redirect, body, audit, or stderr", async () => {
+  const c = config(); const id = fakeIdentity(c);
+  const IDP_POISON = "IDP_ATTACKER_DESCRIPTION_xyz://evil";
+  const PORT_POISON = "CUSTOM_PORT_ATTACKER_REASON_xyz://evil";
+  id.set({ ok: false, kind: "identity_rejected", reason: PORT_POISON });
+  const { flow, audit } = makeFlow(c, id);
+  const { claims, cookieValue } = await initiate(c, flow);
+  const chunks: string[] = [];
+  const original = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((value: string | Uint8Array): boolean => {
+    chunks.push(typeof value === "string" ? value : Buffer.from(value).toString());
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const response = await flow.handleCallback(callbackReq(c, cookieValue, {
+      state: claims.state, code: "c", error_description: IDP_POISON,
+    }));
+    const serialized = JSON.stringify(response);
+    assert.equal(new URL(hLoc(response)).searchParams.get("error_description"), "upstream identity verification failed");
+    assert.doesNotMatch(hLoc(response), /IDP_ATTACKER_DESCRIPTION|CUSTOM_PORT_ATTACKER_REASON/);
+    assert.doesNotMatch(serialized, /IDP_ATTACKER_DESCRIPTION|CUSTOM_PORT_ATTACKER_REASON/);
+    assert.doesNotMatch(audit.json(), /IDP_ATTACKER_DESCRIPTION|CUSTOM_PORT_ATTACKER_REASON/);
+  } finally {
+    process.stderr.write = original;
+  }
+  assert.doesNotMatch(chunks.join(""), /IDP_ATTACKER_DESCRIPTION|CUSTOM_PORT_ATTACKER_REASON/);
 });
 
 test("callback rows 12/13: success => 200 consent page + identity.verify success + oauth.upstream.callback success", async () => {

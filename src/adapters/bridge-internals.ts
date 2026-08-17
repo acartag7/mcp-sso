@@ -41,6 +41,17 @@ export function normalizedIdentityFailureReason(value: unknown): string {
     ? value : "identity_rejected";
 }
 
+/** Public redirect text for a normalized identity failure. The input selects
+ *  only from this library-authored switch; it is never copied into the output. */
+export function identityRejectionDescription(normalizedReason: string): string {
+  switch (normalizedReason) {
+    case "entra_no_groups": return "Entra returned no groups for this account";
+    case "entra_no_mapped_groups": return "Entra groups do not authorize this account for this resource";
+    case "entra_groups_overage": return "Entra group claims exceed the supported limit; operator configuration is required";
+    default: return "upstream identity verification failed";
+  }
+}
+
 export function hasBasicAuthorization(headers: NormRequest["headers"]): boolean {
   return Object.entries(headers).some(([key, raw]) =>
     key.toLowerCase() === "authorization" &&

@@ -11,6 +11,7 @@ Start from the symptom:
 | --- | --- |
 | SQLite refuses to boot or migrate | [SQLite persistent-state boot rejection](#sqlite-persistent-state-boot-rejection) |
 | DCR returns `invalid_redirect_uri` for an ephemeral localhost callback | [Native CLI registration](#native-cli-registration-needs-stored-dcr) |
+| Entra returns `access_denied` after successful sign-in | [Entra group authorization denials](#entra-group-authorization-denials) |
 | A client rejects the OAuth callback when `iss` is present | [Codex CLI callback regression](#codex-cli-01441-callback-regression) |
 | A tunnel connects but the public URL returns an edge 404 | [Anonymous quick tunnels](#anonymous-quick-tunnels-404-at-the-edge) or [named-tunnel ingress](#named-tunnels-need-a-config-file-ingress-rule) |
 | A named tunnel loops on authentication | [Default config credential selection](#default-configyml-can-hijack-your-credentials) |
@@ -61,6 +62,22 @@ a shared `ClientStore` and a bounded core `RateLimitPort`. The Fastify/SQLite
 example supplies a finite process-local registration port automatically in
 stored mode; multi-replica deployments use a shared port such as
 `mcp-sso/rate-limit/redis`.
+
+## Entra group authorization denials
+
+After Entra has authenticated the user, the redirect may contain
+`error=access_denied` and one of these fixed, library-authored descriptions:
+
+| Exact `error_description` | Cause | Remedy |
+| --- | --- | --- |
+| `Entra returned no groups for this account` | The verified token contained no usable group IDs. The user may belong to zero groups, or the app registration may not emit group claims. | Assign the user to a mapped group and verify the app manifest's `groupMembershipClaims` setting. If every authenticated user should receive baseline scopes, configure `baseScopes` deliberately. |
+| `Entra groups do not authorize this account for this resource` | Entra returned groups, but none of their object IDs matched `groupAuthorization.mapping`, and no `baseScopes` applied. | Add the intended group object ID to `mapping`, assign the user to an already-mapped group, or configure deliberate `baseScopes`. |
+| `Entra group claims exceed the supported limit; operator configuration is required` | Entra emitted a group-overage marker instead of the group list, so mcp-sso failed closed rather than dereferencing `_claim_sources`. | Set `groupMembershipClaims` to `ApplicationGroup` for direct assignments (requires Entra P1), or reduce the user's group sprawl below the claim limit. |
+
+Other identity failures retain `upstream identity verification failed`. Use the
+closed reason code on the `identity.verify` audit event for the operator-only
+detail; raw IdP `error` and `error_description` values are never copied to the
+client or logs.
 
 ## Codex CLI 0.144.1 callback regression
 
