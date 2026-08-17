@@ -71,7 +71,7 @@ async function runServeScenario(mode) {
   executable(join(infra, "scripts/tofu-run.sh"), `#!/usr/bin/env bash\ncase "${'$'}{*: -1}" in\n  issuer_origins) printf '%s\\n' '{"entra":"https://entra.test"}' ;;\n  tunnel_ingress_ports) printf '%s\\n' '{"entra":{"gateway":43123}}' ;;\nesac\n`);
   executable(join(bin, "cloudflared"), `#!/usr/bin/env bash\nif [[ "${'$'}1 ${'$'}2" == "tunnel info" ]]; then\n  printf 'ID 00000000-0000-0000-0000-000000000000\\n'\n  exit 0\nfi\nwhile [[ ! -f "$READY" ]]; do /bin/sleep 0.01; done\nprintf ready > "$TUNNEL_READY"\ncase "$TUNNEL_MODE" in\n  normal) exit 0 ;;\n  failure) exit 7 ;;\n  signal) while [[ ! -f "$RELEASE_TUNNEL" ]]; do /bin/sleep 0.01; done ;;\nesac\n`);
   executable(join(bin, "mktemp"), `#!/usr/bin/env bash\npath="$FAKE_TMPDIR/mcp-sso-tunnel-fixed"\n( set -o noclobber; : > "$path" ) || exit 1\nprintf '%s\\n' "$path"\n`);
-  executable(join(bin, "curl"), "#!/usr/bin/env bash\n[[ -f \"$READY\" ]]\n");
+  executable(join(bin, "curl"), "#!/usr/bin/env bash\n[[ \"$TUNNEL_MODE\" != \"startup-timeout\" && -f \"$READY\" ]]\n");
   executable(join(bin, "sleep"), "#!/usr/bin/env bash\n/bin/sleep 0.05\n");
 
   const child = spawn(join(repo, "scripts/live/serve.sh"), ["entra"], {
@@ -82,7 +82,7 @@ async function runServeScenario(mode) {
       BYSTANDER_PID: bystanderPid, BYSTANDER_SIGNALED: bystanderSignaled,
       FAKE_SERVER_JS: serverJs, FAKE_BYSTANDER_JS: bystanderJs,
       STARTUP_EXIT: mode === "startup-failure" ? "23" : "",
-      TUNNEL_MODE: mode === "normal" || mode === "failure" ? mode : "signal",
+      TUNNEL_MODE: ["normal", "failure", "startup-timeout"].includes(mode) ? mode : "signal",
       TUNNEL_READY: tunnelReady, RELEASE_TUNNEL: releaseTunnel,
       FAKE_TMPDIR: fixture,
       PATH: `${bin}:${process.env.PATH}`, TMPDIR: fixture,
@@ -99,9 +99,9 @@ async function runServeScenario(mode) {
       writeFileSync(releaseTunnel, "release");
     }
     const result = await waitForExit(child);
-    const expected = { normal: 0, failure: 7, sigint: 130, sigterm: 143, "startup-failure": 23 }[mode];
+    const expected = { normal: 0, failure: 7, sigint: 130, sigterm: 143, "startup-failure": 23, "startup-timeout": 1 }[mode];
     assert.deepEqual(result, { code: expected, signal: null });
-    if (mode === "startup-failure") {
+    if (mode === "startup-failure" || mode === "startup-timeout") {
       assert.equal(existsSync(tunnelReady), false, "a failed server never starts the public tunnel");
     } else {
       assert.equal(readFileSync(marker, "utf8"), "terminated", "cleanup terminated the captured server PID");
@@ -125,7 +125,7 @@ async function runServeScenario(mode) {
 }
 
 test("live serve cleanup owns only its child and generated config on every exit", async (t) => {
-  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure"]) {
+  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout"]) {
     await t.test(mode, () => runServeScenario(mode));
   }
   assert.doesNotMatch(SERVE, /kill\s+0\b/, "cleanup must not signal the whole process group");

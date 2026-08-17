@@ -70,9 +70,15 @@ for _ in {1..50}; do
   sleep 0.1
 done
 if [[ "$SERVER_READY" != true ]]; then
-  wait "$SERVER_PID"
-  SERVER_STATUS=$?
-  if [[ "$SERVER_STATUS" -eq 0 ]]; then SERVER_STATUS=1; fi
+  if kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+    SERVER_STATUS=1
+  else
+    wait "$SERVER_PID"
+    SERVER_STATUS=$?
+    if [[ "$SERVER_STATUS" -eq 0 ]]; then SERVER_STATUS=1; fi
+  fi
   echo "example server failed readiness before tunnel startup" >&2
   exit "$SERVER_STATUS"
 fi
