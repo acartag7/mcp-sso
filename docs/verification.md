@@ -15,7 +15,9 @@ How mcp-sso proves a release actually works.
 > explicit-`application_type: "native"` loopback-port gate rejects Claude
 > Code's published port-less callbacks because that document omits the optional
 > member and the runtime supplies an ephemeral port. Current source restores
-> the registered-loopback any-port rule; a patch release decision remains.
+> the registered-loopback any-port rule for native or absent types while
+> retaining exact matching for explicit `"web"`; a patch release decision
+> remains.
 >
 > **Published v0.3.5's production Fastify/SQLite example cannot register Codex
 > CLI.** Codex presents an ephemeral callback such as
@@ -539,7 +541,7 @@ its enforcement evidence.
 | S6b.2 | Happy path | URL-shaped `client_id` fetches the doc, validates; authorize→token→`/mcp` succeeds. |
 | S6b.3 | Generic client error | Every CIMD failure returns identical client-facing error text. |
 | S6b.4 | Audit detail | `oauth.cimd.fetch` records the specific reason without leaking the document body or secrets. |
-| S6b.5 | Redirect URI match | Exact match required except that a registered loopback `http` entry may vary only its port; scheme, host, path, and query stay exact. The optional `application_type` is validated and carried but does not select this rule. The frozen suite pins Claude Code's literal published document without `application_type`, plus declared native/web and narrow negative cases. **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2).** |
+| S6b.5 | Redirect URI match | Exact match required except that a registered loopback `http` entry may vary only its port when `application_type` is `"native"` or absent; scheme, host, path, and query stay exact, and explicit `"web"` stays exact. The frozen suite pins Claude Code's literal published document without `application_type`, declared native, explicit-web rejection, and narrow negative cases. **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2).** |
 | S6b.6 | Scope accumulation (CIMD deferred) | CIMD ids do NOT accumulate: a genuine CIMD authorization reports `priorScopes = []` and mints only the requested (ceiling-bounded) scopes in BOTH DCR modes; seed an active legacy URL-keyed refresh row with a broader scope and prove it is never unioned. Control: an opaque stored-DCR client still accumulates. (§17.1.6 decision 3.) |
 | S6b.7 | Metadata flag | `client_id_metadata_document_supported` appears only when enabled. |
 | S6b.8 | Cache (freshness) | Cache HIT reuses only a fresh validated document. The shared cache gives valid `s-maxage` priority over `max-age`, rejects `private`, `no-store`, `no-cache`, and `Vary: *`, and includes Age, valid Date apparent age, and observed response delay. It is bounded LRU, per Bridge, raw-client-id keyed, and serves direct-mode prepare plus upstream redirect resolution. |
@@ -829,8 +831,8 @@ checks without adding implied strings to the token. The current remainder is
   that gate and rejects Claude Code's real CIMD document because it registers
   port-less loopback callbacks without `application_type`, while the runtime
   presents an ephemeral port. Current source keys the RFC 8252 any-port branch
-  on the validated registered entry being loopback `http`; only the port may
-  differ. A present `"native"` or `"web"` value remains validated and carried,
+  on a validated registered loopback `http` entry when `application_type` is
+  `"native"` or absent; only the port may differ. Explicit `"web"` remains exact,
   malformed values still reject, and the literal published Claude Code shape is
   frozen as acceptance evidence. A patch release is required before the npm
   artifact regains Claude Code compatibility.

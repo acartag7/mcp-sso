@@ -287,8 +287,9 @@ decision. Everything else in the pipeline still runs under the flag.
   restatement, and not a per-site re-derivation: the CIMD matcher previously
   accepted `*`, `javascript:`, and non-canonical entries that §10.1 refused).
   https entries exact-match at authorize (draft §4.5 / RFC 9700); a registered
-  loopback `http` entry matches RFC 8252 any-port regardless of whether the
-  optional `application_type` member is `"native"`, `"web"`, or absent — see
+  loopback `http` entry matches RFC 8252 any-port when the optional
+  `application_type` member is `"native"` or absent; an explicit `"web"`
+  declaration keeps exact raw-string matching — see
   the §17.1.6 decision-1 shared matcher for the canonical rule and its
   **IMPLEMENTED; FROZEN SUITE ACTIVE
   (D00-4.5.2)** status. If present:
@@ -579,14 +580,14 @@ active.
     remotely hosted web callback cannot receive it, while the native client
     must bind a runtime-selected local port. Gating the exception on an
     optional metadata label makes the permitted flow unusable for real clients
-    whose documents omit that label. The shared matcher therefore keys the
-    exception on the validated registered URI being loopback `http`, not on
-    `application_type`. A present type is still validated as exact `"native"`
-    or `"web"`, carried through projection/cache/signed state, and malformed
-    direct or signed state still fails closed; the type does not widen or
-    narrow redirect membership.
+    whose documents omit that label. Omission is therefore treated as the
+    compatibility case for a validated registered loopback `http` URI, while a
+    declared `"native"` type selects the same exception. A declared `"web"`
+    type is an explicit restrictive signal: it retains exact raw-string
+    matching and never receives the native-app port exception. Unknown or
+    malformed direct or signed state still fails closed.
     The authorize-time (S6b) loopback any-port match
-    uses `src/cimd/registration.ts:113-119` — scheme,
+    uses `src/cimd/registration.ts:113-120` — scheme,
     hostname, pathname, and search equal; port ignored; fragment already rejected
     at validation — resolving the looser "origin" wording elsewhere.
 
@@ -690,23 +691,26 @@ a **single NEW pure matcher** (not the §10 export functions, which strip fragme
 consult a stored client): an https registration entry matches by **exact raw-string**
 `presented === registered` (rule 20 / the raw-string identity rule — no normalization
 AT MATCH TIME, port included; sound because §10.0 already required the registered entry
-to be canonical); a loopback `http` entry matches RFC 8252 **any-port** using the compare
-semantics of `src/cimd/registration.ts:113-119` (scheme, host, path, and search equal; port
-ignored; fragment already rejected), regardless of the optional carried
-`application_type`. It is NOT array `∈`/`includes` (that rejects a
+to be canonical); when the optional carried `application_type` is `"native"`
+or absent, a loopback `http` entry matches RFC 8252 **any-port** using the compare
+semantics of `src/cimd/registration.ts:113-120` (scheme, host, path, and search
+equal; port ignored; fragment already rejected). An explicit `"web"`
+declaration uses the
+same exact raw-string rule as every other web redirect. It is NOT array `∈`/`includes` (that rejects a
 legitimate any-port loopback redirect). Authorize (1a), the callback gate (1d), and
 `prepare`'s re-check MUST call this SAME matcher.
 **IMPLEMENTED; FROZEN SUITE ACTIVE (D00-4.5.2, §16.1) — this rule is the canonical
 definition the other any-port statements defer to:** RFC 9700 permits a varying
-port for native-app loopback redirects, but the CIMD profile does not require the
-optional `application_type` member. The registered URI supplies the enforceable
-signal: a validated loopback `http` entry is local/native in operation, including
-the port-less form whose client selects a port only when it binds. The any-port
-branch therefore depends only on that registered entry and preserves exact
-scheme, host, path, and search equality; **only the port is free**. A declared
-`"native"` or `"web"` value is still validated and carried but does not change
-this match. Absence is accepted, and malformed runtime discriminants still
-reject before matching or JTI consumption. This deliberately restores
+port only for native-app loopback redirects, while the CIMD profile does not
+require the optional `application_type` member. A validated port-less loopback
+`http` entry supplies the operational compatibility signal when that member is
+absent, and an explicit `"native"` declaration selects the same exception. The
+any-port branch preserves exact scheme, host, path, and search equality;
+**only the port is free**. An explicit `"web"` declaration keeps exact
+raw-string matching, because ignoring that restrictive signal would apply the
+native-only exception to a client that expressly identifies as web. Malformed
+runtime discriminants still reject before matching or JTI consumption. This
+deliberately restores
 interoperability with deployed clients such as Claude Code whose published
 document registers port-less loopback callbacks without `application_type`.
 

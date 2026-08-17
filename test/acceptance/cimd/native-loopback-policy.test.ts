@@ -1,7 +1,6 @@
 // FROZEN acceptance suite — CIMD D00-4.5.2 loopback-port compatibility.
-// A registered loopback http entry gets the narrow any-port exception whether
-// application_type is native, web, or absent. Scheme, host, path, and query stay
-// exact; unknown or malformed declarations still fail closed.
+// Any-port is limited to native or absent application_type; explicit web stays
+// exact. Scheme, host, path, and query stay exact; malformed types fail closed.
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -112,17 +111,17 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     assert.equal(ctx.fetches, 1);
   });
 
-  test("document path: registered loopback http is any-port for native, web, and absent types", async () => {
+  test("document path: native and absent are any-port while explicit web stays exact", async () => {
     for (const loopback of LOOPBACKS) {
-      for (const [applicationType, redirect] of [
-        ["native", loopback.differentPort], ["web", loopback.differentPort],
-        [OMIT, loopback.differentPort], ["web", loopback.registered],
-        [OMIT, loopback.registered],
+      for (const [applicationType, redirect, expected] of [
+        ["native", loopback.differentPort, 200], [OMIT, loopback.differentPort, 200],
+        ["web", loopback.differentPort, 401], ["web", loopback.registered, 200], [OMIT, loopback.registered, 200],
       ] as const) {
         const ctx = context(document(applicationType, loopback.registered));
         for (const pass of ["miss", "hit"] as const) {
           const response = await ctx.bridge.handleAuthorize(request(params(redirect)), { subject: "user-1" });
-          assert.equal(response.status, 200, `${String(applicationType)} ${pass} at ${redirect}`);
+          assert.equal(response.status, expected, `${String(applicationType)} ${pass} at ${redirect}`);
+          if (expected === 401) assert.equal(errorCode(response), "invalid_client");
         }
         assert.equal(ctx.fetches, 1, "the second type decision uses the cached named projection");
       }
@@ -170,18 +169,21 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     assert.equal(ctx.exchanges, 1);
   });
 
-  test("prepare re-check accepts declared or absent types for a registered loopback port", async () => {
+  test("prepare re-check accepts native or absent elasticity but keeps explicit web exact", async () => {
     for (const loopback of LOOPBACKS) {
-      for (const [applicationType, expected] of [["native", 200], ["web", 200], [OMIT, 200]] as const) {
+      for (const [applicationType, redirect, expected] of [
+        ["native", loopback.differentPort, 200], [OMIT, loopback.differentPort, 200],
+        ["web", loopback.differentPort, 401], ["web", loopback.registered, 200],
+      ] as const) {
         const ctx = context(document(OMIT));
         const registration: Record<string, unknown> = {
           client_id: CLIENT_ID, client_name: "Carried", redirect_uris: [loopback.registered],
         };
         if (applicationType !== OMIT) registration.application_type = applicationType;
         const response = await ctx.bridge.handleAuthorize(
-          request(params(loopback.differentPort)), { subject: "user-1", registration },
+          request(params(redirect)), { subject: "user-1", registration },
         );
-        assert.equal(response.status, expected, `${String(applicationType)} at ${loopback.differentPort}`);
+        assert.equal(response.status, expected, `${String(applicationType)} at ${redirect}`);
         assert.equal(ctx.fetches, 0, "supplied registration never re-fetches");
       }
     }
@@ -198,7 +200,7 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     }
   });
 
-  test("signed callback claims accept native, web, and absent types but reject malformed types before consumption", async () => {
+  test("signed callback claims keep explicit web exact and reject malformed types before consumption", async () => {
     const store = new MemoryStore();
     let consumes = 0;
     const originalConsume = store.consumeConsentJti.bind(store);
@@ -225,7 +227,7 @@ if (phases["cimd-native-loopback-policy"] !== true) {
     for (const loopback of LOOPBACKS) {
       cases.push(
         ["native", loopback.registered, loopback.differentPort, 200, 1],
-        ["web", loopback.registered, loopback.differentPort, 200, 1],
+        ["web", loopback.registered, loopback.differentPort, 400, 0],
         [OMIT, loopback.registered, loopback.differentPort, 200, 1],
       );
     }
