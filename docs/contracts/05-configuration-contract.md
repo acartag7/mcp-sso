@@ -235,8 +235,11 @@ malformed limiter values fail at boot rather than counting as a bound. The guard
 can distinguish the exported no-op singleton but cannot prove the behavior of a
 custom implementation; a custom port that always allows registration is
 nonconforming.
-Composition roots run this guard before creating a state directory, signing
-keys, audit file, state store, or starting OIDC discovery. The console-pairing branches perform their
+Composition roots run this guard before creating a state directory, persisting
+signing keys, creating an audit file or state store, or starting OIDC discovery.
+The generated starter first prepares new signing material in memory, validates
+the complete `BridgeConfig`, retains the guard's bound limiter, and only then
+persists that material. The console-pairing branches perform their
 loopback-only preflight from issuer/resource strings before the signing-key
 helper needed to build a complete `BridgeConfig`. Exported factories snapshot
 their config, limiter, and acknowledgement once and reuse those exact values

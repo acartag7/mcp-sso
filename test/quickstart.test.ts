@@ -3,6 +3,7 @@
 
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 import type { JWK } from "jose";
 import { AuthConfigError, createBridgeConfig } from "../src/config.ts";
-import { loadOrCreateQuickstartSecrets } from "../src/quickstart.ts";
+import { loadOrCreateQuickstartSecrets, prepareQuickstartSecrets } from "../src/quickstart.ts";
 import { signAccessToken, verifyAccessToken } from "../src/crypto.ts";
 import { SystemClock } from "../src/ports/clock.ts";
 import { MemoryStore } from "../src/store/memory.ts";
@@ -61,6 +62,41 @@ test("S1b.1: first boot with an empty dir — 0700 dir, 0600 file, .gitignore *,
     assert.ok(typeof jwk.y === "string" && jwk.y.length > 0);
     assert.ok(secrets.consentSigningSecret.length >= 32, "consent secret >= 32 chars");
     assert.doesNotThrow(() => configFrom(secrets));
+  });
+});
+
+test("§17.8: two-phase preparation validates before its one-shot persistence", async () => {
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    const prepared = await prepareQuickstartSecrets({ dir: target });
+    assert.equal(existsSync(target), false, "preparation created no target state");
+    assert.doesNotThrow(() => configFrom(prepared.secrets));
+
+    await prepared.persist();
+    assert.equal(existsSync(join(target, "secrets.json")), true);
+    assert.equal(await readFile(join(target, ".gitignore"), "utf8"), "*\n");
+    await assert.rejects(prepared.persist, /may be called only once/);
+
+    const content = await readFile(join(target, "secrets.json"), "utf8");
+    const existing = await prepareQuickstartSecrets({ dir: target });
+    assert.deepEqual(existing.secrets, prepared.secrets);
+    await existing.persist();
+    assert.equal(await readFile(join(target, "secrets.json"), "utf8"), content, "existing state was not rewritten");
+    await assert.rejects(existing.persist, /may be called only once/);
+  });
+});
+
+test("§17.8: concurrent preparations keep exclusive first-boot persistence", async () => {
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    const first = await prepareQuickstartSecrets({ dir: target });
+    const second = await prepareQuickstartSecrets({ dir: target });
+    assert.equal(existsSync(target), false);
+
+    await first.persist();
+    await assert.rejects(second.persist, /appeared concurrently; restart to load it/);
+    const stored = JSON.parse(await readFile(join(target, "secrets.json"), "utf8")) as unknown;
+    assert.deepEqual(stored, first.secrets, "the first preparation is the only persisted winner");
   });
 });
 

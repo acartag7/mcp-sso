@@ -31,7 +31,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   Bridge, RequestAuthorizer, createBridgeConfig, originOf, isMcpPath, validateAllowedOrigins,
-  assertRedirectAllowlistEntries, loadOrCreateQuickstartSecrets, handlePairingAuthorize,
+  assertRedirectAllowlistEntries, prepareQuickstartSecrets, handlePairingAuthorize,
   assertSafeDeploymentCombination, SystemClock, JsonlFileAudit, buildUnauthorizedChallenge, OAuthError,
   type ClientRegistration, type ClientStore, type RateLimitPort,
 } from "mcp-sso";
@@ -106,7 +106,8 @@ async function main(): Promise<void> {
     list(process.env.OAUTH_REDIRECT_ALLOWLIST, "http://localhost,http://127.0.0.1"),
   );
   const redirectAllowlistMode = redirectAllowlistModeFromEnv(process.env.OAUTH_REDIRECT_ALLOWLIST_MODE, redirectAllowlist);
-  const secrets = await loadOrCreateQuickstartSecrets({ dir: DIR });
+  const preparedSecrets = await prepareQuickstartSecrets({ dir: DIR });
+  const secrets = preparedSecrets.secrets;
   let store: ReturnType<typeof openSqliteStore> | undefined;
   const clientStore: ClientStore = {
     async save(client: ClientRegistration): Promise<void> { if (!store) throw new Error("mcp-sso: client store is not ready"); await store.save(client); },
@@ -129,6 +130,7 @@ async function main(): Promise<void> {
   const rateLimit = assertSafeDeploymentCombination(
     { config, rateLimit: registrationRateLimit }, { emitAcknowledgementWarning: false },
   );
+  await preparedSecrets.persist();
   store = openSqliteStore(\`\${DIR}/auth.db\`);
   const audit = new JsonlFileAudit(\`\${DIR}/audit.jsonl\`);
 

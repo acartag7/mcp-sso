@@ -79,7 +79,7 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
     assert.ok(!/[\^~]/.test(Object.values(deps).join(" ")), "no version ranges — exact pins only");
 
     const server = await readFile(join(dir, "server.ts"), "utf8");
-    for (const marker of ['from "mcp-sso"', 'from "mcp-sso/fastify/protected-resource-rate-limit"', "registerOAuthRoutes", "registerProtectedResourceRateLimit", "semanticOAuthBody", "isMcpPath", "loadOrCreateQuickstartSecrets", "validateAllowedOrigins", "createConsolePairingIdentity", "handlePairingAuthorize", "assertSafeDeploymentCombination"]) {
+    for (const marker of ['from "mcp-sso"', 'from "mcp-sso/fastify/protected-resource-rate-limit"', "registerOAuthRoutes", "registerProtectedResourceRateLimit", "semanticOAuthBody", "isMcpPath", "prepareQuickstartSecrets", "validateAllowedOrigins", "createConsolePairingIdentity", "handlePairingAuthorize", "assertSafeDeploymentCombination"]) {
       assert.ok(server.includes(marker), `server.ts composition root includes ${marker}`);
     }
     assert.match(server, /config:\s*\{\s*rateLimit:/, "generated /mcp route enables the mandatory finite budget");
@@ -107,23 +107,32 @@ test("bin init: scaffolds 5 files with a valid, exact-pinned package.json", asyn
       /rateLimit:\s*registrationRateLimit/,
       "generated stored-DCR starter supplies its finite core registration limiter",
     );
+    assert.match(
+      server,
+      /new Bridge\(\{ config, store, clock, audit, rateLimit \}\)/,
+      "generated Bridge reuses the exact limiter snapshot returned by preflight",
+    );
     assert.ok(
-      server.indexOf("assertSafeDeploymentCombination({ config") < server.indexOf("openSqliteStore("),
-      "generated stored-DCR guard runs before SQLite opens",
+      server.indexOf("assertSafeDeploymentCombination(") < server.indexOf("preparedSecrets.persist()"),
+      "generated stored-DCR guard runs before quickstart persistence",
+    );
+    assert.ok(
+      server.indexOf("preparedSecrets.persist()") < server.indexOf("openSqliteStore("),
+      "generated quickstart persistence completes before SQLite opens",
     );
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST, "http:\/\/localhost,http:\/\/127\.0\.0\.1"/, "generated local composition explicitly declares loopback callback origins");
     assert.match(server, /OAUTH_REDIRECT_ALLOWLIST_MODE/, "generated starter exposes the redirect trust mode");
     assert.match(server, /redirectAllowlistMode,/, "generated starter passes the parsed mode into createBridgeConfig");
     assert.ok(
-      server.indexOf("validateAllowedOrigins(") < server.indexOf("loadOrCreateQuickstartSecrets("),
+      server.indexOf("validateAllowedOrigins(") < server.indexOf("preparedSecrets.persist()"),
       "generated origin preflight runs before persistent quickstart state",
     );
     assert.ok(
-      server.indexOf("const redirectAllowlistMode = redirectAllowlistModeFromEnv(") < server.indexOf("loadOrCreateQuickstartSecrets("),
+      server.indexOf("const redirectAllowlistMode = redirectAllowlistModeFromEnv(") < server.indexOf("preparedSecrets.persist()"),
       "generated redirect-mode preflight runs before persistent quickstart state",
     );
     assert.ok(
-      server.indexOf("const redirectAllowlist = assertRedirectAllowlistEntries(") < server.indexOf("loadOrCreateQuickstartSecrets("),
+      server.indexOf("const redirectAllowlist = assertRedirectAllowlistEntries(") < server.indexOf("preparedSecrets.persist()"),
       "generated redirect-entry preflight runs before persistent quickstart state",
     );
     const generatedReadme = await readFile(join(dir, "README.md"), "utf8");
@@ -719,7 +728,7 @@ test("bin init (spawn): invalid scope config fails before SQLite creates auth.db
     const code = await new Promise<number | null>((resolveP) => child.on("close", resolveP));
     assert.notEqual(code, 0, "an empty scope catalog fails closed");
     assert.match(stderr, /scopeCatalog must be a non-empty array/);
-    assert.equal(existsSync(join(stateDir, "auth.db")), false, "config validation ran before SQLite opened the database");
+    assert.equal(existsSync(stateDir), false, "complete config validation ran before any quickstart or SQLite state");
   } finally {
     await rm(base, { recursive: true, force: true });
   }

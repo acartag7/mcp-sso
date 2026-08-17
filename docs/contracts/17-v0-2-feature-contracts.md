@@ -1918,13 +1918,31 @@ gate replaces no-gate).
 > no ephemeral fallback under any failure mode.
 
 `loadOrCreateQuickstartSecrets({ dir = "./.mcp-sso" })` →
-`{ signingPrivateJwk, consentSigningSecret }`:
+`{ signingPrivateJwk, consentSigningSecret }`. It is the immediate-persistence
+convenience wrapper over the two-phase composition-root API:
+`prepareQuickstartSecrets({ dir })` →
+`{ secrets, persist(): Promise<void> }`.
+
+- Preparation is read-only with respect to the target path. If secrets exist it
+  loads and validates them. If absent it validates any pre-existing directory and
+  managed `.gitignore`, then generates the key and consent secret in memory.
+  It does not create the directory, `.gitignore`, or `secrets.json`.
+- A composition root builds and validates its complete configuration from
+  `secrets`, then invokes the one-shot `persist()` capability. `persist()` is the
+  only write step and applies the same exclusive-create, permission, symlink,
+  regular-file, and managed-ignore rules as the immediate wrapper. A second call
+  fails closed. Concurrent first boots remain create-don't-clobber: one wins and
+  the other fails with the existing restart instruction.
+- Existing secrets are never rewritten: their preparation's first `persist()` is
+  a no-op after the read-time admission checks, and a second call still rejects.
+
+Persistence then follows these rules:
 
 - If `${dir}/secrets.json` exists: load, validate shape (§5 boot checks), and
   on POSIX **reject group/other-readable files** (`mode & 0o077` ⇒ boot error
   with the exact `chmod 600` remediation; the check is skipped on Windows,
   documented). The first Windows call in each Node worker/runtime instance to
-  `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`,
+  `prepareQuickstartSecrets`, `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`,
   `ensureStateDir`, or `openSqliteStore` with a persistent path emits one
   shared, fixed, path-free warning that DACL privacy was not verified; later
   calls in that instance do not repeat it, and a throwing warning transport
@@ -1962,7 +1980,7 @@ gate replaces no-gate).
   is read or set; the warning makes that limitation visible but is not an
   admission decision.
 - **Parity rule:** EVERY code path that creates, reads, or admits the state dir —
-  `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, the example's
+  `prepareQuickstartSecrets`, `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, the example's
   Cloudflare Access branch (`ensureStateDir`), and the sqlite store
   ([§12.4](12-store-conformance-contract.md#124-persistent-sqlite-filesystem-admission)) —
   meets the applicable bar. SQLite additionally requires an already-existing,
