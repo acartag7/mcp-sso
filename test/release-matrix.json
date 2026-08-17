@@ -111,6 +111,38 @@
         { "file": "test/rate-limit-redis.test.ts", "name": "RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws (fail-open) — review M1" },
         { "file": "test/bridge.test.ts", "name": "bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Redis outage must not lock out auth)" }
       ]
+    },
+    {
+      "id": "RM.11",
+      "title": "Redirect allowlist mode",
+      "evidence": [
+        { "file": "test/release-redirect-mode.test.ts", "name": "RM.11 readers 1 and 2: replace refuses a built-in origin at DCR write and stateless authorize" },
+        { "file": "test/release-redirect-mode.test.ts", "name": "RM.11 extend remains the default, so an existing deployment is unchanged" },
+        { "file": "test/release-redirect-mode.test.ts", "name": "RM.11 replace with an empty allowlist refuses to boot" },
+        { "file": "test/release-redirect-mode.test.ts", "name": "RM.11 reader 3: a client stored under extend stops authorizing under replace" },
+        { "file": "test/release-redirect-mode.test.ts", "name": "RM.11 reader 4: a consent token minted under extend is refused at approve under replace" }
+      ]
+    },
+    {
+      "id": "RM.12",
+      "title": "Identity display name",
+      "evidence": [
+        { "file": "test/release-identity-name.test.ts", "name": "RM.12 [Google preset] the shipped port surfaces a verified display name" },
+        { "file": "test/release-identity-name.test.ts", "name": "RM.12 [Google preset] the shipped port drops an unverified display name" },
+        { "file": "test/release-identity-name.test.ts", "name": "RM.12 [Google preset] the shipped port omits an over-long name rather than truncating" },
+        { "file": "test/release-identity-name.test.ts", "name": "RM.12 [Google preset] the shipped port ignores a non-string name" },
+        { "file": "test/release-identity-name.test.ts", "name": "RM.12 [generic OIDC] the shipped port surfaces a verified display name" },
+        { "file": "test/release-identity-name.test.ts", "name": "RM.12 [generic OIDC] the shipped port drops an unverified display name" },
+        { "file": "test/release-identity-name.test.ts", "name": "RM.12 [generic OIDC] the shipped port omits an over-long name rather than truncating" },
+        { "file": "test/release-identity-name.test.ts", "name": "RM.12 [generic OIDC] the shipped port ignores a non-string name" }
+      ]
+    },
+    {
+      "id": "RM.13",
+      "title": "Audit sink fan-out",
+      "evidence": [
+        { "file": "test/release-audit-sinks.test.ts", "name": "RM.13 both shipped audit sinks receive a real flow through combineAudit without leaking credentials" }
+      ]
     }
   ]
 }
