@@ -95,7 +95,7 @@ function deployment() {
  *  handlers, returning the scopes granted and the prior grants shown. */
 async function grant(
   bridge: Bridge, clientId: string, redirectUri: string, scope: string,
-): Promise<{ scopes: string[]; prior: string[] }> {
+): Promise<{ scopes: string[]; prior: string[]; minted: string[] }> {
   const authz = await bridge.handleAuthorize({
     query: {
       response_type: "code", client_id: clientId, redirect_uri: redirectUri,
@@ -136,7 +136,9 @@ async function grant(
     headers: { "content-type": "application/x-www-form-urlencoded" }, ip: "127.0.0.1",
   });
   assert.equal(tok.status, 200, `token exchange failed: ${JSON.stringify(tok.body).slice(0, 160)}`);
-  return { scopes, prior };
+  const mintedScope = (tok.body as { scope?: unknown }).scope;
+  assert.ok(typeof mintedScope === "string", "token response must report the minted scope set");
+  return { scopes, prior, minted: mintedScope.split(" ").filter(Boolean).sort() };
 }
 
 releaseTest("RM.14 an opaque stored-DCR client accumulates while a CIMD client in the same deployment does not", async () => {
@@ -165,14 +167,16 @@ releaseTest("RM.14 an opaque stored-DCR client accumulates while a CIMD client i
     opaqueSecond.scopes.includes("mcp:write") && !opaqueSecond.prior.includes("mcp:write"),
     "the newly requested scope must be offered as new, not silently pre-granted",
   );
+  assert.deepEqual(opaqueSecond.minted, ["mcp:read", "mcp:write"], "the accumulated grant must reach the token");
 
   // --- the CIMD client, same subject, same store, does NOT ------------------
   await grant(bridge, CIMD_ID, CIMD_REDIRECT, "mcp:read");
-  const cimdSecond = await grant(bridge, CIMD_ID, CIMD_REDIRECT, "mcp:read mcp:write");
+  const cimdSecond = await grant(bridge, CIMD_ID, CIMD_REDIRECT, "mcp:write");
   assert.deepEqual(
     cimdSecond.prior, [],
     `a CIMD client stands alone (§17.1.6) and must accumulate nothing; saw ${JSON.stringify(cimdSecond.prior)}`,
   );
+  assert.deepEqual(cimdSecond.minted, ["mcp:write"], "a CIMD token must not inherit its own prior grant");
 });
 
 releaseTest("RM.14 neither client kind inherits the other's grants for the same subject", async () => {
@@ -186,14 +190,19 @@ releaseTest("RM.14 neither client kind inherits the other's grants for the same 
 
   // The opaque client banks mcp:write for this subject.
   await grant(bridge, opaqueId, OPAQUE_REDIRECT, "mcp:read");
-  await grant(bridge, opaqueId, OPAQUE_REDIRECT, "mcp:write");
+  const opaqueAccumulated = await grant(bridge, opaqueId, OPAQUE_REDIRECT, "mcp:write");
+  assert.deepEqual(
+    opaqueAccumulated.minted, ["mcp:read", "mcp:write"],
+    "approve must union the opaque client's prior grant into the minted token",
+  );
 
   // The CIMD client, same subject, must not see any of it — cross-kind
   // inheritance here would be silent privilege escalation across the profile
   // boundary, and it is the reason this row exists.
-  const cimd = await grant(bridge, CIMD_ID, CIMD_REDIRECT, "mcp:read mcp:write");
+  const cimd = await grant(bridge, CIMD_ID, CIMD_REDIRECT, "mcp:read");
   assert.deepEqual(cimd.prior, [], `CIMD inherited opaque grants: ${JSON.stringify(cimd.prior)}`);
-  assert.deepEqual(cimd.scopes.sort(), ["mcp:read", "mcp:write"], "a CIMD client is offered exactly what it asked for");
+  assert.deepEqual(cimd.scopes, ["mcp:read"], "a CIMD client is offered exactly what it asked for");
+  assert.deepEqual(cimd.minted, ["mcp:read"], "a CIMD token must not inherit the opaque client's write grant");
 
   // And the reverse: a fresh opaque client must not inherit the CIMD grant.
   const reg2 = await bridge.handleRegister({
@@ -201,11 +210,12 @@ releaseTest("RM.14 neither client kind inherits the other's grants for the same 
     headers: { "content-type": "application/json" }, ip: "127.0.0.1",
   });
   const secondOpaque = (reg2.body as { client_id: string }).client_id;
-  const fresh = await grant(bridge, secondOpaque, OPAQUE_REDIRECT, "mcp:read mcp:write");
+  const fresh = await grant(bridge, secondOpaque, OPAQUE_REDIRECT, "mcp:write");
   assert.deepEqual(
     fresh.prior, [],
     `a different opaque client inherited grants: ${JSON.stringify(fresh.prior)}`,
   );
+  assert.deepEqual(fresh.minted, ["mcp:write"], "a fresh opaque token must not inherit the CIMD client's read grant");
 });
 
 releaseTest("RM.14 dispatch cannot be crossed: an HTTPS client id never falls back to DCR", async () => {
