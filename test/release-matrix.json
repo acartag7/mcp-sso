@@ -204,7 +204,7 @@
       "evidence": [
         {
           "file": "test/release-redirect-mode.test.ts",
-          "name": "RM.11 replace mode refuses a built-in hosted origin at every shipped reader"
+          "name": "RM.11 readers 1 and 2: replace refuses a built-in origin at DCR write and stateless authorize"
         },
         {
           "file": "test/release-redirect-mode.test.ts",
