@@ -16,6 +16,15 @@ that serialized audit output never contains raw codes, refresh tokens, or access
 tokens, across every event name (the v0.2 names are exercised by synthetic
 events through each sink; the v0.1 names additionally by the live OAuth flow).
 
+`oauth.cimd.fetch` success events optionally carry
+`selectedClientAuthMethod: "none"`. The field is emitted only when document
+resolution overrides a singular `token_endpoint_auth_method: "private_key_jwt"`
+with an explicitly advertised public `none` choice; natively public documents
+omit it. Its value is a library-owned one-value enum, never copied from the
+document. Cache-hit successes retain the same marker. Failed, malformed, or
+incompatible documents emit the existing allowlisted failure `reason` and no
+selected-method field.
+
 `oauth.revoke` distinguishes an admitted RFC 7009 no-op from an unexpected
 revocation failure without changing either token-existence outcome. An unknown
 token emits

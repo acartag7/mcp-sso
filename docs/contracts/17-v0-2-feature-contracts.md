@@ -25,6 +25,35 @@ additionally records a
 draft `-02`-only gap: the private-JWK denylist predates RFC 9964's `AKP` `priv`
 member.
 
+> **2026-08-17 public-client authentication-choice amendment.** Draft `-00`
+> §4.1 imports the
+> [OAuth Dynamic Client Registration Metadata registry](https://www.iana.org/assignments/oauth-parameters/oauth-parameters.xhtml#client-metadata)
+> and permits additional properties. That registry includes
+> `token_endpoint_auth_methods_supported` through OpenID Connect Relying Party
+> [Metadata Choices 1.0](https://openid.net/specs/openid-connect-rp-metadata-choices-1_0.html#name-client-metadata).
+> When the singular `token_endpoint_auth_method` is also
+> present, that extension requires its value to occur in the plural list; when
+> the singular preference is unsupported but another advertised choice is
+> supported, the AS SHOULD use the compatible choice instead of rejecting the
+> client. mcp-sso remains a public-client-only AS: it selects `"none"` only when
+> the plural list is well-formed and explicitly advertises it. A
+> `private_key_jwt` preference is therefore compatible only when the same list
+> contains both `"private_key_jwt"` and `"none"`; the effective method is
+> `"none"`. This does not implement `private_key_jwt`, authenticate a
+> confidential client, or fetch `jwks_uri`. A shared-symmetric-secret singular
+> method remains invalid under draft `-00` §4.1 even if the plural list also
+> advertises `"none"`. Metadata Choices §4 describes a registration request and
+> an `invalid_client_metadata` registration response; CIMD has no registration
+> response channel. At this boundary, "reject" means
+> `CimdError("document_invalid")`, which the existing decision-2 anti-oracle
+> boundary maps to the fixed `invalid_client` response. A successful override of
+> the singular `"private_key_jwt"` preference is not silent: every successful
+> `oauth.cimd.fetch` event for that resolution, including a cache hit, carries
+> the allowlisted field `selectedClientAuthMethod: "none"`. Natively public
+> documents omit that field, so operators can distinguish explicit method
+> selection from an absent or already-`"none"` singular value without logging
+> attacker-controlled metadata.
+
 > **Draft `-02` (2026-07-06) review — performed 2026-07-10, recorded here
 > 2026-07-16 (closes issue #58).** At that review, the implementation hardening
 > target remained `-01`. Every normative change in `-02` is already satisfied by
@@ -48,9 +77,10 @@ member.
 > by 17.1.3's explicit rejection of private/symmetric key material in
 > `jwks`, paired with the public-client-only profile; (6) `-02` §8.2's
 > strengthened client-authentication language (an AS MUST authenticate a
-> `private_key_jwt`-declaring client per RFC 7523) is satisfied vacuously —
-> 17.1.3 rejects any document declaring a `token_endpoint_auth_method`
-> other than absent/`"none"`. `-02` also renumbers sections. Unlabeled
+> client whose effective method is `private_key_jwt` per RFC 7523) remains
+> inapplicable — 17.1.3 either rejects that singular preference or selects an
+> explicitly advertised `"none"` alternative, so mcp-sso never admits a
+> confidential CIMD client. `-02` also renumbers sections. Unlabeled
 > draft citations in this section remain in `-01` numbering; citations
 > explicitly tagged `-02` are already re-pinned. The mapping for the next
 > re-pin: §4.5 → §4.2 (redirect URL registration), §5 → §6 (AS metadata),
@@ -265,12 +295,23 @@ decision. Everything else in the pipeline still runs under the flag.
 - Required members (MCP profile): `client_id`, `client_name` (non-empty
   string, ≤ 256 chars — display data, HTML-escaped at render),
   `redirect_uris` (non-empty array).
-- `token_endpoint_auth_method` MUST be absent or `"none"`. **v0.2 CIMD
-  clients are public clients only** — the draft explicitly sanctions this
-  profile restriction. `private_key_jwt` (confidential CIMD via published
-  JWKS) is DEFERRED, together with 17.2's `private_key_jwt` — one future
-  asymmetric-client-auth unit. `client_secret` /
-  `client_secret_expires_at` present ⇒ reject (draft MUST NOT).
+- **v0.2 CIMD clients are public clients only.** An absent
+  `token_endpoint_auth_method` or the singular value `"none"` selects public
+  client authentication. If `token_endpoint_auth_methods_supported` is
+  present, it MUST be an array of non-empty strings that explicitly contains
+  `"none"`; when the singular member is also present, its value MUST occur in
+  that array. A singular `"private_key_jwt"` preference is accepted only in
+  that choice form, with both `"private_key_jwt"` and `"none"` advertised; the
+  AS selects `"none"` and never enters confidential-client handling. A missing,
+  malformed, or incompatible plural list rejects. Every other non-`"none"`
+  singular method rejects, and draft `-00`'s shared-symmetric-secret methods
+  reject even if their list also offers `"none"`. Actual `private_key_jwt`
+  support (confidential CIMD via published JWKS) remains DEFERRED together with
+  17.2's `private_key_jwt` as one future asymmetric-client-auth unit.
+  `client_secret` / `client_secret_expires_at` present ⇒ reject (draft MUST
+  NOT). `jwks_uri` remains inert and is never fetched. A compatible
+  `private_key_jwt` preference produces the library-owned audit marker
+  `selectedClientAuthMethod: "none"`; the marker is never read from `raw`.
 - **Private or symmetric key material rejects the document** (`-02` §4.1:
   "private key material MUST NOT be included ... only public keys ... are
   permitted" — enforced AS-side as a fail-closed conformance check, even
@@ -736,7 +777,10 @@ callback re-fetch is forbidden (1d).**
 *1b. Anti-oracle ordering.* Resolve + redirect exact-match complete BEFORE
 `Set-Cookie` / the IdP 302. Any failure ⇒ the decision-2 generic (`invalid_client`
 401) and `oauth.cimd.fetch` (failure, reason); success ⇒ `oauth.cimd.fetch`
-(success). The 4096-byte `Set-Cookie` oversize guard (upstream-flow.ts:104), for a
+(success). A success that selected public `none` over a singular
+`private_key_jwt` preference includes `selectedClientAuthMethod: "none"`; an
+absent or natively public singular value omits it. The 4096-byte `Set-Cookie`
+oversize guard (upstream-flow.ts:104), for a
 CIMD id, maps to the SAME generic `invalid_client` (never `invalid_request`) so it
 is not a content oracle. The `oauth.cimd.fetch` **success** audit is emitted only
 **after the oversize guard passes**: a resolution whose document is valid but whose
@@ -774,6 +818,9 @@ post-authentication late fetch; no TOCTOU; the consent page shows exactly the
 validated document). The consent renderer receives display-only CIMD fields on
 `PreparedConsent` (client_id host, redirect host, `client_name` as unverified text —
 threat row 17); only `cimd_verified` is copied into the consent JWT (decision 3).
+The optional `selectedClientAuthMethod` evidence stays in the resolver's cache
+envelope for success auditing; it is not a `CimdRegistration` member, is not
+signed into the flow cookie, and cannot become client capability.
 
 *1d. Fail-closed consistency (a signed-claim schema check — NOT a capability
 system).* Split across two seams (GLM): **(i)** `verifyFlowToken`
@@ -1902,7 +1949,9 @@ gate replaces no-gate).
   `oauth.device.approve`, `oauth.token.device_code`,
   `oauth.token.client_credentials`, `oauth.client.provision`,
   `oauth.client.rotate_secret`, `oauth.cimd.fetch`. `AuthAuditEvent` gains
-  optional `ip?: string` (adapter-populated; personal data — noted in docs).
+  optional `ip?: string` (adapter-populated; personal data — noted in docs) and
+  the CIMD-success-only, library-owned
+  `selectedClientAuthMethod?: "none"` negotiation evidence from §17.1.
   The §13 metadata-only rule is unchanged and the no-secrets serialization
   test extends to every new event.
 - **Retention: documentation guidance, not a library mechanism.** The library

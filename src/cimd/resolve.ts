@@ -6,7 +6,7 @@
 // authorize — so a cross-mode repeat of one raw client_id is ONE fetch.
 
 import type { BridgeConfig } from "../config.ts";
-import { cacheClockObservation, finiteClockSnapshot, type ClockPort } from "../ports/clock.ts";
+import { cacheClockObservation, type ClockPort } from "../ports/clock.ts";
 import type { AuditPort } from "../ports/audit.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit, rateLimitIdentity } from "../ports/rate-limit.ts";
@@ -20,7 +20,7 @@ import type { CimdTransport, DnsResolver } from "./transport.ts";
 import { CimdSuccessCache, computeCacheExpiryMs } from "./cache.ts";
 import { WaiterCounts } from "./waiters.ts";
 import { cimdRedirectMatches, projectCimdRegistration, type CimdRegistration } from "./registration.ts";
-import { writeAuditBestEffort } from "../audit/best-effort.ts";
+import { writeCimdAudit } from "./audit.ts";
 export interface CimdResolverDeps {
   config: BridgeConfig;
   clock: ClockPort;
@@ -55,13 +55,14 @@ export interface CimdResolution {
   emitSuccess(): Promise<void>;
 }
 
+interface ResolvedRegistration { registration: CimdRegistration; selectedClientAuthMethod?: "none" }
 export class CimdResolver {
   readonly #enabled: boolean;
   readonly #clock: ClockPort;
   readonly #audit: AuditPort;
   readonly #rateLimit: RateLimitPort;
-  readonly #cache: CimdSuccessCache;
-  readonly #inFlight = new Map<string, Promise<CimdRegistration>>();
+  readonly #cache: CimdSuccessCache<ResolvedRegistration>;
+  readonly #inFlight = new Map<string, Promise<ResolvedRegistration>>();
   readonly #maxInFlight: number;
   readonly #maxWaitersPerFetch: number;
   readonly #waiters = new WaiterCounts();
@@ -190,11 +191,12 @@ export class CimdResolver {
       // request" row still holds: this closure runs only on the success path,
       // after the matcher passed.
       const emitSuccess = (): Promise<void> =>
-        this.#emit("success", undefined, input.clientId, input.ip);
+        writeCimdAudit(this.#audit, this.#clock, "success", undefined, input.clientId, input.ip,
+          outcome.selectedClientAuthMethod);
       return { registration: outcome.registration, emitSuccess };
     } catch (error) {
       if (error instanceof OAuthError) throw error; // the rate-limit channel is not a resolution outcome
-      await this.#emit("failure", auditReason(error), input.clientId, input.ip);
+      await writeCimdAudit(this.#audit, this.#clock, "failure", auditReason(error), input.clientId, input.ip);
       throw mapCimdError(error);
     }
   }
@@ -202,13 +204,13 @@ export class CimdResolver {
   /** Audit a redirect-mode-only failure (e.g. the cookie-oversize residual)
    *  with a fixed allowlisted reason, then map to the decision-2 generic. */
   async rejectAfterResolve(reason: "oversize", clientId: string, ip?: string): Promise<OAuthError> {
-    await this.#emit("failure", reason, clientId, ip);
+    await writeCimdAudit(this.#audit, this.#clock, "failure", reason, clientId, ip);
     return cimdGenericError();
   }
 
-  async #registrationFor(rawClientId: string, fetcher: GuardedFetcher): Promise<{ registration: CimdRegistration; fetched: boolean }> {
+  async #registrationFor(rawClientId: string, fetcher: GuardedFetcher): Promise<ResolvedRegistration> {
     const hit = this.#cache.get(rawClientId, cacheClockObservation(this.#clock));
-    if (hit !== undefined) return { registration: hit, fetched: false };
+    if (hit !== undefined) return hit;
     const existing = this.#inFlight.get(rawClientId);
     // A coalesced follower consumes no FETCH slot (rule 24) but IS bounded
     // (decision 7 — rationale in waiters.ts). The rejection reuses the EXISTING
@@ -216,34 +218,32 @@ export class CimdResolver {
     // failure (decision 2).
     if (existing !== undefined) {
       if (!this.#waiters.tryAcquire(rawClientId, this.#maxWaitersPerFetch)) throw new CimdError("overloaded");
-      try { return { registration: await existing, fetched: false }; }
+      try { return await existing; }
       finally { this.#waiters.release(rawClientId); }
     }
     if (this.#inFlight.size >= this.#maxInFlight) throw new CimdError("overloaded");
     const pending = this.#fetchAndCache(rawClientId, fetcher);
     this.#inFlight.set(rawClientId, pending);
     try {
-      return { registration: await pending, fetched: true };
+      return await pending;
     } finally {
       this.#inFlight.delete(rawClientId); // removed on settle: success, error, or timeout
     }
   }
 
-  async #fetchAndCache(rawClientId: string, fetcher: GuardedFetcher): Promise<CimdRegistration> {
+  async #fetchAndCache(rawClientId: string, fetcher: GuardedFetcher): Promise<ResolvedRegistration> {
     const t0Ms = cacheClockObservation(this.#clock);
     const result = await fetcher.fetch(rawClientId);
     const t1Ms = cacheClockObservation(this.#clock);
     // Project BEFORE caching: a raw CimdDocument is never cached or signed.
     const registration = projectCimdRegistration(result.document);
+    const resolved = {
+      registration,
+      ...(result.document.selectedClientAuthMethod === undefined
+        ? {} : { selectedClientAuthMethod: result.document.selectedClientAuthMethod }),
+    };
     const expiresAtMs = computeCacheExpiryMs(result.cacheView, this.#cacheTtlCapSeconds, t0Ms, t1Ms);
-    if (expiresAtMs !== null) this.#cache.set(rawClientId, registration, expiresAtMs, t1Ms);
-    return registration;
-  }
-
-  async #emit(status: "success" | "failure", reason: string | undefined, clientId: string, ip?: string): Promise<void> {
-    await writeAuditBestEffort(this.#audit, {
-      occurredAt: new Date(finiteClockSnapshot(this.#clock)).toISOString(),
-      event: "oauth.cimd.fetch", status, reason, clientId, ip,
-    });
+    if (expiresAtMs !== null) this.#cache.set(rawClientId, resolved, expiresAtMs, t1Ms);
+    return resolved;
   }
 }

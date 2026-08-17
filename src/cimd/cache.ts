@@ -44,13 +44,13 @@ function splitDirectives(header: string): string[] {
  *  likewise escapes only HTAB/SP/VCHAR/obs-text. */
 const QUOTED_STRING = /^"(?:[\t \x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t \x21-\x7e\x80-\xff])*"$/;
 
-interface CacheEntry {
-  readonly registration: CimdRegistration;
+interface CacheEntry<T> {
+  readonly registration: T;
   readonly expiresAtMs: number;
 }
 
-export class CimdSuccessCache {
-  private readonly entries = new Map<string, CacheEntry>();
+export class CimdSuccessCache<T = CimdRegistration> {
+  private readonly entries = new Map<string, CacheEntry<T>>();
   private readonly maxEntries: number;
   private lastObservedNowMs: number | undefined;
 
@@ -60,7 +60,7 @@ export class CimdSuccessCache {
 
   /** A fresh hit; expired entries are evicted on read. LRU order is refreshed
    *  on every hit (re-insert moves the key to the tail). */
-  get(key: string, nowMs: number): CimdRegistration | undefined {
+  get(key: string, nowMs: number): T | undefined {
     if (!this.observe(nowMs)) return undefined;
     const entry = this.entries.get(key);
     if (entry === undefined) return undefined;
@@ -73,7 +73,7 @@ export class CimdSuccessCache {
     return entry.registration;
   }
 
-  set(key: string, registration: CimdRegistration, expiresAtMs: number, observedNowMs: number): void {
+  set(key: string, registration: T, expiresAtMs: number, observedNowMs: number): void {
     if (!this.observe(observedNowMs) || !Number.isFinite(expiresAtMs)) return;
     this.entries.delete(key);
     while (this.entries.size >= this.maxEntries) {

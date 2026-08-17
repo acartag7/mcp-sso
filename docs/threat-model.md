@@ -503,7 +503,15 @@ deployer acts on.
   enforces the network
   [§17.1](./contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract)
   control set; `CimdResolver.resolve` and `mapCimdError` provide the anti-oracle
-  boundary (row 13).
+  boundary (row 13). Its public-client authentication choice is fail-closed:
+  mcp-sso selects `none` from `token_endpoint_auth_methods_supported` only when
+  the document explicitly advertises it and any singular preference is also a
+  member of that list. A `private_key_jwt`-only, malformed, inconsistent, or
+  shared-secret declaration rejects; the bridge never authenticates a
+  confidential CIMD client or fetches its `jwks_uri`. Successful preference
+  overrides are observable as the fixed
+  `selectedClientAuthMethod: "none"` field on `oauth.cimd.fetch`; native public
+  documents omit it, and no attacker-authored method string reaches audit.
 - **Consent and upstream-flow replay detection are store-scoped.** Under the
   0.3.3 consent correction, a surviving store retains a consent JTI
   through the consent JWT's signed expiry even if the configured TTL is later

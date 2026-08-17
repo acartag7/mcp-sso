@@ -6,6 +6,8 @@ export interface CimdDocument {
   readonly client_name: string;
   readonly redirect_uris: readonly string[];
   readonly application_type?: CimdApplicationType;
+  /** Library-selected public method; absent for a natively public document. */
+  readonly selectedClientAuthMethod?: "none";
   readonly raw: Record<string, unknown>;
 }
 
@@ -38,8 +40,7 @@ export function validateCimdDocument(rawBody: string, rawClientId: string): Cimd
     validatedApplicationType = applicationType;
   }
 
-  if (Object.hasOwn(parsed, "token_endpoint_auth_method")
-    && parsed.token_endpoint_auth_method !== "none") throw invalid();
+  const selectedClientAuthMethod = selectClientAuthMethod(parsed);
   if (Object.hasOwn(parsed, "client_secret") || Object.hasOwn(parsed, "client_secret_expires_at")) {
     throw invalid();
   }
@@ -52,8 +53,25 @@ export function validateCimdDocument(rawBody: string, rawClientId: string): Cimd
     client_name: clientName,
     redirect_uris: [...redirectUris] as string[],
     ...(validatedApplicationType === undefined ? {} : { application_type: validatedApplicationType }),
+    ...(selectedClientAuthMethod === undefined ? {} : { selectedClientAuthMethod }),
     raw: parsed,
   };
+}
+
+function selectClientAuthMethod(document: Record<string, unknown>): "none" | undefined {
+  const hasMethod = Object.hasOwn(document, "token_endpoint_auth_method");
+  const hasChoices = Object.hasOwn(document, "token_endpoint_auth_methods_supported");
+  const method = document.token_endpoint_auth_method;
+  if (hasChoices) {
+    const choices = document.token_endpoint_auth_methods_supported;
+    if (!Array.isArray(choices)
+      || !choices.every((choice) => typeof choice === "string" && choice.length > 0)
+      || !choices.includes("none")) throw invalid();
+    if (hasMethod && (typeof method !== "string" || !choices.includes(method))) throw invalid();
+  }
+  if (!hasMethod || method === "none") return undefined;
+  if (method === "private_key_jwt" && hasChoices) return "none";
+  throw invalid();
 }
 
 export function assertCimdRedirectUri(raw: unknown): void {

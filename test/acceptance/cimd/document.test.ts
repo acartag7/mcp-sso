@@ -85,12 +85,45 @@ if (phases["s6a-cimd-primitives"] !== true) {
     for (const raw of ["{not json", "", '{"client_id":', "undefined"]) invalidRaw(raw);
   });
 
-  test("token_endpoint_auth_method: absent or \"none\" only", () => {
-    assert.ok(validate(base())); // absent
-    assert.ok(validate(base({ token_endpoint_auth_method: "none" })));
-    invalid(base({ token_endpoint_auth_method: "client_secret_basic" }));
+  test("token endpoint auth choices select public none or reject fail-closed", () => {
+    const absent = validate(base());
+    const nativePublic = validate(base({ token_endpoint_auth_method: "none" }));
+    const attackerNamedMarker = validate(base({ selectedClientAuthMethod: "none" }));
+    assert.equal(Object.hasOwn(absent, "selectedClientAuthMethod"), false);
+    assert.equal(Object.hasOwn(nativePublic, "selectedClientAuthMethod"), false);
+    assert.equal(Object.hasOwn(attackerNamedMarker, "selectedClientAuthMethod"), false);
+
+    const negotiated = validate(base({
+      token_endpoint_auth_method: "private_key_jwt",
+      token_endpoint_auth_methods_supported: ["none", "private_key_jwt"],
+      token_endpoint_auth_signing_alg: "RS256",
+      jwks_uri: "https://client.example/jwks.json",
+    }));
+    assert.equal(negotiated.selectedClientAuthMethod, "none");
+
     invalid(base({ token_endpoint_auth_method: "private_key_jwt" }));
-    invalid(base({ token_endpoint_auth_method: "" }));
+    invalid(base({
+      token_endpoint_auth_method: "private_key_jwt",
+      token_endpoint_auth_methods_supported: ["private_key_jwt"],
+    }));
+    invalid(base({
+      token_endpoint_auth_method: "private_key_jwt",
+      token_endpoint_auth_methods_supported: ["none"],
+    }));
+    invalid(base({ token_endpoint_auth_methods_supported: ["private_key_jwt"] }));
+    invalid(base({
+      token_endpoint_auth_method: "none",
+      token_endpoint_auth_methods_supported: ["private_key_jwt"],
+    }));
+    for (const malformed of [null, "none", {}, [], ["none", 7], [""]]) {
+      invalid(base({ token_endpoint_auth_methods_supported: malformed }));
+    }
+    for (const method of ["client_secret_basic", "client_secret_post", "client_secret_jwt", "custom_shared_secret", ""]) {
+      invalid(base({
+        token_endpoint_auth_method: method,
+        token_endpoint_auth_methods_supported: [method, "none"],
+      }));
+    }
   });
 
   test("client_secret / client_secret_expires_at reject", () => {

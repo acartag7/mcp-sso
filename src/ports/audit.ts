@@ -44,6 +44,8 @@ export interface AuthAuditEvent {
    *  retention/redaction (a reverse proxy often yields a better value than the
    *  socket peer). Metadata-only like the rest of the event; never a secret. */
   ip?: string;
+  /** Library-selected CIMD method; present only for a negotiated public client. */
+  selectedClientAuthMethod?: "none";
 }
 
 export interface AuditPort {
