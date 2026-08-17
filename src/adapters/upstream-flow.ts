@@ -26,7 +26,7 @@ import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
 import { resolveUpstreamAuthorizeClient, assertCallbackCimdPolicy } from "./upstream-flow-cimd.ts";
 import { isSchemeShaped } from "../cimd/registration.ts";
 import { resolveOpaqueRedirect } from "../authorize-internals.ts";
-import { normalizedIdentityFailureReason } from "./bridge-internals.ts";
+import { identityRejectionDescription, normalizedIdentityFailureReason } from "./bridge-internals.ts";
 import { buildUpstreamAuthorizationUrl, exchangeUpstreamIdentity } from "./upstream-flow-port.ts";
 import { consumeConsentJtiSnapshot } from "../port-result.ts";
 import {
@@ -214,8 +214,9 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
       } catch (e) { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(e)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
       if (!exchange.ok) {
         if (exchange.kind === "exchange_failed") { console.error("[mcp-sso] upstream exchange failed (exchange_failed)", redactForStderr(clientId), redactForStderr(exchange.reason)); return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "server_error", clientState, "upstream identity provider error"), "failure", "exchange_failed", clientId); }
-        await emitIdentityVerify("failure", normalizedIdentityFailureReason(exchange.reason), undefined);
-        return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "access_denied", clientState, "upstream identity verification failed"), "failure", "identity_rejected", clientId); // row 11 (§9.3 extension)
+        const reason = normalizedIdentityFailureReason(exchange.reason);
+        await emitIdentityVerify("failure", reason, undefined);
+        return finish(redirectErrorResponse(bridge.config, clientRedirectUri, "access_denied", clientState, identityRejectionDescription(reason)), "failure", "identity_rejected", clientId); // row 11 (§9.3 extension)
       }
       await emitIdentityVerify("success", undefined, exchange.identity.subject); // identity decision reached
       const synthetic: NormRequest = { query: pickOAuthParams(claims.params), body: undefined, headers: req.headers, ip }; // rows 12/13 — ceiling travels
