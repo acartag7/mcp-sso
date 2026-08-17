@@ -1,10 +1,14 @@
 # Matrices (mcp-sso)
 
 Fill every applicable cell. `n/a` needs a one-line reason that
-cites the tree, not the ticket. An unmentioned cell that
-**exists in the tree** is empty → FAIL. A surface that is not
+cites the **named behavior**, not the ticket. Classify `n/a`
+immediately when that axis cannot be a sibling of this
+behavior — do not open stores or schema to prove they are
+irrelevant. An unmentioned cell that **is a sibling and
+exists in the tree** is empty → FAIL. A surface that is not
 in the tree (not in the checkout, or not in a pasted exact-head
-excerpt) is `n/a`, not a finding.
+excerpt) is `n/a`, not a finding. "Exists in the checkout"
+alone does not occupy a cell.
 
 These axes exist because hosted review kept finding them after
 CLEAN local passes. They are the execution of AGENTS.md §7.2.

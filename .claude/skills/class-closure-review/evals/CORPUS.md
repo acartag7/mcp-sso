@@ -39,7 +39,8 @@ Five-runner bakeoff on those same heads (2026-08-16):
 Opus 5, Terra xhigh, Sol medium, and Grok 4.6 are 9/9.
 GLM 5.3 is 7/9 — it PASSed #187 (live `this.headers` as
 snapshot) and #227 (public `SqliteStore` constructor as
-P3). Method, matrix, and miss write-ups: `evals/RESULTS.md`.
+P3). That exam does not pick a local runner. Method,
+matrix, and miss write-ups: `evals/RESULTS.md`.
 
 ## Other repos
 

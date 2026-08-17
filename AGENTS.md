@@ -166,14 +166,15 @@ describes:
 
 **Local exact-head review.** Before opening a PR or pushing a fix after a
 hosted comment, run
-[class-closure-review](.claude/skills/class-closure-review/SKILL.md).
-That skill is how items 1–4 above are executed: fill the matrices, empty
-cell = do not push, do not re-request Codex. A follow-up PR that is only
-the next sibling of the last merge is a miss of that skill — freeze it
-as an eval case the same day.
-Measured runner bakeoff (Sol medium default; do not use
-GLM 5.3 alone):
-[evals/RESULTS.md](.claude/skills/class-closure-review/evals/RESULTS.md).
+[class-closure-review](.claude/skills/class-closure-review/SKILL.md)
+on the real `merge-base...HEAD`. That skill is how items 1–4 above
+are executed: name the behavior, fill the matrices, empty occupied
+cell = do not push, do not re-request Codex. Do not pick a runner
+from the excerpt bakeoff. Hosted Codex remains the merge gate. A
+follow-up PR that is only the next sibling of the last merge is a
+miss of that skill — freeze it as an eval case the same day.
+Runner budget:
+[runner.md](.claude/skills/class-closure-review/references/runner.md).
 
 ## Verify before claiming done
 

@@ -1,6 +1,7 @@
 # Output contract
 
-Emit every block. Silence is not PASS.
+Emit every block **once**. Silence is not PASS. Do not
+repeat VERDICT, FINDINGS, or the matrix after this block.
 
 ```text
 REVIEWED_SHA: <full exact head>
@@ -40,11 +41,13 @@ CONFIDENCE: high | medium | low — <reason>
   guarantee traces to code and a biting test, no P1/P2. A P3
   “add another mutation of the same wrapper” does **not** flip
   PASS to FAIL.
-- **FAIL** — empty applicable cell **in this tree**, leftover
-  claim, guard after a side effect, tautological test, or
-  unwrapped Port-method sibling that **exists in this tree**.
-  Do not FAIL because the store factory itself is unwrapped
-  unless the claim names sanitizing store-*open* errors.
+- **FAIL** — empty applicable cell that is a **sibling of this
+  behavior** in this tree, leftover claim, guard after a side
+  effect, tautological test, or unwrapped Port-method sibling
+  that exists in this tree. Do not FAIL because the store
+  factory itself is unwrapped unless the claim names
+  sanitizing store-*open* errors. Do not FAIL an irrelevant
+  axis you correctly marked `n/a`.
 - Do not FAIL a pasted excerpt for adapters, stores, or files
   the excerpt does not contain. Those are `n/a`.
 - **STOP** — new edge class the contract never named. Do not

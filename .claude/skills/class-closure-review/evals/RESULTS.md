@@ -142,22 +142,23 @@ Graders must accept that form.
 
 The frozen suite does **not** separate these runners. All five
 scored 7/7, including the closed-class control (P3 nits only,
-no invented P1/P2). Use the live leftover-sibling heads to
-pick a model.
+no invented P1/P2). The live heads separate leftover-cell
+recovery on **pasted excerpts**. That is not a real-review
+ranking and does not pick a local runner.
 
-### What to run locally
+### What this bakeoff measured
 
-- **Default class-closure pass:** Sol medium. It is the only
-  16/16 runner under a minute a case.
-- **Cross-family check before Codex:** Opus 5, Terra xhigh, or
-  Grok 4.6. All three closed every live leftover cell. Terra
-  is the fastest of that set; Grok is the slowest.
-- **Do not use GLM 5.3 as the only local reviewer.** It
-  passed the synthetic suite and seven live heads, then
-  PASSed the two leftover-sibling shapes this skill exists
-  to catch. Those misses match the first Opus 4.8 live pass
-  *before* the M5 wording, and the "factory path is clean so
-  the public constructor is P3" pattern.
+Leftover-cell thrash on pasted snippets. It does **not**
+answer the objective (fewer hosted rounds on a real
+`merge-base...HEAD`). Do not pin Sol — or any runner —
+from this table. Hosted Codex remains the merge gate.
+
+GLM 5.3 / `glmcode` PASSed two leftover-sibling shapes
+this skill exists to catch. That is a statement about this
+exam, not a general ranking. Those misses match the first
+Opus 4.8 live pass *before* the M5 wording, and the
+"factory path is clean so the public constructor is P3"
+pattern.
 
 ### Live leftover-sibling matrix
 
@@ -228,12 +229,10 @@ not "the shown factories migrate first."
 
 ### What this bakeoff is not
 
-A claim that Sol medium is the best reviewer in general.
-It is the fastest runner that closed every leftover-sibling
-cell in *this* skill's live gold set. Hosted Codex remains
-the merge-gate reviewer. A new leftover sibling after a
-CLEAN from one of the 16/16 runners should be frozen the
-same day.
+A claim that any of these runners is the best reviewer in
+general, or a reason to pin one. Hosted Codex remains the
+merge-gate reviewer. A leftover sibling after a local CLEAN
+should be frozen the same day.
 
 ## What this is not
 
