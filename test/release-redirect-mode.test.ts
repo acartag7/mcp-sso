@@ -33,10 +33,10 @@ function jwk(): JWK {
   return { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "release" } as JWK;
 }
 
-function config(mode?: "extend" | "replace") {
+function config(mode?: "extend" | "replace", signingPrivateJwk: JWK = jwk()) {
   return createBridgeConfig({
     issuer: "http://localhost", resource: "http://localhost/mcp",
-    consentSigningSecret: "r".repeat(40), signingPrivateJwk: jwk(), signingKeyId: "release",
+    consentSigningSecret: "r".repeat(40), signingPrivateJwk, signingKeyId: "release",
     redirectAllowlist: [OWN],
     ...(mode ? { redirectAllowlistMode: mode } : {}),
     scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
@@ -47,9 +47,9 @@ function config(mode?: "extend" | "replace") {
   });
 }
 
-async function mount(mode?: "extend" | "replace") {
+async function mount(mode?: "extend" | "replace", signingPrivateJwk?: JWK) {
   return await buildApp({
-    config: config(mode),
+    config: config(mode, signingPrivateJwk),
     identityHeader: "x-release-identity",
     identity: { async verify() { return { ok: true, identity: { subject: "release-user" } }; } },
     acknowledgeUnsafeStatelessDefaults: true,
@@ -72,7 +72,24 @@ function authorizeQuery(clientId: string, redirectUri: string): string {
 }
 
 releaseTest("RM.11 readers 1 and 2: replace refuses a built-in origin at DCR write and stateless authorize", async () => {
-  const { app } = await mount("replace");
+  // Mint under the old/default policy, then restart with the same signing key
+  // under replace. That gives reader 2 a client whose signed registration
+  // genuinely permits BUILT_IN, so only the current global policy can refuse it.
+  const signingKey = jwk();
+  const { app: extendApp } = await mount("extend", signingKey);
+  let builtInClientId: string;
+  try {
+    const registered = await extendApp.inject({
+      method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" },
+      payload: JSON.stringify({ redirect_uris: [BUILT_IN], application_type: "web" }),
+    });
+    assert.equal(registered.statusCode, 201, registered.body);
+    builtInClientId = registered.json<{ client_id: string }>().client_id;
+  } finally {
+    await extendApp.close();
+  }
+
+  const { app } = await mount("replace", signingKey);
   try {
     // Reader 1 — DCR write. A hosted origin cannot even register.
     const rejected = await app.inject({
@@ -89,13 +106,13 @@ releaseTest("RM.11 readers 1 and 2: replace refuses a built-in origin at DCR wri
       payload: JSON.stringify({ redirect_uris: [OWN], application_type: "web" }),
     });
     assert.equal(accepted.statusCode, 201, accepted.body);
-    const clientId = accepted.json<{ client_id: string }>().client_id;
+    const ownClientId = accepted.json<{ client_id: string }>().client_id;
 
     // Reader 2 — stateless authorize. Even with a legitimately registered client,
     // presenting a built-in origin is refused, and refused DIRECTLY: a redirect
     // would use the untrusted origin to report that it is untrusted.
     const authz = await app.inject({
-      method: "GET", url: `/oauth/authorize?${authorizeQuery(clientId, BUILT_IN)}`,
+      method: "GET", url: `/oauth/authorize?${authorizeQuery(builtInClientId, BUILT_IN)}`,
       headers: { "x-release-identity": "release-token" },
     });
     assert.notEqual(authz.statusCode, 200, "replace must refuse a built-in redirect at authorize");
@@ -104,7 +121,7 @@ releaseTest("RM.11 readers 1 and 2: replace refuses a built-in origin at DCR wri
 
     // The operator's own origin still reaches consent.
     const ok = await app.inject({
-      method: "GET", url: `/oauth/authorize?${authorizeQuery(clientId, OWN)}`,
+      method: "GET", url: `/oauth/authorize?${authorizeQuery(ownClientId, OWN)}`,
       headers: { "x-release-identity": "release-token" },
     });
     assert.equal(ok.statusCode, 200, ok.body);
@@ -254,6 +271,10 @@ releaseTest("RM.11 reader 4: a consent token minted under extend is refused at a
       ip: "127.0.0.1",
     });
     assert.notEqual(res.status, 302, `${label} must not redirect to the removed origin`);
+    assert.equal((res.body as { error?: string }).error, "invalid_redirect_uri",
+      `${label} must reach the current redirect-policy reader`);
+    assert.match((res.body as { error_description?: string }).error_description ?? "", /redirect_uri is not allowed/,
+      `${label} must fail for the removed origin, not token verification`);
     assert.equal(
       new URL(res.redirect ?? "http://localhost/none").searchParams.get("code"), null,
       `${label} must not deliver a code to the removed origin`,
