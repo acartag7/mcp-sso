@@ -24,6 +24,7 @@ import { pkceChallenge } from "../src/crypto.ts";
 import type { CimdTransport, DnsResolver } from "../src/cimd/transport.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import { MemoryStore } from "../src/store/memory.ts";
+import type { RateLimitPort } from "../src/ports/rate-limit.ts";
 
 const releaseTest = process.env.RUN_RELEASE_MATRIX === "true" ? test : test.skip;
 
@@ -38,6 +39,8 @@ class Clients implements ClientStore {
   async save(c: ClientRegistration): Promise<void> { this.rows.set(c.clientId, structuredClone(c)); }
   async find(id: string): Promise<ClientRegistration | null> { return structuredClone(this.rows.get(id) ?? null); }
 }
+
+const boundedLimiter: RateLimitPort = { async check() { return true; } };
 
 function jwk(): JWK {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -73,9 +76,13 @@ function deployment() {
       };
     },
   };
+  // Stored DCR requires a bounded limiter since B1 (#253): an unbounded anonymous
+  // durable-write path is a boot failure. Supply one so this row tests scope
+  // accumulation rather than re-testing that guard.
   const bridge = new Bridge({
     config, store, clock: { nowMs: () => Date.parse("2026-08-16T12:00:00Z") },
     audit: { async writeAuthEvent() {} }, cimdTransport: transport, cimdResolver: resolver,
+    rateLimit: boundedLimiter,
   });
   return { bridge, clients, store };
 }
@@ -214,7 +221,7 @@ releaseTest("RM.14 dispatch cannot be crossed: an HTTPS client id never falls ba
   });                                           // cimd deliberately absent
   const bridge = new Bridge({
     config, store: new MemoryStore(), clock: { nowMs: () => Date.parse("2026-08-16T12:00:00Z") },
-    audit: { async writeAuthEvent() {} },
+    audit: { async writeAuthEvent() {} }, rateLimit: boundedLimiter,
   });
 
   const authz = await bridge.handleAuthorize({

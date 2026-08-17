@@ -85,6 +85,32 @@ releaseTest("RM.13 both shipped audit sinks receive a real flow through combineA
       headers: { "x-release-identity": "release-token" },
     });
     assert.equal(authorize.statusCode, 200, authorize.body);
+    const consentToken = /name="consent_token" value="([^"]+)"/.exec(authorize.body)?.[1];
+    assert.ok(consentToken, "expected a consent token in the rendered page");
+
+    // COMPLETE the flow before inspecting the sinks. Stopping at GET authorize
+    // made the no-secret claim vacuous for the two stages where a secret is
+    // actually SUBMITTED: the consent token arrives on the approve POST, and the
+    // PKCE verifier on the token POST. Auditing before either is sent proves
+    // nothing about them.
+    const approved = await app.inject({
+      method: "POST", url: "/oauth/authorize/approve",
+      headers: { origin: "http://localhost", "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString(),
+    });
+    const code = new URL(approved.headers.location ?? "http://x.test").searchParams.get("code");
+    assert.ok(code, `approve must mint a code: HTTP ${approved.statusCode}`);
+
+    const tokenRes = await app.inject({
+      method: "POST", url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({
+        grant_type: "authorization_code", code, redirect_uri: REDIRECT,
+        client_id: clientId, code_verifier: VERIFIER,
+      }).toString(),
+    });
+    assert.equal(tokenRes.statusCode, 200, `token exchange must succeed: ${tokenRes.body.slice(0, 160)}`);
+    const accessToken = tokenRes.json<{ access_token: string; refresh_token?: string }>();
 
     // Fan-out reached BOTH sinks for the same flow.
     const jsonl = await readFile(jsonlPath, "utf8");
@@ -99,13 +125,21 @@ releaseTest("RM.13 both shipped audit sinks receive a real flow through combineA
     // Neither sink publishes a credential. The webhook's own collector token is
     // a header, so it must not appear in a body either.
     const everything = `${jsonl}\n${JSON.stringify(posted)}`;
-    for (const secret of ["collector-secret-token", VERIFIER, "release-token", "r".repeat(40)]) {
-      assert.ok(!everything.includes(secret), `an audit sink published a credential: ${secret.slice(0, 16)}…`);
+    // Named, never valued: printing a prefix would put key material in CI logs.
+    const credentials: Array<[string, string | undefined]> = [
+      ["webhook collector token", "collector-secret-token"],
+      ["PKCE verifier", VERIFIER],
+      ["identity header value", "release-token"],
+      ["consent signing secret", "r".repeat(40)],
+      ["consent token", consentToken],
+      ["authorization code", code],
+      ["access token", accessToken.access_token],
+      ["refresh token", accessToken.refresh_token],
+    ];
+    for (const [name, value] of credentials) {
+      if (typeof value !== "string" || value.length === 0) continue;
+      assert.ok(!everything.includes(value), `an audit sink published the ${name}`);
     }
-    // The consent token is a bearer-equivalent for the approve step.
-    const consent = /name="consent_token" value="([^"]+)"/.exec(authorize.body)?.[1];
-    assert.ok(consent, "expected a consent token in the rendered page");
-    assert.ok(!everything.includes(consent), "an audit sink published the consent token");
     assert.deepEqual(
       sinkErrors.filter((line) => line.includes("audit webhook write failed")), [],
       "the webhook sink reported a delivery failure; delivery must actually succeed",

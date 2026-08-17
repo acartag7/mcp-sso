@@ -281,9 +281,15 @@ empty allowlist is a boot failure rather than a bridge that starts and rejects
 every client.
 
 The mode has FOUR readers — DCR write, stateless authorize, stored-client
-re-validation, and consent approve. That count is four rather than three because
-review found `approve` unguarded after the sweep was declared complete, which is
-why this row exists at the release gate instead of relying on the sweep.
+re-validation, and consent approve — and **each is exercised separately**. Review
+found the first version of this row asserting "every shipped reader" while
+covering only the first two, which is the same defect class as a fixture that
+confirms the rule its author just wrote. Reader 3 seeds a client registered while
+the built-ins were trusted and proves it stops authorizing after the switch;
+reader 4 mints a consent token under `"extend"` and proves BOTH approve and deny
+are refused under `"replace"`, since a consent token outlives the process that
+issued it. That count is four rather than three because review found `approve`
+unguarded after the sweep was declared complete.
 
 ### RM.12 — Identity display name
 
@@ -331,6 +337,28 @@ Grants are banked through a real token exchange rather than stopping at approve:
 `findGrantedScopes` is derived from active refresh records (§12.3, "no grant
 table"), so an approve-only row would report empty accumulation and pass
 vacuously.
+
+### RM.15 — Registration dispatch matrix
+
+`dcr` is REQUIRED in `BridgeConfig` and no adapter option suppresses the register
+route, so "CIMD only" is not a deployment state — it is a client choice. The real
+configuration axes are `cimd enabled?` × `dcr stateless | stored`, crossed with
+the client kinds a deployment meets. All four deployments accept an opaque DCR
+client and reach consent; a CIMD `client_id` is resolved when CIMD is enabled and
+**refused** when it is not, and in neither case does it enter the DCR client
+store. There is no fallback between the paths, by design.
+
+The row also carries the shape that broke Claude Code in v0.3.5: a real published
+document with port-less loopback redirects and no `application_type`, matched
+against an ephemeral port. Every CIMD fixture in this repository sets that field
+because they were written alongside the rule that required it, so a self-authored
+fixture could not see the regression. Negative cases pin that the elasticity stays
+narrow — same scheme, host, and path, port free — and that a non-loopback `https`
+entry gains none of it.
+
+Stored-DCR deployments here supply a bounded limiter, because B1 makes an
+unbounded anonymous durable-write path a boot failure; the row tests dispatch
+rather than re-testing that guard.
 
 ## Harness helpers
 

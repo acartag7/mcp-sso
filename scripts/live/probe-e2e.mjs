@@ -20,6 +20,7 @@ import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 import { createBridgeConfig } from "../../src/config.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
 import { createRedisRateLimit } from "../../src/rate-limit/redis.ts";
+import { registerProtectedResourceRateLimit } from "../../src/adapters/fastify-protected-resource-rate-limit.ts";
 import { provisionMachineClient, disableMachineClient } from "../../src/machine-client.ts";
 import { JsonlFileAudit, WebhookAudit, combineAudit } from "../../src/index.ts";
 import { RequestAuthorizer } from "../../src/index.ts";
@@ -103,7 +104,14 @@ const bridge = new Bridge({ config, store, clock, audit, rateLimit: limiter,
   identity: { async verify() { return { ok: false, reason: "interactive_only" }; } } });
 
 const app = Fastify();
-app.post("/mcp", async (req, reply) => {
+
+// The probe's own protected route must carry the same finite admission budget a
+// real deployment does: this library refuses an authorizing route with no bound
+// (CodeQL js/missing-rate-limiting, and §17.10). A probe that skips it models a
+// composition the library would reject at boot.
+const probeRouteLimit = await registerProtectedResourceRateLimit(app, { max: 60, timeWindowMs: 60_000 });
+
+app.post("/mcp", { config: { rateLimit: { max: probeRouteLimit.max, timeWindow: probeRouteLimit.timeWindowMs } } }, async (req, reply) => {
   const authorizer = new RequestAuthorizer({ config, store, clock, audit });
   try {
     const res = await authorizer.authorize({ authorization: req.headers.authorization, ip: req.ip });
@@ -192,8 +200,21 @@ try {
   if (!ok("webhook sink recorded the flow", posted.length > 0, `${posted.length} posts`)) failures++;
   if (!ok("both sinks saw the same event count", fileRows === posted.length, `${fileRows} vs ${posted.length}`)) failures++;
   const all = `${jsonl}\n${JSON.stringify(posted)}`;
-  for (const secret of [provisioned.clientSecret, token ?? " none", "collector-secret", process.env.OAUTH_CONSENT_SIGNING_SECRET]) {
-    if (!ok(`audit never published a credential (${secret.slice(0, 8)}…)`, !all.includes(secret))) failures++;
+  // Label each credential by NAME, never by any part of its value. Printing even
+  // a short prefix puts real key material into probe output and CI logs — the
+  // exact thing these assertions exist to prevent (CodeQL js/clear-text-logging).
+  const credentials = [
+    ["machine client secret", provisioned.clientSecret],
+    ["access token", token],
+    ["webhook collector token", "collector-secret"],
+    ["consent signing secret", process.env.OAUTH_CONSENT_SIGNING_SECRET],
+  ];
+  for (const [name, value] of credentials) {
+    if (typeof value !== "string" || value.length === 0) {
+      out.push(`SKIP  audit-leak check for ${name} — absent in this run`);
+      continue;
+    }
+    if (!ok(`audit never published the ${name}`, !all.includes(value))) failures++;
   }
 } finally {
   try { await app.close(); } catch {}

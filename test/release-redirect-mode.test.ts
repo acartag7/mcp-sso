@@ -17,6 +17,10 @@ import { createBridgeConfig } from "../src/config.ts";
 import { AuthConfigError } from "../src/config.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import { buildApp } from "../examples/fastify-sqlite/app.ts";
+import { Bridge } from "../src/adapters/bridge.ts";
+import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
+import { MemoryStore } from "../src/store/memory.ts";
+import type { RateLimitPort } from "../src/ports/rate-limit.ts";
 
 const releaseTest = process.env.RUN_RELEASE_MATRIX === "true" ? test : test.skip;
 
@@ -50,6 +54,14 @@ async function mount(mode?: "extend" | "replace") {
     identity: { async verify() { return { ok: true, identity: { subject: "release-user" } }; } },
     acknowledgeUnsafeStatelessDefaults: true,
   } as Parameters<typeof buildApp>[0]);
+}
+
+function authorizeQueryFor(clientId: string, redirectUri: string): Record<string, string> {
+  return {
+    response_type: "code", client_id: clientId, redirect_uri: redirectUri,
+    code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+    scope: "mcp:read", state: "s",
+  };
 }
 
 function authorizeQuery(clientId: string, redirectUri: string): string {
@@ -135,4 +147,116 @@ releaseTest("RM.11 replace with an empty allowlist refuses to boot", async () =>
       return true;
     },
   );
+});
+
+// --- readers 3 and 4: stored-client revalidation, and consent approve ---------
+//
+// The first case above covers the DCR write path and stateless authorize. The
+// mode has FOUR readers, and the two below are the ones a name-only assertion
+// misses — review found `approve` unguarded AFTER the sweep was called complete,
+// so the gate proves them rather than trusting the enumeration.
+
+class StoredClients implements ClientStore {
+  readonly rows = new Map<string, ClientRegistration>();
+  async save(c: ClientRegistration): Promise<void> { this.rows.set(c.clientId, structuredClone(c)); }
+  async find(id: string): Promise<ClientRegistration | null> { return structuredClone(this.rows.get(id) ?? null); }
+}
+
+/** Stored DCR needs a bounded limiter since #253; supply one so boot succeeds. */
+const boundedLimiter: RateLimitPort = { async check() { return true; } };
+
+function storedConfig(mode: "extend" | "replace", clients: ClientStore) {
+  return createBridgeConfig({
+    issuer: "http://localhost", resource: "http://localhost/mcp",
+    consentSigningSecret: "r".repeat(40), signingPrivateJwk: jwk(), signingKeyId: "release",
+    redirectAllowlist: [OWN],
+    ...(mode === "replace" ? { redirectAllowlistMode: "replace" as const } : {}),
+    scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
+    allowedOrigins: ["http://localhost"], dcr: { mode: "stored", store: clients },
+    dev: { allowInsecureLocalhost: true },
+    accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 3600,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+}
+
+releaseTest("RM.11 reader 3: a client stored under extend stops authorizing under replace", async () => {
+  // The stored-state sibling of the entry-point guard. Seeded directly, exactly
+  // as a rolling upgrade would leave it: the record was legitimately written
+  // while the built-ins were trusted.
+  const clients = new StoredClients();
+  await clients.save({
+    clientId: "mcpdc_legacy_builtin", redirectUris: [BUILT_IN],
+    applicationType: "web", issuedAtEpoch: 1_700_000_000,
+  });
+
+  const before = new Bridge({
+    config: storedConfig("extend", clients), store: new MemoryStore(),
+    clock: { nowMs: () => Date.parse("2026-08-17T12:00:00Z") },
+    audit: { async writeAuthEvent() {} }, rateLimit: boundedLimiter,
+  });
+  const allowed = await before.handleAuthorize({
+    query: authorizeQueryFor("mcpdc_legacy_builtin", BUILT_IN),
+    body: undefined, headers: {}, ip: "127.0.0.1",
+  }, { subject: "release-user" });
+  assert.equal(allowed.status, 200, "under extend the stored built-in client still authorizes");
+
+  const after = new Bridge({
+    config: storedConfig("replace", clients), store: new MemoryStore(),
+    clock: { nowMs: () => Date.parse("2026-08-17T12:00:00Z") },
+    audit: { async writeAuthEvent() {} }, rateLimit: boundedLimiter,
+  });
+  const refused = await after.handleAuthorize({
+    query: authorizeQueryFor("mcpdc_legacy_builtin", BUILT_IN),
+    body: undefined, headers: {}, ip: "127.0.0.1",
+  }, { subject: "release-user" });
+  assert.notEqual(refused.status, 200, "a stored built-in registration must stop authorizing under replace");
+  assert.equal(refused.redirect, undefined, "and must not be reported by redirecting to the disputed origin");
+});
+
+releaseTest("RM.11 reader 4: a consent token minted under extend is refused at approve under replace", async () => {
+  // A consent token outlives the process that minted it, so approve is read at a
+  // different time from every other reader. Without this, a flow begun seconds
+  // before the trust change still delivers a code — or a Deny redirect — to the
+  // removed origin.
+  const clients = new StoredClients();
+  const store = new MemoryStore();
+  const clock = { nowMs: () => Date.parse("2026-08-17T12:00:00Z") };
+
+  const reg = await new Bridge({
+    config: storedConfig("extend", clients), store, clock,
+    audit: { async writeAuthEvent() {} }, rateLimit: boundedLimiter,
+  }).handleRegister({
+    query: {}, body: { redirect_uris: [BUILT_IN], application_type: "web" },
+    headers: { "content-type": "application/json" }, ip: "127.0.0.1",
+  });
+  assert.equal(reg.status, 201, JSON.stringify(reg.body));
+  const clientId = (reg.body as { client_id: string }).client_id;
+
+  const minted = await new Bridge({
+    config: storedConfig("extend", clients), store, clock,
+    audit: { async writeAuthEvent() {} }, rateLimit: boundedLimiter,
+  }).handleAuthorize({
+    query: authorizeQueryFor(clientId, BUILT_IN), body: undefined, headers: {}, ip: "127.0.0.1",
+  }, { subject: "release-user" });
+  assert.equal(minted.status, 200, "the consent page must render while extend is in force");
+  const consentToken = /name="consent_token" value="([^"]+)"/.exec(String(minted.body))?.[1];
+  assert.ok(consentToken, "consent page must carry a consent token");
+
+  // The restart into "replace" — same store, same consent token, new policy.
+  const after = new Bridge({
+    config: storedConfig("replace", clients), store, clock,
+    audit: { async writeAuthEvent() {} }, rateLimit: boundedLimiter,
+  });
+  for (const [label, approved] of [["approve", "true"], ["deny", "false"]] as const) {
+    const res = await after.handleApprove({
+      query: {}, body: { consent_token: consentToken, approved },
+      headers: { origin: "http://localhost", "content-type": "application/x-www-form-urlencoded" },
+      ip: "127.0.0.1",
+    });
+    assert.notEqual(res.status, 302, `${label} must not redirect to the removed origin`);
+    assert.equal(
+      new URL(res.redirect ?? "http://localhost/none").searchParams.get("code"), null,
+      `${label} must not deliver a code to the removed origin`,
+    );
+  }
 });

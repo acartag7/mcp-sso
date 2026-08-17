@@ -213,6 +213,14 @@
         {
           "file": "test/release-redirect-mode.test.ts",
           "name": "RM.11 replace with an empty allowlist refuses to boot"
+        },
+        {
+          "file": "test/release-redirect-mode.test.ts",
+          "name": "RM.11 reader 3: a client stored under extend stops authorizing under replace"
+        },
+        {
+          "file": "test/release-redirect-mode.test.ts",
+          "name": "RM.11 reader 4: a consent token minted under extend is refused at approve under replace"
         }
       ]
     },
@@ -222,7 +230,35 @@
       "evidence": [
         {
           "file": "test/release-identity-name.test.ts",
-          "name": "RM.12 both shipped OIDC ports surface a verified display name and drop an unverified one"
+          "name": "RM.12 [Google preset] the shipped port surfaces a verified display name"
+        },
+        {
+          "file": "test/release-identity-name.test.ts",
+          "name": "RM.12 [Google preset] the shipped port drops an unverified display name"
+        },
+        {
+          "file": "test/release-identity-name.test.ts",
+          "name": "RM.12 [Google preset] the shipped port omits an over-long name rather than truncating"
+        },
+        {
+          "file": "test/release-identity-name.test.ts",
+          "name": "RM.12 [Google preset] the shipped port ignores a non-string name"
+        },
+        {
+          "file": "test/release-identity-name.test.ts",
+          "name": "RM.12 [generic OIDC] the shipped port surfaces a verified display name"
+        },
+        {
+          "file": "test/release-identity-name.test.ts",
+          "name": "RM.12 [generic OIDC] the shipped port drops an unverified display name"
+        },
+        {
+          "file": "test/release-identity-name.test.ts",
+          "name": "RM.12 [generic OIDC] the shipped port omits an over-long name rather than truncating"
+        },
+        {
+          "file": "test/release-identity-name.test.ts",
+          "name": "RM.12 [generic OIDC] the shipped port ignores a non-string name"
         }
       ]
     },
@@ -251,6 +287,56 @@
         {
           "file": "test/release-cimd-dcr-coexistence.test.ts",
           "name": "RM.14 dispatch cannot be crossed: an HTTPS client id never falls back to DCR"
+        }
+      ]
+    },
+    {
+      "id": "RM.15",
+      "title": "Registration dispatch matrix",
+      "evidence": [
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 [cimd on  + dcr stateless] an opaque DCR client registers and reaches consent"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 [cimd on  + dcr stored] an opaque DCR client registers and reaches consent"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 [cimd off + dcr stateless] an opaque DCR client registers and reaches consent"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 [cimd off + dcr stored] an opaque DCR client registers and reaches consent"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 [cimd on  + dcr stateless] a CIMD client id is resolved, never routed to DCR"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 [cimd on  + dcr stored] a CIMD client id is resolved, never routed to DCR"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 [cimd off + dcr stateless] a CIMD client id is refused, never routed to DCR"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 [cimd off + dcr stored] a CIMD client id is refused, never routed to DCR"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 a real published CIMD document matches its ephemeral loopback port"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 loopback elasticity does not leak beyond loopback"
+        },
+        {
+          "file": "test/release-registration-matrix.test.ts",
+          "name": "RM.15 an explicit application_type still works in both directions"
         }
       ]
     }
