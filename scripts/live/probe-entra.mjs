@@ -79,9 +79,11 @@ try {
   // this check counted {"mapping":…} as one and would have passed on an empty map.
   const groupAuth = JSON.parse(process.env.ENTRA_GROUP_AUTHORIZATION_JSON ?? "{}");
   const groups = Object.keys(groupAuth.mapping ?? {});
+  const normalizedGroups = new Set(groups.map((group) => group.toLowerCase()));
   if (!ok("boot accepted the real group mapping", groups.length >= 2, `${groups.length} real groups mapped`)) failures++;
   if (!ok("every mapped key is a real GUID, not a display name", groups.length > 0 && groups.every((g) => guid.test(g)))) failures++;
-  if (!ok("the unmapped deny-leg group is NOT in the mapping", !groups.includes(unmappedGroup), "no-mapped-group leg stays provable")) failures++;
+  if (!ok("the unmapped deny-leg group is NOT in the mapping",
+    !normalizedGroups.has(unmappedGroup.toLowerCase()), "no-mapped-group leg stays provable")) failures++;
 } finally {
   await app.close();
 }

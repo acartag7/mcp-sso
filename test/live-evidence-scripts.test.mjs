@@ -207,6 +207,11 @@ test("Entra deny evidence and Google credentials are mandatory inputs", () => {
     "the required Entra deny fixture is validated before stateful example construction",
   );
   assert.doesNotMatch(ENTRA, /ENTRA_UNMAPPED_GROUP \?\? ""/);
+  assert.match(
+    ENTRA,
+    /new Set\(groups\.map\(\(group\) => group\.toLowerCase\(\)\)\)[\s\S]*?!normalizedGroups\.has\(unmappedGroup\.toLowerCase\(\)\)/,
+    "the deny fixture is excluded with the same case-insensitive GUID semantics as production authorization",
+  );
   assert.match(README, /~\/\.mcp-sso-google\.env/);
   assert.match(README, /GOOGLE_CLIENT_ID/);
   assert.match(README, /GOOGLE_CLIENT_SECRET/);
