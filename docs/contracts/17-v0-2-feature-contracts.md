@@ -2511,8 +2511,10 @@ callback outcome for which the callback established a trustworthy timestamp,
 with `status` success/failure and `reason` from the fixed enum in the failure
 table; optional `clientId` (from `params`) and `ip`. `identity.verify` is
 best-effort submitted whenever an identity **decision was reached** — `ok: true`
-(success) and `kind: "identity_rejected"` (failure, with the port's reason) —
-with the same event metadata as `Bridge.resolveIdentity`'s emission (S2a);
+(success) and `kind: "identity_rejected"` (failure, with the normalized
+library-allowlisted reason; an unknown/custom port reason collapses to
+`identity_rejected`) — with the same event metadata as
+`Bridge.resolveIdentity`'s emission (S2a);
 `exchange_failed` reaches no identity decision, so it emits only the
 `oauth.upstream.callback` failure, never a spurious `identity.verify`. Whether
 the implementation routes through `resolveIdentity` internally or emits

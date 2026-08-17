@@ -677,7 +677,7 @@ test("callback row 10: exchange_failed (non-200/timeout/missing id_token) => 302
   assert.equal(a2.identity().length, 0, "a thrown exchange also reaches no identity decision — no identity.verify");
 });
 
-test("callback row 10: returned and thrown exchange detail cannot reach redirect, body, audit, or stderr", async () => {
+test("callback row 10: returned and thrown exchange detail cannot reach redirect, body, audit, or fixed stderr diagnostic", async () => {
   for (const mode of ["returned", "thrown"] as const) {
     const c = config(); const id = fakeIdentity(c);
     const marker = mode === "returned"
@@ -690,9 +690,9 @@ test("callback row 10: returned and thrown exchange detail cannot reach redirect
     }
     const { flow, audit } = makeFlow(c, id);
     const { claims, cookieValue } = await initiate(c, flow);
-    const chunks: string[] = [];
+    const calls: unknown[][] = [];
     const original = console.error;
-    console.error = (...values: unknown[]): void => { chunks.push(values.map(String).join(" ")); };
+    console.error = (...values: unknown[]): void => { calls.push(values); };
     try {
       const response = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "c" }));
       assert.equal(new URL(hLoc(response)).searchParams.get("error_description"), "upstream identity provider error");
@@ -701,7 +701,11 @@ test("callback row 10: returned and thrown exchange detail cannot reach redirect
     } finally {
       console.error = original;
     }
-    assert.doesNotMatch(chunks.join(""), new RegExp(marker));
+    assert.deepEqual(calls, [[
+      "[mcp-sso] upstream exchange failed (exchange_failed)",
+      "client-1",
+    ]], `${mode}: stderr has only the fixed diagnostic and sanitized client id`);
+    assert.doesNotMatch(JSON.stringify(calls), new RegExp(marker));
   }
 });
 
@@ -725,7 +729,7 @@ test("callback row 10: a throwing returned accessor stays in the exchange failur
   assert.doesNotMatch(audit.json(), /tenant_internal|secret identity detail/);
 });
 
-test("callback row 11: identity_rejected => 302 access_denied + identity.verify failure (with the port reason)", async () => {
+test("callback row 11: identity_rejected => 302 access_denied + identity.verify failure with a normalized reason", async () => {
   const c = config(); const id = fakeIdentity(c);
   id.set({ ok: false, kind: "identity_rejected", reason: "entra_bad_nonce" });
   const { flow, audit } = makeFlow(c, id);
@@ -739,7 +743,7 @@ test("callback row 11: identity_rejected => 302 access_denied + identity.verify 
   assert.equal(audit.callback().at(-1)?.reason, "identity_rejected");
   const idv = audit.identity().at(-1);
   assert.equal(idv?.status, "failure");
-  assert.equal(idv?.reason, "entra_bad_nonce", "the port's reason lands in identity.verify");
+  assert.equal(idv?.reason, "entra_bad_nonce", "an allowlisted reason lands in identity.verify");
 });
 
 test("callback row 11: entra_no_groups selects its exact fixed description", async () => {
