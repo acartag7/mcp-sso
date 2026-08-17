@@ -356,9 +356,12 @@ published document shape: port-less loopback redirects with no
 `Bridge.handleAuthorize`. RM.15 does not fill a fixture-shape gap. Its new evidence
 crosses that already-covered shape with the full CIMD-enabled/disabled ×
 DCR-stateless/stored dispatch matrix and proves that scheme-shaped client IDs
-never fall through to DCR lookup. The existing acceptance negatives remain the
-evidence that loopback elasticity stays narrow — same scheme, host, and path,
-port free — and that a non-loopback `https` entry gains none of it.
+with a lowercase `https://` prefix never fall through to DCR lookup. The frozen
+S6b dispatch phase carries the wider scheme-shaped class (`HTTPS://`, `http://`,
+`ftp://`, and other schemes) across direct and redirect modes. The existing
+acceptance negatives remain the evidence that loopback elasticity stays narrow
+— same scheme, host, and path, port free — and that a non-loopback `https` entry
+gains none of it.
 
 Stored-DCR deployments here supply a bounded limiter, because B1 makes an
 unbounded anonymous durable-write path a boot failure; the row tests dispatch
