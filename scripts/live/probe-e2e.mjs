@@ -1,12 +1,13 @@
 // Headless end-to-end against live infrastructure: a machine credential is
-// provisioned into persistent SQLite, exchanged for a token through the shipped
-// Fastify token route, used by the OFFICIAL MCP SDK client against /mcp, then
-// revoked — while a real Redis limiter guards admission and both shipped audit
-// sinks record the flow.
+// provisioned into a process-local MachineClientStore, exchanged for a token
+// through the shipped Fastify token route, used by the OFFICIAL MCP SDK client
+// against /mcp, then revoked — while a real Redis limiter guards admission and
+// both shipped audit sinks record the flow.
 //
 // Everything here runs without a browser, so it covers the §17.2 machine leg,
-// §17.7 audit sinks, §17.10 Redis limiter, persistent SQLite admission, and the
-// SDK-client row of the matrix. No secret is printed.
+// §17.7 audit sinks, §17.10 Redis limiter, persistent SQLite filesystem
+// admission, and the SDK-client row of the matrix. SQLite is opened separately;
+// the machine credential is not persisted there. No secret is printed.
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,10 +55,10 @@ const audit = combineAudit(new JsonlFileAudit(jsonlPath), webhook);
 
 const sqlite = openSqliteStore(dbPath);
 
-// §12/§17.2: the reference stores deliberately do NOT implement the additive
-// atomic MachineClientStore methods — that contract is the deployer's. This is
-// the shape a deployer supplies: durable OAuth state in SQLite, machine rows
-// behind compare-and-swap.
+// §12/§17.2: the reference SQLite store deliberately does NOT implement the
+// additive atomic MachineClientStore methods — that contract is the deployer's.
+// This probe therefore keeps machine rows process-local behind compare-and-swap;
+// opening SQLite above proves its separate filesystem-admission claim only.
 const machineRows = new Map();
 const machineAudits = [];
 const store = new Proxy(sqlite, {
@@ -141,12 +142,12 @@ try {
   // 1. Persistent SQLite admission accepted a 0700 directory.
   if (!ok("persistent SQLite store opened under a 0700 dir", existsSync(dbPath), "filesystem admission passed")) failures++;
 
-  // 2. Provision a machine credential into the real store.
+  // 2. Provision a machine credential into the probe's process-local store.
   const provisioned = await provisionMachineClient(
     { store, clock, audit, catalog: ["mcp:read", "mcp:write"], resource: RESOURCE },
     { allowedScopes: ["mcp:read"], name: "live-probe" },
   );
-  if (!ok("machine credential provisioned", !!provisioned.clientId && !!provisioned.clientSecret)) failures++;
+  if (!ok("process-local machine credential provisioned", !!provisioned.clientId && !!provisioned.clientSecret)) failures++;
   if (!ok("issued secret carries the minted shape", /^mcs_[A-Za-z0-9_-]{43}$/.test(provisioned.clientSecret))) failures++;
 
   // 3. Exchange it through the SHIPPED token route.

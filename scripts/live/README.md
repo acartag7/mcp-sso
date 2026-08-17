@@ -33,7 +33,7 @@ node scripts/live/probe-google.mjs                               # standalone
 | --- | --- |
 | `probe-entra` | Real discovery and JWKS; DCR; authorize redirecting to the real tenant with the provisioned client, callback, scope, PKCE S256, state and nonce; flow cookie `__Host-` + `SameSite=Lax` + HttpOnly + Secure; the group mapping accepted with real GUIDs and the deny-leg group excluded from it |
 | `probe-cloudflare` | Access certs resolve; a **self-signed assertion with the correct issuer and audience is refused against the live JWKS**, and the refusal does not echo the forged subject; RFC 9728 challenge; RFC 7009 always-200; duplicate form field, unsupported media type, and unlisted redirect origin all refused; state directory `0700` |
-| `probe-e2e` | Machine credential provisioned, exchanged through the shipped token route, used against a protected `/mcp`, with a real Redis limiter refusing past budget and both audit sinks receiving identical event counts and no credential |
+| `probe-e2e` | Machine credential provisioned into a process-local `MachineClientStore`, exchanged through the shipped token route, and used against a protected `/mcp`, with a real Redis limiter refusing past budget and both audit sinks receiving identical event counts and no credential. The separately opened persistent SQLite store proves filesystem admission only; the shipped SQLite adapter deliberately does not implement the atomic machine-client lifecycle. |
 | `probe-google` | Google discovery and JWKS; lookalike issuer, wrong audience, and multi-audience refused; discovery-host binding, non-https endpoints, and missing PKCE S256 all refused |
 
 A leg argument is required because the example **boot-refuses more than one

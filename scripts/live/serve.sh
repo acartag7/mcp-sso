@@ -20,7 +20,27 @@ PORTS="$(./scripts/tofu-run.sh mcp-sso-cloudflare output -json tunnel_ingress_po
 HOST="$(echo "$ORIGINS" | python3 -c "import json,sys;print(json.load(sys.stdin)['$LEG'].split('://')[1])")"
 PORT="$(echo "$PORTS" | python3 -c "import json,sys;print(json.load(sys.stdin)['$LEG']['gateway'])")"
 
-CONF="$(mktemp -t mcp-sso-tunnel-XXXX).yml"
+CONF=""
+SERVER_PID=""
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ -n "$SERVER_PID" ]]; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$CONF" ]]; then
+    rm -f -- "$CONF"
+  fi
+  exit "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+CONF="$(mktemp -t mcp-sso-tunnel-XXXX)" || exit 1
 cat > "$CONF" <<YAML
 tunnel: ${TUNNEL}
 credentials-file: ${HOME}/.cloudflared/$(cloudflared tunnel info "$TUNNEL" 2>/dev/null | awk '/^ID/{print $2}').json
@@ -37,7 +57,7 @@ echo "Point a client at:  https://${HOST}/mcp"
 echo "  Claude Code:  claude mcp add --transport http mcp-sso https://${HOST}/mcp"
 echo "  Codex CLI:    add the same URL as an HTTP MCP server"
 echo
-trap 'kill 0' EXIT INT TERM
 PORT="$PORT" "$REPO/scripts/live/run.sh" "$REPO/examples/fastify-sqlite/index.ts" "$LEG" &
+SERVER_PID=$!
 sleep 3
 cloudflared tunnel --config "$CONF" run "$TUNNEL"
