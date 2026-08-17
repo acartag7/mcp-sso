@@ -86,7 +86,9 @@ their selected returned fields are contained inside the port boundary, while
 the existing callback contract maps every failure to fixed `exchange_failed`
 or `identity_rejected` channels. Returned identity-rejection reasons use the
 same shipped-code allowlist as `IdentityPort.verify`; unknown custom text never
-becomes audit data.
+becomes audit data. A thrown or returned exchange-failure reason likewise never
+becomes audit data or stderr text; row 10 emits only its fixed diagnostic plus
+the sanitized client id.
 
 The reference sinks satisfy the fail-open port contract: their
 `writeAuthEvent` methods do not reject, and `combineAudit` isolates sibling
