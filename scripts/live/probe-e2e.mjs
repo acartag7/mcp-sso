@@ -223,10 +223,26 @@ try {
   // fan-out discrepancy.
   await new Promise((r) => setTimeout(r, 250));
   const jsonl = existsSync(jsonlPath) ? readFileSync(jsonlPath, "utf8") : "";
-  const fileRows = jsonl.trim().split("\n").filter(Boolean).length;
-  if (!ok("JSONL sink recorded the flow", fileRows > 0, `${fileRows} rows`)) failures++;
+  const fileEvents = jsonl.trim() === "" ? [] : jsonl.trim().split("\n").map((line) => JSON.parse(line));
+  if (!ok("JSONL sink recorded the flow", fileEvents.length > 0, `${fileEvents.length} rows`)) failures++;
   if (!ok("webhook sink recorded the flow", posted.length > 0, `${posted.length} posts`)) failures++;
-  if (!ok("both sinks saw the same event count", fileRows === posted.length, `${fileRows} vs ${posted.length}`)) failures++;
+  if (!ok("both sinks received the same ordered events",
+    JSON.stringify(fileEvents) === JSON.stringify(posted), `${fileEvents.length} vs ${posted.length}`)) failures++;
+  const requiredFlow = [
+    ["oauth.client.provision", "success"],
+    ["oauth.token.client_credentials", "success"],
+    ["auth.request", "success"],
+    ["oauth.client.disable", "success"],
+  ];
+  const hasRequiredFlow = (events) => {
+    let next = 0;
+    for (const event of events) {
+      if (event.event === requiredFlow[next]?.[0] && event.status === requiredFlow[next]?.[1]) next += 1;
+    }
+    return next === requiredFlow.length;
+  };
+  if (!ok("JSONL sink contains the exercised credential flow", hasRequiredFlow(fileEvents))) failures++;
+  if (!ok("webhook sink contains the exercised credential flow", hasRequiredFlow(posted))) failures++;
   const all = `${jsonl}\n${JSON.stringify(posted)}`;
   // Label each credential by NAME, never by any part of its value. Printing even
   // a short prefix puts real key material into probe output and CI logs — the

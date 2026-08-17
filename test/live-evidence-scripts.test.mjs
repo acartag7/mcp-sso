@@ -194,6 +194,13 @@ test("live probes cannot turn an unexercised subject into passing evidence", () 
     PROBE.indexOf("await disableMachineClient(") < PROBE.indexOf("for (let i = 0; i < 12; i += 1)"),
     "disablement is proved before the shared token limiter is exhausted",
   );
+  assert.match(
+    PROBE,
+    /const requiredFlow = \[[\s\S]*?\["oauth\.client\.provision", "success"\][\s\S]*?\["oauth\.token\.client_credentials", "success"\][\s\S]*?\["auth\.request", "success"\][\s\S]*?\["oauth\.client\.disable", "success"\][\s\S]*?hasRequiredFlow\(fileEvents\)[\s\S]*?hasRequiredFlow\(posted\)/,
+    "both sinks must contain the ordered events that constitute the exercised flow",
+  );
+  assert.match(PROBE, /JSON\.stringify\(fileEvents\) === JSON\.stringify\(posted\)/,
+    "sink parity compares event content and order, not only totals");
 });
 
 test("Entra deny evidence and Google credentials are mandatory inputs", () => {
