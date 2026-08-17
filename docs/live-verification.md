@@ -133,8 +133,9 @@ the explicit out-of-band exception documented below. No provider secret is
 stored in this repository or read from a developer's shell profile.
 
 The run order is: authenticate to the cloud account once, then invoke the
-documented runner. It validates every required stack/file input before state
-cleanup and probe execution.
+documented runner. It validates every required stack/file input before choosing
+a fresh per-run state path and executing the probe; it never recursively clears
+an ignored state parent.
 
 | What the checklists need | Where it comes from |
 | --- | --- |

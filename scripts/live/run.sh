@@ -43,6 +43,21 @@ required_json() {
   printf '%s' "$value"
 }
 
+ISSUER_ORIGINS_JSON="$(required_json "$CLOUDFLARE_STACK" issuer_origins)" || exit 1
+OAUTH_ISSUER="$(printf '%s' "$ISSUER_ORIGINS_JSON" | node -e '
+const fs=require("node:fs");
+let parsed;
+try { parsed=JSON.parse(fs.readFileSync(0,"utf8")); } catch { process.exit(1); }
+const value=parsed?.[process.argv[1]];
+if (typeof value!=="string" || value.length===0) process.exit(1);
+let url;
+try { url=new URL(value); } catch { process.exit(1); }
+if (url.protocol!=="https:" || url.username || url.password || url.origin!==value) process.exit(1);
+process.stdout.write(value);
+' "$LEG")" || fail "issuer origin output is missing or invalid for the selected leg"
+unset ISSUER_ORIGINS_JSON
+export OAUTH_ISSUER
+
 unset ENTRA_TENANT_ID CF_ACCESS_AUDIENCE GOOGLE_CLIENT_ID OIDC_ISSUER
 
 case "$LEG" in
@@ -61,6 +76,34 @@ if not isinstance(mapping,dict): raise SystemExit(1)
 print(json.dumps({"mapping":mapping},separators=(",",":")))
 ')" || fail "group authorization output is invalid"
     unset ENTRA_MAPPING_JSON
+    if ! printf '%s' "$ENTRA_GROUP_AUTHORIZATION_JSON" | \
+      MCP_SSO_REPO_ROOT="$REPO" OAUTH_ISSUER="$OAUTH_ISSUER" \
+      ENTRA_CLIENT_ID="$ENTRA_CLIENT_ID" ENTRA_CLIENT_SECRET="$ENTRA_CLIENT_SECRET" \
+      ENTRA_REDIRECT_URI="$ENTRA_REDIRECT_URI" ENTRA_TENANT_ID="$ENTRA_TENANT_ID" \
+      ENTRA_UNMAPPED_GROUP="$ENTRA_UNMAPPED_GROUP" node --input-type=module -e '
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const { createEntraIdentity } = await import(pathToFileURL(`${process.env.MCP_SSO_REPO_ROOT}/src/identity/entra.ts`).href);
+const groupAuthorization = JSON.parse(readFileSync(0, "utf8"));
+const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const mappingKeys = Object.keys(groupAuthorization.mapping ?? {});
+const secret = process.env.ENTRA_CLIENT_SECRET;
+if (!guid.test(process.env.ENTRA_TENANT_ID ?? "") || !guid.test(process.env.ENTRA_CLIENT_ID ?? "")
+  || !guid.test(process.env.ENTRA_UNMAPPED_GROUP ?? "") || mappingKeys.length < 2
+  || mappingKeys.some((key) => key.toLowerCase() === process.env.ENTRA_UNMAPPED_GROUP.toLowerCase())
+  || typeof secret !== "string" || secret.length === 0 || secret.length > 4096
+  || /[\u0000-\u001f\u007f]/.test(secret)
+  || process.env.ENTRA_REDIRECT_URI !== `${process.env.OAUTH_ISSUER}/oauth/callback`) process.exit(1);
+createEntraIdentity({
+  tenantId: process.env.ENTRA_TENANT_ID,
+  clientId: process.env.ENTRA_CLIENT_ID,
+  clientSecret: secret,
+  redirectUri: process.env.ENTRA_REDIRECT_URI,
+  groupAuthorization,
+}, { scopeCatalog: ["mcp:read", "mcp:write"] });
+'; then
+      fail "Entra stack outputs failed provider preflight"
+    fi
     export ENTRA_CLIENT_ID ENTRA_CLIENT_SECRET ENTRA_REDIRECT_URI
     export ENTRA_UNMAPPED_GROUP ENTRA_TENANT_ID ENTRA_GROUP_AUTHORIZATION_JSON
     ;;
@@ -68,6 +111,19 @@ print(json.dumps({"mapping":mapping},separators=(",",":")))
     CF_ACCESS_ISSUER="$(required_raw "$CLOUDFLARE_STACK" cf_access_issuer)" || exit 1
     CF_ACCESS_CERTS_URL="$(required_raw "$CLOUDFLARE_STACK" cf_access_certs_url)" || exit 1
     CF_ACCESS_AUDIENCE="$(required_raw "$CLOUDFLARE_STACK" cf_access_audience)" || exit 1
+    if ! MCP_SSO_REPO_ROOT="$REPO" CF_ACCESS_ISSUER="$CF_ACCESS_ISSUER" \
+      CF_ACCESS_CERTS_URL="$CF_ACCESS_CERTS_URL" CF_ACCESS_AUDIENCE="$CF_ACCESS_AUDIENCE" \
+      node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const { createCloudflareAccessIdentity } = await import(pathToFileURL(`${process.env.MCP_SSO_REPO_ROOT}/src/identity/cloudflare-access.ts`).href);
+createCloudflareAccessIdentity({
+  issuer: process.env.CF_ACCESS_ISSUER,
+  certsUrl: process.env.CF_ACCESS_CERTS_URL,
+  audience: process.env.CF_ACCESS_AUDIENCE,
+});
+'; then
+      fail "Cloudflare stack outputs failed provider preflight"
+    fi
     export CF_ACCESS_ISSUER CF_ACCESS_CERTS_URL CF_ACCESS_AUDIENCE
     ;;
   google)
@@ -103,20 +159,6 @@ process.stdout.write(JSON.stringify(parsed));
     ;;
 esac
 
-ISSUER_ORIGINS_JSON="$(required_json "$CLOUDFLARE_STACK" issuer_origins)" || exit 1
-OAUTH_ISSUER="$(printf '%s' "$ISSUER_ORIGINS_JSON" | node -e '
-const fs=require("node:fs");
-let parsed;
-try { parsed=JSON.parse(fs.readFileSync(0,"utf8")); } catch { process.exit(1); }
-const value=parsed?.[process.argv[1]];
-if (typeof value!=="string" || value.length===0) process.exit(1);
-let url;
-try { url=new URL(value); } catch { process.exit(1); }
-if (url.protocol!=="https:" || url.username || url.password || url.origin!==value) process.exit(1);
-process.stdout.write(value);
-' "$LEG")" || fail "issuer origin output is missing or invalid for the selected leg"
-unset ISSUER_ORIGINS_JSON
-export OAUTH_ISSUER
 export OAUTH_RESOURCE="${OAUTH_ISSUER}/mcp"
 export OAUTH_ALLOWED_ORIGINS="$OAUTH_ISSUER"
 export PROBE_CLIENT_REDIRECT="https://claude.ai/api/mcp/auth_callback"
@@ -140,8 +182,9 @@ export OAUTH_DCR_MODE="${MCP_SSO_DCR_MODE:-stored}"
 export OAUTH_SCOPE_CATALOG="mcp:read,mcp:write"
 export OAUTH_DEFAULT_SCOPES="mcp:read"
 
-STATE="$REPO/.live-state/$LEG"
-rm -rf -- "$STATE" || fail "failed to remove prior live state"
+STATE_SUFFIX="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')" || fail "state path generation failed"
+[ -n "$STATE_SUFFIX" ] || fail "state path generation returned empty"
+STATE="$REPO/.live-state/${LEG}-${STATE_SUFFIX}"
 export MCP_SSO_DIR="$STATE"
 export OAUTH_SQLITE_FILE="$STATE/auth.db"
 

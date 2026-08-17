@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
@@ -72,8 +73,50 @@ test("runner validates every external or generated value before export", () => {
     "cf_access_audience", "issuer_origins",
   ]) assert.match(RUN, new RegExp(`required_(?:raw|json)[^\\n]*${name}`));
   assert.match(RUN, /issuer origin output is missing or invalid for the selected leg/);
+  assert.match(RUN, /createEntraIdentity[\s\S]*?Entra stack outputs failed provider preflight/);
+  assert.match(RUN, /ENTRA_UNMAPPED_GROUP[\s\S]*?mappingKeys\.some[\s\S]*?createEntraIdentity/);
+  assert.match(RUN, /createCloudflareAccessIdentity[\s\S]*?Cloudflare stack outputs failed provider preflight/);
+  assert.ok(RUN.indexOf("failed provider preflight") < RUN.indexOf("STATE_SUFFIX="));
   assert.match(RUN, /consent signing credential generation returned empty/);
   assert.match(RUN, /signing key generation returned empty/);
+  assert.doesNotMatch(RUN, /rm -rf/, "the runner must never delete through an ignored state parent");
+  assert.match(RUN, /randomUUID\(\)[\s\S]*?\.live-state\/\$\{LEG\}-\$\{STATE_SUFFIX\}/);
+});
+
+test("malformed provider output aborts in preflight before the probe runs", () => {
+  const infra = mkdtempSync(join(tmpdir(), "mcp-sso-live-runner-"));
+  const wrapper = join(infra, "scripts/tofu-run.sh");
+  try {
+    mkdirSync(join(infra, "scripts"));
+    writeFileSync(wrapper, `#!/usr/bin/env bash
+case "$4" in
+  issuer_origins) printf '%s' '{"entra":"https://issuer.example.test"}' ;;
+  entra_client_id) printf '%s' '11111111-2222-3333-4444-555555555555' ;;
+  entra_client_secret) printf '%s' 'fixture-secret' ;;
+  entra_redirect_uri) printf '%s' 'https://issuer.example.test/oauth/callback' ;;
+  unmapped_group_object_id_do_not_map) printf '%s' 'not-a-guid' ;;
+  entra_tenant_id) printf '%s' 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' ;;
+  group_authorization_mapping) printf '%s' '{"10000000-0000-0000-0000-000000000001":["mcp:read"],"10000000-0000-0000-0000-000000000002":["mcp:write"]}' ;;
+  *) exit 7 ;;
+esac
+`);
+    chmodSync(wrapper, 0o700);
+    const result = spawnSync(RUN_PATH, ["scripts/live/probe-entra.mjs", "entra"], {
+      cwd: ROOT,
+      env: {
+        PATH: process.env.PATH ?? "",
+        MCP_SSO_INFRA_DIR: infra,
+        MCP_SSO_CLOUDFLARE_STACK: "cloudflare-stack",
+        MCP_SSO_ENTRA_STACK: "entra-stack",
+      },
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Entra stack outputs failed provider preflight/);
+    assert.doesNotMatch(result.stdout, /PASS|FAIL/);
+  } finally {
+    rmSync(infra, { recursive: true, force: true });
+  }
 });
 
 test("Google credentials are owner-held JSON read through the checked descriptor", () => {
