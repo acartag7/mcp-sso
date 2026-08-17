@@ -748,8 +748,8 @@ test("callback row 11: a custom redirect-identity reason cannot inject audit con
 
 test("callback row 11: IdP error_description and custom-port text cannot reach redirect, body, audit, or stderr", async () => {
   const c = config(); const id = fakeIdentity(c);
-  const IDP_POISON = "IDP_ERROR_DESCRIPTION_SECRET_xyz://evil";
-  const PORT_POISON = "CUSTOM_PORT_REASON_SECRET_xyz://evil";
+  const IDP_POISON = "IDP_ATTACKER_DESCRIPTION_xyz://evil";
+  const PORT_POISON = "CUSTOM_PORT_ATTACKER_REASON_xyz://evil";
   id.set({ ok: false, kind: "identity_rejected", reason: PORT_POISON });
   const { flow, audit } = makeFlow(c, id);
   const { claims, cookieValue } = await initiate(c, flow);
@@ -765,13 +765,13 @@ test("callback row 11: IdP error_description and custom-port text cannot reach r
     }));
     const serialized = JSON.stringify(response);
     assert.equal(new URL(hLoc(response)).searchParams.get("error_description"), "upstream identity verification failed");
-    assert.doesNotMatch(hLoc(response), /IDP_ERROR_DESCRIPTION_SECRET|CUSTOM_PORT_REASON_SECRET/);
-    assert.doesNotMatch(serialized, /IDP_ERROR_DESCRIPTION_SECRET|CUSTOM_PORT_REASON_SECRET/);
-    assert.doesNotMatch(audit.json(), /IDP_ERROR_DESCRIPTION_SECRET|CUSTOM_PORT_REASON_SECRET/);
+    assert.doesNotMatch(hLoc(response), /IDP_ATTACKER_DESCRIPTION|CUSTOM_PORT_ATTACKER_REASON/);
+    assert.doesNotMatch(serialized, /IDP_ATTACKER_DESCRIPTION|CUSTOM_PORT_ATTACKER_REASON/);
+    assert.doesNotMatch(audit.json(), /IDP_ATTACKER_DESCRIPTION|CUSTOM_PORT_ATTACKER_REASON/);
   } finally {
     process.stderr.write = original;
   }
-  assert.doesNotMatch(chunks.join(""), /IDP_ERROR_DESCRIPTION_SECRET|CUSTOM_PORT_REASON_SECRET/);
+  assert.doesNotMatch(chunks.join(""), /IDP_ATTACKER_DESCRIPTION|CUSTOM_PORT_ATTACKER_REASON/);
 });
 
 test("callback rows 12/13: success => 200 consent page + identity.verify success + oauth.upstream.callback success", async () => {
