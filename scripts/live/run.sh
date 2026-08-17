@@ -50,27 +50,44 @@ case "$LEG" in
 esac
 
 # Google credentials are NOT provisioned by the stacks (they live in Google
-# Cloud Console). Supply them in a private file outside the repository, mode
-# 0600; it is sourced here and never printed or committed.
+# Cloud Console). Supply them as JSON data in a private file outside the
+# repository, mode 0600; it is never executed, printed, or committed.
 GOOGLE_ENV="${MCP_SSO_GOOGLE_ENV:-$HOME/.mcp-sso-google.env}"
 if [ "$LEG" = "google" ]; then
   [ -f "$GOOGLE_ENV" ] || { echo "Google credential file is required" >&2; exit 1; }
-  node -e '
-const { lstatSync } = require("node:fs");
+  GOOGLE_CONFIG_JSON="$(node -e '
+const { constants, closeSync, fstatSync, openSync, readFileSync } = require("node:fs");
+if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) process.exit(1);
+let fd;
+try { fd = openSync(process.argv[1], constants.O_RDONLY | constants.O_NOFOLLOW); } catch { process.exit(1); }
 let st;
-try { st = lstatSync(process.argv[1]); } catch { process.exit(1); }
+try { st = fstatSync(fd); } catch {
+  closeSync(fd);
+  process.exit(1);
+}
 const ownerMatches = typeof process.getuid !== "function" || st.uid === process.getuid();
-if (!st.isFile() || !ownerMatches || (st.mode & 0o777) !== 0o600) process.exit(1);
-' "$GOOGLE_ENV" || { echo "Google credential file must be an owner-held regular file with mode 0600" >&2; exit 1; }
-  set -a; . "$GOOGLE_ENV"; set +a
-  # A private credential file is not a second-selector configuration surface.
-  # Only its Google selector survives.
-  unset ENTRA_TENANT_ID CF_ACCESS_AUDIENCE OIDC_ISSUER
-  # The Google preset reads GOOGLE_CLIENT_SECRET; OIDC_CLIENT_SECRET belongs to
-  # the generic OIDC path. Accept either name so a file written for one works.
-  : "${GOOGLE_CLIENT_SECRET:=${OIDC_CLIENT_SECRET:-}}"
-  : "${GOOGLE_CLIENT_ID:?Google credential file must set GOOGLE_CLIENT_ID}"
-  : "${GOOGLE_CLIENT_SECRET:?Google credential file must set GOOGLE_CLIENT_SECRET or OIDC_CLIENT_SECRET}"
+if (!st.isFile() || !ownerMatches || (st.mode & 0o777) !== 0o600 || st.size > 16 * 1024) {
+  closeSync(fd);
+  process.exit(1);
+}
+let parsed;
+try { parsed = JSON.parse(readFileSync(fd, "utf8")); } catch {
+  closeSync(fd);
+  process.exit(1);
+}
+closeSync(fd);
+if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)
+  || Object.getPrototypeOf(parsed) !== Object.prototype
+  || Object.keys(parsed).sort().join(",") !== "GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET"
+  || typeof parsed.GOOGLE_CLIENT_ID !== "string" || parsed.GOOGLE_CLIENT_ID.length === 0 || parsed.GOOGLE_CLIENT_ID.length > 4096
+  || typeof parsed.GOOGLE_CLIENT_SECRET !== "string" || parsed.GOOGLE_CLIENT_SECRET.length === 0 || parsed.GOOGLE_CLIENT_SECRET.length > 4096
+  || /[\u0000-\u001f\u007f]/.test(parsed.GOOGLE_CLIENT_ID)
+  || /[\u0000-\u001f\u007f]/.test(parsed.GOOGLE_CLIENT_SECRET)) process.exit(1);
+process.stdout.write(JSON.stringify(parsed));
+' "$GOOGLE_ENV")" || { echo "Google credential file must be owner-held mode-0600 JSON with the required fields" >&2; exit 1; }
+  GOOGLE_CLIENT_ID="$(printf '%s' "$GOOGLE_CONFIG_JSON" | node -e 'const v=JSON.parse(require("node:fs").readFileSync(0,"utf8"));process.stdout.write(v.GOOGLE_CLIENT_ID)')"
+  GOOGLE_CLIENT_SECRET="$(printf '%s' "$GOOGLE_CONFIG_JSON" | node -e 'const v=JSON.parse(require("node:fs").readFileSync(0,"utf8"));process.stdout.write(v.GOOGLE_CLIENT_SECRET)')"
+  unset GOOGLE_CONFIG_JSON ENTRA_TENANT_ID CF_ACCESS_AUDIENCE OIDC_ISSUER
   export GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
 fi
 

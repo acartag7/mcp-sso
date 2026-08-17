@@ -101,15 +101,16 @@ test("Entra deny evidence and Google credentials are mandatory inputs", () => {
   assert.match(README, /MCP_SSO_GOOGLE_ENV/);
   assert.match(RUN, /google\)\s+:\s+;;/);
   assert.match(RUN, /\[ "\$LEG" = "google" \] && export GOOGLE_REDIRECT_URI=/);
-  const permissionAt = RUN.indexOf("const { lstatSync }");
-  const sourceAt = RUN.indexOf('set -a; . "$GOOGLE_ENV"; set +a');
-  assert.ok(permissionAt >= 0 && permissionAt < sourceAt,
-    "the credential file is ownership/type/mode checked before sourcing");
-  assert.match(RUN, /!st\.isFile\(\) \|\| !ownerMatches \|\| \(st\.mode & 0o777\) !== 0o600/);
-  assert.match(RUN, /try \{ st = lstatSync\(process\.argv\[1\]\); \} catch \{ process\.exit\(1\); \}/,
-    "credential-file races fail with the fixed shell diagnostic, not a raw path-bearing stack");
+  const permissionAt = RUN.indexOf("constants.O_RDONLY | constants.O_NOFOLLOW");
+  const readAt = RUN.indexOf('readFileSync(fd, "utf8")');
+  assert.ok(permissionAt >= 0 && permissionAt < readAt,
+    "the credential file is opened no-follow and read through the checked descriptor");
+  assert.match(RUN, /!st\.isFile\(\) \|\| !ownerMatches \|\| \(st\.mode & 0o777\) !== 0o600 \|\| st\.size > 16 \* 1024/);
   assert.match(RUN, /Google credential file is required/);
-  assert.match(RUN, /GOOGLE_CLIENT_ID:\?Google credential file must set GOOGLE_CLIENT_ID/);
+  assert.match(RUN, /Object\.keys\(parsed\)\.sort\(\)\.join\(","\) !== "GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET"/);
+  assert.match(RUN, /parsed\.GOOGLE_CLIENT_SECRET\.length > 4096/);
+  assert.doesNotMatch(RUN, /\. "\$GOOGLE_ENV"|source "\$GOOGLE_ENV"/,
+    "credential data is never executed as shell code");
 });
 
 test("Google live metadata passes through the production preset", () => {
