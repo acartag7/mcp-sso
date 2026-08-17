@@ -64,10 +64,14 @@ try {
   const authz = await app.inject({ method: "GET", url: `/oauth/authorize?${q}` });
   const loc = authz.headers.location ?? "";
   const u = loc.startsWith("http") ? new URL(loc) : null;
+  const advertisedAuthorization = typeof discJson.authorization_endpoint === "string"
+    ? new URL(discJson.authorization_endpoint) : null;
 
   if (!ok("authorize redirects (302)", authz.statusCode === 302, `HTTP ${authz.statusCode}`)) failures++;
-  if (!ok("redirect targets Microsoft login", u?.host === "login.microsoftonline.com", u?.host ?? "no location")) failures++;
-  if (!ok("redirect path carries the real tenant", (u?.pathname ?? "").startsWith(`/${tenant}/`), "tenant path matched")) failures++;
+  if (!ok("redirect matches the discovered Entra authorization endpoint",
+    u !== null && advertisedAuthorization !== null
+      && u.origin === advertisedAuthorization.origin && u.pathname === advertisedAuthorization.pathname,
+    u === null ? "no location" : `${u.origin}${u.pathname}`)) failures++;
   if (!ok("upstream client_id is the provisioned app", u?.searchParams.get("client_id") === process.env.ENTRA_CLIENT_ID)) failures++;
   if (!ok("upstream redirect_uri is the provisioned callback", u?.searchParams.get("redirect_uri") === process.env.ENTRA_REDIRECT_URI)) failures++;
   if (!ok("upstream scope requests openid profile email", (u?.searchParams.get("scope") ?? "").split(" ").sort().join(" ") === "email openid profile", u?.searchParams.get("scope") ?? "")) failures++;

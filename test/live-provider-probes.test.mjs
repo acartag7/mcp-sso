@@ -16,6 +16,8 @@ test("live identity negative reaches verification after a valid client control",
   assert.match(CLOUDFLARE, /client_id: identityClientId \?\? "fixture-registration-failed"/);
   assert.match(CLOUDFLARE, /const forgedRes[\s\S]*?url: `\/oauth\/authorize\?\$\{identityQuery\}`/);
   assert.match(CLOUDFLARE, /forgedRes\.statusCode === 401/);
+  assert.match(CLOUDFLARE, /statSync\(built\.dir\)/);
+  assert.doesNotMatch(CLOUDFLARE, /statSync\(process\.env\.MCP_SSO_DIR\)/);
 });
 
 test("Entra deny evidence is required and exercised through the identity port", () => {
@@ -25,6 +27,8 @@ test("Entra deny evidence is required and exercised through the identity port", 
   assert.match(ENTRA, /new Set\(groups\.map\(\(group\) => group\.toLowerCase\(\)\)\)[\s\S]*?!normalizedGroups\.has\(unmappedGroup\.toLowerCase\(\)\)/);
   assert.match(ENTRA, /createEntraRedirectIdentity[\s\S]*?groups: \[unmappedGroup\][\s\S]*?denyIdentity\.exchangeAndVerify/);
   assert.match(ENTRA, /denied\.kind === "identity_rejected" && denied\.reason === "entra_no_mapped_groups"/);
+  assert.match(ENTRA, /advertisedAuthorization[\s\S]*?u\.origin === advertisedAuthorization\.origin && u\.pathname === advertisedAuthorization\.pathname/);
+  assert.doesNotMatch(ENTRA, /pathname[^\n]*startsWith\(`\/\$\{tenant\}\//);
 });
 
 test("Google production metadata checks cover each endpoint independently", () => {
@@ -38,6 +42,11 @@ test("Google production metadata checks cover each endpoint independently", () =
   assert.match(GOOGLE, /"http token endpoint refused"/);
   assert.match(GOOGLE, /"http JWKS endpoint refused"/);
   assert.doesNotMatch(GOOGLE, /authorization_endpoint: "https:\/\/evil\.test\/authorize", token_endpoint:/);
+  assert.match(GOOGLE, /const GENERIC_ISS = "https:\/\/idp\.example\.test"/);
+  for (const field of ["authorization endpoint", "token endpoint", "JWKS endpoint"]) {
+    assert.match(GOOGLE, new RegExp(`generic OIDC refuses an off-host ${field}`, "i"));
+  }
+  assert.match(GOOGLE, /generic OIDC accepts exact issuer-host endpoints/);
 });
 
 test("discovered JWKS URLs are trusted before either probe follows them", () => {

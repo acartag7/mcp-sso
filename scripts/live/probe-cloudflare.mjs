@@ -116,7 +116,7 @@ try {
 
   // --- 6. State-dir hardening actually applied ------------------------------
   const { statSync } = await import("node:fs");
-  const mode = statSync(process.env.MCP_SSO_DIR).mode & 0o777;
+  const mode = statSync(built.dir).mode & 0o777;
   if (!ok("state directory is 0700 on disk", mode === 0o700, `mode ${mode.toString(8)}`)) failures++;
 } finally {
   await app.close();

@@ -74,6 +74,24 @@ for (const [label, doc, mustRefuse] of [
   if (!ok(label, refused === mustRefuse, refused ? why : "accepted")) failures++;
 }
 
+const GENERIC_ISS = "https://idp.example.test";
+const GENERIC_GOOD = {
+  ...GOOD, issuer: GENERIC_ISS,
+  authorization_endpoint: `${GENERIC_ISS}/authorize`,
+  token_endpoint: `${GENERIC_ISS}/token`, jwks_uri: `${GENERIC_ISS}/jwks`,
+};
+for (const [label, doc, mustRefuse] of [
+  ["generic OIDC accepts exact issuer-host endpoints", GENERIC_GOOD, false],
+  ["generic OIDC refuses an off-host authorization endpoint", { ...GENERIC_GOOD, authorization_endpoint: "https://login.example.test/authorize" }, true],
+  ["generic OIDC refuses an off-host token endpoint", { ...GENERIC_GOOD, token_endpoint: "https://tokens.example.test/token" }, true],
+  ["generic OIDC refuses an off-host JWKS endpoint", { ...GENERIC_GOOD, jwks_uri: "https://keys.example.test/jwks" }, true],
+]) {
+  let refused = false, why = "";
+  try { await createGenericOidcIdentity({ issuer: GENERIC_ISS, clientId: "probe", clientSecret: "s", redirectUri: "https://app.test/cb", endpoints: "discover" }, { discoveryFetch: mk(doc) }); }
+  catch (e) { refused = true; why = String(e.message).slice(0, 64); }
+  if (!ok(label, refused === mustRefuse, refused ? why : "accepted")) failures++;
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.filter((l) => l.startsWith("PASS")).length}/${out.length} checks passed`);
 process.exit(failures > 0 ? 1 : 0);
