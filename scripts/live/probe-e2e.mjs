@@ -203,10 +203,11 @@ try {
   );
   const afterDisable = await app.inject({ method: "POST", url: "/oauth/token",
     headers: { "content-type": "application/x-www-form-urlencoded" }, payload: form.toString() });
-  const body = String(afterDisable.body);
+  let afterDisableError;
+  try { afterDisableError = afterDisable.json().error; } catch { /* malformed response fails the assertion */ }
   if (!ok("a disabled credential can no longer mint tokens",
-    afterDisable.statusCode >= 400 && afterDisable.statusCode !== 429 && !body.includes("access_token"),
-    `HTTP ${afterDisable.statusCode} (429 would prove nothing here)`)) failures++;
+    afterDisable.statusCode === 401 && afterDisableError === "invalid_client",
+    `HTTP ${afterDisable.statusCode}; error ${afterDisableError ?? "missing"}`)) failures++;
 
   // 7. Real Redis limiter admits then refuses. Deliberately LAST, because it
   // exhausts the shared bucket for this IP.

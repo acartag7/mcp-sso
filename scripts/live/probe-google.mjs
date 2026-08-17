@@ -58,9 +58,13 @@ const GOOD = {
   code_challenge_methods_supported: ["S256"], id_token_signing_alg_values_supported: ["RS256"],
 };
 for (const [label, doc, mustRefuse] of [
-  ["off-issuer discovery endpoints refused", { ...GOOD, authorization_endpoint: "https://evil.test/authorize", token_endpoint: "https://evil.test/token", jwks_uri: "https://evil.test/jwks" }, true],
+  ["off-issuer authorization endpoint refused", { ...GOOD, authorization_endpoint: "https://evil.test/authorize" }, true],
+  ["off-issuer token endpoint refused", { ...GOOD, token_endpoint: "https://evil.test/token" }, true],
+  ["off-issuer JWKS endpoint refused", { ...GOOD, jwks_uri: "https://evil.test/jwks" }, true],
   ["mismatched document issuer refused", { ...GOOD, issuer: "https://evil.test" }, true],
-  ["http (non-https) endpoint refused", { ...GOOD, authorization_endpoint: "http://accounts.google.com/auth" }, true],
+  ["http authorization endpoint refused", { ...GOOD, authorization_endpoint: "http://accounts.google.com/auth" }, true],
+  ["http token endpoint refused", { ...GOOD, token_endpoint: "http://oauth2.googleapis.com/token" }, true],
+  ["http JWKS endpoint refused", { ...GOOD, jwks_uri: "http://www.googleapis.com/oauth2/v3/certs" }, true],
   ["discovery without PKCE S256 refused", { ...GOOD, code_challenge_methods_supported: ["plain"] }, true],
   ["a complete genuine document is accepted", GOOD, false],
 ]) {

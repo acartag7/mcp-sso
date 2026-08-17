@@ -37,6 +37,8 @@ test("live probes cannot turn an unexercised subject into passing evidence", () 
   assert.match(PROBE, /await client\.connect\(transport\)/);
   assert.match(PROBE, /await client\.callTool\(/);
   assert.ok(PROBE.indexOf("await disableMachineClient(") < PROBE.indexOf("for (let i = 0; i < 12; i += 1)"));
+  assert.match(PROBE, /afterDisable\.statusCode === 401 && afterDisableError === "invalid_client"/);
+  assert.doesNotMatch(PROBE, /afterDisable\.statusCode >= 400/);
   assert.match(PROBE, /const requiredFlow = \[[\s\S]*?\["oauth\.client\.provision", "success"\][\s\S]*?\["oauth\.token\.client_credentials", "success"\][\s\S]*?\["auth\.request", "success"\][\s\S]*?\["oauth\.client\.disable", "success"\][\s\S]*?hasRequiredFlow\(fileEvents\)[\s\S]*?hasRequiredFlow\(posted\)/);
   assert.match(PROBE, /JSON\.stringify\(fileEvents\) === JSON\.stringify\(posted\)/);
 });
@@ -46,6 +48,8 @@ test("Entra deny evidence is a mandatory input", () => {
   assert.ok(ENTRA.indexOf("ENTRA_UNMAPPED_GROUP must provide the deny-fixture GUID") < ENTRA.indexOf("await buildExample(process.env)"));
   assert.doesNotMatch(ENTRA, /ENTRA_UNMAPPED_GROUP \?\? ""/);
   assert.match(ENTRA, /new Set\(groups\.map\(\(group\) => group\.toLowerCase\(\)\)\)[\s\S]*?!normalizedGroups\.has\(unmappedGroup\.toLowerCase\(\)\)/);
+  assert.match(ENTRA, /createEntraRedirectIdentity[\s\S]*?groups: \[unmappedGroup\][\s\S]*?denyIdentity\.exchangeAndVerify/);
+  assert.match(ENTRA, /denied\.kind === "identity_rejected" && denied\.reason === "entra_no_mapped_groups"/);
 });
 
 test("Google live metadata passes through the production preset", () => {
@@ -53,6 +57,13 @@ test("Google live metadata passes through the production preset", () => {
   assert.match(GOOGLE, /createGoogleIdentity\(cfg, \{ discoveryFetch:[\s\S]*?json: async \(\) => structuredClone\(dj\)/);
   assert.match(GOOGLE, /builderDiscoveryUrl === "https:\/\/accounts\.google\.com\/\.well-known\/openid-configuration"/);
   assert.match(GOOGLE, /liveGoogle\.getAuthorizationUrl\(/);
+  assert.match(GOOGLE, /"off-issuer authorization endpoint refused", \{ \.\.\.GOOD, authorization_endpoint: "https:\/\/evil\.test\/authorize" \}/);
+  assert.match(GOOGLE, /"off-issuer token endpoint refused", \{ \.\.\.GOOD, token_endpoint: "https:\/\/evil\.test\/token" \}/);
+  assert.match(GOOGLE, /"off-issuer JWKS endpoint refused", \{ \.\.\.GOOD, jwks_uri: "https:\/\/evil\.test\/jwks" \}/);
+  assert.doesNotMatch(GOOGLE, /authorization_endpoint: "https:\/\/evil\.test\/authorize", token_endpoint:/);
+  assert.match(GOOGLE, /"http authorization endpoint refused", \{ \.\.\.GOOD, authorization_endpoint: "http:\/\/accounts\.google\.com\/auth" \}/);
+  assert.match(GOOGLE, /"http token endpoint refused", \{ \.\.\.GOOD, token_endpoint: "http:\/\/oauth2\.googleapis\.com\/token" \}/);
+  assert.match(GOOGLE, /"http JWKS endpoint refused", \{ \.\.\.GOOD, jwks_uri: "http:\/\/www\.googleapis\.com\/oauth2\/v3\/certs" \}/);
 });
 
 test("discovered JWKS URLs are trusted before either probe follows them", () => {

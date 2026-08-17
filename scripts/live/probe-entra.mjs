@@ -5,7 +5,8 @@
 // No secret is printed. Values arrive through env and only derived facts
 // (host, presence, lengths) are reported.
 import { buildExample } from "../../examples/fastify-sqlite/app.ts";
-import { entraJwksUrl } from "../../src/identity/entra.ts";
+import { generateKeyPair, SignJWT } from "jose";
+import { createEntraRedirectIdentity, entraIssuer, entraJwksUrl } from "../../src/identity/entra.ts";
 
 const out = [];
 const ok = (label, cond, detail = "") => {
@@ -89,6 +90,37 @@ try {
   if (!ok("every mapped key is a real GUID, not a display name", groups.length > 0 && groups.every((g) => guid.test(g)))) failures++;
   if (!ok("the unmapped deny-leg group is NOT in the mapping",
     !normalizedGroups.has(unmappedGroup.toLowerCase()), "no-mapped-group leg stays provable")) failures++;
+
+  // Exercise the shipped redirect identity port with a cryptographically
+  // verified control token carrying only the provisioned unmapped group. Merely
+  // checking that a GUID is absent from the mapping would let an unrelated or
+  // unused fixture pass without proving the deny reason.
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const now = Math.floor(Date.now() / 1000);
+  const denyNonce = "live-unmapped-group-control";
+  const denyToken = await new SignJWT({
+    oid: "live-unmapped-group-control", tid: tenant, nonce: denyNonce,
+    groups: [unmappedGroup],
+  }).setProtectedHeader({ alg: "RS256", kid: "live-control" })
+    .setIssuer(entraIssuer(tenant)).setAudience(process.env.ENTRA_CLIENT_ID)
+    .setIssuedAt(now).setExpirationTime(now + 300).sign(privateKey);
+  const denyIdentity = createEntraRedirectIdentity({
+    tenantId: tenant, clientId: process.env.ENTRA_CLIENT_ID,
+    redirectUri: process.env.ENTRA_REDIRECT_URI,
+    groupAuthorization: groupAuth,
+  }, {
+    verifyKey: publicKey,
+    currentDate: new Date(now * 1000),
+    transport: { async postForm() {
+      return { status: 200, async text() { return JSON.stringify({ id_token: denyToken }); } };
+    } },
+  });
+  const denied = await denyIdentity.exchangeAndVerify({
+    code: "live-control", codeVerifier: "V".repeat(43), nonce: denyNonce,
+  });
+  if (!ok("identity port rejects a verified token carrying only the unmapped group",
+    !denied.ok && denied.kind === "identity_rejected" && denied.reason === "entra_no_mapped_groups",
+    denied.ok ? "unexpectedly accepted" : `${denied.kind}:${denied.reason}`)) failures++;
 } finally {
   await app.close();
 }
