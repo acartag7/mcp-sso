@@ -215,7 +215,8 @@ official-SDK tool call. The generated composition rejects a non-loopback `HOST` 
 creating state. It prepares missing signing material in memory, builds the full
 `BridgeConfig`, then calls the root-exported `assertSafeDeploymentCombination`
 with its finite registration port. Only after both checks pass does it persist
-the prepared material or open SQLite. It retains the returned bound port for
+the same deeply frozen prepared-material snapshot or open SQLite; mutation cannot
+change the later write after validation. It retains the returned bound port for
 `Bridge`, and `Bridge` repeats the
 guard: stored DCR is intentionally confined to the starter's
 single-operator localhost envelope, where an unauthenticated network caller cannot grow

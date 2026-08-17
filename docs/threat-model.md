@@ -225,8 +225,10 @@ material is generated only in memory. The starter validates its complete
 `BridgeConfig` and bounded stored-DCR limiter before invoking the preparation's
 one-shot persistence capability, so rejected configuration creates no new
 directory, ignore file, signing file, audit file, or database. Persistence keeps
-the row's exclusive-create and permission rules; concurrent first boots still
-leave one winner and one fail-closed restart instruction.
+the same deeply frozen secret snapshot that the complete configuration consumed;
+callers cannot swap signing or consent material between validation and the write.
+It also keeps the row's exclusive-create and permission rules; concurrent first
+boots still leave one winner and one fail-closed restart instruction.
 
 ### Rows 5/9 — the redirect-entry grammar
 

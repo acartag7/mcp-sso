@@ -1933,6 +1933,11 @@ convenience wrapper over the two-phase composition-root API:
   regular-file, and managed-ignore rules as the immediate wrapper. A second call
   fails closed. Concurrent first boots remain create-don't-clobber: one wins and
   the other fails with the existing restart instruction.
+- Preparation captures one deeply frozen secret snapshot before returning. The
+  public `secrets` value and the private value later serialized by `persist()` are
+  that same snapshot; callers cannot change signing or consent material between
+  complete-config validation and persistence. The immediate wrapper returns the
+  same immutable snapshot.
 - Existing secrets are never rewritten: their preparation's first `persist()` is
   a no-op after the read-time admission checks, and a second call still rejects.
 

@@ -13,6 +13,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { exportJWK, generateKeyPair } from "jose";
 import { AuthConfigError } from "./config.ts";
+import { snapshotJwk } from "./config-snapshot.ts";
 import {
   assertRealDir, ensureGitignore, loadQuickstartSecrets, pathExists,
   persistQuickstartSecrets,
@@ -29,7 +30,7 @@ export interface QuickstartOptions {
 }
 
 export interface PreparedQuickstartSecrets {
-  /** Existing admitted material or newly generated in-memory material. */
+  /** Deeply frozen material shared by validation and later persistence. */
   readonly secrets: QuickstartSecrets;
   /** Persist missing material once. Existing admitted material is not rewritten. */
   persist(): Promise<void>;
@@ -56,7 +57,7 @@ export async function prepareQuickstartSecrets(
   const secrets = await generateQuickstartSecrets();
   return oneShotPreparation(
     secrets,
-    () => persistQuickstartSecrets(dir, secretsPath, secrets),
+    (snapshot) => persistQuickstartSecrets(dir, secretsPath, snapshot),
   );
 }
 
@@ -79,17 +80,29 @@ async function generateQuickstartSecrets(): Promise<QuickstartSecrets> {
 
 function oneShotPreparation(
   secrets: QuickstartSecrets,
-  persist: () => Promise<void>,
+  persist: (snapshot: QuickstartSecrets) => Promise<void>,
 ): PreparedQuickstartSecrets {
+  const snapshot = freezeSecretsSnapshot(secrets);
   let used = false;
   return Object.freeze({
-    secrets,
+    secrets: snapshot,
     async persist(): Promise<void> {
       if (used) {
         throw new AuthConfigError("quickstart: prepared secrets persist() may be called only once");
       }
       used = true;
-      await persist();
+      await persist(snapshot);
     },
+  });
+}
+
+function freezeSecretsSnapshot(secrets: QuickstartSecrets): QuickstartSecrets {
+  const signingPrivateJwk = snapshotJwk(
+    secrets.signingPrivateJwk,
+    (message) => new AuthConfigError(`quickstart: ${message}`),
+  );
+  return Object.freeze({
+    signingPrivateJwk,
+    consentSigningSecret: secrets.consentSigningSecret,
   });
 }

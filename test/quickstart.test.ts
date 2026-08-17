@@ -80,9 +80,33 @@ test("§17.8: two-phase preparation validates before its one-shot persistence", 
     const content = await readFile(join(target, "secrets.json"), "utf8");
     const existing = await prepareQuickstartSecrets({ dir: target });
     assert.deepEqual(existing.secrets, prepared.secrets);
+    assert.throws(() => {
+      (existing.secrets as { consentSigningSecret: string }).consentSigningSecret = "M".repeat(48);
+    }, TypeError, "existing admitted material is immutable too");
     await existing.persist();
     assert.equal(await readFile(join(target, "secrets.json"), "utf8"), content, "existing state was not rewritten");
     await assert.rejects(existing.persist, /may be called only once/);
+  });
+});
+
+test("§17.8: prepared material cannot change between validation and persistence", async () => {
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    const prepared = await prepareQuickstartSecrets({ dir: target });
+    const config = configFrom(prepared.secrets);
+    const admitted = JSON.stringify(prepared.secrets);
+
+    assert.throws(() => {
+      (prepared.secrets as { consentSigningSecret: string }).consentSigningSecret = "M".repeat(48);
+    }, TypeError);
+    assert.throws(() => {
+      (prepared.secrets.signingPrivateJwk as Record<string, unknown>).d = "mutated";
+    }, TypeError);
+    assert.equal(config.consentSigningSecret, prepared.secrets.consentSigningSecret);
+
+    await prepared.persist();
+    assert.equal(await readFile(join(target, "secrets.json"), "utf8"), `${admitted}\n`);
+    assert.deepEqual(await loadOrCreateQuickstartSecrets({ dir: target }), prepared.secrets);
   });
 });
 
