@@ -15,6 +15,7 @@ const RUN = readFileSync(join(ROOT, "scripts/live/run.sh"), "utf8");
 const PROBE = readFileSync(join(ROOT, "scripts/live/probe-e2e.mjs"), "utf8");
 const CLOUDFLARE = readFileSync(join(ROOT, "scripts/live/probe-cloudflare.mjs"), "utf8");
 const ENTRA = readFileSync(join(ROOT, "scripts/live/probe-entra.mjs"), "utf8");
+const GOOGLE = readFileSync(join(ROOT, "scripts/live/probe-google.mjs"), "utf8");
 const README = readFileSync(join(ROOT, "scripts/live/README.md"), "utf8");
 const CHECKLIST = readFileSync(join(ROOT, "scripts/live/CHECKLIST.md"), "utf8");
 
@@ -225,6 +226,19 @@ test("Entra deny evidence and Google credentials are mandatory inputs", () => {
   assert.match(README, /MCP_SSO_GOOGLE_ENV/);
   assert.match(RUN, /google\)\s+:\s+;;/);
   assert.match(RUN, /\[ "\$LEG" = "google" \] && export GOOGLE_REDIRECT_URI=/);
+});
+
+test("Google live metadata passes through the production preset", () => {
+  assert.match(GOOGLE, /import \{ createGoogleIdentity, validateGoogleIdToken \}/);
+  assert.match(
+    GOOGLE,
+    /createGoogleIdentity\(cfg, \{ discoveryFetch:[\s\S]*?json: async \(\) => structuredClone\(dj\)/,
+    "the production Google builder parses the live document fetched by the probe",
+  );
+  assert.match(GOOGLE, /builderDiscoveryUrl === "https:\/\/accounts\.google\.com\/\.well-known\/openid-configuration"/,
+    "the preset must request Google's canonical discovery URL");
+  assert.match(GOOGLE, /liveGoogle\.getAuthorizationUrl\(/,
+    "the resolved live endpoint is exercised through the production identity");
 });
 
 test("Cloudflare edge-denial evidence compares the audit state around E1", () => {

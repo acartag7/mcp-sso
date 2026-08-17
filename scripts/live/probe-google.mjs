@@ -2,7 +2,7 @@
 // OAuth client is provisioned by the stacks, so this covers what does not need
 // one: real discovery, real JWKS, the claim gate, and the discovery-host
 // binding. Runs standalone — no stack values required.
-import { validateGoogleIdToken } from "../../src/identity/google.ts";
+import { createGoogleIdentity, validateGoogleIdToken } from "../../src/identity/google.ts";
 import { createGenericOidcIdentity } from "../../src/identity/generic-oidc.ts";
 
 const out = [];
@@ -17,8 +17,22 @@ const jj = await jwks.json();
 if (!ok("Google JWKS serves real signing keys", jwks.status === 200 && (jj.keys ?? []).length > 0, `${(jj.keys ?? []).length} keys`)) failures++;
 if (!ok("Google advertises RS256", (dj.id_token_signing_alg_values_supported ?? []).includes("RS256"))) failures++;
 
-const base = { iss: "https://accounts.google.com", aud: "probe-client", sub: "1234567890", exp: 1_900_000_000, iat: 1_800_000_000 };
 const cfg = { clientId: "probe-client", clientSecret: "s", redirectUri: "https://app.test/cb" };
+let builderDiscoveryUrl;
+const liveGoogle = await createGoogleIdentity(cfg, { discoveryFetch: {
+  async get(url) {
+    builderDiscoveryUrl = url;
+    return { status: disc.status, json: async () => structuredClone(dj) };
+  },
+} });
+if (!ok("Google production preset requests the canonical discovery document",
+  builderDiscoveryUrl === "https://accounts.google.com/.well-known/openid-configuration")) failures++;
+const liveAuth = new URL(liveGoogle.getAuthorizationUrl({ state: "probe-state", nonce: "probe-nonce", codeChallenge: "A".repeat(43) }));
+const advertisedAuth = new URL(dj.authorization_endpoint);
+if (!ok("Google production preset accepts and uses the live authorization endpoint",
+  liveAuth.origin === advertisedAuth.origin && liveAuth.pathname === advertisedAuth.pathname)) failures++;
+
+const base = { iss: "https://accounts.google.com", aud: "probe-client", sub: "1234567890", exp: 1_900_000_000, iat: 1_800_000_000 };
 for (const [label, payload] of [
   ["a lookalike Google issuer is refused", { ...base, iss: "https://accounts.google.com.evil.test" }],
   ["a token for another audience is refused", { ...base, aud: "someone-else" }],
