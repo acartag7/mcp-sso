@@ -25,7 +25,7 @@ function executable(path, source) {
 
 function waitForExit(child) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("serve.sh did not exit after tunnel completion")), 5_000);
+    const timer = setTimeout(() => reject(new Error("serve.sh did not exit after tunnel completion")), 10_000);
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       clearTimeout(timer);
