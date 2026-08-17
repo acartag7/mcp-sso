@@ -73,9 +73,9 @@ test("runner validates every external or generated value before export", () => {
     "cf_access_audience", "issuer_origins",
   ]) assert.match(RUN, new RegExp(`required_(?:raw|json)[^\\n]*${name}`));
   assert.match(RUN, /issuer origin output is missing or invalid for the selected leg/);
-  assert.match(RUN, /createEntraIdentity[\s\S]*?Entra stack outputs failed provider preflight/);
+  assert.match(RUN, /createEntraIdentity\(\{[\s\S]*?Entra stack outputs failed provider preflight/);
   assert.match(RUN, /ENTRA_UNMAPPED_GROUP[\s\S]*?mappingKeys\.some[\s\S]*?createEntraIdentity/);
-  assert.match(RUN, /createCloudflareAccessIdentity[\s\S]*?Cloudflare stack outputs failed provider preflight/);
+  assert.match(RUN, /createCloudflareAccessIdentity\(\{[\s\S]*?Cloudflare stack outputs failed provider preflight/);
   assert.ok(RUN.indexOf("failed provider preflight") < RUN.indexOf("STATE_SUFFIX="));
   assert.match(RUN, /consent signing credential generation returned empty/);
   assert.match(RUN, /signing key generation returned empty/);
