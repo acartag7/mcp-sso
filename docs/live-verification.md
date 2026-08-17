@@ -124,6 +124,39 @@ These repeatable procedures produced the dated matrix evidence above and remain
 the gate for any pending clean-main rerun. A new `⬜` row flips only after the
 owner records the observed result and caveat in the matrix.
 
+### Provisioning — the environment is infrastructure-as-code, not hand-built
+
+The identity providers, hostnames, tunnel ports, and test users these checklists
+need are **provisioned by OpenTofu stacks in a separate private repository**, one
+stack per provider leg. Nothing below is assembled by hand, and no provider
+secret is stored in this repository or read from a developer's shell profile.
+
+The run order is always: authenticate to the cloud account once, then read the
+stack outputs, then export them into the checklist's environment.
+
+| What the checklists need | Where it comes from |
+| --- | --- |
+| `CF_ACCESS_ISSUER`, `CF_ACCESS_AUD`, the Access certs URL | Cloudflare stack outputs |
+| Public issuer origin + tunnel ingress ports, per leg | Cloudflare stack outputs, keyed by leg so legs can run side by side |
+| Entra tenant, client id, client secret, redirect URI | Entra stack outputs; the secret is a sensitive output, never a variable |
+| `ENTRA_GROUP_AUTHORIZATION_JSON` | Entra stack's group-authorization mapping output, fed in verbatim |
+| Deny-leg fixtures — an unmapped group, a group-overage user, a no-group user, a cross-tenant guest | Entra stack outputs; the negative legs are provisioned, not improvised |
+
+Two rules that make this reproducible rather than a one-off:
+
+- **Feed the mapping in through configuration, never by patching source.** The
+  group-authorization mapping is an environment value consumed by the example's
+  builder. A run that edits library or example code to make a leg pass has
+  verified the patch, not the release.
+- **Provider credentials reach the process from the stack outputs for the
+  duration of the run.** They are not committed, not placed in a shell profile,
+  and not echoed into evidence — see the redaction rule in the receipts above.
+
+The stack names, repository path, and the exact wrapper command are recorded in
+the maintainer's project memory rather than here, because they name private
+infrastructure. Everything a run *observes* — reason codes, statuses, flows — is
+public and belongs in the matrix above.
+
 ### A — Cloudflare Access (production identity leg) × a live client
 
 The goal: prove a real MCP client completes the flow when Cloudflare Access — not a
