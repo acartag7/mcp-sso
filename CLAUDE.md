@@ -31,3 +31,7 @@ regression test fails without its fix. Codex Reviewer must review the exact
 final PR head, and every review object and inline thread must be read before
 merge. After more than two unsuccessful review cycles, split or redesign the
 PR.
+
+Local review before Codex is
+[class-closure-review](.claude/skills/class-closure-review/SKILL.md), not a
+prose “sibling sweep.” Empty matrix cell = do not push.
