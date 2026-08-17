@@ -15,3 +15,6 @@ coverage/
 .codex/
 .entire/
 .live-evidence/
+
+# Live-verification working state (never committed)
+.live-state/
