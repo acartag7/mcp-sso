@@ -350,13 +350,15 @@ client and reach consent; a CIMD `client_id` is resolved when CIMD is enabled an
 **refused** when it is not, and in neither case does it enter the DCR client
 store. There is no fallback between the paths, by design.
 
-The row also carries the shape that broke Claude Code in v0.3.5: a real published
-document with port-less loopback redirects and no `application_type`, matched
-against an ephemeral port. Every CIMD fixture in this repository sets that field
-because they were written alongside the rule that required it, so a self-authored
-fixture could not see the regression. Negative cases pin that the elasticity stays
-narrow — same scheme, host, and path, port free — and that a non-loopback `https`
-entry gains none of it.
+The frozen native-loopback acceptance phase already carries Claude Code's literal
+published document shape: port-less loopback redirects with no
+`application_type`, matched against an ephemeral port through
+`Bridge.handleAuthorize`. RM.15 does not fill a fixture-shape gap. Its new evidence
+crosses that already-covered shape with the full CIMD-enabled/disabled ×
+DCR-stateless/stored dispatch matrix and proves that scheme-shaped client IDs
+never fall through to DCR lookup. The existing acceptance negatives remain the
+evidence that loopback elasticity stays narrow — same scheme, host, and path,
+port free — and that a non-loopback `https` entry gains none of it.
 
 Stored-DCR deployments here supply a bounded limiter, because B1 makes an
 unbounded anonymous durable-write path a boot failure; the row tests dispatch
