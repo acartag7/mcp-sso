@@ -88,11 +88,18 @@ document directly, so the URL must return HTTP 200 without a redirect, exactly
 one JSON `Content-Type` header (for example, `application/json`), and no
 `Content-Encoding` header. Disable automatic compression for this document.
 
-CIMD clients are public clients in 0.3:
-`token_endpoint_auth_method` must be absent or `"none"`, and client secrets are
-rejected. If `response_types` is present it must include `"code"`; if
-`grant_types` is present it must include `"authorization_code"`. Extra grant
-declarations do not enable extra bridge grant handlers.
+CIMD clients are public clients in 0.3. A document may omit
+`token_endpoint_auth_method` or set it to `"none"`. It may also prefer
+`"private_key_jwt"` when its registered
+`token_endpoint_auth_methods_supported` list contains both
+`"private_key_jwt"` and `"none"`; mcp-sso selects `"none"`. A missing or
+malformed choice list, or one that does not advertise `"none"`, is rejected.
+This is public-client method selection, not confidential-client support:
+mcp-sso does not validate a client assertion or fetch `jwks_uri`, and shared
+secret methods and client secrets remain rejected. If `response_types` is
+present it must include `"code"`; if `grant_types` is present it must include
+`"authorization_code"`. Extra grant declarations do not enable extra bridge
+grant handlers.
 
 The complete URL-admission, SSRF, size, timeout, redirect, document, cache, and
 error contract is [§17.1](contracts/17-v0-2-feature-contracts.md#171-cimd--client-id-metadata-documents-the-ssrf-enforcement-contract).
