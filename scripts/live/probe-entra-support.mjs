@@ -8,6 +8,28 @@ export const fetchJson = async (url) => {
   });
   return { status: response.status, body: await response.json() };
 };
+export const matchesUpstreamCookieProfile = (cookie, issuer) => {
+  let url;
+  try {
+    url = new URL(issuer);
+  } catch {
+    return false;
+  }
+  const secure = url.protocol === "https:";
+  const loopback = url.protocol === "http:"
+    && new Set(["localhost", "127.0.0.1", "[::1]"]).has(url.hostname);
+  if (!secure && !loopback) return false;
+  const name = secure ? "__Host-mcp-sso-upstream" : "mcp-sso-upstream";
+  const parts = cookie.split("; ");
+  const expectedAttributes = secure
+    ? ["Path=/", "Secure", "HttpOnly", "SameSite=Lax"]
+    : ["Path=/", "HttpOnly", "SameSite=Lax"];
+  return parts[0]?.startsWith(`${name}=`) === true
+    && parts[0].length > name.length + 1
+    && expectedAttributes.every((attribute) => parts.includes(attribute))
+    && parts.filter((part) => /^Max-Age=\d+$/.test(part)).length === 1
+    && parts.length === expectedAttributes.length + 2;
+};
 export const countUsableRs256Keys = async (document) => {
   if (document === null || typeof document !== "object"
     || !Array.isArray(document.keys)) return 0;

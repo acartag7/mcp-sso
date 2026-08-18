@@ -9,7 +9,9 @@ import {
   assertGroupAuthorizationMapping, createEntraRedirectIdentity, entraIssuer, entraJwksUrl,
 } from "../../src/identity/entra.ts";
 import { assertRegistrationRedirectPolicy } from "../../src/redirect.ts";
-import { countUsableRs256Keys, fetchJson } from "./probe-entra-support.mjs";
+import {
+  countUsableRs256Keys, fetchJson, matchesUpstreamCookieProfile,
+} from "./probe-entra-support.mjs";
 
 const out = [];
 const ok = (label, condition, detail = "") => {
@@ -136,10 +138,8 @@ try {
     (target?.searchParams.get("nonce") ?? "").length > 16)) failures++;
 
   const cookie = String(authorization.headers["set-cookie"] ?? "");
-  if (!ok("flow cookie is __Host- prefixed", cookie.includes("__Host-"))) failures++;
-  if (!ok("flow cookie is SameSite=Lax", /SameSite=Lax/i.test(cookie))) failures++;
-  if (!ok("flow cookie is HttpOnly and Secure",
-    /HttpOnly/i.test(cookie) && /Secure/i.test(cookie))) failures++;
+  if (!ok("flow cookie matches the issuer security profile",
+    matchesUpstreamCookieProfile(cookie, built.config.issuer))) failures++;
 
   // This does not prove that the tenant emits the group in a real token. It is
   // a local group-only control for the shipped mapping and reason-code path;

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { exportJWK, generateKeyPair } from "jose";
 import {
-  countUsableRs256Keys, fetchJson,
+  countUsableRs256Keys, fetchJson, matchesUpstreamCookieProfile,
 } from "../scripts/live/probe-entra-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -92,6 +92,27 @@ test("Entra JWKS evidence requires a runtime-usable RS256 public key", async () 
   assert.match(PROBE, /Entra JWKS serves usable RS256 verification keys/);
   assert.match(PROBE, /jwks\.status === 200 && usableKeys > 0/);
   assert.doesNotMatch(PROBE, /\.filter\(\(key\) => key\.kty === "RSA"\)/);
+});
+
+test("Entra cookie evidence accepts exactly the issuer's supported profile", () => {
+  const secureCookie = "__Host-mcp-sso-upstream=value; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=300";
+  const loopbackCookie = "mcp-sso-upstream=value; Path=/; HttpOnly; SameSite=Lax; Max-Age=300";
+  assert.equal(matchesUpstreamCookieProfile(secureCookie, "https://sso.example.test"), true);
+  assert.equal(matchesUpstreamCookieProfile(loopbackCookie, "http://127.0.0.1:3000"), true);
+  for (const [cookie, issuer] of [
+    [secureCookie.replace("; Secure", ""), "https://sso.example.test"],
+    [loopbackCookie.replace("; HttpOnly", "; Secure; HttpOnly"), "http://localhost:3000"],
+    [secureCookie.replace("__Host-", ""), "https://sso.example.test"],
+    [loopbackCookie.replace("mcp-sso-upstream", "__Host-mcp-sso-upstream"), "http://localhost:3000"],
+    [secureCookie.replace("; HttpOnly", ""), "https://sso.example.test"],
+    [`${secureCookie}; Domain=example.test`, "https://sso.example.test"],
+  ]) {
+    assert.equal(matchesUpstreamCookieProfile(cookie, issuer), false);
+  }
+  assert.equal(matchesUpstreamCookieProfile(secureCookie, "not a URL"), false);
+  assert.equal(matchesUpstreamCookieProfile(loopbackCookie, "http://sso.example.test"), false);
+  assert.match(PROBE, /matchesUpstreamCookieProfile\(cookie, built\.config\.issuer\)/);
+  assert.doesNotMatch(PROBE, /cookie\.includes\("__Host-"\)/);
 });
 
 test("Entra synthetic denial is a non-live control excluded from live counts", () => {
