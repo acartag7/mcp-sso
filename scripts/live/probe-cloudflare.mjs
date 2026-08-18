@@ -4,7 +4,7 @@ import { buildExample } from "../../examples/fastify-sqlite/app.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertRegistrationRedirectPolicy } from "../../src/redirect.ts";
+import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
 
 const { SignJWT, decodeProtectedHeader, generateKeyPair } = await import("jose");
 
@@ -14,9 +14,11 @@ if (typeof providerAssertion !== "string" || providerAssertion.length === 0) {
 }
 let callback;
 try {
-  callback = assertRegistrationRedirectPolicy(process.env.PROBE_APP_CALLBACK, "web");
+  callback = assertProbeClientRedirect(process.env.PROBE_APP_CALLBACK);
 } catch {
-  throw new Error("PROBE_APP_CALLBACK must provide a valid web callback URL");
+  throw new Error(
+    "PROBE_APP_CALLBACK must be a web callback URL the effective allowlist admits",
+  );
 }
 
 const out = [];

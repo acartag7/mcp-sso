@@ -11,7 +11,7 @@ import { generateKeyPair, SignJWT } from "jose";
 import {
   assertGroupAuthorizationMapping, createEntraRedirectIdentity, entraIssuer, entraJwksUrl,
 } from "../../src/identity/entra.ts";
-import { assertRegistrationRedirectPolicy } from "../../src/redirect.ts";
+import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
 import {
   countUsableRs256Keys, fetchJson, hasExpectedSignedFlowLifetime,
   matchesUpstreamCookieProfile, upstreamCookieValue,
@@ -51,12 +51,11 @@ if (normalizedGroups.has(unmappedGroup.toLowerCase())) {
 }
 let redirect;
 try {
-  redirect = assertRegistrationRedirectPolicy(
-    process.env.PROBE_CLIENT_REDIRECT,
-    "web",
-  );
+  redirect = assertProbeClientRedirect(process.env.PROBE_CLIENT_REDIRECT);
 } catch {
-  throw new Error("PROBE_CLIENT_REDIRECT must provide a valid web redirect URL");
+  throw new Error(
+    "PROBE_CLIENT_REDIRECT must be a web redirect URL the effective allowlist admits",
+  );
 }
 
 let app;

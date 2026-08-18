@@ -148,9 +148,17 @@ describes:
 2. **Sibling sweep = exhaustive grep, never an eyeball pass.** This repo's
    recurring sibling axes: the **3 adapters** (fastify/express/hono), the **3
    stores** (memory/sqlite/mysql — parity via the SHARED conformance suite,
-   never a store-specific test), example vs library, quickstart path vs
+   never a store-specific test), the **3 live probes**
+   (`scripts/live/probe-{cloudflare,entra,google}.mjs` — a preflight, cleanup,
+   or evidence rule added to one belongs in a shared `*-support.mjs` helper and
+   applies to all three), example vs library, quickstart path vs
    deployment branch, and **entry-point guard vs stored-state** (a guard at
    prepare/register always has a sibling for records already in the store).
+   Changing the harness also updates its record: the row table in
+   [`docs/live-verification.md`](docs/live-verification.md), and — once the
+   runnable operator checklist lands alongside the probes — that checklist too.
+   A probe whose behaviour no longer matches its written record leaves the
+   person running the release gate following instructions that no longer hold.
 3. **Guards run before side effects.** A rejection must not leave state — check
    ordering against store writes and success-audit emits. A success audit
    followed by a failure for the same operation means the guard is in the wrong

@@ -18,7 +18,7 @@ test("Entra-owned fixtures are parsed before boot or provider reads", () => {
   const denyRequiredAt = PROBE.indexOf("ENTRA_UNMAPPED_GROUP must provide the deny-fixture GUID");
   const mappingRequiredAt = PROBE.indexOf("ENTRA_GROUP_AUTHORIZATION_JSON must provide a valid group mapping");
   const mappingAbsentAt = PROBE.indexOf("ENTRA_UNMAPPED_GROUP must be absent from the group mapping");
-  const redirectRequiredAt = PROBE.indexOf("PROBE_CLIENT_REDIRECT must provide a valid web redirect URL");
+  const redirectRequiredAt = PROBE.indexOf("PROBE_CLIENT_REDIRECT must be a web redirect URL the effective allowlist admits");
   const buildAt = PROBE.indexOf("await buildExample(");
   const fetchAt = PROBE.indexOf("await fetchJson(");
   assert.ok(denyRequiredAt >= 0 && denyRequiredAt < buildAt && denyRequiredAt < fetchAt);
@@ -32,7 +32,7 @@ test("Entra-owned fixtures are parsed before boot or provider reads", () => {
   assert.match(PROBE, /groupAuthorization === undefined/);
   assert.match(PROBE, /normalizedGroups\.has\(unmappedGroup\.toLowerCase\(\)\)/);
   assert.doesNotMatch(PROBE, /ENTRA_GROUP_AUTHORIZATION_JSON \?\? "\{\}"/);
-  assert.match(PROBE, /redirect = assertRegistrationRedirectPolicy\(\s*process\.env\.PROBE_CLIENT_REDIRECT,\s*"web",\s*\)/);
+  assert.match(PROBE, /redirect = assertProbeClientRedirect\(process\.env\.PROBE_CLIENT_REDIRECT\)/);
   assert.doesNotMatch(PROBE, /const redirect = process\.env\.PROBE_CLIENT_REDIRECT/);
 });
 
@@ -181,4 +181,14 @@ test("Entra probe emits no tenant identifier and drains output", () => {
   assert.doesNotMatch(PROBE, /catch \([^)]*\)[\s\S]*?console\.(?:log|warn|error)\([^\n]*(?:error|message)/);
   assert.match(PROBE, /process\.exitCode = failures > 0 \? 1 : 0/);
   assert.doesNotMatch(PROBE, /process\.exit\(/);
+});
+
+test("Entra probe preflights its callback against the effective allowlist", () => {
+  // A scheme-only check passes a valid https URL that the allowlist refuses,
+  // so the probe would spend provider I/O before /oauth/register rejects it.
+  assert.match(PROBE, /assertProbeClientRedirect\(process\.env\.PROBE_CLIENT_REDIRECT\)/);
+  assert.doesNotMatch(PROBE, /assertRegistrationRedirectPolicy/);
+  const preflightAt = PROBE.indexOf("assertProbeClientRedirect(process.env.PROBE_CLIENT_REDIRECT)");
+  const buildAt = PROBE.indexOf("await buildExample(");
+  assert.ok(preflightAt >= 0 && preflightAt < buildAt);
 });
