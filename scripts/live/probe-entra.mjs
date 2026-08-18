@@ -60,6 +60,7 @@ try {
 }
 
 let app;
+let store;
 let stateDir;
 
 try {
@@ -71,6 +72,7 @@ try {
   };
   const built = await buildExample(isolatedEnv);
   app = built.app;
+  store = built.store;
   const probeScope = built.config.scopeCatalog[0];
   const tenant = process.env.ENTRA_TENANT_ID;
   const discovery = await fetchJson(
@@ -210,6 +212,14 @@ try {
     } catch {
       failures++;
       out.push("FAIL  probe cleanup failed");
+    }
+  }
+  if (store !== undefined) {
+    try {
+      await store.close();
+    } catch {
+      failures++;
+      out.push("FAIL  probe store cleanup failed");
     }
   }
   if (stateDir !== undefined) {
