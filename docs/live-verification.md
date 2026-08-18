@@ -137,30 +137,39 @@ accepted anything.
 | `probe-cloudflare.mjs` | Cloudflare Access | a provider-signed assertion reaches consent; a missing assertion and an attacker signature under the provider key ID are both refused | not run in this change: it needs the operator's own Access login (`cloudflared access login`), which `run.sh` turns into the assertion |
 | `probe-entra.mjs` | Entra ID | tenant discovery resolves to the expected JWKS with usable RS256 keys; the authorize redirect targets exactly the discovered endpoint and carries the expected upstream cookie profile; one local group-denial control | 13 live checks and the local control passed on 2026-08-19 through `run.sh` from this change's tree |
 | `probe-google.mjs` | Google sign-in | discovery is validated through the shipped resolver before its JWKS is followed; the authorize redirect targets exactly the validated endpoint | 11 live checks passed on 2026-08-19 through `run.sh` from this change's tree |
-| `probe-e2e.mjs` | the shipped example composition, headless, with a probe-local identity port | DCR into the shipped SQLite store; authorization code, refresh rotation, and `/oauth/revoke` observed as `invalid_grant` on the revoked token; the official MCP SDK client completing a tool call over a real socket with a user token and with a machine token; the tokenless RFC 9728 challenge; the §17.2 machine grant minting, refusing a wrong secret, and refusing a disabled client as `invalid_client`; the §17.10 Redis limiter admitting then refusing over a real connection; the JSONL and webhook sinks receiving the same ordered events with none of the run's credentials. Machine rows live in a process-local store (no shipped store implements the atomic extension); no identity-provider claim | 26 checks passed on 2026-08-19 through `run.sh` from this change's tree, against a local Redis |
+| `probe-e2e.mjs` | the shipped example composition, headless, with a probe-local identity port | DCR into the shipped SQLite store; authorization code, refresh rotation, and `/oauth/revoke` observed as `invalid_grant` on the revoked token; the official MCP SDK client completing a tool call over a real socket with a user token and with a machine token; the tokenless RFC 9728 challenge; the §17.2 machine grant minting, refusing a wrong secret, and refusing a disabled client as `invalid_client`; the §17.10 Redis limiter admitting exactly the remaining window budget then refusing, over a real connection; the JSONL and webhook sinks receiving the same ordered events with none of the run's credentials (consent token, code, verifier, tokens, secrets). Machine rows live in a process-local store (no shipped store implements the atomic extension); no identity-provider claim | 29 checks passed on 2026-08-19 through `run.sh` from this change's tree, against a local Redis; `test/live-e2e-probe.test.mjs` spawns it in CI against the Redis service |
 
 Each provider probe requires its credentials out of band, and none writes a
-credential or provider identifier to output. Each builds the example against a
-disposable state directory the library itself creates (`ensureStateDir`
-refuses a pre-existing directory without its managed `.gitignore`, so the temp
-container is never the state directory), and disposes of the app, the store,
-and that directory on every exit path, so a run never mutates the deployment
-it is verifying. Each validates its DCR callback against the effective redirect
-allowlist before any provider I/O. Every probe either exercises what a row
-claims or reports `FAIL`; none reports `SKIP`.
+credential or provider identifier to output. Each provider probe builds the
+example against a disposable state directory the library itself creates
+(`ensureStateDir` refuses a pre-existing directory without its managed
+`.gitignore`, so the temp container is never the state directory), and
+`probe-e2e.mjs` composes the example app against a disposable temp directory;
+every probe disposes of the app, the store, and that directory on every exit
+path, so a run never mutates the deployment it is verifying. Each validates its
+DCR callback against the effective redirect allowlist before any provider I/O.
+Every probe either exercises what a row claims or reports `FAIL`; none reports
+`SKIP`.
 
-`run.sh` validates every stack output through the example's own config parser
-and the leg's shipped identity constructor before it touches state; clears
-inherited provider and OAuth variables so a stale selector cannot choose a leg;
-reads the Google credential file through one descriptor as owner-only data
-rather than sourcing it; and refuses a symlinked or shared `.live-state` parent
-before removing a previous leg's state, stopping when that removal fails.
-`serve.sh` accepts readiness only from the process it started (`lsof` must
-report that child as the only listener), aborts when a server fails or times
-out during startup, and signals only its own children on exit. These
-properties are exercised by `test/live-run-script.test.mjs` and
+`run.sh` hands the entry an allowlisted environment — exactly the variables it
+assembled plus `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL` — so nothing
+inherited (a stale selector, an OAuth override, `HOST`,
+`MCP_SSO_TRUSTED_PROXIES`, `NODE_OPTIONS`) can choose a leg or reshape the run,
+and its own helper processes run under the same minimal environment; validates
+that exact environment through every pre-state gate the example itself runs
+plus the leg's shipped identity constructor before it touches state; reads the
+Google credential file through one descriptor as owner-only data rather than
+sourcing it; hands `probe-e2e.mjs` no provider credential at all; and refuses a
+symlinked or shared `.live-state` parent before rotating a previous leg's state
+to `<leg>.previous` (removing only the generation before it), stopping when
+that rotation fails. `serve.sh` accepts readiness only from the process it
+started (`lsof` must report that child as the only listener), aborts when a
+server fails or times out during startup, supervises the tunnel so a signal to
+the script itself still runs cleanup, and signals only its own children on
+exit. These properties are exercised by `test/live-run-script.test.mjs` and
 `test/live-serve-script.test.mjs`, which spawn the shipped scripts against
-fixture infrastructure.
+fixture infrastructure, and `test/live-e2e-probe.test.mjs`, which spawns the
+end-to-end probe.
 
 ### Provisioning — the environment is infrastructure-as-code, not hand-built
 

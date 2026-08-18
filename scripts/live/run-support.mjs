@@ -6,7 +6,8 @@
 // surface the shell scripts call. No value read here is ever printed; failures
 // exit with a fixed reason.
 import {
-  chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync,
+  chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync,
+  rmSync,
 } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,8 @@ import {
   assertSingleIdentityProviderSelector, assertUpstreamConfigBeforeState, configFromEnv,
   entraGroupAuthorizationFromEnv, fastifySqliteDcrFromEnv,
 } from "../../examples/fastify-sqlite/app.ts";
+import { trustedProxiesFromEnv } from "../../examples/fastify-sqlite/trusted-proxy.ts";
+import { assertSafeDeploymentCombination } from "../../src/deployment-guard.ts";
 import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
 import { createEntraRedirectIdentity } from "../../src/identity/entra-redirect.ts";
 
@@ -83,16 +86,17 @@ export function groupAuthorizationJsonFromMapping(rawJson) {
 }
 
 /** Read the private Google credential file through ONE descriptor: opened
- *  without following symlinks, checked (regular file, caller-owned, no group or
- *  other permission bits, bounded size) on that same descriptor, and parsed as
- *  KEY=VALUE data. It is never sourced. */
+ *  without following symlinks and without blocking (so a FIFO at the path fails
+ *  the regular-file check instead of hanging the open), checked (regular file,
+ *  caller-owned, no group or other permission bits, bounded size) on that same
+ *  descriptor, and parsed as KEY=VALUE data. It is never sourced. */
 export function readGoogleCredentialFile(path, uid = process.getuid?.()) {
   if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
     throw new RunSupportError("credential file reads require O_NOFOLLOW");
   }
   let fd;
   try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch {
     throw new RunSupportError("credential file cannot be opened without following a symlink");
   }
@@ -140,18 +144,43 @@ const requireEnv = (env, name) => {
   return value;
 };
 
+/** The pre-state gates buildExample runs before ensureStateDir, in its order:
+ *  selector cardinality, DCR mode, proxy trust, config parse, deployment
+ *  combination. Running the same set here means every configuration the
+ *  example would refuse at boot is refused BEFORE prior state is cleared. */
+function assertExamplePreStateGates(env) {
+  assertSingleIdentityProviderSelector(env);
+  const productionDcr = fastifySqliteDcrFromEnv(env);
+  trustedProxiesFromEnv(env);
+  const config = configFromEnv(env, productionDcr.dcr);
+  assertSafeDeploymentCombination({ config, rateLimit: productionDcr.rateLimit }, { emitAcknowledgementWarning: false });
+  return config;
+}
+
+/** Base preflight for the end-to-end probe, which composes its own app and
+ *  needs no provider leg: a bare https issuer and a config the example's own
+ *  parser and deployment guard accept. */
+export function assertBasePreflight(env) {
+  const issuer = requireEnv(env, "OAUTH_ISSUER");
+  if (!isBareHttpsOrigin(issuer)) throw new RunSupportError("OAUTH_ISSUER is not a bare https origin");
+  requireEnv(env, "OAUTH_CONSENT_SIGNING_SECRET");
+  requireEnv(env, "REDIS_URL");
+  return assertExamplePreStateGates(env);
+}
+
 /** Provider preflight over the exact environment the runner assembled: exactly
- *  the selected leg's selector is present, the example's own config parser
- *  accepts it, and the leg's shipped identity constructor accepts its values.
- *  Nothing here performs network I/O or touches state. */
+ *  the selected leg's selector is present, every pre-state gate the example
+ *  itself runs accepts it, and the leg's shipped identity constructor accepts
+ *  its values (Google's constructor performs discovery, so its values are
+ *  shape-checked here and the probe performs the discovery). Nothing here
+ *  performs network I/O or touches state. */
 export function assertLegPreflight(leg, env) {
   assertLeg(leg);
-  assertSingleIdentityProviderSelector(env);
   const selector = { cloudflare_access: "CF_ACCESS_AUDIENCE", entra: "ENTRA_TENANT_ID", google: "GOOGLE_CLIENT_ID" }[leg];
   if (env[selector] === undefined) throw new RunSupportError("selected leg has no identity selector");
   const issuer = requireEnv(env, "OAUTH_ISSUER");
   if (!isBareHttpsOrigin(issuer)) throw new RunSupportError("OAUTH_ISSUER is not a bare https origin");
-  const config = configFromEnv(env, fastifySqliteDcrFromEnv(env).dcr);
+  const config = assertExamplePreStateGates(env);
   if (leg === "entra") {
     const tenantId = requireEnv(env, "ENTRA_TENANT_ID");
     const clientId = requireEnv(env, "ENTRA_CLIENT_ID");
@@ -188,9 +217,13 @@ export function assertLegPreflight(leg, env) {
 
 /** Prepare `<root>/<leg>` for a fresh example server: the parent must be a real
  *  directory (never a symlink) that the caller owns with no group or other
- *  bits — created 0700 when absent — and a prior leaf is removed only after that
- *  check. A leaf that is itself a symlink or cannot be removed is an error;
- *  nothing is ever deleted through a link. */
+ *  bits — created 0700 when absent — and only after that check is the prior
+ *  state touched: the generation before last (`<leg>.previous`) is removed and
+ *  the last run's leaf is rotated into its place, so a start that fails after
+ *  this point (provider discovery at boot, a refused bind) never costs the
+ *  previous run's evidence. A leaf or previous generation that is itself a
+ *  symlink, or that cannot be removed or rotated, is an error; nothing is ever
+ *  deleted through a link. */
 export function prepareLiveStateDir(root, leg, uid = process.getuid?.()) {
   assertLeg(leg);
   let parent;
@@ -200,26 +233,51 @@ export function prepareLiveStateDir(root, leg, uid = process.getuid?.()) {
     if (error?.code !== "ENOENT") throw new RunSupportError("live state parent cannot be inspected");
   }
   if (parent === undefined) {
-    mkdirSync(root, { mode: 0o700 });
-    chmodSync(root, 0o700);
-  } else {
+    try {
+      mkdirSync(root, { mode: 0o700 });
+      chmodSync(root, 0o700);
+    } catch (error) {
+      // Legs started together (serve.sh) race on the first-ever create; the
+      // loser re-inspects what won and holds it to the same bar below.
+      if (error?.code !== "EEXIST") throw new RunSupportError("live state parent cannot be created");
+      try {
+        parent = lstatSync(root);
+      } catch {
+        throw new RunSupportError("live state parent cannot be inspected");
+      }
+    }
+  }
+  if (parent !== undefined) {
     if (!parent.isDirectory()) throw new RunSupportError("live state parent is not a real directory");
     if (uid !== undefined && parent.uid !== uid) throw new RunSupportError("live state parent is not owned by the caller");
     if ((parent.mode & 0o077) !== 0) throw new RunSupportError("live state parent must have no group or other permission bits");
   }
   const leaf = join(root, leg);
-  let prior;
-  try {
-    prior = lstatSync(leaf);
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw new RunSupportError("prior live state cannot be inspected");
+  const previous = join(root, `${leg}.previous`);
+  const inspect = (path) => {
+    try {
+      return lstatSync(path);
+    } catch (error) {
+      if (error?.code === "ENOENT") return undefined;
+      throw new RunSupportError("prior live state cannot be inspected");
+    }
+  };
+  const priorPrevious = inspect(previous);
+  if (priorPrevious !== undefined) {
+    if (!priorPrevious.isDirectory()) throw new RunSupportError("prior live state is not a real directory");
+    try {
+      rmSync(previous, { recursive: true });
+    } catch {
+      throw new RunSupportError("prior live state cannot be removed");
+    }
   }
+  const prior = inspect(leaf);
   if (prior !== undefined) {
     if (!prior.isDirectory()) throw new RunSupportError("prior live state is not a real directory");
     try {
-      rmSync(leaf, { recursive: true });
+      renameSync(leaf, previous);
     } catch {
-      throw new RunSupportError("prior live state cannot be removed");
+      throw new RunSupportError("prior live state cannot be rotated aside");
     }
   }
   return leaf;
@@ -235,6 +293,7 @@ const COMMANDS = {
     return `${values.GOOGLE_CLIENT_ID}\n${values.GOOGLE_CLIENT_SECRET}`;
   },
   preflight: ([leg]) => { assertLegPreflight(leg, process.env); return ""; },
+  "preflight-base": () => { assertBasePreflight(process.env); return ""; },
   "state-dir": ([root, leg]) => prepareLiveStateDir(root, leg),
 };
 
@@ -258,7 +317,7 @@ if (invokedAsMain()) {
     } catch (error) {
       // Only this module's fixed reasons reach output; a shipped constructor's
       // message may quote the value it rejected, so it is reduced to its class.
-      const reason = error instanceof RunSupportError ? error.message : "provider preflight failed";
+      const reason = error instanceof RunSupportError ? error.message : `${command} failed`;
       process.stderr.write(`run-support: ${reason}\n`);
       process.exitCode = 1;
     }

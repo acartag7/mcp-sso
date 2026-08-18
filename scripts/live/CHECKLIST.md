@@ -30,10 +30,12 @@ concrete substitutions live in the maintainer's project memory. Placeholders her
    that is the supported shape for CLI clients with ephemeral callback ports,
    and stored DCR requires a bounded limiter (the example supplies one).
 4. Each leg gets its **own** state directory, `.live-state/<leg>`, from
-   `run.sh`; the previous run's state for that leg is removed at start. A
-   shared directory would let one leg delete another's database, and every
-   later store write would then fail as a generic `internal_error` that reads
-   exactly like a product bug.
+   `run.sh`; at start the previous run's state for that leg is rotated to
+   `.live-state/<leg>.previous` (and the generation before it removed), so the
+   last round's `audit.jsonl` is still there to compare against. A shared
+   directory would let one leg delete another's database, and every later
+   store write would then fail as a generic `internal_error` that reads exactly
+   like a product bug.
 5. **A fresh private window for every row.** Entra and Cloudflare both reuse
    sessions; that has produced false failures more than once.
 

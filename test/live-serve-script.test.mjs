@@ -21,7 +21,7 @@ const executable = (path, source) => { writeFileSync(path, source); chmodSync(pa
 
 function waitForExit(child, label) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label}: serve.sh did not exit`)), 15_000);
+    const timer = setTimeout(() => reject(new Error(`${label}: serve.sh did not exit`)), 30_000);
     child.once("error", reject);
     child.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
   });
@@ -64,6 +64,7 @@ async function runServeScenario(mode, legs = ["entra"]) {
   const bystanderPid = join(fixture, "bystander-pid");
   const bystanderSignaled = join(fixture, "bystander-signaled");
   const tunnelStarted = join(fixture, "tunnel-started");
+  const tunnelStopped = join(fixture, "tunnel-stopped");
   const tunnelConfig = join(fixture, "tunnel-config.yml");
   const releaseTunnel = join(fixture, "release-tunnel");
   const runShLog = join(fixture, "run-sh.log");
@@ -106,6 +107,7 @@ esac
 [[ "$1 $2" == "tunnel --config" ]] || exit 9
 cp -- "$3" "$TUNNEL_CONFIG_COPY"
 printf started > "$TUNNEL_STARTED"
+trap 'printf stopped > "$TUNNEL_STOPPED"; exit 143' TERM INT
 case "$TUNNEL_MODE" in
   normal) exit 0 ;;
   failure) exit 7 ;;
@@ -139,7 +141,7 @@ exit 0
       STARTUP_EXIT: mode === "startup-failure" ? "23" : "",
       TUNNEL_MODE: ["normal", "failure", "startup-timeout"].includes(mode) ? mode : "signal",
       LSOF_MODE: mode === "port-busy" ? "busy" : mode === "foreign-listener" ? "foreign" : "",
-      TUNNEL_STARTED: tunnelStarted, TUNNEL_CONFIG_COPY: tunnelConfig, RELEASE_TUNNEL: releaseTunnel,
+      TUNNEL_STARTED: tunnelStarted, TUNNEL_STOPPED: tunnelStopped, TUNNEL_CONFIG_COPY: tunnelConfig, RELEASE_TUNNEL: releaseTunnel,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -151,9 +153,10 @@ exit 0
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   try {
     if (mode === "sigint" || mode === "sigterm") {
+      // Signal serve.sh ALONE (by pid, not the process group) and never
+      // release the tunnel: cleanup must terminate the tunnel it started.
       await waitForFile(tunnelStarted);
       process.kill(child.pid, mode === "sigint" ? "SIGINT" : "SIGTERM");
-      writeFileSync(releaseTunnel, "release");
     }
     const result = await waitForExit(child, mode);
     const expected = {
@@ -170,7 +173,8 @@ exit 0
       assert.match(config, new RegExp(`^tunnel: ${TUNNEL}$`, "m"));
       assert.match(config, new RegExp(`^credentials-file: ${join(home, ".cloudflared", `${TUNNEL}.json`)}$`, "m"));
       for (const leg of legs) {
-        assert.match(config, new RegExp(`- hostname: ${ORIGINS[leg].slice("https://".length)}\\n    service: http://localhost:${PORTS[leg].gateway}$`, "m"));
+        assert.match(config, new RegExp(`- hostname: ${ORIGINS[leg].slice("https://".length)}\\n    service: http://127.0.0.1:${PORTS[leg].gateway}$`, "m"),
+          "the ingress targets the address readiness and lsof proved");
       }
       assert.match(config, /- service: http_status:404\n$/);
     }
@@ -193,6 +197,9 @@ exit 0
       const unrelatedPid = Number(readFileSync(bystanderPid, "utf8"));
       assert.doesNotThrow(() => process.kill(unrelatedPid, 0), `${mode}: an unrelated process in the group survived cleanup`);
       assert.equal(existsSync(bystanderSignaled), false, `${mode}: cleanup never signaled an unrelated process in the group`);
+    }
+    if (mode === "sigint" || mode === "sigterm") {
+      assert.equal(readFileSync(tunnelStopped, "utf8"), "stopped", `${mode}: cleanup terminated the tunnel it started`);
     }
     if (mode === "foreign-listener") assert.match(stderr, /is not the server just started/);
     if (mode === "port-busy") assert.match(stderr, /already has a listener/);

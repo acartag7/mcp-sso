@@ -49,12 +49,15 @@ and a cross-tenant guest.
 scripts/live/run.sh <entry> <leg>
 ```
 
-`run.sh` reads the selected leg's values from the stacks, validates every one of
-them through the shipped constructors (`scripts/live/run-support.mjs` runs the
-example's own config parser and the leg's identity constructor over the exact
-environment it assembled), generates fresh signing material for the run, and
-only then executes the entry. It accepts these pairs and nothing else, so stack
-credentials are only ever exported into an allowlisted script:
+`run.sh` generates fresh signing material for the run, reads the selected leg's
+values from the stacks, validates every one of them through the shipped code
+(`scripts/live/run-support.mjs` runs every pre-state gate `buildExample` itself
+runs — selector cardinality, DCR mode, proxy trust, config parse, deployment
+combination — plus the Entra or Cloudflare identity constructor; Google's
+constructor performs discovery, so its values are shape-checked and the probe
+performs the discovery), and only then executes the entry. It accepts these
+pairs and nothing else, so a stack credential is handed to an allowlisted entry
+or to that preflight — never to an arbitrary path:
 
 | Entry | Legs |
 | --- | --- |
@@ -64,20 +67,35 @@ credentials are only ever exported into an allowlisted script:
 | `scripts/live/probe-e2e.mjs` | any (needs `REDIS_URL`) |
 | `examples/fastify-sqlite/index.ts` | any (what `serve.sh` starts) |
 
-Before it reads anything it clears every inherited `ENTRA_*`, `CF_ACCESS_*`,
-`GOOGLE_*`, `OIDC_*`, `OAUTH_*`, and `PROBE_*` variable, so a stale selector or
-allowlist override in your shell cannot select a leg or reshape the run. Stored
-DCR with the loopback origins allowlisted is the default (`MCP_SSO_ALLOW_LOOPBACK=false`
-drops loopback; `MCP_SSO_DCR_MODE=stateless` switches mode).
+The entry's environment is an **allowlist**, not your shell's environment minus
+a blocklist: it receives exactly the variables `run.sh` assembled plus `PATH`,
+`HOME`, `TMPDIR`, `LANG`, and `LC_ALL` — nothing else. A stale identity
+selector, an `OAUTH_*` override, `HOST`, `MCP_SSO_TRUSTED_PROXIES`,
+`NODE_OPTIONS`, or `NODE_TLS_REJECT_UNAUTHORIZED` in your shell cannot select
+a leg or reshape the run, and every helper `node` the runner itself starts runs
+under the same minimal environment. `probe-e2e.mjs` composes its own app and
+receives no provider credential at all — only the issuer origin, the run's
+signing material, and `REDIS_URL`. `PORT` reaches only the example-server
+entry (that is how `serve.sh` places each leg). Stored DCR with the loopback
+origins allowlisted is the default; `MCP_SSO_ALLOW_LOOPBACK=false` drops
+loopback, and `MCP_SSO_DCR_MODE=stateless` boots only together with it (the
+deployment guard refuses stateless DCR beside loopback entries, and the
+preflight refuses it before any state moves).
 
 Only the example-server entry gets a state directory, `.live-state/<leg>` in
 this checkout (ignored by Git). `run-support.mjs` refuses a `.live-state` that
-is a symlink or that anyone else can read, removes the previous leg state only
-after the stack outputs have passed the preflight, and stops when that removal
-fails — so a bad output never costs the previous run's evidence and nothing is
-ever deleted through a link. The probes never touch `.live-state`; each builds
-the example from a disposable temp directory the library creates and removes it
-on every exit path.
+is a symlink or that anyone else can read, and only after the preflight has
+passed does it touch prior state — and then it does not delete the last run:
+`.live-state/<leg>` is rotated to `.live-state/<leg>.previous` and only the
+generation before that is removed, so a start that fails after this point (a
+provider discovery at boot, a refused bind) still leaves the previous run's
+evidence in place. A rotation or removal that fails stops the run, and nothing
+is ever deleted or moved through a link. Do not start the server entry for a
+leg that `serve.sh` is currently serving — that rotates the live server's state
+out from under it. The probes never touch `.live-state`; each provider probe
+builds the example from a disposable temp directory the library creates, and
+`probe-e2e.mjs` composes the example app against one, removed on every exit
+path.
 
 ## Probes — no browser required
 
@@ -118,7 +136,9 @@ listener. It prints the public URL and the client command per leg, for example:
 claude mcp add --transport http live-entra https://<host>/mcp
 ```
 
-Ctrl-C stops the tunnel and the servers it started — never the process group.
+The tunnel runs supervised (started in the background and waited on), so a
+signal delivered to `serve.sh` itself — Ctrl-C, or a `kill` by PID — stops the
+tunnel and the servers it started, never the process group.
 Readiness waits up to `MCP_SSO_READINESS_POLLS` × 0.5 s per leg (default 120;
 provider discovery at boot can take a while).
 The client then performs discovery, registration, and authorize. **The consent

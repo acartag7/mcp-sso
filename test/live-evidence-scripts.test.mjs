@@ -18,9 +18,10 @@ import { test } from "node:test";
 import {
   containsCredential, createProbeClientStore, extractConsentToken, hasOrderedFlow, parseJsonl,
 } from "../scripts/live/probe-e2e-support.mjs";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
-  assertLegPreflight, gatewayPortForLeg, groupAuthorizationJsonFromMapping, issuerOriginForLeg,
-  prepareLiveStateDir, readGoogleCredentialFile,
+  assertBasePreflight, assertLegPreflight, gatewayPortForLeg, groupAuthorizationJsonFromMapping,
+  issuerOriginForLeg, prepareLiveStateDir, readGoogleCredentialFile,
 } from "../scripts/live/run-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -109,6 +110,17 @@ test("BEHAVIOUR run-support: the Google credential file is read as owner-only da
     assert.throws(() => readGoogleCredentialFile(link), /symlink/);
     assert.throws(() => readGoogleCredentialFile(dir), /regular file|opened/);
     assert.throws(() => readGoogleCredentialFile(join(dir, "missing")), /opened/);
+    if (process.platform !== "win32") {
+      // A FIFO at the path must fail the regular-file check, not block the open.
+      // Probed in a child with a deadline so a regression fails instead of hanging.
+      execFileSync("mkfifo", [join(dir, "fifo.env")]);
+      const probe = spawnSync(process.execPath, ["--input-type=module", "-e",
+        `import { readGoogleCredentialFile } from ${JSON.stringify(join(ROOT, "scripts/live/run-support.mjs"))};
+         try { readGoogleCredentialFile(process.argv[1]); console.log("returned"); } catch (e) { console.log("threw:" + e.message); }`,
+        join(dir, "fifo.env")], { encoding: "utf8", timeout: 5_000 });
+      assert.equal(probe.status, 0, "the open must return (a blocked open times out here)");
+      assert.match(probe.stdout, /threw:credential file is not a regular file/);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -158,6 +170,40 @@ test("BEHAVIOUR run-support: the provider preflight admits exactly the shipped c
     assert.throws(() => assertLegPreflight(leg, env), `${leg} ${JSON.stringify(patch)}`);
   }
   assert.throws(() => assertLegPreflight("other", goodEnv("entra")), /unknown leg/);
+  // The example's own pre-state gates are mirrored: what buildExample would
+  // refuse at boot is refused here, before any prior state moves.
+  const loopback = "https://mcp.example/app/callback,http://localhost,http://127.0.0.1";
+  assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), OAUTH_REDIRECT_ALLOWLIST: loopback });
+  assert.throws(() => assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), OAUTH_DCR_MODE: "stateless", OAUTH_REDIRECT_ALLOWLIST: loopback }),
+    /stateless DCR/, "stateless DCR with the loopback allowlist is what the deployment guard refuses");
+  assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), OAUTH_DCR_MODE: "stateless" });
+  assert.throws(() => assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), MCP_SSO_TRUSTED_PROXIES: "garbage" }), /trusted proxies/);
+  assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), MCP_SSO_TRUSTED_PROXIES: "127.0.0.1" });
+  const e2eEnv = { ...goodEnv("entra"), REDIS_URL: "redis://127.0.0.1:6379" };
+  for (const key of ["ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ENTRA_CLIENT_SECRET", "ENTRA_UNMAPPED_GROUP", "ENTRA_REDIRECT_URI", "ENTRA_GROUP_AUTHORIZATION_JSON"]) delete e2eEnv[key];
+  assertBasePreflight(e2eEnv);
+  assert.throws(() => assertBasePreflight({ ...e2eEnv, REDIS_URL: undefined }), /REDIS_URL/);
+  assert.throws(() => assertBasePreflight({ ...e2eEnv, OAUTH_ISSUER: "http://mcp.example" }), /https/);
+  assert.throws(() => assertBasePreflight({ ...e2eEnv, OAUTH_DCR_MODE: "stateless", OAUTH_REDIRECT_ALLOWLIST: loopback }), /stateless DCR/);
+});
+
+test("BEHAVIOUR run-support CLI: a shipped constructor's message never reaches output, only a fixed reason", () => {
+  // createEntraRedirectIdentity / assertUpstreamConfigBeforeState quote the
+  // value they reject; the CLI reduces anything that is not its own message.
+  // The group mapping names a scope outside the catalog: the shipped constructor
+  // quotes that scope in its message, and the group id beside it.
+  const env = {
+    ...goodEnv("entra"), PATH: process.env.PATH,
+    ENTRA_GROUP_AUTHORIZATION_JSON: JSON.stringify({ mapping: { "cccccccc-0000-0000-0000-000000000000": ["mcp:REJECTEDVALUE"] } }),
+  };
+  const result = spawnSync(process.execPath, [join(ROOT, "scripts/live/run-support.mjs"), "preflight", "entra"], { env, encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.doesNotMatch(result.stderr, /REJECTEDVALUE|cccccccc-0000/, "the rejected value must not be echoed");
+  assert.match(result.stderr, /run-support: preflight failed/);
+  const own = spawnSync(process.execPath, [join(ROOT, "scripts/live/run-support.mjs"), "preflight", "entra"], { env: { ...env, ENTRA_TENANT_ID: "not-a-guid" }, encoding: "utf8" });
+  assert.equal(own.status, 1);
+  assert.match(own.stderr, /Entra identifiers are not GUIDs/, "the module's own fixed reasons do reach stderr");
 });
 
 test("BEHAVIOUR run-support: live state is prepared under a real private parent and never through a link", () => {
@@ -169,21 +215,31 @@ test("BEHAVIOUR run-support: live state is prepared under a real private parent 
     assert.equal(lstatSync(root).isDirectory(), true);
     if (process.platform !== "win32") assert.equal(lstatSync(root).mode & 0o777, 0o700, "a created parent is owner-only");
     assert.equal(existsSync(leaf), false, "the leaf is left for the library to create");
+    const previous = join(root, "entra.previous");
     mkdirSync(join(leaf, "nested"), { recursive: true });
     writeFileSync(join(leaf, "nested/auth.db"), "prior");
     prepareLiveStateDir(root, "entra");
-    assert.equal(existsSync(leaf), false, "prior leg state is removed");
+    assert.equal(existsSync(leaf), false, "the leaf is left for the library to create");
+    assert.equal(readFileSync(join(previous, "nested/auth.db"), "utf8"), "prior", "the last run's evidence is rotated aside, not deleted");
+    mkdirSync(leaf);
+    writeFileSync(join(leaf, "auth.db"), "second");
+    prepareLiveStateDir(root, "entra");
+    assert.equal(readFileSync(join(previous, "auth.db"), "utf8"), "second", "only the generation before last is discarded");
+    assert.equal(existsSync(join(previous, "nested")), false);
     assert.throws(() => prepareLiveStateDir(root, "../escape"), /unknown leg/);
-    mkdirSync(join(leaf, "locked"), { recursive: true });
-    writeFileSync(join(leaf, "locked/file"), "x");
-    chmodSync(join(leaf, "locked"), 0o500);
+    mkdirSync(join(previous, "locked"), { recursive: true });
+    writeFileSync(join(previous, "locked/file"), "x");
+    chmodSync(join(previous, "locked"), 0o500);
     try {
       assert.throws(() => prepareLiveStateDir(root, "entra"), /cannot be removed/);
-      assert.equal(existsSync(join(leaf, "locked/file")), true, "a failed removal stops the run; nothing is silently kept");
+      assert.equal(existsSync(join(previous, "locked/file")), true, "a failed removal stops the run; nothing is silently kept");
     } finally {
-      chmodSync(join(leaf, "locked"), 0o700);
+      chmodSync(join(previous, "locked"), 0o700);
     }
     prepareLiveStateDir(root, "entra");
+    symlinkSync(join(dir, "nowhere"), previous);
+    assert.throws(() => prepareLiveStateDir(root, "entra"), /not a real directory/, "a symlinked previous generation is refused, not followed");
+    rmSync(previous);
     const elsewhere = join(dir, "elsewhere");
     mkdirSync(join(elsewhere, "google"), { recursive: true });
     chmodSync(elsewhere, 0o700); // owner-only, so a link to it is refused for being a link
@@ -278,10 +334,13 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.match(PROBE, /hasOrderedFlow\(fileEvents, requiredFlow\)[\s\S]*?hasOrderedFlow\(posted, requiredFlow\)/);
   assert.match(PROBE, /JSON\.stringify\(fileEvents\) === JSON\.stringify\(posted\)/);
   assert.match(PROBE, /\["consent signing credential", process\.env\.OAUTH_CONSENT_SIGNING_SECRET\]/);
+  assert.match(PROBE, /\["consent token", consentToken\], \["authorization code", code\], \["PKCE verifier", verifier\]/,
+    "every generated flow credential is in the leak scan");
+  assert.match(PROBE, /redis\.on\("error", \(\) => \{\}\)/, "ioredis must not print the host and port itself");
   assert.doesNotMatch(PROBE, /console\.(?:log|warn|error)\([^\n]*(?:Secret|secret|Token|token|clientSecret|OAUTH_|REDIS_URL|error|message)/i);
   assert.doesNotMatch(PROBE, /OAUTH_CONSENT_SIGNING_SECRET[^\n]*(?:slice|substring|substr)/);
   const disableAt = PROBE.indexOf("await disableMachineClient(");
-  const limiterAt = PROBE.indexOf("for (let i = 0; i < TOKEN_LIMIT + 2; i++)");
+  const limiterAt = PROBE.indexOf("for (let i = 0; i < burst; i++)");
   assert.ok(disableAt > 0 && disableAt < limiterAt, "disablement is proved before the shared token bucket is exhausted");
   assert.ok(PROBE.indexOf("await app.close()") < PROBE.indexOf("await store.close()"));
   assert.ok(PROBE.indexOf("await store.close()") < PROBE.indexOf("redis.disconnect()"));
@@ -310,7 +369,7 @@ test("CONTENT records: docs, README, and CHECKLIST agree with what the scripts d
   assert.match(DOC, /`serve\.sh`/);
   assert.match(DOC, /`CHECKLIST\.md`/);
   assert.match(DOC, /scripts\/live\/README\.md/);
-  assert.match(DOC, /none reports `SKIP`/);
+  assert.match(DOC, /none reports\n?`SKIP`/);
   assert.match(README, /run\.sh scripts\/live\/probe-e2e\.mjs/);
   assert.match(README, /~\/\.mcp-sso-google\.env/);
   assert.match(README, /MCP_SSO_GOOGLE_ENV/);

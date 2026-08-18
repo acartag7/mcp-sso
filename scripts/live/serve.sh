@@ -57,12 +57,17 @@ done
 
 CONF=""
 SERVER_PIDS=()
+TUNNEL_PID=""
 
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
   # Signal only the processes this script started — never the process group,
   # which would include the invoking shell and any sibling job.
+  if [[ -n "$TUNNEL_PID" ]]; then
+    kill "$TUNNEL_PID" 2>/dev/null || true
+    wait "$TUNNEL_PID" 2>/dev/null || true
+  fi
   for pid in ${SERVER_PIDS[@]+"${SERVER_PIDS[@]}"}; do
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -82,7 +87,7 @@ CONF="$(mktemp -t mcp-sso-tunnel-XXXX)" || exit 1
   printf 'credentials-file: %s\n' "$CREDENTIALS"
   printf 'ingress:\n'
   for i in "${!LEGS[@]}"; do
-    printf '  - hostname: %s\n    service: http://localhost:%s\n' "${HOSTS[$i]}" "${GATEWAY_PORTS[$i]}"
+    printf '  - hostname: %s\n    service: http://127.0.0.1:%s\n' "${HOSTS[$i]}" "${GATEWAY_PORTS[$i]}"
   done
   printf '  - service: http_status:404\n'
 } > "$CONF" || fail "cannot write the tunnel config"
@@ -111,7 +116,7 @@ for i in "${!LEGS[@]}"; do
   polls=0
   while [ "$polls" -lt "$READINESS_POLLS" ]; do
     if ! kill -0 "$pid" 2>/dev/null; then break; fi
-    if curl --fail --silent --output /dev/null "http://127.0.0.1:${port}/.well-known/oauth-protected-resource"; then
+    if curl --fail --silent --noproxy '*' --max-time 5 --output /dev/null "http://127.0.0.1:${port}/.well-known/oauth-protected-resource"; then
       ready=true
       break
     fi
@@ -134,4 +139,14 @@ for i in "${!LEGS[@]}"; do
     exit "$status"
   fi
 done
-cloudflared tunnel --config "$CONF" run "$TUNNEL"
+# The tunnel runs in the background and this script waits on it: `wait` is
+# interruptible, so a signal delivered to this script alone (not through the
+# terminal's process group) still runs cleanup and takes the tunnel and the
+# servers down with it. A foreground tunnel would defer the trap until it
+# exited on its own.
+cloudflared tunnel --config "$CONF" run "$TUNNEL" &
+TUNNEL_PID=$!
+wait "$TUNNEL_PID"
+status=$?
+TUNNEL_PID=""
+exit "$status"

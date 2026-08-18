@@ -148,10 +148,10 @@ describes:
 2. **Sibling sweep = exhaustive grep, never an eyeball pass.** This repo's
    recurring sibling axes: the **3 adapters** (fastify/express/hono), the **3
    stores** (memory/sqlite/mysql — parity via the SHARED conformance suite,
-   never a store-specific test), the **3 live probes**
-   (`scripts/live/probe-{cloudflare,entra,google}.mjs` — a preflight, cleanup,
-   or evidence rule added to one belongs in a shared `*-support.mjs` helper and
-   applies to all three), example vs library, quickstart path vs
+   never a store-specific test), the **4 live probes**
+   (`scripts/live/probe-{cloudflare,entra,google,e2e}.mjs` — a preflight,
+   cleanup, or evidence rule added to one belongs in a shared `*-support.mjs`
+   helper and applies to all of them), example vs library, quickstart path vs
    deployment branch, and **entry-point guard vs stored-state** (a guard at
    prepare/register always has a sibling for records already in the store).
    Changing the harness also updates its record: the row table in

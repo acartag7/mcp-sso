@@ -61,10 +61,14 @@ const identity = {
       : { ok: false, reason: "probe_identity_rejected" };
   },
 };
-const tokenPost = (app, params) => app.inject({
-  method: "POST", url: "/oauth/token",
-  headers: { "content-type": "application/x-www-form-urlencoded" }, payload: form(params),
-});
+let tokenCalls = 0;
+const tokenPost = (app, params) => {
+  tokenCalls++;
+  return app.inject({
+    method: "POST", url: "/oauth/token",
+    headers: { "content-type": "application/x-www-form-urlencoded" }, payload: form(params),
+  });
+};
 const settle = async (ready, deadlineMs) => {
   const until = Date.now() + deadlineMs;
   while (!(await ready()) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
@@ -89,6 +93,9 @@ try {
     }),
   );
   redis = new Redis(process.env.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1 });
+  // ioredis would otherwise print its own connection error, which names the
+  // host and port, to stderr; reachability is reported as a row below instead.
+  redis.on("error", () => {});
   let redisReachable = false;
   try {
     await redis.connect();
@@ -214,16 +221,20 @@ try {
     revoke.statusCode === 200 && afterRevoke.statusCode === 400 && afterRevoke.json().error === "invalid_grant",
     `HTTP ${revoke.statusCode} then ${afterRevoke.statusCode}`)) failures++;
 
-  // 5. Redis limiter admits then refuses. Last: it exhausts the shared bucket.
+  // 5. Redis limiter admits exactly the remaining window budget, then refuses.
+  // Last: it exhausts the shared bucket for this address.
+  const remainingBudget = Math.max(0, TOKEN_LIMIT - tokenCalls);
+  const burst = remainingBudget + 2;
   let admitted = 0;
   let limited = 0;
-  for (let i = 0; i < TOKEN_LIMIT + 2; i++) {
+  for (let i = 0; i < burst; i++) {
     const response = await tokenPost(app, machineForm);
     if (response.statusCode === 429) limited++;
     else admitted++;
   }
-  if (!ok("Redis limiter admits within the window budget and refuses past it",
-    admitted > 0 && limited > 0, `${admitted} admitted, ${limited} refused with 429`)) failures++;
+  if (!ok("Redis limiter admits exactly the remaining window budget and refuses past it",
+    admitted === remainingBudget && limited === 2,
+    `${admitted}/${remainingBudget} admitted, ${limited} refused with 429`)) failures++;
 
   // 6. Both shipped sinks recorded the same ordered flow, without any credential.
   let fileEvents = [];
@@ -245,6 +256,7 @@ try {
   if (!ok("webhook sink contains the exercised flow in order", hasOrderedFlow(posted, requiredFlow))) failures++;
   const evidence = `${JSON.stringify(fileEvents)}\n${JSON.stringify(posted)}`;
   const credentials = [
+    ["consent token", consentToken], ["authorization code", code], ["PKCE verifier", verifier],
     ["machine client secret", provisioned.clientSecret], ["user access token", userTokens.access_token],
     ["user refresh token", userTokens.refresh_token], ["rotated refresh token", rotated],
     ["machine access token", machineAccess], ["probe identity token", identityToken],
