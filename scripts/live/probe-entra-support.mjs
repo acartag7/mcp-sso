@@ -1,4 +1,5 @@
-import { createLocalJWKSet } from "jose";
+import { createLocalJWKSet, decodeJwt } from "jose";
+import { verifyFlowToken } from "../../src/adapters/upstream-flow-internals.ts";
 
 export const fetchJson = async (url) => {
   const response = await fetch(url, {
@@ -31,6 +32,26 @@ export const matchesUpstreamCookieProfile = (cookie, issuer, expectedMaxAge) => 
     && expectedAttributes.every((attribute) => parts.includes(attribute))
     && parts.filter((part) => part === `Max-Age=${expectedMaxAge}`).length === 1
     && parts.length === expectedAttributes.length + 2;
+};
+export const upstreamCookieValue = (cookie) => {
+  const nameValue = cookie.split(";", 1)[0] ?? "";
+  const equalsAt = nameValue.indexOf("=");
+  if (equalsAt <= 0 || equalsAt === nameValue.length - 1) return undefined;
+  return nameValue.slice(equalsAt + 1);
+};
+export const hasExpectedSignedFlowLifetime = async (
+  token, secret, issuer, callbackPath, expectedSeconds,
+) => {
+  if (typeof token !== "string" || !Number.isInteger(expectedSeconds)
+    || expectedSeconds <= 0 || expectedSeconds > 3_600) return false;
+  try {
+    const claims = await verifyFlowToken(token, secret, issuer, callbackPath);
+    const issuedAt = decodeJwt(token).iat;
+    return typeof issuedAt === "number" && Number.isFinite(issuedAt)
+      && claims.exp - issuedAt === expectedSeconds;
+  } catch {
+    return false;
+  }
 };
 export const countUsableRs256Keys = async (document) => {
   if (document === null || typeof document !== "object"

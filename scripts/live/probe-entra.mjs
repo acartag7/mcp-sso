@@ -10,7 +10,8 @@ import {
 } from "../../src/identity/entra.ts";
 import { assertRegistrationRedirectPolicy } from "../../src/redirect.ts";
 import {
-  countUsableRs256Keys, fetchJson, matchesUpstreamCookieProfile,
+  countUsableRs256Keys, fetchJson, hasExpectedSignedFlowLifetime,
+  matchesUpstreamCookieProfile, upstreamCookieValue,
 } from "./probe-entra-support.mjs";
 
 const out = [];
@@ -140,6 +141,12 @@ try {
   const cookie = String(authorization.headers["set-cookie"] ?? "");
   if (!ok("flow cookie matches the issuer security profile",
     matchesUpstreamCookieProfile(cookie, built.config.issuer, 600))) failures++;
+  const callbackPath = new URL(process.env.ENTRA_REDIRECT_URI).pathname;
+  if (!ok("flow cookie signature and lifetime match the 600-second flow",
+    await hasExpectedSignedFlowLifetime(
+      upstreamCookieValue(cookie), built.config.consentSigningSecret,
+      built.config.issuer, callbackPath, 600,
+    ))) failures++;
 
   // This does not prove that the tenant emits the group in a real token. It is
   // a local group-only control for the shipped mapping and reason-code path;

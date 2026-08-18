@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { exportJWK, generateKeyPair } from "jose";
 import {
-  countUsableRs256Keys, fetchJson, matchesUpstreamCookieProfile,
+  countUsableRs256Keys, fetchJson, hasExpectedSignedFlowLifetime,
+  matchesUpstreamCookieProfile, upstreamCookieValue,
 } from "../scripts/live/probe-entra-support.mjs";
+import { signFlowToken } from "../src/adapters/upstream-flow-internals.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PROBE = readFileSync(join(ROOT, "scripts/live/probe-entra.mjs"), "utf8");
@@ -94,7 +96,7 @@ test("Entra JWKS evidence requires a runtime-usable RS256 public key", async () 
   assert.doesNotMatch(PROBE, /\.filter\(\(key\) => key\.kty === "RSA"\)/);
 });
 
-test("Entra cookie evidence accepts exactly the issuer's supported profile", () => {
+test("Entra cookie evidence accepts exactly the issuer's supported profile and signed TTL", async () => {
   const secureCookie = "__Host-mcp-sso-upstream=value; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=300";
   const loopbackCookie = "mcp-sso-upstream=value; Path=/; HttpOnly; SameSite=Lax; Max-Age=300";
   assert.equal(matchesUpstreamCookieProfile(secureCookie, "https://sso.example.test", 300), true);
@@ -118,6 +120,23 @@ test("Entra cookie evidence accepts exactly the issuer's supported profile", () 
   assert.equal(matchesUpstreamCookieProfile(secureCookie, "https://sso.example.test", 301), false);
   assert.match(PROBE, /matchesUpstreamCookieProfile\(cookie, built\.config\.issuer, 600\)/);
   assert.doesNotMatch(PROBE, /cookie\.includes\("__Host-"\)/);
+
+  assert.equal(upstreamCookieValue(secureCookie), "value");
+  assert.equal(upstreamCookieValue("mcp-sso-upstream=; Path=/"), undefined);
+  const secret = "synthetic-flow-secret-for-live-probe-tests";
+  const issuer = "https://sso.example.test";
+  const callbackPath = "/oauth/callback";
+  const token = await signFlowToken({
+    secret, issuer, callbackPath, clock: { nowMs: () => 2_000_000_000_000 },
+    jti: "upf_synthetic", state: "state", nonce: "nonce",
+    codeVerifier: "V".repeat(43), params: {}, ttlSeconds: 600,
+  });
+  assert.equal(await hasExpectedSignedFlowLifetime(token, secret, issuer, callbackPath, 600), true);
+  assert.equal(await hasExpectedSignedFlowLifetime(token, secret, issuer, callbackPath, 601), false);
+  assert.equal(await hasExpectedSignedFlowLifetime(token, `${secret}-wrong`, issuer, callbackPath, 600), false);
+  assert.equal(await hasExpectedSignedFlowLifetime(`${token}x`, secret, issuer, callbackPath, 600), false);
+  assert.match(PROBE, /upstreamCookieValue\(cookie\), built\.config\.consentSigningSecret/);
+  assert.match(PROBE, /built\.config\.issuer, callbackPath, 600/);
 });
 
 test("Entra synthetic denial is a non-live control excluded from live counts", () => {
