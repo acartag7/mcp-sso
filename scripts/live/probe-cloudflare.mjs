@@ -1,6 +1,10 @@
 // Cloudflare Access identity proof against the shipped Fastify/SQLite example.
 // The provider assertion is supplied out of band and is never written to output.
 import { buildExample } from "../../examples/fastify-sqlite/app.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { assertRegistrationRedirectPolicy } from "../../src/redirect.ts";
 
 const { SignJWT, decodeProtectedHeader, generateKeyPair } = await import("jose");
 
@@ -8,9 +12,11 @@ const providerAssertion = process.env.CF_ACCESS_ASSERTION;
 if (typeof providerAssertion !== "string" || providerAssertion.length === 0) {
   throw new Error("CF_ACCESS_ASSERTION must provide a current provider-signed assertion");
 }
-const callback = process.env.PROBE_APP_CALLBACK;
-if (typeof callback !== "string" || callback.length === 0) {
-  throw new Error("PROBE_APP_CALLBACK must provide the registered callback URL");
+let callback;
+try {
+  callback = assertRegistrationRedirectPolicy(process.env.PROBE_APP_CALLBACK, "web");
+} catch {
+  throw new Error("PROBE_APP_CALLBACK must provide a valid web callback URL");
 }
 
 const out = [];
@@ -21,10 +27,23 @@ const ok = (label, condition, detail = "") => {
 
 let failures = 0;
 let app;
+let store;
+let stateDir;
 
 try {
-  const built = await buildExample(process.env);
+  // Disposable state. Without this the probe registers a client directly in the
+  // deployment's own SQLite database and leaves those rows behind — a
+  // verification run must never mutate the deployment it is verifying.
+  stateDir = await mkdtemp(join(tmpdir(), "mcp-sso-live-cloudflare-"));
+  const isolatedEnv = {
+    ...process.env,
+    MCP_SSO_DIR: stateDir,
+    OAUTH_SQLITE_FILE: join(stateDir, "auth.db"),
+  };
+  const built = await buildExample(isolatedEnv);
   app = built.app;
+  store = built.store;
+  const probeScope = built.config.scopeCatalog[0];
   const registration = await app.inject({
     method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" },
     payload: JSON.stringify({ redirect_uris: [callback], application_type: "web" }),
@@ -42,7 +61,7 @@ try {
     redirect_uri: callback,
     code_challenge: "A".repeat(43),
     code_challenge_method: "S256",
-    scope: "mcp:read",
+    scope: probeScope,
     state: "cloudflare-live-proof",
   });
 
@@ -93,6 +112,22 @@ try {
     } catch {
       failures++;
       out.push("FAIL  probe cleanup failed");
+    }
+  }
+  if (store !== undefined) {
+    try {
+      await store.close();
+    } catch {
+      failures++;
+      out.push("FAIL  probe store cleanup failed");
+    }
+  }
+  if (stateDir !== undefined) {
+    try {
+      await rm(stateDir, { recursive: true, force: true });
+    } catch {
+      failures++;
+      out.push("FAIL  probe state cleanup failed");
     }
   }
   console.log(out.join("\n"));
