@@ -13,14 +13,14 @@ export const countUsableRs256Keys = async (document) => {
     || !Array.isArray(document.keys)) return 0;
   let usable = 0;
   for (const key of document.keys) {
+    if (key === null || typeof key !== "object"
+      || typeof key.kid !== "string" || key.kid.length === 0) continue;
     try {
       // createRemoteJWKSet uses this same local resolver after its network read.
       const resolveKey = createLocalJWKSet({ keys: [key] });
       await resolveKey({
         alg: "RS256",
-        kid: key !== null && typeof key === "object" && typeof key.kid === "string"
-          ? key.kid
-          : undefined,
+        kid: key.kid,
       });
       usable++;
     } catch {

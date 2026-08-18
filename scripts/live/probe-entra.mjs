@@ -40,6 +40,7 @@ let app;
 try {
   const built = await buildExample(process.env);
   app = built.app;
+  const probeScope = built.config.scopeCatalog[0];
   const tenant = process.env.ENTRA_TENANT_ID;
   const discovery = await fetchJson(
     `https://login.microsoftonline.com/${tenant}/v2.0/.well-known/openid-configuration`,
@@ -77,7 +78,7 @@ try {
     redirect_uri: redirect,
     code_challenge: pkceChallenge(verifier),
     code_challenge_method: "S256",
-    scope: "mcp:read",
+    scope: probeScope,
   });
   const authorization = await app.inject({
     method: "GET", url: `/oauth/authorize?${query}`,

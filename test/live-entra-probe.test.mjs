@@ -28,6 +28,9 @@ test("Entra-owned fixtures are parsed before boot or provider reads", () => {
 
 test("Entra redirect is bound to the discovered endpoint and registered client", () => {
   assert.match(PROBE, /client_id: clientId \?\? "fixture-registration-failed"/);
+  assert.match(PROBE, /const probeScope = built\.config\.scopeCatalog\[0\]/);
+  assert.match(PROBE, /scope: probeScope/);
+  assert.doesNotMatch(PROBE, /scope: "mcp:read"/);
   assert.match(PROBE, /advertised\.username === ""[\s\S]*?advertised\.password === ""[\s\S]*?advertised\.search === ""[\s\S]*?advertised\.hash === ""/);
   assert.match(PROBE, /targetBase\.search = "";[\s\S]*?targetBase\.hash = "";/);
   assert.match(PROBE, /advertisedIsBare && targetBase\?\.href === advertised\.href/);
@@ -59,20 +62,24 @@ test("Entra provider reads have hard deadlines", async () => {
 
 test("Entra JWKS evidence requires a runtime-usable RS256 public key", async () => {
   const { publicKey, privateKey } = await generateKeyPair("RS256", { extractable: true });
-  const publicJwk = await exportJWK(publicKey);
-  const privateJwk = await exportJWK(privateKey);
+  const publicJwk = { ...await exportJWK(publicKey), kid: "provider-key" };
+  const privateJwk = { ...await exportJWK(privateKey), kid: "private-key" };
   assert.equal(await countUsableRs256Keys({ keys: [publicJwk] }), 1);
   for (const key of [
+    { ...publicJwk, kid: undefined },
+    { ...publicJwk, kid: "" },
     { ...publicJwk, use: "enc" },
     { ...publicJwk, alg: "RS512" },
     { ...publicJwk, key_ops: ["encrypt"] },
-    { kty: "RSA" },
+    { kty: "RSA", kid: "incomplete-key" },
     { ...privateJwk, key_ops: undefined },
   ]) {
     assert.equal(await countUsableRs256Keys({ keys: [key] }), 0);
   }
   assert.match(SUPPORT, /createLocalJWKSet\(\{ keys: \[key\] \}\)/);
+  assert.match(SUPPORT, /typeof key\.kid !== "string" \|\| key\.kid\.length === 0\) continue/);
   assert.match(SUPPORT, /await resolveKey\(\{[\s\S]*?alg: "RS256"/);
+  assert.match(SUPPORT, /kid: key\.kid/);
   assert.match(PROBE, /const usableKeys = await countUsableRs256Keys\(jwks\.body\)/);
   assert.match(PROBE, /Entra JWKS serves usable RS256 verification keys/);
   assert.match(PROBE, /jwks\.status === 200 && usableKeys > 0/);
