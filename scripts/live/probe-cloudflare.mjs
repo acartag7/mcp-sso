@@ -19,11 +19,12 @@ const ok = (label, condition, detail = "") => {
   return condition;
 };
 
-const built = await buildExample(process.env);
-const app = built.app;
 let failures = 0;
+let app;
 
 try {
+  const built = await buildExample(process.env);
+  app = built.app;
   const registration = await app.inject({
     method: "POST", url: "/oauth/register", headers: { "content-type": "application/json" },
     payload: JSON.stringify({ redirect_uris: [callback], application_type: "web" }),
@@ -82,10 +83,19 @@ try {
   });
   if (!ok("an attacker signature under the provider key ID is refused",
     forgedResult.statusCode === 401, `HTTP ${forgedResult.statusCode}`)) failures++;
+} catch {
+  failures++;
+  out.push("FAIL  probe aborted before completion");
 } finally {
-  await app.close();
+  if (app !== undefined) {
+    try {
+      await app.close();
+    } catch {
+      failures++;
+      out.push("FAIL  probe cleanup failed");
+    }
+  }
+  console.log(out.join("\n"));
+  console.log(`\n${out.filter((line) => line.startsWith("PASS")).length}/${out.length} checks passed`);
+  process.exitCode = failures > 0 ? 1 : 0;
 }
-
-console.log(out.join("\n"));
-console.log(`\n${out.filter((line) => line.startsWith("PASS")).length}/${out.length} checks passed`);
-process.exitCode = failures > 0 ? 1 : 0;
