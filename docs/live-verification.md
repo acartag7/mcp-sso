@@ -120,30 +120,74 @@ single-operator/private-console deployments only; **never expose it on a public 
 
 ## Executable probe harness
 
-`scripts/live/probe-*.mjs` are runnable harnesses that drive one provider leg
-each against the shipped `examples/fastify-sqlite` app. They exist to make an
-owner-run leg reproducible; **a harness is not evidence.** A matrix row above
-flips only when the owner runs the probe against real provider infrastructure
-and records the observed result — running the test suite proves the harness is
-wired, never that a provider accepted anything.
+`scripts/live/` is the runnable harness: `run.sh` pulls one leg's values from
+the OpenTofu stacks and executes an allowlisted entry, `probe-*.mjs` drive one
+subject each against the shipped `examples/fastify-sqlite` app, `serve.sh`
+exposes one or more legs behind the named tunnel for real MCP clients, and
+`CHECKLIST.md` is the client × leg matrix a human runs against it. Its own
+record is [`scripts/live/README.md`](../scripts/live/README.md); the harness
+changes and its record change in the same pull request. **A harness is not
+evidence.** A matrix row above flips only when the owner runs the probe or the
+checklist against real provider infrastructure and records the observed result
+— running the test suite proves the harness is wired, never that a provider
+accepted anything.
 
 | Harness | Drives | Evidence it can establish | Live-run status |
 | --- | --- | --- | --- |
-| `probe-cloudflare.mjs` | Cloudflare Access | a provider-signed assertion reaches consent; a missing assertion and an attacker signature under the provider key ID are both refused | not run in this change |
-| `probe-entra.mjs` | Entra ID | tenant discovery resolves to the expected JWKS with usable RS256 keys; the authorize redirect carries the expected upstream cookie profile; one local group-denial control | not run in this change |
-| `probe-google.mjs` | Google sign-in | discovery resolves to the expected Google endpoints and JWKS; the authorize redirect targets the provider | not run in this change |
+| `probe-cloudflare.mjs` | Cloudflare Access | a provider-signed assertion reaches consent; a missing assertion and an attacker signature under the provider key ID are both refused | not run in this change: it needs the operator's own Access login (`cloudflared access login`), which `run.sh` turns into the assertion |
+| `probe-entra.mjs` | Entra ID | tenant discovery resolves to the expected JWKS with usable RS256 keys; the authorize redirect targets exactly the discovered endpoint and carries the expected upstream cookie profile; one local group-denial control | 13 live checks and the local control passed on 2026-08-19 through `run.sh` from this change's tree |
+| `probe-google.mjs` | Google sign-in | discovery is validated through the shipped resolver before its JWKS is followed; the authorize redirect targets exactly the validated endpoint | 11 live checks passed on 2026-08-19 through `run.sh` from this change's tree |
+| `probe-e2e.mjs` | the shipped example composition, headless, with a probe-local identity port | DCR into the shipped SQLite store; authorization code, refresh rotation, and `/oauth/revoke` observed as `invalid_grant` on the revoked token; the official MCP SDK client completing a tool call over a real socket with a user token and with a machine token; the tokenless RFC 9728 challenge; the §17.2 machine grant minting, refusing a wrong secret, and refusing a disabled client as `invalid_client`; the §17.10 Redis limiter admitting then refusing over a real connection; the JSONL and webhook sinks receiving the same ordered events with none of the run's credentials. Machine rows live in a process-local store (no shipped store implements the atomic extension); no identity-provider claim | 26 checks passed on 2026-08-19 through `run.sh` from this change's tree, against a local Redis |
 
-Each probe requires its provider credentials out of band, and none writes a
+Each provider probe requires its credentials out of band, and none writes a
 credential or provider identifier to output. Each builds the example against a
-disposable state directory and disposes of the app, the store, and that
-directory on every exit path, so a run never mutates the deployment it is
-verifying. Each validates its DCR callback against the effective redirect
-allowlist before any provider I/O, so a callback the deployment would reject
-fails immediately rather than after discovery and JWKS reads.
+disposable state directory the library itself creates (`ensureStateDir`
+refuses a pre-existing directory without its managed `.gitignore`, so the temp
+container is never the state directory), and disposes of the app, the store,
+and that directory on every exit path, so a run never mutates the deployment
+it is verifying. Each validates its DCR callback against the effective redirect
+allowlist before any provider I/O. Every probe either exercises what a row
+claims or reports `FAIL`; none reports `SKIP`.
 
-**The Google leg has not been live-driven since these harnesses were
-introduced.** The 2026-07-10 and 2026-07-28 Google rows above were driven by
-hand against earlier runtimes; they are not receipts for this harness.
+`run.sh` validates every stack output through the example's own config parser
+and the leg's shipped identity constructor before it touches state; clears
+inherited provider and OAuth variables so a stale selector cannot choose a leg;
+reads the Google credential file through one descriptor as owner-only data
+rather than sourcing it; and refuses a symlinked or shared `.live-state` parent
+before removing a previous leg's state, stopping when that removal fails.
+`serve.sh` accepts readiness only from the process it started (`lsof` must
+report that child as the only listener), aborts when a server fails or times
+out during startup, and signals only its own children on exit. These
+properties are exercised by `test/live-run-script.test.mjs` and
+`test/live-serve-script.test.mjs`, which spawn the shipped scripts against
+fixture infrastructure.
+
+### Provisioning — the environment is infrastructure-as-code, not hand-built
+
+The identity providers, hostnames, tunnel ports, and test users the harness
+needs are **provisioned by OpenTofu stacks in a separate private repository**,
+one stack per provider leg. Nothing is assembled by hand, and no provider
+secret is stored in this repository or read from a developer's shell profile.
+
+| What the harness needs | Where it comes from |
+| --- | --- |
+| `CF_ACCESS_ISSUER`, `CF_ACCESS_AUDIENCE`, `CF_ACCESS_CERTS_URL` | Cloudflare stack outputs |
+| Public issuer origin + tunnel ingress port, per leg | Cloudflare stack outputs, keyed by leg so legs run side by side |
+| Entra tenant, client id, client secret, redirect URI | Entra stack outputs, read by `run.sh` at run time; the secret is read as a sensitive output and exported only into the allowlisted entry |
+| `ENTRA_GROUP_AUTHORIZATION_JSON` | the Entra stack's group-authorization mapping output, wrapped as `{"mapping": …}` with no `baseScopes` |
+| Deny-leg fixtures — an unmapped group, a group-overage user, a no-group user, a cross-tenant guest | Entra stack outputs; the negative legs are provisioned, not improvised |
+| Google client id and secret | a private owner-only `KEY=VALUE` file that `run.sh` reads as data (`scripts/live/README.md`) |
+
+Two rules make this reproducible rather than a one-off: the mapping is fed in
+through configuration, never by patching source (a run that edits library or
+example code to make a leg pass has verified the patch, not the release); and
+provider credentials reach the process from the stack outputs for the duration
+of the run through `run.sh`, and every probe's output guards keep them out of
+the evidence it prints. The stack handles, repository path, and tunnel id are supplied
+through `MCP_SSO_*` environment variables and recorded in the maintainer's
+project memory, because they name private infrastructure. Everything a run
+*observes* — reason codes, statuses, flows — is public and belongs in the
+matrix above.
 
 ---
 

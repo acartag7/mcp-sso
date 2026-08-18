@@ -1,0 +1,343 @@
+// Live-harness evidence guards. Two kinds, deliberately labelled:
+//   - BEHAVIOUR: the shared support modules are imported and executed;
+//   - CONTENT: claims that really are about file contents (no secret printed, no
+//     process.exit, a probe calls a route, a doc row exists) are read as text.
+// A content guard proves a call is written, not that it behaves; every unit with
+// behaviour has a behaviour test here or in test/live-run-script.test.mjs and
+// test/live-serve-script.test.mjs, which spawn the shipped shell scripts.
+import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
+import {
+  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  symlinkSync, writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
+import {
+  containsCredential, createProbeClientStore, extractConsentToken, hasOrderedFlow, parseJsonl,
+} from "../scripts/live/probe-e2e-support.mjs";
+import {
+  assertLegPreflight, gatewayPortForLeg, groupAuthorizationJsonFromMapping, issuerOriginForLeg,
+  prepareLiveStateDir, readGoogleCredentialFile,
+} from "../scripts/live/run-support.mjs";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const read = (path) => readFileSync(join(ROOT, path), "utf8");
+const PROBE = read("scripts/live/probe-e2e.mjs");
+const README = read("scripts/live/README.md");
+const CHECKLIST = read("scripts/live/CHECKLIST.md");
+const DOC = read("docs/live-verification.md");
+const GUID_A = "11111111-2222-3333-4444-555555555555";
+const GUID_B = "66666666-7777-8888-9999-aaaaaaaaaaaa";
+const GUID_C = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+const SIGNING_JWK = JSON.stringify({
+  ...generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k",
+});
+
+// ---------------------------------------------------------------- BEHAVIOUR
+
+test("BEHAVIOUR run-support: stack-output parsers accept only the documented shapes", () => {
+  const origins = JSON.stringify({ entra: "https://entra.example", google: "https://google.example" });
+  assert.equal(issuerOriginForLeg(origins, "entra"), "https://entra.example");
+  for (const [raw, leg] of [
+    [origins, "cloudflare_access"], [origins, "../etc"], ["not json", "entra"], ["[]", "entra"], ['"str"', "entra"],
+    [JSON.stringify({ entra: "http://entra.example" }), "entra"],
+    [JSON.stringify({ entra: "https://user:pw@entra.example" }), "entra"],
+    [JSON.stringify({ entra: "https://entra.example/" }), "entra"],
+    [JSON.stringify({ entra: "https://entra.example/path" }), "entra"],
+    [JSON.stringify({ entra: "" }), "entra"], [JSON.stringify({ entra: 5 }), "entra"],
+  ]) {
+    assert.throws(() => issuerOriginForLeg(raw, leg), `${raw} / ${leg}`);
+  }
+  const ports = JSON.stringify({ entra: { gateway: 43111, backend: 43112 } });
+  assert.equal(gatewayPortForLeg(ports, "entra"), 43111);
+  for (const raw of [JSON.stringify({ entra: { gateway: "43111" } }), JSON.stringify({ entra: { gateway: 0 } }),
+    JSON.stringify({ entra: { gateway: 70000 } }), JSON.stringify({ entra: 8801 }), JSON.stringify({ google: { gateway: 1 } })]) {
+    assert.throws(() => gatewayPortForLeg(raw, "entra"), raw);
+  }
+  assert.deepEqual(JSON.parse(groupAuthorizationJsonFromMapping(JSON.stringify({ [GUID_A]: ["mcp:read"] }))),
+    { mapping: { [GUID_A]: ["mcp:read"] } });
+  for (const raw of ["{}", "[]", JSON.stringify({ [GUID_A]: [] }), JSON.stringify({ [GUID_A]: "mcp:read" }),
+    JSON.stringify({ "not-a-guid": ["mcp:read"] }), JSON.stringify({ [GUID_A]: [""] }), JSON.stringify({ [GUID_A]: [1] })]) {
+    assert.throws(() => groupAuthorizationJsonFromMapping(raw), raw);
+  }
+});
+
+test("BEHAVIOUR run-support: the Google credential file is read as owner-only data", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-live-cred-"));
+  const file = join(dir, "google.env");
+  const write = (text, mode = 0o600) => {
+    if (existsSync(file)) chmodSync(file, 0o600);
+    writeFileSync(file, text, { mode });
+    chmodSync(file, mode);
+  };
+  try {
+    write("GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=secret\n");
+    assert.deepEqual(readGoogleCredentialFile(file), { GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret" });
+    write("# comment\r\n\r\nGOOGLE_CLIENT_ID=id\r\nOIDC_CLIENT_SECRET=alias=with=equals\r\n");
+    assert.deepEqual(readGoogleCredentialFile(file), { GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "alias=with=equals" });
+    write("GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=$(id)\n");
+    assert.equal(readGoogleCredentialFile(file).GOOGLE_CLIENT_SECRET, "$(id)", "values are data, never evaluated");
+    write("GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=secret\n", 0o644);
+    assert.throws(() => readGoogleCredentialFile(file), /group or other/);
+    write("GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=secret\n", 0o400);
+    assert.deepEqual(readGoogleCredentialFile(file).GOOGLE_CLIENT_ID, "id", "read-only owner mode is still private");
+    write("GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=secret\n");
+    assert.throws(() => readGoogleCredentialFile(file, 424242), /owned/);
+    for (const text of [
+      "GOOGLE_CLIENT_ID=id\n", "GOOGLE_CLIENT_SECRET=secret\n",
+      "GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=a\nOIDC_CLIENT_SECRET=b\n",
+      "export GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=secret\n",
+      "GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=secret\nGOOGLE_HOSTED_DOMAIN=example.com\n",
+      "GOOGLE_CLIENT_ID=\nGOOGLE_CLIENT_SECRET=secret\n",
+      "GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_ID=id2\nGOOGLE_CLIENT_SECRET=secret\n",
+      "GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=se\u0007cret\n",
+      "GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=secret\nnot a pair\n",
+      'GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET="quoted"\n',
+      "GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET='quoted'\n",
+      "GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=with space\n",
+      `GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=${"x".repeat(5_000)}\n`,
+    ]) {
+      write(text);
+      assert.throws(() => readGoogleCredentialFile(file), text.slice(0, 40));
+    }
+    write("GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=secret\n");
+    const link = join(dir, "link.env");
+    symlinkSync(file, link);
+    assert.throws(() => readGoogleCredentialFile(link), /symlink/);
+    assert.throws(() => readGoogleCredentialFile(dir), /regular file|opened/);
+    assert.throws(() => readGoogleCredentialFile(join(dir, "missing")), /opened/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const goodEnv = (leg) => {
+  const base = {
+    OAUTH_ISSUER: "https://mcp.example", OAUTH_RESOURCE: "https://mcp.example/mcp",
+    OAUTH_CONSENT_SIGNING_SECRET: "x".repeat(40),
+    OAUTH_SIGNING_PRIVATE_JWK: SIGNING_JWK,
+    OAUTH_REDIRECT_ALLOWLIST: "https://mcp.example/app/callback", OAUTH_DCR_MODE: "stored",
+  };
+  if (leg === "entra") {
+    return {
+      ...base, ENTRA_TENANT_ID: GUID_A, ENTRA_CLIENT_ID: GUID_B, ENTRA_CLIENT_SECRET: "s", ENTRA_UNMAPPED_GROUP: GUID_C,
+      ENTRA_REDIRECT_URI: "https://mcp.example/oauth/callback",
+      ENTRA_GROUP_AUTHORIZATION_JSON: JSON.stringify({ mapping: { "cccccccc-0000-0000-0000-000000000000": ["mcp:read"] } }),
+    };
+  }
+  if (leg === "cloudflare_access") {
+    return { ...base, CF_ACCESS_AUDIENCE: "aud", CF_ACCESS_ISSUER: "https://team.cloudflareaccess.com", CF_ACCESS_CERTS_URL: "https://team.cloudflareaccess.com/cdn-cgi/access/certs" };
+  }
+  return { ...base, GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret", GOOGLE_REDIRECT_URI: "https://mcp.example/oauth/callback" };
+};
+
+test("BEHAVIOUR run-support: the provider preflight admits exactly the shipped configuration", () => {
+  for (const leg of ["entra", "cloudflare_access", "google"]) assertLegPreflight(leg, goodEnv(leg));
+  const cases = [
+    ["entra", { ENTRA_TENANT_ID: "not-a-guid" }], ["entra", { ENTRA_CLIENT_ID: "" }], ["entra", { ENTRA_CLIENT_SECRET: "" }],
+    ["entra", { ENTRA_UNMAPPED_GROUP: "cccccccc-0000-0000-0000-000000000000".toUpperCase() }],
+    ["entra", { ENTRA_REDIRECT_URI: "https://mcp.example/callback" }], ["entra", { ENTRA_REDIRECT_URI: "https://other.example/oauth/callback" }],
+    ["entra", { ENTRA_GROUP_AUTHORIZATION_JSON: undefined }], ["entra", { ENTRA_GROUP_AUTHORIZATION_JSON: "{}" }],
+    ["entra", { GOOGLE_CLIENT_ID: "second selector" }], ["entra", { ENTRA_TENANT_ID: undefined }],
+    ["entra", { OAUTH_ISSUER: "http://mcp.example" }], ["entra", { OAUTH_SIGNING_PRIVATE_JWK: undefined }],
+    ["entra", { OAUTH_REDIRECT_ALLOWLIST_MODE: "Replace" }],
+    ["cloudflare_access", { CF_ACCESS_AUDIENCE: " " }], ["cloudflare_access", { CF_ACCESS_ISSUER: "http://team.cloudflareaccess.com" }],
+    ["cloudflare_access", { CF_ACCESS_CERTS_URL: undefined }], ["cloudflare_access", { ENTRA_TENANT_ID: GUID_A }],
+    ["google", { GOOGLE_CLIENT_SECRET: undefined }], ["google", { GOOGLE_REDIRECT_URI: "https://mcp.example/oauth/cb" }],
+    ["google", { OIDC_ISSUER: "https://idp.example" }],
+  ];
+  for (const [leg, patch] of cases) {
+    const env = { ...goodEnv(leg) };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) delete env[key];
+      else env[key] = value;
+    }
+    assert.throws(() => assertLegPreflight(leg, env), `${leg} ${JSON.stringify(patch)}`);
+  }
+  assert.throws(() => assertLegPreflight("other", goodEnv("entra")), /unknown leg/);
+});
+
+test("BEHAVIOUR run-support: live state is prepared under a real private parent and never through a link", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-live-state-"));
+  try {
+    const root = join(dir, ".live-state");
+    const leaf = prepareLiveStateDir(root, "entra");
+    assert.equal(leaf, join(root, "entra"));
+    assert.equal(lstatSync(root).isDirectory(), true);
+    if (process.platform !== "win32") assert.equal(lstatSync(root).mode & 0o777, 0o700, "a created parent is owner-only");
+    assert.equal(existsSync(leaf), false, "the leaf is left for the library to create");
+    mkdirSync(join(leaf, "nested"), { recursive: true });
+    writeFileSync(join(leaf, "nested/auth.db"), "prior");
+    prepareLiveStateDir(root, "entra");
+    assert.equal(existsSync(leaf), false, "prior leg state is removed");
+    assert.throws(() => prepareLiveStateDir(root, "../escape"), /unknown leg/);
+    mkdirSync(join(leaf, "locked"), { recursive: true });
+    writeFileSync(join(leaf, "locked/file"), "x");
+    chmodSync(join(leaf, "locked"), 0o500);
+    try {
+      assert.throws(() => prepareLiveStateDir(root, "entra"), /cannot be removed/);
+      assert.equal(existsSync(join(leaf, "locked/file")), true, "a failed removal stops the run; nothing is silently kept");
+    } finally {
+      chmodSync(join(leaf, "locked"), 0o700);
+    }
+    prepareLiveStateDir(root, "entra");
+    const elsewhere = join(dir, "elsewhere");
+    mkdirSync(join(elsewhere, "google"), { recursive: true });
+    chmodSync(elsewhere, 0o700); // owner-only, so a link to it is refused for being a link
+    writeFileSync(join(elsewhere, "google/marker"), "outside");
+    symlinkSync(elsewhere, leaf);
+    assert.throws(() => prepareLiveStateDir(root, "entra"), /not a real directory/, "a symlinked leaf is refused, not followed");
+    assert.equal(readFileSync(join(elsewhere, "google/marker"), "utf8"), "outside");
+    rmSync(leaf);
+    if (process.platform !== "win32") {
+      chmodSync(root, 0o750);
+      assert.throws(() => prepareLiveStateDir(root, "entra"), /group or other/);
+      chmodSync(root, 0o700);
+    }
+    assert.throws(() => prepareLiveStateDir(root, "entra", 424242), /owned/);
+    const linkedRoot = join(dir, "linked-root");
+    symlinkSync(elsewhere, linkedRoot);
+    assert.throws(() => prepareLiveStateDir(linkedRoot, "google"), /not a real directory/);
+    assert.equal(readFileSync(join(elsewhere, "google/marker"), "utf8"), "outside", "the parent link's target is untouched");
+    writeFileSync(join(dir, "file-root"), "x");
+    assert.throws(() => prepareLiveStateDir(join(dir, "file-root"), "entra"), /not a real directory/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("BEHAVIOUR e2e support: the probe client store, consent parser, flow matcher, and leak check", async () => {
+  const { store, bind } = createProbeClientStore();
+  await assert.rejects(store.find("cid"), /not bound/);
+  const sqliteRows = new Map();
+  bind({ async save(c) { sqliteRows.set(c.clientId, c); }, async find(id) { return sqliteRows.get(id) ?? null; } });
+  await store.save({ clientId: "user-1", redirectUris: [] });
+  assert.equal((await store.find("user-1")).clientId, "user-1", "DCR clients round-trip through the bound SQLite store");
+  const machine = { clientId: "mcc_1", version: 1, status: "active", secrets: [] };
+  assert.equal(await store.createMachineClient(machine, { event: "oauth.client.provision" }), true);
+  assert.equal(await store.createMachineClient(machine, { event: "oauth.client.provision" }), false, "collision is refused");
+  const found = await store.find("mcc_1");
+  assert.deepEqual(found, machine);
+  found.status = "mutated";
+  assert.equal((await store.find("mcc_1")).status, "active", "reads are copies");
+  assert.equal(await store.compareAndSwapMachineClient(2, { ...machine, version: 3 }, {}), false, "stale version loses");
+  assert.equal(await store.compareAndSwapMachineClient(1, { ...machine, version: 2, status: "disabled" }, {}), true);
+  assert.equal((await store.find("mcc_1")).status, "disabled");
+  assert.equal(await store.compareAndSwapMachineClient(1, { ...machine, clientId: "mcc_missing" }, {}), false);
+
+  assert.equal(extractConsentToken('<input type="hidden" name="consent_token" value="ct.value" />'), "ct.value");
+  assert.equal(extractConsentToken("<html>no form</html>"), undefined);
+  assert.equal(extractConsentToken(undefined), undefined);
+
+  const events = [
+    { event: "oauth.register", status: "success" }, { event: "oauth.token.client_credentials", status: "failure" },
+    { event: "auth.request", status: "success" }, { event: "oauth.revoke", status: "success" },
+  ];
+  assert.equal(hasOrderedFlow(events, [["oauth.register", "success"], ["auth.request", "success"], ["oauth.revoke", "success"]]), true);
+  assert.equal(hasOrderedFlow(events, [["auth.request", "success"], ["oauth.register", "success"]]), false, "order matters");
+  assert.equal(hasOrderedFlow(events, [["oauth.token.client_credentials", "success"]]), false, "status matters");
+  assert.equal(hasOrderedFlow(events, [["auth.request", "success"], ["auth.request", "success"]]), false, "each step needs its own event");
+  assert.equal(hasOrderedFlow([], []), true);
+  assert.equal(hasOrderedFlow("nope", []), false);
+
+  assert.deepEqual(parseJsonl('{"a":1}\n{"b":2}\n'), [{ a: 1 }, { b: 2 }]);
+  assert.deepEqual(parseJsonl(""), []);
+  assert.throws(() => parseJsonl('{"a":1}\nnot json\n'), "a malformed line is a failure, not a skip");
+
+  assert.equal(containsCredential("audit says mcs_abc here", ["mcs_abc"]), true);
+  assert.equal(containsCredential("clean", ["mcs_abc"]), false);
+  assert.equal(containsCredential("clean", [undefined]), true, "a missing credential fails closed");
+  assert.equal(containsCredential("clean", [""]), true, "an empty credential fails closed");
+});
+
+// ------------------------------------------------------------------ CONTENT
+
+test("CONTENT probe-e2e: exercises every subject it reports and prints no credential", () => {
+  assert.doesNotMatch(PROBE, /\bSKIP\b/, "a skipped leg must never count as evidence");
+  assert.doesNotMatch(PROBE, /process\.exit\(/);
+  assert.match(PROBE, /process\.exitCode = failures > 0 \? 1 : 0/);
+  assert.match(PROBE, /catch \{\s*failures\+\+;\s*out\.push\("FAIL  probe aborted before completion"\)/);
+  assert.match(PROBE, /disableMachineClient\(machineDeps, provisioned\.clientId\)/, "the disable helper receives the client id string");
+  assert.doesNotMatch(PROBE, /disableMachineClient\([^)]*\{\s*clientId/);
+  assert.match(PROBE, /afterDisable\.statusCode === 401 && afterDisable\.json\(\)\.error === "invalid_client"/, "the disabled-client response is asserted exactly");
+  assert.match(PROBE, /url: "\/oauth\/revoke"/, "revocation is exercised through the endpoint");
+  assert.match(PROBE, /afterRevoke\.statusCode === 400 && afterRevoke\.json\(\)\.error === "invalid_grant"/);
+  assert.match(PROBE, /url: "\/oauth\/register"/);
+  assert.match(PROBE, /url: "\/oauth\/authorize\/approve"/);
+  assert.match(PROBE, /grant_type: "authorization_code"/);
+  assert.match(PROBE, /grant_type: "refresh_token"/);
+  assert.match(PROBE, /grant_type: "client_credentials"/);
+  assert.match(PROBE, /sdkPing\(base, userTokens\.access_token/);
+  assert.match(PROBE, /sdkPing\(base, machineAccess/);
+  assert.match(PROBE, /createRedisRateLimit\(redis/);
+  assert.match(PROBE, /new JsonlFileAudit\(jsonlPath\)/);
+  assert.match(PROBE, /new WebhookAudit\(/);
+  assert.match(PROBE, /hasOrderedFlow\(fileEvents, requiredFlow\)[\s\S]*?hasOrderedFlow\(posted, requiredFlow\)/);
+  assert.match(PROBE, /JSON\.stringify\(fileEvents\) === JSON\.stringify\(posted\)/);
+  assert.match(PROBE, /\["consent signing credential", process\.env\.OAUTH_CONSENT_SIGNING_SECRET\]/);
+  assert.doesNotMatch(PROBE, /console\.(?:log|warn|error)\([^\n]*(?:Secret|secret|Token|token|clientSecret|OAUTH_|REDIS_URL|error|message)/i);
+  assert.doesNotMatch(PROBE, /OAUTH_CONSENT_SIGNING_SECRET[^\n]*(?:slice|substring|substr)/);
+  const disableAt = PROBE.indexOf("await disableMachineClient(");
+  const limiterAt = PROBE.indexOf("for (let i = 0; i < TOKEN_LIMIT + 2; i++)");
+  assert.ok(disableAt > 0 && disableAt < limiterAt, "disablement is proved before the shared token bucket is exhausted");
+  assert.ok(PROBE.indexOf("await app.close()") < PROBE.indexOf("await store.close()"));
+  assert.ok(PROBE.indexOf("await store.close()") < PROBE.indexOf("redis.disconnect()"));
+  assert.ok(PROBE.indexOf("redis.disconnect()") < PROBE.indexOf("await rm(stateDir, { recursive: true, force: true })"));
+  assert.match(PROBE, /FAIL  probe limiter cleanup failed/);
+  assert.match(PROBE, /FAIL  probe state cleanup failed/);
+});
+
+test("CONTENT provider probes: all three share the disposable-state helper before boot and dispose last", () => {
+  for (const [file, prefix] of [["probe-cloudflare.mjs", "cloudflare"], ["probe-entra.mjs", "entra"], ["probe-google.mjs", "google"]]) {
+    const source = read(`scripts/live/${file}`);
+    const stateAt = source.indexOf(`await createDisposableProbeState("mcp-sso-live-${prefix}-")`);
+    const buildAt = source.indexOf("await buildExample(isolatedEnv)");
+    assert.ok(stateAt >= 0 && stateAt < buildAt, `${file}: state is prepared before boot`);
+    assert.match(source, /\.\.\.disposable\.env,\n  \};/, `${file}: the helper's overrides are applied last`);
+    assert.doesNotMatch(source, /mkdtemp|MCP_SSO_DIR: stateDir/, `${file}: no probe hands the temp root in as the state dir`);
+    assert.ok(source.indexOf("await store.close()") < source.indexOf("await disposable.dispose()"), `${file}: dispose runs after the store closes`);
+    assert.doesNotMatch(source, /\bSKIP\b/, `${file}: a skipped subject must never count as evidence`);
+    assert.doesNotMatch(source, /process\.exit\(/, `${file}: evidence drains before exit`);
+  }
+});
+
+test("CONTENT records: docs, README, and CHECKLIST agree with what the scripts do", () => {
+  assert.match(DOC, /^\| `probe-e2e\.mjs` \|/m, "the harness table records the e2e probe");
+  assert.match(DOC, /`run\.sh`/);
+  assert.match(DOC, /`serve\.sh`/);
+  assert.match(DOC, /`CHECKLIST\.md`/);
+  assert.match(DOC, /scripts\/live\/README\.md/);
+  assert.match(DOC, /none reports `SKIP`/);
+  assert.match(README, /run\.sh scripts\/live\/probe-e2e\.mjs/);
+  assert.match(README, /~\/\.mcp-sso-google\.env/);
+  assert.match(README, /MCP_SSO_GOOGLE_ENV/);
+  assert.match(README, /OIDC_CLIENT_SECRET/);
+  assert.match(README, /cloudflared access login/);
+  assert.match(README, /lsof/);
+  const before = CHECKLIST.indexOf("E1_BEFORE=$(audit_count");
+  const after = CHECKLIST.indexOf("E1_AFTER=$(audit_count");
+  const comparison = CHECKLIST.indexOf('test "$E1_AFTER" -eq "$E1_BEFORE"');
+  assert.ok(before >= 0 && before < after && after < comparison, "E1 records a before/after count and fails when it changes");
+  assert.doesNotMatch(CHECKLIST, /no audit row at all/i);
+  assert.match(CHECKLIST, /serve\.sh cloudflare_access entra google/);
+});
+
+test("CONTENT hygiene: scripts/live and its records name no private infrastructure", () => {
+  const allowedHosts = new Set([
+    "claude.ai", "chatgpt.com", "login.microsoftonline.com", "accounts.google.com", "127.0.0.1", "localhost",
+    "collector.example", "mcp.example", "www.googleapis.com", "oauth2.googleapis.com", "github.com",
+  ]);
+  const files = readdirSync(join(ROOT, "scripts/live")).map((name) => `scripts/live/${name}`).concat(["docs/live-verification.md"]);
+  for (const file of files) {
+    const text = read(file);
+    for (const match of text.matchAll(/https?:\/\/([A-Za-z0-9.<>_-]+)/g)) {
+      const host = match[1];
+      const ok = allowedHosts.has(host) || host.startsWith("<") || host.endsWith(".example") || host.endsWith(".test");
+      assert.ok(ok, `${file}: unexpected host in ${match[0]}`);
+    }
+    assert.doesNotMatch(text, /\$HOME\/project\/|\/Users\//, `${file}: no private checkout path`);
+  }
+});

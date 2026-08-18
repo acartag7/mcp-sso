@@ -155,8 +155,9 @@ describes:
    deployment branch, and **entry-point guard vs stored-state** (a guard at
    prepare/register always has a sibling for records already in the store).
    Changing the harness also updates its record: the row table in
-   [`docs/live-verification.md`](docs/live-verification.md), and — once the
-   runnable operator checklist lands alongside the probes — that checklist too.
+   [`docs/live-verification.md`](docs/live-verification.md),
+   [`scripts/live/README.md`](scripts/live/README.md), and the operator
+   checklist [`scripts/live/CHECKLIST.md`](scripts/live/CHECKLIST.md).
    A probe whose behaviour no longer matches its written record leaves the
    person running the release gate following instructions that no longer hold.
 3. **Guards run before side effects.** A rejection must not leave state — check

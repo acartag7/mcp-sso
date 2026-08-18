@@ -1,0 +1,272 @@
+// Behavioural coverage for scripts/live/run.sh: the shipped script is spawned
+// against a fixture infrastructure wrapper and fixture entry points that record
+// the environment they receive. Nothing here reads run.sh as text.
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import {
+  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
+  symlinkSync, writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const TENANT = "11111111-2222-3333-4444-555555555555";
+const CLIENT = "66666666-7777-8888-9999-aaaaaaaaaaaa";
+const MAPPED = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+const UNMAPPED = "01234567-89ab-cdef-0123-456789abcdef";
+const ORIGINS = { cloudflare_access: "https://cf.example", entra: "https://entra.example", google: "https://google.example" };
+
+const executable = (path, source) => { writeFileSync(path, source); chmodSync(path, 0o700); };
+const CAPTURE_ENTRY = 'import { writeFileSync } from "node:fs";\nwriteFileSync(process.env.CAPTURE, JSON.stringify(process.env));\n';
+
+/** A fixture repository whose scripts/live holds the REAL run.sh and
+ *  run-support.mjs, whose src/ and example app are the real ones (symlinked, so
+ *  the preflight exercises the shipped constructors), and whose entry points are
+ *  capture stubs. The infrastructure wrapper answers with canned outputs and
+ *  logs every call. */
+function makeFixture() {
+  const fixture = mkdtempSync(join(tmpdir(), "mcp-sso-live-run-"));
+  const repo = join(fixture, "repo");
+  const infra = join(fixture, "infra");
+  const home = join(fixture, "home");
+  mkdirSync(join(repo, "scripts/live"), { recursive: true });
+  mkdirSync(join(repo, "examples/fastify-sqlite"), { recursive: true });
+  mkdirSync(join(infra, "scripts"), { recursive: true });
+  mkdirSync(home, { recursive: true });
+  symlinkSync(join(ROOT, "src"), join(repo, "src"));
+  for (const file of ["app.ts", "registration-rate-limit.ts", "trusted-proxy.ts"]) {
+    symlinkSync(join(ROOT, "examples/fastify-sqlite", file), join(repo, "examples/fastify-sqlite", file));
+  }
+  copyFileSync(join(ROOT, "scripts/live/run.sh"), join(repo, "scripts/live/run.sh"));
+  chmodSync(join(repo, "scripts/live/run.sh"), 0o700);
+  copyFileSync(join(ROOT, "scripts/live/run-support.mjs"), join(repo, "scripts/live/run-support.mjs"));
+  for (const entry of ["probe-cloudflare.mjs", "probe-entra.mjs", "probe-google.mjs", "probe-e2e.mjs"]) {
+    writeFileSync(join(repo, "scripts/live", entry), CAPTURE_ENTRY);
+  }
+  writeFileSync(join(repo, "examples/fastify-sqlite/index.ts"), CAPTURE_ENTRY);
+  executable(join(infra, "scripts/tofu-run.sh"), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$TOFU_LOG"
+stack="$1"; name="$4"
+case "$stack:$name" in
+  cf:issuer_origins) printf '%s' '${JSON.stringify(ORIGINS)}' ;;
+  cf:cf_access_issuer) printf '%s' 'https://team.cloudflareaccess.com' ;;
+  cf:cf_access_certs_url) printf '%s' 'https://team.cloudflareaccess.com/cdn-cgi/access/certs' ;;
+  cf:cf_access_audience) printf '%s' 'fixture-audience-tag' ;;
+  entra:entra_tenant_id) printf '%s' '${TENANT}' ;;
+  entra:entra_client_id) printf '%s' '${CLIENT}' ;;
+  entra:entra_client_secret) printf '%s' "\${FAKE_ENTRA_SECRET-fixture-entra-secret}" ;;
+  entra:entra_redirect_uri) printf '%s' 'https://entra.example/oauth/callback' ;;
+  entra:unmapped_group_object_id_do_not_map) printf '%s' "\${FAKE_UNMAPPED-${UNMAPPED}}" ;;
+  entra:group_authorization_mapping) printf '%s' '{"${MAPPED}":["mcp:read"]}' ;;
+  *) exit 1 ;;
+esac
+`);
+  const bin = join(fixture, "bin");
+  mkdirSync(bin);
+  executable(join(bin, "cloudflared"), `#!/usr/bin/env bash
+[[ "$1 $2" == "access token" && -n "\${FAKE_ASSERTION-}" ]] || exit 1
+printf '%s' "$FAKE_ASSERTION"
+`);
+  return { fixture, repo, infra, home, bin };
+}
+
+function runScript(fx, entry, leg, extraEnv = {}) {
+  const capture = join(fx.fixture, `capture-${Math.random().toString(16).slice(2)}.json`);
+  const tofuLog = join(fx.fixture, `tofu-${Math.random().toString(16).slice(2)}.log`);
+  return new Promise((resolve, reject) => {
+    const child = spawn(join(fx.repo, "scripts/live/run.sh"), [entry, leg], {
+      env: {
+        PATH: `${fx.bin}:${process.env.PATH}`, HOME: fx.home, TMPDIR: fx.fixture,
+        MCP_SSO_INFRA_DIR: fx.infra, MCP_SSO_CLOUDFLARE_STACK: "cf", MCP_SSO_ENTRA_STACK: "entra",
+        CAPTURE: capture, TOFU_LOG: tofuLog, ...extraEnv,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    let stdout = "";
+    child.stderr.setEncoding("utf8");
+    child.stdout.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.once("error", reject);
+    child.once("exit", (code) => resolve({
+      code, stderr, stdout,
+      captured: existsSync(capture) ? JSON.parse(readFileSync(capture, "utf8")) : undefined,
+      tofuCalls: existsSync(tofuLog) ? readFileSync(tofuLog, "utf8").trim().split("\n") : [],
+    }));
+  });
+}
+
+test("run.sh assembles the selected leg from stack outputs and clears stale selectors", async (t) => {
+  const fx = makeFixture();
+  try {
+    await t.test("entra probe: canned outputs reach the entry; inherited selectors and OAuth overrides do not", async () => {
+      const result = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        GOOGLE_CLIENT_ID: "stale", OIDC_ISSUER: "https://stale.example", CF_ACCESS_AUDIENCE: "stale",
+        OAUTH_ALLOW_INSECURE_LOCALHOST: "true", OAUTH_REDIRECT_ALLOWLIST_MODE: "replace",
+        PROBE_CLIENT_REDIRECT: "https://stale.example/cb", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
+      });
+      assert.equal(result.code, 0, result.stderr);
+      const env = result.captured;
+      assert.equal(env.OAUTH_ISSUER, ORIGINS.entra);
+      assert.equal(env.ENTRA_TENANT_ID, TENANT);
+      assert.equal(env.ENTRA_CLIENT_ID, CLIENT);
+      assert.equal(env.ENTRA_CLIENT_SECRET, "fixture-entra-secret");
+      assert.equal(env.ENTRA_REDIRECT_URI, "https://entra.example/oauth/callback");
+      assert.equal(env.ENTRA_UNMAPPED_GROUP, UNMAPPED);
+      assert.deepEqual(JSON.parse(env.ENTRA_GROUP_AUTHORIZATION_JSON), { mapping: { [MAPPED]: ["mcp:read"] } });
+      for (const stale of ["GOOGLE_CLIENT_ID", "OIDC_ISSUER", "CF_ACCESS_AUDIENCE", "OAUTH_ALLOW_INSECURE_LOCALHOST",
+        "OAUTH_REDIRECT_ALLOWLIST_MODE", "ENTRA_SUBJECT_ALLOWLIST", "MCP_SSO_DIR", "OAUTH_SQLITE_FILE"]) {
+        assert.equal(env[stale], undefined, `${stale} must not reach the entry`);
+      }
+      assert.equal(env.PROBE_CLIENT_REDIRECT, "https://claude.ai/api/mcp/auth_callback");
+      assert.equal(env.PROBE_APP_CALLBACK, "https://entra.example/app/callback");
+      assert.equal(env.OAUTH_REDIRECT_ALLOWLIST, "https://entra.example/app/callback,http://localhost,http://127.0.0.1");
+      assert.equal(env.OAUTH_DCR_MODE, "stored");
+      assert.equal(env.OAUTH_RESOURCE, "https://entra.example/mcp");
+      assert.ok(env.OAUTH_CONSENT_SIGNING_SECRET.length >= 40);
+      assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /fixture-entra-secret/, "run.sh never prints a stack secret");
+      assert.equal(JSON.parse(env.OAUTH_SIGNING_PRIVATE_JWK).kty, "EC");
+      assert.equal(env.CAPTURE.length > 0, true);
+    });
+    await t.test("cloudflare probe: the Access assertion is minted by cloudflared, never inherited", async () => {
+      const denied = await runScript(fx, "scripts/live/probe-cloudflare.mjs", "cloudflare_access", { CF_ACCESS_ASSERTION: "stale" });
+      assert.equal(denied.code, 1);
+      assert.equal(denied.captured, undefined, "no assertion available must stop before the entry");
+      assert.match(denied.stderr, /cloudflared access login/);
+      const minted = await runScript(fx, "scripts/live/probe-cloudflare.mjs", "cloudflare_access", { FAKE_ASSERTION: "fixture.jwt.value" });
+      assert.equal(minted.code, 0, minted.stderr);
+      assert.equal(minted.captured.CF_ACCESS_ASSERTION, "fixture.jwt.value");
+      assert.equal(minted.captured.CF_ACCESS_ISSUER, "https://team.cloudflareaccess.com");
+      assert.equal(minted.captured.CF_ACCESS_AUDIENCE, "fixture-audience-tag");
+      assert.equal(minted.captured.ENTRA_TENANT_ID, undefined);
+      assert.ok(minted.tofuCalls.every((call) => call.startsWith("cf ")), "the Entra stack is never read for the Cloudflare leg");
+    });
+    await t.test("unsupported entry/leg pairs and a missing REDIS_URL stop before any stack read", async () => {
+      for (const [entry, leg, env] of [
+        ["scripts/live/probe-entra.mjs", "google", {}],
+        ["scripts/live/probe-google.mjs", "entra", {}],
+        ["scripts/live/run-support.mjs", "entra", {}],
+        ["scripts/live/probe-e2e.mjs", "entra", {}],
+      ]) {
+        const result = await runScript(fx, entry, leg, env);
+        assert.equal(result.code, 1, `${entry} ${leg}`);
+        assert.equal(result.captured, undefined);
+        assert.deepEqual(result.tofuCalls, [], `${entry} ${leg} must not read the stacks`);
+      }
+      const e2e = await runScript(fx, "scripts/live/probe-e2e.mjs", "google", { REDIS_URL: "redis://127.0.0.1:1" });
+      assert.equal(e2e.code, 1, "the Google leg needs the credential file even for the e2e probe");
+    });
+  } finally {
+    rmSync(fx.fixture, { recursive: true, force: true });
+  }
+});
+
+test("run.sh validates before it touches prior state, and never deletes through a link", async (t) => {
+  const fx = makeFixture();
+  const stateRoot = join(fx.repo, ".live-state");
+  const server = "examples/fastify-sqlite/index.ts";
+  try {
+    await t.test("a malformed stack output stops the run with the previous leg state intact", async () => {
+      mkdirSync(join(stateRoot, "entra"), { recursive: true, mode: 0o700 });
+      chmodSync(stateRoot, 0o700);
+      writeFileSync(join(stateRoot, "entra/marker"), "previous evidence");
+      const bad = await runScript(fx, server, "entra", { FAKE_UNMAPPED: "not-a-guid" });
+      assert.equal(bad.code, 1);
+      assert.equal(bad.captured, undefined);
+      assert.equal(readFileSync(join(stateRoot, "entra/marker"), "utf8"), "previous evidence");
+      const mapped = await runScript(fx, server, "entra", { FAKE_UNMAPPED: MAPPED.toUpperCase() });
+      assert.equal(mapped.code, 1, "an unmapped fixture that is in the mapping (any case) fails the preflight");
+      assert.equal(readFileSync(join(stateRoot, "entra/marker"), "utf8"), "previous evidence");
+      const empty = await runScript(fx, server, "entra", { FAKE_ENTRA_SECRET: "" });
+      assert.equal(empty.code, 1, "an empty client secret output stops the run");
+      assert.equal(readFileSync(join(stateRoot, "entra/marker"), "utf8"), "previous evidence");
+    });
+    await t.test("the server entry gets a fresh per-leg state directory; probes never touch it", async () => {
+      const probe = await runScript(fx, "scripts/live/probe-entra.mjs", "entra");
+      assert.equal(probe.code, 0, probe.stderr);
+      assert.equal(readFileSync(join(stateRoot, "entra/marker"), "utf8"), "previous evidence", "a probe run leaves the served leg's state alone");
+      const served = await runScript(fx, server, "entra");
+      assert.equal(served.code, 0, served.stderr);
+      assert.equal(existsSync(join(stateRoot, "entra/marker")), false, "prior server state is cleared");
+      assert.equal(served.captured.MCP_SSO_DIR, join(stateRoot, "entra"));
+      assert.equal(served.captured.OAUTH_SQLITE_FILE, join(stateRoot, "entra/auth.db"));
+    });
+    await t.test("prior state that cannot be removed stops the run before the entry", async () => {
+      const locked = join(stateRoot, "entra/locked");
+      mkdirSync(locked, { recursive: true });
+      writeFileSync(join(locked, "file"), "x");
+      chmodSync(locked, 0o500);
+      try {
+        const result = await runScript(fx, server, "entra");
+        assert.equal(result.code, 1);
+        assert.equal(result.captured, undefined);
+        assert.equal(existsSync(join(locked, "file")), true);
+      } finally {
+        chmodSync(locked, 0o700);
+      }
+    });
+    await t.test("a symlinked live-state parent is refused and its target is untouched", async () => {
+      rmSync(stateRoot, { recursive: true, force: true });
+      const elsewhere = join(fx.fixture, "elsewhere");
+      mkdirSync(join(elsewhere, "entra"), { recursive: true });
+      chmodSync(elsewhere, 0o700); // owner-only, so the link itself is the only defect
+      writeFileSync(join(elsewhere, "entra/marker"), "outside the repository");
+      symlinkSync(elsewhere, stateRoot);
+      const result = await runScript(fx, server, "entra");
+      assert.equal(result.code, 1);
+      assert.equal(result.captured, undefined);
+      assert.equal(readFileSync(join(elsewhere, "entra/marker"), "utf8"), "outside the repository");
+      rmSync(stateRoot, { force: true });
+    });
+  } finally {
+    rmSync(fx.fixture, { recursive: true, force: true });
+  }
+});
+
+test("run.sh reads the Google credential file as owner-only data, never by sourcing it", async (t) => {
+  const fx = makeFixture();
+  const file = join(fx.home, ".mcp-sso-google.env");
+  try {
+    await t.test("a private KEY=VALUE file with the OIDC secret alias supplies both Google values", async () => {
+      writeFileSync(file, "# comment\nGOOGLE_CLIENT_ID=fixture-google-id\nOIDC_CLIENT_SECRET=fixture-google-secret\n", { mode: 0o600 });
+      chmodSync(file, 0o600);
+      const result = await runScript(fx, "scripts/live/probe-google.mjs", "google");
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.captured.GOOGLE_CLIENT_ID, "fixture-google-id");
+      assert.equal(result.captured.GOOGLE_CLIENT_SECRET, "fixture-google-secret");
+      assert.equal(result.captured.OIDC_CLIENT_SECRET, undefined, "the alias never reaches the entry under the generic-OIDC name");
+      assert.equal(result.captured.GOOGLE_REDIRECT_URI, "https://google.example/oauth/callback");
+      assert.ok(result.tofuCalls.every((call) => call.startsWith("cf ")));
+      assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /fixture-google-secret|fixture-google-id/, "run.sh never prints the credential");
+    });
+    await t.test("group/other-readable, symlinked, sourced-shape, and shell-injecting files are refused", async () => {
+      chmodSync(file, 0o644);
+      const readable = await runScript(fx, "scripts/live/probe-google.mjs", "google");
+      assert.equal(readable.code, 1);
+      assert.equal(readable.captured, undefined);
+      chmodSync(file, 0o600);
+      const target = join(fx.fixture, "real-credentials.env");
+      writeFileSync(target, "GOOGLE_CLIENT_ID=a\nGOOGLE_CLIENT_SECRET=b\n", { mode: 0o600 });
+      rmSync(file);
+      symlinkSync(target, file);
+      const linked = await runScript(fx, "scripts/live/probe-google.mjs", "google");
+      assert.equal(linked.code, 1, "a symlink at the credential path is refused");
+      rmSync(file);
+      const injected = join(fx.fixture, "injected");
+      writeFileSync(file, `GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=$(id>${injected})\n`, { mode: 0o600 });
+      const shell = await runScript(fx, "scripts/live/probe-google.mjs", "google");
+      assert.equal(shell.code, 0, shell.stderr);
+      assert.equal(shell.captured.GOOGLE_CLIENT_SECRET, `$(id>${injected})`, "the value is data");
+      assert.equal(existsSync(injected), false, "the credential file is never executed");
+      writeFileSync(file, "export GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=s\n", { mode: 0o600 });
+      const exported = await runScript(fx, "scripts/live/probe-google.mjs", "google");
+      assert.equal(exported.code, 1, "an unsupported key shape is refused rather than sourced");
+    });
+  } finally {
+    rmSync(fx.fixture, { recursive: true, force: true });
+  }
+});
