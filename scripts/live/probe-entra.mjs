@@ -24,10 +24,11 @@ if (typeof unmappedGroup !== "string" || !guid.test(unmappedGroup)) {
   throw new Error("ENTRA_UNMAPPED_GROUP must provide the deny-fixture GUID");
 }
 
-const built = await buildExample(process.env);
-const app = built.app;
+let app;
 
 try {
+  const built = await buildExample(process.env);
+  app = built.app;
   const tenant = process.env.ENTRA_TENANT_ID;
   const discovery = await fetch(
     `https://login.microsoftonline.com/${tenant}/v2.0/.well-known/openid-configuration`,
@@ -77,12 +78,21 @@ try {
   const advertised = typeof discoveryJson.authorization_endpoint === "string"
     ? new URL(discoveryJson.authorization_endpoint)
     : null;
+  const targetBase = target === null ? null : new URL(target.href);
+  if (targetBase !== null) {
+    targetBase.search = "";
+    targetBase.hash = "";
+  }
+  const advertisedIsBare = advertised !== null
+    && advertised.username === ""
+    && advertised.password === ""
+    && advertised.search === ""
+    && advertised.hash === "";
 
   if (!ok("authorize redirects to Entra", authorization.statusCode === 302,
     `HTTP ${authorization.statusCode}`)) failures++;
   if (!ok("redirect matches the discovered authorization endpoint",
-    target !== null && advertised !== null
-      && target.origin === advertised.origin && target.pathname === advertised.pathname)) failures++;
+    advertisedIsBare && targetBase?.href === advertised.href)) failures++;
   if (!ok("upstream client_id is the provisioned app",
     target?.searchParams.get("client_id") === process.env.ENTRA_CLIENT_ID)) failures++;
   if (!ok("upstream redirect_uri is the provisioned callback",
@@ -151,13 +161,22 @@ try {
       && denied.kind === "identity_rejected"
       && denied.reason === "entra_no_mapped_groups",
     denied.ok ? "unexpectedly accepted" : `${denied.kind}:${denied.reason}`)) failures++;
+} catch {
+  failures++;
+  out.push("FAIL  probe aborted before completion");
 } finally {
-  await app.close();
+  if (app !== undefined) {
+    try {
+      await app.close();
+    } catch {
+      failures++;
+      out.push("FAIL  probe cleanup failed");
+    }
+  }
+  console.log(out.join("\n"));
+  console.log(
+    `\n${out.filter((line) => line.startsWith("PASS")).length} live checks passed; `
+    + `${out.filter((line) => line.startsWith("CONTROL")).length} local controls passed`,
+  );
+  process.exitCode = failures > 0 ? 1 : 0;
 }
-
-console.log(out.join("\n"));
-console.log(
-  `\n${out.filter((line) => line.startsWith("PASS")).length} live checks passed; `
-  + `${out.filter((line) => line.startsWith("CONTROL")).length} local controls passed`,
-);
-process.exitCode = failures > 0 ? 1 : 0;

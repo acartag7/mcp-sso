@@ -17,7 +17,9 @@ test("Entra deny fixture is mandatory before the example boots", () => {
 
 test("Entra redirect is bound to the discovered endpoint and registered client", () => {
   assert.match(PROBE, /client_id: clientId \?\? "fixture-registration-failed"/);
-  assert.match(PROBE, /target\.origin === advertised\.origin && target\.pathname === advertised\.pathname/);
+  assert.match(PROBE, /advertised\.username === ""[\s\S]*?advertised\.password === ""[\s\S]*?advertised\.search === ""[\s\S]*?advertised\.hash === ""/);
+  assert.match(PROBE, /targetBase\.search = "";[\s\S]*?targetBase\.hash = "";/);
+  assert.match(PROBE, /advertisedIsBare && targetBase\?\.href === advertised\.href/);
   assert.doesNotMatch(PROBE, /pathname[^\n]*startsWith/);
   assert.match(PROBE, /discoveryJson\.jwks_uri !== expectedJwks[\s\S]*?await fetch\(expectedJwks\)/);
 });
@@ -34,6 +36,9 @@ test("Entra synthetic denial is a non-live control excluded from live counts", (
 test("Entra probe emits no tenant identifier and drains output", () => {
   assert.doesNotMatch(PROBE, /`\$\{target\.origin\}\$\{target\.pathname\}`/);
   assert.doesNotMatch(PROBE, /console\.(?:log|warn|error)\([^\n]*(?:tenant|unmappedGroup|denyToken)/);
+  assert.match(PROBE, /catch \{[\s\S]*?FAIL  probe aborted before completion[\s\S]*?finally \{/);
+  assert.ok(PROBE.indexOf('finally {') < PROBE.indexOf('console.log(out.join("\\n"))'));
+  assert.doesNotMatch(PROBE, /catch \([^)]*\)[\s\S]*?console\.(?:log|warn|error)\([^\n]*(?:error|message)/);
   assert.match(PROBE, /process\.exitCode = failures > 0 \? 1 : 0/);
   assert.doesNotMatch(PROBE, /process\.exit\(/);
 });
