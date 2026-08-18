@@ -37,6 +37,9 @@ test("Cloudflare forged negative reuses the accepted provider key ID", () => {
 
 test("Cloudflare credential is not printed and evidence drains before exit", () => {
   assert.doesNotMatch(PROBE, /console\.(?:log|warn|error)\([^\n]*providerAssertion/);
+  assert.match(PROBE, /catch \{[\s\S]*?FAIL  probe aborted before completion[\s\S]*?finally \{/);
+  assert.ok(PROBE.indexOf('finally {') < PROBE.indexOf('console.log(out.join("\\n"))'));
+  assert.doesNotMatch(PROBE, /catch \([^)]*\)[\s\S]*?console\.(?:log|warn|error)\([^\n]*(?:error|message)/);
   assert.match(PROBE, /process\.exitCode = failures > 0 \? 1 : 0/);
   assert.doesNotMatch(PROBE, /process\.exit\(/);
 });
