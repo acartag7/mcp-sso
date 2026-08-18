@@ -9,7 +9,7 @@ const PROBE = readFileSync(join(ROOT, "scripts/live/probe-cloudflare.mjs"), "utf
 
 test("Cloudflare probe requires out-of-band provider evidence before boot", () => {
   const requiredAt = PROBE.indexOf("CF_ACCESS_ASSERTION must provide a current provider-signed assertion");
-  const buildAt = PROBE.indexOf("await buildExample(process.env)");
+  const buildAt = PROBE.indexOf("await buildExample(isolatedEnv)");
   assert.ok(requiredAt >= 0 && requiredAt < buildAt);
   assert.match(PROBE, /typeof providerAssertion !== "string" \|\| providerAssertion\.length === 0/);
   assert.doesNotMatch(PROBE, /CF_ACCESS_ASSERTION \?\?/);
@@ -42,4 +42,29 @@ test("Cloudflare credential is not printed and evidence drains before exit", () 
   assert.doesNotMatch(PROBE, /catch \([^)]*\)[\s\S]*?console\.(?:log|warn|error)\([^\n]*(?:error|message)/);
   assert.match(PROBE, /process\.exitCode = failures > 0 \? 1 : 0/);
   assert.doesNotMatch(PROBE, /process\.exit\(/);
+});
+
+test("Cloudflare DCR registration uses disposable state on every exit", () => {
+  const stateAt = PROBE.indexOf('await mkdtemp(join(tmpdir(), "mcp-sso-live-cloudflare-"))');
+  const buildAt = PROBE.indexOf("await buildExample(isolatedEnv)");
+  const closeAt = PROBE.indexOf("await app.close()");
+  const storeCloseAt = PROBE.indexOf("await store.close()");
+  const removeAt = PROBE.indexOf("await rm(stateDir, { recursive: true, force: true })");
+  assert.ok(stateAt >= 0 && stateAt < buildAt);
+  assert.ok(closeAt >= 0 && closeAt < storeCloseAt && storeCloseAt < removeAt);
+  assert.match(PROBE, /MCP_SSO_DIR: stateDir,[\s\S]*?OAUTH_SQLITE_FILE: join\(stateDir, "auth\.db"\)/);
+  assert.match(PROBE, /store = built\.store/);
+  assert.match(PROBE, /finally \{[\s\S]*?await app\.close\(\)[\s\S]*?await store\.close\(\)[\s\S]*?await rm\(stateDir, \{ recursive: true, force: true \}\)/);
+  assert.match(PROBE, /FAIL  probe store cleanup failed/);
+  assert.match(PROBE, /FAIL  probe state cleanup failed/);
+  assert.doesNotMatch(PROBE, /buildExample\(process\.env\)/);
+});
+
+test("Cloudflare probe validates its callback before any side effect", () => {
+  const preflightAt = PROBE.indexOf("assertRegistrationRedirectPolicy(process.env.PROBE_APP_CALLBACK");
+  const buildAt = PROBE.indexOf("await buildExample(isolatedEnv)");
+  assert.ok(preflightAt >= 0 && preflightAt < buildAt);
+  assert.doesNotMatch(PROBE, /scope: "mcp:read"/);
+  assert.match(PROBE, /const probeScope = built\.config\.scopeCatalog\[0\]/);
+  assert.match(PROBE, /scope: probeScope/);
 });
