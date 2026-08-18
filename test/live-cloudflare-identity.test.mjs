@@ -61,10 +61,20 @@ test("Cloudflare DCR registration uses disposable state on every exit", () => {
 });
 
 test("Cloudflare probe validates its callback before any side effect", () => {
-  const preflightAt = PROBE.indexOf("assertRegistrationRedirectPolicy(process.env.PROBE_APP_CALLBACK");
+  const preflightAt = PROBE.indexOf("assertProbeClientRedirect(process.env.PROBE_APP_CALLBACK)");
   const buildAt = PROBE.indexOf("await buildExample(isolatedEnv)");
   assert.ok(preflightAt >= 0 && preflightAt < buildAt);
   assert.doesNotMatch(PROBE, /scope: "mcp:read"/);
   assert.match(PROBE, /const probeScope = built\.config\.scopeCatalog\[0\]/);
   assert.match(PROBE, /scope: probeScope/);
+});
+
+test("Cloudflare probe preflights its callback against the effective allowlist", () => {
+  // A scheme-only check passes a valid https URL that the allowlist refuses,
+  // so the probe would spend provider I/O before /oauth/register rejects it.
+  assert.match(PROBE, /assertProbeClientRedirect\(process\.env\.PROBE_APP_CALLBACK\)/);
+  assert.doesNotMatch(PROBE, /assertRegistrationRedirectPolicy/);
+  const preflightAt = PROBE.indexOf("assertProbeClientRedirect(process.env.PROBE_APP_CALLBACK)");
+  const buildAt = PROBE.indexOf("await buildExample(");
+  assert.ok(preflightAt >= 0 && preflightAt < buildAt);
 });

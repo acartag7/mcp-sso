@@ -8,7 +8,7 @@ import { buildExample } from "../../examples/fastify-sqlite/app.ts";
 import { pkceChallenge } from "../../src/crypto.ts";
 import { GOOGLE_ISSUER } from "../../src/identity/google.ts";
 import { defaultDiscoveryTransport } from "../../src/identity/generic-oidc-discovery.ts";
-import { assertRegistrationRedirectPolicy } from "../../src/redirect.ts";
+import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
 import { countUsableRs256Keys, fetchJson } from "./probe-entra-support.mjs";
 import { resolveFetchedGoogleDiscovery } from "./probe-google-support.mjs";
 
@@ -20,12 +20,11 @@ for (const name of required) {
 }
 let clientRedirect;
 try {
-  clientRedirect = assertRegistrationRedirectPolicy(
-    process.env.PROBE_CLIENT_REDIRECT,
-    "web",
-  );
+  clientRedirect = assertProbeClientRedirect(process.env.PROBE_CLIENT_REDIRECT);
 } catch {
-  throw new Error("PROBE_CLIENT_REDIRECT must provide a valid web redirect URL");
+  throw new Error(
+    "PROBE_CLIENT_REDIRECT must be a web redirect URL the effective allowlist admits",
+  );
 }
 
 const out = [];
