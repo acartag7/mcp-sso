@@ -126,7 +126,13 @@ try {
     !normalizedGroups.has(unmappedGroup.toLowerCase()))) failures++;
 
   // This does not prove that the tenant emits the group in a real token. It is
-  // a local control for the shipped mapping and reason-code path only.
+  // a local group-only control for the shipped mapping and reason-code path;
+  // documented deployment base scopes are deliberately excluded from this
+  // synthetic denial without changing the live example configuration above.
+  const groupOnlyAuthorization = {
+    mapping: groupAuthorization.mapping,
+    baseScopes: [],
+  };
   const { privateKey, publicKey } = await generateKeyPair("RS256");
   const now = Math.floor(Date.now() / 1000);
   const nonce = "live-unmapped-group-control";
@@ -143,7 +149,7 @@ try {
     tenantId: tenant,
     clientId: process.env.ENTRA_CLIENT_ID,
     redirectUri: process.env.ENTRA_REDIRECT_URI,
-    groupAuthorization,
+    groupAuthorization: groupOnlyAuthorization,
   }, {
     verifyKey: publicKey,
     currentDate: new Date(now * 1000),

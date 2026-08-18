@@ -77,6 +77,8 @@ test("Entra JWKS evidence requires a runtime-usable RS256 public key", async () 
 test("Entra synthetic denial is a non-live control excluded from live counts", () => {
   assert.match(PROBE, /This does not prove that the tenant emits the group in a real token/);
   assert.match(PROBE, /groups: \[unmappedGroup\]/);
+  assert.match(PROBE, /const groupOnlyAuthorization = \{\s*mapping: groupAuthorization\.mapping,\s*baseScopes: \[\],\s*\}/);
+  assert.match(PROBE, /groupAuthorization: groupOnlyAuthorization/);
   assert.match(PROBE, /if \(!control\("local identity control rejects the unmapped group"/);
   assert.match(PROBE, /denied\.reason === "entra_no_mapped_groups"/);
   assert.match(PROBE, /startsWith\("CONTROL"\)/);
