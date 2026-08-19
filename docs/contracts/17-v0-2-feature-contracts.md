@@ -1088,13 +1088,21 @@ bounded rather than open-ended.
 
 ## 17.2 `client_credentials` grant (MCP extension `io.modelcontextprotocol/oauth-client-credentials`)
 
-**Admin-API error boundary (0.3.6).** `provisionMachineClient`,
-`rotateMachineClientSecret`, and `disableMachineClient` return the underlying
-`ClientStore` error to their DIRECT caller by design. These are administrative
-APIs, not endpoints: the library never turns them into an HTTP response, and the
-operator invoking one needs the store's actual cause to diagnose a failed
-provision. That is the opposite of the `/oauth/revoke` rule in §13, and
-deliberately so — there the library owns the response.
+**Admin-API error boundary (0.3.6; provenance amended — see §6.4).**
+`provisionMachineClient`, `rotateMachineClientSecret`, and
+`disableMachineClient` are administrative APIs, not endpoints: the library
+never turns them into an HTTP response, and the operator invoking one needs
+the store's actual cause to diagnose a failed provision. Their store calls
+run through the §13 `callPort` boundary like every other pluggable-port call
+site, closing the lifecycle call sites the #247 sweep left unwrapped (two
+`find`s, two `compareAndSwapMachineClient`s, one `createMachineClient`): a
+store throw surfaces to the DIRECT caller as a `PortFailureError` carrying
+the original on `.cause` — never as the thrown value itself. Diagnosis is one
+property away, but a store-authored `OAuthError` can no longer arrive
+indistinguishable from a library-raised one, and the failure audit
+classifies it `internal_error` instead of publishing the port's own code.
+The 0.3.6 verbatim-return decision is superseded; the HTTP duty below is
+unchanged.
 
 **A host that exposes machine-client lifecycle over HTTP MUST map these to a
 sanitized response itself.** The library makes no guarantee at that boundary,
