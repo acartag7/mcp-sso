@@ -34,8 +34,8 @@ const EXCEPTIONS = {
     reason: "One use-case class whose prepare/approve both depend on its private auditSuccess/auditFailure guards; splitting either method away from those wrappers separates each failure path from the audit that accounts for it, and extracting the two 3-line helpers leaves a fragment.",
   },
   "adapters/bridge.ts": {
-    limit: 255,
-    reason: "The pairing admission seam belongs beside Bridge's snapshotted limiter and endpoint guards; splitting would separate one policy owner.",
+    limit: 258,
+    reason: "The pairing admission seam belongs beside Bridge's snapshotted limiter and endpoint guards; splitting would separate one policy owner. Raised 255→258 for the §6.7 stored-DCR runtime admission (D2): the one-line call sits beside the guard it admits through, and the helper already lives in bridge-internals.",
   },
 };
 

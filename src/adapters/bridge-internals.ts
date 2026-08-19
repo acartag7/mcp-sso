@@ -167,3 +167,14 @@ export function consentCookie(req: NormRequest): string | undefined {
   const found = raw.split(";").map((p) => p.trim()).find((p) => p.startsWith("mcp_idp_consent="));
   return found ? decodeURIComponent(found.slice("mcp_idp_consent=".length)) : undefined;
 }
+
+/** §6.7 stored-DCR admission (D2 runtime half): the anonymous durable write
+ *  must key per-client, and a configured extractor that yields nothing for a
+ *  given request must not fall back to the shared "unknown" bucket — the boot
+ *  check cannot see per-request extraction results. Direct 400 invalid_request
+ *  BEFORE the limiter charge or any durable work; never a redirect. */
+export function assertStoredRegistrationIp(mode: "stateless" | "stored", ip: string | undefined): void {
+  if (mode === "stored" && (typeof ip !== "string" || ip === "")) {
+    throw new OAuthError("invalid_request", "stored registration requires a client IP for rate limiting", 400);
+  }
+}
