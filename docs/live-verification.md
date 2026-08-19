@@ -168,8 +168,9 @@ symlinked or shared `.live-state` parent before rotating a previous leg's state
 to `<leg>.previous` — only a leaf holding an `audit.jsonl` is rotated, so a
 failed start and its retry never cost the last successful run's evidence —
 stopping when that rotation fails. `serve.sh` accepts readiness only from the process it
-started (`lsof` must report that child as the only listener), aborts when a
-server fails or times out during startup, refuses a leg named twice or two
+started (`lsof` must report that child as the only listener) and re-proves that
+ownership immediately before exposing the tunnel, aborts when a server fails or
+times out during startup, refuses a leg named twice or two
 legs sharing a hostname or port, supervises the tunnel and every server so a
 signal to the script itself still runs cleanup and a server dying while
 serving stops the run, and signals only its own children on exit. These properties are exercised by `test/live-run-script.test.mjs` and

@@ -64,6 +64,7 @@ test("probe-e2e: every row passes against a real Redis and no credential reaches
     "official SDK client completes a tool call with the user token",
     "official SDK client completes a tool call with the machine token",
     "a disabled credential is refused as invalid_client",
+    "replaying a consumed refresh token is refused and revokes its whole family",
     "/oauth/revoke answers 200 and the revoked refresh token is refused as invalid_grant",
     "Redis limiter admits exactly the remaining window budget and refuses past it",
     "JSONL and webhook sinks received the same ordered events",

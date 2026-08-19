@@ -47,7 +47,7 @@ const ok = (label, condition, detail = "") => {
   out.push(`${condition ? "PASS" : "FAIL"}  ${label}${detail ? " — " + detail : ""}`);
   return condition;
 };
-const TOKEN_LIMIT = 10;
+const TOKEN_LIMIT = 20;
 const ISSUER = process.env.OAUTH_ISSUER;
 const RESOURCE = `${ISSUER}/mcp`;
 const SUBJECT = "live-probe-user";
@@ -135,34 +135,46 @@ try {
   const clientId = registration.statusCode === 201 ? registration.json().client_id : undefined;
   if (!ok("DCR registers a client into the shipped SQLite store",
     registration.statusCode === 201 && typeof clientId === "string", `HTTP ${registration.statusCode}`)) failures++;
-  const verifier = "live-e2e-probe-verifier-0123456789abcdef01234567";
-  const authorize = await app.inject({
-    method: "GET",
-    url: `/oauth/authorize?${new URLSearchParams({
-      response_type: "code", client_id: clientId ?? "fixture-registration-failed", redirect_uri: callback,
-      code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "live-e2e",
-    })}`,
-    headers: { [IDENTITY_HEADER]: identityToken },
-  });
-  const consentToken = authorize.statusCode === 200 ? extractConsentToken(authorize.body) : undefined;
-  if (!ok("verified identity reaches the consent page", consentToken !== undefined,
-    `HTTP ${authorize.statusCode}`)) failures++;
-  const approve = await app.inject({
-    method: "POST", url: "/oauth/authorize/approve",
-    headers: { "content-type": "application/x-www-form-urlencoded", origin: ISSUER },
-    payload: form({ consent_token: consentToken ?? "fixture-no-consent", approved: "true" }),
-  });
-  const code = approve.statusCode === 302 ? new URL(approve.headers.location).searchParams.get("code") : null;
-  if (!ok("consent approval redirects with an authorization code", typeof code === "string" && code.length > 0,
-    `HTTP ${approve.statusCode}`)) failures++;
-  const userToken = await tokenPost(app, {
-    grant_type: "authorization_code", code: code ?? "fixture-no-code", redirect_uri: callback,
-    client_id: clientId ?? "fixture-registration-failed", code_verifier: verifier,
-  });
-  const userTokens = userToken.statusCode === 200 ? userToken.json() : {};
-  if (!ok("authorization_code mints access and refresh tokens",
-    typeof userTokens.access_token === "string" && typeof userTokens.refresh_token === "string",
-    `HTTP ${userToken.statusCode}`)) failures++;
+
+  /** One authorization-code grant end to end. Each call mints its OWN refresh
+   *  family, which is what lets replay revocation and RFC 7009 revocation be
+   *  proved separately — a family the replay already revoked cannot show
+   *  whether revoke works, and vice versa. */
+  const authorizationCodeGrant = async (label, state) => {
+    const grantVerifier = `live-e2e-probe-verifier-${state}-0123456789abcdef`;
+    const authorize = await app.inject({
+      method: "GET",
+      url: `/oauth/authorize?${new URLSearchParams({
+        response_type: "code", client_id: clientId ?? "fixture-registration-failed", redirect_uri: callback,
+        code_challenge: pkceChallenge(grantVerifier), code_challenge_method: "S256", scope: "mcp:read", state,
+      })}`,
+      headers: { [IDENTITY_HEADER]: identityToken },
+    });
+    const consent = authorize.statusCode === 200 ? extractConsentToken(authorize.body) : undefined;
+    if (!ok(`${label}: verified identity reaches the consent page`, consent !== undefined,
+      `HTTP ${authorize.statusCode}`)) failures++;
+    const approve = await app.inject({
+      method: "POST", url: "/oauth/authorize/approve",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: ISSUER },
+      payload: form({ consent_token: consent ?? "fixture-no-consent", approved: "true" }),
+    });
+    const granted = approve.statusCode === 302 ? new URL(approve.headers.location).searchParams.get("code") : null;
+    if (!ok(`${label}: consent approval redirects with an authorization code`,
+      typeof granted === "string" && granted.length > 0, `HTTP ${approve.statusCode}`)) failures++;
+    const minted = await tokenPost(app, {
+      grant_type: "authorization_code", code: granted ?? "fixture-no-code", redirect_uri: callback,
+      client_id: clientId ?? "fixture-registration-failed", code_verifier: grantVerifier,
+    });
+    const tokens = minted.statusCode === 200 ? minted.json() : {};
+    if (!ok(`${label}: authorization_code mints access and refresh tokens`,
+      typeof tokens.access_token === "string" && typeof tokens.refresh_token === "string",
+      `HTTP ${minted.statusCode}`)) failures++;
+    return { ...tokens, consent, code: granted, verifier: grantVerifier };
+  };
+  const userTokens = await authorizationCodeGrant("replay family", "live-e2e-replay");
+  const consentToken = userTokens.consent;
+  const code = userTokens.code;
+  const verifier = userTokens.verifier;
 
   // 2. The OFFICIAL MCP SDK client over a real loopback socket.
   const base = await app.listen({ host: "127.0.0.1", port: 0 });
@@ -204,20 +216,37 @@ try {
       && afterDisable.statusCode === 401 && afterDisable.json().error === "invalid_client",
     `HTTP ${afterDisable.statusCode}`)) failures++;
 
-  // 4. Refresh rotation, then RFC 7009 revocation observed on the successor.
-  const refreshed = await tokenPost(app, {
-    grant_type: "refresh_token", refresh_token: userTokens.refresh_token ?? "fixture-no-refresh", client_id: clientId,
+  // 4a. Rotation, then REPLAY of the consumed predecessor: the replay is
+  // refused AND the live successor dies with it, which is family revocation
+  // rather than a single-token rejection.
+  const refresh = (token) => tokenPost(app, {
+    grant_type: "refresh_token", refresh_token: token ?? "fixture-no-refresh", client_id: clientId,
   });
+  const refreshed = await refresh(userTokens.refresh_token);
   const rotated = refreshed.statusCode === 200 ? refreshed.json().refresh_token : undefined;
   if (!ok("refresh rotates the refresh token",
     typeof rotated === "string" && rotated !== userTokens.refresh_token, `HTTP ${refreshed.statusCode}`)) failures++;
+  const replayed = await refresh(userTokens.refresh_token);
+  const afterReplay = await refresh(rotated);
+  if (!ok("replaying a consumed refresh token is refused and revokes its whole family",
+    replayed.statusCode === 400 && replayed.json().error === "invalid_grant"
+      && afterReplay.statusCode === 400 && afterReplay.json().error === "invalid_grant",
+    `replay HTTP ${replayed.statusCode}, live successor HTTP ${afterReplay.statusCode}`)) failures++;
+
+  // 4b. RFC 7009 revocation, on its OWN family — the family above is already
+  // revoked, so it could not tell a working revoke endpoint from a broken one.
+  const revocationTokens = await authorizationCodeGrant("revocation family", "live-e2e-revoke");
+  const revocationRefreshed = await refresh(revocationTokens.refresh_token);
+  const revocationRotated = revocationRefreshed.statusCode === 200 ? revocationRefreshed.json().refresh_token : undefined;
+  if (!ok("the revocation family rotates before it is revoked",
+    typeof revocationRotated === "string" && revocationRotated !== revocationTokens.refresh_token,
+    `HTTP ${revocationRefreshed.statusCode}`)) failures++;
   const revoke = await app.inject({
     method: "POST", url: "/oauth/revoke",
-    headers: { "content-type": "application/x-www-form-urlencoded" }, payload: form({ token: rotated ?? "fixture-no-refresh" }),
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    payload: form({ token: revocationRotated ?? "fixture-no-refresh" }),
   });
-  const afterRevoke = await tokenPost(app, {
-    grant_type: "refresh_token", refresh_token: rotated ?? "fixture-no-refresh", client_id: clientId,
-  });
+  const afterRevoke = await refresh(revocationRotated);
   if (!ok("/oauth/revoke answers 200 and the revoked refresh token is refused as invalid_grant",
     revoke.statusCode === 200 && afterRevoke.statusCode === 400 && afterRevoke.json().error === "invalid_grant",
     `HTTP ${revoke.statusCode} then ${afterRevoke.statusCode}`)) failures++;
@@ -251,13 +280,19 @@ try {
     ["oauth.authorize.approve", "success"], ["oauth.token.authorization_code", "success"], ["auth.request", "success"],
     ["oauth.client.provision", "success"], ["oauth.token.client_credentials", "success"],
     ["oauth.token.client_credentials", "failure"], ["oauth.client.disable", "success"],
-    ["oauth.token.refresh", "success"], ["oauth.revoke", "success"], ["oauth.token.refresh", "failure"],
+    ["oauth.token.refresh", "success"], ["oauth.token.refresh", "failure"],
+    ["oauth.token.authorization_code", "success"], ["oauth.token.refresh", "success"],
+    ["oauth.revoke", "success"], ["oauth.token.refresh", "failure"],
   ];
   if (!ok("JSONL sink contains the exercised flow in order", hasOrderedFlow(fileEvents, requiredFlow))) failures++;
   if (!ok("webhook sink contains the exercised flow in order", hasOrderedFlow(posted, requiredFlow))) failures++;
   const evidence = `${JSON.stringify(fileEvents)}\n${JSON.stringify(posted)}`;
   const credentials = [
     ["consent token", consentToken], ["authorization code", code], ["PKCE verifier", verifier],
+    ["revocation-family consent token", revocationTokens.consent],
+    ["revocation-family authorization code", revocationTokens.code],
+    ["revocation-family refresh token", revocationTokens.refresh_token],
+    ["revocation-family rotated refresh token", revocationRotated],
     ["machine client secret", provisioned.clientSecret], ["user access token", userTokens.access_token],
     ["user refresh token", userTokens.refresh_token], ["rotated refresh token", rotated],
     ["machine access token", machineAccess], ["probe identity token", identityToken],

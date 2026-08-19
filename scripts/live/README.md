@@ -140,8 +140,8 @@ One tunnel carries every leg you name; start all the legs you want served in
 **one** invocation, because a second connector with a different ingress would
 receive part of the traffic. Before it exposes anything it proves readiness of
 the process it started — the port answers, the child is alive, and `lsof`
-reports the child as the only listener — and refuses a port that already has a
-listener. It prints the public URL and the client command per leg, for example:
+reports the child as the only listener, re-proved immediately before the tunnel
+is exposed — and refuses a port that already has a listener. It prints the public URL and the client command per leg, for example:
 
 ```
 claude mcp add --transport http live-entra https://<host>/mcp

@@ -151,11 +151,15 @@ for i in "${!LEGS[@]}"; do
     exit "$status"
   fi
 done
-# Every server proved ready above; re-check each is still alive immediately
-# before exposure, since a later leg's readiness wait may have outlived an
-# earlier leg's process.
+# Every server proved ready above; re-prove it immediately before exposure. A
+# later leg's readiness wait can outlive an earlier leg's process, and an
+# earlier server can stop listening while still alive — letting another process
+# bind its port — so the liveness check and the ownership proof are both redone
+# here rather than trusting the per-leg proof from minutes ago.
 for i in "${!LEGS[@]}"; do
   kill -0 "${SERVER_PIDS[$i]}" 2>/dev/null || fail "example server for leg ${LEGS[$i]} exited before the tunnel started"
+  [ "$(listener_pids "${GATEWAY_PORTS[$i]}")" = "${SERVER_PIDS[$i]} " ] \
+    || fail "port ${GATEWAY_PORTS[$i]} is no longer held solely by the server started for leg ${LEGS[$i]}"
 done
 
 # The tunnel runs in the background and this script supervises it and every

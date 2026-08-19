@@ -351,6 +351,10 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.doesNotMatch(PROBE, /disableMachineClient\([^)]*\{\s*clientId/);
   assert.match(PROBE, /afterDisable\.statusCode === 401 && afterDisable\.json\(\)\.error === "invalid_client"/, "the disabled-client response is asserted exactly");
   assert.match(PROBE, /url: "\/oauth\/revoke"/, "revocation is exercised through the endpoint");
+  assert.match(PROBE, /const replayed = await refresh\(userTokens\.refresh_token\);[\s\S]*?const afterReplay = await refresh\(rotated\);/,
+    "the consumed predecessor is replayed and the live successor re-checked");
+  assert.ok(PROBE.indexOf('await authorizationCodeGrant("revocation family"') > PROBE.indexOf("const afterReplay"),
+    "revocation is proved on a family the replay did not already revoke");
   assert.match(PROBE, /afterRevoke\.statusCode === 400 && afterRevoke\.json\(\)\.error === "invalid_grant"/);
   assert.match(PROBE, /url: "\/oauth\/register"/);
   assert.match(PROBE, /url: "\/oauth\/authorize\/approve"/);
