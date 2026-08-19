@@ -296,10 +296,29 @@ export function prepareLiveStateDir(root, leg, uid = process.getuid?.()) {
 }
 
 const readStdin = () => readFileSync(0, "utf8");
+
+/** Normalize a deny-channel value with EXACTLY the example's listEnv semantics
+ *  (split on ",", String.prototype.trim — Unicode whitespace included — filter
+ *  Boolean). Rejects the empty-normalizing channel (it would run the positive
+ *  leg) and, when the real value is supplied as argv[0], a list containing it
+ *  (a member login would pass while the run records the deny leg). Returns the
+ *  normalized list for the runner to pass on — one parser, no shell re-parse. */
+function denyListNormalized(raw, real) {
+  const entries = raw.split(",").map((entry) => entry.trim()).filter(Boolean);
+  if (entries.length === 0) {
+    throw new RunSupportError("deny channel normalizes to an empty list; listEnv would treat it as unset and the positive leg would run");
+  }
+  if (real !== undefined && entries.includes(real.trim())) {
+    throw new RunSupportError("deny channel contains the real value; the deny leg must exclude it or every member login passes");
+  }
+  return entries.join(",");
+}
+
 const COMMANDS = {
   "issuer-origin": ([leg]) => issuerOriginForLeg(readStdin(), leg),
   "gateway-port": ([leg]) => String(gatewayPortForLeg(readStdin(), leg)),
   "group-authorization": () => groupAuthorizationJsonFromMapping(readStdin()),
+  "deny-list": ([real]) => denyListNormalized(readStdin(), real),
   "google-credential-file": ([path]) => {
     const values = readGoogleCredentialFile(path);
     return `${values.GOOGLE_CLIENT_ID}\n${values.GOOGLE_CLIENT_SECRET}`;

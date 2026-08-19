@@ -184,19 +184,22 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
       assert.match(bothSet.stderr, /only ONE Entra deny channel/);
       assert.equal(bothSet.captured, undefined, "the refusal stops before the entry runs");
       // A value that trims to nothing is the positive leg in disguise (the
-      // example's listEnv would treat it as unset) and is refused.
-      const blank = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
-        MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: " , ",
-      });
-      assert.equal(blank.code, 1);
-      assert.match(blank.stderr, /no nonempty entry after trimming/);
+      // example's listEnv would treat it as unset) and is refused — including
+      // JS-trimmable Unicode whitespace, which bash-side trimming would miss.
+      for (const blankish of [" , ", " "]) {
+        const blank = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+          MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: blankish,
+        });
+        assert.equal(blank.code, 1);
+        assert.match(blank.stderr, /normalizes to an empty list/);
+      }
       // A wrong-tenant list containing the REAL tenant would pass every member
       // login while the run records D4 — refused before the entry runs.
       const realTenant = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
         MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: `00000000-0000-0000-0000-000000000000,${TENANT}`,
       });
       assert.equal(realTenant.code, 1);
-      assert.match(realTenant.stderr, /contains the REAL tenant/);
+      assert.match(realTenant.stderr, /contains the real value/);
       const bareOnly = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
         ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
       });

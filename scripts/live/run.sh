@@ -85,34 +85,6 @@ pass() {
 }
 pass PATH HOME TMPDIR LANG LC_ALL
 
-# True when the comma-separated value keeps at least one nonempty element after
-# trimming — the same normalization listEnv applies on the example side. A
-# deny channel whose value trims to nothing is the positive leg in disguise
-# and must fail loudly instead of producing a silently-wrong run.
-deny_channel_nonempty() {
-  local item
-  for item in $(printf '%s' "$1" | tr ',' ' '); do
-    item="${item#"${item%%[![:space:]]*}"}"
-    item="${item%"${item##*[![:space:]]}"}"
-    if [ -n "$item" ]; then return 0; fi
-  done
-  return 1
-}
-
-# True when no trimmed element of the comma-separated value equals $2. The
-# wrong-tenant leg must EXCLUDE the stack's real tenant: an operator typo that
-# includes it makes every member login pass tenant validation while the run is
-# recorded as the D4 deny leg.
-deny_channel_excludes() {
-  local item
-  for item in $(printf '%s' "$1" | tr ',' ' '); do
-    item="${item#"${item%%[![:space:]]*}"}"
-    item="${item%"${item##*[![:space:]]}"}"
-    if [ "$item" = "$2" ]; then return 1; fi
-  done
-  return 0
-}
-
 # Fresh signing material for this run, generated BEFORE any stack secret is
 # read so the generating processes never hold one.
 OAUTH_CONSENT_SIGNING_SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '\n=')" \
@@ -173,22 +145,21 @@ if [ "$KIND" != "e2e" ]; then
       # un-allowlisted from the ambient shell. Unset means the positive-only
       # configuration and the example's defaults apply. Both set at once is
       # ambiguous evidence (tenant validation runs first and would mask the
-      # allowlist denial), so it is refused rather than run.
+      # allowlist denial), so it is refused rather than run. Validation and
+      # normalization go through run-support's deny-list (never this shell):
+      # exactly the example's listEnv semantics — split, Unicode trim, filter —
+      # and, for the wrong-tenant channel, exclusion of the REAL tenant.
       if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" ] && [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST:-}" ]; then
         fail "set only ONE Entra deny channel per run: MCP_SSO_ENTRA_ALLOWED_TENANT_IDS (wrong-tenant) or MCP_SSO_ENTRA_SUBJECT_ALLOWLIST (allowlist); both set cannot produce unambiguous evidence"
       fi
       if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" ]; then
-        deny_channel_nonempty "$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS" \
-          || fail "MCP_SSO_ENTRA_ALLOWED_TENANT_IDS has no nonempty entry after trimming; a deny channel that normalizes to unset would run the positive leg"
-        deny_channel_excludes "$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS" "$ENTRA_TENANT_ID" \
-          || fail "MCP_SSO_ENTRA_ALLOWED_TENANT_IDS contains the REAL tenant ${ENTRA_TENANT_ID}; the wrong-tenant leg must exclude it, or every member login passes tenant validation while the run records D4"
-        ENTRA_ALLOWED_TENANT_IDS="$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS"
+        ENTRA_ALLOWED_TENANT_IDS="$(printf '%s' "$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS" | support deny-list "$ENTRA_TENANT_ID")" \
+          || fail "MCP_SSO_ENTRA_ALLOWED_TENANT_IDS is not a usable wrong-tenant deny list (run-support reports why above)"
         pass ENTRA_ALLOWED_TENANT_IDS
       fi
       if [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST:-}" ]; then
-        deny_channel_nonempty "$MCP_SSO_ENTRA_SUBJECT_ALLOWLIST" \
-          || fail "MCP_SSO_ENTRA_SUBJECT_ALLOWLIST has no nonempty entry after trimming; a deny channel that normalizes to unset would run the positive leg"
-        ENTRA_SUBJECT_ALLOWLIST="$MCP_SSO_ENTRA_SUBJECT_ALLOWLIST"
+        ENTRA_SUBJECT_ALLOWLIST="$(printf '%s' "$MCP_SSO_ENTRA_SUBJECT_ALLOWLIST" | support deny-list)" \
+          || fail "MCP_SSO_ENTRA_SUBJECT_ALLOWLIST is not a usable deny allowlist (run-support reports why above)"
         pass ENTRA_SUBJECT_ALLOWLIST
       fi
       ;;
