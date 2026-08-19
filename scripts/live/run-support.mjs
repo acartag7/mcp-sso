@@ -308,7 +308,7 @@ function denyListNormalized(raw, real) {
   if (entries.length === 0) {
     throw new RunSupportError("deny channel normalizes to an empty list; listEnv would treat it as unset and the positive leg would run");
   }
-  if (real !== undefined && entries.includes(real.trim())) {
+  if (real !== undefined && entries.some((entry) => entry.toLowerCase() === real.trim().toLowerCase())) {
     throw new RunSupportError("deny channel contains the real value; the deny leg must exclude it or every member login passes");
   }
   return entries.join(",");
