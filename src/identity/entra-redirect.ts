@@ -37,7 +37,8 @@
 //       access/refresh tokens are discarded immediately (never stored, logged,
 //       audited, forwarded, or placed in the flow cookie).
 //   R5. A replayed callback URL is rejected (flow_replayed, direct 400) with NO
-//       second outbound exchange; the cookie is cleared on every callback outcome.
+//       second outbound exchange; the cookie is cleared on every callback outcome
+//       except a quota denial, which performs no work (§17.11).
 
 import type {
   IdentityClaims, RedirectExchangeResult, RedirectIdentityPort,

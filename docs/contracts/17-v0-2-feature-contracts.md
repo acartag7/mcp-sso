@@ -2349,7 +2349,9 @@ response mode** (`response_mode=query` for Entra; a form_post-style callback
 would arrive cookieless under Lax and MUST NOT be used). `HttpOnly` keeps the
 PKCE verifier out of script reach. The cookie is cleared (`Max-Age=0`, same
 attributes) on every callback response that had a readable cookie — success or
-failure. Every upstream response that sets or clears this credential-bearing
+failure — with one exception: a **quota denial** (the `upstream:<ip>` guard
+returning false) performs no work at all, including no cookie mutation, so a
+post-window retry can still complete the same flow. Every upstream response that sets or clears this credential-bearing
 flow cookie also carries `Cache-Control: no-store`; the framework-free response
 helpers add the directive before Fastify, Express, or Hono maps the response.
 Callback response construction and cookie clearing are authoritative over
