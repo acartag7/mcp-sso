@@ -2103,7 +2103,7 @@ CLOSED with a fixed 503 — the adapter's behaviour is unchanged, but it is no
 longer correct to describe a Redis outage as uniformly fail-open. Under
 `dcr.mode === "stateless"` the same `register:<ip>` key stays fail-open, since
 that mode persists nothing; the mode decides the direction, not the key name. (The 503 half
-is pending implementation; see the note in §6.7.) Client library enters as an optional peer
+is enforced by `Bridge.handleRegister` before registration work.) Client library enters as an optional peer
 dep through the §15 ledger process (ordinary 15-day rule or verified published-
 advisory exception). The hot path runs the script via
 `EVALSHA` (Redis caches compiled scripts by SHA1 after the first call, so only the

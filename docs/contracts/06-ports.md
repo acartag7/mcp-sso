@@ -605,8 +605,7 @@ does not consume this port at all. This paragraph changes none of it. A `check` 
 what the operation does:
 
 - **An operation that creates anonymous durable registration state fails
-  closed** *(pending implementation — see the note below; `Bridge.guard`
-  currently fails open here too)*. Today that class has exactly one member:
+  closed**. Today that class has exactly one member:
   `register:<ip>` when `dcr.mode === "stored"`. The rejection is a fixed
   **503** carrying the §14 `temporarily_unavailable` error code — not 429,
   because no quota decision was made — emitted on the direct channel, never a
@@ -628,12 +627,6 @@ The rule is stated by consequence rather than as a list of key prefixes. A new
 surface that performs anonymous durable work states its own outage direction
 when it is introduced; it does not inherit the availability-oriented default by
 omission.
-
-> **Pending implementation.** The 503 behaviour described in this bullet list is
-> a contract change approved 2026-08-19 and is **not yet enforced in `src/`**.
-> `Bridge.guard` currently treats every throw as fail-open. The implementation
-> PR follows this contract PR; until it lands, `dcr.mode === "stored"` retains
-> the fail-open runtime behaviour for `register:<ip>` too.
 
 This advisory OAuth-port policy does **not** govern the protected resource
 itself. A Fastify host mounts `/mcp` through the separately exported

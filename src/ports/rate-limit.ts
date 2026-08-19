@@ -2,13 +2,16 @@
 // surfaces (contracts §6.7, fix #7). Bridge/CIMD checks register:<ip>,
 // approve:<ip>, token:<ip>, revoke:<ip>, authorize:<ip>, or cimd:<ip> before the
 // corresponding work and returns 429 on false. Upstream redirect and submitted
-// pairing-code paths additionally use upstream:<ip> and pairing:<ip>. The no-op
-// default allows everything; a THROWN error is fail-open (allow). Rate-limiting
-// is defense-in-depth against flooding (threat-model #8), NOT a security
-// boundary, so an outage must not lock out auth.
+// pairing-code paths additionally use upstream:<ip> and pairing:<ip>; the latter
+// returns `pairing_rate_limited` instead of 429. The no-op default allows
+// everything. A THROWN error fails closed only for stored-mode
+// registration, whose anonymous durable write makes limiter availability part
+// of admission; every continuity operation and stateless registration remains
+// fail-open (threat-model #8, contracts §6.7).
 
 export interface RateLimitPort {
-  /** true = allow; false = reject with 429. Throw => adapter fails open (allows). */
+  /** true = allow; false = the caller's denial outcome (guard 429 or pairing
+   *  failure). Throw => §6.7: stored registration rejects with 503; others allow. */
   check(key: string): Promise<boolean>;
 }
 

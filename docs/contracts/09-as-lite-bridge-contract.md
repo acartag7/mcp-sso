@@ -631,8 +631,7 @@ deployment preconditions in §6.4. Wiring rules:
   `Bridge.handleRegister` when `dcr.mode === "stored"` — a fixed, sanitized 503
   emitted at the same point in the order, before field selection, durable state,
   or success audit, so an unavailable limiter cannot admit the anonymous durable
-  write the §5 boot rule refuses to start without. (Pending implementation; see
-  §6.7.) Unknown form
+  write the §5 boot rule refuses to start without. Unknown form
   members remain ignored. Multipart remains outside this reconstruct (OAuth
   POSTs are URL-encoded).
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page

@@ -207,9 +207,9 @@ port that is bounded at startup can become unavailable later. §6.7 carries the
 matching runtime rule — a `register:<ip>` check that throws under stored DCR
 fails closed with a fixed 503 rather than restoring the unbounded anonymous
 durable-write path this rule exists to close. Read the two together; neither is
-sufficient alone. (The boot rule below is enforced today; the §6.7 runtime half
-is a contract change approved 2026-08-19 whose implementation PR has not landed
-— until it does, a limiter outage still fails open on registration.)
+sufficient alone. `Bridge.handleRegister` enforces the runtime half before body
+selection or registration work; stateless registration retains fail-open outage
+handling because it persists nothing.
 
 Stateless DCR retains its existing composition rule. `Bridge` rejects the shape
 where all three conditions hold: DCR is stateless, no bounded `RateLimitPort` was

@@ -4,11 +4,10 @@
 // incrementers cannot both see n==1 and the TTL is set exactly once per window).
 // The hot path uses EVALSHA (one round-trip carries only the SHA1, not the script
 // body); on NOSCRIPT — Redis restarted or SCRIPT FLUSH — it falls back to EVAL,
-// which re-loads the script for next time. Atomicity and fail-open are identical
-// either way. check() THROWS on any OTHER Redis error — the bridge's guard()
-// catches that and fails OPEN (availability over advisory defense; §6.7 "Throw =>
-// adapter fails open", §17.10 "failure semantics UNCHANGED"). Rate-limiting is DoS
-// defense-in-depth (threat-model #8), NOT a security boundary.
+// which re-loads the script for next time. Atomicity and throw behavior are
+// identical either way. check() THROWS on any OTHER Redis error; the consuming
+// operation then applies §6.7: stored registration fails closed with 503, while
+// stateless registration and continuity operations fail open.
 
 import { createHash } from "node:crypto";
 import type { Redis } from "ioredis";
@@ -21,7 +20,7 @@ export interface RedisRateLimitConfig {
   limit: number;
   /** Key namespace (the bridge passes logical keys like "register:<ip>"). Defaults
    *  to "mcp-sso:rl:" so a shared Redis is isolated. Must not collide with non-string
-   *  keys (a WRONGTYPE collision degrades to fail-open — safe direction). */
+   *  keys (a WRONGTYPE collision throws and invokes the operation's outage policy). */
   keyPrefix?: string;
 }
 
@@ -62,13 +61,14 @@ export class RedisRateLimit implements RateLimitPort {
     } catch (error) {
       // NOSCRIPT = Redis has no cached copy of the script (restart / FLUSH). Fall back
       // to EVAL, which re-loads it; subsequent calls use EVALSHA again. This is the ONLY
-      // swallowed error — any other failure propagates so guard() fails open.
+      // swallowed error — any other failure propagates for the operation's
+      // §6.7 outage policy.
       if (!isNoScript(error)) throw error;
       count = await this.client.eval(FIXED_WINDOW_LUA, 1, fullKey, this.windowSeconds);
     }
-    // Fail-open on a non-numeric reply (defensive — unreachable in practice: the script
-    // always returns the INCR integer; ioredis rejects on connection loss) to match the
-    // throw -> fail-open posture of §6.7/§17.10 rather than deny (NaN <= limit is false).
+    // Allow on a non-numeric reply (defensive — unreachable in practice: the script
+    // always returns the INCR integer; ioredis rejects on connection loss). This is a
+    // returned allow decision, distinct from the operation-specific throw policy.
     const n = Number(count);
     return Number.isFinite(n) ? n <= this.limit : true;
   }

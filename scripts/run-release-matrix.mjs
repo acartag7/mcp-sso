@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveOutcome } from "./lib/release-matrix-outcome.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const manifest = JSON.parse(readFileSync(resolve(root, "test/release-matrix.json"), "utf8"));
@@ -48,10 +49,7 @@ if (failedRuns.length > 0) {
 const results = new Map();
 for (const { file, names, result } of runs) {
   for (const name of names) {
-    const marker = `# Subtest: ${name}\n`;
-    const start = result.output.indexOf(marker);
-    const outcome = start < 0 ? "missing" : result.output.slice(start + marker.length).split("\n", 1)[0];
-    results.set(`${file}\0${name}`, outcome.startsWith("ok ") && !outcome.includes("# SKIP") ? "pass" : outcome);
+    results.set(`${file}\0${name}`, resolveOutcome(result.output, name));
   }
 }
 

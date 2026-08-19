@@ -101,7 +101,7 @@ export class Bridge {
 
   async handleRegister(req: NormRequest): Promise<NormResponse> {
     try {
-      await this.guard("register", req.ip);
+      await this.guard("register", req.ip, this.config.dcr.mode === "stored");
       const body = checkedFormObject(req, REGISTER_SINGLETON_PARAM_KEYS, REGISTER_JSON_ARRAY_PARAM_KEYS);
       // All DCR metadata crosses as raw unknown values. registerClient owns the
       // container → member → grammar checks and snapshots arrays before use.
@@ -242,12 +242,12 @@ export class Bridge {
     }
   }
 
-  private async guard(prefix: string, ip: string | undefined): Promise<void> {
+  private async guard(prefix: string, ip: string | undefined, failClosedOnThrow = false): Promise<void> {
     let allowed = true;
     try {
       allowed = await this.rateLimit.check(`${prefix}:${ip ?? "unknown"}`);
     } catch {
-      allowed = true; // fail-open: a rate-limiter outage must not lock out auth
+      if (failClosedOnThrow) throw new OAuthError("temporarily_unavailable", "Rate limiter unavailable; retry later", 503);
     }
     if (!allowed) throw new OAuthError("temporarily_unavailable", "Rate limit exceeded; retry later", 429);
   }
