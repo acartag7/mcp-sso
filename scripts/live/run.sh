@@ -99,6 +99,20 @@ deny_channel_nonempty() {
   return 1
 }
 
+# True when no trimmed element of the comma-separated value equals $2. The
+# wrong-tenant leg must EXCLUDE the stack's real tenant: an operator typo that
+# includes it makes every member login pass tenant validation while the run is
+# recorded as the D4 deny leg.
+deny_channel_excludes() {
+  local item
+  for item in $(printf '%s' "$1" | tr ',' ' '); do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    if [ "$item" = "$2" ]; then return 1; fi
+  done
+  return 0
+}
+
 # Fresh signing material for this run, generated BEFORE any stack secret is
 # read so the generating processes never hold one.
 OAUTH_CONSENT_SIGNING_SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '\n=')" \
@@ -166,6 +180,8 @@ if [ "$KIND" != "e2e" ]; then
       if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" ]; then
         deny_channel_nonempty "$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS" \
           || fail "MCP_SSO_ENTRA_ALLOWED_TENANT_IDS has no nonempty entry after trimming; a deny channel that normalizes to unset would run the positive leg"
+        deny_channel_excludes "$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS" "$ENTRA_TENANT_ID" \
+          || fail "MCP_SSO_ENTRA_ALLOWED_TENANT_IDS contains the REAL tenant ${ENTRA_TENANT_ID}; the wrong-tenant leg must exclude it, or every member login passes tenant validation while the run records D4"
         ENTRA_ALLOWED_TENANT_IDS="$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS"
         pass ENTRA_ALLOWED_TENANT_IDS
       fi

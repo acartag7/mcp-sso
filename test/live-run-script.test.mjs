@@ -190,6 +190,13 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
       });
       assert.equal(blank.code, 1);
       assert.match(blank.stderr, /no nonempty entry after trimming/);
+      // A wrong-tenant list containing the REAL tenant would pass every member
+      // login while the run records D4 — refused before the entry runs.
+      const realTenant = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: `00000000-0000-0000-0000-000000000000,${TENANT}`,
+      });
+      assert.equal(realTenant.code, 1);
+      assert.match(realTenant.stderr, /contains the REAL tenant/);
       const bareOnly = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
         ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
       });
