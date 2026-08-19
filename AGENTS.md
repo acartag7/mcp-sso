@@ -21,10 +21,20 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 
 ## 2. MCP specification compliance
 
-- **Spec target:** **MCP Authorization `2026-07-28`** for the current source
-  tree. Version v0.3.5 packages that source-tree work without making a
-  published-artifact conformance claim; published v0.3.4 retains the
-  `2025-11-25` baseline. The official stable
+- **Spec target:** **MCP Authorization `2026-07-28`**. **v0.4.0 is the first
+  published version to claim conformance to it, with two recorded deviations.**
+  Every applicable `MUST` is met, 29 rows are conformant, and one is conformant
+  with a disclosed dev-only caveat (D00-6.5.1). Two applicable obligations are
+  **deliberately not met** and recorded as reasoned deviations, not conformance:
+  D00-4.2.1 (`SHOULD`) and D00-4.2.2 (`RECOMMENDED`), both asking the
+  authorization server to operate a CIMD Metadata Document Service. mcp-sso is a
+  library and ships no such service; running one is a separate hosted product
+  with its own abuse, retention, and trust surface. No unresolved evidence row
+  and no runtime mismatch remains. The two clients that could not complete
+  authorization under v0.3.5, Claude Code and the Codex CLI, were driven against
+  the released behaviour on 2026-08-19. Earlier published versions do not carry the claim: v0.3.5 packaged
+  the source-tree work without claiming it, and v0.3.4 retains the `2025-11-25`
+  baseline. The official stable
   `2026-07-28` artifact was manually re-verified on 2026-08-02. Its DCR
   deprecation and client-side DCR `application_type` requirement align with the
   v0.3.2 registration surface. The current source tree includes the configured

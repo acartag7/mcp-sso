@@ -30,6 +30,20 @@ How mcp-sso proves a release actually works.
 > keys remain fail-open on a throw; an explicit limiter denial remains 429. This
 > does not relax the stateless deployment guard.
 >
+> **Conformance.** v0.4.0 is the first published version to claim conformance to
+> MCP Authorization `2026-07-28`, **with two recorded deviations**. In the
+> [§16 matrix](contracts/16-spec-conformance-matrix.md): every applicable `MUST`
+> is met, 29 rows are conformant, one is conformant with a disclosed dev-only
+> caveat, and two applicable obligations are deliberately not met and recorded as
+> reasoned deviations rather than conformance. Both are D00-4.2.1 (`SHOULD`) and
+> D00-4.2.2 (`RECOMMENDED`), which ask the authorization server to operate a CIMD
+> Metadata Document Service; mcp-sso is a library and ships none. No unresolved
+> evidence row and no runtime mismatch remains. The two clients that could not
+> complete authorization under v0.3.5 were driven against this behaviour on
+> 2026-08-19. The claim covers the specification, not the deployment matrix: a second non-Google generic-OIDC issuer has never been
+> driven, and three of the six Entra deny cases were not run. Neither is a
+> specification requirement, and both remain listed as pending above.
+>
 > The rest of the line hardens the shipped OAuth composition rather than adding a
 > new protocol profile. It host-binds generic-OIDC discovery endpoints; rejects
 > opaque browser origins, ambiguous bearer input, duplicate OAuth form members,
@@ -1019,10 +1033,13 @@ registry signatures and attestations. The implementation was reviewed against
 receipt. This source branch closes RFC 9207 error redirects, scope-hierarchy
 handling, and the CIMD native-app policy. The source tree therefore targets MCP
 Authorization 2026-07-28 with no unresolved runtime or governed CIMD evidence
-row. Published v0.3.5 packages that work without making a published-artifact
-conformance claim; published v0.3.4 retains its earlier baseline. The
-post-v0.3.5 status is canonicalized at the top of this document and does not
-upgrade the dated live evidence.
+row. **v0.4.0 is the first published version to claim conformance to MCP
+Authorization 2026-07-28, with the two reasoned deviations recorded in the §16
+matrix (D00-4.2.1 and D00-4.2.2, both the CIMD Metadata Document Service the
+library does not ship).** Earlier published versions do not carry the claim:
+v0.3.5 packaged the work without claiming it, and v0.3.4 retains its earlier
+baseline. The post-v0.3.5 status is canonicalized at the top of this document
+and does not upgrade the dated live evidence.
 Historical Codex CLI success remains recorded, and the compatibility gap this
 block previously described is closed. Installed Codex CLI 0.144.1 showed an
 RFC 9207 `iss` callback regression on 2026-07-28, and published v0.3.5's
