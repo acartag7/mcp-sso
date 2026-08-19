@@ -26,7 +26,7 @@ import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
 import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { JsonlFileAudit } from "../../src/audit/jsonl-file.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
-import { loadOrCreateQuickstartSecrets } from "../../src/quickstart.ts";
+import { prepareQuickstartSecrets } from "../../src/quickstart.ts";
 import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
 import { createEntraRedirectIdentity } from "../../src/identity/entra-redirect.ts";
 import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identity.ts";
@@ -420,7 +420,11 @@ export async function buildGatewayExample(
   const { redirectAllowlist, redirectAllowlistMode } = redirectAllowlistPolicyFromEnv(
     env, "http://localhost,http://127.0.0.1",
   );
-  const secrets = await loadOrCreateQuickstartSecrets({ dir });
+  // §17.8 two-phase composition (mirrors src/bin/templates.ts and the fastify-sqlite
+  // example): prepare read-only, validate the COMPLETE config, only then persist —
+  // a boot that fails validation leaves no state dir, secrets, or .gitignore behind.
+  const preparedSecrets = await prepareQuickstartSecrets({ dir });
+  const secrets = preparedSecrets.secrets;
   const config = createBridgeConfig({
     issuer, resource,
     consentSigningSecret: secrets.consentSigningSecret,
@@ -438,6 +442,7 @@ export async function buildGatewayExample(
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
+  await preparedSecrets.persist(); // the one write step — AFTER validation
   const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl,
     getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile, trustedProxies });
   return { app, store, config, dir };
