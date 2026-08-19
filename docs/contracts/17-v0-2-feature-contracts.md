@@ -2093,9 +2093,14 @@ once per window, on `n == 1`; never reset mid-window). Config
 defaults to `mcp-sso:rl:` so a shared Redis is namespaced; it MUST NOT collide
 with a non-string key, which would degrade to fail-open). Constructor validates
 both `windowSeconds` and `limit` as positive integers (fail-closed on misconfig).
-Keys are as in §6.7 (`register:<ip>` etc.). Failure semantics are UNCHANGED from
-§6.7: `check()` THROWS on Redis error, so the bridge `guard()` fails OPEN
-(availability over advisory defense). Client library enters as an optional peer
+Keys are as in §6.7 (`register:<ip>` etc.). Failure semantics are delegated to
+§6.7 rather than fixed here: `check()` THROWS on any Redis error other than a
+missing script, and the *operation* decides the outage direction. For every
+continuity key the bridge `guard()` fails OPEN (availability over advisory
+defense). For `register:<ip>` under `dcr.mode === "stored"` the throw fails
+CLOSED with a fixed 503 — the adapter's behaviour is unchanged, but it is no
+longer correct to describe a Redis outage as uniformly fail-open. (The 503 half
+is pending implementation; see the note in §6.7.) Client library enters as an optional peer
 dep through the §15 ledger process (ordinary 15-day rule or verified published-
 advisory exception). The hot path runs the script via
 `EVALSHA` (Redis caches compiled scripts by SHA1 after the first call, so only the

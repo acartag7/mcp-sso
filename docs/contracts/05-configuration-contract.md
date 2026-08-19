@@ -202,6 +202,15 @@ singleton both fail boot in stored mode because each anonymous registration is a
 durable write. This rule applies to loopback and internet-facing deployments
 alike, before any stateless-only carve-out.
 
+This is a **boot** rule, and boot admission alone is not a runtime guarantee: a
+port that is bounded at startup can become unavailable later. §6.7 carries the
+matching runtime rule — a `register:<ip>` check that throws under stored DCR
+fails closed with a fixed 503 rather than restoring the unbounded anonymous
+durable-write path this rule exists to close. Read the two together; neither is
+sufficient alone. (The boot rule below is enforced today; the §6.7 runtime half
+is a contract change approved 2026-08-19 whose implementation PR has not landed
+— until it does, a limiter outage still fails open on registration.)
+
 Stateless DCR retains its existing composition rule. `Bridge` rejects the shape
 where all three conditions hold: DCR is stateless, no bounded `RateLimitPort` was
 supplied, and `redirectAllowlist` adds no application-specific HTTPS redirect

@@ -589,10 +589,37 @@ the bound boot snapshot retains the source port's identity. The shared CIMD
 resolver therefore charges that counting port once for the request's
 `cimd:<ip>` key, while two genuinely distinct ports both apply.
 The default `noopRateLimit` allows everything and counts as absent for the
-stored-DCR boot rule. A thrown error is treated as **fail-open** (allow) — a
-rate-limiter outage must not lock out all auth; runtime rate limiting remains
-defense-in-depth, not an authorization boundary. A custom always-allow port is
-nonconforming even though the structural boot check cannot distinguish it.
+stored-DCR boot rule. A custom always-allow port is nonconforming even though
+the structural boot check cannot distinguish it.
+
+**Outage policy is chosen per operation, by consequence.** A `check` returning
+`false` is a quota denial and rejects with 429 on every key. A `check` that
+*throws* means no quota decision was reached, and what happens next depends on
+what the operation does:
+
+- **An operation that creates anonymous durable registration state fails
+  closed.** Today that class has exactly one member: `register:<ip>` when
+  `dcr.mode === "stored"`. The rejection is a fixed, sanitized **503** — not
+  429, because no quota decision was made — emitted before body selection,
+  registration work, durable state, or success audit. This is the runtime half
+  of the §5 boot rule: a bounded port is required to start, and an unavailable
+  port must not silently restore the unbounded anonymous durable-write path
+  that rule exists to close.
+- **Every other key retains fail-open** — `authorize`, `approve`, `token`,
+  `revoke`, `upstream`, `cimd`, and pairing. A rate-limiter outage must not lock
+  existing clients out of a working deployment; for these operations runtime
+  rate limiting remains defense-in-depth, not an authorization boundary.
+
+The rule is stated by consequence rather than as a list of key prefixes. A new
+surface that performs anonymous durable work states its own outage direction
+when it is introduced; it does not inherit the availability-oriented default by
+omission.
+
+> **Pending implementation.** The 503 behaviour described in this bullet list is
+> a contract change approved 2026-08-19 and is **not yet enforced in `src/`**.
+> `Bridge.guard` currently treats every throw as fail-open. The implementation
+> PR follows this contract PR; until it lands, `dcr.mode === "stored"` retains
+> the fail-open runtime behaviour for `register:<ip>` too.
 
 This advisory OAuth-port policy does **not** govern the protected resource
 itself. A Fastify host mounts `/mcp` through the separately exported

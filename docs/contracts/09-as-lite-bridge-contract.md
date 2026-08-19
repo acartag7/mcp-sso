@@ -623,7 +623,16 @@ deployment preconditions in §6.4. Wiring rules:
   that checked snapshot for every subsequent field read rather than returning
   to the parser-selected `body`. The four Bridge
   POST routes charge their existing limiter first, then reject before field
-  selection, grant routing, durable state, or endpoint audit. Unknown form
+  selection, grant routing, durable state, or endpoint audit. Charging the
+  limiter has **two** failure outcomes and they are not the same response: a
+  quota denial (`check` returns `false`) is the existing direct 429, while a
+  limiter that *throws* reached no quota decision at all. Under §6.7 that throw
+  is fail-open for approve, token, and revoke, and fails **closed** for
+  `Bridge.handleRegister` when `dcr.mode === "stored"` — a fixed, sanitized 503
+  emitted at the same point in the order, before field selection, durable state,
+  or success audit, so an unavailable limiter cannot admit the anonymous durable
+  write the §5 boot rule refuses to start without. (Pending implementation; see
+  §6.7.) Unknown form
   members remain ignored. Multipart remains outside this reconstruct (OAuth
   POSTs are URL-encoded).
 - **Consent page *(fix #5)*:** GET `/oauth/authorize` success renders an HTML page
