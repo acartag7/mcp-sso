@@ -96,6 +96,7 @@ test("Bridge boot rejects stateless DCR plus starter-only redirect trust plus no
     ["http://localhost", "http://127.0.0.1", "http://[::1]"],
     ["http://localhost:4321/callback"],
     ["https://localhost", "https://127.0.0.1", "https://[::1]"],
+    ["https://localhost/callback"],
   ]) {
     assert.throws(
       () => construct(config({ redirectAllowlist })),
@@ -112,7 +113,6 @@ test("Bridge boot rejects stateless DCR plus starter-only redirect trust plus no
 test("Bridge boot accepts each adjacent composition when one unsafe-default condition changes", () => {
   assert.doesNotThrow(() => construct(config(), { async check() { return true; } }));
   assert.doesNotThrow(() => construct(config({ redirectAllowlist: ["https://client.test/callback"] })));
-  assert.doesNotThrow(() => construct(config({ redirectAllowlist: ["https://localhost/callback"] })));
   assert.doesNotThrow(() => construct(config({
     issuer: "http://localhost:3000", resource: "http://localhost:3000/mcp",
     redirectAllowlist: ["http://127.0.0.1:4321/callback"],
@@ -133,12 +133,16 @@ test("an HTTP loopback callback does not mitigate an internet-facing composition
 });
 
 test("an application callback does not mitigate a retained generic loopback redirect", () => {
-  assert.throws(
-    () => construct(config({
-      redirectAllowlist: ["http://localhost", "https://client.test/callback"],
-    })),
-    /application-specific HTTPS redirect/,
-  );
+  for (const redirectAllowlist of [
+    ["http://localhost", "https://client.test/callback"],
+    ["http://localhost:4321/callback", "https://client.test/callback"],
+    ["https://localhost/callback", "https://client.test/callback"],
+  ]) {
+    assert.throws(
+      () => construct(config({ redirectAllowlist })),
+      /application-specific HTTPS redirect/,
+    );
+  }
 });
 
 test("Bridge snapshots accessor-backed dependencies before its deployment guard", () => {
