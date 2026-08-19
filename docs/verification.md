@@ -31,11 +31,16 @@ How mcp-sso proves a release actually works.
 > does not relax the stateless deployment guard.
 >
 > **Conformance.** v0.4.0 is the first published version to claim conformance to
-> MCP Authorization `2026-07-28`. Every row of the
-> [§16 matrix](contracts/16-spec-conformance-matrix.md) is met, and the two
-> clients that could not complete authorization under v0.3.5 were driven against
-> this behaviour on 2026-08-19. The claim covers the specification, not the
-> deployment matrix: a second non-Google generic-OIDC issuer has never been
+> MCP Authorization `2026-07-28`, **with two recorded deviations**. In the
+> [§16 matrix](contracts/16-spec-conformance-matrix.md): every applicable `MUST`
+> is met, 29 rows are conformant, one is conformant with a disclosed dev-only
+> caveat, and two applicable obligations are deliberately not met and recorded as
+> reasoned deviations rather than conformance. Both are D00-4.2.1 (`SHOULD`) and
+> D00-4.2.2 (`RECOMMENDED`), which ask the authorization server to operate a CIMD
+> Metadata Document Service; mcp-sso is a library and ships none. No unresolved
+> evidence row and no runtime mismatch remains. The two clients that could not
+> complete authorization under v0.3.5 were driven against this behaviour on
+> 2026-08-19. The claim covers the specification, not the deployment matrix: a second non-Google generic-OIDC issuer has never been
 > driven, and three of the six Entra deny cases were not run. Neither is a
 > specification requirement, and both remain listed as pending above.
 >
@@ -1029,7 +1034,9 @@ receipt. This source branch closes RFC 9207 error redirects, scope-hierarchy
 handling, and the CIMD native-app policy. The source tree therefore targets MCP
 Authorization 2026-07-28 with no unresolved runtime or governed CIMD evidence
 row. **v0.4.0 is the first published version to claim conformance to MCP
-Authorization 2026-07-28.** Earlier published versions do not carry the claim:
+Authorization 2026-07-28, with the two reasoned deviations recorded in the §16
+matrix (D00-4.2.1 and D00-4.2.2, both the CIMD Metadata Document Service the
+library does not ship).** Earlier published versions do not carry the claim:
 v0.3.5 packaged the work without claiming it, and v0.3.4 retains its earlier
 baseline. The post-v0.3.5 status is canonicalized at the top of this document
 and does not upgrade the dated live evidence.
