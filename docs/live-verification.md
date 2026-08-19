@@ -38,7 +38,7 @@ checklist.
 | --- | --- | --- |
 | Patched, uncommitted checkout based on `ee8994a` (2026-07-26/27) | Observed CIMD happy paths with Cloudflare Access, Entra ID, and Google; refresh rotation plus replay/family revocation; retained audit-log search found no backend credential. | Historical observation only: the exact dirty tree was neither committed nor archived, so this campaign does not satisfy the minimum live-row evidence contract and does not qualify as verified. |
 | Clean `main` at `e71a2bb` (2026-07-28) | Three metadata/tokenless-challenge probes and DCR registrations; Cloudflare Access path gating; Entra- and Google-configured gateways resolving a public CIMD document to their authorization redirects; CIMD rejection of literal IP, DNS rebinding, DNS failure, non-200 response, wrong content type, oversized body, and timeout. See the [sanitized receipt](#clean-main-rerun-receipt-2026-07-28). | Browser completion stopped before identity and consent; the exact-runtime campaign below completed those legs. |
-| Exact runtime commit `af2a61f` (2026-07-28) | Claude Code 2.1.220 completed CIMD authorization and protected `status` calls with Cloudflare Access, Entra ID, and Google. A corrected refresh harness proved A→B→C rotation, HTTP 400 `invalid_grant` on replayed A, then HTTP 400 `invalid_grant` on current C. Audit and retained client-result scans found zero backend-credential matches. See the [sanitized receipt](#exact-runtime-live-receipt-2026-07-28). | Entra deny/ceiling cases and the older claude.ai/ChatGPT CIMD observations remain pending as reproducible rows. |
+| Exact runtime commit `af2a61f` (2026-07-28) | Claude Code 2.1.220 completed CIMD authorization and protected `status` calls with Cloudflare Access, Entra ID, and Google. A corrected refresh harness proved A→B→C rotation, HTTP 400 `invalid_grant` on replayed A, then HTTP 400 `invalid_grant` on current C. Audit and retained client-result scans found zero backend-credential matches. See the [sanitized receipt](#exact-runtime-live-receipt-2026-07-28). | The claude.ai and ChatGPT CIMD observations were re-driven on a committed runtime in the 2026-08-19 campaign and are now verified rows. Of the Entra deny/ceiling cases, no-group, no-mapped-group, and group-overage were driven on 2026-08-19; wrong-tenant, allowlist, and guest/B2B remain pending. |
 
 No secrets, tenant/team identifiers, provider subjects, or deployment URLs from
 these campaigns are retained in this public record.
@@ -89,16 +89,51 @@ only. Provider secrets and identifiers remained in private environment files.
 | Entra ID (redirect flow, §17.11) | Claude Code | register→authorize→Entra login→consent→token→`/mcp` tools | ✅ | 2026-07-08 | The reproducible enterprise happy path used `mcp-sso@0.2.0`. See [`docs/field-report-api-key-gateway.md`](field-report-api-key-gateway.md). |
 | Entra ID (redirect flow, §17.11) | Claude Desktop | register→authorize→Entra login→consent→token→`/mcp` tools | ✅ | 2026-07-08 | The enterprise happy path completed with `mcp-sso@0.2.0`. |
 | Entra ID (redirect flow, §17.11) | Claude Code 2.1.220 | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` `status` | ✅ | 2026-07-28 | Passed at exact runtime commit `af2a61f1aa772a7f3963acfa9dab15c47f676607`; audit-confirmed CIMD client ID and successful identity, callback, approval, token exchange, and protected call. |
-| Entra ID (redirect flow, §17.11) | Owner browser + provider harness | wrong-tenant, group-overage, no-group, no-mapped-group, allowlist, and guest/B2B outcomes | ⬜ | 2026-07-26/27 | Observed on the patched, uncommitted `ee8994a`-based checkout, whose exact tree was not archived. The deny/ceiling sweep must be repeated on clean main to qualify. |
-| Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ⬜ | 2026-07-26/27 | Observed on the patched, uncommitted `ee8994a`-based checkout, whose exact tree was not archived. This does not qualify as a verified row; clean-main browser completion is required. |
-| Entra ID (redirect flow, §17.11) | ChatGPT (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ⬜ | 2026-07-26/27 | Observed on the patched, uncommitted `ee8994a`-based checkout, whose exact tree was not archived. This does not qualify as a verified row; clean-main browser completion is required. |
+| Entra ID (redirect flow, §17.11) | Owner browser + provider harness | wrong-tenant, allowlist, and guest/B2B outcomes | ⬜ | 2026-07-26/27 | Observed on the patched, uncommitted `ee8994a`-based checkout, whose exact tree was not archived. These three cases still require a clean-main run. The group-overage, no-group, and no-mapped-group cases of this sweep were driven separately and are recorded in the row below; this row is NOT verified by that campaign. |
+| Entra ID (redirect flow, §17.11) | Owner browser, three provisioned deny fixtures | no-group, no-mapped-group, and group-overage denials through the real provider | ✅ | 2026-08-19 | Driven at exact runtime commit `d6143b3`. Each fixture produced its own audit reason exactly once — `entra_no_groups`, `entra_no_mapped_groups`, `entra_groups_overage` — proving the three denials are distinct server-side decisions rather than one generic rejection. The audit records reason codes, not the client-facing sentences, so the distinctness claim is about the codes. Covers only these three of the six cases named in the row above. |
+| Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ✅ | 2026-08-19 | Completed at exact runtime commit `d6143b3` against the tunnelled `entra` leg. |
+| Entra ID (redirect flow, §17.11) | ChatGPT (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ✅ | 2026-08-19 | Completed at exact runtime commit `d6143b3` against the tunnelled `entra` leg. A client caveat: ChatGPT reports a denial only as a cancelled connection, so deny-leg results must be read from the audit trail, never the client UI. |
 | Cloudflare Access | ChatGPT custom connector | consent + tool round-trip | ✅ | 2026-07-07 | ChatGPT completed register→authorize→consent→token→`/mcp` `ping` against the same sanitized Cloudflare Access deployment. |
 | Cloudflare Access / Entra / Google | Claude Code 2.1.220 + **api-key-gateway example** | full CIMD proxied round trip: client → gateway → token-only backend | ✅ | 2026-07-28 | All three `status` calls returned the expected allowlisted response shape at exact runtime commit `af2a61f1aa772a7f3963acfa9dab15c47f676607`; retained client results and all three audit logs had zero backend-key matches. |
+| Cloudflare Access, Entra ID, Google (all three production identity legs) | Claude Code, Codex CLI, claude.ai connector (all three legs); ChatGPT connector (Cloudflare Access and Entra only) | register (CIMD and DCR) → authorize → provider identity → consent → token → `/mcp`; refresh rotation and revocation exercised | ✅ | 2026-08-19 | Full client matrix at exact runtime commit `d6143b3`, three legs behind one named tunnel via `scripts/live/serve.sh`. Eleven complete flows, not twelve: four on Cloudflare Access, four on Entra, three on Google. **Google × ChatGPT was not driven** — `scripts/live/CHECKLIST.md` carries ChatGPT rows for Cloudflare Access and Entra only — so no ChatGPT result is claimed for the Google leg — each audit-confirmed as approve→token. A non-admitted Cloudflare account was stopped at the Access edge with **no** audit row on the gateway, which is that case's pass condition. `oauth.token.refresh` on all three legs and `oauth.revoke` on Entra were exercised by the clients unprompted. |
+| Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | stateless-DCR deployment: CIMD `client_id`→authorize→Entra identity→consent→token→refresh→`/mcp` | ✅ | 2026-08-19 | Driven at exact runtime commit `8c08c36` with `OAUTH_DCR_MODE=stateless` and loopback de-allowlisted, which is the only way that mode boots (#280). Audit shows one `oauth.cimd.fetch` and **zero** `oauth.register`: this row establishes that a stateless-configured deployment serves a complete flow, **not** that the stateless DCR registration path works. The consent page rendered the client's self-reported name marked unverified. |
 
-**Current Codex CLI caveat (2026-07-28):** the installed 0.144.1 client showed
-an RFC 9207 `iss` callback regression. This does not invalidate the dated
-historical success row, but compatibility with that current client version is
-pending upstream resolution and retest.
+**Codex CLI regression — retested and clear (2026-08-19):** the 0.144.1 client
+observed on 2026-07-28 showed an RFC 9207 `iss` callback regression. Codex CLI
+completed all three identity legs at exact runtime commit `d6143b3`, so the
+regression does not reproduce on the client build that was driven. Two variables
+moved between the two observations — this library and the client — so a clear
+result is **not** evidence that a change here fixed it.
+
+Client builds driven: Codex CLI `0.148.0` (a stable release, supplied by the
+operator — the clients were driven from a different machine than the one holding
+this checkout, so it is recorded on that authority rather than from a local
+install) and Claude Code `2.1.235`. Because `0.148.0` is a stable release, the
+0.144.1 regression is cleared on the stable channel and not only on a
+pre-release.
+
+**Registration mode driven (2026-08-19):** the client matrix ran
+`OAUTH_DCR_MODE=stored` with CIMD enabled. A stateless-configured leg was then
+driven separately and is recorded in the matrix, but note what that row does and
+does not establish: claude.ai authenticated through CIMD, so the audit shows one
+`oauth.cimd.fetch` and **zero** `oauth.register` events. The deployment booted
+and served a full flow under stateless configuration; the stateless **DCR
+registration path itself was not exercised.**
+
+That path is not merely untested — it is unreachable through this harness. DCR is
+used by CLI clients over loopback callbacks, and stateless refuses to boot while a
+generic loopback entry is allowlisted without a bounded limiter, which the example
+supplies only in stored mode (issue #280). The hosted connectors both use CIMD, so
+no available client performs DCR over an HTTPS callback. Until #280 is resolved,
+the mode difference in #278 can be shown at bridge level only.
+
+Neither registration surface can be switched off in the shipped example, so only
+one of the three intended registration shapes is reachable through it. CIMD +
+DCR is driven above. **CIMD-only** needs a `dcr.mode` that can be disabled
+(#152). **DCR-only** is supported by the library — `cimd` is optional and the
+`cimd off` cells are covered in `test/release-registration-matrix.test.ts`, where
+a CIMD client id is refused rather than routed to DCR — but the example hardcodes
+`cimd.enabled` at two composition sites, so it cannot be configured (#281).
 
 ### † Dagger note (the four 2026-07-04 rows)
 
