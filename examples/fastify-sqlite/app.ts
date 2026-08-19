@@ -91,8 +91,8 @@ export interface ExampleOptions {
    *  events are never dropped relative to the Bridge/RequestAuthorizer audit. */
   pairing?: ConsolePairingOptions;
   /** §17.11 upstream redirect-flow identity + callback config. When set, buildApp
-   *  builds `createUpstreamRedirectFlow` with the SAME store/clock/audit the
-   *  Bridge uses (the composition root passes the shared instances — §17.11). */
+   *  builds `createUpstreamRedirectFlow` with the SAME store/clock/audit/rateLimit
+   *  the Bridge uses (the composition root passes the shared instances — §17.11). */
   upstream?: { identity: RedirectIdentityPort; callbackPath?: string; flowTtlSeconds?: number };
   sqliteFile?: string; // defaults to :memory:
   identityHeader?: string;
@@ -156,9 +156,11 @@ export async function buildApp(opts: ExampleOptions) {
   if (opts.upstream) {
     // §17.11 upstream redirect-flow mode: the bridge delegates /oauth/authorize +
     // the callback to the orchestrator, built here with the SAME store/clock/audit
-    // the Bridge uses (the composition root owns the shared instances).
+    // the Bridge uses (the composition root owns the shared instances). The
+    // limiter travels too: one operator-supplied port must cover upstream:<ip>
+    // (authorize + callback, §6.7), not just the Bridge's own keys.
     const upstream = createUpstreamRedirectFlow({
-      bridge, identity: opts.upstream.identity, store, clock, audit,
+      bridge, identity: opts.upstream.identity, store, clock, audit, rateLimit,
       callbackPath: opts.upstream.callbackPath, flowTtlSeconds: opts.upstream.flowTtlSeconds,
     });
     await registerOAuthRoutes(app, { bridge, upstream });

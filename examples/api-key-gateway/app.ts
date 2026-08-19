@@ -78,7 +78,8 @@ export interface GatewayOptions {
   identity?: IdentityPort;
   /** Console-pairing OPTIONS — when set, the gateway mounts the pairing authorize surface. */
   pairing?: ConsolePairingOptions;
-  /** §17.11 upstream redirect-flow identity + callback config. */
+  /** §17.11 upstream redirect-flow identity + callback config. The flow is built
+   *  with the SAME store/clock/audit/rateLimit the Bridge uses. */
   upstream?: { identity: RedirectIdentityPort; callbackPath?: string; flowTtlSeconds?: number };
   sqliteFile?: string; // defaults to :memory:
   identityHeader?: string;
@@ -154,8 +155,10 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
 
   // --- OAuth routes + metadata (identical surface to examples/fastify-sqlite/app.ts) ---
   if (opts.upstream) {
+    // Same shared instances as the Bridge (§17.11), limiter included: one
+    // operator-supplied port covers upstream:<ip> (authorize + callback, §6.7).
     const upstream = createUpstreamRedirectFlow({
-      bridge, identity: opts.upstream.identity, store, clock, audit,
+      bridge, identity: opts.upstream.identity, store, clock, audit, rateLimit,
       callbackPath: opts.upstream.callbackPath, flowTtlSeconds: opts.upstream.flowTtlSeconds,
     });
     await registerOAuthRoutes(app, { bridge, upstream });
