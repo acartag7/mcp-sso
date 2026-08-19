@@ -16,7 +16,7 @@ drives §8.3.
 | `unsupported_response_type` | 400 | — | response_type ≠ code |
 | `unsupported_grant_type` | 400 | — | grant_type unsupported |
 | `insufficient_scope` | 403 | `Bearer resource_metadata=…, scope=…, error="insufficient_scope"` | missing required scope (step-up) |
-| `temporarily_unavailable` | 429 | — | `RateLimitPort.check` returned `false` on a Bridge endpoint guard — a quota denial. `pairing:<ip>` keeps its own §17.5 shape and does not use this row |
+| `temporarily_unavailable` | 429 | — | a rate-limit quota denial. Four shipped producers: the Bridge endpoint guards (`bridge.ts`), the upstream-redirect guard for `upstream:<ip>` (`upstream-flow.ts`), `CimdResolver`'s guard for `cimd:<ip>` (`cimd/resolve.ts`), and §17.5's in-process pairing-authorize gate (`pairing-flow.ts`). The **`pairing:<ip>` `RateLimitPort`** key is the one exception: it returns the `pairing_rate_limited` identity failure and re-renders the pairing page instead of this row |
 | `temporarily_unavailable` | 503 | — | `RateLimitPort.check` **threw** on `register:<ip>` under `dcr.mode === "stored"` — no quota decision was reached, so it is not 429 (§6.7). Direct channel, never a redirect. **Pending implementation:** approved 2026-08-19; `Bridge.guard` currently fails open here |
 | `server_error` | 500 | — | internal failure (e.g. refresh generation) |
 | `internal_error` | 500 | — | unexpected (mapped from non-OAuthError) |

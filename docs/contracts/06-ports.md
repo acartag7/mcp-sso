@@ -593,10 +593,14 @@ stored-DCR boot rule. A custom always-allow port is nonconforming even though
 the structural boot check cannot distinguish it.
 
 **Outage policy is chosen per operation, by consequence.** A `check` returning
-`false` is a quota denial. On the Bridge endpoint guards that is a direct 429;
-`pairing:<ip>` keeps its own documented shape, returning the
-`pairing_rate_limited` verification failure that re-renders the pairing page
-rather than a 429 (§17.5). This paragraph does not change that. A `check` that
+`false` is a quota denial, and every guard that consumes this port answers it
+with a direct 429 `temporarily_unavailable` (§14) — the Bridge endpoint guards,
+the upstream-redirect guard for `upstream:<ip>`, and `CimdResolver`'s guard for
+`cimd:<ip>`. The single exception is the **`pairing:<ip>`** key, which is
+consumed by the identity rather than a guard: it returns the
+`pairing_rate_limited` failure and re-renders the pairing page. That is distinct
+from §17.5's own in-process pairing-authorize gate, which does answer 429 but
+does not consume this port at all. This paragraph changes none of it. A `check` that
 *throws* means no quota decision was reached, and what happens next depends on
 what the operation does:
 
