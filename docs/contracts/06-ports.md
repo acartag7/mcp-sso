@@ -593,18 +593,23 @@ stored-DCR boot rule. A custom always-allow port is nonconforming even though
 the structural boot check cannot distinguish it.
 
 **Outage policy is chosen per operation, by consequence.** A `check` returning
-`false` is a quota denial and rejects with 429 on every key. A `check` that
+`false` is a quota denial. On the Bridge endpoint guards that is a direct 429;
+`pairing:<ip>` keeps its own documented shape, returning the
+`pairing_rate_limited` verification failure that re-renders the pairing page
+rather than a 429 (§17.5). This paragraph does not change that. A `check` that
 *throws* means no quota decision was reached, and what happens next depends on
 what the operation does:
 
 - **An operation that creates anonymous durable registration state fails
-  closed.** Today that class has exactly one member: `register:<ip>` when
-  `dcr.mode === "stored"`. The rejection is a fixed, sanitized **503** — not
-  429, because no quota decision was made — emitted before body selection,
-  registration work, durable state, or success audit. This is the runtime half
-  of the §5 boot rule: a bounded port is required to start, and an unavailable
-  port must not silently restore the unbounded anonymous durable-write path
-  that rule exists to close.
+  closed** *(pending implementation — see the note below; `Bridge.guard`
+  currently fails open here too)*. Today that class has exactly one member:
+  `register:<ip>` when `dcr.mode === "stored"`. The rejection is a fixed
+  **503** carrying the §14 `temporarily_unavailable` error code — not 429,
+  because no quota decision was made — emitted on the direct channel, never a
+  redirect, before body selection, registration work, durable state, or success
+  audit. This is the runtime half of the §5 boot rule: a bounded port is
+  required to start, and an unavailable port must not silently restore the
+  unbounded anonymous durable-write path that rule exists to close.
 - **Every other key retains fail-open** — `authorize`, `approve`, `token`,
   `revoke`, `upstream`, `cimd`, and pairing. A rate-limiter outage must not lock
   existing clients out of a working deployment; for these operations runtime

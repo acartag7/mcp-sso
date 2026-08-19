@@ -2055,7 +2055,7 @@ Persistence then follows these rules:
 - **Protected-resource request budget.** Both runnable Fastify examples and the
   generated starter install `@fastify/rate-limit` for `/mcp` through the
   §8.4/§15 helper. It is a mandatory finite `onRequest` budget (default 60 per
-  60 seconds per Fastify `request.ip`), not the optional/fail-open §6.7 OAuth
+  60 seconds per Fastify `request.ip`), not the optional §6.7 OAuth
   hook. The foreign-Origin gate stays earlier; after it admits a request,
   normal denial (429) or counter-store failure (fixed 503) precedes body
   parsing, bearer verification/audit, MCP SDK/server construction, backend-key
@@ -2091,7 +2091,8 @@ script does atomic `INCR` + `EXPIRE`-on-first-increment (the TTL is set exactly
 once per window, on `n == 1`; never reset mid-window). Config
 `{ windowSeconds: number, limit: number, keyPrefix?: string }` (`keyPrefix`
 defaults to `mcp-sso:rl:` so a shared Redis is namespaced; it MUST NOT collide
-with a non-string key, which would degrade to fail-open). Constructor validates
+with a non-string key, which would degrade to the key's §6.7 outage
+direction — fail-open for the continuity keys). Constructor validates
 both `windowSeconds` and `limit` as positive integers (fail-closed on misconfig).
 Keys are as in §6.7 (`register:<ip>` etc.). Failure semantics are delegated to
 §6.7 rather than fixed here: `check()` THROWS on any Redis error other than a
@@ -2105,7 +2106,7 @@ dep through the §15 ledger process (ordinary 15-day rule or verified published-
 advisory exception). The hot path runs the script via
 `EVALSHA` (Redis caches compiled scripts by SHA1 after the first call, so only the
 hash crosses the wire); on `NOSCRIPT` (Redis restart or `SCRIPT FLUSH`) it falls
-back to `EVAL`, which re-loads the script for next time. Atomicity and fail-open
+back to `EVAL`, which re-loads the script for next time. Atomicity and the §6.7 outage direction
 are identical either way.
 
 ## 17.11 Upstream redirect-leg orchestrator (locked 2026-07-06)
