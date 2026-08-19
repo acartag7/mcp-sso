@@ -1755,7 +1755,8 @@ gate replaces no-gate).
   { authorizationEndpoint, tokenEndpoint, jwksUri }` (manual mode — zero
   boot-time fetching), `scopes?` (default `openid profile email`),
   `subjectAllowlist?` (matches `sub`), `allowEmailAllowlist?` (opt-in; only
-  matches when `email_verified === true`).
+  matches when `email_verified === true`), `maxDiscoveryDocumentBytes?` /
+  `maxTokenResponseBytes?` (the body caps below).
 - **`claims.name` (optional, display only).** Present ONLY when
   `email_verified === true` AND `payload.name` is a string whose trimmed length
   is non-zero and whose raw length is at most **256** characters; otherwise the
@@ -1789,6 +1790,26 @@ gate replaces no-gate).
   config, and enterprise IdPs legitimately live on private networks —
   documented rationale. Redirects on the discovery fetch: not followed
   (fail closed).
+- **Body caps on IdP-fetched bodies** (owner decision 2026-08-19, D5): the
+  default discovery transport caps the discovery document at **65536 bytes**
+  and the default token transport caps every token-endpoint response at
+  **16384 bytes**. Both are configurable (`maxDiscoveryDocumentBytes` /
+  `maxTokenResponseBytes`, named for the CIMD `maxDocumentBytes` precedent)
+  with the CIMD cap shape: a closed integer domain **[1024, 1048576]**,
+  boot-validated — a non-integer, `NaN`, `Infinity`, or out-of-domain value
+  fails boot (`generic_oidc_bad_config`), never a silent default, in discovery
+  AND manual mode. Enforcement stream-counts the response body chunk by chunk
+  and CANCELS the download the moment the cap is exceeded, so an oversized
+  body is rejected without being materialized — a hostile or broken IdP (or
+  anything between) cannot force the bridge to buffer an arbitrary body
+  before any validation runs. The rejection is a fetch/protocol failure in
+  the existing taxonomy — `generic_oidc_discovery_failed` at boot,
+  `generic_oidc_exchange_failed` at exchange (the §17.11 throw rule maps it
+  to `exchange_failed`, never `identity_rejected`: no identity decision was
+  made). A deployer-supplied custom discovery/token transport owns its own
+  body discipline; the caps govern the transports the core builds from
+  config. The Google preset delegates to this port and inherits the
+  defaults.
 - **id_token validation:** `iss` exact-match; `aud` must contain `clientId`
   and multiple-audience tokens are rejected outright (a single-element
   `[clientId]` array is accepted; an array with any second audience is
