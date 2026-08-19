@@ -69,3 +69,64 @@ test("a shared limiter is charged once for an upstream CIMD resolution after bin
   assert.equal(counts.get(`cimd:${IP}`), 1, "the shared counting limiter is not double-charged");
   assert.equal(counts.get(`upstream:${IP}`), 1);
 });
+
+// §6.7 states that the continuity keys keep fail-open when their limiter is
+// unavailable. `cimd:<ip>` is guarded by CimdResolver's own catch
+// (`src/cimd/resolve.ts`), not by `Bridge.guard`, so the Bridge-level tests do
+// not bite on it: removing that catch leaves them green while CIMD starts
+// failing closed during a limiter outage. This pins the guarantee to the code
+// that actually provides it.
+test("a THROWING limiter leaves CIMD resolution fail-open (§6.7 continuity key)", async () => {
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const config = createBridgeConfig({
+    issuer: "https://auth.example", resource: "https://api.example/mcp",
+    consentSigningSecret: "test-consent-secret-with-enough-entropy",
+    signingPrivateJwk: privateKey.export({ format: "jwk" }) as JWK,
+    redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
+    allowedOrigins: ["https://auth.example"], dcr: { mode: "stateless" },
+    cimd: { enabled: true }, accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000,
+    consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
+  });
+  const thrown: string[] = [];
+  const rateLimit = {
+    async check(key: string): Promise<boolean> {
+      if (key.startsWith("cimd:")) { thrown.push(key); throw new Error("limiter outage"); }
+      return true;
+    },
+  };
+  const resolver: DnsResolver = { async resolve() { return [{ address: "93.184.216.34", family: 4 }]; } };
+  const body = new TextEncoder().encode(JSON.stringify({
+    client_id: CLIENT_ID, client_name: "Client", redirect_uris: [REDIRECT],
+  }));
+  const transport: CimdTransport = {
+    async connectAndGet() {
+      return {
+        status: 200, redirected: false, finalUrl: CLIENT_ID,
+        headersDistinct: { "content-type": ["application/json"] },
+        encodedBody: (async function* () { yield body; })(),
+      };
+    },
+  };
+  const store = new MemoryStore();
+  const clock = { nowMs: () => Date.parse("2026-08-13T12:00:00Z") };
+  const audit = { async writeAuthEvent() {} };
+  const bridge = new Bridge({ config, store, clock, audit, rateLimit, cimdResolver: resolver, cimdTransport: transport });
+  const flow = createUpstreamRedirectFlow({
+    bridge, store, clock, audit, rateLimit,
+    identity: {
+      redirectUri: "https://auth.example/oauth/callback",
+      buildAuthorizationUrl: () => "https://idp.example/authorize",
+      async exchangeAndVerify() { return { ok: true, identity: { subject: "operator" } }; },
+    },
+  });
+  const response = await flow.handleAuthorize({
+    ip: IP, headers: {}, body: undefined,
+    query: {
+      response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT,
+      code_challenge: pkceChallenge("v".repeat(43)), code_challenge_method: "S256",
+      scope: "mcp:read", state: "state",
+    },
+  });
+  assert.ok(thrown.length > 0, "the cimd limiter must have been charged and thrown");
+  assert.equal(response.status, 302, `a limiter outage must not fail CIMD closed: HTTP ${response.status}`);
+});
