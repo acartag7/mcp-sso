@@ -1,7 +1,7 @@
 {
   "name": "mcp-sso",
   "version": "0.3.5",
-  "description": "OAuth 2.1 and enterprise SSO for remote MCP servers—without API keys in client configs.",
+  "description": "OAuth 2.1 and enterprise SSO for remote MCP servers\u2014without API keys in client configs.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -69,6 +69,14 @@
     "./identity/google": {
       "types": "./dist/identity/google.d.ts",
       "default": "./dist/identity/google.js"
+    },
+    "./testing/store-conformance": {
+      "types": "./dist/testing/store-conformance.d.ts",
+      "default": "./dist/testing/store-conformance.js"
+    },
+    "./testing/client-store-conformance": {
+      "types": "./dist/testing/client-store-conformance.d.ts",
+      "default": "./dist/testing/client-store-conformance.js"
     }
   },
   "files": [

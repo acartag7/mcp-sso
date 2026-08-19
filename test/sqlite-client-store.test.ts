@@ -11,7 +11,7 @@ import { createBridgeConfig } from "../src/config.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 import type { ClientRegistration } from "../src/ports/client-store.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
-import { runClientStoreConformance } from "./lib/client-store-conformance.ts";
+import { runClientStoreConformance } from "../src/testing/client-store-conformance.ts";
 import { boundedTestRateLimit } from "./support/bounded-rate-limit.ts";
 
 const WEB: ClientRegistration = {
