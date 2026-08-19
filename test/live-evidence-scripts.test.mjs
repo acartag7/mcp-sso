@@ -351,8 +351,12 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.doesNotMatch(PROBE, /disableMachineClient\([^)]*\{\s*clientId/);
   assert.match(PROBE, /afterDisable\.statusCode === 401 && afterDisable\.json\(\)\.error === "invalid_client"/, "the disabled-client response is asserted exactly");
   assert.match(PROBE, /url: "\/oauth\/revoke"/, "revocation is exercised through the endpoint");
-  assert.match(PROBE, /const replayed = await refresh\(userTokens\.refresh_token\);[\s\S]*?const afterReplay = await refresh\(rotated\);/,
+  assert.match(PROBE, /const replayed = await refresh\(userTokens\.refresh_token\);\n  const afterReplay = await refresh\(rotated\);/,
     "the consumed predecessor is replayed and the live successor re-checked");
+  // Both halves are the claim: a refused replay alone is one dead token, not a
+  // revoked family, so the row must assert the successor too.
+  assert.match(PROBE, /replayed\.statusCode === 400 && replayed\.json\(\)\.error === "invalid_grant"\n\s*&& afterReplay\.statusCode === 400 && afterReplay\.json\(\)\.error === "invalid_grant",/,
+    "the replay row asserts the refused replay AND the dead successor");
   assert.ok(PROBE.indexOf('await authorizationCodeGrant("revocation family"') > PROBE.indexOf("const afterReplay"),
     "revocation is proved on a family the replay did not already revoke");
   assert.match(PROBE, /afterRevoke\.statusCode === 400 && afterRevoke\.json\(\)\.error === "invalid_grant"/);
