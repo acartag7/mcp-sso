@@ -11,6 +11,7 @@ import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
 import type { AuditPort, AuthAuditEvent } from "./ports/audit.ts";
 import { OAuthError } from "./errors.ts";
 import { writeAuditBestEffort } from "./audit/best-effort.ts";
+import { callPort } from "./port-failure.ts";
 import {
   epochSeconds,
   hashMachineClientSecret,
@@ -99,7 +100,7 @@ export async function provisionMachineClient(
       }],
     };
     const durableAudit = mutationAudit(deps.clock, "oauth.client.provision", record);
-    if (!await store.createMachineClient(record, durableAudit)) {
+    if (!await callPort("ClientStore", "createMachineClient", () => store.createMachineClient(record, durableAudit))) {
       throw new OAuthError("server_error", "Machine client identifier collision", 500);
     }
     safeAudit(deps.audit, { ...durableAudit, status: "success" });
@@ -125,7 +126,7 @@ export async function rotateMachineClientSecret(
     const now = epochSeconds(deps.clock);
     validateExpiryOffset(now, graceSeconds, "graceSeconds");
     const current = requireMutableActive(
-      parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+      parseMachineClientRegistration(await callPort("ClientStore", "find", () => deps.store.find(clientId)), clientId, now),
       resource,
     );
     const clientSecret = mintClientSecret();
@@ -140,7 +141,7 @@ export async function rotateMachineClientSecret(
       ),
     };
     const durableAudit = mutationAudit(deps.clock, "oauth.client.rotate_secret", next);
-    if (!await store.compareAndSwapMachineClient(current.version, next, durableAudit)) {
+    if (!await callPort("ClientStore", "compareAndSwapMachineClient", () => store.compareAndSwapMachineClient(current.version, next, durableAudit))) {
       throw new OAuthError("invalid_request", "Machine client changed; retry rotation", 409);
     }
     safeAudit(deps.audit, { ...durableAudit, status: "success" });
@@ -160,7 +161,7 @@ export async function disableMachineClient(
     const store = requireMachineClientStore(deps.store);
     const now = epochSeconds(deps.clock);
     const current = requireMutableActive(
-      parseMachineClientRegistration(await deps.store.find(clientId), clientId, now),
+      parseMachineClientRegistration(await callPort("ClientStore", "find", () => deps.store.find(clientId)), clientId, now),
       resource,
     );
     const next: VersionedMachineClientRegistration = {
@@ -171,7 +172,7 @@ export async function disableMachineClient(
       disabledAtEpoch: now,
     };
     const durableAudit = mutationAudit(deps.clock, "oauth.client.disable", next);
-    if (!await store.compareAndSwapMachineClient(current.version, next, durableAudit)) {
+    if (!await callPort("ClientStore", "compareAndSwapMachineClient", () => store.compareAndSwapMachineClient(current.version, next, durableAudit))) {
       throw new OAuthError("invalid_request", "Machine client changed; retry disable", 409);
     }
     safeAudit(deps.audit, { ...durableAudit, status: "success" });

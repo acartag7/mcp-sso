@@ -20,6 +20,9 @@ import type { JWK } from "jose";
 
 import { OAuthError } from "../src/errors.ts";
 import { PortFailureError, callPort } from "../src/port-failure.ts";
+import {
+  disableMachineClient, provisionMachineClient, rotateMachineClientSecret,
+} from "../src/machine-client.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { OAuthAuthorizationUseCase } from "../src/authorize.ts";
 import { OAuthTokenUseCase } from "../src/token.ts";
@@ -29,7 +32,10 @@ import { revokeRefreshToken } from "../src/token-revoke.ts";
 import type { AuditPort } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { StorePort } from "../src/ports/store.ts";
-import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
+import type {
+  ActiveMachineClientRegistration, ClientRegistration, ClientStore,
+  MachineClientStore,
+} from "../src/ports/client-store.ts";
 import type { IdentityPort } from "../src/ports/identity.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { resolveIdentityWithAudit } from "../src/adapters/bridge-internals.ts";
@@ -311,6 +317,80 @@ test("every response-owning store/client-store call re-casts a port-authored OAu
       grantType: "client_credentials", clientId: "mcc_service", clientSecret: "presented-secret",
       scope: "mcp:read",
     }), "find");
+  });
+});
+
+test("machine-client lifecycle store calls re-cast a port-authored OAuthError", async (t) => {
+  // The §17.2 admin APIs are library functions, not endpoints — but their store
+  // is still caller-supplied code. Unwrapped, a store's OAuthError reached the
+  // direct caller indistinguishable from a library-raised one AND wrote its own
+  // code into the oauth.client.* failure-audit reason.
+  const ACTIVE: ActiveMachineClientRegistration = {
+    clientId: "mcc_lifecycle", redirectUris: [], applicationType: "machine",
+    issuedAtEpoch: 1_700_000_000, name: "svc", allowedScopes: ["mcp:read"],
+    resource: RESOURCE, status: "active", version: 1,
+    secrets: [{ hash: "a".repeat(64), createdAtEpoch: 1_700_000_000 }],
+  };
+  const store = (overrides: {
+    find?: () => Promise<ClientRegistration | null>;
+    create?: () => Promise<boolean>;
+    cas?: () => Promise<boolean>;
+  }): MachineClientStore => ({
+    async save() {},
+    async find() { return overrides.find ? await overrides.find() : null; },
+    async createMachineClient() { return overrides.create ? await overrides.create() : true; },
+    async compareAndSwapMachineClient() { return overrides.cas ? await overrides.cas() : true; },
+  });
+  const deps = (clients: ClientStore, audit = quietAudit) =>
+    ({ store: clients, catalog: ["mcp:read"], resource: RESOURCE, clock, audit });
+
+  await t.test("provision createMachineClient", async () => {
+    const { audit, events } = recordingAudit();
+    await expectPortFailure(
+      () => provisionMachineClient(deps(store({ create: portBoom }), audit), { allowedScopes: ["mcp:read"] }),
+      "createMachineClient",
+    );
+    assert.equal(events.at(-1)?.reason, "internal_error");
+  });
+
+  await t.test("rotation lookup", async () => {
+    await expectPortFailure(
+      () => rotateMachineClientSecret(deps(store({ find: portBoom })), "mcc_lifecycle"),
+      "find",
+    );
+  });
+
+  await t.test("rotation compare-and-swap", async () => {
+    const { audit, events } = recordingAudit();
+    await expectPortFailure(
+      () => rotateMachineClientSecret(deps(store({ find: async () => ACTIVE, cas: portBoom }), audit), "mcc_lifecycle"),
+      "compareAndSwapMachineClient",
+    );
+    assert.equal(events.at(-1)?.reason, "internal_error");
+  });
+
+  await t.test("disable lookup", async () => {
+    await expectPortFailure(
+      () => disableMachineClient(deps(store({ find: portBoom })), "mcc_lifecycle"),
+      "find",
+    );
+  });
+
+  await t.test("disable compare-and-swap", async () => {
+    const { audit, events } = recordingAudit();
+    await expectPortFailure(
+      () => disableMachineClient(deps(store({ find: async () => ACTIVE, cas: portBoom }), audit), "mcc_lifecycle"),
+      "compareAndSwapMachineClient",
+    );
+    assert.equal(events.at(-1)?.reason, "internal_error");
+  });
+
+  await t.test("a false CAS return is still control flow, not a port failure", async () => {
+    // The wrap must not swallow the library's OWN retry/conflict shapes.
+    await assert.rejects(
+      () => rotateMachineClientSecret(deps(store({ find: async () => ACTIVE, cas: async () => false })), "mcc_lifecycle"),
+      (error: unknown) => error instanceof OAuthError && /retry rotation/.test((error as Error).message),
+    );
   });
 });
 
