@@ -172,8 +172,9 @@ started (`lsof` must report that child as the only listener) and re-proves that
 ownership immediately before exposing the tunnel, aborts when a server fails or
 times out during startup, refuses a leg named twice or two
 legs sharing a hostname or port, supervises the tunnel and every server so a
-signal to the script itself still runs cleanup and a server that dies — or
-whose port changes hands — while serving stops the run, and signals only its own children on exit. These properties are exercised by `test/live-run-script.test.mjs` and
+signal to the script itself still runs cleanup — bounded, so a child that
+ignores termination is killed rather than stalling it — and a server that dies,
+or whose port changes hands, while serving stops the run, and signals only its own children on exit. These properties are exercised by `test/live-run-script.test.mjs` and
 `test/live-serve-script.test.mjs`, which spawn the shipped scripts against
 fixture infrastructure, and `test/live-e2e-probe.test.mjs`, which spawns the
 end-to-end probe.

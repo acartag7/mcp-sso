@@ -149,8 +149,10 @@ claude mcp add --transport http live-entra https://<host>/mcp
 
 The tunnel and every server run supervised: a signal delivered to `serve.sh`
 itself — Ctrl-C, or a `kill` by PID — stops the tunnel and the servers it
-started, never the process group, and a server that dies **or whose port
-changes hands** while serving stops the run rather than leaving the tunnel
+started — with a bounded grace period before each is killed, so one child that
+ignores the signal cannot stall the rest of the cleanup — never the process
+group, and a server that dies **or whose port changes hands** while serving
+stops the run rather than leaving the tunnel
 exposing a dead or foreign backend (ownership is re-proved every second, not
 only before exposure). A leg named
 twice, or two legs the stack maps to the same hostname or port, is refused

@@ -65,6 +65,7 @@ async function runServeScenario(mode, legs = ["entra"]) {
   const bystanderSignaled = join(fixture, "bystander-signaled");
   const tunnelStarted = join(fixture, "tunnel-started");
   const tunnelStopped = join(fixture, "tunnel-stopped");
+  const tunnelIgnored = join(fixture, "tunnel-ignored");
   const tunnelConfig = join(fixture, "tunnel-config.yml");
   const releaseTunnel = join(fixture, "release-tunnel");
   const runShLog = join(fixture, "run-sh.log");
@@ -107,7 +108,12 @@ esac
 [[ "$1 $2" == "tunnel --config" ]] || exit 9
 cp -- "$3" "$TUNNEL_CONFIG_COPY"
 printf started > "$TUNNEL_STARTED"
-trap 'printf stopped > "$TUNNEL_STOPPED"; exit 143' TERM INT
+if [[ "$CLOUDFLARED_MODE" == "ignore" ]]; then
+  # Receives the signal and keeps running: only a bounded reap stops it.
+  trap 'printf ignored > "$TUNNEL_IGNORED"' TERM INT
+else
+  trap 'printf stopped > "$TUNNEL_STOPPED"; exit 143' TERM INT
+fi
 case "$TUNNEL_MODE" in
   normal) exit 0 ;;
   failure) exit 7 ;;
@@ -168,7 +174,9 @@ exit 0
       // stale-listener steals at the pre-tunnel gate (call 3 per leg);
       // steal-while-serving lets that gate pass and steals in supervision.
       STEAL_AFTER: String((mode === "steal-while-serving" ? 3 : 2) * legs.length),
-      TUNNEL_STARTED: tunnelStarted, TUNNEL_STOPPED: tunnelStopped, TUNNEL_CONFIG_COPY: tunnelConfig, RELEASE_TUNNEL: releaseTunnel,
+      TUNNEL_STARTED: tunnelStarted, TUNNEL_STOPPED: tunnelStopped, TUNNEL_IGNORED: tunnelIgnored,
+      TUNNEL_CONFIG_COPY: tunnelConfig, RELEASE_TUNNEL: releaseTunnel,
+      CLOUDFLARED_MODE: mode === "stubborn-tunnel" ? "ignore" : "",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -179,7 +187,7 @@ exit 0
   child.stdout.on("data", (chunk) => { stdout += chunk; });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   try {
-    if (mode === "sigint" || mode === "sigterm") {
+    if (["sigint", "sigterm", "stubborn-tunnel"].includes(mode)) {
       // Signal serve.sh ALONE (by pid, not the process group) and never
       // release the tunnel: cleanup must terminate the tunnel it started.
       await waitForFile(tunnelStarted);
@@ -202,6 +210,7 @@ exit 0
       normal: 0, failure: 7, sigint: 130, sigterm: 143, "startup-failure": 23,
       "startup-timeout": 1, "foreign-listener": 1, "port-busy": 1, "server-exit": 1, "duplicate-leg": 1,
       "stale-listener": 1, "stalled-readiness": 1, "bad-readiness": 1, "steal-while-serving": 1,
+      "stubborn-tunnel": 143,
     }[mode];
     assert.deepEqual(result, { code: expected, signal: null }, `${mode}: ${stderr}`);
     const gatewayPorts = legs.map((leg) => PORTS[leg].gateway);
@@ -245,6 +254,10 @@ exit 0
     if (mode === "stale-listener") assert.match(stderr, /no longer held solely by the server started/);
     if (mode === "stalled-readiness") assert.match(stderr, /failed readiness before tunnel startup/);
     if (mode === "bad-readiness") assert.match(stderr, /must be a whole number of seconds/);
+    if (mode === "stubborn-tunnel") {
+      assert.equal(readFileSync(tunnelIgnored, "utf8"), "ignored", "the tunnel received the signal and ignored it");
+      assert.equal(existsSync(tunnelStopped), false, "it never stopped on its own");
+    }
     if (mode === "steal-while-serving") {
       assert.match(stderr, /changed hands while serving/);
       assert.equal(existsSync(tunnelStarted), true, "the tunnel had started; supervision is what caught it");
@@ -261,7 +274,7 @@ exit 0
 }
 
 test("serve.sh proves readiness of the server it started and cleans up only what it owns", async (t) => {
-  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener", "stalled-readiness", "bad-readiness", "steal-while-serving"]) {
+  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener", "stalled-readiness", "bad-readiness", "steal-while-serving", "stubborn-tunnel"]) {
     await t.test(mode, () => runServeScenario(mode));
   }
   await t.test("two legs share one tunnel ingress and one cleanup", () => runServeScenario("normal", ["cloudflare_access", "google"]));

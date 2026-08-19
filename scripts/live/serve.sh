@@ -40,6 +40,8 @@ esac
 if [ "$READINESS_SECONDS" -lt 1 ] || [ "$READINESS_SECONDS" -gt 3600 ]; then
   fail "MCP_SSO_READINESS_SECONDS must be between 1 and 3600 seconds"
 fi
+# × 0.1 s: how long a child gets to exit on TERM before cleanup kills it.
+REAP_GRACE_TICKS=50
 
 for tool in cloudflared curl lsof; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is required on PATH"
@@ -84,18 +86,34 @@ CONF=""
 SERVER_PIDS=()
 TUNNEL_PID=""
 
+# Terminate one child this script started, bounded: TERM, a grace period, then
+# KILL. An unbounded `wait` would let one child that ignores TERM — cloudflared
+# has — stall cleanup before it reaches the servers or removes the config,
+# leaving the tunnel publicly routed after the operator asked it to stop.
+reap() {
+  local pid="$1" waited=0
+  kill "$pid" 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$REAP_GRACE_TICKS" ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "child $pid ignored termination; killing" >&2
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
   # Signal only the processes this script started — never the process group,
   # which would include the invoking shell and any sibling job.
   if [[ -n "$TUNNEL_PID" ]]; then
-    kill "$TUNNEL_PID" 2>/dev/null || true
-    wait "$TUNNEL_PID" 2>/dev/null || true
+    reap "$TUNNEL_PID"
   fi
   for pid in ${SERVER_PIDS[@]+"${SERVER_PIDS[@]}"}; do
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
+    reap "$pid"
   done
   if [[ -n "$CONF" ]]; then
     rm -f -- "$CONF"
