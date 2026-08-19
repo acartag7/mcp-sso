@@ -5,6 +5,7 @@ import type { JWK } from "jose";
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { ClockPort } from "../src/ports/clock.ts";
 import type { RateLimitPort } from "../src/ports/rate-limit.ts";
+import type { ClientRegistration } from "../src/ports/client-store.ts";
 import type { NormRequest } from "../src/adapters/http.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { handlePairingAuthorize } from "../src/adapters/pairing-flow.ts";
@@ -24,20 +25,20 @@ class FakeClock implements ClockPort { private ms: number; constructor(ms: numbe
 class MemoryAudit implements AuditPort { readonly events: AuthAuditEvent[] = []; async writeAuthEvent(e: AuthAuditEvent): Promise<void> { this.events.push(e); } }
 
 function jwk(): JWK { const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" }); return { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK; }
-function config(redirectAllowlist: string[] = [REDIRECT]): BridgeConfig {
+function config(redirectAllowlist: string[] = [REDIRECT], dcr: BridgeConfig["dcr"] = { mode: "stateless" }): BridgeConfig {
   return createBridgeConfig({
     issuer: "https://auth.test", resource: "https://api.test/mcp",
     consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: jwk(), signingKeyId: "k",
     redirectAllowlist, scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
-    allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" },
+    allowedOrigins: ["https://auth.test"], dcr,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
 }
 
 interface Ctx { bridge: Bridge; audit: MemoryAudit; }
-function setup(rateLimit?: RateLimitPort, redirectAllowlist?: string[]): Ctx {
+function setup(rateLimit?: RateLimitPort, redirectAllowlist?: string[], dcr?: BridgeConfig["dcr"]): Ctx {
   const audit = new MemoryAudit();
-  return { bridge: new Bridge({ config: config(redirectAllowlist), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit, rateLimit }), audit };
+  return { bridge: new Bridge({ config: config(redirectAllowlist, dcr), store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit, rateLimit }), audit };
 }
 function req(partial: Partial<NormRequest> & { query?: NormRequest["query"]; body?: unknown }): NormRequest {
   return {
@@ -574,7 +575,24 @@ test("bridge: stateless registration stays fail-open when its limiter throws", a
   assert.equal(res.status, 201); // not 429 — the bridge guard() caught the throw and allowed
 });
 
-test("bridge: authorize, approve, token, and revoke stay fail-open when their limiter throws", async (t) => {
+// Driven under BOTH dcr modes. Stored is the mode in which the fail-closed flag
+// exists at all, so it is where continuity most needs proving: if a future change
+// broadens that flag beyond registration, the stored half of this matrix goes red.
+const CONTINUITY_MODES = [
+  { label: "stateless", dcr: () => ({ mode: "stateless" }) as BridgeConfig["dcr"] },
+  // A real map, not a discarding stub: stored-mode authorize resolves the client
+  // through this store, so a stub that drops the registration would fail the flow
+  // for a reason unrelated to limiter outages.
+  { label: "stored", dcr: (): BridgeConfig["dcr"] => {
+    const rows = new Map<string, ClientRegistration>();
+    return { mode: "stored", store: {
+      async save(client) { rows.set(client.clientId, client); },
+      async find(id) { return rows.get(id) ?? null; },
+    } };
+  } },
+];
+for (const mode of CONTINUITY_MODES) {
+test(`bridge: authorize, approve, token, and revoke stay fail-open when their limiter throws [dcr ${mode.label}]`, async (t) => {
   for (const outageKey of ["authorize", "approve", "token", "revoke"] as const) {
     await t.test(outageKey, async () => {
       const keys: string[] = [];
@@ -582,7 +600,7 @@ test("bridge: authorize, approve, token, and revoke stay fail-open when their li
         keys.push(key);
         if (key.startsWith(`${outageKey}:`)) throw new Error("limiter unavailable");
         return true;
-      } });
+      } }, undefined, mode.dcr());
       const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
       const registration = await ctx.bridge.handleRegister(req({ body: { redirect_uris: [REDIRECT] } }));
       assert.equal(registration.status, 201);
@@ -618,6 +636,7 @@ test("bridge: authorize, approve, token, and revoke stay fail-open when their li
     });
   }
 });
+}
 
 test("bridge: authorize rate-limit denial precedes identity verification and audit", async () => {
   const keys: string[] = [];
