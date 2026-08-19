@@ -162,9 +162,12 @@ exit 0
       FAKE_SERVER_JS: serverJs, FAKE_BYSTANDER_JS: bystanderJs, RUN_SH_LOG: runShLog,
       STARTUP_EXIT: mode === "startup-failure" ? "23" : "",
       TUNNEL_MODE: ["normal", "failure", "startup-timeout"].includes(mode) ? mode : "signal",
-      LSOF_MODE: mode === "port-busy" ? "busy" : mode === "foreign-listener" ? "foreign" : mode === "stale-listener" ? "steal" : "",
+      LSOF_MODE: mode === "port-busy" ? "busy" : mode === "foreign-listener" ? "foreign"
+        : ["stale-listener", "steal-while-serving"].includes(mode) ? "steal" : "",
       CURL_MODE: mode === "stalled-readiness" ? "stall" : "",
-      STEAL_AFTER: String(2 * legs.length),
+      // stale-listener steals at the pre-tunnel gate (call 3 per leg);
+      // steal-while-serving lets that gate pass and steals in supervision.
+      STEAL_AFTER: String((mode === "steal-while-serving" ? 3 : 2) * legs.length),
       TUNNEL_STARTED: tunnelStarted, TUNNEL_STOPPED: tunnelStopped, TUNNEL_CONFIG_COPY: tunnelConfig, RELEASE_TUNNEL: releaseTunnel,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -198,7 +201,7 @@ exit 0
     const expected = {
       normal: 0, failure: 7, sigint: 130, sigterm: 143, "startup-failure": 23,
       "startup-timeout": 1, "foreign-listener": 1, "port-busy": 1, "server-exit": 1, "duplicate-leg": 1,
-      "stale-listener": 1, "stalled-readiness": 1, "bad-readiness": 1,
+      "stale-listener": 1, "stalled-readiness": 1, "bad-readiness": 1, "steal-while-serving": 1,
     }[mode];
     assert.deepEqual(result, { code: expected, signal: null }, `${mode}: ${stderr}`);
     const gatewayPorts = legs.map((leg) => PORTS[leg].gateway);
@@ -242,6 +245,11 @@ exit 0
     if (mode === "stale-listener") assert.match(stderr, /no longer held solely by the server started/);
     if (mode === "stalled-readiness") assert.match(stderr, /failed readiness before tunnel startup/);
     if (mode === "bad-readiness") assert.match(stderr, /must be a whole number of seconds/);
+    if (mode === "steal-while-serving") {
+      assert.match(stderr, /changed hands while serving/);
+      assert.equal(existsSync(tunnelStarted), true, "the tunnel had started; supervision is what caught it");
+      assert.equal(readFileSync(tunnelStopped, "utf8"), "stopped", "cleanup terminated the tunnel it started");
+    }
     if (mode === "duplicate-leg") assert.match(stderr, /named twice/);
     if (mode === "foreign-listener") assert.match(stderr, /is not the server just started/);
     if (mode === "port-busy") assert.match(stderr, /already has a listener/);
@@ -253,7 +261,7 @@ exit 0
 }
 
 test("serve.sh proves readiness of the server it started and cleans up only what it owns", async (t) => {
-  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener", "stalled-readiness", "bad-readiness"]) {
+  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener", "stalled-readiness", "bad-readiness", "steal-while-serving"]) {
     await t.test(mode, () => runServeScenario(mode));
   }
   await t.test("two legs share one tunnel ingress and one cleanup", () => runServeScenario("normal", ["cloudflare_access", "google"]));

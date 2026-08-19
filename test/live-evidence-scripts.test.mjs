@@ -371,6 +371,17 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.match(PROBE, /new JsonlFileAudit\(jsonlPath\)/);
   assert.match(PROBE, /new WebhookAudit\(/);
   assert.match(PROBE, /hasOrderedFlow\(fileEvents, requiredFlow\)[\s\S]*?hasOrderedFlow\(posted, requiredFlow\)/);
+  // The required sequence must cover BOTH grants (two identity/consent runs)
+  // and BOTH refresh failures the replay produces.
+  const flow = /const requiredFlow = \[[\s\S]*?\n  \];/.exec(PROBE)?.[0] ?? "";
+  const occurrences = (event, status) => (flow.match(new RegExp(`\\["${event}", "${status}"\\]`, "g")) ?? []).length;
+  assert.equal(occurrences("identity\\.verify", "success"), 2, "both grants' identity verifications are required");
+  assert.equal(occurrences("oauth\\.authorize\\.prepare", "success"), 2);
+  assert.equal(occurrences("oauth\\.authorize\\.approve", "success"), 2);
+  assert.equal(occurrences("oauth\\.token\\.authorization_code", "success"), 2);
+  assert.equal(occurrences("oauth\\.token\\.refresh", "failure"), 3,
+    "the replayed predecessor, its revoked successor, and the revoked token each fail");
+  assert.equal(occurrences("oauth\\.token\\.refresh", "success"), 2);
   assert.match(PROBE, /JSON\.stringify\(fileEvents\) === JSON\.stringify\(posted\)/);
   assert.match(PROBE, /\["consent signing credential", process\.env\.OAUTH_CONSENT_SIGNING_SECRET\]/);
   assert.match(PROBE, /\["signing private key", signingJwk\.d\]/, "the signing key's private component is in the leak scan");

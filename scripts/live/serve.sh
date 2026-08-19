@@ -184,13 +184,24 @@ done
 cloudflared tunnel --config "$CONF" run "$TUNNEL" &
 TUNNEL_PID=$!
 while kill -0 "$TUNNEL_PID" 2>/dev/null; do
+  # Interval first: the gate above proved every leg a moment ago, so the next
+  # meaningful check is one interval later.
+  sleep 1
+  kill -0 "$TUNNEL_PID" 2>/dev/null || break
   for i in "${!LEGS[@]}"; do
     if ! kill -0 "${SERVER_PIDS[$i]}" 2>/dev/null; then
       echo "example server for leg ${LEGS[$i]} exited while serving; stopping" >&2
       exit 1
     fi
+    # Liveness is not ownership: a server can close its listening socket
+    # without exiting and another process can take the port, and the public
+    # tunnel would keep routing to that replacement. Re-prove ownership here,
+    # the same way the pre-tunnel gate does.
+    if [ "$(listener_pids "${GATEWAY_PORTS[$i]}")" != "${SERVER_PIDS[$i]} " ]; then
+      echo "port ${GATEWAY_PORTS[$i]} changed hands while serving leg ${LEGS[$i]}; stopping" >&2
+      exit 1
+    fi
   done
-  sleep 1
 done
 wait "$TUNNEL_PID"
 status=$?

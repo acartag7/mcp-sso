@@ -277,14 +277,22 @@ try {
   if (!ok("JSONL and webhook sinks received the same ordered events",
     fileEvents.length > 0 && JSON.stringify(fileEvents) === JSON.stringify(posted),
     `${fileEvents.length} file rows, ${posted.length} webhook posts`)) failures++;
+  // Every step the probe exercised, in order — including the SECOND grant's
+  // identity and consent events and BOTH refresh failures the replay produces
+  // (the replayed predecessor and the successor its revocation killed). A
+  // shorter list would let a sink drop those events and still report the flow.
   const requiredFlow = [
-    ["oauth.register", "success"], ["identity.verify", "success"], ["oauth.authorize.prepare", "success"],
-    ["oauth.authorize.approve", "success"], ["oauth.token.authorization_code", "success"], ["auth.request", "success"],
+    ["oauth.register", "success"],
+    ["identity.verify", "success"], ["oauth.authorize.prepare", "success"],
+    ["oauth.authorize.approve", "success"], ["oauth.token.authorization_code", "success"],
+    ["auth.request", "success"],
     ["oauth.client.provision", "success"], ["oauth.token.client_credentials", "success"],
     ["oauth.token.client_credentials", "failure"], ["oauth.client.disable", "success"],
-    ["oauth.token.refresh", "success"], ["oauth.token.refresh", "failure"],
-    ["oauth.token.authorization_code", "success"], ["oauth.token.refresh", "success"],
-    ["oauth.revoke", "success"], ["oauth.token.refresh", "failure"],
+    ["oauth.token.refresh", "success"],
+    ["oauth.token.refresh", "failure"], ["oauth.token.refresh", "failure"],
+    ["identity.verify", "success"], ["oauth.authorize.prepare", "success"],
+    ["oauth.authorize.approve", "success"], ["oauth.token.authorization_code", "success"],
+    ["oauth.token.refresh", "success"], ["oauth.revoke", "success"], ["oauth.token.refresh", "failure"],
   ];
   if (!ok("JSONL sink contains the exercised flow in order", hasOrderedFlow(fileEvents, requiredFlow))) failures++;
   if (!ok("webhook sink contains the exercised flow in order", hasOrderedFlow(posted, requiredFlow))) failures++;
