@@ -5,6 +5,35 @@ Every `StorePort` implementation MUST satisfy these invariants — the
 `SqliteStore`, and `MysqlStore`, and any further downstream SQL adapter must pass the same suite. **Fix #3**
 documents the one contract the source left implicit.
 
+The suite ships in the package so a downstream adapter can satisfy that
+requirement: import `runStoreConformance` from `mcp-sso/testing/store-conformance`
+(and `runClientStoreConformance` from `mcp-sso/testing/client-store-conformance`
+for a `ClientStore`) and call it once per adapter under `node --test`:
+
+```js
+import { runStoreConformance } from "mcp-sso/testing/store-conformance";
+runStoreConformance("MyPostgresStore", () => openMyPostgresStore(url));
+```
+
+It registers rows only when called, so importing it has no side effects, and it
+needs only Node built-ins (`node:test`, `node:assert`) — no runtime dependency.
+
+A store that omits the OPTIONAL `startExpiryCollection` hook — which §6.3 allows
+only for a store owning an equivalent lifecycle on the same configured clock —
+supplies that lifecycle instead, and the expiry rows then run against it:
+
+```js
+runStoreConformance("MyPostgresStore", () => openMyPostgresStore(url), {
+  startExpiryCollection: (store, clock) => store.beginMySweepLoop(clock),
+});
+```
+
+A store with neither the hook nor that fixture fails the rows; they are never
+skipped, because a skipped row is not evidence.
+The suite is split into sections for readability; `runStoreConformance` runs all
+of them and a downstream adapter must not call a section directly, because
+passing part of the suite is not passing the suite.
+
 Every store exposes both `getStoreInstanceId(): Promise<string>` and
 `rotateStoreInstanceId(): Promise<string>` as required `StorePort` methods. The value is
 an opaque base64url identifier with at least 128 bits of randomness. It is stable

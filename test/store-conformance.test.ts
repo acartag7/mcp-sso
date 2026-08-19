@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { STORED_DCR_GRANT_GENERATION } from "../src/ports/store.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
-import { runStoreConformance } from "./lib/store-conformance.ts";
+import { runStoreConformance } from "../src/testing/store-conformance.ts";
 
 runStoreConformance("MemoryStore", () => new MemoryStore());
 runStoreConformance("SqliteStore", () => openSqliteStore(":memory:"));

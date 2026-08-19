@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { ClientRegistration, ClientStore } from "../../src/ports/client-store.ts";
+import type { ClientRegistration, ClientStore } from "../ports/client-store.ts";
 
 type CloseableClientStore = ClientStore & { close(): Promise<void> };
 

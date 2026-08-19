@@ -367,6 +367,23 @@ Stored-DCR deployments here supply a bounded limiter, because B1 makes an
 unbounded anonymous durable-write path a boot failure; the row tests dispatch
 rather than re-testing that guard.
 
+### RM.16 — Shipped conformance suite
+
+§12 and the release gate in the threat model require every downstream store
+adapter to pass the shared conformance suite. That requirement is only
+satisfiable if the suite is in the published package, so this row treats it as a
+release property rather than a source-tree one: it packs the artifact, extracts
+it as a consumer's dependency, and runs `runStoreConformance` and
+`runClientStoreConformance` through `mcp-sso/testing/*` — the package's own
+export map, not a repository path.
+
+The row also proves the negative: an individual section
+(`mcp-sso/testing/store-conformance-grants`) is refused with
+`ERR_PACKAGE_PATH_NOT_EXPORTED`. The suite is split into sections for
+readability, and passing part of it is not passing it, so only the two entry
+points are public and the exports map is what enforces that.
+
+
 ## Harness helpers
 
 The current shared helpers are:

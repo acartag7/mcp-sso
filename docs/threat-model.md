@@ -416,7 +416,8 @@ false guarantee.
   exception).
 - The [store-conformance suite](./contracts/12-store-conformance-contract.md#12-store-conformance-contract)
   MUST be green (memory + sqlite + mysql) before any correctness claim; any
-  further downstream SQL adapter must pass the same suite.
+  further downstream SQL adapter must pass the same suite, which ships as
+  `mcp-sso/testing/store-conformance`.
 - The end-to-end verify gate — register → authorize (identity port) → token →
   protected `/mcp` call → refresh → replay-detection (family revoked) → revoke,
   driven by the **official MCP SDK client** — must pass before a release. Green

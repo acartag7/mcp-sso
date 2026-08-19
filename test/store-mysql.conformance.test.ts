@@ -18,7 +18,7 @@ import { STORE_EXPIRY_SWEEP_INTERVAL_MS } from "../src/store/expiry-scheduler.ts
 import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
 import { MYSQL_SUBJECT_CAPACITY } from "../src/store/mysql-subject-schema.ts";
 import { entraIssuer, validateEntraIdToken } from "../src/identity/entra.ts";
-import { runStoreConformance } from "./lib/store-conformance.ts";
+import { runStoreConformance } from "../src/testing/store-conformance.ts";
 
 const RUN_INTEGRATION = process.env.RUN_INTEGRATION === "true";
 const MYSQL_URL = process.env.MYSQL_URL;
