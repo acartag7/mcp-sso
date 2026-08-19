@@ -10,6 +10,17 @@ import type { SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../por
 /** A store factory: one fresh, independent store per conformance row. */
 export type MakeStore = () => StorePort | Promise<StorePort>;
 
+/** Per-adapter fixtures for the parts of §12 an adapter may satisfy its own way. */
+export interface StoreConformanceOptions {
+  /** Start this adapter's expiry collection when it omits the OPTIONAL
+   *  `startExpiryCollection` hook. §6.3 permits that omission only for a store
+   *  that "provides an equivalent lifecycle using the same configured clock",
+   *  so the suite asks for that lifecycle instead of assuming the hook — and
+   *  still runs the expiry rows against it. A store with neither fails; the
+   *  rows are never skipped, because a skipped row is not evidence. */
+  startExpiryCollection?: (store: StorePort, clock: ClockPort) => void;
+}
+
 export const NOW = "2026-07-03T12:00:00.000Z";
 export const LATER = "2026-07-03T12:05:00.000Z";
 export const FUTURE = "2026-07-03T13:00:00.000Z";
@@ -18,9 +29,18 @@ export const RESOURCE_A = "https://api-a.test/mcp";
 export const RESOURCE_B = "https://api-b.test/mcp";
 export const STORE_EXPIRY_SWEEP_INTERVAL_MS = 300_000;
 
-export function startExpiryCollection(store: StorePort, clock: ClockPort): void {
-  assert.equal(typeof store.startExpiryCollection, "function");
-  store.startExpiryCollection?.(clock);
+export function startExpiryCollection(
+  store: StorePort, clock: ClockPort, options: StoreConformanceOptions = {},
+): void {
+  if (typeof store.startExpiryCollection === "function") {
+    store.startExpiryCollection(clock);
+    return;
+  }
+  assert.equal(typeof options.startExpiryCollection, "function",
+    "this store omits the optional startExpiryCollection hook, which §6.3 allows only "
+    + "for a store that owns an equivalent lifecycle on the same configured clock: pass "
+    + "options.startExpiryCollection so these rows can start it");
+  options.startExpiryCollection?.(store, clock);
 }
 
 export async function settleUntil(done: () => boolean): Promise<void> {

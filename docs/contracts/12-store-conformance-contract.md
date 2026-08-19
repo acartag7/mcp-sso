@@ -17,6 +17,19 @@ runStoreConformance("MyPostgresStore", () => openMyPostgresStore(url));
 
 It registers rows only when called, so importing it has no side effects, and it
 needs only Node built-ins (`node:test`, `node:assert`) — no runtime dependency.
+
+A store that omits the OPTIONAL `startExpiryCollection` hook — which §6.3 allows
+only for a store owning an equivalent lifecycle on the same configured clock —
+supplies that lifecycle instead, and the expiry rows then run against it:
+
+```js
+runStoreConformance("MyPostgresStore", () => openMyPostgresStore(url), {
+  startExpiryCollection: (store, clock) => store.beginMySweepLoop(clock),
+});
+```
+
+A store with neither the hook nor that fixture fails the rows; they are never
+skipped, because a skipped row is not evidence.
 The suite is split into sections for readability; `runStoreConformance` runs all
 of them and a downstream adapter must not call a section directly, because
 passing part of the suite is not passing the suite.

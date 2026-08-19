@@ -4,10 +4,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  FUTURE, NOW, PAST, refresh, settleUntil, startExpiryCollection, STORE_EXPIRY_SWEEP_INTERVAL_MS, type MakeStore,
+  FUTURE, NOW, PAST, refresh, settleUntil, startExpiryCollection, STORE_EXPIRY_SWEEP_INTERVAL_MS, type MakeStore, type StoreConformanceOptions,
 } from "./store-conformance-fixtures.ts";
 
-export function registerLifecycleRows(label: string, make: MakeStore): void {
+export function registerLifecycleRows(label: string, make: MakeStore, options: StoreConformanceOptions = {}): void {
   test(`${label}: expiry collection starts after configured-clock binding`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.parse(NOW) });
     const store = await make();
@@ -20,7 +20,7 @@ export function registerLifecycleRows(label: string, make: MakeStore): void {
       assert.equal(await store.consumeConsentJti(activeJti, FUTURE), true);
       await store.saveRefreshToken(expiredToken);
       await store.saveRefreshToken(activeToken);
-      startExpiryCollection(store, { nowMs: () => Date.now() });
+      startExpiryCollection(store, { nowMs: () => Date.now() }, options);
 
       t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
       let expiredJtiCollected = false;
@@ -55,7 +55,7 @@ export function registerLifecycleRows(label: string, make: MakeStore): void {
     };
     try {
       assert.equal(await store.consumeConsentJti(jti, signedExpiry), true);
-      startExpiryCollection(store, { nowMs: () => configuredNow });
+      startExpiryCollection(store, { nowMs: () => configuredNow }, options);
       t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS * 2);
       await settleUntil(() => sweeps === 1);
       assert.equal(
@@ -87,7 +87,7 @@ export function registerLifecycleRows(label: string, make: MakeStore): void {
     const blocked = new Promise<void>((resolve) => { releaseSweep = resolve; });
     let calls = 0;
     store.sweepExpired = async () => { calls += 1; await blocked; };
-    startExpiryCollection(store, { nowMs: () => Date.now() });
+    startExpiryCollection(store, { nowMs: () => Date.now() }, options);
     t.mock.timers.tick(STORE_EXPIRY_SWEEP_INTERVAL_MS);
     await settleUntil(() => calls === 1);
 

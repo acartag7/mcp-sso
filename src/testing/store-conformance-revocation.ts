@@ -6,10 +6,10 @@ import { test } from "node:test";
 import { STORED_DCR_GRANT_GENERATION } from "../ports/store.ts";
 import type { SaveRefreshTokenInput } from "../ports/store.ts";
 import {
-  FUTURE, LATER, NOW, PAST, RESOURCE_A, RESOURCE_B, refresh, sha256Hex, type MakeStore,
+  FUTURE, LATER, NOW, PAST, RESOURCE_A, RESOURCE_B, refresh, sha256Hex, type MakeStore, type StoreConformanceOptions,
 } from "./store-conformance-fixtures.ts";
 
-export function registerRevocationRows(label: string, make: MakeStore): void {
+export function registerRevocationRows(label: string, make: MakeStore, _options: StoreConformanceOptions = {}): void {
   test(`${label}: explicit family revocation is idempotent and disables a rotated successor`, async () => {
     const store = await make();
     await store.saveRefreshToken(refresh("comp-one", "fam-comp", null, FUTURE));

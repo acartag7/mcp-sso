@@ -4,9 +4,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { StoreInputError } from "../ports/store.ts";
-import { NOW, refresh, sha256Hex, type MakeStore } from "./store-conformance-fixtures.ts";
+import { NOW, refresh, sha256Hex, type MakeStore, type StoreConformanceOptions, } from "./store-conformance-fixtures.ts";
 
-export function registerSweepRows(label: string, make: MakeStore): void {
+export function registerSweepRows(label: string, make: MakeStore, _options: StoreConformanceOptions = {}): void {
   test(`${label}: consumeConsentJti rejects a non-3-ms timestamp (addendum 10)`, async () => {
     const store = await make();
     await assert.rejects(store.consumeConsentJti("jti", "not-a-timestamp"), (e: unknown) => e instanceof StoreInputError);

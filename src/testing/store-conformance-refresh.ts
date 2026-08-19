@@ -5,9 +5,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { StoreInputError, UNBOUND_REFRESH_RESOURCE } from "../ports/store.ts";
 import type { SaveRefreshTokenInput } from "../ports/store.ts";
-import { FUTURE, LATER, NOW, RESOURCE_A, RESOURCE_B, refresh, sha256Hex, type MakeStore } from "./store-conformance-fixtures.ts";
+import { FUTURE, LATER, NOW, RESOURCE_A, RESOURCE_B, refresh, sha256Hex, type MakeStore, type StoreConformanceOptions, } from "./store-conformance-fixtures.ts";
 
-export function registerRefreshRows(label: string, make: MakeStore): void {
+export function registerRefreshRows(label: string, make: MakeStore, _options: StoreConformanceOptions = {}): void {
   test(`${label}: rotates refresh tokens and replay revokes the family`, async () => {
     const store = await make();
     await store.saveRefreshToken(refresh("one", "fam-1", null, FUTURE));

@@ -13,9 +13,9 @@ import { registerLifecycleRows } from "./store-conformance-lifecycle.ts";
 import { registerRefreshRows } from "./store-conformance-refresh.ts";
 import { registerRevocationRows } from "./store-conformance-revocation.ts";
 import { registerSweepRows } from "./store-conformance-sweep.ts";
-import type { MakeStore } from "./store-conformance-fixtures.ts";
+import type { MakeStore, StoreConformanceOptions } from "./store-conformance-fixtures.ts";
 
-export type { MakeStore } from "./store-conformance-fixtures.ts";
+export type { MakeStore, StoreConformanceOptions } from "./store-conformance-fixtures.ts";
 
 const SECTIONS = [
   registerLifecycleRows,
@@ -25,7 +25,13 @@ const SECTIONS = [
   registerSweepRows,
 ] as const;
 
-/** Register the whole StorePort conformance suite for one adapter. */
-export function runStoreConformance(label: string, make: MakeStore): void {
-  for (const registerSection of SECTIONS) registerSection(label, make);
+/** Register the whole StorePort conformance suite for one adapter.
+ *
+ *  `options` carries fixtures for the parts of §12 an adapter may satisfy its
+ *  own way — today, starting an expiry lifecycle for a store that omits the
+ *  optional `startExpiryCollection` hook. */
+export function runStoreConformance(
+  label: string, make: MakeStore, options: StoreConformanceOptions = {},
+): void {
+  for (const registerSection of SECTIONS) registerSection(label, make, options);
 }

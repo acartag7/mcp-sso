@@ -6,9 +6,9 @@ import { test } from "node:test";
 import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError,
 } from "../ports/store.ts";
-import { authCode, FUTURE, NOW, PAST, sha256Hex, type MakeStore } from "./store-conformance-fixtures.ts";
+import { authCode, FUTURE, NOW, PAST, sha256Hex, type MakeStore, type StoreConformanceOptions, } from "./store-conformance-fixtures.ts";
 
-export function registerGrantRows(label: string, make: MakeStore): void {
+export function registerGrantRows(label: string, make: MakeStore, _options: StoreConformanceOptions = {}): void {
   test(`${label}: consent approval atomically binds JTI and authorization code`, async () => {
     const store = await make();
     const binding = await store.getStoreInstanceId();
