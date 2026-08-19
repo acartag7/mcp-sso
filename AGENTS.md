@@ -21,10 +21,13 @@ polyrepo — ignore the parent directory's `CLAUDE.md`. No Edictum branding here
 
 ## 2. MCP specification compliance
 
-- **Spec target:** **MCP Authorization `2026-07-28`** for the current source
-  tree. Version v0.3.5 packages that source-tree work without making a
-  published-artifact conformance claim; published v0.3.4 retains the
-  `2025-11-25` baseline. The official stable
+- **Spec target:** **MCP Authorization `2026-07-28`**. **v0.4.0 is the first
+  published version to claim conformance to it.** Every row of the §16 matrix is
+  met, and the two clients that could not complete authorization under v0.3.5,
+  Claude Code and the Codex CLI, were driven against the released behaviour on
+  2026-08-19. Earlier published versions do not carry the claim: v0.3.5 packaged
+  the source-tree work without claiming it, and v0.3.4 retains the `2025-11-25`
+  baseline. The official stable
   `2026-07-28` artifact was manually re-verified on 2026-08-02. Its DCR
   deprecation and client-side DCR `application_type` requirement align with the
   v0.3.2 registration surface. The current source tree includes the configured
