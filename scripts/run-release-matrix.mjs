@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveOutcome } from "./lib/release-matrix-outcome.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const manifest = JSON.parse(readFileSync(resolve(root, "test/release-matrix.json"), "utf8"));
@@ -48,26 +49,7 @@ if (failedRuns.length > 0) {
 const results = new Map();
 for (const { file, names, result } of runs) {
   for (const name of names) {
-    const marker = `# Subtest: ${name}\n`;
-    const start = result.output.indexOf(marker);
-    // The test's own result line, not merely the next line. A test that declares
-    // subtests emits them between its `# Subtest:` marker and its own `ok` line,
-    // so reading one line ahead reports a passing parent as `# Subtest: <child>`
-    // and fails evidence that is genuinely green. Scan forward for the line that
-    // names THIS test, at any indentation, and stop at the first one.
-    let outcome = "missing";
-    if (start >= 0) {
-      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      // End-anchored, not space-terminated: one evidence name is a strict prefix
-      // of another here, and a trailing-space match would let the shorter name
-      // resolve against the longer test's result line. TAP allows only a
-      // directive comment after the description.
-      const own = new RegExp(`^\\s*(not )?ok \\d+ - ${escaped}(?:$|\\s+#)`, "m");
-      const rest = result.output.slice(start + marker.length);
-      const hit = own.exec(rest);
-      outcome = hit === null ? "no result line" : hit[0].trim();
-    }
-    results.set(`${file}\0${name}`, outcome.startsWith("ok ") && !outcome.includes("# SKIP") ? "pass" : outcome);
+    results.set(`${file}\0${name}`, resolveOutcome(result.output, name));
   }
 }
 
