@@ -84,6 +84,16 @@ loopback, and `MCP_SSO_DCR_MODE=stateless` boots only together with it (the
 deployment guard refuses stateless DCR beside loopback entries, and the
 preflight refuses it before any state moves).
 
+Two Entra deny legs are driven through **operator-supplied deliberately-wrong
+values**, which never come from a stack output (those are the real values):
+`MCP_SSO_ENTRA_ALLOWED_TENANT_IDS` (a tenant list that excludes yours, for the
+wrong-tenant denial) and `MCP_SSO_ENTRA_SUBJECT_ALLOWLIST` (a subject that is
+not the one signing in, for the allowlist denial). The runner maps each onto
+the example's `ENTRA_ALLOWED_TENANT_IDS` / `ENTRA_SUBJECT_ALLOWLIST` — the bare
+names themselves stay un-allowlisted from the ambient shell, so a wrong value
+reaches a run only through its clearly-marked `MCP_SSO_` channel. Leave both
+unset and the leg runs as the positive-only configuration.
+
 `run.sh` names the runtime commit on stderr and refuses a checkout with
 uncommitted tracked changes — live evidence must name a commit; set
 `MCP_SSO_ALLOW_DIRTY=true` only for a run you will not record as evidence. It

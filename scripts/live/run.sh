@@ -137,6 +137,21 @@ if [ "$KIND" != "e2e" ]; then
         || fail "group authorization output is invalid"
       pass ENTRA_TENANT_ID ENTRA_CLIENT_ID ENTRA_CLIENT_SECRET ENTRA_REDIRECT_URI
       pass ENTRA_UNMAPPED_GROUP ENTRA_GROUP_AUTHORIZATION_JSON
+      # Negative-leg configuration (#279): deliberately-wrong OPERATOR-supplied
+      # values for the wrong-tenant and subject-allowlist deny legs. Every other
+      # Entra value here is a stack output (a real infrastructure value); these
+      # two are wrong by design, so they arrive through their own clearly-marked
+      # MCP_SSO_ channel instead — the example's bare ENTRA_* names stay
+      # un-allowlisted from the ambient shell. Unset means the positive-only
+      # configuration and the example's defaults apply.
+      if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" ]; then
+        ENTRA_ALLOWED_TENANT_IDS="$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS"
+        pass ENTRA_ALLOWED_TENANT_IDS
+      fi
+      if [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST:-}" ]; then
+        ENTRA_SUBJECT_ALLOWLIST="$MCP_SSO_ENTRA_SUBJECT_ALLOWLIST"
+        pass ENTRA_SUBJECT_ALLOWLIST
+      fi
       ;;
     cloudflare_access)
       CF_ACCESS_ISSUER="$(output_raw "$CLOUDFLARE_STACK" cf_access_issuer)"

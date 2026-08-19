@@ -73,6 +73,12 @@ is worth resolving before spending a browser session.
 | D1 | any | Entra | `<NOGROUPS>` | `access_denied` — *Entra returned no groups for this account* |
 | D2 | any | Entra | `<WRONGGROUP>` | `access_denied` — *Entra groups do not authorize this account for this resource* |
 | D3 | any | Entra | `<OVERAGE>` | `access_denied` — *Entra group claims exceed the supported limit; operator configuration is required* |
+| D4 | any | Entra, served with `MCP_SSO_ENTRA_ALLOWED_TENANT_IDS` set to a tenant that is not yours (`run.sh` maps it onto `ENTRA_ALLOWED_TENANT_IDS`) | `<MEMBER>` | `access_denied`, audit reason `entra_bad_tid` |
+| D5 | any | Entra, served with `MCP_SSO_ENTRA_SUBJECT_ALLOWLIST` set to a subject that is not the signer (`run.sh` maps it onto `ENTRA_SUBJECT_ALLOWLIST`) | `<MEMBER>` | `access_denied`, audit reason `entra_subject_not_allowed` |
+
+D4 and D5 change server configuration, so each needs its own `serve.sh entra`
+invocation with the marked variable exported; they cannot ride the normal
+matrix run. Read both outcomes from the audit trail like every other deny row.
 | E1 | any | Cloudflare | any account that is **not** `<ADMITTED_EMAIL>` | Cloudflare's own denial page; **no** consent screen, **no** code mail, and the gateway audit count is unchanged from immediately before the attempt |
 | F1–F3 | claude.ai connector | all three | as A1–A3 | consent → tool round-trip |
 

@@ -158,6 +158,23 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
       assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /fixture-entra-secret/, "run.sh never prints a stack secret");
       assert.equal(JSON.parse(env.OAUTH_SIGNING_PRIVATE_JWK).kty, "EC");
     });
+    await t.test("entra deny legs: wrong values pass only through the marked MCP_SSO_ channel, never as bare ENTRA_* names", async () => {
+      const WRONG_TENANT = "00000000-0000-0000-0000-000000000000";
+      const WRONG_SUBJECT = "nobody@wrong.example";
+      const carried = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: WRONG_TENANT, MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: WRONG_SUBJECT,
+        ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
+      });
+      assert.equal(carried.code, 0, carried.stderr);
+      expectKeys(carried.captured, [...LEG_KEYS.entra, "ENTRA_ALLOWED_TENANT_IDS", "ENTRA_SUBJECT_ALLOWLIST"]);
+      assert.equal(carried.captured.ENTRA_ALLOWED_TENANT_IDS, WRONG_TENANT, "the marked channel's value, not the ambient bare name");
+      assert.equal(carried.captured.ENTRA_SUBJECT_ALLOWLIST, WRONG_SUBJECT, "the marked channel's value, not the ambient bare name");
+      const bareOnly = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
+      });
+      assert.equal(bareOnly.code, 0, bareOnly.stderr);
+      expectKeys(bareOnly.captured, LEG_KEYS.entra);
+    });
     await t.test("cloudflare probe: the Access assertion is minted by cloudflared, never inherited", async () => {
       const denied = await runScript(fx, "scripts/live/probe-cloudflare.mjs", "cloudflare_access", { CF_ACCESS_ASSERTION: "stale" });
       assert.equal(denied.code, 1);
