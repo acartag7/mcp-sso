@@ -143,6 +143,15 @@ test("hono: a stored-DCR extractor that yields no IP rejects registration before
   assert.match(JSON.parse(await resp.text()).error_description, /requires a client IP/);
   assert.deepEqual(keys, [], "the rejection precedes the limiter charge");
   assert.equal(events.length, 0, "and every audit emit");
+  // The reserved literal "unknown" (an extractor's own missing-address
+  // fallback) is the shared bucket key itself — same refusal.
+  const sentinel = honoSetup(() => "unknown", { mode: "stored", store: storedClients });
+  const resp2 = await sentinel.app.request("/oauth/register", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ redirect_uris: ["https://client.test/callback"] }),
+  });
+  assert.equal(resp2.status, 400);
+  assert.deepEqual(sentinel.keys, [], "the literal never reaches the limiter");
 });
 
 test("hono: stateless DCR without clientIp boots and warns once about the shared unknown bucket", () => {

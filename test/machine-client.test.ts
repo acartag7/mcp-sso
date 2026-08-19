@@ -939,7 +939,7 @@ test("Bridge.handleRegister: machine-shape rejection surfaces as the RFC 7591 er
     config: storedConfig(h.store), store: new MemoryStore(), clock: h.clock,
     audit: h.audit, rateLimit: boundedTestRateLimit(),
   });
-  const res = await bridge.handleRegister({ query: {}, headers: {}, body: { redirect_uris: ["https://client.test/callback"], grant_types: ["client_credentials"] } });
+  const res = await bridge.handleRegister({ query: {}, headers: {}, ip: "198.51.100.13", body: { redirect_uris: ["https://client.test/callback"], grant_types: ["client_credentials"] } });
   assert.equal(res.status, 400);
   assert.deepEqual(res.body, { error: "invalid_client_metadata", error_description: (res.body as { error_description: string }).error_description });
 });

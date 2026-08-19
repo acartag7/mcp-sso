@@ -205,7 +205,7 @@ test("integration: a DCR registration survives restart and completes authorizati
       rateLimit: boundedTestRateLimit(),
     });
     const registration = await firstBridge.handleRegister({
-      query: {}, headers: {}, body: { redirect_uris: [redirectUri], application_type: "native" },
+      query: {}, headers: {}, ip: "198.51.100.14", body: { redirect_uris: [redirectUri], application_type: "native" },
     });
     assert.equal(registration.status, 201);
     const clientId = (registration.body as { client_id: string }).client_id;
