@@ -30,6 +30,16 @@ LEGS=("$@")
 # connection and then stalls would otherwise stretch each poll by the request
 # timeout and blow far past the advertised wait.
 READINESS_SECONDS="${MCP_SSO_READINESS_SECONDS:-60}"
+# Validated as a bounded decimal integer BEFORE it is ever used in arithmetic:
+# `$(( ))` evaluates its operand as an expression, so an unvalidated value
+# could fail mid-run — after every server had started — or, with an array
+# subscript, evaluate a command substitution.
+case "$READINESS_SECONDS" in
+  ""|*[!0-9]*) fail "MCP_SSO_READINESS_SECONDS must be a whole number of seconds" ;;
+esac
+if [ "$READINESS_SECONDS" -lt 1 ] || [ "$READINESS_SECONDS" -gt 3600 ]; then
+  fail "MCP_SSO_READINESS_SECONDS must be between 1 and 3600 seconds"
+fi
 
 for tool in cloudflared curl lsof; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is required on PATH"

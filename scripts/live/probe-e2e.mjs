@@ -223,7 +223,8 @@ try {
     grant_type: "refresh_token", refresh_token: token ?? "fixture-no-refresh", client_id: clientId,
   });
   const refreshed = await refresh(userTokens.refresh_token);
-  const rotated = refreshed.statusCode === 200 ? refreshed.json().refresh_token : undefined;
+  const rotatedTokens = refreshed.statusCode === 200 ? refreshed.json() : {};
+  const rotated = rotatedTokens.refresh_token;
   if (!ok("refresh rotates the refresh token",
     typeof rotated === "string" && rotated !== userTokens.refresh_token, `HTTP ${refreshed.statusCode}`)) failures++;
   const replayed = await refresh(userTokens.refresh_token);
@@ -237,7 +238,8 @@ try {
   // revoked, so it could not tell a working revoke endpoint from a broken one.
   const revocationTokens = await authorizationCodeGrant("revocation family", "live-e2e-revoke");
   const revocationRefreshed = await refresh(revocationTokens.refresh_token);
-  const revocationRotated = revocationRefreshed.statusCode === 200 ? revocationRefreshed.json().refresh_token : undefined;
+  const revocationRotatedTokens = revocationRefreshed.statusCode === 200 ? revocationRefreshed.json() : {};
+  const revocationRotated = revocationRotatedTokens.refresh_token;
   if (!ok("the revocation family rotates before it is revoked",
     typeof revocationRotated === "string" && revocationRotated !== revocationTokens.refresh_token,
     `HTTP ${revocationRefreshed.statusCode}`)) failures++;
@@ -287,15 +289,26 @@ try {
   if (!ok("JSONL sink contains the exercised flow in order", hasOrderedFlow(fileEvents, requiredFlow))) failures++;
   if (!ok("webhook sink contains the exercised flow in order", hasOrderedFlow(posted, requiredFlow))) failures++;
   const evidence = `${JSON.stringify(fileEvents)}\n${JSON.stringify(posted)}`;
+  // Every value the run minted, not a sample of them: a sink that publishes a
+  // token missing from this list would leave all the rows green.
   const credentials = [
-    ["consent token", consentToken], ["authorization code", code], ["PKCE verifier", verifier],
+    ["replay-family consent token", consentToken],
+    ["replay-family authorization code", code],
+    ["replay-family PKCE verifier", verifier],
+    ["replay-family access token", userTokens.access_token],
+    ["replay-family refresh token", userTokens.refresh_token],
+    ["replay-family rotated access token", rotatedTokens.access_token],
+    ["replay-family rotated refresh token", rotated],
     ["revocation-family consent token", revocationTokens.consent],
     ["revocation-family authorization code", revocationTokens.code],
+    ["revocation-family PKCE verifier", revocationTokens.verifier],
+    ["revocation-family access token", revocationTokens.access_token],
     ["revocation-family refresh token", revocationTokens.refresh_token],
+    ["revocation-family rotated access token", revocationRotatedTokens.access_token],
     ["revocation-family rotated refresh token", revocationRotated],
-    ["machine client secret", provisioned.clientSecret], ["user access token", userTokens.access_token],
-    ["user refresh token", userTokens.refresh_token], ["rotated refresh token", rotated],
-    ["machine access token", machineAccess], ["probe identity token", identityToken],
+    ["machine client secret", provisioned.clientSecret],
+    ["machine access token", machineAccess],
+    ["probe identity token", identityToken],
     ["webhook collector token", collectorToken],
     ["consent signing credential", process.env.OAUTH_CONSENT_SIGNING_SECRET],
     ["signing private key", signingJwk.d],

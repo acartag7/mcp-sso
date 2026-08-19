@@ -373,9 +373,16 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.match(PROBE, /hasOrderedFlow\(fileEvents, requiredFlow\)[\s\S]*?hasOrderedFlow\(posted, requiredFlow\)/);
   assert.match(PROBE, /JSON\.stringify\(fileEvents\) === JSON\.stringify\(posted\)/);
   assert.match(PROBE, /\["consent signing credential", process\.env\.OAUTH_CONSENT_SIGNING_SECRET\]/);
-  assert.match(PROBE, /\["consent token", consentToken\], \["authorization code", code\], \["PKCE verifier", verifier\]/,
-    "every generated flow credential is in the leak scan");
   assert.match(PROBE, /\["signing private key", signingJwk\.d\]/, "the signing key's private component is in the leak scan");
+  // Every value the run mints is scanned, not a sample: each grant's consent
+  // token, code, verifier, access and refresh token, and each refresh
+  // response's rotated pair.
+  for (const family of ["replay", "revocation"]) {
+    for (const part of ["consent token", "authorization code", "PKCE verifier", "access token",
+      "refresh token", "rotated access token", "rotated refresh token"]) {
+      assert.match(PROBE, new RegExp(`\\["${family}-family ${part}",`), `${family} family: ${part} is scanned`);
+    }
+  }
   assert.match(PROBE, /redis\.on\("error", \(\) => \{\}\)/, "ioredis must not print the host and port itself");
   assert.doesNotMatch(PROBE, /console\.(?:log|warn|error)\([^\n]*(?:Secret|secret|Token|token|clientSecret|OAUTH_|REDIS_URL|error|message)/i);
   assert.doesNotMatch(PROBE, /OAUTH_CONSENT_SIGNING_SECRET[^\n]*(?:slice|substring|substr)/);

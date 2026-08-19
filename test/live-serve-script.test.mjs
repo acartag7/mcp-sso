@@ -157,7 +157,7 @@ exit 0
     env: {
       PATH: `${bin}:${process.env.PATH}`, HOME: home, TMPDIR: fixture, STATE: state,
       MCP_SSO_INFRA_DIR: infra, MCP_SSO_CLOUDFLARE_STACK: "cf", MCP_SSO_TUNNEL: TUNNEL,
-      MCP_SSO_READINESS_SECONDS: "3",
+      MCP_SSO_READINESS_SECONDS: mode === "bad-readiness" ? "60s" : "3",
       BYSTANDER_PID: bystanderPid, BYSTANDER_SIGNALED: bystanderSignaled,
       FAKE_SERVER_JS: serverJs, FAKE_BYSTANDER_JS: bystanderJs, RUN_SH_LOG: runShLog,
       STARTUP_EXIT: mode === "startup-failure" ? "23" : "",
@@ -198,11 +198,11 @@ exit 0
     const expected = {
       normal: 0, failure: 7, sigint: 130, sigterm: 143, "startup-failure": 23,
       "startup-timeout": 1, "foreign-listener": 1, "port-busy": 1, "server-exit": 1, "duplicate-leg": 1,
-      "stale-listener": 1, "stalled-readiness": 1,
+      "stale-listener": 1, "stalled-readiness": 1, "bad-readiness": 1,
     }[mode];
     assert.deepEqual(result, { code: expected, signal: null }, `${mode}: ${stderr}`);
     const gatewayPorts = legs.map((leg) => PORTS[leg].gateway);
-    if (["startup-failure", "startup-timeout", "foreign-listener", "port-busy", "duplicate-leg", "stale-listener", "stalled-readiness"].includes(mode)) {
+    if (["startup-failure", "startup-timeout", "foreign-listener", "port-busy", "duplicate-leg", "stale-listener", "stalled-readiness", "bad-readiness"].includes(mode)) {
       assert.equal(existsSync(tunnelStarted), false, `${mode}: a failed, unproven, or ambiguous configuration never starts the public tunnel`);
     } else {
       assert.equal(existsSync(tunnelStarted), true, `${mode}: the tunnel starts once every leg is ready`);
@@ -215,7 +215,7 @@ exit 0
       }
       assert.match(config, /- service: http_status:404\n$/);
     }
-    if (mode === "port-busy" || mode === "duplicate-leg") {
+    if (["port-busy", "duplicate-leg", "bad-readiness"].includes(mode)) {
       assert.equal(existsSync(runShLog), false, `${mode}: serve.sh stops before any server starts`);
     } else if (mode !== "startup-failure") {
       for (const port of gatewayPorts) {
@@ -225,12 +225,12 @@ exit 0
       assert.deepEqual(started, legs.map((leg) => `examples/fastify-sqlite/index.ts ${leg} PORT=${PORTS[leg].gateway}`).sort());
     }
     const config = /^tunnel config: (.+)$/m.exec(stdout)?.[1];
-    if (mode !== "port-busy" && mode !== "duplicate-leg") {
+    if (!["port-busy", "duplicate-leg", "bad-readiness"].includes(mode)) {
       assert.ok(config, `${mode}: serve.sh printed its generated config path: ${stdout}`);
       assert.equal(existsSync(config), false, `${mode}: cleanup removed the generated tunnel config`);
     }
     assert.deepEqual(readdirSync(fixture).filter((name) => name.startsWith("mcp-sso-tunnel-")), [], `${mode}: no tunnel tempfile survives`);
-    if (!["startup-failure", "port-busy", "duplicate-leg"].includes(mode)) {
+    if (!["startup-failure", "port-busy", "duplicate-leg", "bad-readiness"].includes(mode)) {
       const unrelatedPid = Number(readFileSync(bystanderPid, "utf8"));
       assert.doesNotThrow(() => process.kill(unrelatedPid, 0), `${mode}: an unrelated process in the group survived cleanup`);
       assert.equal(existsSync(bystanderSignaled), false, `${mode}: cleanup never signaled an unrelated process in the group`);
@@ -241,6 +241,7 @@ exit 0
     if (mode === "server-exit") assert.match(stderr, /exited while serving/);
     if (mode === "stale-listener") assert.match(stderr, /no longer held solely by the server started/);
     if (mode === "stalled-readiness") assert.match(stderr, /failed readiness before tunnel startup/);
+    if (mode === "bad-readiness") assert.match(stderr, /must be a whole number of seconds/);
     if (mode === "duplicate-leg") assert.match(stderr, /named twice/);
     if (mode === "foreign-listener") assert.match(stderr, /is not the server just started/);
     if (mode === "port-busy") assert.match(stderr, /already has a listener/);
@@ -252,7 +253,7 @@ exit 0
 }
 
 test("serve.sh proves readiness of the server it started and cleans up only what it owns", async (t) => {
-  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener", "stalled-readiness"]) {
+  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener", "stalled-readiness", "bad-readiness"]) {
     await t.test(mode, () => runServeScenario(mode));
   }
   await t.test("two legs share one tunnel ingress and one cleanup", () => runServeScenario("normal", ["cloudflare_access", "google"]));
