@@ -98,6 +98,8 @@ only. Provider secrets and identifiers remained in private environment files.
 
 | Cloudflare Access, Entra ID, Google (all three production identity legs) | Claude Code, Codex CLI, ChatGPT connector, claude.ai connector | register (CIMD and DCR) → authorize → provider identity → consent → token → `/mcp`; refresh rotation and revocation exercised | ✅ | 2026-08-19 | Full client matrix at exact runtime commit `d6143b3`, three legs behind one named tunnel via `scripts/live/serve.sh`. Eleven complete flows: four on Cloudflare Access, four on Entra, three on Google — each audit-confirmed as approve→token. A non-admitted Cloudflare account was stopped at the Access edge with **no** audit row on the gateway, which is that case's pass condition. `oauth.token.refresh` on all three legs and `oauth.revoke` on Entra were exercised by the clients unprompted. |
 
+| Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | stateless-DCR deployment: CIMD `client_id`→authorize→Entra identity→consent→token→refresh→`/mcp` | ✅ | 2026-08-19 | Driven at exact runtime commit `8c08c36` with `OAUTH_DCR_MODE=stateless` and loopback de-allowlisted, which is the only way that mode boots (#280). Audit shows one `oauth.cimd.fetch` and **zero** `oauth.register`: this row establishes that a stateless-configured deployment serves a complete flow, **not** that the stateless DCR registration path works. The consent page rendered the client's self-reported name marked unverified. |
+
 **Codex CLI regression — retested and clear (2026-08-19):** the 0.144.1 client
 observed on 2026-07-28 showed an RFC 9207 `iss` callback regression. Codex CLI
 completed all three identity legs at exact runtime commit `d6143b3`, so the
@@ -112,10 +114,23 @@ install) and Claude Code `2.1.235`. Because `0.148.0` is a stable release, the
 0.144.1 regression is cleared on the stable channel and not only on a
 pre-release.
 
-**Registration mode driven (2026-08-19):** every leg ran `OAUTH_DCR_MODE=stored`
-with CIMD enabled, which is one cell of the registration matrix. Stateless DCR
-was not driven live, and the shipped example hardcodes `cimd.enabled`, so a
-CIMD-disabled deployment is not reachable through it — see issue #152.
+**Registration mode driven (2026-08-19):** the client matrix ran
+`OAUTH_DCR_MODE=stored` with CIMD enabled. A stateless-configured leg was then
+driven separately and is recorded in the matrix, but note what that row does and
+does not establish: claude.ai authenticated through CIMD, so the audit shows one
+`oauth.cimd.fetch` and **zero** `oauth.register` events. The deployment booted
+and served a full flow under stateless configuration; the stateless **DCR
+registration path itself was not exercised.**
+
+That path is not merely untested — it is unreachable through this harness. DCR is
+used by CLI clients over loopback callbacks, and stateless refuses to boot while a
+generic loopback entry is allowlisted without a bounded limiter, which the example
+supplies only in stored mode (issue #280). The hosted connectors both use CIMD, so
+no available client performs DCR over an HTTPS callback. Until #280 is resolved,
+the mode difference in #278 can be shown at bridge level only.
+
+The shipped example also hardcodes `cimd.enabled`, so a CIMD-disabled deployment
+is not reachable through it — see issue #152.
 
 ### † Dagger note (the four 2026-07-04 rows)
 
