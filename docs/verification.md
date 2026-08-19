@@ -4,45 +4,44 @@ How mcp-sso proves a release actually works.
 
 ## Current status
 
-> Status: **unreleased main after v0.3.5**. The published npm package and tag
-> remain v0.3.5; its release input was exact implementation commit
-> `bfdd7b562cafce91c000c5d17c160aa289d5bee6`. Current `main` is an unreleased
-> hardening line under release review. Its package metadata deliberately remains `0.3.5`
-> until a separate version-bump PR, so a source checkout must not be mistaken
-> for the published artifact.
+> Status: **v0.4.0**. This is a release input, not an unreleased line: the
+> package metadata, the tag, and this document describe the same tree.
 >
-> **Published v0.3.5 is broken for Claude Code CIMD authorization.** Its
-> explicit-`application_type: "native"` loopback-port gate rejects Claude
-> Code's published port-less callbacks because that document omits the optional
-> member and the runtime supplies an ephemeral port. Current source restores
-> the registered-loopback any-port rule for native or absent types while
-> retaining exact matching for explicit `"web"`; a patch release decision
-> remains.
+> **v0.4.0 fixes two clients that published v0.3.5 cannot serve.** In v0.3.5 the
+> explicit-`application_type: "native"` loopback-port gate rejected Claude Code's
+> published port-less callbacks, because that document omits the optional member
+> while the runtime supplies an ephemeral port; the registered-loopback any-port
+> rule now applies for native **or absent** types, with exact matching retained
+> for explicit `"web"`. In v0.3.5 the production Fastify/SQLite example could not
+> register Codex CLI, which presents an ephemeral callback such as
+> `http://localhost:1455/auth/callback`; the already-supported stored-DCR/SQLite
+> composition is now reachable as `OAUTH_DCR_MODE=stored`. Both were confirmed
+> against the real clients on 2026-08-19 — eleven complete flows across three
+> identity providers, recorded in the
+> [live-verification matrix](live-verification.md#matrix), not in this
+> document's matrix.
 >
-> **Published v0.3.5's production Fastify/SQLite example cannot register Codex
-> CLI.** Codex presents an ephemeral callback such as
-> `http://localhost:1455/auth/callback`; stateless DCR cannot safely boot with
-> the portless loopback origin needed to admit that changing path and port.
-> Current source exposes the already-supported stored-DCR/SQLite composition as
-> `OAUTH_DCR_MODE=stored`. The example supplies a finite process-local core
-> registration limiter; custom stored-DCR compositions now fail boot without a
-> bounded `RateLimitPort`. If that limiter later throws during stored
-> registration, the bridge returns a direct 503 before request-body selection,
-> durable registration state, or register audit. Stateless registration and the
-> authorize/approve/token/revoke continuity keys remain fail-open on a throw;
-> explicit limiter denial remains 429. This does not relax the stateless
-> deployment guard.
+> **Breaking:** a stored-DCR composition without a bounded `RateLimitPort` no
+> longer boots, because every accepted anonymous registration is a durable write.
+> The example supplies a finite process-local registration limiter. If that
+> limiter later **throws** during stored registration, the bridge returns a direct
+> 503 before request-body selection, durable registration state, or register
+> audit. Stateless registration and the authorize/approve/token/revoke continuity
+> keys remain fail-open on a throw; an explicit limiter denial remains 429. This
+> does not relax the stateless deployment guard.
 >
-> The post-v0.3.5 line hardens the shipped OAuth composition rather than adding
-> a new protocol profile. It host-binds generic-OIDC discovery endpoints; rejects
+> The rest of the line hardens the shipped OAuth composition rather than adding a
+> new protocol profile. It host-binds generic-OIDC discovery endpoints; rejects
 > opaque browser origins, ambiguous bearer input, duplicate OAuth form members,
 > and ambiguous adapter content types; aligns adapter body-size handling across
-> frameworks; puts approve and revoke behind
-> their admission budgets; snapshots token-issuance clocks; makes permanent JSONL
-> disablement and revocation-store failures observable; and runs bounded,
-> clock-bound expiry collection in all three reference stores. Trusted-proxy,
-> pairing, limiter-wrapper, and dependency-policy corrections are also included.
-> Published v0.3.5 does not contain these post-tag changes.
+> frameworks; puts approve and revoke behind their admission budgets; snapshots
+> token-issuance clocks; makes permanent JSONL disablement and revocation-store
+> failures observable; and runs bounded, clock-bound expiry collection in all
+> three reference stores. The store-conformance suites now ship as
+> `mcp-sso/testing/store-conformance` and `mcp-sso/testing/client-store-conformance`,
+> so a downstream adapter can satisfy the §12 requirement it is held to.
+> Trusted-proxy, pairing, limiter-wrapper, and dependency-policy corrections are
+> also included.
 >
 > The previous silent Windows permission-gap blocker is closed in this source
 > line: the first call in each Node worker/runtime instance to
@@ -68,8 +67,11 @@ How mcp-sso proves a release actually works.
 >
 > Device flow §17.3 and the dedicated GitHub port in §17.6 remain contract-only,
 > not release claims. Historical Cloudflare Access, Entra, and Google evidence is
-> retained; a second non-Google generic-OIDC issuer, the Entra deny/ceiling live
-> sweep, and current-head live CIMD re-verification remain pending.
+> retained. Current-head live CIMD re-verification was completed on 2026-08-19
+> across all three identity legs. Of the Entra deny/ceiling sweep, the no-group,
+> no-mapped-group, and group-overage cases were driven that day; wrong-tenant,
+> allowlist, and guest/B2B were not. A second non-Google generic-OIDC issuer
+> remains undriven.
 
 Three tiers:
 
@@ -890,8 +892,9 @@ MANUAL maintainer receipt — not automated and not CI-enforced. Checked against
   §9 bridge contract, §16 matrix, §17 CIMD citation, this receipt, and the
   contributor-facing status were updated.
 
-**Verdict:** final checked, but MCP Authorization 2026-07-28 conformance remains
-pending on three known items:
+**Verdict (as of 2026-08-02; all three items have since been closed — see the
+status section below, which supersedes this list):** final checked, but MCP
+Authorization 2026-07-28 conformance remained pending on three known items:
 
 1. **RFC 9207 error responses.** `src/challenge.ts` builds
    `error`/`state`/`error_description` redirects without `iss`;
@@ -1020,9 +1023,20 @@ row. Published v0.3.5 packages that work without making a published-artifact
 conformance claim; published v0.3.4 retains its earlier baseline. The
 post-v0.3.5 status is canonicalized at the top of this document and does not
 upgrade the dated live evidence.
-Historical Codex CLI success remains recorded. Installed Codex CLI 0.144.1
-showed an RFC 9207 `iss` callback regression on 2026-07-28, and published
-v0.3.5's production Fastify/SQLite composition does not expose the stored-DCR
-mode required by current ephemeral loopback callbacks. Current compatibility
-therefore awaits both an upstream callback retest and live verification of the
-unreleased stored-DCR example wiring.
+Historical Codex CLI success remains recorded, and the compatibility gap this
+block previously described is closed. Installed Codex CLI 0.144.1 showed an
+RFC 9207 `iss` callback regression on 2026-07-28, and published v0.3.5's
+production Fastify/SQLite composition does not expose the stored-DCR mode that
+current ephemeral loopback callbacks require.
+
+Both conditions were retested on 2026-08-19 at runtime commit `d6143b3`: Codex
+CLI `0.148.0` — a stable release, not a pre-release — completed all three
+identity legs, and the stored-DCR example wiring was live-driven rather than
+merely implemented. That wiring ships in v0.4.0, so it is no longer unreleased.
+
+Two limits on that result, stated so the row is not read as more than it is.
+Both this library and the client changed between the two observations, so a clear
+run is not evidence that a change here fixed the client regression. And the
+client build is recorded on the operator's authority, because the clients were
+driven from a different machine than the one holding this checkout; the receipts
+are in [`live-verification.md`](live-verification.md#matrix).
