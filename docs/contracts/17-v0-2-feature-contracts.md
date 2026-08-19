@@ -1809,7 +1809,11 @@ gate replaces no-gate).
   made). A deployer-supplied custom discovery/token transport owns its own
   body discipline; the caps govern the transports the core builds from
   config. The Google preset delegates to this port and inherits the
-  defaults.
+  defaults. The Entra port's default token transport carries the same
+  **16384-byte** cap — fixed, not configurable, because its endpoint is
+  hardcoded and the port fetches no discovery document; the throw maps to
+  `exchange_failed` under the §17.11 throw rule. The JWKS fetches (all
+  ports) remain jose's remote-JWK-set reader and are tracked separately.
 - **id_token validation:** `iss` exact-match; `aud` must contain `clientId`
   and multiple-audience tokens are rejected outright (a single-element
   `[clientId]` array is accepted; an array with any second audience is
