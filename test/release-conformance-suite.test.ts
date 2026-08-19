@@ -20,8 +20,11 @@ releaseTest("RM.16 a downstream adapter runs the shipped conformance suite from 
     const pack = await run("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", base], repo);
     assert.equal(pack.code, 0, `npm pack failed:\n${pack.output}`);
     const start = pack.output.indexOf("[");
-    const filename = (JSON.parse(pack.output.slice(start, pack.output.lastIndexOf("]") + 1)) as
-      Array<{ filename: string }>)[0].filename;
+    const packed = JSON.parse(pack.output.slice(start, pack.output.lastIndexOf("]") + 1)) as
+      Array<{ filename: string }>;
+    const artifact = packed[0];
+    assert.ok(artifact, `npm pack reported no artifact:\n${pack.output}`);
+    const filename = artifact.filename;
 
     // Extract the tarball as the consumer's dependency instead of installing
     // from a registry: this proves the artifact's own export map resolves, and
