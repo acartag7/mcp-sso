@@ -183,6 +183,13 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
       assert.equal(bothSet.code, 1);
       assert.match(bothSet.stderr, /only ONE Entra deny channel/);
       assert.equal(bothSet.captured, undefined, "the refusal stops before the entry runs");
+      // A value that trims to nothing is the positive leg in disguise (the
+      // example's listEnv would treat it as unset) and is refused.
+      const blank = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: " , ",
+      });
+      assert.equal(blank.code, 1);
+      assert.match(blank.stderr, /no nonempty entry after trimming/);
       const bareOnly = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
         ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
       });

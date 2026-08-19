@@ -85,6 +85,20 @@ pass() {
 }
 pass PATH HOME TMPDIR LANG LC_ALL
 
+# True when the comma-separated value keeps at least one nonempty element after
+# trimming — the same normalization listEnv applies on the example side. A
+# deny channel whose value trims to nothing is the positive leg in disguise
+# and must fail loudly instead of producing a silently-wrong run.
+deny_channel_nonempty() {
+  local item
+  for item in $(printf '%s' "$1" | tr ',' ' '); do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    if [ -n "$item" ]; then return 0; fi
+  done
+  return 1
+}
+
 # Fresh signing material for this run, generated BEFORE any stack secret is
 # read so the generating processes never hold one.
 OAUTH_CONSENT_SIGNING_SECRET="$(head -c 32 /dev/urandom | base64 | tr -d '\n=')" \
@@ -150,10 +164,14 @@ if [ "$KIND" != "e2e" ]; then
         fail "set only ONE Entra deny channel per run: MCP_SSO_ENTRA_ALLOWED_TENANT_IDS (wrong-tenant) or MCP_SSO_ENTRA_SUBJECT_ALLOWLIST (allowlist); both set cannot produce unambiguous evidence"
       fi
       if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" ]; then
+        deny_channel_nonempty "$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS" \
+          || fail "MCP_SSO_ENTRA_ALLOWED_TENANT_IDS has no nonempty entry after trimming; a deny channel that normalizes to unset would run the positive leg"
         ENTRA_ALLOWED_TENANT_IDS="$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS"
         pass ENTRA_ALLOWED_TENANT_IDS
       fi
       if [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST:-}" ]; then
+        deny_channel_nonempty "$MCP_SSO_ENTRA_SUBJECT_ALLOWLIST" \
+          || fail "MCP_SSO_ENTRA_SUBJECT_ALLOWLIST has no nonempty entry after trimming; a deny channel that normalizes to unset would run the positive leg"
         ENTRA_SUBJECT_ALLOWLIST="$MCP_SSO_ENTRA_SUBJECT_ALLOWLIST"
         pass ENTRA_SUBJECT_ALLOWLIST
       fi
