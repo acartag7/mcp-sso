@@ -468,6 +468,25 @@ test("bridge: malformed mcp_idp_consent cookie percent-escape is direct 400 inva
   assert.equal((formWins.body as { error: string }).error, "invalid_consent");
 });
 
+test("bridge: a foreign Origin keeps its 403 CSRF classification even with a malformed consent cookie", async () => {
+  // Review P1 on #292: the origin gate must run BEFORE the fallback cookie
+  // decodes, or a cross-origin request with a malformed cookie answers 400
+  // invalid_consent instead of the contractual 403 invalid_origin.
+  const ctx = setup();
+  const foreign = await ctx.bridge.handleApprove(req({
+    body: { approved: "true" },
+    headers: { origin: "https://evil.example", cookie: "mcp_idp_consent=%E0%A4%A" },
+  }));
+  assert.equal(foreign.status, 403);
+  assert.equal((foreign.body as { error: string }).error, "invalid_origin");
+  const missing = await ctx.bridge.handleApprove(req({
+    body: { approved: "true" },
+    headers: { cookie: "mcp_idp_consent=%E0%A4%A" },
+  }));
+  assert.equal(missing.status, 403);
+  assert.equal((missing.body as { error: string }).error, "invalid_origin");
+});
+
 test("bridge: every recognized OAuth form key rejects strict repetition before endpoint audit", async (t) => {
   const routes = [
     {

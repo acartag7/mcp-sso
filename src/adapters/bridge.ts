@@ -8,6 +8,7 @@ import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { noopRateLimit } from "../ports/rate-limit.ts";
 import type { IdentityPort, IdentityResult } from "../ports/identity.ts";
 import { OAuthAuthorizationUseCase, type PreparedConsent } from "../authorize.ts";
+import { assertApproveOrigin } from "../authorize-internals.ts";
 import { OAuthTokenUseCase, type UserTokenResponse, type MachineTokenResponse } from "../token.ts";
 import { registerClient } from "../register.ts";
 import { authorizationServerMetadata, jwks, protectedResourceMetadata } from "../metadata.ts";
@@ -182,6 +183,8 @@ export class Bridge {
     try {
       await this.guard("approve", req.ip);
       const body = checkedFormObject(req, APPROVE_SINGLETON_PARAM_KEYS);
+      // §9.3: origin gate precedes the cookie decode; same fn the use-case re-runs.
+      assertApproveOrigin(this.config, headerString(req.headers, "origin"));
       const consentToken = formField(body, "consent_token") ?? consentCookie(req);
       const result = await this.auth.approve({
         consentToken,
