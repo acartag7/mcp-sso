@@ -38,7 +38,7 @@ function harness(clientIp?: Parameters<typeof createOAuthApp>[0]["clientIp"]): {
     return ok();
   };
   const bridge = {
-    config: { resource: "https://api.test/mcp" },
+    config: { resource: "https://api.test/mcp", dcr: { mode: "stateless" } },
     handleRegister: receive("register"),
     handleApprove: receive("approve"),
     handleToken: receive("token"),
@@ -105,7 +105,7 @@ function sideEffectHarness(): {
     rateLimit: { async check() { effects.limiter += 1; return true; } },
     audit: { async writeAuthEvent(event) { if (event.status === "success") effects.successAudits += 1; } },
   });
-  return { app: createOAuthApp({ bridge, skipAuthorize: true }), effects };
+  return { app: createOAuthApp({ bridge, skipAuthorize: true, clientIp: () => "198.51.100.7" }), effects };
 }
 
 function streamRequest(

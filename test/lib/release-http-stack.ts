@@ -127,7 +127,10 @@ async function mountExpress(bridge: Bridge, authorizer: RequestAuthorizer, confi
 }
 
 async function mountHono(bridge: Bridge, authorizer: RequestAuthorizer, config: BridgeConfig, mode: AuthorizeMode): Promise<MountedStack> {
-  const app = createOAuthApp(adapterOptions(bridge, mode));
+  // §6.7: hono has no framework req.ip. The stack's stored-DCR legs need an
+  // extractor; mirror the loopback address fastify/express derive on the same
+  // server so adapter behavior stays comparable.
+  const app = createOAuthApp({ ...adapterOptions(bridge, mode), clientIp: () => "127.0.0.1" });
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
     if (url.pathname === "/mcp") {

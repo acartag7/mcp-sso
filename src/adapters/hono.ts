@@ -8,7 +8,7 @@ import type { Context } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { IdentityPort } from "../ports/identity.ts";
-import { pathAfterOrigin } from "../config.ts";
+import { AuthConfigError, pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
 import {
@@ -58,6 +58,15 @@ function invalidRequest(): Response {
     status: 400,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+/** §6.7 advisory for the stateless default: no extractor means every request
+ * shares the one "unknown" rate-limit key. Loud like the §5 acknowledgement
+ * warning, not fatal — stateless registration persists nothing. */
+function warnSharedUnknownBucket(): void {
+  console.warn(
+    "[mcp-sso] hono createOAuthApp has no clientIp extractor — every request shares the one \"unknown\" rate-limit key, so one client can exhaust each endpoint budget for everyone. Supply clientIp wired to your proxy topology.",
+  );
 }
 
 function restoreRequestExtensions(original: Request, replacement: Request): void {
@@ -123,6 +132,17 @@ export const honoOAuthBodyLimit: MiddlewareHandler = async (c, next) => {
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   const app = new Hono();
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, clientIp } = opts;
+  // §6.7/§9.6 boot rule, ahead of every route registration: stored-DCR
+  // registration needs per-client limiter keys, and without an extractor every
+  // request shares the one "unknown" bucket — one client could exhaust the
+  // anonymous durable-write budget for everyone. Stateless keeps the shipped
+  // default but says so once.
+  if (bridge.config.dcr.mode === "stored" && clientIp === undefined) {
+    throw new AuthConfigError(
+      'createOAuthApp requires the clientIp option for stored DCR: without an extractor every request shares the one "unknown" rate-limit key, so one client can exhaust the stored-registration budget for everyone (§6.7)',
+    );
+  }
+  if (clientIp === undefined) warnSharedUnknownBucket();
 
   const toNorm = async (c: Context): Promise<NormRequest> => {
     const ct = (c.req.header("content-type")?.split(";", 1)[0] ?? "").trim().toLowerCase();
