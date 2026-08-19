@@ -2,7 +2,7 @@
 // against a fixture infrastructure wrapper and fixture entry points that record
 // the environment they receive. Nothing here reads run.sh as text.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
   symlinkSync, writeFileSync,
@@ -70,6 +70,12 @@ esac
 [[ "$1 $2" == "access token" && -n "\${FAKE_ASSERTION-}" ]] || exit 1
 printf '%s' "$FAKE_ASSERTION"
 `);
+  // The runner names the runtime commit and refuses uncommitted tracked
+  // changes, so the fixture repository is a committed git checkout.
+  const git = (...args) => execFileSync("git", ["-C", repo, "-c", "user.name=fixture", "-c", "user.email=fixture@example.test", ...args], { stdio: "ignore" });
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-q", "-m", "fixture");
   return { fixture, repo, infra, home, bin };
 }
 
@@ -166,8 +172,36 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
       assert.ok(minted.tofuCalls.every((call) => call.startsWith("cf ")), "the Entra stack is never read for the Cloudflare leg");
       const served = await runScript(fx, "examples/fastify-sqlite/index.ts", "cloudflare_access", { PORT: "43999" });
       assert.equal(served.code, 0, served.stderr);
-      expectKeys(served.captured, [...LEG_KEYS.cloudflare_access, "MCP_SSO_DIR", "OAUTH_SQLITE_FILE", "PORT"]);
+      expectKeys(served.captured, [...LEG_KEYS.cloudflare_access, "MCP_SSO_DIR", "OAUTH_SQLITE_FILE", "HOST", "PORT"]);
       assert.equal(served.captured.PORT, "43999", "the server entry keeps the port serve.sh assigned");
+      assert.equal(served.captured.HOST, "127.0.0.1", "a tunnel-backed server binds loopback only");
+    });
+    await t.test("inherited shell tracing is switched off before any secret is handled", async () => {
+      const traced = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", { SHELLOPTS: "xtrace", PS4: "+trace+ " });
+      assert.equal(traced.code, 0, traced.stderr);
+      assert.equal(traced.captured.ENTRA_CLIENT_SECRET, "fixture-entra-secret");
+      // Only the two `set` lines that run before tracing is switched off may echo.
+      assert.doesNotMatch(traced.stderr, /fixture-entra-secret|\+trace\+ (?!set )/, "xtrace inherited through SHELLOPTS must not echo assignments");
+    });
+    await t.test("uncommitted tracked changes are refused unless the run is declared non-evidence", async () => {
+      const tracked = join(fx.repo, "scripts/live/probe-entra.mjs");
+      const original = readFileSync(tracked, "utf8");
+      writeFileSync(tracked, `${original}// local edit\n`);
+      try {
+        const dirty = await runScript(fx, "scripts/live/probe-entra.mjs", "entra");
+        assert.equal(dirty.code, 1);
+        assert.equal(dirty.captured, undefined, "a dirty tree produces no run");
+        assert.deepEqual(dirty.tofuCalls, [], "refused before any stack read");
+        assert.match(dirty.stderr, /uncommitted tracked changes/);
+        const declared = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", { MCP_SSO_ALLOW_DIRTY: "true" });
+        assert.equal(declared.code, 0, declared.stderr);
+        assert.match(declared.stderr, /UNCOMMITTED tracked changes — this run is not release evidence/);
+      } finally {
+        writeFileSync(tracked, original);
+      }
+      const clean = await runScript(fx, "scripts/live/probe-entra.mjs", "entra");
+      assert.equal(clean.code, 0, clean.stderr);
+      assert.match(clean.stderr, /^run\.sh: runtime commit [0-9a-f]{40}$/m, "a clean run names its runtime commit");
     });
     await t.test("e2e probe: REDIS_URL passes through and no provider credential is read or handed over", async () => {
       const result = await runScript(fx, "scripts/live/probe-e2e.mjs", "entra", { REDIS_URL: "redis://127.0.0.1:6379", ENTRA_CLIENT_SECRET: "stale" });

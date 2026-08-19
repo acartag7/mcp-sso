@@ -151,8 +151,12 @@ DCR callback against the effective redirect allowlist before any provider I/O.
 Every probe either exercises what a row claims or reports `FAIL`; none reports
 `SKIP`.
 
-`run.sh` hands the entry an allowlisted environment — exactly the variables it
-assembled plus `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL` — so nothing
+`run.sh` names the runtime commit and refuses a checkout with uncommitted
+tracked changes (a run declared non-evidence with `MCP_SSO_ALLOW_DIRTY=true`
+says so on stderr), switches off inherited shell tracing before any secret is
+handled, and hands the entry an allowlisted environment — exactly the
+variables it assembled plus `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL` (the
+server also `PORT` and `HOST=127.0.0.1`, loopback only) — so nothing
 inherited (a stale selector, an OAuth override, `HOST`,
 `MCP_SSO_TRUSTED_PROXIES`, `NODE_OPTIONS`) can choose a leg or reshape the run,
 and its own helper processes run under the same minimal environment; validates

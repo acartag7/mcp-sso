@@ -15,6 +15,7 @@
 # Requires cloudflared, curl, and lsof on PATH. MCP_SSO_TUNNEL is the tunnel
 # UUID whose credentials file lives at ~/.cloudflared/<uuid>.json.
 set -uo pipefail
+set +xv
 
 fail() { echo "serve.sh: $1" >&2; exit 1; }
 

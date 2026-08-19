@@ -18,10 +18,26 @@
 # `az login`). Every parse and every destructive step goes through
 # scripts/live/run-support.mjs, never through this shell.
 set -euo pipefail
+# Tracing inherited through SHELLOPTS=xtrace (or verbose) would write every
+# assignment below — provider secrets included — to stderr. Off, first.
+set +xv
 
 fail() { echo "run.sh: $1" >&2; exit 1; }
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Live evidence must name the exact runtime commit, and a tree with uncommitted
+# tracked changes cannot (docs/live-verification.md). Refuse it unless the
+# operator says explicitly that this run is not evidence.
+RUNTIME_COMMIT="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || fail "the checkout is not a git repository; live evidence must name a commit"
+if [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  if [ "${MCP_SSO_ALLOW_DIRTY:-false}" = "true" ]; then
+    echo "run.sh: runtime commit ${RUNTIME_COMMIT} with UNCOMMITTED tracked changes — this run is not release evidence" >&2
+  else
+    fail "the checkout has uncommitted tracked changes; commit them, or set MCP_SSO_ALLOW_DIRTY=true for a run that is not evidence"
+  fi
+else
+  echo "run.sh: runtime commit ${RUNTIME_COMMIT}" >&2
+fi
 SUPPORT="$REPO/scripts/live/run-support.mjs"
 NODE_BIN="$(command -v node)" || fail "node is required on PATH"
 # Every node this script starts — helpers, preflight, and the entry — runs under
@@ -199,7 +215,10 @@ if [ "$KIND" = "server" ]; then
   STATE="$(support state-dir "$REPO/.live-state" "$LEG")" || fail "live state directory could not be prepared"
   MCP_SSO_DIR="$STATE"
   OAUTH_SQLITE_FILE="$STATE/auth.db"
-  pass MCP_SSO_DIR OAUTH_SQLITE_FILE PORT
+  # The tunnel connects over loopback; a server bound to every interface would
+  # let LAN peers reach the OAuth endpoints around the tunnel edge.
+  HOST="127.0.0.1"
+  pass MCP_SSO_DIR OAUTH_SQLITE_FILE HOST PORT
 fi
 
 cd "$REPO" || fail "cannot enter the repository checkout"

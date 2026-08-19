@@ -69,7 +69,9 @@ or to that preflight — never to an arbitrary path:
 
 The entry's environment is an **allowlist**, not your shell's environment minus
 a blocklist: it receives exactly the variables `run.sh` assembled plus `PATH`,
-`HOME`, `TMPDIR`, `LANG`, and `LC_ALL` — nothing else. A stale identity
+`HOME`, `TMPDIR`, `LANG`, and `LC_ALL` — nothing else (the example server
+additionally gets `PORT` and `HOST=127.0.0.1`, so a tunnel-backed server binds
+loopback only). A stale identity
 selector, an `OAUTH_*` override, `HOST`, `MCP_SSO_TRUSTED_PROXIES`,
 `NODE_OPTIONS`, or `NODE_TLS_REJECT_UNAUTHORIZED` in your shell cannot select
 a leg or reshape the run, and every helper `node` the runner itself starts runs
@@ -81,6 +83,12 @@ origins allowlisted is the default; `MCP_SSO_ALLOW_LOOPBACK=false` drops
 loopback, and `MCP_SSO_DCR_MODE=stateless` boots only together with it (the
 deployment guard refuses stateless DCR beside loopback entries, and the
 preflight refuses it before any state moves).
+
+`run.sh` names the runtime commit on stderr and refuses a checkout with
+uncommitted tracked changes — live evidence must name a commit; set
+`MCP_SSO_ALLOW_DIRTY=true` only for a run you will not record as evidence. It
+also switches off shell tracing inherited through `SHELLOPTS` before any
+secret is handled.
 
 Only the example-server entry gets a state directory, `.live-state/<leg>` in
 this checkout (ignored by Git). `run-support.mjs` refuses a `.live-state` that
