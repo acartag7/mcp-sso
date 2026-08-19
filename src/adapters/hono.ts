@@ -136,7 +136,11 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   // registration needs per-client limiter keys, and without an extractor every
   // request shares the one "unknown" bucket — one client could exhaust the
   // anonymous durable-write budget for everyone. Stateless keeps the shipped
-  // default but says so once.
+  // default but says so once. A supplied extractor must actually be callable:
+  // JS callers can pass anything, and a non-function silently never extracts.
+  if (clientIp !== undefined && typeof clientIp !== "function") {
+    throw new AuthConfigError("createOAuthApp: the clientIp option must be a function (context) => string | undefined");
+  }
   if (bridge.config.dcr.mode === "stored" && clientIp === undefined) {
     throw new AuthConfigError(
       'createOAuthApp requires the clientIp option for stored DCR: without an extractor every request shares the one "unknown" rate-limit key, so one client can exhaust the stored-registration budget for everyone (§6.7)',

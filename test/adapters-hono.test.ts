@@ -129,6 +129,15 @@ test("hono: stored DCR without a clientIp extractor refuses at createOAuthApp", 
   );
 });
 
+test("hono: a clientIp that is not a function refuses at createOAuthApp", () => {
+  // JS callers can pass anything; a non-function silently never extracts and
+  // every request falls back to the shared bucket (review round 3 on #294).
+  assert.throws(
+    () => honoSetup("127.0.0.1" as unknown as () => string, { mode: "stateless" }),
+    (error: unknown) => error instanceof AuthConfigError && /must be a function/.test(error.message),
+  );
+});
+
 test("hono: a stored-DCR extractor that yields no IP rejects registration before any work", async () => {
   // The runtime half of the boot rule: a CONFIGURED extractor may still return
   // undefined per request (its declared return type permits it), and the core
