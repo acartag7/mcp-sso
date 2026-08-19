@@ -116,6 +116,18 @@ esac
 `);
   executable(join(bin, "curl"), `#!/usr/bin/env bash
 url="\${@: -1}"; port="\${url##*:}"; port="\${port%%/*}"
+if [[ "$CURL_MODE" == "stall" ]]; then
+  # Accepts the connection, then stalls: each request costs its whole
+  # --max-time budget and never succeeds.
+  max=1
+  prev=""
+  for arg in "$@"; do
+    if [[ "$prev" == "--max-time" ]]; then max="$arg"; fi
+    prev="$arg"
+  done
+  /bin/sleep "$max"
+  exit 28
+fi
 [[ "$TUNNEL_MODE" != "startup-timeout" && -f "$STATE/ready.$port" ]]
 `);
   executable(join(bin, "lsof"), `#!/usr/bin/env bash
@@ -145,12 +157,13 @@ exit 0
     env: {
       PATH: `${bin}:${process.env.PATH}`, HOME: home, TMPDIR: fixture, STATE: state,
       MCP_SSO_INFRA_DIR: infra, MCP_SSO_CLOUDFLARE_STACK: "cf", MCP_SSO_TUNNEL: TUNNEL,
-      MCP_SSO_READINESS_POLLS: "60",
+      MCP_SSO_READINESS_SECONDS: "3",
       BYSTANDER_PID: bystanderPid, BYSTANDER_SIGNALED: bystanderSignaled,
       FAKE_SERVER_JS: serverJs, FAKE_BYSTANDER_JS: bystanderJs, RUN_SH_LOG: runShLog,
       STARTUP_EXIT: mode === "startup-failure" ? "23" : "",
       TUNNEL_MODE: ["normal", "failure", "startup-timeout"].includes(mode) ? mode : "signal",
       LSOF_MODE: mode === "port-busy" ? "busy" : mode === "foreign-listener" ? "foreign" : mode === "stale-listener" ? "steal" : "",
+      CURL_MODE: mode === "stalled-readiness" ? "stall" : "",
       STEAL_AFTER: String(2 * legs.length),
       TUNNEL_STARTED: tunnelStarted, TUNNEL_STOPPED: tunnelStopped, TUNNEL_CONFIG_COPY: tunnelConfig, RELEASE_TUNNEL: releaseTunnel,
     },
@@ -175,15 +188,21 @@ exit 0
       await waitForFile(tunnelStarted);
       process.kill(Number(readFileSync(join(state, `pid.${PORTS[legs[0]].gateway}`), "utf8")), "SIGTERM");
     }
+    const startedAt = Date.now();
     const result = await waitForExit(child, mode);
+    if (mode === "stalled-readiness") {
+      // Budget is 3 s in this fixture; a poll-count budget with a 2 s request
+      // timeout would run for minutes.
+      assert.ok(Date.now() - startedAt < 20_000, `${mode}: readiness is bounded by wall clock, not by poll count`);
+    }
     const expected = {
       normal: 0, failure: 7, sigint: 130, sigterm: 143, "startup-failure": 23,
       "startup-timeout": 1, "foreign-listener": 1, "port-busy": 1, "server-exit": 1, "duplicate-leg": 1,
-      "stale-listener": 1,
+      "stale-listener": 1, "stalled-readiness": 1,
     }[mode];
     assert.deepEqual(result, { code: expected, signal: null }, `${mode}: ${stderr}`);
     const gatewayPorts = legs.map((leg) => PORTS[leg].gateway);
-    if (["startup-failure", "startup-timeout", "foreign-listener", "port-busy", "duplicate-leg", "stale-listener"].includes(mode)) {
+    if (["startup-failure", "startup-timeout", "foreign-listener", "port-busy", "duplicate-leg", "stale-listener", "stalled-readiness"].includes(mode)) {
       assert.equal(existsSync(tunnelStarted), false, `${mode}: a failed, unproven, or ambiguous configuration never starts the public tunnel`);
     } else {
       assert.equal(existsSync(tunnelStarted), true, `${mode}: the tunnel starts once every leg is ready`);
@@ -221,6 +240,7 @@ exit 0
     }
     if (mode === "server-exit") assert.match(stderr, /exited while serving/);
     if (mode === "stale-listener") assert.match(stderr, /no longer held solely by the server started/);
+    if (mode === "stalled-readiness") assert.match(stderr, /failed readiness before tunnel startup/);
     if (mode === "duplicate-leg") assert.match(stderr, /named twice/);
     if (mode === "foreign-listener") assert.match(stderr, /is not the server just started/);
     if (mode === "port-busy") assert.match(stderr, /already has a listener/);
@@ -232,7 +252,7 @@ exit 0
 }
 
 test("serve.sh proves readiness of the server it started and cleans up only what it owns", async (t) => {
-  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener"]) {
+  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener", "stalled-readiness"]) {
     await t.test(mode, () => runServeScenario(mode));
   }
   await t.test("two legs share one tunnel ingress and one cleanup", () => runServeScenario("normal", ["cloudflare_access", "google"]));

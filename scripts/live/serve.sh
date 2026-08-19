@@ -26,7 +26,10 @@ CLOUDFLARE_STACK="${MCP_SSO_CLOUDFLARE_STACK:?set MCP_SSO_CLOUDFLARE_STACK to th
 TUNNEL="${MCP_SSO_TUNNEL:?set MCP_SSO_TUNNEL to the tunnel UUID}"
 [ $# -ge 1 ] || fail "usage: scripts/live/serve.sh <leg> [leg ...]"
 LEGS=("$@")
-READINESS_POLLS="${MCP_SSO_READINESS_POLLS:-120}"   # × 0.5 s; provider discovery can take a while
+# Wall-clock budget per leg, not a poll count: a server that accepts the
+# connection and then stalls would otherwise stretch each poll by the request
+# timeout and blow far past the advertised wait.
+READINESS_SECONDS="${MCP_SSO_READINESS_SECONDS:-60}"
 
 for tool in cloudflared curl lsof; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is required on PATH"
@@ -125,15 +128,16 @@ for i in "${!LEGS[@]}"; do
   pid="${SERVER_PIDS[$i]}"
   port="${GATEWAY_PORTS[$i]}"
   ready=false
-  polls=0
-  while [ "$polls" -lt "$READINESS_POLLS" ]; do
+  deadline=$((SECONDS + READINESS_SECONDS))
+  while [ "$SECONDS" -lt "$deadline" ]; do
     if ! kill -0 "$pid" 2>/dev/null; then break; fi
-    if curl --fail --silent --noproxy '*' --max-time 5 --output /dev/null "http://127.0.0.1:${port}/.well-known/oauth-protected-resource"; then
+    # Each request is bounded well inside the polling interval, so a stalled
+    # response costs one interval rather than the whole budget.
+    if curl --fail --silent --noproxy '*' --max-time 2 --output /dev/null "http://127.0.0.1:${port}/.well-known/oauth-protected-resource"; then
       ready=true
       break
     fi
     sleep 0.5
-    polls=$((polls + 1))
   done
   if [[ "$ready" == true ]] && { ! kill -0 "$pid" 2>/dev/null || [[ "$(listener_pids "$port")" != "$pid " ]]; }; then
     ready=false
