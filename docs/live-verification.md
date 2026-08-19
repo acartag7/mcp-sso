@@ -101,10 +101,17 @@ only. Provider secrets and identifiers remained in private environment files.
 **Codex CLI regression — retested and clear (2026-08-19):** the 0.144.1 client
 observed on 2026-07-28 showed an RFC 9207 `iss` callback regression. Codex CLI
 `0.147.0-alpha.1` completed all three identity legs at exact runtime commit
-`d6143b3`, so that regression no longer reproduces on the tested client. The
-2026-07-28 note is retained above as history; it is not an open caveat. Client
-versions driven in the 2026-08-19 campaign: Codex CLI `0.147.0-alpha.1` and
-Claude Code `2.1.235`.
+`d6143b3`, so the regression does not reproduce on that client build. Two
+variables moved between the observations — this library and the client — so this
+is **not** evidence that a change here fixed it, and `0.147.0-alpha.1` is a
+pre-release, so it is not evidence about the current stable Codex CLI either. A
+stable-channel row is still owed. Client versions driven in the 2026-08-19
+campaign: Codex CLI `0.147.0-alpha.1` (pre-release) and Claude Code `2.1.235`.
+
+**Registration mode driven (2026-08-19):** every leg ran `OAUTH_DCR_MODE=stored`
+with CIMD enabled, which is one cell of the registration matrix. Stateless DCR
+was not driven live, and the shipped example hardcodes `cimd.enabled`, so a
+CIMD-disabled deployment is not reachable through it — see issue #152.
 
 ### † Dagger note (the four 2026-07-04 rows)
 
