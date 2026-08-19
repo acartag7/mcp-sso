@@ -165,5 +165,13 @@ export function consentCookie(req: NormRequest): string | undefined {
   const raw = headerString(req.headers, "cookie");
   if (!raw) return undefined;
   const found = raw.split(";").map((p) => p.trim()).find((p) => p.startsWith("mcp_idp_consent="));
-  return found ? decodeURIComponent(found.slice("mcp_idp_consent=".length)) : undefined;
+  if (!found) return undefined;
+  try {
+    return decodeURIComponent(found.slice("mcp_idp_consent=".length));
+  } catch {
+    // Fail closed (§9.3): the malformed cookie IS the consent credential this
+    // request presented, so it takes the same direct 400 invalid_consent as an
+    // unparseable form token — never a 500, and never silently absent.
+    throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
+  }
 }

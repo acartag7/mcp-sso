@@ -447,6 +447,27 @@ test("bridge: duplicate approved or consent_token is invalid_request, not last-w
   assert.ok(new URL(ok.headers.location as string).searchParams.get("code"));
 });
 
+test("bridge: malformed mcp_idp_consent cookie percent-escape is direct 400 invalid_consent, never a 500", async () => {
+  const ctx = setup();
+  // No form consent_token: the cookie is the credential actually read
+  // (formField(body, "consent_token") ?? consentCookie(req) short-circuits
+  // before the cookie when the form supplies one).
+  const res = await ctx.bridge.handleApprove(req({
+    body: { approved: "true" },
+    headers: { origin: "https://auth.test", cookie: "mcp_idp_consent=%E0%A4%A" },
+  }));
+  assert.equal(res.status, 400);
+  assert.deepEqual(res.body, { error: "invalid_consent", error_description: "Consent token is invalid or expired" });
+  assert.equal(res.redirect, undefined);
+  // A present form token keeps precedence: the malformed cookie is never read.
+  const formWins = await ctx.bridge.handleApprove(req({
+    body: { consent_token: "x", approved: "true" },
+    headers: { origin: "https://auth.test", cookie: "mcp_idp_consent=%E0%A4%A" },
+  }));
+  assert.equal(formWins.status, 400);
+  assert.equal((formWins.body as { error: string }).error, "invalid_consent");
+});
+
 test("bridge: every recognized OAuth form key rejects strict repetition before endpoint audit", async (t) => {
   const routes = [
     {
