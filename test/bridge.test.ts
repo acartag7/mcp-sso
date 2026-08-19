@@ -579,11 +579,13 @@ test("bridge: stateless registration stays fail-open when its limiter throws", a
 // exists at all, so it is where continuity most needs proving: if a future change
 // broadens that flag beyond registration, the stored half of this matrix goes red.
 const CONTINUITY_MODES = [
-  { label: "stateless", dcr: () => ({ mode: "stateless" }) as BridgeConfig["dcr"] },
+  { name: "bridge: authorize, approve, token, and revoke stay fail-open when their limiter throws",
+    dcr: () => ({ mode: "stateless" }) as BridgeConfig["dcr"] },
   // A real map, not a discarding stub: stored-mode authorize resolves the client
   // through this store, so a stub that drops the registration would fail the flow
   // for a reason unrelated to limiter outages.
-  { label: "stored", dcr: (): BridgeConfig["dcr"] => {
+  { name: "bridge: authorize, approve, token, and revoke stay fail-open when their limiter throws under stored DCR",
+    dcr: (): BridgeConfig["dcr"] => {
     const rows = new Map<string, ClientRegistration>();
     return { mode: "stored", store: {
       async save(client) { rows.set(client.clientId, client); },
@@ -592,7 +594,7 @@ const CONTINUITY_MODES = [
   } },
 ];
 for (const mode of CONTINUITY_MODES) {
-test(`bridge: authorize, approve, token, and revoke stay fail-open when their limiter throws [dcr ${mode.label}]`, async (t) => {
+test(mode.name, async (t) => {
   for (const outageKey of ["authorize", "approve", "token", "revoke"] as const) {
     await t.test(outageKey, async () => {
       const keys: string[] = [];
