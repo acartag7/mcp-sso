@@ -2023,13 +2023,15 @@ Persistence then follows these rules:
   (dirs) with `O_EXCL` for create-don't-clobber. On supported POSIX hosts, reads
   of trusted content go through `open(O_NOFOLLOW | O_NONBLOCK)` + `fstat` +
   read-fd (atomic: refuses a symlink, won't hang on a FIFO/special file, no
-  lstat→readFile race) + a perm check (`mode & 0o077` fails closed); a
-  pre-existing dir is `assertRealDir`'d (reject symlink
-  + group/other-accessible mode); the `.gitignore` is the managed `*\n` (write
+  lstat→readFile race) + a perm check (`mode & 0o077` fails closed) + an
+  ownership check (`st.uid` equals the effective UID — a foreign-owned
+  `secrets.json` or `.gitignore` fails closed before its bytes are read); a
+  pre-existing dir is `assertRealDir`'d (reject symlink, wrong owner, or
+  group/other-accessible mode); the `.gitignore` is the managed `*\n` (write
   into a dir we created, require exact in a pre-existing one). On Windows or a
-  host without `O_NOFOLLOW`, trusted-file reads instead lstat-reject a symlink
-  or non-regular object and then read the pathname; replacement between those
-  calls remains possible. The deployer-private directory/ACL is the boundary
+  host without `O_NOFOLLOW`, trusted-file reads instead lstat-reject a symlink,
+  non-regular object, or (non-Windows) wrong owner and then read the pathname;
+  replacement between those calls remains possible. The deployer-private directory/ACL is the boundary
   against a lower-privileged swap. Windows mode/UID gates are absent and no DACL
   is read or set; the warning makes that limitation visible but is not an
   admission decision.
