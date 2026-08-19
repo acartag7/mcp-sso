@@ -158,17 +158,31 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
       assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /fixture-entra-secret/, "run.sh never prints a stack secret");
       assert.equal(JSON.parse(env.OAUTH_SIGNING_PRIVATE_JWK).kty, "EC");
     });
-    await t.test("entra deny legs: wrong values pass only through the marked MCP_SSO_ channel, never as bare ENTRA_* names", async () => {
+    await t.test("entra deny legs: one marked channel per run; bare ENTRA_* names never pass", async () => {
       const WRONG_TENANT = "00000000-0000-0000-0000-000000000000";
       const WRONG_SUBJECT = "nobody@wrong.example";
-      const carried = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
-        MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: WRONG_TENANT, MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: WRONG_SUBJECT,
+      // One channel at a time (both set at once is ambiguous evidence — tenant
+      // validation would mask the allowlist denial — and is refused below).
+      const tenantRun = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: WRONG_TENANT,
         ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
       });
-      assert.equal(carried.code, 0, carried.stderr);
-      expectKeys(carried.captured, [...LEG_KEYS.entra, "ENTRA_ALLOWED_TENANT_IDS", "ENTRA_SUBJECT_ALLOWLIST"]);
-      assert.equal(carried.captured.ENTRA_ALLOWED_TENANT_IDS, WRONG_TENANT, "the marked channel's value, not the ambient bare name");
-      assert.equal(carried.captured.ENTRA_SUBJECT_ALLOWLIST, WRONG_SUBJECT, "the marked channel's value, not the ambient bare name");
+      assert.equal(tenantRun.code, 0, tenantRun.stderr);
+      expectKeys(tenantRun.captured, [...LEG_KEYS.entra, "ENTRA_ALLOWED_TENANT_IDS"]);
+      assert.equal(tenantRun.captured.ENTRA_ALLOWED_TENANT_IDS, WRONG_TENANT, "the marked channel's value, not the ambient bare name");
+      const subjectRun = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: WRONG_SUBJECT,
+        ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
+      });
+      assert.equal(subjectRun.code, 0, subjectRun.stderr);
+      expectKeys(subjectRun.captured, [...LEG_KEYS.entra, "ENTRA_SUBJECT_ALLOWLIST"]);
+      assert.equal(subjectRun.captured.ENTRA_SUBJECT_ALLOWLIST, WRONG_SUBJECT, "the marked channel's value, not the ambient bare name");
+      const bothSet = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: WRONG_TENANT, MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: WRONG_SUBJECT,
+      });
+      assert.equal(bothSet.code, 1);
+      assert.match(bothSet.stderr, /only ONE Entra deny channel/);
+      assert.equal(bothSet.captured, undefined, "the refusal stops before the entry runs");
       const bareOnly = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
         ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
       });

@@ -143,7 +143,12 @@ if [ "$KIND" != "e2e" ]; then
       # two are wrong by design, so they arrive through their own clearly-marked
       # MCP_SSO_ channel instead — the example's bare ENTRA_* names stay
       # un-allowlisted from the ambient shell. Unset means the positive-only
-      # configuration and the example's defaults apply.
+      # configuration and the example's defaults apply. Both set at once is
+      # ambiguous evidence (tenant validation runs first and would mask the
+      # allowlist denial), so it is refused rather than run.
+      if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" ] && [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST:-}" ]; then
+        fail "set only ONE Entra deny channel per run: MCP_SSO_ENTRA_ALLOWED_TENANT_IDS (wrong-tenant) or MCP_SSO_ENTRA_SUBJECT_ALLOWLIST (allowlist); both set cannot produce unambiguous evidence"
+      fi
       if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" ]; then
         ENTRA_ALLOWED_TENANT_IDS="$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS"
         pass ENTRA_ALLOWED_TENANT_IDS
