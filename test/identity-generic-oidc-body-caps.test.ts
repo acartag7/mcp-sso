@@ -7,21 +7,44 @@
 // and parsed; here it must be rejected mid-download at 65536 bytes.
 //
 // The identity-level legs stand up a LOCAL https server with a self-signed
-// certificate (test/fixtures/oidc-cap-test-*.pem) and relax TLS verification
-// via NODE_TLS_REJECT_UNAUTHORIZED for those legs only — the same local-harness
-// trick the PoC used, reproduced honestly: the property under test is the BYTE
-// CAP, not chain validation (the ports enforce https issuers everywhere, and
-// the CIMD guarded fetcher even pins rejectUnauthorized against this env var —
-// src/cimd/node-io.ts). node:test runs each file in its own process and these
-// tests are sequential, so the variable is restored in each finally.
+// certificate (test/fixtures/oidc-cap-test-*.pem). The library calls run in a
+// CHILD process (test/lib/oidc-cap-child.mjs) with NODE_EXTRA_CA_CERTS
+// pointing at that certificate, so TLS verification stays FULLY ON against a
+// cert Node itself trusts — no NODE_TLS_REJECT_UNAUTHORIZED anywhere. The
+// property under test is the BYTE CAP; chain validation is never relaxed to
+// observe it.
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import http from "node:http";
 import https from "node:https";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { AddressInfo } from "node:net";
+import { fileURLToPath } from "node:url";
+
+/** Run one library leg in a child process whose TLS trust includes the local
+ *  self-signed certificate (NODE_EXTRA_CA_CERTS): full verification, no
+ *  disabled validation. Prints one JSON line back. */
+async function runCapChild(mode: "discovery" | "token", port: number): Promise<Record<string, unknown>> {
+  const childPath = fileURLToPath(new URL("./lib/oidc-cap-child.mjs", import.meta.url));
+  const certPath = fileURLToPath(new URL("./fixtures/oidc-cap-test-cert.pem", import.meta.url));
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [childPath, mode, String(port)], {
+      env: { ...process.env, NODE_EXTRA_CA_CERTS: certPath },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    let out = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { out += chunk; });
+    child.once("error", reject);
+    child.once("exit", () => {
+      try { resolve(JSON.parse(out.trim().split("\n").at(-1) ?? "{}")); }
+      catch (error) { reject(error); }
+    });
+  });
+}
 import {
   createDiscoveryTransport, createTokenTransport,
   DEFAULT_MAX_DISCOVERY_DOCUMENT_BYTES, DEFAULT_MAX_TOKEN_RESPONSE_BYTES,
@@ -133,8 +156,6 @@ test("resolveEndpoints: an out-of-domain discovery cap fails boot before ANY fet
 });
 
 test("createGenericOidcIdentity: a 32 MB discovery document is rejected at the byte cap without being materialized", async () => {
-  const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // local-harness trick — see file header
   const TOTAL = 32 * 1024 * 1024; // the PoC's size: comfortably past any socket buffering
   let done: Promise<number> | undefined;
   const server = https.createServer({ key: KEY, cert: CERT }, (_req, res) => {
@@ -144,23 +165,17 @@ test("createGenericOidcIdentity: a 32 MB discovery document is rejected at the b
   });
   try {
     const port = await listen(server);
-    await assert.rejects(
-      createGenericOidcIdentity({ issuer: `https://127.0.0.1:${port}`, clientId: "cid", redirectUri: `https://127.0.0.1:${port}/cb`, endpoints: "discover" }),
-      /generic_oidc_discovery_failed: discovery document exceeded the 65536-byte cap/,
-    );
+    const outcome = await runCapChild("discovery", port);
+    assert.match(String(outcome.threw), /discovery document exceeded the 65536-byte cap/);
     const written = await done!;
     assert.ok(written < TOTAL / 2, `server wrote ${written} bytes of the 32 MiB document — the download must abort near the cap, not drain`);
   } finally {
-    if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
     server.close();
     server.closeAllConnections();
   }
 });
 
 test("redirect port: an oversized token response is exchange_failed, never identity_rejected (§17.11 throw rule)", async () => {
-  const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // local-harness trick — see file header
   let done: Promise<number> | undefined;
   const server = https.createServer({ key: KEY, cert: CERT }, (_req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
@@ -168,25 +183,13 @@ test("redirect port: an oversized token response is exchange_failed, never ident
   });
   try {
     const port = await listen(server);
-    const identity = await createGenericOidcRedirectIdentity({
-      issuer: `https://127.0.0.1:${port}`,
-      clientId: "cid",
-      redirectUri: `https://127.0.0.1:${port}/cb`,
-      endpoints: {
-        authorizationEndpoint: `https://127.0.0.1:${port}/auth`,
-        tokenEndpoint: `https://127.0.0.1:${port}/token`,
-        jwksUri: `https://127.0.0.1:${port}/jwks`,
-      },
-    });
-    const result = await identity.exchangeAndVerify({ code: "c", codeVerifier: "v", nonce: "n" });
-    if (result.ok) assert.fail("an oversized token response must not succeed");
-    assert.equal(result.kind, "exchange_failed"); // never identity_rejected — no identity decision was made
-    assert.match(result.reason, /exceeded the 16384-byte cap/);
+    const outcome = await runCapChild("token", port);
+    assert.equal(outcome.ok, false, "an oversized token response must not succeed");
+    assert.equal(outcome.kind, "exchange_failed"); // never identity_rejected — no identity decision was made
+    assert.match(String(outcome.reason), /exceeded the 16384-byte cap/);
     const written = await done!;
     assert.ok(written < 512 * 1024, `server wrote ${written} bytes of a 1 MiB token response — the download must abort near the cap`);
   } finally {
-    if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
     server.close();
     server.closeAllConnections();
   }
