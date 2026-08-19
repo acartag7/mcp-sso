@@ -239,14 +239,14 @@ upstream registries.
       "published": "2026-07-14T02:46:05Z"
     },
     "pnpm/action-setup": {
-      "sha": "0ebf47130e4866e96fce0953f49152a61190b271",
-      "tag": "v6.0.9",
-      "published": "2026-06-15T12:06:03Z"
+      "sha": "0977fd99725f1db4007ccb2928dbb4e90d06cc86",
+      "tag": "v6.0.10",
+      "published": "2026-08-03T12:06:25Z"
     },
     "github/codeql-action": {
-      "sha": "8aad20d150bbac5944a9f9d289da16a4b0d87c1e",
-      "tag": "v4.36.2",
-      "published": "2026-06-04T14:27:19Z"
+      "sha": "5595ccaf912efad79be6eef63a5619ff05969be3",
+      "tag": "v4.37.6",
+      "published": "2026-08-04T13:34:40Z"
     },
     "ossf/scorecard-action": {
       "sha": "2d1146689b8cda280b9bc96326124645441f03bc",
