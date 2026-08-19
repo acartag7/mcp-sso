@@ -215,10 +215,11 @@ each added only by the people who need it.
   one-origin-per-bridge (subdomains) makes the built-in challenge correct.
 - **Never relay the backend's `WWW-Authenticate`.** A token-only backend may
   answer 401/403 with a challenge of its own (a `Basic` realm, a vendor
-  scheme). Relay that header and public MCP clients chase the backend's
-  challenge instead of the gateway's RFC 9728 discovery — authorization breaks
-  at discovery time — while the backend's realm names and scheme hints leak to
-  the client. The shipped gateway cannot do this: its response relay is an
+  scheme). The gateway verifies its own token before forwarding, so such a
+  challenge reaches the client only AFTER it holds a valid gateway token:
+  relayed, it tells the client to authenticate to a backend it has no
+  credentials for, and the backend's realm names and scheme hints leak to the
+  public client. The shipped gateway cannot do this: its response relay is an
   allowlist (`RELAY_RESPONSE_HEADERS` in `examples/api-key-gateway/app.ts`:
   `content-type`, `mcp-session-id`, `mcp-protocol-version`), so a challenge
   header is dropped by construction rather than filtered by pattern. Keep that
@@ -265,8 +266,11 @@ Each gateway is a small Deployment + Service + Ingress + Secret.
   artifacts and never touches client registrations; the library's `ClientStore`
   has no delete, and nothing in it deletes a registration as a security
   response. A stolen, actively rotated refresh family therefore survives any
-  cleanup by design — the recovery tool is `POST /oauth/revoke`, which kills
-  the whole family. If you add registration GC of your own on `ClientStore`,
+  cleanup by design. The recovery tool is `POST /oauth/revoke`, which kills
+  the whole family from any one member token: a rotated-away member you still
+  hold maps to its family, so keep your last-issued token. With no member
+  token in hand, an operator with store access must revoke by family id
+  directly. If you add registration GC of your own on `ClientStore`,
   revocation remains the only security boundary: deleting a registration does
   not revoke its outstanding grants.
 - **Proxy trust × per-client budgets**: leave `MCP_SSO_TRUSTED_PROXIES` unset
