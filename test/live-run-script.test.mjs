@@ -257,7 +257,8 @@ test("run.sh validates before it touches prior state, and never deletes through 
       assert.equal(statelessNoLoopback.captured.OAUTH_DCR_MODE, "stateless");
       assert.equal(statelessNoLoopback.captured.OAUTH_REDIRECT_ALLOWLIST, "https://entra.example/app/callback");
     });
-    await t.test("the server entry rotates the previous leg state aside; probes never touch it", async () => {
+    await t.test("the server entry retains the last evidence-bearing leg state; probes never touch it", async () => {
+      writeFileSync(join(stateRoot, "entra/audit.jsonl"), "{}\n");
       const probe = await runScript(fx, "scripts/live/probe-entra.mjs", "entra");
       assert.equal(probe.code, 0, probe.stderr);
       assert.equal(readFileSync(join(stateRoot, "entra/marker"), "utf8"), "previous evidence", "a probe run leaves the served leg's state alone");
@@ -267,17 +268,27 @@ test("run.sh validates before it touches prior state, and never deletes through 
       assert.equal(readFileSync(join(stateRoot, "entra.previous/marker"), "utf8"), "previous evidence", "the last run's evidence survives one more start");
       assert.equal(served.captured.MCP_SSO_DIR, join(stateRoot, "entra"));
       assert.equal(served.captured.OAUTH_SQLITE_FILE, join(stateRoot, "entra/auth.db"));
+      // A start that failed after the preflight leaves a leaf without audit
+      // evidence; the retry must not trade the good generation for it.
+      mkdirSync(join(stateRoot, "entra"));
+      writeFileSync(join(stateRoot, "entra/auth.db"), "failed start");
+      const retry = await runScript(fx, server, "entra");
+      assert.equal(retry.code, 0, retry.stderr);
+      assert.equal(readFileSync(join(stateRoot, "entra.previous/marker"), "utf8"), "previous evidence", "a failed-start retry keeps the last successful evidence");
       mkdirSync(join(stateRoot, "entra"));
       writeFileSync(join(stateRoot, "entra/marker"), "second run");
+      writeFileSync(join(stateRoot, "entra/audit.jsonl"), "{}\n");
       const again = await runScript(fx, server, "entra");
       assert.equal(again.code, 0, again.stderr);
-      assert.equal(readFileSync(join(stateRoot, "entra.previous/marker"), "utf8"), "second run", "only the generation before last is discarded");
+      assert.equal(readFileSync(join(stateRoot, "entra.previous/marker"), "utf8"), "second run", "a generation with evidence replaces the one before it");
     });
     await t.test("a previous generation that cannot be removed stops the run before the entry", async () => {
       const locked = join(stateRoot, "entra.previous/locked");
       mkdirSync(locked, { recursive: true });
       writeFileSync(join(locked, "file"), "x");
       chmodSync(locked, 0o500);
+      mkdirSync(join(stateRoot, "entra"), { recursive: true });
+      writeFileSync(join(stateRoot, "entra/audit.jsonl"), "{}\n"); // evidence: the retained generation is due for replacement
       try {
         const result = await runScript(fx, server, "entra");
         assert.equal(result.code, 1);

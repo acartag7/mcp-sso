@@ -218,29 +218,52 @@ test("BEHAVIOUR run-support: live state is prepared under a real private parent 
     const previous = join(root, "entra.previous");
     mkdirSync(join(leaf, "nested"), { recursive: true });
     writeFileSync(join(leaf, "nested/auth.db"), "prior");
+    writeFileSync(join(leaf, "audit.jsonl"), "{}\n");
     prepareLiveStateDir(root, "entra");
     assert.equal(existsSync(leaf), false, "the leaf is left for the library to create");
     assert.equal(readFileSync(join(previous, "nested/auth.db"), "utf8"), "prior", "the last run's evidence is rotated aside, not deleted");
+    // A start that produced no evidence (a boot failure after the preflight)
+    // is discarded on retry; the retained generation is untouched.
+    mkdirSync(leaf);
+    writeFileSync(join(leaf, "auth.db"), "failed start");
+    prepareLiveStateDir(root, "entra");
+    assert.equal(existsSync(leaf), false, "an evidence-less leaf is removed");
+    assert.equal(readFileSync(join(previous, "nested/auth.db"), "utf8"), "prior", "the retained generation survives a failed-start retry");
+    mkdirSync(leaf);
+    writeFileSync(join(leaf, "audit.jsonl"), "");
+    prepareLiveStateDir(root, "entra");
+    assert.equal(readFileSync(join(previous, "nested/auth.db"), "utf8"), "prior", "an empty audit file is not evidence either");
     mkdirSync(leaf);
     writeFileSync(join(leaf, "auth.db"), "second");
+    writeFileSync(join(leaf, "audit.jsonl"), "{}\n");
     prepareLiveStateDir(root, "entra");
-    assert.equal(readFileSync(join(previous, "auth.db"), "utf8"), "second", "only the generation before last is discarded");
+    assert.equal(readFileSync(join(previous, "auth.db"), "utf8"), "second", "a generation with evidence replaces the one before it");
     assert.equal(existsSync(join(previous, "nested")), false);
+    mkdirSync(leaf);
+    symlinkSync(join(dir, "nowhere"), join(leaf, "audit.jsonl"));
+    assert.throws(() => prepareLiveStateDir(root, "entra"), /not a regular file/, "evidence is judged through lstat, never through a link");
+    assert.equal(readFileSync(join(previous, "auth.db"), "utf8"), "second");
+    rmSync(leaf, { recursive: true });
     assert.throws(() => prepareLiveStateDir(root, "../escape"), /unknown leg/);
     mkdirSync(join(previous, "locked"), { recursive: true });
     writeFileSync(join(previous, "locked/file"), "x");
     chmodSync(join(previous, "locked"), 0o500);
+    mkdirSync(leaf);
+    writeFileSync(join(leaf, "audit.jsonl"), "{}\n"); // evidence, so the retained generation is due for replacement
     try {
       assert.throws(() => prepareLiveStateDir(root, "entra"), /cannot be removed/);
       assert.equal(existsSync(join(previous, "locked/file")), true, "a failed removal stops the run; nothing is silently kept");
+      assert.equal(existsSync(join(leaf, "audit.jsonl")), true, "the leaf is untouched when the retained generation cannot be removed");
     } finally {
       chmodSync(join(previous, "locked"), 0o700);
     }
     prepareLiveStateDir(root, "entra");
+    rmSync(previous, { recursive: true, force: true });
     symlinkSync(join(dir, "nowhere"), previous);
     assert.throws(() => prepareLiveStateDir(root, "entra"), /not a real directory/, "a symlinked previous generation is refused, not followed");
     rmSync(previous);
     // A rejected leaf must not have cost the retained generation first.
+    rmSync(previous, { recursive: true, force: true });
     mkdirSync(previous);
     writeFileSync(join(previous, "audit.jsonl"), "retained");
     symlinkSync(join(dir, "nowhere"), leaf);
@@ -344,6 +367,7 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.match(PROBE, /\["consent signing credential", process\.env\.OAUTH_CONSENT_SIGNING_SECRET\]/);
   assert.match(PROBE, /\["consent token", consentToken\], \["authorization code", code\], \["PKCE verifier", verifier\]/,
     "every generated flow credential is in the leak scan");
+  assert.match(PROBE, /\["signing private key", signingJwk\.d\]/, "the signing key's private component is in the leak scan");
   assert.match(PROBE, /redis\.on\("error", \(\) => \{\}\)/, "ioredis must not print the host and port itself");
   assert.doesNotMatch(PROBE, /console\.(?:log|warn|error)\([^\n]*(?:Secret|secret|Token|token|clientSecret|OAUTH_|REDIS_URL|error|message)/i);
   assert.doesNotMatch(PROBE, /OAUTH_CONSENT_SIGNING_SECRET[^\n]*(?:slice|substring|substr)/);

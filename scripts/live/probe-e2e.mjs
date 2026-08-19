@@ -109,10 +109,11 @@ try {
   });
   const clientStore = createProbeClientStore();
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const signingJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "live" };
   const config = createBridgeConfig({
     issuer: ISSUER, resource: RESOURCE,
     consentSigningSecret: process.env.OAUTH_CONSENT_SIGNING_SECRET,
-    signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "live" }, signingKeyId: "live",
+    signingPrivateJwk: signingJwk, signingKeyId: "live",
     redirectAllowlist: [callback], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
     allowedOrigins: [ISSUER], dcr: { mode: "stored", store: clientStore.store }, clientCredentials: { enabled: true },
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 3_600, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
@@ -262,6 +263,7 @@ try {
     ["machine access token", machineAccess], ["probe identity token", identityToken],
     ["webhook collector token", collectorToken],
     ["consent signing credential", process.env.OAUTH_CONSENT_SIGNING_SECRET],
+    ["signing private key", signingJwk.d],
   ];
   for (const [name, value] of credentials) {
     if (!ok(`audit sinks never published the ${name}`, !containsCredential(evidence, [value]))) failures++;

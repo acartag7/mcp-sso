@@ -30,9 +30,10 @@ concrete substitutions live in the maintainer's project memory. Placeholders her
    that is the supported shape for CLI clients with ephemeral callback ports,
    and stored DCR requires a bounded limiter (the example supplies one).
 4. Each leg gets its **own** state directory, `.live-state/<leg>`, from
-   `run.sh`; at start the previous run's state for that leg is rotated to
-   `.live-state/<leg>.previous` (and the generation before it removed), so the
-   last round's `audit.jsonl` is still there to compare against. A shared
+   `run.sh`; at start the last run's state for that leg is rotated to
+   `.live-state/<leg>.previous` when it holds an `audit.jsonl` (a failed start
+   without one is discarded instead), so the last round's `audit.jsonl` is
+   still there to compare against — even after a failed start and a retry. A shared
    directory would let one leg delete another's database, and every later
    store write would then fail as a generic `internal_error` that reads exactly
    like a product bug.

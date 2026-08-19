@@ -218,12 +218,14 @@ export function assertLegPreflight(leg, env) {
 /** Prepare `<root>/<leg>` for a fresh example server: the parent must be a real
  *  directory (never a symlink) that the caller owns with no group or other
  *  bits — created 0700 when absent — and only after that check is the prior
- *  state touched: the generation before last (`<leg>.previous`) is removed and
- *  the last run's leaf is rotated into its place, so a start that fails after
- *  this point (provider discovery at boot, a refused bind) never costs the
- *  previous run's evidence. A leaf or previous generation that is itself a
- *  symlink, or that cannot be removed or rotated, is an error; nothing is ever
- *  deleted through a link. */
+ *  state touched. The last generation that holds evidence is retained: a leaf
+ *  with an `audit.jsonl` is rotated to `<leg>.previous` (replacing the
+ *  generation before it), while a leaf without one — a start that failed after
+ *  the preflight, a server that never took a request — is removed and leaves
+ *  `<leg>.previous` untouched, so a routine retry never costs the last
+ *  successful run's audit trail. Every path is inspected before anything is
+ *  removed or renamed; a symlink anywhere in that set is an error, and nothing
+ *  is ever deleted or moved through a link. */
 export function prepareLiveStateDir(root, leg, uid = process.getuid?.()) {
   assertLeg(leg);
   let parent;
@@ -262,25 +264,33 @@ export function prepareLiveStateDir(root, leg, uid = process.getuid?.()) {
       throw new RunSupportError("prior live state cannot be inspected");
     }
   };
-  // Inspect BOTH generations before touching either: a rejected leaf must not
-  // have cost the retained generation first.
+  // Inspect every path before touching any: a rejected leaf must not have cost
+  // the retained generation first.
   const priorPrevious = inspect(previous);
   const prior = inspect(leaf);
   if (priorPrevious !== undefined && !priorPrevious.isDirectory()) throw new RunSupportError("prior live state is not a real directory");
   if (prior !== undefined && !prior.isDirectory()) throw new RunSupportError("prior live state is not a real directory");
-  if (priorPrevious !== undefined) {
+  const evidence = prior === undefined ? undefined : inspect(join(leaf, "audit.jsonl"));
+  if (evidence !== undefined && !evidence.isFile()) throw new RunSupportError("prior live state evidence is not a regular file");
+  const remove = (path) => {
     try {
-      rmSync(previous, { recursive: true });
+      rmSync(path, { recursive: true });
     } catch {
       throw new RunSupportError("prior live state cannot be removed");
     }
+  };
+  if (prior === undefined) return leaf;
+  if (evidence === undefined || evidence.size === 0) {
+    // A start that produced no evidence is discarded; the retained generation
+    // stays exactly as it was.
+    remove(leaf);
+    return leaf;
   }
-  if (prior !== undefined) {
-    try {
-      renameSync(leaf, previous);
-    } catch {
-      throw new RunSupportError("prior live state cannot be rotated aside");
-    }
+  if (priorPrevious !== undefined) remove(previous);
+  try {
+    renameSync(leaf, previous);
+  } catch {
+    throw new RunSupportError("prior live state cannot be rotated aside");
   }
   return leaf;
 }

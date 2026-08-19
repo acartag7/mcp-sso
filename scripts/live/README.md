@@ -93,12 +93,15 @@ secret is handled.
 Only the example-server entry gets a state directory, `.live-state/<leg>` in
 this checkout (ignored by Git). `run-support.mjs` refuses a `.live-state` that
 is a symlink or that anyone else can read, and only after the preflight has
-passed does it touch prior state — and then it does not delete the last run:
-`.live-state/<leg>` is rotated to `.live-state/<leg>.previous` and only the
-generation before that is removed, so a start that fails after this point (a
-provider discovery at boot, a refused bind) still leaves the previous run's
-evidence in place. A rotation or removal that fails stops the run, and nothing
-is ever deleted or moved through a link. Do not start the server entry for a
+passed does it touch prior state — and then it keeps the last generation that
+holds evidence: a `.live-state/<leg>` with an `audit.jsonl` is rotated to
+`.live-state/<leg>.previous` (replacing the generation before it), while a leaf
+without one — a start that failed after the preflight, a server that never
+took a request — is removed and `<leg>.previous` is left as it was. So a start
+that fails after this point (a provider discovery at boot, a refused bind) and
+the retry after it never cost the last successful run's audit trail. A rotation
+or removal that fails stops the run, and nothing is ever deleted or moved
+through a link. Do not start the server entry for a
 leg that `serve.sh` is currently serving — that rotates the live server's state
 out from under it. The probes never touch `.live-state`; each provider probe
 builds the example from a disposable temp directory the library creates, and
