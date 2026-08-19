@@ -2096,7 +2096,15 @@ direction — fail-open for the continuity keys). Constructor validates
 both `windowSeconds` and `limit` as positive integers (fail-closed on misconfig).
 Keys are as in §6.7 (`register:<ip>` etc.). Failure semantics are delegated to
 §6.7 rather than fixed here: `check()` THROWS on any Redis error other than a
-missing script, and the *operation* decides the outage direction. For every
+missing script, and the *operation* decides the outage direction. **A
+non-numeric script reply is an outage, not an allow** (owner decision
+2026-08-19, D3): the only accepted reply shape is the INCR integer — a JS
+number, or a decimal-integer string under ioredis's `stringNumbers` option —
+and a bulk payload, null bulk, or status reply THROWS into the same §6.7
+policy. `Number(null) === 0`, so a coercion-then-compare reading would turn a
+null reply into "0 counted ⇒ allow", silently disabling the limiter behind a
+Redis-compatible facade (proxy, mock, or a mid-protocol rewrite); no quota
+decision was reached, so the closed stored-registration class must see it. For every
 continuity key the bridge `guard()` fails OPEN (availability over advisory
 defense). For `register:<ip>` under `dcr.mode === "stored"` the throw fails
 CLOSED with a fixed 503 — the adapter's behaviour is unchanged, but it is no
