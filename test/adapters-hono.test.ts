@@ -17,9 +17,9 @@ import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 runAdapterFlow("hono", async (bridge, identity) => {
   // §6.7: the flow's stored-DCR leg needs an extractor to construct at all.
   // This harness rebuilds Requests from a buffered node socket, so no stable
-  // runtime IP survives to extract — returning undefined keeps the per-request
-  // "unknown" keys this flow asserts for hono.
-  const app = createOAuthApp({ bridge, identity, clientIp: () => undefined });
+  // runtime IP survives to extract — the deployer-owned extractor supplies a
+  // constant, exactly as a real deployment's would supply its proxy value.
+  const app = createOAuthApp({ bridge, identity, clientIp: () => "127.0.0.1" });
   const server = createServer(async (incoming, outgoing) => {
     try {
       const chunks: Buffer[] = [];
@@ -127,6 +127,22 @@ test("hono: stored DCR without a clientIp extractor refuses at createOAuthApp", 
       && /clientIp/.test(error.message)
       && /stored DCR/.test(error.message),
   );
+});
+
+test("hono: a stored-DCR extractor that yields no IP rejects registration before any work", async () => {
+  // The runtime half of the boot rule: a CONFIGURED extractor may still return
+  // undefined per request (its declared return type permits it), and the core
+  // must not fall back to the shared "unknown" bucket for the anonymous
+  // durable write — direct 400 before the limiter charge, audit, or save.
+  const { app, keys, events } = honoSetup(() => undefined, { mode: "stored", store: storedClients });
+  const resp = await app.request("/oauth/register", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ redirect_uris: ["https://client.test/callback"] }),
+  });
+  assert.equal(resp.status, 400);
+  assert.match(JSON.parse(await resp.text()).error_description, /requires a client IP/);
+  assert.deepEqual(keys, [], "the rejection precedes the limiter charge");
+  assert.equal(events.length, 0, "and every audit emit");
 });
 
 test("hono: stateless DCR without clientIp boots and warns once about the shared unknown bucket", () => {

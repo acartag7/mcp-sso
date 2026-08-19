@@ -78,7 +78,7 @@ export function runAdapterFormOccurrenceFlow(
             assert.equal(response.headers.location, undefined);
             assert.equal(JSON.parse(response.body).error, "invalid_request");
             assert.equal(response.body.includes(SENTINEL), false);
-            const ip = name === "hono" ? "unknown" : "127.0.0.1";
+            const ip = "127.0.0.1";
             assert.deepEqual(keys, [`${formCase.limiter}:${ip}`], "the existing limiter is charged exactly once");
             assert.deepEqual(audit.events, [], "duplicate rejection precedes endpoint audit work");
           } finally {
@@ -111,7 +111,7 @@ export function runAdapterFormOccurrenceFlow(
           assert.equal(response.headers.location, undefined);
           assert.equal(JSON.parse(response.body).error, "invalid_request");
           assert.equal(response.body.includes(SENTINEL), false);
-          const ip = name === "hono" ? "unknown" : "127.0.0.1";
+          const ip = "127.0.0.1";
           assert.deepEqual(keys, [`${formCase.limiter}:${ip}`], "the existing limiter is charged exactly once");
           assert.deepEqual(audit.events, [], "header ambiguity precedes endpoint audit work");
         } finally {
@@ -132,7 +132,7 @@ export function runAdapterFormOccurrenceFlow(
         ], JSON.stringify({ redirect_uris: [REDIRECT] }));
         assert.equal(response.status, 400);
         assert.equal(JSON.parse(response.body).error, "invalid_request");
-        const ip = name === "hono" ? "unknown" : "127.0.0.1";
+        const ip = "127.0.0.1";
         assert.deepEqual(keys, [`register:${ip}`]);
         assert.deepEqual(audit.events, []);
       } finally {

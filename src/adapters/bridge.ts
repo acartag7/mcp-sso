@@ -101,6 +101,14 @@ export class Bridge {
 
   async handleRegister(req: NormRequest): Promise<NormResponse> {
     try {
+      // §6.7 stored-DCR admission (D2, runtime half): a configured-but-empty
+      // extractor must not fall back to the shared "unknown" bucket — the boot
+      // check cannot see per-request extraction results, so the core rejects a
+      // stored registration with no usable client IP BEFORE the limiter charge
+      // or any durable work. Direct 400; never a redirect.
+      if (this.config.dcr.mode === "stored" && (typeof req.ip !== "string" || req.ip === "")) {
+        throw new OAuthError("invalid_request", "stored registration requires a client IP for rate limiting", 400);
+      }
       await this.guard("register", req.ip, this.config.dcr.mode === "stored");
       const body = checkedFormObject(req, REGISTER_SINGLETON_PARAM_KEYS, REGISTER_JSON_ARRAY_PARAM_KEYS);
       // All DCR metadata crosses as raw unknown values. registerClient owns the

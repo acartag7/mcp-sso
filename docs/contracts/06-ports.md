@@ -664,3 +664,13 @@ one-time console warning stating the shared-bucket consequence; per-request
 rate limiting on a stateless bridge is defense-in-depth, not an authorization
 boundary. Fastify and Express need no equivalent option because they key on the
 framework's `req.ip`.
+
+The boot check cannot see per-request extraction results: an extractor whose
+declared return type permits `undefined` may still yield nothing for a given
+request, and the shared-key fallback would silently return. The runtime half
+therefore lives in the core, for every adapter: a stored-DCR registration
+that reaches `Bridge.handleRegister` with no usable `req.ip` (missing, not a
+string, or empty) is rejected with a direct **400** `invalid_request` naming
+the requirement — before the limiter charge, any durable work, or a success
+audit. The limiter key for a stored registration is always
+`register:<extracted-ip>`; it is never `register:unknown`.
