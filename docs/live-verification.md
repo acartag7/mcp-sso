@@ -105,12 +105,12 @@ regression does not reproduce on the client build that was driven. Two variables
 moved between the two observations — this library and the client — so a clear
 result is **not** evidence that a change here fixed it.
 
-The Codex CLI build used in that campaign is **not recorded**: the clients were
-driven from a different machine than the one holding this checkout, so no local
-install identifies it. Until the operator supplies the version, this row proves
-that some Codex CLI build completes the flow, not which one — and it therefore
-does not retire the 0.144.1 regression for any named version. Claude Code
-`2.1.235` was driven and is recorded.
+Client builds driven: Codex CLI `0.148.0` (a stable release, supplied by the
+operator — the clients were driven from a different machine than the one holding
+this checkout, so it is recorded on that authority rather than from a local
+install) and Claude Code `2.1.235`. Because `0.148.0` is a stable release, the
+0.144.1 regression is cleared on the stable channel and not only on a
+pre-release.
 
 **Registration mode driven (2026-08-19):** every leg ran `OAUTH_DCR_MODE=stored`
 with CIMD enabled, which is one cell of the registration matrix. Stateless DCR
