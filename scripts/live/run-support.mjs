@@ -262,18 +262,20 @@ export function prepareLiveStateDir(root, leg, uid = process.getuid?.()) {
       throw new RunSupportError("prior live state cannot be inspected");
     }
   };
+  // Inspect BOTH generations before touching either: a rejected leaf must not
+  // have cost the retained generation first.
   const priorPrevious = inspect(previous);
+  const prior = inspect(leaf);
+  if (priorPrevious !== undefined && !priorPrevious.isDirectory()) throw new RunSupportError("prior live state is not a real directory");
+  if (prior !== undefined && !prior.isDirectory()) throw new RunSupportError("prior live state is not a real directory");
   if (priorPrevious !== undefined) {
-    if (!priorPrevious.isDirectory()) throw new RunSupportError("prior live state is not a real directory");
     try {
       rmSync(previous, { recursive: true });
     } catch {
       throw new RunSupportError("prior live state cannot be removed");
     }
   }
-  const prior = inspect(leaf);
   if (prior !== undefined) {
-    if (!prior.isDirectory()) throw new RunSupportError("prior live state is not a real directory");
     try {
       renameSync(leaf, previous);
     } catch {

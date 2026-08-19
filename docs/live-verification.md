@@ -164,9 +164,10 @@ symlinked or shared `.live-state` parent before rotating a previous leg's state
 to `<leg>.previous` (removing only the generation before it), stopping when
 that rotation fails. `serve.sh` accepts readiness only from the process it
 started (`lsof` must report that child as the only listener), aborts when a
-server fails or times out during startup, supervises the tunnel so a signal to
-the script itself still runs cleanup, and signals only its own children on
-exit. These properties are exercised by `test/live-run-script.test.mjs` and
+server fails or times out during startup, refuses a leg named twice or two
+legs sharing a hostname or port, supervises the tunnel and every server so a
+signal to the script itself still runs cleanup and a server dying while
+serving stops the run, and signals only its own children on exit. These properties are exercised by `test/live-run-script.test.mjs` and
 `test/live-serve-script.test.mjs`, which spawn the shipped scripts against
 fixture infrastructure, and `test/live-e2e-probe.test.mjs`, which spawns the
 end-to-end probe.

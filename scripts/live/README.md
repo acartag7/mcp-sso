@@ -136,9 +136,12 @@ listener. It prints the public URL and the client command per leg, for example:
 claude mcp add --transport http live-entra https://<host>/mcp
 ```
 
-The tunnel runs supervised (started in the background and waited on), so a
-signal delivered to `serve.sh` itself — Ctrl-C, or a `kill` by PID — stops the
-tunnel and the servers it started, never the process group.
+The tunnel and every server run supervised: a signal delivered to `serve.sh`
+itself — Ctrl-C, or a `kill` by PID — stops the tunnel and the servers it
+started, never the process group, and a server that dies while serving stops
+the run rather than leaving the tunnel exposing a dead backend. A leg named
+twice, or two legs the stack maps to the same hostname or port, is refused
+before anything starts.
 Readiness waits up to `MCP_SSO_READINESS_POLLS` × 0.5 s per leg (default 120;
 provider discovery at boot can take a while).
 The client then performs discovery, registration, and authorize. **The consent

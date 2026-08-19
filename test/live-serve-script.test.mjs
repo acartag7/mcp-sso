@@ -158,15 +158,21 @@ exit 0
       await waitForFile(tunnelStarted);
       process.kill(child.pid, mode === "sigint" ? "SIGINT" : "SIGTERM");
     }
+    if (mode === "server-exit") {
+      // A server that dies while serving must stop the run: the tunnel must not
+      // keep exposing a dead backend, and cleanup must take the tunnel down.
+      await waitForFile(tunnelStarted);
+      process.kill(Number(readFileSync(join(state, `pid.${PORTS[legs[0]].gateway}`), "utf8")), "SIGTERM");
+    }
     const result = await waitForExit(child, mode);
     const expected = {
       normal: 0, failure: 7, sigint: 130, sigterm: 143, "startup-failure": 23,
-      "startup-timeout": 1, "foreign-listener": 1, "port-busy": 1,
+      "startup-timeout": 1, "foreign-listener": 1, "port-busy": 1, "server-exit": 1, "duplicate-leg": 1,
     }[mode];
     assert.deepEqual(result, { code: expected, signal: null }, `${mode}: ${stderr}`);
     const gatewayPorts = legs.map((leg) => PORTS[leg].gateway);
-    if (["startup-failure", "startup-timeout", "foreign-listener", "port-busy"].includes(mode)) {
-      assert.equal(existsSync(tunnelStarted), false, `${mode}: a failed or unproven server never starts the public tunnel`);
+    if (["startup-failure", "startup-timeout", "foreign-listener", "port-busy", "duplicate-leg"].includes(mode)) {
+      assert.equal(existsSync(tunnelStarted), false, `${mode}: a failed, unproven, or ambiguous configuration never starts the public tunnel`);
     } else {
       assert.equal(existsSync(tunnelStarted), true, `${mode}: the tunnel starts once every leg is ready`);
       const config = readFileSync(tunnelConfig, "utf8");
@@ -178,8 +184,8 @@ exit 0
       }
       assert.match(config, /- service: http_status:404\n$/);
     }
-    if (mode === "port-busy") {
-      assert.equal(existsSync(runShLog), false, "a busy port stops serve.sh before any server starts");
+    if (mode === "port-busy" || mode === "duplicate-leg") {
+      assert.equal(existsSync(runShLog), false, `${mode}: serve.sh stops before any server starts`);
     } else if (mode !== "startup-failure") {
       for (const port of gatewayPorts) {
         assert.equal(readFileSync(join(state, `terminated.${port}`), "utf8"), "terminated", `${mode}: cleanup terminated the server on ${port}`);
@@ -188,19 +194,21 @@ exit 0
       assert.deepEqual(started, legs.map((leg) => `examples/fastify-sqlite/index.ts ${leg} PORT=${PORTS[leg].gateway}`).sort());
     }
     const config = /^tunnel config: (.+)$/m.exec(stdout)?.[1];
-    if (mode !== "port-busy") {
+    if (mode !== "port-busy" && mode !== "duplicate-leg") {
       assert.ok(config, `${mode}: serve.sh printed its generated config path: ${stdout}`);
       assert.equal(existsSync(config), false, `${mode}: cleanup removed the generated tunnel config`);
     }
     assert.deepEqual(readdirSync(fixture).filter((name) => name.startsWith("mcp-sso-tunnel-")), [], `${mode}: no tunnel tempfile survives`);
-    if (!["startup-failure", "port-busy"].includes(mode)) {
+    if (!["startup-failure", "port-busy", "duplicate-leg"].includes(mode)) {
       const unrelatedPid = Number(readFileSync(bystanderPid, "utf8"));
       assert.doesNotThrow(() => process.kill(unrelatedPid, 0), `${mode}: an unrelated process in the group survived cleanup`);
       assert.equal(existsSync(bystanderSignaled), false, `${mode}: cleanup never signaled an unrelated process in the group`);
     }
-    if (mode === "sigint" || mode === "sigterm") {
+    if (["sigint", "sigterm", "server-exit"].includes(mode)) {
       assert.equal(readFileSync(tunnelStopped, "utf8"), "stopped", `${mode}: cleanup terminated the tunnel it started`);
     }
+    if (mode === "server-exit") assert.match(stderr, /exited while serving/);
+    if (mode === "duplicate-leg") assert.match(stderr, /named twice/);
     if (mode === "foreign-listener") assert.match(stderr, /is not the server just started/);
     if (mode === "port-busy") assert.match(stderr, /already has a listener/);
   } finally {
@@ -211,8 +219,10 @@ exit 0
 }
 
 test("serve.sh proves readiness of the server it started and cleans up only what it owns", async (t) => {
-  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy"]) {
+  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit"]) {
     await t.test(mode, () => runServeScenario(mode));
   }
   await t.test("two legs share one tunnel ingress and one cleanup", () => runServeScenario("normal", ["cloudflare_access", "google"]));
+  await t.test("a leg named twice is refused before anything starts", () => runServeScenario("duplicate-leg", ["entra", "entra"]));
+  await t.test("a server dying while two legs are served stops the run", () => runServeScenario("server-exit", ["cloudflare_access", "google"]));
 });

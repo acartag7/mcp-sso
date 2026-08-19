@@ -49,6 +49,17 @@ for leg in "${LEGS[@]}"; do
   HOSTS+=("${origin#https://}")
   GATEWAY_PORTS+=("$port")
 done
+# One ingress route per leg: a repeated leg, or two legs the stack maps to the
+# same hostname or port, would leave one server unreachable or bind-racing —
+# and its rows attributed to the wrong leg. Refuse before anything starts.
+for i in "${!LEGS[@]}"; do
+  for j in "${!LEGS[@]}"; do
+    [ "$i" -lt "$j" ] || continue
+    [ "${LEGS[$i]}" != "${LEGS[$j]}" ] || fail "leg ${LEGS[$i]} is named twice"
+    [ "${HOSTS[$i]}" != "${HOSTS[$j]}" ] || fail "legs ${LEGS[$i]} and ${LEGS[$j]} resolve to the same hostname"
+    [ "${GATEWAY_PORTS[$i]}" != "${GATEWAY_PORTS[$j]}" ] || fail "legs ${LEGS[$i]} and ${LEGS[$j]} resolve to the same port"
+  done
+done
 
 listener_pids() { lsof -nP -t -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | sort -u | tr '\n' ' '; }
 for port in "${GATEWAY_PORTS[@]}"; do
@@ -139,13 +150,29 @@ for i in "${!LEGS[@]}"; do
     exit "$status"
   fi
 done
-# The tunnel runs in the background and this script waits on it: `wait` is
-# interruptible, so a signal delivered to this script alone (not through the
-# terminal's process group) still runs cleanup and takes the tunnel and the
-# servers down with it. A foreground tunnel would defer the trap until it
-# exited on its own.
+# Every server proved ready above; re-check each is still alive immediately
+# before exposure, since a later leg's readiness wait may have outlived an
+# earlier leg's process.
+for i in "${!LEGS[@]}"; do
+  kill -0 "${SERVER_PIDS[$i]}" 2>/dev/null || fail "example server for leg ${LEGS[$i]} exited before the tunnel started"
+done
+
+# The tunnel runs in the background and this script supervises it and every
+# server: a signal delivered to this script alone (not through the terminal's
+# process group) still runs cleanup and takes them all down, and a server that
+# dies while serving stops the run instead of leaving the tunnel exposing a
+# dead backend. A foreground tunnel would defer the trap until it exited.
 cloudflared tunnel --config "$CONF" run "$TUNNEL" &
 TUNNEL_PID=$!
+while kill -0 "$TUNNEL_PID" 2>/dev/null; do
+  for i in "${!LEGS[@]}"; do
+    if ! kill -0 "${SERVER_PIDS[$i]}" 2>/dev/null; then
+      echo "example server for leg ${LEGS[$i]} exited while serving; stopping" >&2
+      exit 1
+    fi
+  done
+  sleep 1
+done
 wait "$TUNNEL_PID"
 status=$?
 TUNNEL_PID=""

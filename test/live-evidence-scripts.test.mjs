@@ -240,6 +240,14 @@ test("BEHAVIOUR run-support: live state is prepared under a real private parent 
     symlinkSync(join(dir, "nowhere"), previous);
     assert.throws(() => prepareLiveStateDir(root, "entra"), /not a real directory/, "a symlinked previous generation is refused, not followed");
     rmSync(previous);
+    // A rejected leaf must not have cost the retained generation first.
+    mkdirSync(previous);
+    writeFileSync(join(previous, "audit.jsonl"), "retained");
+    symlinkSync(join(dir, "nowhere"), leaf);
+    assert.throws(() => prepareLiveStateDir(root, "entra"), /not a real directory/);
+    assert.equal(readFileSync(join(previous, "audit.jsonl"), "utf8"), "retained", "both generations are inspected before either is touched");
+    rmSync(leaf);
+    rmSync(previous, { recursive: true });
     const elsewhere = join(dir, "elsewhere");
     mkdirSync(join(elsewhere, "google"), { recursive: true });
     chmodSync(elsewhere, 0o700); // owner-only, so a link to it is refused for being a link
