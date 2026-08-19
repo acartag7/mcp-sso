@@ -129,8 +129,13 @@ supplies only in stored mode (issue #280). The hosted connectors both use CIMD, 
 no available client performs DCR over an HTTPS callback. Until #280 is resolved,
 the mode difference in #278 can be shown at bridge level only.
 
-The shipped example also hardcodes `cimd.enabled`, so a CIMD-disabled deployment
-is not reachable through it — see issue #152.
+Neither registration surface can be switched off in the shipped example, so only
+one of the three intended registration shapes is reachable through it. CIMD +
+DCR is driven above. **CIMD-only** needs a `dcr.mode` that can be disabled
+(#152). **DCR-only** is supported by the library — `cimd` is optional and the
+`cimd off` cells are covered in `test/release-registration-matrix.test.ts`, where
+a CIMD client id is refused rather than routed to DCR — but the example hardcodes
+`cimd.enabled` at two composition sites, so it cannot be configured (#281).
 
 ### † Dagger note (the four 2026-07-04 rows)
 
