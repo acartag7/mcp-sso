@@ -141,8 +141,8 @@ export class CimdResolver {
 
   /** Pre-resolution `cimd:<ip>` rate-limit guard (decision 2 — OUTSIDE the
    *  anti-oracle map: a direct 429 `temporarily_unavailable`, no DNS, no
-   *  connect, no `oauth.cimd.fetch` audit). Fail-open on a limiter outage,
-   *  mirroring the existing Bridge and upstream guards. */
+   *  connect, no `oauth.cimd.fetch` audit). Fail-open: `cimd:<ip>` is a §6.7
+   *  continuity key. Per-operation — the Bridge fails CLOSED on stored DCR. */
   async #rateGuard(ip: string | undefined, limiter?: RateLimitPort): Promise<void> {
     // BOTH limiters apply — never replace. `UpstreamFlowDeps.rateLimit` is
     // independent of `BridgeDeps.rateLimit` and the upstream flow shares this
