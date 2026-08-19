@@ -74,11 +74,14 @@ How mcp-sso proves a release actually works.
 > evidence rows, zero runtime mismatches, and 12 not-applicable rows. RFC 9207
 > error redirects, scope-hierarchy handling, and narrow CIMD loopback-port
 > elasticity are closed in source. This precise mapping is **not a current-head
-> live conformance claim**: the latest live CIMD provider/client run is exact
-> runtime commit `d6143b3` from 2026-08-19, after the post-v0.3.5 hardening line
-> and across all three identity legs ([matrix](live-verification.md#matrix)), and
-> the merged head has since gained the stored-registration fail-closed runtime
-> change, which CI covers and no live run does.
+> live conformance claim**: the latest full-matrix live CIMD provider/client
+> run is exact runtime commit `d6143b3` from 2026-08-19, after the
+> post-v0.3.5 hardening line and across all three identity legs
+> ([matrix](live-verification.md#matrix)). The same day's later
+> stateless-DCR Entra/claude.ai row (`7909642` on `main`) is newer but is one
+> deployment shape, not a full matrix. The merged head has since gained the
+> stored-registration fail-closed runtime change, which CI covers and no live
+> run does.
 > See [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
 > and the append-only [spec-release receipt](#spec-release-re-verification-completed-2026-08-02).
 >
