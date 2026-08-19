@@ -653,3 +653,14 @@ prevents a client-controlled header from spreading traffic across buckets; the
 no-op limiter default still permits every request. A deployer behind a trusted
 proxy supplies an extractor wired to their actual topology (e.g. the rightmost trusted `X-Forwarded-For`
 hop, or the runtime's connection info).
+Where that shared key would bound an anonymous durable write, the option stops
+being advisory: `createOAuthApp` throws `AuthConfigError` at boot when
+`dcr.mode === "stored"` and `clientIp` is absent. Stored registration needs
+per-client `register:<ip>` keys, and the one shared `unknown` bucket turns one
+client's flood into a site-wide registration outage — the exact collision the
+adapter refuses to construct rather than warn about. Stateless DCR without
+`clientIp` still boots (the §5 composition guard governs it) but emits a
+one-time console warning stating the shared-bucket consequence; per-request
+rate limiting on a stateless bridge is defense-in-depth, not an authorization
+boundary. Fastify and Express need no equivalent option because they key on the
+framework's `req.ip`.
