@@ -382,6 +382,11 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.equal(occurrences("oauth\\.token\\.refresh", "failure"), 3,
     "the replayed predecessor, its revoked successor, and the revoked token each fail");
   assert.equal(occurrences("oauth\\.token\\.refresh", "success"), 2);
+  assert.equal(occurrences("auth\\.request", "success"), 2, "the user-token and machine-token protected calls are both required");
+  assert.equal(occurrences("auth\\.request", "failure"), 1, "the tokenless protected call is required");
+  assert.equal(occurrences("oauth\\.token\\.client_credentials", "failure"), 2, "the wrong-secret and disabled-client refusals are both required");
+  assert.match(PROBE, /const unrequired = \[\.\.\.new Set\(fileEvents\.map[\s\S]*?filter\(\(kind\) => !requiredKinds\.has\(kind\)\)/,
+    "an event kind the run emits but the flow does not name is itself a failure");
   assert.match(PROBE, /JSON\.stringify\(fileEvents\) === JSON\.stringify\(posted\)/);
   assert.match(PROBE, /\["consent signing credential", process\.env\.OAUTH_CONSENT_SIGNING_SECRET\]/);
   assert.match(PROBE, /\["signing private key", signingJwk\.d\]/, "the signing key's private component is in the leak scan");

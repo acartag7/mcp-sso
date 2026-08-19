@@ -68,6 +68,7 @@ test("probe-e2e: every row passes against a real Redis and no credential reaches
     "/oauth/revoke answers 200 and the revoked refresh token is refused as invalid_grant",
     "Redis limiter admits exactly the remaining window budget and refuses past it",
     "JSONL and webhook sinks received the same ordered events",
+    "every event kind the run emitted is named in the required flow",
     "audit sinks never published the consent signing credential",
   ]) {
     assert.match(result.stdout, new RegExp(`^PASS  ${row.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`, "m"), row);

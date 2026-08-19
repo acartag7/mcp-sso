@@ -277,23 +277,35 @@ try {
   if (!ok("JSONL and webhook sinks received the same ordered events",
     fileEvents.length > 0 && JSON.stringify(fileEvents) === JSON.stringify(posted),
     `${fileEvents.length} file rows, ${posted.length} webhook posts`)) failures++;
-  // Every step the probe exercised, in order — including the SECOND grant's
-  // identity and consent events and BOTH refresh failures the replay produces
-  // (the replayed predecessor and the successor its revocation killed). A
-  // shorter list would let a sink drop those events and still report the flow.
+  // Every step the probe exercised, in the order it exercised them: both
+  // grants, both protected-call outcomes, both machine-credential refusals,
+  // and all three refresh failures. The guard below keeps this list from
+  // drifting behind what the run actually emits.
   const requiredFlow = [
     ["oauth.register", "success"],
     ["identity.verify", "success"], ["oauth.authorize.prepare", "success"],
     ["oauth.authorize.approve", "success"], ["oauth.token.authorization_code", "success"],
-    ["auth.request", "success"],
+    ["auth.request", "success"],                    // protected /mcp with the user token
+    ["auth.request", "failure"],                    // tokenless /mcp
     ["oauth.client.provision", "success"], ["oauth.token.client_credentials", "success"],
-    ["oauth.token.client_credentials", "failure"], ["oauth.client.disable", "success"],
+    ["auth.request", "success"],                    // protected /mcp with the machine token
+    ["oauth.token.client_credentials", "failure"],  // wrong secret
+    ["oauth.client.disable", "success"],
+    ["oauth.token.client_credentials", "failure"],  // disabled credential
     ["oauth.token.refresh", "success"],
     ["oauth.token.refresh", "failure"], ["oauth.token.refresh", "failure"],
     ["identity.verify", "success"], ["oauth.authorize.prepare", "success"],
     ["oauth.authorize.approve", "success"], ["oauth.token.authorization_code", "success"],
     ["oauth.token.refresh", "success"], ["oauth.revoke", "success"], ["oauth.token.refresh", "failure"],
   ];
+  // Close the class rather than the instance: any event KIND the run emits
+  // that the required flow does not name is a gap in this receipt, so a new
+  // audit event has to be added here deliberately instead of going unnoticed.
+  const requiredKinds = new Set(requiredFlow.map(([event, status]) => `${event}/${status}`));
+  const unrequired = [...new Set(fileEvents.map((event) => `${event.event}/${event.status}`))]
+    .filter((kind) => !requiredKinds.has(kind));
+  if (!ok("every event kind the run emitted is named in the required flow",
+    unrequired.length === 0, unrequired.join(", "))) failures++;
   if (!ok("JSONL sink contains the exercised flow in order", hasOrderedFlow(fileEvents, requiredFlow))) failures++;
   if (!ok("webhook sink contains the exercised flow in order", hasOrderedFlow(posted, requiredFlow))) failures++;
   const evidence = `${JSON.stringify(fileEvents)}\n${JSON.stringify(posted)}`;
