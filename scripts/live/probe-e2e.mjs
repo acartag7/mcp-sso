@@ -25,8 +25,7 @@ import { disableMachineClient, provisionMachineClient } from "../../src/machine-
 import { SystemClock } from "../../src/ports/clock.ts";
 import { createRedisRateLimit } from "../../src/rate-limit/redis.ts";
 import {
-  containsCredential, createProbeClientStore, extractConsentToken, form, hasOrderedFlow,
-  parseJsonl, sdkPing,
+  containsCredential, createProbeClientStore, extractConsentToken, form, parseJsonl, sdkPing,
 } from "./probe-e2e-support.mjs";
 import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
 
@@ -52,8 +51,19 @@ const ISSUER = process.env.OAUTH_ISSUER;
 const RESOURCE = `${ISSUER}/mcp`;
 const SUBJECT = "live-probe-user";
 const IDENTITY_HEADER = "x-mcp-sso-probe-identity";
-const identityToken = randomBytes(24).toString("base64url");
-const collectorToken = randomBytes(24).toString("base64url");
+// Every credential this run creates or submits, recorded where it is produced
+// so the leak scan cannot fall behind the flow.
+const secrets = [];
+const secret = (label, value) => { secrets.push([label, value]); return value; };
+const identityToken = secret("probe identity token", randomBytes(24).toString("base64url"));
+const collectorToken = secret("webhook collector token", randomBytes(24).toString("base64url"));
+// Every audit event this run expects, recorded where it is caused so the
+// receipt cannot fall behind the flow either. Compared as an exact sequence.
+const expected = [];
+const expect = (event, status, times = 1) => {
+  for (let i = 0; i < times; i += 1) expected.push(`${event}/${status}`);
+};
+const SDK_AUTH_REQUESTS = 3; // initialize + notification + tool call, per session
 const identity = {
   async verify(input) {
     return input === identityToken
@@ -110,6 +120,8 @@ try {
   const clientStore = createProbeClientStore();
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const signingJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "live" };
+  secret("signing private key", signingJwk.d);
+  secret("consent signing credential", process.env.OAUTH_CONSENT_SIGNING_SECRET);
   const config = createBridgeConfig({
     issuer: ISSUER, resource: RESOURCE,
     consentSigningSecret: process.env.OAUTH_CONSENT_SIGNING_SECRET,
@@ -133,6 +145,7 @@ try {
     payload: JSON.stringify({ redirect_uris: [callback], application_type: "web" }),
   });
   const clientId = registration.statusCode === 201 ? registration.json().client_id : undefined;
+  expect("oauth.register", "success");
   if (!ok("DCR registers a client into the shipped SQLite store",
     registration.statusCode === 201 && typeof clientId === "string", `HTTP ${registration.statusCode}`)) failures++;
 
@@ -141,7 +154,7 @@ try {
    *  proved separately — a family the replay already revoked cannot show
    *  whether revoke works, and vice versa. */
   const authorizationCodeGrant = async (label, state) => {
-    const grantVerifier = `live-e2e-probe-verifier-${state}-0123456789abcdef`;
+    const grantVerifier = secret(`${label} PKCE verifier`, `live-e2e-probe-verifier-${state}-0123456789abcdef`);
     const authorize = await app.inject({
       method: "GET",
       url: `/oauth/authorize?${new URLSearchParams({
@@ -150,7 +163,9 @@ try {
       })}`,
       headers: { [IDENTITY_HEADER]: identityToken },
     });
-    const consent = authorize.statusCode === 200 ? extractConsentToken(authorize.body) : undefined;
+    expect("identity.verify", "success");
+    expect("oauth.authorize.prepare", "success");
+    const consent = secret(`${label} consent token`, authorize.statusCode === 200 ? extractConsentToken(authorize.body) : undefined);
     if (!ok(`${label}: verified identity reaches the consent page`, consent !== undefined,
       `HTTP ${authorize.statusCode}`)) failures++;
     const approve = await app.inject({
@@ -158,14 +173,18 @@ try {
       headers: { "content-type": "application/x-www-form-urlencoded", origin: ISSUER },
       payload: form({ consent_token: consent ?? "fixture-no-consent", approved: "true" }),
     });
-    const granted = approve.statusCode === 302 ? new URL(approve.headers.location).searchParams.get("code") : null;
+    expect("oauth.authorize.approve", "success");
+    const granted = secret(`${label} authorization code`, approve.statusCode === 302 ? new URL(approve.headers.location).searchParams.get("code") : null);
     if (!ok(`${label}: consent approval redirects with an authorization code`,
       typeof granted === "string" && granted.length > 0, `HTTP ${approve.statusCode}`)) failures++;
     const minted = await tokenPost(app, {
       grant_type: "authorization_code", code: granted ?? "fixture-no-code", redirect_uri: callback,
       client_id: clientId ?? "fixture-registration-failed", code_verifier: grantVerifier,
     });
+    expect("oauth.token.authorization_code", "success");
     const tokens = minted.statusCode === 200 ? minted.json() : {};
+    secret(`${label} access token`, tokens.access_token);
+    secret(`${label} refresh token`, tokens.refresh_token);
     if (!ok(`${label}: authorization_code mints access and refresh tokens`,
       typeof tokens.access_token === "string" && typeof tokens.refresh_token === "string",
       `HTTP ${minted.statusCode}`)) failures++;
@@ -179,11 +198,13 @@ try {
   // 2. The OFFICIAL MCP SDK client over a real loopback socket.
   const base = await app.listen({ host: "127.0.0.1", port: 0 });
   const userPing = await sdkPing(base, userTokens.access_token ?? "fixture-no-token");
+  expect("auth.request", "success", SDK_AUTH_REQUESTS);
   if (!ok("official SDK client completes a tool call with the user token", userPing === `pong: ${SUBJECT}`,
     userPing === undefined ? "no text content" : "tool call answered")) failures++;
   const unauthenticated = await fetch(new URL("/mcp", base), {
     method: "POST", headers: { "content-type": "application/json" }, body: "{}",
   });
+  expect("auth.request", "failure");
   if (!ok("protected /mcp refuses an unauthenticated call with the RFC 9728 challenge",
     unauthenticated.status === 401
       && /^Bearer resource_metadata="/.test(unauthenticated.headers.get("www-authenticate") ?? ""),
@@ -191,6 +212,8 @@ try {
 
   // 3. Machine-client leg: provision, mint, use, refuse a wrong secret, disable.
   const provisioned = await provisionMachineClient(machineDeps, { allowedScopes: ["mcp:read"], name: "live-probe" });
+  expect("oauth.client.provision", "success");
+  secret("machine client secret", provisioned.clientSecret);
   if (!ok("machine credential provisioned into the process-local store",
     /^mcs_[A-Za-z0-9_-]{43}$/.test(provisioned.clientSecret))) failures++;
   const machineForm = {
@@ -198,19 +221,26 @@ try {
     client_secret: provisioned.clientSecret, resource: RESOURCE, scope: "mcp:read",
   };
   const machineToken = await tokenPost(app, machineForm);
-  const machineAccess = machineToken.statusCode === 200 ? machineToken.json().access_token : undefined;
+  expect("oauth.token.client_credentials", "success");
+  const machineAccess = secret("machine access token",
+    machineToken.statusCode === 200 ? machineToken.json().access_token : undefined);
   if (!ok("client_credentials mints an access token", typeof machineAccess === "string",
     `HTTP ${machineToken.statusCode}`)) failures++;
   const machinePing = await sdkPing(base, machineAccess ?? "fixture-no-token");
+  expect("auth.request", "success", SDK_AUTH_REQUESTS);
   if (!ok("official SDK client completes a tool call with the machine token",
     machinePing === `pong: ${provisioned.clientId}`,
     machinePing === undefined ? "no text content" : "tool call answered")) failures++;
-  const wrongSecret = await tokenPost(app, { ...machineForm, client_secret: `mcs_${"A".repeat(43)}` });
+  const rejectedSecret = secret("rejected machine client secret", `mcs_${"A".repeat(43)}`);
+  const wrongSecret = await tokenPost(app, { ...machineForm, client_secret: rejectedSecret });
+  expect("oauth.token.client_credentials", "failure");
   if (!ok("a wrong client_secret is refused as invalid_client",
     wrongSecret.statusCode === 401 && wrongSecret.json().error === "invalid_client",
     `HTTP ${wrongSecret.statusCode}`)) failures++;
   const disabled = await disableMachineClient(machineDeps, provisioned.clientId);
+  expect("oauth.client.disable", "success");
   const afterDisable = await tokenPost(app, machineForm);
+  expect("oauth.token.client_credentials", "failure");
   if (!ok("a disabled credential is refused as invalid_client",
     disabled.clientId === provisioned.clientId
       && afterDisable.statusCode === 401 && afterDisable.json().error === "invalid_client",
@@ -223,12 +253,15 @@ try {
     grant_type: "refresh_token", refresh_token: token ?? "fixture-no-refresh", client_id: clientId,
   });
   const refreshed = await refresh(userTokens.refresh_token);
+  expect("oauth.token.refresh", "success");
   const rotatedTokens = refreshed.statusCode === 200 ? refreshed.json() : {};
-  const rotated = rotatedTokens.refresh_token;
+  const rotated = secret("replay family rotated refresh token", rotatedTokens.refresh_token);
+  secret("replay family rotated access token", rotatedTokens.access_token);
   if (!ok("refresh rotates the refresh token",
     typeof rotated === "string" && rotated !== userTokens.refresh_token, `HTTP ${refreshed.statusCode}`)) failures++;
   const replayed = await refresh(userTokens.refresh_token);
   const afterReplay = await refresh(rotated);
+  expect("oauth.token.refresh", "failure", 2);
   if (!ok("replaying a consumed refresh token is refused and revokes its whole family",
     replayed.statusCode === 400 && replayed.json().error === "invalid_grant"
       && afterReplay.statusCode === 400 && afterReplay.json().error === "invalid_grant",
@@ -238,8 +271,10 @@ try {
   // revoked, so it could not tell a working revoke endpoint from a broken one.
   const revocationTokens = await authorizationCodeGrant("revocation family", "live-e2e-revoke");
   const revocationRefreshed = await refresh(revocationTokens.refresh_token);
+  expect("oauth.token.refresh", "success");
   const revocationRotatedTokens = revocationRefreshed.statusCode === 200 ? revocationRefreshed.json() : {};
-  const revocationRotated = revocationRotatedTokens.refresh_token;
+  const revocationRotated = secret("revocation family rotated refresh token", revocationRotatedTokens.refresh_token);
+  secret("revocation family rotated access token", revocationRotatedTokens.access_token);
   if (!ok("the revocation family rotates before it is revoked",
     typeof revocationRotated === "string" && revocationRotated !== revocationTokens.refresh_token,
     `HTTP ${revocationRefreshed.statusCode}`)) failures++;
@@ -248,7 +283,9 @@ try {
     headers: { "content-type": "application/x-www-form-urlencoded" },
     payload: form({ token: revocationRotated ?? "fixture-no-refresh" }),
   });
+  expect("oauth.revoke", "success");
   const afterRevoke = await refresh(revocationRotated);
+  expect("oauth.token.refresh", "failure");
   if (!ok("/oauth/revoke answers 200 and the revoked refresh token is refused as invalid_grant",
     revoke.statusCode === 200 && afterRevoke.statusCode === 400 && afterRevoke.json().error === "invalid_grant",
     `HTTP ${revoke.statusCode} then ${afterRevoke.statusCode}`)) failures++;
@@ -264,6 +301,7 @@ try {
     if (response.statusCode === 429) limited++;
     else admitted++;
   }
+  expect("oauth.token.client_credentials", "failure", admitted);
   if (!ok("Redis limiter admits exactly the remaining window budget and refuses past it",
     admitted === remainingBudget && limited === 2,
     `${admitted}/${remainingBudget} admitted, ${limited} refused with 429`)) failures++;
@@ -277,62 +315,19 @@ try {
   if (!ok("JSONL and webhook sinks received the same ordered events",
     fileEvents.length > 0 && JSON.stringify(fileEvents) === JSON.stringify(posted),
     `${fileEvents.length} file rows, ${posted.length} webhook posts`)) failures++;
-  // Every step the probe exercised, in the order it exercised them: both
-  // grants, both protected-call outcomes, both machine-credential refusals,
-  // and all three refresh failures. The guard below keeps this list from
-  // drifting behind what the run actually emits.
-  const requiredFlow = [
-    ["oauth.register", "success"],
-    ["identity.verify", "success"], ["oauth.authorize.prepare", "success"],
-    ["oauth.authorize.approve", "success"], ["oauth.token.authorization_code", "success"],
-    ["auth.request", "success"],                    // protected /mcp with the user token
-    ["auth.request", "failure"],                    // tokenless /mcp
-    ["oauth.client.provision", "success"], ["oauth.token.client_credentials", "success"],
-    ["auth.request", "success"],                    // protected /mcp with the machine token
-    ["oauth.token.client_credentials", "failure"],  // wrong secret
-    ["oauth.client.disable", "success"],
-    ["oauth.token.client_credentials", "failure"],  // disabled credential
-    ["oauth.token.refresh", "success"],
-    ["oauth.token.refresh", "failure"], ["oauth.token.refresh", "failure"],
-    ["identity.verify", "success"], ["oauth.authorize.prepare", "success"],
-    ["oauth.authorize.approve", "success"], ["oauth.token.authorization_code", "success"],
-    ["oauth.token.refresh", "success"], ["oauth.revoke", "success"], ["oauth.token.refresh", "failure"],
-  ];
-  // Close the class rather than the instance: any event KIND the run emits
-  // that the required flow does not name is a gap in this receipt, so a new
-  // audit event has to be added here deliberately instead of going unnoticed.
-  const requiredKinds = new Set(requiredFlow.map(([event, status]) => `${event}/${status}`));
-  const unrequired = [...new Set(fileEvents.map((event) => `${event.event}/${event.status}`))]
-    .filter((kind) => !requiredKinds.has(kind));
-  if (!ok("every event kind the run emitted is named in the required flow",
-    unrequired.length === 0, unrequired.join(", "))) failures++;
-  if (!ok("JSONL sink contains the exercised flow in order", hasOrderedFlow(fileEvents, requiredFlow))) failures++;
-  if (!ok("webhook sink contains the exercised flow in order", hasOrderedFlow(posted, requiredFlow))) failures++;
+  // The receipt is the sequence the run recorded as it happened, compared
+  // exactly — not a hand-written subsequence that can fall behind the flow in
+  // either kind or count.
+  const observedKinds = fileEvents.map((event) => `${event.event}/${event.status}`);
+  if (!ok("the audit sinks contain exactly the events this run caused, in order",
+    JSON.stringify(observedKinds) === JSON.stringify(expected),
+    `${observedKinds.length} emitted vs ${expected.length} expected`)) failures++;
   const evidence = `${JSON.stringify(fileEvents)}\n${JSON.stringify(posted)}`;
   // Every value the run minted, not a sample of them: a sink that publishes a
   // token missing from this list would leave all the rows green.
-  const credentials = [
-    ["replay-family consent token", consentToken],
-    ["replay-family authorization code", code],
-    ["replay-family PKCE verifier", verifier],
-    ["replay-family access token", userTokens.access_token],
-    ["replay-family refresh token", userTokens.refresh_token],
-    ["replay-family rotated access token", rotatedTokens.access_token],
-    ["replay-family rotated refresh token", rotated],
-    ["revocation-family consent token", revocationTokens.consent],
-    ["revocation-family authorization code", revocationTokens.code],
-    ["revocation-family PKCE verifier", revocationTokens.verifier],
-    ["revocation-family access token", revocationTokens.access_token],
-    ["revocation-family refresh token", revocationTokens.refresh_token],
-    ["revocation-family rotated access token", revocationRotatedTokens.access_token],
-    ["revocation-family rotated refresh token", revocationRotated],
-    ["machine client secret", provisioned.clientSecret],
-    ["machine access token", machineAccess],
-    ["probe identity token", identityToken],
-    ["webhook collector token", collectorToken],
-    ["consent signing credential", process.env.OAUTH_CONSENT_SIGNING_SECRET],
-    ["signing private key", signingJwk.d],
-  ];
+  // The registry, not a second hand-written list: every credential the run
+  // created or submitted was recorded where it was produced.
+  const credentials = secrets;
   for (const [name, value] of credentials) {
     if (!ok(`audit sinks never published the ${name}`, !containsCredential(evidence, [value]))) failures++;
   }

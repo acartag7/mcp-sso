@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
-  containsCredential, createProbeClientStore, extractConsentToken, hasOrderedFlow, parseJsonl,
+  containsCredential, createProbeClientStore, extractConsentToken, parseJsonl,
 } from "../scripts/live/probe-e2e-support.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -319,17 +319,6 @@ test("BEHAVIOUR e2e support: the probe client store, consent parser, flow matche
   assert.equal(extractConsentToken("<html>no form</html>"), undefined);
   assert.equal(extractConsentToken(undefined), undefined);
 
-  const events = [
-    { event: "oauth.register", status: "success" }, { event: "oauth.token.client_credentials", status: "failure" },
-    { event: "auth.request", status: "success" }, { event: "oauth.revoke", status: "success" },
-  ];
-  assert.equal(hasOrderedFlow(events, [["oauth.register", "success"], ["auth.request", "success"], ["oauth.revoke", "success"]]), true);
-  assert.equal(hasOrderedFlow(events, [["auth.request", "success"], ["oauth.register", "success"]]), false, "order matters");
-  assert.equal(hasOrderedFlow(events, [["oauth.token.client_credentials", "success"]]), false, "status matters");
-  assert.equal(hasOrderedFlow(events, [["auth.request", "success"], ["auth.request", "success"]]), false, "each step needs its own event");
-  assert.equal(hasOrderedFlow([], []), true);
-  assert.equal(hasOrderedFlow("nope", []), false);
-
   assert.deepEqual(parseJsonl('{"a":1}\n{"b":2}\n'), [{ a: 1 }, { b: 2 }]);
   assert.deepEqual(parseJsonl(""), []);
   assert.throws(() => parseJsonl('{"a":1}\nnot json\n'), "a malformed line is a failure, not a skip");
@@ -370,35 +359,34 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.match(PROBE, /createRedisRateLimit\(redis/);
   assert.match(PROBE, /new JsonlFileAudit\(jsonlPath\)/);
   assert.match(PROBE, /new WebhookAudit\(/);
-  assert.match(PROBE, /hasOrderedFlow\(fileEvents, requiredFlow\)[\s\S]*?hasOrderedFlow\(posted, requiredFlow\)/);
-  // The required sequence must cover BOTH grants (two identity/consent runs)
-  // and BOTH refresh failures the replay produces.
-  const flow = /const requiredFlow = \[[\s\S]*?\n  \];/.exec(PROBE)?.[0] ?? "";
-  const occurrences = (event, status) => (flow.match(new RegExp(`\\["${event}", "${status}"\\]`, "g")) ?? []).length;
-  assert.equal(occurrences("identity\\.verify", "success"), 2, "both grants' identity verifications are required");
-  assert.equal(occurrences("oauth\\.authorize\\.prepare", "success"), 2);
-  assert.equal(occurrences("oauth\\.authorize\\.approve", "success"), 2);
-  assert.equal(occurrences("oauth\\.token\\.authorization_code", "success"), 2);
-  assert.equal(occurrences("oauth\\.token\\.refresh", "failure"), 3,
-    "the replayed predecessor, its revoked successor, and the revoked token each fail");
-  assert.equal(occurrences("oauth\\.token\\.refresh", "success"), 2);
-  assert.equal(occurrences("auth\\.request", "success"), 2, "the user-token and machine-token protected calls are both required");
-  assert.equal(occurrences("auth\\.request", "failure"), 1, "the tokenless protected call is required");
-  assert.equal(occurrences("oauth\\.token\\.client_credentials", "failure"), 2, "the wrong-secret and disabled-client refusals are both required");
-  assert.match(PROBE, /const unrequired = \[\.\.\.new Set\(fileEvents\.map[\s\S]*?filter\(\(kind\) => !requiredKinds\.has\(kind\)\)/,
-    "an event kind the run emits but the flow does not name is itself a failure");
-  assert.match(PROBE, /JSON\.stringify\(fileEvents\) === JSON\.stringify\(posted\)/);
-  assert.match(PROBE, /\["consent signing credential", process\.env\.OAUTH_CONSENT_SIGNING_SECRET\]/);
-  assert.match(PROBE, /\["signing private key", signingJwk\.d\]/, "the signing key's private component is in the leak scan");
-  // Every value the run mints is scanned, not a sample: each grant's consent
-  // token, code, verifier, access and refresh token, and each refresh
-  // response's rotated pair.
-  for (const family of ["replay", "revocation"]) {
-    for (const part of ["consent token", "authorization code", "PKCE verifier", "access token",
-      "refresh token", "rotated access token", "rotated refresh token"]) {
-      assert.match(PROBE, new RegExp(`\\["${family}-family ${part}",`), `${family} family: ${part} is scanned`);
-    }
+  // The receipt and the leak scan are RECORDED as the run happens, not
+  // hand-listed: expectations are pushed where each action occurs, credentials
+  // where each is produced, and both are then compared exactly. That is what
+  // stops either from falling behind the flow.
+  assert.match(PROBE, /const credentials = secrets;/, "the leak scan is the registry, not a second list");
+  assert.doesNotMatch(PROBE, /const requiredFlow = \[/, "no hand-written event list survives");
+  assert.match(PROBE, /JSON\.stringify\(observedKinds\) === JSON\.stringify\(expected\)/,
+    "the emitted sequence is compared exactly, in order and in count");
+  assert.match(PROBE, /expect\("auth\.request", "success", SDK_AUTH_REQUESTS\)/,
+    "each SDK session's full set of protected-call events is expected");
+  assert.equal((PROBE.match(/expect\("auth\.request", "success", SDK_AUTH_REQUESTS\)/g) ?? []).length, 2,
+    "both SDK sessions");
+  assert.match(PROBE, /expect\("auth\.request", "failure"\)/);
+  assert.match(PROBE, /expect\("oauth\.token\.client_credentials", "failure", admitted\)/,
+    "the limiter burst's admitted calls are accounted for");
+  assert.match(PROBE, /const rejectedSecret = secret\("rejected machine client secret"/,
+    "the submitted-and-rejected secret is registered, not only the minted one");
+  for (const registered of ["probe identity token", "webhook collector token", "signing private key",
+    "consent signing credential", "machine client secret", "machine access token",
+    "replay family rotated refresh token", "revocation family rotated access token"]) {
+    assert.match(PROBE, new RegExp(`secret\\("${registered}"`), `${registered} is registered`);
   }
+  // Both grants register their own consent token, code, verifier, access and
+  // refresh token through the labelled helper.
+  for (const part of ["consent token", "authorization code", "PKCE verifier", "access token", "refresh token"]) {
+    assert.match(PROBE, new RegExp("secret\\(`\\$\\{label\\} " + part + "`"), `each grant registers its ${part}`);
+  }
+  assert.match(PROBE, /JSON\.stringify\(fileEvents\) === JSON\.stringify\(posted\)/);
   assert.match(PROBE, /redis\.on\("error", \(\) => \{\}\)/, "ioredis must not print the host and port itself");
   assert.doesNotMatch(PROBE, /console\.(?:log|warn|error)\([^\n]*(?:Secret|secret|Token|token|clientSecret|OAUTH_|REDIS_URL|error|message)/i);
   assert.doesNotMatch(PROBE, /OAUTH_CONSENT_SIGNING_SECRET[^\n]*(?:slice|substring|substr)/);

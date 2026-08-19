@@ -49,20 +49,6 @@ export function extractConsentToken(html) {
 /** URL-encoded form body for the token, approve, and revoke routes. */
 export const form = (params) => new URLSearchParams(params).toString();
 
-/** True when `required` ([event, status] pairs) appears in `events` in order,
- *  possibly interleaved with other events. Counts alone cannot see a missing
- *  step; this is the shape both audit sinks must satisfy. */
-export function hasOrderedFlow(events, required) {
-  if (!Array.isArray(events) || !Array.isArray(required)) return false;
-  let next = 0;
-  for (const entry of events) {
-    if (next === required.length) break;
-    if (entry !== null && typeof entry === "object"
-      && entry.event === required[next][0] && entry.status === required[next][1]) next++;
-  }
-  return next === required.length;
-}
-
 /** Parse a JSONL audit file; a malformed line is a parse failure, not a skip. */
 export function parseJsonl(text) {
   if (typeof text !== "string" || text.trim() === "") return [];
