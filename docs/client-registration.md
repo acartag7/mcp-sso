@@ -118,9 +118,10 @@ OAUTH_DCR_MODE=stored
 OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
 ```
 
-Do not put a bare loopback origin into the stateless production composition.
-The boot guard rejects that reusable trust shape by design, even when the same
-additive allowlist also contains an application-specific HTTPS callback. Stored
+Do not put a loopback entry into the stateless production composition — root or
+path, `http` or `https`. The boot guard rejects that reusable trust shape by
+design, even when the same additive allowlist also contains an
+application-specific HTTPS callback. Stored
 DCR narrows the runtime decision back to the concrete callback saved for each
 native client. The API-key gateway example does not consume `OAUTH_DCR_MODE`;
 give a custom gateway composition its own shared `ClientStore` when it needs the

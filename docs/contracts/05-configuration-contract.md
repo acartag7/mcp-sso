@@ -214,14 +214,23 @@ handling because it persists nothing.
 Stateless DCR retains its existing composition rule. `Bridge` rejects the shape
 where all three conditions hold: DCR is stateless, no bounded `RateLimitPort` was
 supplied, and `redirectAllowlist` adds no application-specific HTTPS redirect
-trust beyond the hosted defaults and the explicit loopback starter origins
-(`localhost`, `127.0.0.1`, `[::1]`). A bridge whose issuer and resource are both
-loopback URLs under `dev.allowInsecureLocalhost` is local-only and does not need
-that internet-facing mitigation. Each stateless choice remains available
-separately; the unbounded, broadly reusable starter combination is not a valid
-composition. Adding an application callback does not mitigate a generic
-loopback origin that remains in the same additive allowlist; that mixed
-allowlist is still rejected.
+trust beyond the hosted defaults and the retained loopback starter entries. A
+loopback entry is starter trust regardless of its path, port, or scheme: any
+redirect entry whose host is `localhost`, `127.0.0.1`, or `[::1]` — root,
+`http://localhost:4321/callback`, `https://localhost/callback`, any spelling
+those hosts admit without a query or fragment — counts as retained starter
+trust and never as application-specific trust. The §10.0 grammar admits
+loopback entries with paths because native CLI clients choose their callback
+path at runtime; this guard is what keeps that admitted shape from silently
+re-widening the starter trust. An `https` loopback entry is not an
+application-specific HTTPS callback: its host is the developer's own machine,
+and its authority is the starter's, not an application's. A bridge whose issuer
+and resource are both loopback URLs under `dev.allowInsecureLocalhost` is
+local-only and does not need that internet-facing mitigation. Each stateless
+choice remains available separately; the unbounded, broadly reusable starter
+combination is not a valid composition. Adding an application callback does not
+mitigate a generic loopback entry that remains in the same additive allowlist;
+that mixed allowlist is still rejected.
 `Bridge` snapshots `config`, `rateLimit`, the acknowledgement, and its remaining
 dependencies once, then runs the check and constructs every use-case from that
 same snapshot. Accessor-backed input therefore cannot present one composition to
@@ -311,3 +320,16 @@ This is a deliberate boot-breaking change approved by owner decision **B1** on
 `noopRateLimit` must add a bounded port before upgrading. There is no
 acknowledgement escape hatch and the existing stateless acknowledgement is not
 widened.
+
+**Loopback starter trust is path-independent** (owner decision, 2026-08-19).
+The guard's loopback predicate previously matched only root-path entries, so
+two compositions booted that the rule's own wording did not intend to admit:
+an application-specific HTTPS callback sitting alongside a loopback entry with
+a path (the exact native-CLI callback shape
+`http://localhost:4321/callback`), and an `https` loopback entry with a path
+as the only entry, which the predicate mis-filed as application-specific HTTPS
+trust. Both now fail the stateless guard until a bounded limiter is supplied
+or the starter risk is acknowledged. Existing stateless compositions whose
+allowlists mix an application callback with a loopback entry carrying a path
+must add a limiter before upgrading; the acknowledgement escape hatch and its
+loopback-only restriction are unchanged.
