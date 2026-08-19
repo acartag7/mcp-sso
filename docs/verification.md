@@ -67,8 +67,11 @@ How mcp-sso proves a release actually works.
 >
 > Device flow §17.3 and the dedicated GitHub port in §17.6 remain contract-only,
 > not release claims. Historical Cloudflare Access, Entra, and Google evidence is
-> retained; a second non-Google generic-OIDC issuer, the Entra deny/ceiling live
-> sweep, and current-head live CIMD re-verification remain pending.
+> retained. Current-head live CIMD re-verification was completed on 2026-08-19
+> across all three identity legs. Of the Entra deny/ceiling sweep, the no-group,
+> no-mapped-group, and group-overage cases were driven that day; wrong-tenant,
+> allowlist, and guest/B2B were not. A second non-Google generic-OIDC issuer
+> remains undriven.
 
 Three tiers:
 
@@ -889,8 +892,9 @@ MANUAL maintainer receipt — not automated and not CI-enforced. Checked against
   §9 bridge contract, §16 matrix, §17 CIMD citation, this receipt, and the
   contributor-facing status were updated.
 
-**Verdict:** final checked, but MCP Authorization 2026-07-28 conformance remains
-pending on three known items:
+**Verdict (as of 2026-08-02; all three items have since been closed — see the
+status section below, which supersedes this list):** final checked, but MCP
+Authorization 2026-07-28 conformance remained pending on three known items:
 
 1. **RFC 9207 error responses.** `src/challenge.ts` builds
    `error`/`state`/`error_description` redirects without `iss`;
@@ -1019,9 +1023,20 @@ row. Published v0.3.5 packages that work without making a published-artifact
 conformance claim; published v0.3.4 retains its earlier baseline. The
 post-v0.3.5 status is canonicalized at the top of this document and does not
 upgrade the dated live evidence.
-Historical Codex CLI success remains recorded. Installed Codex CLI 0.144.1
-showed an RFC 9207 `iss` callback regression on 2026-07-28, and published
-v0.3.5's production Fastify/SQLite composition does not expose the stored-DCR
-mode required by current ephemeral loopback callbacks. Current compatibility
-therefore awaits both an upstream callback retest and live verification of the
-unreleased stored-DCR example wiring.
+Historical Codex CLI success remains recorded, and the compatibility gap this
+block previously described is closed. Installed Codex CLI 0.144.1 showed an
+RFC 9207 `iss` callback regression on 2026-07-28, and published v0.3.5's
+production Fastify/SQLite composition does not expose the stored-DCR mode that
+current ephemeral loopback callbacks require.
+
+Both conditions were retested on 2026-08-19 at runtime commit `d6143b3`: Codex
+CLI `0.148.0` — a stable release, not a pre-release — completed all three
+identity legs, and the stored-DCR example wiring was live-driven rather than
+merely implemented. That wiring ships in v0.4.0, so it is no longer unreleased.
+
+Two limits on that result, stated so the row is not read as more than it is.
+Both this library and the client changed between the two observations, so a clear
+run is not evidence that a change here fixed the client regression. And the
+client build is recorded on the operator's authority, because the clients were
+driven from a different machine than the one holding this checkout; the receipts
+are in [`live-verification.md`](live-verification.md#matrix).
