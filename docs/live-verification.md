@@ -38,7 +38,7 @@ checklist.
 | --- | --- | --- |
 | Patched, uncommitted checkout based on `ee8994a` (2026-07-26/27) | Observed CIMD happy paths with Cloudflare Access, Entra ID, and Google; refresh rotation plus replay/family revocation; retained audit-log search found no backend credential. | Historical observation only: the exact dirty tree was neither committed nor archived, so this campaign does not satisfy the minimum live-row evidence contract and does not qualify as verified. |
 | Clean `main` at `e71a2bb` (2026-07-28) | Three metadata/tokenless-challenge probes and DCR registrations; Cloudflare Access path gating; Entra- and Google-configured gateways resolving a public CIMD document to their authorization redirects; CIMD rejection of literal IP, DNS rebinding, DNS failure, non-200 response, wrong content type, oversized body, and timeout. See the [sanitized receipt](#clean-main-rerun-receipt-2026-07-28). | Browser completion stopped before identity and consent; the exact-runtime campaign below completed those legs. |
-| Exact runtime commit `af2a61f` (2026-07-28) | Claude Code 2.1.220 completed CIMD authorization and protected `status` calls with Cloudflare Access, Entra ID, and Google. A corrected refresh harness proved A→B→C rotation, HTTP 400 `invalid_grant` on replayed A, then HTTP 400 `invalid_grant` on current C. Audit and retained client-result scans found zero backend-credential matches. See the [sanitized receipt](#exact-runtime-live-receipt-2026-07-28). | Entra deny/ceiling cases and the older claude.ai/ChatGPT CIMD observations remain pending as reproducible rows. |
+| Exact runtime commit `af2a61f` (2026-07-28) | Claude Code 2.1.220 completed CIMD authorization and protected `status` calls with Cloudflare Access, Entra ID, and Google. A corrected refresh harness proved A→B→C rotation, HTTP 400 `invalid_grant` on replayed A, then HTTP 400 `invalid_grant` on current C. Audit and retained client-result scans found zero backend-credential matches. See the [sanitized receipt](#exact-runtime-live-receipt-2026-07-28). | The claude.ai and ChatGPT CIMD observations were re-driven on a committed runtime in the 2026-08-19 campaign and are now verified rows. Of the Entra deny/ceiling cases, no-group, no-mapped-group, and group-overage were driven on 2026-08-19; wrong-tenant, allowlist, and guest/B2B remain pending. |
 
 No secrets, tenant/team identifiers, provider subjects, or deployment URLs from
 these campaigns are retained in this public record.
@@ -98,10 +98,13 @@ only. Provider secrets and identifiers remained in private environment files.
 
 | Cloudflare Access, Entra ID, Google (all three production identity legs) | Claude Code, Codex CLI, ChatGPT connector, claude.ai connector | register (CIMD and DCR) → authorize → provider identity → consent → token → `/mcp`; refresh rotation and revocation exercised | ✅ | 2026-08-19 | Full client matrix at exact runtime commit `d6143b3`, three legs behind one named tunnel via `scripts/live/serve.sh`. Eleven complete flows: four on Cloudflare Access, four on Entra, three on Google — each audit-confirmed as approve→token. A non-admitted Cloudflare account was stopped at the Access edge with **no** audit row on the gateway, which is that case's pass condition. `oauth.token.refresh` on all three legs and `oauth.revoke` on Entra were exercised by the clients unprompted. |
 
-**Current Codex CLI caveat (2026-07-28):** the installed 0.144.1 client showed
-an RFC 9207 `iss` callback regression. This does not invalidate the dated
-historical success row, but compatibility with that current client version is
-pending upstream resolution and retest.
+**Codex CLI regression — retested and clear (2026-08-19):** the 0.144.1 client
+observed on 2026-07-28 showed an RFC 9207 `iss` callback regression. Codex CLI
+`0.147.0-alpha.1` completed all three identity legs at exact runtime commit
+`d6143b3`, so that regression no longer reproduces on the tested client. The
+2026-07-28 note is retained above as history; it is not an open caveat. Client
+versions driven in the 2026-08-19 campaign: Codex CLI `0.147.0-alpha.1` and
+Claude Code `2.1.235`.
 
 ### † Dagger note (the four 2026-07-04 rows)
 
