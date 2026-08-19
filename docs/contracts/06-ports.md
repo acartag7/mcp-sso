@@ -615,7 +615,12 @@ what the operation does:
   required to start, and an unavailable port must not silently restore the
   unbounded anonymous durable-write path that rule exists to close.
 - **Every other key retains fail-open** — `authorize`, `approve`, `token`,
-  `revoke`, `upstream`, `cimd`, and pairing. A rate-limiter outage must not lock
+  `revoke`, `upstream`, `cimd`, pairing, **and `register:<ip>` when
+  `dcr.mode === "stateless"`**. Stateless registration is named explicitly
+  because the key alone does not decide the direction: stateless registration
+  persists nothing, so it is not in the durable-write class and must not be
+  refused on a limiter outage. An implementation that keys on the `register:`
+  prefix rather than on `dcr.mode` is wrong. A rate-limiter outage must not lock
   existing clients out of a working deployment; for these operations runtime
   rate limiting remains defense-in-depth, not an authorization boundary.
 

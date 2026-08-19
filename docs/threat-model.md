@@ -463,8 +463,10 @@ deployer acts on.
   instances. A proxy-only budget does not satisfy stored-DCR boot: the bridge
   must receive a bounded port. Custom ports that always allow registration are
   nonconforming, and port-store throws retain the §6.7 outage direction for
-  the key involved — fail-open for the continuity keys, and fail-closed for
-  stored-DCR `register:<ip>` once the 2026-08-19 contract change is implemented.
+  the key involved — fail-open for the continuity keys and for `register:<ip>`
+  under stateless DCR, which persists nothing, and fail-closed for `register:<ip>`
+  under **stored** DCR once the 2026-08-19 contract change is implemented. The
+  mode decides the direction, not the key name.
 - **Single-node store is not HA** (memory is process-local; sqlite is one file).
   The pooled `MysqlStore` (`/store/mysql`, v0.1.2) is the scale path to a shared
   DB. Under concurrent `/oauth/token` load a fixed-size pool can be saturated:
