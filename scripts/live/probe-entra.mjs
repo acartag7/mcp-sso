@@ -4,14 +4,12 @@
 import {
   buildExample, entraGroupAuthorizationFromEnv,
 } from "../../examples/fastify-sqlite/app.ts";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { generateKeyPair, SignJWT } from "jose";
 import {
   assertGroupAuthorizationMapping, createEntraRedirectIdentity, entraIssuer, entraJwksUrl,
 } from "../../src/identity/entra.ts";
 import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
+import { createDisposableProbeState } from "./probe-state-support.mjs";
 import {
   countUsableRs256Keys, fetchJson, hasExpectedSignedFlowLifetime,
   matchesUpstreamCookieProfile, upstreamCookieValue,
@@ -60,14 +58,13 @@ try {
 
 let app;
 let store;
-let stateDir;
+let disposable;
 
 try {
-  stateDir = await mkdtemp(join(tmpdir(), "mcp-sso-live-entra-"));
+  disposable = await createDisposableProbeState("mcp-sso-live-entra-");
   const isolatedEnv = {
     ...process.env,
-    MCP_SSO_DIR: stateDir,
-    OAUTH_SQLITE_FILE: join(stateDir, "auth.db"),
+    ...disposable.env,
   };
   const built = await buildExample(isolatedEnv);
   app = built.app;
@@ -221,9 +218,9 @@ try {
       out.push("FAIL  probe store cleanup failed");
     }
   }
-  if (stateDir !== undefined) {
+  if (disposable !== undefined) {
     try {
-      await rm(stateDir, { recursive: true, force: true });
+      await disposable.dispose();
     } catch {
       failures++;
       out.push("FAIL  probe state cleanup failed");

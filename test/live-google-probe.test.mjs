@@ -91,14 +91,17 @@ test("Google probe contains no generic OIDC or synthetic claim PASS rows", () =>
 });
 
 test("Google DCR state is disposable and output is identifier-free on every exit", () => {
-  const stateAt = PROBE.indexOf('await mkdtemp(join(tmpdir(), "mcp-sso-live-google-"))');
+  // The state helper's behaviour (a directory the library can create, disposed
+  // with its container) is exercised in test/live-evidence-scripts.test.mjs.
+  const stateAt = PROBE.indexOf('await createDisposableProbeState("mcp-sso-live-google-")');
   const buildAt = PROBE.indexOf("await buildExample(isolatedEnv)");
   const closeAt = PROBE.indexOf("await app.close()");
   const storeCloseAt = PROBE.indexOf("await store.close()");
-  const removeAt = PROBE.indexOf("await rm(stateDir, { recursive: true, force: true })");
+  const removeAt = PROBE.indexOf("await disposable.dispose()");
   assert.ok(stateAt >= 0 && stateAt < buildAt);
   assert.ok(closeAt >= 0 && closeAt < storeCloseAt && storeCloseAt < removeAt);
-  assert.match(PROBE, /MCP_SSO_DIR: stateDir,[\s\S]*?OAUTH_SQLITE_FILE: join\(stateDir, "auth\.db"\)/);
+  assert.match(PROBE, /ENTRA_TENANT_ID: undefined,[\s\S]*?CF_ACCESS_AUDIENCE: undefined,[\s\S]*?OIDC_ISSUER: undefined,\n\s*\.\.\.disposable\.env,/);
+  assert.doesNotMatch(PROBE, /mkdtemp|MCP_SSO_DIR: stateDir/);
   assert.match(PROBE, /catch \{[\s\S]*?FAIL  probe aborted before completion[\s\S]*?finally \{/);
   assert.match(PROBE, /} catch \{\s*failures\+\+;\s*out\.push\("FAIL  probe aborted before completion"\)/);
   assert.match(PROBE, /catch \{\s*failures\+\+;\s*out\.push\("FAIL  probe cleanup failed"\)/);

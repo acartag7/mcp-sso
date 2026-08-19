@@ -1,14 +1,12 @@
 // Live Google discovery and authorization-redirect proof against the shipped
 // Fastify/SQLite example. Credentials are supplied out of band and no value or
 // provider identifier is written to output.
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { buildExample } from "../../examples/fastify-sqlite/app.ts";
 import { pkceChallenge } from "../../src/crypto.ts";
 import { GOOGLE_ISSUER } from "../../src/identity/google.ts";
 import { defaultDiscoveryTransport } from "../../src/identity/generic-oidc-discovery.ts";
 import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
+import { createDisposableProbeState } from "./probe-state-support.mjs";
 import { countUsableRs256Keys, fetchJson } from "./probe-entra-support.mjs";
 import { resolveFetchedGoogleDiscovery } from "./probe-google-support.mjs";
 
@@ -35,17 +33,16 @@ const ok = (label, condition, detail = "") => {
 let failures = 0;
 let app;
 let store;
-let stateDir;
+let disposable;
 
 try {
-  stateDir = await mkdtemp(join(tmpdir(), "mcp-sso-live-google-"));
+  disposable = await createDisposableProbeState("mcp-sso-live-google-");
   const isolatedEnv = {
     ...process.env,
     ENTRA_TENANT_ID: undefined,
     CF_ACCESS_AUDIENCE: undefined,
     OIDC_ISSUER: undefined,
-    MCP_SSO_DIR: stateDir,
-    OAUTH_SQLITE_FILE: join(stateDir, "auth.db"),
+    ...disposable.env,
   };
   // This factory call uses createGoogleIdentity's default discovery transport.
   const built = await buildExample(isolatedEnv);
@@ -140,9 +137,9 @@ try {
       out.push("FAIL  probe store cleanup failed");
     }
   }
-  if (stateDir !== undefined) {
+  if (disposable !== undefined) {
     try {
-      await rm(stateDir, { recursive: true, force: true });
+      await disposable.dispose();
     } catch {
       failures++;
       out.push("FAIL  probe state cleanup failed");

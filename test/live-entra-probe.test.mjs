@@ -156,16 +156,19 @@ test("Entra mapping preflight accepts every runtime-valid cardinality", () => {
 });
 
 test("Entra DCR registration uses disposable state on every exit", () => {
-  const stateAt = PROBE.indexOf('await mkdtemp(join(tmpdir(), "mcp-sso-live-entra-"))');
+  // The state helper's behaviour (a directory the library can create, disposed
+  // with its container) is exercised in test/live-evidence-scripts.test.mjs.
+  const stateAt = PROBE.indexOf('await createDisposableProbeState("mcp-sso-live-entra-")');
   const buildAt = PROBE.indexOf("await buildExample(isolatedEnv)");
   const closeAt = PROBE.indexOf("await app.close()");
   const storeCloseAt = PROBE.indexOf("await store.close()");
-  const removeAt = PROBE.indexOf("await rm(stateDir, { recursive: true, force: true })");
+  const removeAt = PROBE.indexOf("await disposable.dispose()");
   assert.ok(stateAt >= 0 && stateAt < buildAt);
   assert.ok(closeAt >= 0 && closeAt < storeCloseAt && storeCloseAt < removeAt);
-  assert.match(PROBE, /MCP_SSO_DIR: stateDir,[\s\S]*?OAUTH_SQLITE_FILE: join\(stateDir, "auth\.db"\)/);
+  assert.match(PROBE, /\.\.\.process\.env,\n\s*\.\.\.disposable\.env,/);
+  assert.doesNotMatch(PROBE, /mkdtemp|MCP_SSO_DIR: stateDir/);
   assert.match(PROBE, /store = built\.store/);
-  assert.match(PROBE, /finally \{[\s\S]*?await app\.close\(\)[\s\S]*?await store\.close\(\)[\s\S]*?await rm\(stateDir, \{ recursive: true, force: true \}\)/);
+  assert.match(PROBE, /finally \{[\s\S]*?await app\.close\(\)[\s\S]*?await store\.close\(\)[\s\S]*?await disposable\.dispose\(\)/);
   assert.match(PROBE, /FAIL  probe store cleanup failed/);
   assert.match(PROBE, /FAIL  probe state cleanup failed/);
   assert.doesNotMatch(PROBE, /buildExample\(process\.env\)/);

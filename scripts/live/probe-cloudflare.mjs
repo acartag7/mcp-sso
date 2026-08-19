@@ -1,10 +1,8 @@
 // Cloudflare Access identity proof against the shipped Fastify/SQLite example.
 // The provider assertion is supplied out of band and is never written to output.
 import { buildExample } from "../../examples/fastify-sqlite/app.ts";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
+import { createDisposableProbeState } from "./probe-state-support.mjs";
 
 const { SignJWT, decodeProtectedHeader, generateKeyPair } = await import("jose");
 
@@ -30,17 +28,16 @@ const ok = (label, condition, detail = "") => {
 let failures = 0;
 let app;
 let store;
-let stateDir;
+let disposable;
 
 try {
   // Disposable state. Without this the probe registers a client directly in the
   // deployment's own SQLite database and leaves those rows behind — a
   // verification run must never mutate the deployment it is verifying.
-  stateDir = await mkdtemp(join(tmpdir(), "mcp-sso-live-cloudflare-"));
+  disposable = await createDisposableProbeState("mcp-sso-live-cloudflare-");
   const isolatedEnv = {
     ...process.env,
-    MCP_SSO_DIR: stateDir,
-    OAUTH_SQLITE_FILE: join(stateDir, "auth.db"),
+    ...disposable.env,
   };
   const built = await buildExample(isolatedEnv);
   app = built.app;
@@ -124,9 +121,9 @@ try {
       out.push("FAIL  probe store cleanup failed");
     }
   }
-  if (stateDir !== undefined) {
+  if (disposable !== undefined) {
     try {
-      await rm(stateDir, { recursive: true, force: true });
+      await disposable.dispose();
     } catch {
       failures++;
       out.push("FAIL  probe state cleanup failed");
