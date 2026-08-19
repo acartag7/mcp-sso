@@ -38,19 +38,18 @@ test("RedisRateLimit: rejects non-positive windowSeconds/limit at construction (
   assert.throws(() => new RedisRateLimit(stub, { windowSeconds: 1, limit: 1.5 }));
 });
 
-test("RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws (fail-open) — review M1", async () => {
+test("RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws for operation policy — review M1", async () => {
   // The hot path tries EVALSHA first. A non-NOSCRIPT error (Redis outage, WRONGTYPE, etc.)
-  // must propagate so the bridge guard() catches it and allows the request. This stub
-  // exercises the evalsha-throw branch only (the NOSCRIPT->eval-throw branch is covered
-  // by the test below).
+  // must propagate so the consuming operation applies §6.7. This stub exercises the
+  // evalsha-throw branch only (the NOSCRIPT->eval-throw branch is covered below).
   const broken = { evalsha: async () => { throw new Error("redis down"); } } as unknown as Redis;
   const rl = new RedisRateLimit(broken, { windowSeconds: 60, limit: 1 });
   await assert.rejects(rl.check("k"), /redis down/);
 });
 
-test("RedisRateLimit: if EVALSHA returns NOSCRIPT and EVAL also fails, the EVAL error propagates (fail-open)", async () => {
-  // Locks the fail-open contract on the fallback-also-fails path: NOSCRIPT is the ONLY
-  // swallowed error; a failure from the fallback EVAL must NOT be swallowed.
+test("RedisRateLimit: if EVALSHA returns NOSCRIPT and EVAL also fails, the EVAL error propagates", async () => {
+  // Locks the operation-policy contract on the fallback-also-fails path: NOSCRIPT is
+  // the ONLY swallowed error; a failure from the fallback EVAL must NOT be swallowed.
   const broken = {
     evalsha: async () => { throw new Error("NOSCRIPT No matching script. Please use EVAL."); },
     eval: async () => { throw new Error("redis down"); },

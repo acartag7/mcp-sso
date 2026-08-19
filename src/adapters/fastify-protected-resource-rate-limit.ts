@@ -1,6 +1,6 @@
 // Fastify protected-resource admission (contracts §8.4 / §15).
 //
-// This is deliberately separate from Bridge's optional, fail-open RateLimitPort:
+// This is deliberately separate from Bridge's operation-specific RateLimitPort:
 // `/mcp` is an attacker-reachable resource boundary, so every shipped Fastify
 // composition installs a finite limiter and store errors fail closed before the
 // bearer verifier or protected handler runs.

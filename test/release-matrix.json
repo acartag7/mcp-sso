@@ -192,11 +192,27 @@
         },
         {
           "file": "test/rate-limit-redis.test.ts",
-          "name": "RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws (fail-open) \u2014 review M1"
+          "name": "RedisRateLimit: a non-NOSCRIPT error on the EVALSHA hot path re-throws for operation policy \u2014 review M1"
         },
         {
           "file": "test/bridge.test.ts",
-          "name": "bridge: rate-limit fails OPEN when check() throws (\u00a76.7/\u00a717.10 \u2014 a Redis outage must not lock out auth)"
+          "name": "bridge: stateless registration stays fail-open when its limiter throws"
+        },
+        {
+          "file": "test/bridge.test.ts",
+          "name": "bridge: authorize, approve, token, and revoke stay fail-open when their limiter throws"
+        },
+        {
+          "file": "test/stored-dcr-rate-limit.test.ts",
+          "name": "stored registration returns a direct 503 when its limiter throws"
+        },
+        {
+          "file": "test/stored-dcr-rate-limit.test.ts",
+          "name": "stored registration limiter outage precedes body selection, durable state, and audit"
+        },
+        {
+          "file": "test/stored-dcr-rate-limit.test.ts",
+          "name": "stored registration keeps the direct 429 response for an explicit limiter denial"
         }
       ]
     },

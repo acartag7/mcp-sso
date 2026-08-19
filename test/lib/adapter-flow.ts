@@ -8,12 +8,13 @@ import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 import type { JWK } from "jose";
 import { Bridge } from "../../src/adapters/bridge.ts";
-import { createBridgeConfig } from "../../src/config.ts";
+import { createBridgeConfig, type DcrMode } from "../../src/config.ts";
 import { pkceChallenge } from "../../src/crypto.ts";
 import { OAuthError, withRedirect } from "../../src/errors.ts";
 import type { AuditPort, AuthAuditEvent } from "../../src/ports/audit.ts";
 import type { ClockPort } from "../../src/ports/clock.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
+import type { ClientStore } from "../../src/ports/client-store.ts";
 import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { MemoryStore } from "../../src/store/memory.ts";
 import { runAdapterHeaderFlow } from "./adapter-header-flow.ts";
@@ -36,6 +37,7 @@ function makeBridge(
   audit: AuditPort = new MemoryAudit(),
   clock: ClockPort = new FakeClock(NOW_MS),
   store = new MemoryStore(),
+  dcr: DcrMode = { mode: "stateless" },
 ): Bridge {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const signingPrivateJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK;
@@ -43,7 +45,7 @@ function makeBridge(
     issuer: "https://auth.test", resource: "https://api.test/mcp",
     consentSigningSecret: "x".repeat(40), signingPrivateJwk, signingKeyId: "k",
     redirectAllowlist: [REDIRECT], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
-    allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" },
+    allowedOrigins: ["https://auth.test"], dcr,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   return new Bridge({
@@ -104,6 +106,36 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       const token = await client.postForm("/oauth/token", { grant_type: "authorization_code", code: code as string, redirect_uri: REDIRECT, client_id: clientId, code_verifier: verifier });
       assert.equal(token.status, 200);
       assert.match(JSON.parse(token.body).access_token, /^[^.]+\.[^.]+\.[^.]+$/);
+    } finally {
+      await client.close?.();
+    }
+  });
+
+  test(`${name} adapter: stored registration limiter outage preserves the direct 503`, async () => {
+    let saves = 0;
+    const clients: ClientStore = {
+      async save() { saves += 1; },
+      async find() { return null; },
+    };
+    const audit = new MemoryAudit();
+    const bridge = makeBridge(
+      { async check() { throw new Error("limiter unavailable"); } },
+      audit,
+      undefined,
+      undefined,
+      { mode: "stored", store: clients },
+    );
+    const client = await mount(bridge, stubIdentity);
+    try {
+      const response = await client.postJson("/oauth/register", { redirect_uris: [REDIRECT] });
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.location, undefined);
+      assert.deepEqual(JSON.parse(response.body), {
+        error: "temporarily_unavailable",
+        error_description: "Rate limiter unavailable; retry later",
+      });
+      assert.equal(saves, 0);
+      assert.deepEqual(audit.events, []);
     } finally {
       await client.close?.();
     }

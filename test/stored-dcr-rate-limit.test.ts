@@ -4,7 +4,7 @@ import test from "node:test";
 import type { JWK } from "jose";
 import {
   AuthConfigError, Bridge, createBridgeConfig, noopRateLimit,
-  type AuditPort, type BridgeConfig, type RateLimitPort,
+  type AuditPort, type AuthAuditEvent, type BridgeConfig, type RateLimitPort,
 } from "../src/index.ts";
 import type { ClientRegistration, ClientStore } from "../src/ports/client-store.ts";
 import { MemoryStore } from "../src/store/memory.ts";
@@ -81,6 +81,120 @@ test("stored DCR rejects noopRateLimit and does not inherit stateless carve-outs
     audit,
     acknowledgeUnsafeStatelessDefaults: true,
   }), /bounded RateLimitPort/);
+});
+
+test("stateless registration stays available when its register limiter throws", async () => {
+  let saves = 0;
+  const clients: ClientStore = {
+    async save() { saves += 1; },
+    async find() { return null; },
+  };
+  const keys: string[] = [];
+  const bridge = boot(config("stateless", clients, ["https://client.test/callback"]), {
+    async check(key) {
+      keys.push(key);
+      throw new Error("limiter unavailable");
+    },
+  });
+
+  const response = await bridge.handleRegister({
+    query: {},
+    headers: {},
+    ip: "198.51.100.10",
+    body: {
+      application_type: "web",
+      redirect_uris: ["https://client.test/callback"],
+    },
+  });
+
+  assert.equal(response.status, 201);
+  assert.deepEqual(keys, ["register:198.51.100.10"]);
+  assert.equal(saves, 0, "stateless registration never reaches durable client storage");
+});
+
+test("stored registration returns a direct 503 when its limiter throws", async () => {
+  const saved: ClientRegistration[] = [];
+  const events: AuthAuditEvent[] = [];
+  const clients: ClientStore = {
+    async save(client) { saved.push(client); },
+    async find() { return null; },
+  };
+  const stored = config("stored", clients, ["https://client.test/callback"]);
+  const bridge = new Bridge({
+    config: stored,
+    store: new MemoryStore(),
+    clock,
+    audit: { async writeAuthEvent(event) { events.push(event); } },
+    rateLimit: { async check() { throw new Error("limiter unavailable"); } },
+  });
+
+  const response = await bridge.handleRegister({
+    query: {}, headers: {}, ip: "198.51.100.11",
+    body: { application_type: "web", redirect_uris: ["https://client.test/callback"] },
+  });
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(response.body, {
+    error: "temporarily_unavailable",
+    error_description: "Rate limiter unavailable; retry later",
+  });
+  assert.equal(response.redirect, undefined);
+  assert.equal(response.headers.location, undefined);
+  assert.deepEqual(saved, []);
+  assert.deepEqual(events, []);
+});
+
+test("stored registration limiter outage precedes body selection, durable state, and audit", async () => {
+  let bodyReads = 0;
+  let saves = 0;
+  const events: AuthAuditEvent[] = [];
+  const clients: ClientStore = {
+    async save() { saves += 1; },
+    async find() { return null; },
+  };
+  const body = new Proxy({
+    application_type: "web",
+    redirect_uris: ["https://client.test/callback"],
+  }, {
+    get(target, property, receiver) {
+      bodyReads += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const bridge = new Bridge({
+    config: config("stored", clients, ["https://client.test/callback"]),
+    store: new MemoryStore(),
+    clock,
+    audit: { async writeAuthEvent(event) { events.push(event); } },
+    rateLimit: { async check() { throw new Error("limiter unavailable"); } },
+  });
+
+  const response = await bridge.handleRegister({ query: {}, headers: {}, body });
+
+  assert.equal(response.status, 503);
+  assert.deepEqual({ bodyReads, saves, events }, { bodyReads: 0, saves: 0, events: [] },
+    "outage rejection precedes body selection, durable client storage, and register audit");
+});
+
+test("stored registration keeps the direct 429 response for an explicit limiter denial", async () => {
+  let saves = 0;
+  const clients: ClientStore = {
+    async save() { saves += 1; },
+    async find() { return null; },
+  };
+  const bridge = boot(config("stored", clients, ["https://client.test/callback"]), {
+    async check() { return false; },
+  });
+
+  const response = await bridge.handleRegister({
+    query: {}, headers: {}, body: { redirect_uris: ["https://client.test/callback"] },
+  });
+
+  assert.equal(response.status, 429);
+  assert.equal((response.body as { error: string }).error, "temporarily_unavailable");
+  assert.equal(response.redirect, undefined);
+  assert.equal(response.headers.location, undefined);
+  assert.equal(saves, 0);
 });
 
 test("stored DCR refuses unbounded boot and emits 429 before bulk writes with a limiter", async () => {

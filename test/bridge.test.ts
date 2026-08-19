@@ -567,11 +567,56 @@ test("bridge: supplied formBody cannot bypass ambiguous Content-Type rejection",
   }
 });
 
-test("bridge: rate-limit fails OPEN when check() throws (§6.7/§17.10 — a Redis outage must not lock out auth)", async () => {
+test("bridge: stateless registration stays fail-open when its limiter throws", async () => {
   const boom: RateLimitPort = { async check(): Promise<boolean> { throw new Error("redis down"); } };
   const ctx = setup(boom);
   const res = await ctx.bridge.handleRegister(req({ body: { redirect_uris: [REDIRECT] } }));
   assert.equal(res.status, 201); // not 429 — the bridge guard() caught the throw and allowed
+});
+
+test("bridge: authorize, approve, token, and revoke stay fail-open when their limiter throws", async (t) => {
+  for (const outageKey of ["authorize", "approve", "token", "revoke"] as const) {
+    await t.test(outageKey, async () => {
+      const keys: string[] = [];
+      const ctx = setup({ async check(key) {
+        keys.push(key);
+        if (key.startsWith(`${outageKey}:`)) throw new Error("limiter unavailable");
+        return true;
+      } });
+      const verifier = "correct-horse-battery-staple-0123456789abcdef0123";
+      const registration = await ctx.bridge.handleRegister(req({ body: { redirect_uris: [REDIRECT] } }));
+      assert.equal(registration.status, 201);
+      const clientId = (registration.body as { client_id: string }).client_id;
+      const identity = await ctx.bridge.resolveIdentity({
+        async verify() { return { ok: true, identity: { subject: SUBJECT } }; },
+      }, "presented-credential", "1.2.3.4");
+      const page = await ctx.bridge.handleAuthorize(req({ query: {
+        response_type: "code", client_id: clientId, redirect_uri: REDIRECT,
+        code_challenge: pkceChallenge(verifier), code_challenge_method: "S256",
+      } }), identity);
+      assert.equal(page.status, 200);
+      const approval = await ctx.bridge.handleApprove(req({
+        body: { consent_token: extractConsentToken(String(page.body)), approved: "true" },
+        headers: { origin: "https://auth.test" },
+      }));
+      assert.equal(approval.status, 302);
+      const code = new URL(approval.headers.location as string).searchParams.get("code");
+      assert.ok(code);
+      const token = await ctx.bridge.handleToken(req({ body: {
+        grant_type: "authorization_code", code, redirect_uri: REDIRECT, client_id: clientId,
+        code_verifier: verifier,
+      } }));
+      assert.equal(token.status, 200);
+      const revoked = await ctx.bridge.handleRevoke(req({
+        body: { token: (token.body as { refresh_token: string }).refresh_token },
+      }));
+      assert.equal(revoked.status, 200);
+      assert.deepEqual(keys, [
+        "register:1.2.3.4", "authorize:1.2.3.4", "approve:1.2.3.4",
+        "token:1.2.3.4", "revoke:1.2.3.4",
+      ]);
+    });
+  }
 });
 
 test("bridge: authorize rate-limit denial precedes identity verification and audit", async () => {

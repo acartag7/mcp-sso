@@ -116,7 +116,7 @@ export function createConsolePairingIdentity(opts: ConsolePairingOptions = {}): 
         return { ok: false, reason: "pairing_invalid_input" };
       }
 
-      // Defense-in-depth rate-limit hook. THROW ⇒ fail-open (matches bridge.guard());
+      // Defense-in-depth rate-limit hook. THROW ⇒ fail-open (§6.7 continuity policy);
       // DENY ⇒ block WITHOUT bumping wrongAttempts (the two controls are independent).
       let allowed = true;
       try {

@@ -26,7 +26,12 @@ How mcp-sso proves a release actually works.
 > Current source exposes the already-supported stored-DCR/SQLite composition as
 > `OAUTH_DCR_MODE=stored`. The example supplies a finite process-local core
 > registration limiter; custom stored-DCR compositions now fail boot without a
-> bounded `RateLimitPort`. This does not relax the stateless deployment guard.
+> bounded `RateLimitPort`. If that limiter later throws during stored
+> registration, the bridge returns a direct 503 before request-body selection,
+> durable registration state, or register audit. Stateless registration and the
+> authorize/approve/token/revoke continuity keys remain fail-open on a throw;
+> explicit limiter denial remains 429. This does not relax the stateless
+> deployment guard.
 >
 > The post-v0.3.5 line hardens the shipped OAuth composition rather than adding
 > a new protocol profile. It host-binds generic-OIDC discovery endpoints; rejects
@@ -172,7 +177,7 @@ normal full suite remains part of the release gate and is not duplicated here.
 | Memory store | Complete protocol flow | RM.4/RM.10 |
 | SQLite persistence, restart, migration, trusted opening | Packed-artifact flow | RM.1 plus `test/sqlite-open-admission.test.ts` |
 | MySQL real service, migration, and concurrency | Complete protocol flow | RM.3/RM.10 |
-| Redis real service, shared window, and outage behavior | Route integration | RM.2/RM.10 |
+| Redis real service, shared window, and operation-specific outage behavior | Route integration | RM.2/RM.10 plus `test/stored-dcr-rate-limit.test.ts` and the three-adapter shared flow |
 | JSONL audit and no-secret evidence | Packed-artifact flow | RM.1 |
 | Webhook/combine audit behavior | Route integration | `test/audit-flow.test.ts`, `test/audit-webhook.test.ts`; full suite |
 | Configuration snapshots | Unit only | `test/config-snapshot.test.ts`; full suite |
@@ -208,7 +213,7 @@ installed artifact and its only runtime dependency is `jose`.
 A single real Fastify socket stack accepts a locally signed Cloudflare Access JWT
 through its controlled JWKS seam, persists OAuth state in SQLite, uses stored DCR,
 accumulates scopes across grants under the identity ceiling, enforces a real Redis
-denial, fails open on a real Redis WRONGTYPE error, completes a protected SDK call,
+denial, keeps authorization available on a real Redis WRONGTYPE error, completes a protected SDK call,
 rejects a foreign Origin, and refreshes after reopening SQLite.
 The separately shipped Fastify-SQLite example remains covered by the full suite.
 
@@ -264,8 +269,11 @@ are relayed without exposing the credential.
 
 Memory, persistent SQLite, and real MySQL each complete an OAuth lifecycle. The
 selected MySQL rows cover real migration and concurrent rotation, while real Redis
-covers a shared window and the error path consumed by the bridge's fail-open policy.
-The release command rejects absent MySQL or Redis configuration before running rows.
+covers a shared window and a thrown error consumed by an authorization continuity
+path. RM.10 additionally pins the operation split: stored registration returns
+direct 503 before durable/audit work, while stateless registration and
+authorize/approve/token/revoke continue and explicit denial remains 429. The
+release command rejects absent MySQL or Redis configuration before running rows.
 
 ### RM.11 — Redirect allowlist mode
 
@@ -443,7 +451,7 @@ Run before S2.
 | S0a.2 | MySQL async transaction failure | Original error propagates; rollback/release cleanup errors are swallowed; connection is released. |
 | S0a.3 | Timestamp ordering through MySQL | 3-ms UTC timestamps preserve lexicographic ordering. |
 | S0a.4 | Two Redis limiter instances share a key/window | Second instance observes the first's increments. |
-| S0a.5 | Redis unavailable | Limiter fails open; auth flow continues. |
+| S0a.5 | Redis unavailable | The Redis adapter rethrows the outage. Stored registration maps it to a direct 503 before body, durable-state, or audit work; stateless registration and authorize/approve/token/revoke remain fail-open. (`test/stored-dcr-rate-limit.test.ts`, `test/bridge.test.ts`, and the three-adapter shared flow) |
 | S0a.6 | `/oauth/revoke` admission limiting | After the Fastify, Express, or Hono body boundary, each adapter reaches the same `Bridge.handleRevoke` guard with exactly `revoke:<trusted adapter IP or unknown>`. A denial is 429 before Bridge body normalization, token hashing, use-case, store, revocation, or audit work; a limiter throw proceeds. Hono's over-cap path remains 413 before the limiter. After the form-occurrence gate, admitted singleton unknown and already-revoked tokens remain RFC 7009 HTTP 200. |
 | S0a.7 | MySQL 8.4 legacy subject-width migration | Starting from `VARCHAR(255)` on exactly the auth-code and refresh-token subject columns, migration widens both to `VARCHAR(384)` and is idempotent. A 331-character Entra `issuer|sub` survives authorization-code persistence, refresh persistence, and rotation with its exact bytes; the `(subject, client_id)` utf8mb4 index remains valid, including InnoDB's appended token-hash primary key. |
 | S0a.8 | Clock-bound expiry collection | Each schema-ready reference store starts its scheduler after Bridge or a direct consumer binds the exact configured `ClockPort`; pre-readiness binding fails closed. Under divergent mocked host and Bridge time, one tick retains a consent JTI while the signed JWT remains valid to the Bridge, then collects it only after the bound clock passes expiry. SQLite-reopen and two-live-MySQL-instance regressions prove the durable sweep watermark rejects the original signed expiry after physical collection while admitting an unrelated future expiry. A live MySQL scheduler regression proves its five-minute replica horizon preserves authorization-code exchange and refresh rotation at the allowed slow-clock boundary. The scheduler is non-overlapping, retries after a fixed redacted failure, does not keep the process alive, and `close()` cancels pending work and waits for an active sweep. Semantic and real-Bridge wiring mutations fail, and the shared conformance row covers Memory, SQLite, and live MySQL. (`test/store-expiry-scheduler.test.ts`, `test/bridge.test.ts`, `test/lib/store-conformance.ts`, `test/store-conformance.test.ts`, `test/store-mysql.conformance.test.ts`) |
