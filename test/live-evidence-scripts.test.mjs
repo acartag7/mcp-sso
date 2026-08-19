@@ -411,6 +411,15 @@ test("CONTENT records: docs, README, and CHECKLIST agree with what the scripts d
   assert.match(DOC, /scripts\/live\/README\.md/);
   assert.match(DOC, /none reports\n?`SKIP`/);
   assert.match(README, /run\.sh scripts\/live\/probe-e2e\.mjs/);
+  // The records must name what the probe proves: replay detection and family
+  // revocation are what an operator reads the receipt for.
+  for (const [name, record] of [["docs", DOC], ["README", README]]) {
+    assert.match(record, /replayed predecessor/, `${name}: the probe-e2e row records the replay proof`);
+    assert.match(record, /live successor/, `${name}: the probe-e2e row records the revoked family`);
+    assert.match(record, /second family/, `${name}: the probe-e2e row records that revocation uses its own family`);
+  }
+  assert.match(README, /MCP_SSO_READINESS_SECONDS/);
+  assert.match(DOC, /MCP_SSO_READINESS_SECONDS/);
   assert.match(README, /~\/\.mcp-sso-google\.env/);
   assert.match(README, /MCP_SSO_GOOGLE_ENV/);
   assert.match(README, /OIDC_CLIENT_SECRET/);
