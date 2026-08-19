@@ -69,7 +69,7 @@ export async function provisionMachineClient(
   let clientId: string | undefined;
   try {
     const resource = requireMachineClientResource(deps.resource);
-    const store = requireMachineClientStore(deps.store);
+    const store = await requireMachineClientStore(deps.store);
     const allowedScopes = validateAllowedScopes(input.allowedScopes, deps.catalog);
     if (input.name !== undefined && (typeof input.name !== "string" || input.name.length === 0)) {
       throw new OAuthError("invalid_request", "name must be a non-empty string when provided");
@@ -118,7 +118,7 @@ export async function rotateMachineClientSecret(
 ): Promise<VersionedRotatedSecret> {
   try {
     const resource = requireMachineClientResource(deps.resource);
-    const store = requireMachineClientStore(deps.store);
+    const store = await requireMachineClientStore(deps.store);
     const graceSeconds = opts?.graceSeconds ?? DEFAULT_ROTATION_GRACE_SECONDS;
     if (!isPositiveInteger(graceSeconds) || graceSeconds > MAX_ROTATION_GRACE_SECONDS) {
       throw new OAuthError("invalid_request", `graceSeconds must be an integer between 1 and ${MAX_ROTATION_GRACE_SECONDS}`);
@@ -158,7 +158,7 @@ export async function disableMachineClient(
 ): Promise<DisabledMachineClient> {
   try {
     const resource = requireMachineClientResource(deps.resource);
-    const store = requireMachineClientStore(deps.store);
+    const store = await requireMachineClientStore(deps.store);
     const now = epochSeconds(deps.clock);
     const current = requireMutableActive(
       parseMachineClientRegistration(await callPort("ClientStore", "find", () => deps.store.find(clientId)), clientId, now),
@@ -210,13 +210,15 @@ function requireMachineClientResource(resource: unknown): string {
   }
   return resource;
 }
-function requireMachineClientStore(store: ClientStore): MachineClientStore {
+async function requireMachineClientStore(store: ClientStore): Promise<MachineClientStore> {
+  // Capability READS are port surface (§6.4); absence stays the library's own OAuthError.
   const candidate = store as Partial<MachineClientStore>;
-  if (typeof candidate.createMachineClient !== "function"
-    || typeof candidate.compareAndSwapMachineClient !== "function") {
+  const { create, cas } = await callPort("ClientStore", "resolveMutationMethods",
+    async () => ({ create: candidate.createMachineClient, cas: candidate.compareAndSwapMachineClient }));
+  if (typeof create !== "function" || typeof cas !== "function") {
     throw new OAuthError("server_error", "MachineClientStore atomic mutations are required", 500);
   }
-  return candidate as MachineClientStore;
+  return store as MachineClientStore;
 }
 function failureAudit(
   clock: ClockPort,

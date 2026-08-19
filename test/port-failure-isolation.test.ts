@@ -392,6 +392,29 @@ test("machine-client lifecycle store calls re-cast a port-authored OAuthError", 
       (error: unknown) => error instanceof OAuthError && /retry rotation/.test((error as Error).message),
     );
   });
+
+  await t.test("a throwing capability getter is re-cast, and absence keeps its library shape", async () => {
+    // Review P2 on #290: the METHOD LOOKUP reads port properties, and a
+    // getter/Proxy trap throwing there must join the boundary — while a store
+    // merely LACKING the extension keeps the documented fail-closed OAuthError.
+    const trapped = new Proxy({} as MachineClientStore, {
+      get(_target, prop) {
+        if (prop === "createMachineClient") throw portBoom();
+        return undefined;
+      },
+    }) as ClientStore;
+    const { audit, events } = recordingAudit();
+    await expectPortFailure(
+      () => provisionMachineClient(deps(trapped, audit), { allowedScopes: ["mcp:read"] }),
+      "resolveMutationMethods",
+    );
+    assert.equal(events.at(-1)?.reason, "internal_error");
+    const plain: ClientStore = { async save() {}, async find() { return null; } };
+    await assert.rejects(
+      () => provisionMachineClient(deps(plain), { allowedScopes: ["mcp:read"] }),
+      (error: unknown) => error instanceof OAuthError && /atomic mutations are required/.test((error as Error).message),
+    );
+  });
 });
 
 test("returned port accessors are read inside the provenance boundary", async (t) => {
