@@ -28,6 +28,8 @@ the npm artifact is cut, so the published package is never broken by `.ts` paths
   "./fastify/protected-resource-rate-limit": { "types": "./dist/adapters/fastify-protected-resource-rate-limit.d.ts", "default": "./dist/adapters/fastify-protected-resource-rate-limit.js" },
   "./express":                  { "types": "./dist/adapters/express.d.ts",         "default": "./dist/adapters/express.js" },
   "./hono":                     { "types": "./dist/adapters/hono.d.ts",            "default": "./dist/adapters/hono.js" },
+  "./testing/store-conformance": { "types": "./dist/testing/store-conformance.d.ts", "default": "./dist/testing/store-conformance.js" },
+  "./testing/client-store-conformance": { "types": "./dist/testing/client-store-conformance.d.ts", "default": "./dist/testing/client-store-conformance.js" },
   "./identity/cloudflare-access": { "types": "./dist/identity/cloudflare-access.d.ts", "default": "./dist/identity/cloudflare-access.js" },
   "./identity/entra":             { "types": "./dist/identity/entra.d.ts",             "default": "./dist/identity/entra.js" },
   "./identity/console-pairing":   { "types": "./dist/identity/console-pairing.d.ts",   "default": "./dist/identity/console-pairing.js" },
@@ -47,6 +49,14 @@ The root also exports `validateAllowedOrigins(value)`, the §5 pure boot
 preflight used by zero-setup composition roots before quickstart persistence;
 `createBridgeConfig` invokes the same function, so early wiring cannot drift
 from the authoritative configuration gate.
+The `./testing/*` subpaths exist because §12 and the threat model's release gate
+require every downstream store adapter to pass the shared conformance suite: a
+`MUST` that names a suite the package did not contain could not be satisfied.
+They export `runStoreConformance` and `runClientStoreConformance`, register rows
+only when called, and depend only on `node:test` and `node:assert`. They are
+part of the public API surface and therefore covered by the compatibility
+promise — a change to what the suite asserts is a contract change (§18).
+
 The `./store/sqlite` subpath exports both `openSqliteStore(path)` and the
 `SqliteStore` constructor. Only `openSqliteStore` provides the §12.4 persistent
 filesystem-admission guarantee; `new SqliteStore(callerDatabaseSync)` deliberately
