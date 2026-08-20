@@ -39,20 +39,27 @@ How mcp-sso proves a release actually works.
 >    one caller exhausts each endpoint budget for everyone. Stored mode already
 >    requires a bounded limiter; a required limiter that cannot separate callers
 >    is the same weakness one step removed. Other modes warn rather than refuse.
-> 3. A deployment retaining generic loopback trust without the acknowledgement.
->    The guard's loopback predicate matched only root-form entries, so
->    `http://localhost:4321/callback`, the shape a CLI callback takes, was
->    invisible to it and booted stateless, limiterless, and unacknowledged. Any
->    local process can claim that port either way, so both forms are now treated
->    as retained starter trust.
+> 3. An **internet-facing, limiterless** stateless deployment retaining generic
+>    loopback trust without the acknowledgement. The guard's loopback predicate
+>    matched only root-form entries, so `http://localhost:4321/callback`, the
+>    shape a CLI callback takes, was invisible to it. Any local process can claim
+>    that port either way, so both forms now count as retained starter trust.
+>    This changes boot only where the guard already applies: supplying a bounded
+>    non-`noopRateLimit` limiter returns before the allowlist is inspected, and a
+>    `dev.allowInsecureLocalhost` local-only composition is exempt, so neither
+>    shape is affected.
 >
 > **Also in this release:** `/oauth/callback` now charges `upstream:<ip>`, and
 > both shipped examples pass their limiter into the redirect flow, which they
 > previously dropped, so the marketed Entra and Google compositions were
-> unthrottled on authorize and callback. OIDC discovery and token responses are
-> byte-capped. A non-numeric Redis reply throws instead of reading as an allow.
-> Issuer and resource values whose raw spelling differs from their parse are
-> rejected at boot.
+> unthrottled on authorize and callback. The **default** OIDC discovery and token
+> transports stream-count their bodies against a cap; a supplied custom
+> `discoveryFetch` or token transport is consumed directly, and §17.6 assigns
+> body discipline to that transport rather than wrapping it. A non-numeric Redis
+> reply throws instead of reading as an allow. Issuer and resource values whose
+> raw spelling differs from their WHATWG parse are rejected at boot, with one
+> preserved exception: origin form without the root slash, `https://auth.test`,
+> stays accepted verbatim.
 >
 > **Conformance.** v0.4.0 is the first published version to claim conformance to
 > MCP Authorization `2026-07-28`, **with two recorded deviations**. In the
