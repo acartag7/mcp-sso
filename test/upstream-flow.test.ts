@@ -279,6 +279,31 @@ test("authorize: rate-limit key is upstream:<ip> (false => 429, throw => fail-op
   assert.equal(res2.status, 302, "fail-open: limiter outage does not lock out");
 });
 
+test("callback: rate-limit key is upstream:<ip> (false => direct 429 before any work, throw => fail-open)", async () => {
+  const c = config(); const id = fakeIdentity(c);
+  const audit = new MemoryAudit();
+  const keys: string[] = [];
+  let deny = false;
+  const rl = { async check(key: string): Promise<boolean> { keys.push(key); return !deny; } };
+  const { flow } = makeFlow(c, id, { rateLimit: rl, audit });
+  const { claims, cookieValue } = await initiate(c, flow); // authorize charge admitted
+  deny = true;
+  const res = await flow.handleCallback(callbackReq(c, cookieValue, { state: claims.state, code: "c" }));
+  assert.deepEqual(keys, [`upstream:${IP}`, `upstream:${IP}`], "authorize and callback charge the SAME upstream:<ip> key");
+  assert.equal(res.status, 429, "quota denial is a direct 429");
+  assert.equal((res.body as { error: string }).error, "temporarily_unavailable");
+  assert.equal(res.redirect, undefined, "no redirect on a quota denial");
+  assert.equal(res.headers["set-cookie"], undefined, "no cookie mutation on the denial — a post-window retry can still complete the flow");
+  assert.equal(audit.events.length, 0, "denied before any audit work");
+  assert.equal(id.exchangeCalls(), 0, "denied before any exchange");
+  // fail-open: a throwing limiter does not lock the callback out.
+  const rl2 = { async check(): Promise<boolean> { throw new Error("limiter down"); } };
+  const { flow: flow2 } = makeFlow(c, id, { rateLimit: rl2 });
+  const init2 = await initiate(c, flow2);
+  const res2 = await flow2.handleCallback(callbackReq(c, init2.cookieValue, { state: init2.claims.state, code: "c" }));
+  assert.equal(res2.status, 200, "fail-open: limiter outage still completes the callback (consent page)");
+});
+
 test("authorize: duplicate singleton key => direct 400 invalid_request (RFC 6749 §3.1), no cookie set", async () => {
   const c = config(); const { flow } = makeFlow(c, fakeIdentity(c));
   const q = authorizeQuery(); (q as Record<string, unknown>).state = ["a", "b"];

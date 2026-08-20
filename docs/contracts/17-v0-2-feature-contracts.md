@@ -1968,8 +1968,9 @@ gate replaces no-gate).
 ## 17.8 Quickstart secret persistence (auto-keygen)
 
 > **SHIPPED S1b** (`src/quickstart.ts`, root-exported). The standalone
-> `examples/fastify-sqlite` boots zero-config via
-> `loadOrCreateQuickstartSecrets`; the env-var path (`configFromEnv`) remains for
+> `examples/fastify-sqlite` boots zero-config via the two-phase composition
+> below (prepare → validate the complete config → `persist()`); the env-var
+> path (`configFromEnv`) remains for
 > production. POSIX permission check, `O_EXCL` create, `0700`/`0600`, and the
 > `.gitignore` are all asserted in `test/quickstart.test.ts` (rows S1b.1–S1b.4);
 > no ephemeral fallback under any failure mode.
@@ -2358,7 +2359,9 @@ response mode** (`response_mode=query` for Entra; a form_post-style callback
 would arrive cookieless under Lax and MUST NOT be used). `HttpOnly` keeps the
 PKCE verifier out of script reach. The cookie is cleared (`Max-Age=0`, same
 attributes) on every callback response that had a readable cookie — success or
-failure. Every upstream response that sets or clears this credential-bearing
+failure — with one exception: a **quota denial** (the `upstream:<ip>` guard
+returning false) performs no work at all, including no cookie mutation, so a
+post-window retry can still complete the same flow. Every upstream response that sets or clears this credential-bearing
 flow cookie also carries `Cache-Control: no-store`; the framework-free response
 helpers add the directive before Fastify, Express, or Hono maps the response.
 Callback response construction and cookie clearing are authoritative over
@@ -2408,7 +2411,15 @@ channel; they are not classified as an RFC 6749 duplicate.
    cookie.
 
 **`flow.handleCallback(req)` (GET `callbackPath`) — validation order and
-failure table.** The redirect channel becomes available only because the
+failure table.** Entry first charges the SAME `upstream:<ip>` guard as
+`handleAuthorize` step 1 (§6.7): a quota denial is a direct 429
+`temporarily_unavailable` returned before any work in the table below — no
+parameter analysis, cookie read, store access, or audit event, and no cookie
+mutation (the flow cookie survives so a post-window retry can still complete
+the same flow). A thrown `check` remains fail-open per §6.7's outage policy:
+the callback is not an anonymous durable write. This guard is not a table row;
+it precedes row 1.
+The redirect channel becomes available only because the
 `redirect_uri` inside the *verified* flow JWT already passed **mode-appropriate
 validation** (§10 for opaque ids, the CIMD document match for CIMD ids — §17.1.6
 decision 1) at authorize time; any failure to establish that context is a

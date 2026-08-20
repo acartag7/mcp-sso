@@ -148,6 +148,13 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
   };
 
   const handleCallback = async (req: NormRequest): Promise<NormResponse> => {
+    // Same upstream:<ip> guard as authorize step 1 (§6.7/§17.11): charged at entry,
+    // before any parsing, cookie, store, or audit work — a denial is a direct 429
+    // that performs no other work; the guard itself stays fail-open on outage.
+    try { await guard(req, "upstream"); } catch (error) {
+      const mapped = error instanceof OAuthError ? error : new OAuthError("internal_error", "OAuth request failed", 500);
+      return directErrorResponse(mapped.code, mapped.message, mapped.status);
+    }
     const ip = req.ip;
     const cookieValue = readFlowCookie(req.headers, cookieProfile);
     const cookiePresent = cookieValue !== undefined;
