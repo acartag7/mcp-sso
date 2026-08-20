@@ -498,6 +498,17 @@ scope ceiling) is locked in §17.4.
   case-insensitive or whitespace-normalized. Never the sole gate.
 - **Unit-testable claim validation.** Export the claim-validation logic as a pure
   function so it is unit-testable WITHOUT the JWKS network fetch.
+- **Bounded JWKS documents.** Cloudflare Access, Entra, and generic OIDC use one
+  shared capped-fetch seam for jose's remote JWK set. `maxJwksDocumentBytes`
+  defaults to **65536 bytes** on every port: deliberately above ordinary few-KB
+  key sets and equal to the discovery-document cap, while still bounding a
+  hostile or broken IdP response. The option is an integer in
+  **[1024, 1048576]** and is validated at construction before jose can fetch;
+  invalid values fail boot rather than selecting a default. The seam counts the
+  response stream and cancels it as soon as the cap is exceeded, while jose's
+  five-minute `cacheMaxAge` remains unchanged. An over-cap body is the existing
+  JWKS infrastructure-failure class — `exchange_failed` on redirect identities,
+  never `identity_rejected` — because no identity decision was reached.
 - **Entra multi-tenant.** When `allowedTenantIds` is set, `tid` must be allowlisted
   AND `iss` must equal `entraIssuer(payload.tid)` (the standard Entra multi-tenant
   issuer pattern). Unset ⇒ single-tenant: `iss` must equal `entraIssuer(config.tenantId)`.
