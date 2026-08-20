@@ -137,6 +137,34 @@ if [ "$KIND" != "e2e" ]; then
         || fail "group authorization output is invalid"
       pass ENTRA_TENANT_ID ENTRA_CLIENT_ID ENTRA_CLIENT_SECRET ENTRA_REDIRECT_URI
       pass ENTRA_UNMAPPED_GROUP ENTRA_GROUP_AUTHORIZATION_JSON
+      # Negative-leg configuration (#279): deliberately-wrong OPERATOR-supplied
+      # values for the wrong-tenant and subject-allowlist deny legs. Every other
+      # Entra value here is a stack output (a real infrastructure value); these
+      # two are wrong by design, so they arrive through their own clearly-marked
+      # MCP_SSO_ channel instead — the example's bare ENTRA_* names stay
+      # un-allowlisted from the ambient shell. Unset means the positive-only
+      # configuration and the example's defaults apply. Both set at once is
+      # ambiguous evidence (tenant validation runs first and would mask the
+      # allowlist denial), so it is refused rather than run. Validation and
+      # normalization go through run-support's deny-list (never this shell):
+      # exactly the example's listEnv semantics — split, Unicode trim, filter —
+      # and, for the wrong-tenant channel, exclusion of the REAL tenant.
+      # Presence, not -n: an explicitly exported EMPTY channel is still a set
+      # channel and must reach the normalizer (which rejects it) rather than
+      # silently run the positive leg.
+      if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS+x}" ] && [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST+x}" ]; then
+        fail "set only ONE Entra deny channel per run: MCP_SSO_ENTRA_ALLOWED_TENANT_IDS (wrong-tenant) or MCP_SSO_ENTRA_SUBJECT_ALLOWLIST (allowlist); both set cannot produce unambiguous evidence"
+      fi
+      if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS+x}" ]; then
+        ENTRA_ALLOWED_TENANT_IDS="$(printf '%s' "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" | support deny-list "$ENTRA_TENANT_ID")" \
+          || fail "MCP_SSO_ENTRA_ALLOWED_TENANT_IDS is not a usable wrong-tenant deny list (run-support reports why above)"
+        pass ENTRA_ALLOWED_TENANT_IDS
+      fi
+      if [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST+x}" ]; then
+        ENTRA_SUBJECT_ALLOWLIST="$(printf '%s' "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST:-}" | support deny-list)" \
+          || fail "MCP_SSO_ENTRA_SUBJECT_ALLOWLIST is not a usable deny allowlist (run-support reports why above)"
+        pass ENTRA_SUBJECT_ALLOWLIST
+      fi
       ;;
     cloudflare_access)
       CF_ACCESS_ISSUER="$(output_raw "$CLOUDFLARE_STACK" cf_access_issuer)"
