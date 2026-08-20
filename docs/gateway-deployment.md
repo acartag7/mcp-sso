@@ -213,6 +213,18 @@ each added only by the people who need it.
   backend discovers the wrong issuer/resource and gets rejected fail-closed.
   Single-origin multi-bridge needs custom per-bridge challenge routing you own;
   one-origin-per-bridge (subdomains) makes the built-in challenge correct.
+- **Never relay the backend's `WWW-Authenticate`.** A token-only backend may
+  answer 401/403 with a challenge of its own (a `Basic` realm, a vendor
+  scheme). The gateway verifies its own token before forwarding, so such a
+  challenge reaches the client only AFTER it holds a valid gateway token:
+  relayed, it tells the client to authenticate to a backend it has no
+  credentials for, and the backend's realm names and scheme hints leak to the
+  public client. The shipped gateway cannot do this: its response relay is an
+  allowlist (`RELAY_RESPONSE_HEADERS` in `examples/api-key-gateway/app.ts`:
+  `content-type`, `mcp-session-id`, `mcp-protocol-version`), so a challenge
+  header is dropped by construction rather than filtered by pattern. Keep that
+  shape in any custom proxy — relay the headers you can name, drop everything
+  else.
 - Adding backend N+1 is a config change, not a code change: same image, new
   hostname, new resource, new backend credential.
 
@@ -250,6 +262,17 @@ Each gateway is a small Deployment + Service + Ingress + Secret.
   never `emptyDir` (refresh tokens are long-lived sessions; losing the file logs
   everyone out). For ≥2 replicas or clean rolling updates, use `/store/mysql` (+
   `/rate-limit/redis` so limits are shared).
+- **Registration cleanup is not revocation.** `sweepExpired` clears expired
+  artifacts and never touches client registrations; the library's `ClientStore`
+  has no delete, and nothing in it deletes a registration as a security
+  response. A stolen, actively rotated refresh family therefore survives any
+  cleanup by design. The recovery tool is `POST /oauth/revoke`, which kills
+  the whole family from any one member token: a rotated-away member you still
+  hold maps to its family, so keep your last-issued token. With no member
+  token in hand, an operator with store access must revoke by family id
+  directly. If you add registration GC of your own on `ClientStore`,
+  revocation remains the only security boundary: deleting a registration does
+  not revoke its outstanding grants.
 - **Proxy trust × per-client budgets**: leave `MCP_SSO_TRUSTED_PROXIES` unset
   when clients connect directly. Behind an Ingress/tunnel, set it only to the
   concrete IP/CIDR addresses of proxy peers that actually connect to Fastify;
