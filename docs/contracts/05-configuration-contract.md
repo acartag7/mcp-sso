@@ -327,6 +327,32 @@ generated starter supplies the same finite process-local registration budget.
 Custom and multi-replica production compositions supply their own bounded port;
 `mcp-sso/rate-limit/redis` is the shipped distributed implementation.
 
+**Runnable-example OAuth admission (owner decision, 2026-08-21).** Both
+`examples/fastify-sqlite` and `examples/api-key-gateway` construct their finite
+process-local core `RateLimitPort` unconditionally when the caller does not
+supply one, in stateless as well as stored DCR mode. The port retains one
+aggregate registration bucket (30 requests per 60 seconds per process) and
+adds a separate `upstream:<ip>` bucket with the same fixed window for each
+derived client IP. At most 1,024 upstream buckets exist per process; when that
+set is full the port removes expired windows, then fails closed for a new key
+rather than growing memory without a bound. Both upstream authorize and callback charge that one per-IP
+bucket through the exact port passed to `createUpstreamRedirectFlow`; the
+callback does not receive a second default or the library's `noopRateLimit`.
+An operator-supplied port still replaces this example default and is passed to
+the Bridge and redirect flow unchanged through the boot snapshot.
+
+The unconditional shape is deliberate: one runnable example has one admission
+posture, and a stateless composition must not silently lose the limiter merely
+because registration itself is non-durable. It also means stateless DCR with a
+generic loopback redirect now passes `assertSafeDeploymentCombination` in both
+example factories. That boot change is intended—the guard's escape is a
+bounded port because it converts unbounded anonymous work into a finite
+per-process budget. This does not change `Bridge`,
+`assertSafeDeploymentCombination`, or custom library compositions: an omitted
+library `RateLimitPort` still becomes `noopRateLimit` wherever §5 otherwise
+admits it. Multi-replica public deployments still replace the process-local
+example port with a conforming shared limiter.
+
 This is a deliberate boot-breaking change approved by owner decision **B1** on
 2026-08-17. Existing stored-DCR compositions that omit `rateLimit` or pass
 `noopRateLimit` must add a bounded port before upgrading. There is no
