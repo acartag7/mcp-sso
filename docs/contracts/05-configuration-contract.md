@@ -335,9 +335,10 @@ aggregate registration bucket (30 requests per 60 seconds per process) and
 adds a separate `upstream:<ip>` bucket with the same fixed window for each
 derived client IP. At most 1,024 upstream buckets exist per process; when that
 set is full the port removes expired windows, then fails closed for a new key
-rather than growing memory without a bound. Both upstream authorize and callback charge that one per-IP
-bucket through the exact port passed to `createUpstreamRedirectFlow`; the
-callback does not receive a second default or the library's `noopRateLimit`.
+rather than growing memory without a bound. Both upstream authorize and
+callback charge that one per-IP bucket through the exact port passed to
+`createUpstreamRedirectFlow`; the callback does not receive a second default
+or the library's `noopRateLimit`.
 An operator-supplied port still replaces this example default; the same bound
 boot snapshot is passed to the Bridge and redirect flow.
 
