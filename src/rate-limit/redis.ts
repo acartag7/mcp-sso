@@ -5,9 +5,10 @@
 // The hot path uses EVALSHA (one round-trip carries only the SHA1, not the script
 // body); on NOSCRIPT — Redis restarted or SCRIPT FLUSH — it falls back to EVAL,
 // which re-loads the script for next time. Atomicity and throw behavior are
-// identical either way. check() THROWS on any OTHER Redis error; the consuming
-// operation then applies §6.7: stored registration fails closed with 503, while
-// stateless registration and continuity operations fail open.
+// identical either way. check() THROWS on any OTHER Redis error AND on any
+// non-numeric script reply; the consuming operation then applies §6.7: stored
+// registration fails closed with 503, while stateless registration and
+// continuity operations fail open.
 
 import { createHash } from "node:crypto";
 import type { Redis } from "ioredis";
@@ -66,11 +67,11 @@ export class RedisRateLimit implements RateLimitPort {
       if (!isNoScript(error)) throw error;
       count = await this.client.eval(FIXED_WINDOW_LUA, 1, fullKey, this.windowSeconds);
     }
-    // Allow on a non-numeric reply (defensive — unreachable in practice: the script
-    // always returns the INCR integer; ioredis rejects on connection loss). This is a
-    // returned allow decision, distinct from the operation-specific throw policy.
-    const n = Number(count);
-    return Number.isFinite(n) ? n <= this.limit : true;
+    // The reply shape is checked, not coerced: a non-numeric reply is an outage,
+    // not an allow (§17.10 owner decision D3). Number(null) === 0, so coercion
+    // would read a null bulk as "0 counted ⇒ allow" — silently disabling the
+    // limiter behind any Redis-compatible facade.
+    return scriptCount(count) <= this.limit;
   }
 }
 
@@ -82,4 +83,16 @@ export function createRedisRateLimit(client: Redis, config: RedisRateLimitConfig
 // "NOSCRIPT" (there is no `.code` field — verified against ioredis 5.11 / Redis 7).
 function isNoScript(error: unknown): boolean {
   return String((error as { message?: string } | null)?.message ?? "").startsWith("NOSCRIPT");
+}
+
+// The fixed-window script's reply is the INCR integer. ioredis delivers RESP
+// integers as JS numbers (a decimal-integer string only under the client's
+// `stringNumbers` option); BOTH are the script's reply shape and are accepted.
+// Anything else — a bulk payload, a null bulk, a status reply — reached us with
+// no quota decision, so it THROWS for the operation's §6.7 outage policy
+// (stored registration 503, everything else fail-open).
+function scriptCount(reply: unknown): number {
+  if (typeof reply === "number" && Number.isInteger(reply)) return reply;
+  if (typeof reply === "string" && /^-?\d+$/.test(reply)) return Number(reply);
+  throw new Error(`RedisRateLimit: non-numeric reply from the fixed-window script (got ${typeof reply}) — no quota decision was reached, treated as a limiter outage`);
 }

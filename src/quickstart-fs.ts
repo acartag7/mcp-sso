@@ -82,7 +82,8 @@ export async function ensureGitignore(dir: string, canCreate: boolean): Promise<
   }
 }
 
-/** Reject a symlink, a non-directory, or (POSIX) a group/other-accessible mode. */
+/** Reject a symlink, a non-directory, or (POSIX) a wrong owner or
+ *  group/other-accessible mode. */
 export async function assertRealDir(dir: string): Promise<void> {
   warnWindowsPermissionGap();
   let st;
@@ -94,13 +95,17 @@ export async function assertRealDir(dir: string): Promise<void> {
     throw new AuthConfigError(`quickstart: ${dir} is a symlink; point MCP_SSO_DIR at a real directory`);
   }
   if (!st.isDirectory()) throw new AuthConfigError(`quickstart: ${dir} is not a directory`);
+  if (process.platform !== "win32" && st.uid !== effectiveUid()) {
+    throw new AuthConfigError(`quickstart: ${dir} is not owned by the effective service user; point MCP_SSO_DIR at a directory this user owns`);
+  }
   if (process.platform !== "win32" && st.mode & 0o077) {
     throw new AuthConfigError(`quickstart: ${dir} is group/other-accessible (mode ${(st.mode & 0o777).toString(8).padStart(3, "0")}); use a fresh directory or chmod 700 ${dir}`);
   }
 }
 
-/** Supported POSIX: atomic O_NOFOLLOW+fstat+read-fd. Windows/no flag:
- *  lstat symlink/type precheck + pathname read (private-directory boundary). */
+/** Supported POSIX: atomic O_NOFOLLOW+fstat+read-fd, effective-UID-owned.
+ *  Windows/no flag: lstat symlink/type precheck + pathname read
+ *  (private-directory boundary). */
 async function readOwnedFile(path: string): Promise<{ content: string; mode: number }> {
   if (process.platform === "win32" || O_NOFOLLOW === undefined) {
     let st;
@@ -110,6 +115,9 @@ async function readOwnedFile(path: string): Promise<{ content: string; mode: num
     }
     if (st.isSymbolicLink()) throw new AuthConfigError(`quickstart: ${path} is a symlink`);
     if (!st.isFile()) throw new AuthConfigError(`quickstart: ${path} is not a regular file`);
+    if (process.platform !== "win32" && st.uid !== effectiveUid()) {
+      throw new AuthConfigError(`quickstart: ${path} is not owned by the effective service user; verify provenance, then chown or remove it`);
+    }
     try { return { content: await readFile(path, "utf8"), mode: st.mode }; }
     catch (error) {
       throw new AuthConfigError(`quickstart: cannot read ${path}: ${errMsg(error)}`);
@@ -123,6 +131,9 @@ async function readOwnedFile(path: string): Promise<{ content: string; mode: num
   try {
     const st = await fh.stat();
     if (!st.isFile()) throw new AuthConfigError(`quickstart: ${path} is not a regular file (FIFO/device rejected)`);
+    if (st.uid !== effectiveUid()) {
+      throw new AuthConfigError(`quickstart: ${path} is not owned by the effective service user; verify provenance, then chown or remove it`);
+    }
     const buf = Buffer.alloc(st.size);
     if (st.size > 0) await fh.read(buf, 0, st.size, 0);
     return { content: buf.toString("utf8"), mode: st.mode };
@@ -137,6 +148,13 @@ export async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+function effectiveUid(): number {
+  const uid = process.geteuid?.();
+  if (uid === undefined) {
+    throw new AuthConfigError("quickstart: effective service user is unavailable");
+  }
+  return uid;
+}
 function isExist(error: unknown): boolean { return isErrorWithCode(error, ["EEXIST"]); }
 function isErrorWithCode(error: unknown, codes: string[]): boolean {
   return typeof error === "object" && error !== null && "code" in error

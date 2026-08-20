@@ -8,11 +8,13 @@
 // configured issuer (OIDC Discovery §4.3 / RFC 8414 §3.3); every endpoint +
 // `jwks_uri` MUST pass the raw `^https://` check (addendum 11) and the exact
 // discovery-host policy; discovery redirects are NOT followed (a 3xx ⇒ boot
-// failure); PKCE `S256` MUST be advertised unless
+// failure); the document body is stream-capped at `maxDiscoveryDocumentBytes`
+// (§17.6 owner decision D5); PKCE `S256` MUST be advertised unless
 // `allowProviderWithoutPkce` is set (loud).
 
 import { assertHttpsRaw } from "./util.ts";
 import { resolveAllowedAlgs } from "./generic-oidc-claims.ts";
+import { createDiscoveryTransport, discoveryDocumentCap } from "./generic-oidc-transports.ts";
 
 /** Manual endpoint mode — zero boot-time fetching. */
 export interface GenericOidcManualEndpoints {
@@ -36,6 +38,10 @@ export interface GenericOidcDiscoveryConfig {
   tokenEndpointAuthMethod?: TokenAuthMethod;
   /** Opt-in: accept a provider whose discovery omits PKCE support (loud). */
   allowProviderWithoutPkce?: boolean;
+  /** Cap on the fetched discovery document, in bytes — the default discovery
+   *  transport stream-counts the body and aborts past the cap. Integer domain
+   *  [1024, 1048576], default 65536; boot-validated (§17.6 owner decision D5). */
+  maxDiscoveryDocumentBytes?: number;
 }
 
 /** Injectable GET transport for the discovery document (tests avoid the network). */
@@ -49,32 +55,13 @@ export interface GenericOidcTokenTransport {
   postForm(url: string, body: URLSearchParams, headers?: Record<string, string>): Promise<{ status: number; text(): Promise<string> }>;
 }
 
-/** Default discovery fetch: global fetch, redirects NOT followed (manual ⇒ a 3xx
- *  surfaces as status !== 200 ⇒ fail closed), 10 s hard deadline. */
-export const defaultDiscoveryTransport: DiscoveryTransport = {
-  async get(url) {
-    const resp = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { accept: "application/json" } });
-    return { status: resp.status, json: () => resp.json() };
-  },
-};
-
-/** Default token-endpoint transport: global fetch, 10 s hard deadline, redirects
- *  REFUSED. The POST body carries the code, PKCE verifier, and (for a confidential
- *  client) the client_secret — a redirected token endpoint would leak those to the
- *  redirect target, so `redirect: "error"` fails hard on any 3xx (the token URL is
- *  https-validated + deployer-trusted, so a redirect is never legitimate). */
-export const defaultTokenTransport: GenericOidcTokenTransport = {
-  async postForm(url, body, headers) {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", ...(headers ?? {}) },
-      body: body.toString(),
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    });
-    return { status: resp.status, text: () => resp.text() };
-  },
-};
+// Default transports (stream-counted §17.6 body caps) live in
+// generic-oidc-transports.ts; re-exported here so existing import paths — and
+// the probe scripts — keep resolving them from this module.
+export {
+  createDiscoveryTransport, createTokenTransport, defaultDiscoveryTransport, defaultTokenTransport,
+  discoveryDocumentCap, tokenResponseCap, DEFAULT_MAX_DISCOVERY_DOCUMENT_BYTES, DEFAULT_MAX_TOKEN_RESPONSE_BYTES,
+} from "./generic-oidc-transports.ts";
 
 /** The endpoints + resolved alg set + token-auth method an identity holds after boot. */
 export interface ResolvedEndpoints {
@@ -185,7 +172,10 @@ export async function resolveEndpoints(
     let issuer = config.issuer;
     while (issuer.endsWith("/")) issuer = issuer.slice(0, -1);
     const discoveryUrl = issuer + "/.well-known/openid-configuration";
-    const fetcher = transport ?? defaultDiscoveryTransport;
+    // Resolve the cap BEFORE any fetch: an out-of-domain cap is a boot failure
+    // even when a custom transport is supplied (fail closed on misconfig).
+    const maxDocumentBytes = discoveryDocumentCap(config.maxDiscoveryDocumentBytes);
+    const fetcher = transport ?? createDiscoveryTransport(maxDocumentBytes);
     const resp = await fetcher.get(discoveryUrl);
     if (resp.status !== 200) throw new Error(`generic_oidc_discovery_failed: discovery fetch returned HTTP ${resp.status} (redirects are not followed)`);
     const docRaw = await resp.json();

@@ -1088,13 +1088,21 @@ bounded rather than open-ended.
 
 ## 17.2 `client_credentials` grant (MCP extension `io.modelcontextprotocol/oauth-client-credentials`)
 
-**Admin-API error boundary (0.3.6).** `provisionMachineClient`,
-`rotateMachineClientSecret`, and `disableMachineClient` return the underlying
-`ClientStore` error to their DIRECT caller by design. These are administrative
-APIs, not endpoints: the library never turns them into an HTTP response, and the
-operator invoking one needs the store's actual cause to diagnose a failed
-provision. That is the opposite of the `/oauth/revoke` rule in §13, and
-deliberately so — there the library owns the response.
+**Admin-API error boundary (0.3.6; provenance amended — see §6.4).**
+`provisionMachineClient`, `rotateMachineClientSecret`, and
+`disableMachineClient` are administrative APIs, not endpoints: the library
+never turns them into an HTTP response, and the operator invoking one needs
+the store's actual cause to diagnose a failed provision. Their store calls
+run through the §13 `callPort` boundary like every other pluggable-port call
+site, closing the lifecycle call sites the #247 sweep left unwrapped (two
+`find`s, two `compareAndSwapMachineClient`s, one `createMachineClient`): a
+store throw surfaces to the DIRECT caller as a `PortFailureError` carrying
+the original on `.cause` — never as the thrown value itself. Diagnosis is one
+property away, but a store-authored `OAuthError` can no longer arrive
+indistinguishable from a library-raised one, and the failure audit
+classifies it `internal_error` instead of publishing the port's own code.
+The 0.3.6 verbatim-return decision is superseded; the HTTP duty below is
+unchanged.
 
 **A host that exposes machine-client lifecycle over HTTP MUST map these to a
 sanitized response itself.** The library makes no guarantee at that boundary,
@@ -1755,7 +1763,8 @@ gate replaces no-gate).
   { authorizationEndpoint, tokenEndpoint, jwksUri }` (manual mode — zero
   boot-time fetching), `scopes?` (default `openid profile email`),
   `subjectAllowlist?` (matches `sub`), `allowEmailAllowlist?` (opt-in; only
-  matches when `email_verified === true`).
+  matches when `email_verified === true`), `maxDiscoveryDocumentBytes?` /
+  `maxTokenResponseBytes?` (the body caps below).
 - **`claims.name` (optional, display only).** Present ONLY when
   `email_verified === true` AND `payload.name` is a string whose trimmed length
   is non-zero and whose raw length is at most **256** characters; otherwise the
@@ -1789,6 +1798,30 @@ gate replaces no-gate).
   config, and enterprise IdPs legitimately live on private networks —
   documented rationale. Redirects on the discovery fetch: not followed
   (fail closed).
+- **Body caps on IdP-fetched bodies** (owner decision 2026-08-19, D5): the
+  default discovery transport caps the discovery document at **65536 bytes**
+  and the default token transport caps every token-endpoint response at
+  **16384 bytes**. Both are configurable (`maxDiscoveryDocumentBytes` /
+  `maxTokenResponseBytes`, named for the CIMD `maxDocumentBytes` precedent)
+  with the CIMD cap shape: a closed integer domain **[1024, 1048576]**,
+  boot-validated — a non-integer, `NaN`, `Infinity`, or out-of-domain value
+  fails boot (`generic_oidc_bad_config`), never a silent default, in discovery
+  AND manual mode. Enforcement stream-counts the response body chunk by chunk
+  and CANCELS the download the moment the cap is exceeded, so an oversized
+  body is rejected without being materialized — a hostile or broken IdP (or
+  anything between) cannot force the bridge to buffer an arbitrary body
+  before any validation runs. The rejection is a fetch/protocol failure in
+  the existing taxonomy — `generic_oidc_discovery_failed` at boot,
+  `generic_oidc_exchange_failed` at exchange (the §17.11 throw rule maps it
+  to `exchange_failed`, never `identity_rejected`: no identity decision was
+  made). A deployer-supplied custom discovery/token transport owns its own
+  body discipline; the caps govern the transports the core builds from
+  config. The Google preset delegates to this port and inherits the
+  defaults. The Entra port's default token transport carries the same
+  **16384-byte** cap — fixed, not configurable, because its endpoint is
+  hardcoded and the port fetches no discovery document; the throw maps to
+  `exchange_failed` under the §17.11 throw rule. The JWKS fetches (all
+  ports) remain jose's remote-JWK-set reader and are tracked separately.
 - **id_token validation:** `iss` exact-match; `aud` must contain `clientId`
   and multiple-audience tokens are rejected outright (a single-element
   `[clientId]` array is accepted; an array with any second audience is
@@ -1960,8 +1993,9 @@ gate replaces no-gate).
 ## 17.8 Quickstart secret persistence (auto-keygen)
 
 > **SHIPPED S1b** (`src/quickstart.ts`, root-exported). The standalone
-> `examples/fastify-sqlite` boots zero-config via
-> `loadOrCreateQuickstartSecrets`; the env-var path (`configFromEnv`) remains for
+> `examples/fastify-sqlite` boots zero-config via the two-phase composition
+> below (prepare → validate the complete config → `persist()`); the env-var
+> path (`configFromEnv`) remains for
 > production. POSIX permission check, `O_EXCL` create, `0700`/`0600`, and the
 > `.gitignore` are all asserted in `test/quickstart.test.ts` (rows S1b.1–S1b.4);
 > no ephemeral fallback under any failure mode.
@@ -2023,13 +2057,15 @@ Persistence then follows these rules:
   (dirs) with `O_EXCL` for create-don't-clobber. On supported POSIX hosts, reads
   of trusted content go through `open(O_NOFOLLOW | O_NONBLOCK)` + `fstat` +
   read-fd (atomic: refuses a symlink, won't hang on a FIFO/special file, no
-  lstat→readFile race) + a perm check (`mode & 0o077` fails closed); a
-  pre-existing dir is `assertRealDir`'d (reject symlink
-  + group/other-accessible mode); the `.gitignore` is the managed `*\n` (write
+  lstat→readFile race) + a perm check (`mode & 0o077` fails closed) + an
+  ownership check (`st.uid` equals the effective UID — a foreign-owned
+  `secrets.json` or `.gitignore` fails closed before its bytes are read); a
+  pre-existing dir is `assertRealDir`'d (reject symlink, wrong owner, or
+  group/other-accessible mode); the `.gitignore` is the managed `*\n` (write
   into a dir we created, require exact in a pre-existing one). On Windows or a
-  host without `O_NOFOLLOW`, trusted-file reads instead lstat-reject a symlink
-  or non-regular object and then read the pathname; replacement between those
-  calls remains possible. The deployer-private directory/ACL is the boundary
+  host without `O_NOFOLLOW`, trusted-file reads instead lstat-reject a symlink,
+  non-regular object, or (non-Windows) wrong owner and then read the pathname;
+  replacement between those calls remains possible. The deployer-private directory/ACL is the boundary
   against a lower-privileged swap. Windows mode/UID gates are absent and no DACL
   is read or set; the warning makes that limitation visible but is not an
   admission decision.
@@ -2096,7 +2132,15 @@ direction — fail-open for the continuity keys). Constructor validates
 both `windowSeconds` and `limit` as positive integers (fail-closed on misconfig).
 Keys are as in §6.7 (`register:<ip>` etc.). Failure semantics are delegated to
 §6.7 rather than fixed here: `check()` THROWS on any Redis error other than a
-missing script, and the *operation* decides the outage direction. For every
+missing script, and the *operation* decides the outage direction. **A
+non-numeric script reply is an outage, not an allow** (owner decision
+2026-08-19, D3): the only accepted reply shape is the INCR integer — a JS
+number, or a decimal-integer string under ioredis's `stringNumbers` option —
+and a bulk payload, null bulk, or status reply THROWS into the same §6.7
+policy. `Number(null) === 0`, so a coercion-then-compare reading would turn a
+null reply into "0 counted ⇒ allow", silently disabling the limiter behind a
+Redis-compatible facade (proxy, mock, or a mid-protocol rewrite); no quota
+decision was reached, so the closed stored-registration class must see it. For every
 continuity key the bridge `guard()` fails OPEN (availability over advisory
 defense). For `register:<ip>` under `dcr.mode === "stored"` the throw fails
 CLOSED with a fixed 503 — the adapter's behaviour is unchanged, but it is no
@@ -2348,7 +2392,9 @@ response mode** (`response_mode=query` for Entra; a form_post-style callback
 would arrive cookieless under Lax and MUST NOT be used). `HttpOnly` keeps the
 PKCE verifier out of script reach. The cookie is cleared (`Max-Age=0`, same
 attributes) on every callback response that had a readable cookie — success or
-failure. Every upstream response that sets or clears this credential-bearing
+failure — with one exception: a **quota denial** (the `upstream:<ip>` guard
+returning false) performs no work at all, including no cookie mutation, so a
+post-window retry can still complete the same flow. Every upstream response that sets or clears this credential-bearing
 flow cookie also carries `Cache-Control: no-store`; the framework-free response
 helpers add the directive before Fastify, Express, or Hono maps the response.
 Callback response construction and cookie clearing are authoritative over
@@ -2398,7 +2444,15 @@ channel; they are not classified as an RFC 6749 duplicate.
    cookie.
 
 **`flow.handleCallback(req)` (GET `callbackPath`) — validation order and
-failure table.** The redirect channel becomes available only because the
+failure table.** Entry first charges the SAME `upstream:<ip>` guard as
+`handleAuthorize` step 1 (§6.7): a quota denial is a direct 429
+`temporarily_unavailable` returned before any work in the table below — no
+parameter analysis, cookie read, store access, or audit event, and no cookie
+mutation (the flow cookie survives so a post-window retry can still complete
+the same flow). A thrown `check` remains fail-open per §6.7's outage policy:
+the callback is not an anonymous durable write. This guard is not a table row;
+it precedes row 1.
+The redirect channel becomes available only because the
 `redirect_uri` inside the *verified* flow JWT already passed **mode-appropriate
 validation** (§10 for opaque ids, the CIMD document match for CIMD ids — §17.1.6
 decision 1) at authorize time; any failure to establish that context is a

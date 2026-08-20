@@ -193,6 +193,33 @@ test("createEntraRedirectIdentity: a token-endpoint 307 fails without forwarding
   }
 });
 
+test("entra default token transport caps the response body at 16384 bytes (§17.6 D5 sibling)", async () => {
+  const realFetch = globalThis.fetch;
+  const respondWith = (bytes: number) => {
+    globalThis.fetch = (async () => new Response(
+      new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array(bytes)); c.close(); } }),
+      { status: 200 },
+    )) as typeof fetch;
+  };
+  try {
+    respondWith(20_000);
+    const oversized = createEntraRedirectIdentity({ ...CONFIG, clientSecret: "client-secret" });
+    const capped = await oversized.exchangeAndVerify({ code: "authorization-code", codeVerifier: "pkce-verifier", nonce: "nonce" });
+    assert.ok(!capped.ok && capped.kind === "exchange_failed", "over-cap is an outage, never an identity decision");
+    assert.match(String(capped.reason), /16384/, "the cap names itself");
+
+    respondWith(64);
+    const small = createEntraRedirectIdentity({ ...CONFIG, clientSecret: "client-secret" });
+    const past = await small.exchangeAndVerify({ code: "authorization-code", codeVerifier: "pkce-verifier", nonce: "nonce" });
+    // Within the cap the body is read and handed to JSON, which fails on the
+    // non-JSON fixture — a DIFFERENT failure, proving the request got past the cap.
+    assert.ok(!past.ok && past.kind === "exchange_failed");
+    assert.doesNotMatch(String(past.reason), /16384/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("createEntraIdentity: fails closed on blank tenantId/clientId (empty == missing config)", () => {
   assert.throws(() => createEntraIdentity({ ...CONFIG, tenantId: "" }), /tenantId is required/);
   assert.throws(() => createEntraIdentity({ ...CONFIG, tenantId: "   " }), /tenantId is required/);
