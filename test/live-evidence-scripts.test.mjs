@@ -170,12 +170,10 @@ test("BEHAVIOUR run-support: the provider preflight admits exactly the shipped c
     assert.throws(() => assertLegPreflight(leg, env), `${leg} ${JSON.stringify(patch)}`);
   }
   assert.throws(() => assertLegPreflight("other", goodEnv("entra")), /unknown leg/);
-  // The example's own pre-state gates are mirrored: what buildExample would
-  // refuse at boot is refused here, before any prior state moves.
+  // The example's own pre-state gates are mirrored before any prior state moves.
   const loopback = "https://mcp.example/app/callback,http://localhost,http://127.0.0.1";
   assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), OAUTH_REDIRECT_ALLOWLIST: loopback });
-  assert.throws(() => assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), OAUTH_DCR_MODE: "stateless", OAUTH_REDIRECT_ALLOWLIST: loopback }),
-    /stateless DCR/, "stateless DCR with the loopback allowlist is what the deployment guard refuses");
+  assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), OAUTH_DCR_MODE: "stateless", OAUTH_REDIRECT_ALLOWLIST: loopback });
   assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), OAUTH_DCR_MODE: "stateless" });
   assert.throws(() => assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), MCP_SSO_TRUSTED_PROXIES: "garbage" }), /trusted proxies/);
   assertLegPreflight("cloudflare_access", { ...goodEnv("cloudflare_access"), MCP_SSO_TRUSTED_PROXIES: "127.0.0.1" });
@@ -184,7 +182,7 @@ test("BEHAVIOUR run-support: the provider preflight admits exactly the shipped c
   assertBasePreflight(e2eEnv);
   assert.throws(() => assertBasePreflight({ ...e2eEnv, REDIS_URL: undefined }), /REDIS_URL/);
   assert.throws(() => assertBasePreflight({ ...e2eEnv, OAUTH_ISSUER: "http://mcp.example" }), /https/);
-  assert.throws(() => assertBasePreflight({ ...e2eEnv, OAUTH_DCR_MODE: "stateless", OAUTH_REDIRECT_ALLOWLIST: loopback }), /stateless DCR/);
+  assertBasePreflight({ ...e2eEnv, OAUTH_DCR_MODE: "stateless", OAUTH_REDIRECT_ALLOWLIST: loopback });
 });
 
 test("BEHAVIOUR run-support CLI: a shipped constructor's message never reaches output, only a fixed reason", () => {

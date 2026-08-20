@@ -80,9 +80,10 @@ receives no provider credential at all — only the issuer origin, the run's
 signing material, and `REDIS_URL`. `PORT` reaches only the example-server
 entry (that is how `serve.sh` places each leg). Stored DCR with the loopback
 origins allowlisted is the default; `MCP_SSO_ALLOW_LOOPBACK=false` drops
-loopback, and `MCP_SSO_DCR_MODE=stateless` boots only together with it (the
-deployment guard refuses stateless DCR beside loopback entries, and the
-preflight refuses it before any state moves).
+loopback. `MCP_SSO_DCR_MODE=stateless` now boots with either redirect policy
+because the example supplies its bounded core limiter in every mode; the live
+preflight passes that exact limiter into the deployment guard before any state
+moves.
 
 Two Entra deny legs are driven through **operator-supplied deliberately-wrong
 values**, which never come from a stack output (those are the real values):

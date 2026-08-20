@@ -127,6 +127,13 @@ supplies only in stored mode (issue #280). The hosted connectors both use CIMD, 
 no available client performs DCR over an HTTPS callback. Until #280 is resolved,
 the mode difference in #278 can be shown at bridge level only.
 
+**Source correction (2026-08-21):** the paragraph above remains the limitation
+of the 2026-08-19 evidence and published v0.4.0, but issue #280 is now resolved
+in the source tree. Both examples and the live preflight supply the bounded core
+limiter in stateless mode, so stateless + generic loopback boots and the #278
+mode differential is reachable through the harness. No live row claims that
+result yet; it remains pending until a real CLI run records stateless DCR.
+
 Neither registration surface can be switched off in the shipped example, so only
 one of the three intended registration shapes is reachable through it. CIMD +
 DCR is driven above. **CIMD-only** needs a `dcr.mode` that can be disabled
