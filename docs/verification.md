@@ -21,14 +21,38 @@ How mcp-sso proves a release actually works.
 > [live-verification matrix](live-verification.md#matrix), not in this
 > document's matrix.
 >
-> **Breaking:** a stored-DCR composition without a bounded `RateLimitPort` no
-> longer boots, because every accepted anonymous registration is a durable write.
+> **Breaking: three configurations no longer boot.** Each previously started and
+> behaved in a way that read as safe and was not. Each is fixed by one
+> configuration change.
+>
+> 1. A stored-DCR composition without a bounded `RateLimitPort`, because every
+>    accepted anonymous registration is a durable write.
 > The example supplies a finite process-local registration limiter. If that
 > limiter later **throws** during stored registration, the bridge returns a direct
 > 503 before request-body selection, durable registration state, or register
 > audit. Stateless registration and the authorize/approve/token/revoke continuity
 > keys remain fail-open on a throw; an explicit limiter denial remains 429. This
 > does not relax the stateless deployment guard.
+>
+> 2. A Hono composition in stored mode with no `clientIp` extractor. Limiter keys
+>    are per source, so without an extractor every request keys on `unknown` and
+>    one caller exhausts each endpoint budget for everyone. Stored mode already
+>    requires a bounded limiter; a required limiter that cannot separate callers
+>    is the same weakness one step removed. Other modes warn rather than refuse.
+> 3. A deployment retaining generic loopback trust without the acknowledgement.
+>    The guard's loopback predicate matched only root-form entries, so
+>    `http://localhost:4321/callback`, the shape a CLI callback takes, was
+>    invisible to it and booted stateless, limiterless, and unacknowledged. Any
+>    local process can claim that port either way, so both forms are now treated
+>    as retained starter trust.
+>
+> **Also in this release:** `/oauth/callback` now charges `upstream:<ip>`, and
+> both shipped examples pass their limiter into the redirect flow, which they
+> previously dropped, so the marketed Entra and Google compositions were
+> unthrottled on authorize and callback. OIDC discovery and token responses are
+> byte-capped. A non-numeric Redis reply throws instead of reading as an allow.
+> Issuer and resource values whose raw spelling differs from their parse are
+> rejected at boot.
 >
 > **Conformance.** v0.4.0 is the first published version to claim conformance to
 > MCP Authorization `2026-07-28`, **with two recorded deviations**. In the
