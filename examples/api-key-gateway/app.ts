@@ -26,7 +26,7 @@ import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
 import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { JsonlFileAudit } from "../../src/audit/jsonl-file.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
-import { loadOrCreateQuickstartSecrets } from "../../src/quickstart.ts";
+import { prepareQuickstartSecrets } from "../../src/quickstart.ts";
 import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
 import { createEntraRedirectIdentity } from "../../src/identity/entra-redirect.ts";
 import type { IdentityPort, RedirectIdentityPort } from "../../src/ports/identity.ts";
@@ -78,7 +78,8 @@ export interface GatewayOptions {
   identity?: IdentityPort;
   /** Console-pairing OPTIONS — when set, the gateway mounts the pairing authorize surface. */
   pairing?: ConsolePairingOptions;
-  /** §17.11 upstream redirect-flow identity + callback config. */
+  /** §17.11 upstream redirect-flow identity + callback config. The flow is built
+   *  with the SAME store/clock/audit/rateLimit the Bridge uses. */
   upstream?: { identity: RedirectIdentityPort; callbackPath?: string; flowTtlSeconds?: number };
   sqliteFile?: string; // defaults to :memory:
   identityHeader?: string;
@@ -154,8 +155,10 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
 
   // --- OAuth routes + metadata (identical surface to examples/fastify-sqlite/app.ts) ---
   if (opts.upstream) {
+    // Same shared instances as the Bridge (§17.11), limiter included: one
+    // operator-supplied port covers upstream:<ip> (authorize + callback, §6.7).
     const upstream = createUpstreamRedirectFlow({
-      bridge, identity: opts.upstream.identity, store, clock, audit,
+      bridge, identity: opts.upstream.identity, store, clock, audit, rateLimit,
       callbackPath: opts.upstream.callbackPath, flowTtlSeconds: opts.upstream.flowTtlSeconds,
     });
     await registerOAuthRoutes(app, { bridge, upstream });
@@ -417,7 +420,11 @@ export async function buildGatewayExample(
   const { redirectAllowlist, redirectAllowlistMode } = redirectAllowlistPolicyFromEnv(
     env, "http://localhost,http://127.0.0.1",
   );
-  const secrets = await loadOrCreateQuickstartSecrets({ dir });
+  // §17.8 two-phase composition (mirrors src/bin/templates.ts and the fastify-sqlite
+  // example): prepare read-only, validate the COMPLETE config, only then persist —
+  // a boot that fails validation leaves no state dir, secrets, or .gitignore behind.
+  const preparedSecrets = await prepareQuickstartSecrets({ dir });
+  const secrets = preparedSecrets.secrets;
   const config = createBridgeConfig({
     issuer, resource,
     consentSigningSecret: secrets.consentSigningSecret,
@@ -435,6 +442,7 @@ export async function buildGatewayExample(
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
+  await preparedSecrets.persist(); // the one write step — AFTER validation
   const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl,
     getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile, trustedProxies });
   return { app, store, config, dir };

@@ -24,6 +24,7 @@ import type {
 } from "../src/ports/client-store.ts";
 import { AuthConfigError, createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { OAuthError } from "../src/errors.ts";
+import { PortFailureError } from "../src/port-failure.ts";
 import { sha256Hex } from "../src/crypto.ts";
 import { registerClient } from "../src/register.ts";
 import { assertRedirectAllowedForClient } from "../src/redirect.ts";
@@ -295,7 +296,8 @@ test("provision: durable-audit failure rolls back the row and returns no credent
   h.store.failDurableAudit = true;
   await assert.rejects(
     provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] }),
-    /durable audit unavailable/,
+    (error: unknown) => error instanceof PortFailureError
+      && /durable audit unavailable/.test(String((error as { cause?: Error }).cause?.message)),
   );
   assert.equal(h.store.clients.size, 0, "failed durable transaction committed no credential");
   assert.equal(h.store.mutationAudits.length, 0, "failed durable transaction committed no audit");
@@ -899,7 +901,11 @@ test("disable: durable-audit failure leaves the active credential unchanged", as
   const h = harness();
   const provisioned = await provisionMachineClient(h.deps, { allowedScopes: ["mcp:read"] });
   h.store.failDurableAudit = true;
-  await assert.rejects(disableMachineClient(h.deps, provisioned.clientId), /durable audit unavailable/);
+  await assert.rejects(
+    disableMachineClient(h.deps, provisioned.clientId),
+    (error: unknown) => error instanceof PortFailureError
+      && /durable audit unavailable/.test(String((error as { cause?: Error }).cause?.message)),
+  );
   assert.equal(await verifyMachineClientSecret(h.deps, provisioned.clientId, provisioned.clientSecret), true);
   assert.equal(
     h.store.mutationAudits.filter((audit) => audit.event === "oauth.client.disable").length,
