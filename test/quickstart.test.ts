@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
@@ -12,6 +12,7 @@ import { test } from "node:test";
 import type { JWK } from "jose";
 import { AuthConfigError, createBridgeConfig } from "../src/config.ts";
 import { loadOrCreateQuickstartSecrets, prepareQuickstartSecrets } from "../src/quickstart.ts";
+import { loadQuickstartSecrets } from "../src/quickstart-fs.ts";
 import { signAccessToken, verifyAccessToken } from "../src/crypto.ts";
 import { SystemClock } from "../src/ports/clock.ts";
 import { MemoryStore } from "../src/store/memory.ts";
@@ -402,6 +403,46 @@ test("unwritable directory fails closed (no ephemeral fallback)", async () => {
     if (process.platform !== "win32") {
       await assert.rejects(() => loadOrCreateQuickstartSecrets({ dir: join(target, "sub") }), AuthConfigError);
     }
+  });
+});
+
+test("§17.8 (audit): a wrong-owner state dir fails closed (effective-UID ownership gate)", {
+  skip: process.platform === "win32" || process.geteuid?.() === 0
+    ? "requires a non-root POSIX service user so the root-owned directory has a different UID"
+    : false,
+}, async () => {
+  // `/` is root-owned on every POSIX host. The mode gate alone cannot tell a
+  // foreign-owned 0700 dir from your own — another user's dir holding their
+  // secrets.json is a key-substitution vector (mirrors the sqlite wrong-owner probe).
+  await assert.rejects(
+    () => loadOrCreateQuickstartSecrets({ dir: "/" }),
+    (err: unknown) => err instanceof AuthConfigError
+      && /not owned by the effective service user/.test((err as Error).message),
+  );
+});
+
+test("§17.8 (audit): a wrong-owner secrets.json fails closed before its bytes are read", {
+  skip: process.platform === "win32" || process.geteuid?.() === 0
+    ? "requires a non-root POSIX service user so the root-owned probe file has a different UID"
+    : false,
+}, async (t) => {
+  // /etc/hosts: a root-owned regular file on every POSIX host. The state dir and
+  // its .gitignore are ours and exact, so only the file's ownership is at fault.
+  const probe = "/etc/hosts";
+  if ((await lstat(probe)).uid === process.geteuid?.()) {
+    t.skip("this host has no foreign-owned probe file");
+    return;
+  }
+  await withDir(async (dir) => {
+    const target = join(dir, "state");
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    await chmod(target, 0o700);
+    await writeFile(join(target, ".gitignore"), "*\n", { mode: 0o600 });
+    await assert.rejects(
+      () => loadQuickstartSecrets(target, probe),
+      (err: unknown) => err instanceof AuthConfigError
+        && /not owned by the effective service user/.test((err as Error).message),
+    );
   });
 });
 

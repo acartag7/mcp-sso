@@ -345,6 +345,20 @@ eligible for `BridgeConfig.resource`: HTTPS, or HTTP on `localhost`,
 They reject remote HTTP, blank, and malformed values before mutation or success
 audit.
 
+**Lifecycle provenance boundary.** `provisionMachineClient`,
+`rotateMachineClientSecret`, and `disableMachineClient` invoke
+`createMachineClient`, `find`, and `compareAndSwapMachineClient` through the
+§13 `callPort` boundary like every other pluggable-port call site. Whatever
+the store throws is re-cast to `PortFailureError` before it reaches the
+lifecycle caller or the failure audit: a store-authored `OAuthError` can no
+longer pose as a library-raised one (retry guidance, 409 conflict shape) nor
+write its own code into the `oauth.client.*` failure-audit `reason`, which
+classifies it as `internal_error`. The original stays on
+`PortFailureError.cause` for the operator's local diagnostics. A `false`
+return remains control flow (identifier collision, version conflict) and
+passes through untouched, so the library's own collision/conflict errors are
+unchanged.
+
 `ClientStore.find` is also a runtime boundary: a persisted or migrated row is
 not trusted merely because the port has a TypeScript return type.
 For the authorization-code flow,
