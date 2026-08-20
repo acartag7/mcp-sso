@@ -78,14 +78,13 @@ for the fetch, redirect, and validation contract.
 > file-based secret helper is for local/console-pairing use, not production pods.
 
 The API-key gateway and the Fastify/SQLite example's default DCR mode remain
-stateless and do not wire a core `RateLimitPort`. In those stateless production
-compositions, the deployment guard requires at least one application-specific
-HTTPS callback in `OAUTH_REDIRECT_ALLOWLIST`, with no loopback entry alongside
-it: an empty value, a hosted-client default, or any loopback entry — root or
-path, `http` or `https` — fails that boot guard, and a loopback entry also
-voids the mitigation an application callback would otherwise provide. Supply a
-real limiter or configure the exact callback used by your opaque DCR client; do
-not add a placeholder callback.
+stateless. Both examples wire a finite process-local core `RateLimitPort` in
+every mode, so the deployment guard admits a stateless production composition
+with either an application-specific HTTPS callback or explicitly configured
+generic loopback entries. The example port bounds aggregate registration and
+per-IP upstream authorize/callback work; public multi-replica deployments
+replace it with a conforming shared limiter. Configure only callbacks used by
+real opaque DCR clients; do not add a placeholder callback.
 
 The Fastify/SQLite production example exposes that stored composition directly.
 Native CLI clients such as Codex choose an ephemeral loopback port and callback
