@@ -345,6 +345,20 @@ eligible for `BridgeConfig.resource`: HTTPS, or HTTP on `localhost`,
 They reject remote HTTP, blank, and malformed values before mutation or success
 audit.
 
+**Lifecycle provenance boundary.** `provisionMachineClient`,
+`rotateMachineClientSecret`, and `disableMachineClient` invoke
+`createMachineClient`, `find`, and `compareAndSwapMachineClient` through the
+§13 `callPort` boundary like every other pluggable-port call site. Whatever
+the store throws is re-cast to `PortFailureError` before it reaches the
+lifecycle caller or the failure audit: a store-authored `OAuthError` can no
+longer pose as a library-raised one (retry guidance, 409 conflict shape) nor
+write its own code into the `oauth.client.*` failure-audit `reason`, which
+classifies it as `internal_error`. The original stays on
+`PortFailureError.cause` for the operator's local diagnostics. A `false`
+return remains control flow (identifier collision, version conflict) and
+passes through untouched, so the library's own collision/conflict errors are
+unchanged.
+
 `ClientStore.find` is also a runtime boundary: a persisted or migrated row is
 not trusted merely because the port has a TypeScript return type.
 For the authorization-code flow,
@@ -573,7 +587,13 @@ without consuming a revocation-limit slot.
 does no token-use-case, store, or audit work; an admitted unknown or
 already-revoked token retains RFC 7009's HTTP 200 existence-hiding behavior.
 Upstream redirect and CIMD keep their separate `upstream:<ip>` and `cimd:<ip>`
-budgets. The console-pairing orchestrator calls
+budgets. That `upstream:<ip>` budget covers BOTH legs of the redirect flow:
+`flow.handleAuthorize` charges it at its step 1, and `flow.handleCallback`
+charges the same key at entry — before duplicate-parameter analysis, cookie
+reading, or any audit work — with the authorize posture (denied ⇒ direct 429
+`temporarily_unavailable` performing no other work; a thrown `check` ⇒
+fail-open, because the callback is not an anonymous durable write). The
+console-pairing orchestrator calls
 `Bridge.guardPairingAuthorize(ip)` to charge the `authorize:<ip>` guard once per
 GET or POST authorize request, after the duplicate-query occurrence check, the
 POST body-occurrence check, and the POST Origin gate, and
