@@ -21,7 +21,9 @@ drives §8.3.
 | `server_error` | 500 | — | internal failure (e.g. refresh generation) |
 | `internal_error` | 500 | — | unexpected (mapped from non-OAuthError) |
 
-`invalid_consent` (400) is internal to consent verification. `invalid_store_input`
+`invalid_consent` (400) is internal to consent verification (including the
+adapter's malformed `mcp_idp_consent` cookie percent-decode, §9.3).
+`invalid_store_input`
 (`StoreInputError`) is thrown by store validation and is a programmer error, not
 an OAuth response.
 

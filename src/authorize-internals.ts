@@ -139,12 +139,20 @@ export function cimdDisplay(registration: CimdRegistration, redirectUri: string)
   };
 }
 
+/** Pure form of the §9.3 approve origin gate: same rule, no throw — the
+ *  adapter uses it to skip the fallback cookie decode for requests the
+ *  use-case is about to reject on origin anyway (clock precedence and the
+ *  failure audit stay inside the use-case). */
+export function approveOriginAllowed(config: BridgeConfig, origin: string | undefined): boolean {
+  const issuerOrigin = originOf(config.issuer);
+  return !!origin && (config.allowedOrigins.includes(origin) || origin === issuerOrigin);
+}
+
 /** CSRF/Origin check for `approve` (§9.3): the Origin must be the issuer
  *  origin or in `allowedOrigins` — a foreign origin is never redirected
  *  anywhere (direct `invalid_origin` 403). */
 export function assertApproveOrigin(config: BridgeConfig, origin: string | undefined): void {
-  const issuerOrigin = originOf(config.issuer);
-  if (!origin || (!config.allowedOrigins.includes(origin) && origin !== issuerOrigin)) {
+  if (!approveOriginAllowed(config, origin)) {
     throw new OAuthError("invalid_origin", "Origin not allowed", 403);
   }
 }
