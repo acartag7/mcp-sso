@@ -84,6 +84,29 @@ loopback, and `MCP_SSO_DCR_MODE=stateless` boots only together with it (the
 deployment guard refuses stateless DCR beside loopback entries, and the
 preflight refuses it before any state moves).
 
+Two Entra deny legs are driven through **operator-supplied deliberately-wrong
+values**, which never come from a stack output (those are the real values):
+`MCP_SSO_ENTRA_ALLOWED_TENANT_IDS` (a tenant list that excludes yours, for the
+wrong-tenant denial) and `MCP_SSO_ENTRA_SUBJECT_ALLOWLIST` (a subject that is
+not the one signing in, for the allowlist denial). The runner maps each onto
+the example's `ENTRA_ALLOWED_TENANT_IDS` / `ENTRA_SUBJECT_ALLOWLIST` — the bare
+names themselves stay un-allowlisted from the ambient shell, so a wrong value
+reaches a run only through its clearly-marked `MCP_SSO_` channel. Leave both
+unset and the leg runs as the positive-only configuration.
+
+A set channel is validated by `run-support deny-list` — the example's own
+`listEnv` semantics — and EVERY invalid shape is refused before the entry
+runs, because each would silently record the positive leg as deny evidence:
+
+- both channels set at once (tenant validation would mask the allowlist denial)
+- any value that normalizes to an empty list: explicitly empty, separators or
+  whitespace only, including JS-trimmable Unicode whitespace (`U+00A0`, `U+FEFF`)
+- a wrong-tenant list containing your REAL tenant in any hex casing (GUIDs are
+  case-insensitive identifiers)
+
+The normalized list is what reaches the example, so what was validated is
+exactly what ran.
+
 `run.sh` names the runtime commit on stderr and refuses a checkout with
 uncommitted tracked changes — live evidence must name a commit; set
 `MCP_SSO_ALLOW_DIRTY=true` only for a run you will not record as evidence. It
