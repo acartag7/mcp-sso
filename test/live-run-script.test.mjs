@@ -158,6 +158,57 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
       assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /fixture-entra-secret/, "run.sh never prints a stack secret");
       assert.equal(JSON.parse(env.OAUTH_SIGNING_PRIVATE_JWK).kty, "EC");
     });
+    await t.test("entra deny legs: one marked channel per run; bare ENTRA_* names never pass", async () => {
+      const WRONG_TENANT = "00000000-0000-0000-0000-000000000000";
+      const WRONG_SUBJECT = "nobody@wrong.example";
+      // One channel at a time (both set at once is ambiguous evidence — tenant
+      // validation would mask the allowlist denial — and is refused below).
+      const tenantRun = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: WRONG_TENANT,
+        ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
+      });
+      assert.equal(tenantRun.code, 0, tenantRun.stderr);
+      expectKeys(tenantRun.captured, [...LEG_KEYS.entra, "ENTRA_ALLOWED_TENANT_IDS"]);
+      assert.equal(tenantRun.captured.ENTRA_ALLOWED_TENANT_IDS, WRONG_TENANT, "the marked channel's value, not the ambient bare name");
+      const subjectRun = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: WRONG_SUBJECT,
+        ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
+      });
+      assert.equal(subjectRun.code, 0, subjectRun.stderr);
+      expectKeys(subjectRun.captured, [...LEG_KEYS.entra, "ENTRA_SUBJECT_ALLOWLIST"]);
+      assert.equal(subjectRun.captured.ENTRA_SUBJECT_ALLOWLIST, WRONG_SUBJECT, "the marked channel's value, not the ambient bare name");
+      const bothSet = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: WRONG_TENANT, MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: WRONG_SUBJECT,
+      });
+      assert.equal(bothSet.code, 1);
+      assert.match(bothSet.stderr, /only ONE Entra deny channel/);
+      assert.equal(bothSet.captured, undefined, "the refusal stops before the entry runs");
+      // A value that trims to nothing is the positive leg in disguise (the
+      // example's listEnv would treat it as unset) and is refused — including
+      // JS-trimmable Unicode whitespace, which bash-side trimming would miss.
+      for (const blankish of [" , ", " ", ""]) {
+        const blank = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+          MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: blankish,
+        });
+        assert.equal(blank.code, 1);
+        assert.match(blank.stderr, /normalizes to an empty list/);
+      }
+      // A wrong-tenant list containing the REAL tenant would pass every member
+      // login while the run records D4 — refused before the entry runs. GUIDs
+      // are case-insensitive identifiers, so odd casing is still the real tenant.
+      for (const disguised of [TENANT, TENANT.toUpperCase()]) {
+        const realTenant = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+          MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: `00000000-0000-0000-0000-000000000000,${disguised}`,
+        });
+        assert.equal(realTenant.code, 1);
+        assert.match(realTenant.stderr, /contains the real value/);
+      }
+      const bareOnly = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
+        ENTRA_ALLOWED_TENANT_IDS: "stale-tenant", ENTRA_SUBJECT_ALLOWLIST: "stale@example",
+      });
+      assert.equal(bareOnly.code, 0, bareOnly.stderr);
+      expectKeys(bareOnly.captured, LEG_KEYS.entra);
+    });
     await t.test("cloudflare probe: the Access assertion is minted by cloudflared, never inherited", async () => {
       const denied = await runScript(fx, "scripts/live/probe-cloudflare.mjs", "cloudflare_access", { CF_ACCESS_ASSERTION: "stale" });
       assert.equal(denied.code, 1);
