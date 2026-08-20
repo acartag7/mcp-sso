@@ -30,9 +30,10 @@ import {
   type GenericOidcIdTokenPayload, type GenericOidcValidateOpts,
 } from "./generic-oidc-claims.ts";
 import {
-  resolveEndpoints, defaultTokenTransport, assertValidHttpsEndpoint, formUrlEncode,
+  resolveEndpoints, assertValidHttpsEndpoint,
   type GenericOidcEndpoints, type GenericOidcTokenTransport, type DiscoveryTransport, type ResolvedEndpoints, type TokenAuthMethod,
 } from "./generic-oidc-discovery.ts";
+import { createTokenTransport, discoveryDocumentCap, exchangeCodeForToken, tokenResponseCap } from "./generic-oidc-transports.ts";
 
 export type { GenericOidcEndpoints, GenericOidcManualEndpoints } from "./generic-oidc-discovery.ts";
 
@@ -59,6 +60,14 @@ export interface GenericOidcConfig {
   allowEmailAllowlist?: boolean;
   /** Opt-in: accept a discovery that omits PKCE S256 (loud warning). */
   allowProviderWithoutPkce?: boolean;
+  /** Cap on the fetched discovery document, in bytes — the default discovery
+   *  transport stream-counts the body and aborts past the cap. Integer domain
+   *  [1024, 1048576], default 65536; boot-validated (§17.6 owner decision D5). */
+  maxDiscoveryDocumentBytes?: number;
+  /** Cap on every token-endpoint response body, in bytes — same stream-counted
+   *  enforcement on the default token transport. Integer domain
+   *  [1024, 1048576], default 16384; boot-validated (§17.6 owner decision D5). */
+  maxTokenResponseBytes?: number;
 }
 
 export interface GenericOidcAuthorizeRequest {
@@ -127,37 +136,6 @@ export function getAuthorizationUrl(config: GenericOidcConfig, resolved: Resolve
   return url.toString();
 }
 
-/** Exchange the code at the token endpoint; returns id_token + access_token (at_hash only, then discarded). */
-export async function exchangeCodeForToken(
-  config: GenericOidcConfig,
-  resolved: ResolvedEndpoints,
-  args: { code: string; codeVerifier: string },
-  transport: GenericOidcTokenTransport,
-): Promise<GenericOidcTokenResponse> {
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    code: args.code,
-    redirect_uri: config.redirectUri,
-    code_verifier: args.codeVerifier,
-  });
-  const headers: Record<string, string> = {};
-  if (config.clientSecret && resolved.tokenAuthMethod === "client_secret_basic") {
-    // basic ⇒ clientId + secret in the Authorization header ONLY (RFC 6749 §2.3.1) — not duplicated in the body.
-    headers.authorization = `Basic ${Buffer.from(`${formUrlEncode(config.clientId)}:${formUrlEncode(config.clientSecret)}`).toString("base64")}`;
-  } else {
-    body.set("client_id", config.clientId); // public + post: client identification lives in the body
-    if (config.clientSecret) body.set("client_secret", config.clientSecret); // post
-  }
-  const resp = await transport.postForm(resolved.tokenEndpoint, body, headers);
-  if (resp.status !== 200) { let detail = ""; try { const e = JSON.parse(await resp.text()) as { error?: unknown; error_description?: unknown }; if (typeof e.error === "string") detail = `: ${e.error}${typeof e.error_description === "string" ? ` — ${String(e.error_description).replace(/[\r\n]+/g, " ")}` : ""}`; } catch { /* non-JSON error body — the HTTP status is the detail */ } throw new Error(`generic_oidc_exchange_failed: token endpoint returned HTTP ${resp.status}${detail}`); }
-  const parsed = JSON.parse(await resp.text()) as Partial<GenericOidcTokenResponse>;
-  if (typeof parsed.id_token !== "string" || !parsed.id_token) throw new Error("generic_oidc_exchange_failed: token response missing id_token");
-  // access_token is REQUIRED in the code flow (OIDC §3.1.3.3) — requiring it also
-  // guarantees a present at_hash is validated (no header-mode skip in the code flow).
-  if (typeof parsed.access_token !== "string" || !parsed.access_token) throw new Error("generic_oidc_exchange_failed: token response missing access_token (required in the OIDC code flow)");
-  return { id_token: parsed.id_token, access_token: parsed.access_token };
-}
-
 /** Shared jose-verify + pure-validate seam (generic identity, standalone verifier,
  *  Google preset). iss/aud/multi-aud live in `validate` (NOT jose's `audience`,
  *  which accepts multi-aud); jose enforces the alg pin; JWKS-fetch failures ⇒ exchange_failed. */
@@ -222,13 +200,18 @@ export async function createGenericOidcIdentity(config: GenericOidcConfig, opts?
   if (config.clientSecret !== undefined && !config.clientSecret.trim()) throw new Error("generic_oidc_bad_config: clientSecret must be a non-empty string if set (an empty value would silently use public-client auth)");
   if (config.scopes !== undefined && (!config.scopes.trim() || !config.scopes.split(/\s+/).includes("openid"))) throw new Error("generic_oidc_bad_config: scopes must be a non-empty, space-separated list including 'openid' (omit for the default 'openid profile email')");
   if (config.subjectAllowlist !== undefined && (!Array.isArray(config.subjectAllowlist) || !config.subjectAllowlist.every((e) => typeof e === "string"))) throw new Error("generic_oidc_bad_config: subjectAllowlist must be an array of strings");
+  // Both body caps are boot-validated HERE (fail closed on misconfig even in manual
+  // mode, before any fetch or exchange); resolveEndpoints applies the discovery cap
+  // again when it builds the default transport (idempotent, cheap).
+  discoveryDocumentCap(config.maxDiscoveryDocumentBytes);
+  const maxTokenResponseBytes = tokenResponseCap(config.maxTokenResponseBytes);
   const resolved = await resolveEndpoints(config, opts?.discoveryFetch);
   const jwks = createRemoteJWKSet(new URL(resolved.jwksUri), { cacheMaxAge: 5 * 60 * 1000 });
   const validate = opts?.validate ?? ((p, o) => validateGenericOidcIdToken(p, config, o));
   return {
     redirectUri: config.redirectUri,
     getAuthorizationUrl: (req) => getAuthorizationUrl(config, resolved, req),
-    exchangeCodeForToken: (args, transport) => exchangeCodeForToken(config, resolved, args, transport ?? defaultTokenTransport),
+    exchangeCodeForToken: (args, transport) => exchangeCodeForToken(config, resolved, args, transport ?? createTokenTransport(maxTokenResponseBytes)),
     async verify(input, vopts) {
       if (typeof input !== "string" || !input) return { ok: false, reason: "generic_oidc_id_token_missing" };
       return verifyIdTokenWithKey(input, vopts?.verifyKey ?? jwks, {
@@ -244,5 +227,6 @@ export async function createGenericOidcIdentity(config: GenericOidcConfig, opts?
 
 // Re-exports for the ./identity/generic-oidc subpath.
 export { validateGenericOidcIdToken, computeAtHash, subjectAllowedGeneric, resolveAllowedAlgs, type GenericOidcIdTokenPayload, type GenericOidcValidateOpts, type GenericOidcClaimConfig } from "./generic-oidc-claims.ts";
-export { resolveEndpoints, defaultTokenTransport, defaultDiscoveryTransport, type ResolvedEndpoints, type DiscoveryTransport, type GenericOidcTokenTransport } from "./generic-oidc-discovery.ts";
+export { resolveEndpoints, defaultTokenTransport, defaultDiscoveryTransport, createDiscoveryTransport, createTokenTransport, type ResolvedEndpoints, type DiscoveryTransport, type GenericOidcTokenTransport } from "./generic-oidc-discovery.ts";
+export { exchangeCodeForToken } from "./generic-oidc-transports.ts";
 export { createGenericOidcRedirectIdentity, type GenericOidcRedirectOpts } from "./generic-oidc-redirect.ts";

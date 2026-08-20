@@ -48,11 +48,17 @@ import {
   createEntraIdentity, exchangeCodeForToken, getAuthorizationUrl,
   verifyEntraIdToken,
 } from "./entra.ts";
+import { readCappedText } from "./util.ts";
 import { redactForStderr } from "../audit/util.ts";
 
 /** The exact upstream scope this port requests — `offline_access` is omitted on
  *  purpose (the bridge never uses an upstream refresh token). */
 const UPSTREAM_SCOPE = "openid profile email";
+
+/** Body cap for the hardcoded Entra token endpoint (§17.6, D5 sibling of the
+ *  generic-OIDC 16384-byte cap). Fixed, not configurable: the endpoint is
+ *  hardcoded, so there is no configuration surface to defend. */
+const ENTRA_TOKEN_RESPONSE_MAX_BYTES = 16_384;
 
 /** Injectable transport override + an explicit verify key (so the full path is
  *  testable with a known key and NO JWKS fetch). `scopeCatalog` is the boot-time
@@ -81,7 +87,11 @@ const defaultTransport: EntraTokenTransport = {
       redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
-    return { status: resp.status, text: () => resp.text() };
+    // §17.6 body caps (D5 sibling): the token-endpoint response is capped at
+    // the same 16384 bytes as the generic-OIDC port — fixed, not configurable,
+    // because the endpoint is hardcoded and there is no discovery document.
+    // The throw maps to `exchange_failed` under the §17.11 throw rule.
+    return { status: resp.status, text: () => readCappedText(resp.body, ENTRA_TOKEN_RESPONSE_MAX_BYTES, "entra exchange_failed: token response exceeded the 16384-byte cap") };
   },
 };
 

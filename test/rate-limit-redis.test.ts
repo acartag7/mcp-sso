@@ -6,6 +6,7 @@
 // (review B3) so a wiring typo cannot silently skip and print green.
 
 import assert from "node:assert/strict";
+import net from "node:net";
 import { test } from "node:test";
 import { Redis } from "ioredis";
 import { RedisRateLimit } from "../src/rate-limit/redis.ts";
@@ -56,6 +57,75 @@ test("RedisRateLimit: if EVALSHA returns NOSCRIPT and EVAL also fails, the EVAL 
   } as unknown as Redis;
   const rl = new RedisRateLimit(broken, { windowSeconds: 60, limit: 1 });
   await assert.rejects(rl.check("k"), /redis down/);
+});
+
+// --- non-numeric script replies (§17.10 owner decision D3) ---------------------
+// Real ioredis client against a controlled fake RESP server with a PROPER multibulk
+// frame parser (a naive line-based stub never reassembles the command frame ioredis
+// actually sends). The reply a Redis-compatible facade (proxy, mock, mid-protocol
+// rewrite) could produce in place of the INCR integer must THROW — no quota decision
+// was reached, so §6.7's outage policy applies — never coerce to an allow. Numeric
+// positive controls first prove the instrument itself denies/allows correctly.
+
+type RespResponder = (command: string, items: string[]) => string | undefined;
+
+/** Minimal RESP server: parses one full multibulk command per iteration, asks the
+ *  responder for the raw wire reply, writes it. Returns the listening server+port. */
+function fakeRespRedis(onCommand: RespResponder): Promise<{ server: net.Server; port: number }> {
+  const server = net.createServer((sock) => {
+    let buf = Buffer.alloc(0);
+    sock.on("data", (d) => {
+      buf = Buffer.concat([buf, d]);
+      for (;;) {
+        const nl = buf.indexOf("\r\n");
+        if (nl < 0 || buf[0] !== 42) return; // "*" — multibulk count line incomplete
+        const n = Number(buf.subarray(1, nl).toString());
+        let off = nl + 2;
+        const items: string[] = [];
+        for (let i = 0; i < n; i++) {
+          const l2 = buf.indexOf("\r\n", off);
+          if (l2 < 0 || buf[off] !== 36) return; // "$" — this bulk element incomplete
+          const len = Number(buf.subarray(off + 1, l2).toString());
+          const start = l2 + 2;
+          const end = start + len;
+          if (buf.length < end + 2) return; // element body not fully buffered yet
+          items.push(buf.subarray(start, end).toString());
+          off = end + 2;
+        }
+        buf = buf.subarray(off);
+        const reply = onCommand(items[0]?.toUpperCase() ?? "", items);
+        if (reply !== undefined) sock.write(reply);
+      }
+    });
+  });
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, port: (server.address() as net.AddressInfo).port })));
+}
+
+test("RedisRateLimit: non-numeric script replies (bulk garbage, null bulk, status) throw; numeric replies decide", async () => {
+  const cases: Array<{ label: string; reply: string; expect: boolean | "throw" }> = [
+    { label: "control numeric :5 over limit 3", reply: ":5\r\n", expect: false }, // the instrument must deny
+    { label: "control numeric :2 within limit", reply: ":2\r\n", expect: true },  // the instrument must allow
+    { label: "case bulk garbage 'foo'", reply: "$3\r\nfoo\r\n", expect: "throw" },
+    { label: "case null bulk $-1", reply: "$-1\r\n", expect: "throw" }, // Number(null) === 0 — the coerce-to-allow trap
+    { label: "case status +OK", reply: "+OK\r\n", expect: "throw" },
+  ];
+  for (const c of cases) {
+    // EVALSHA is answered with NOSCRIPT so the fallback EVAL path is the one scored.
+    const { server, port } = await fakeRespRedis((cmd) => (cmd === "EVALSHA" ? "-NOSCRIPT no script\r\n" : c.reply));
+    const client = new Redis({ port, host: "127.0.0.1", enableReadyCheck: false, maxRetriesPerRequest: 0, retryStrategy: null, lazyConnect: true, enableOfflineQueue: false });
+    const rl = new RedisRateLimit(client, { windowSeconds: 60, limit: 3 });
+    try {
+      await client.connect();
+      if (c.expect === "throw") {
+        await assert.rejects(rl.check("register:1.2.3.4"), /non-numeric reply/, `${c.label} → throw`);
+      } else {
+        assert.equal(await rl.check("register:1.2.3.4"), c.expect, `${c.label} → ${c.expect}`);
+      }
+    } finally {
+      client.disconnect();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  }
 });
 
 if (RUN) {

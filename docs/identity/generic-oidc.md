@@ -41,6 +41,8 @@ const identity = await createGenericOidcRedirectIdentity({
   subjectAllowlist: ["<stable sub>"], // optional defense-in-depth
   // allowEmailAllowlist: true,  // also match a verified email against subjectAllowlist
   // allowProviderWithoutPkce: true, // only if your issuer omits PKCE (loud)
+  // maxDiscoveryDocumentBytes: 65536, // byte cap on the fetched discovery document (default; [1024, 1048576])
+  // maxTokenResponseBytes: 16384,     // byte cap on every token-endpoint response (default; [1024, 1048576])
 });
 const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit, callbackPath: "/oauth/callback" });
 ```
@@ -56,6 +58,13 @@ const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit,
 - **`endpoints: { … }`** (manual) — supply the three endpoints directly; no
   boot-time fetch. Each must still be `https://`; explicitly configured
   cross-host endpoints are allowed because the deployer selected every URL.
+- **Body caps** — the default transports stream-count fetched bodies and abort
+  the download the moment the cap is exceeded: the discovery document at
+  `maxDiscoveryDocumentBytes` (default 65536) and every token-endpoint response
+  at `maxTokenResponseBytes` (default 16384). Both must be integers in
+  [1024, 1048576] or boot fails. An oversized body is rejected as a fetch
+  failure (`exchange_failed` class), never as an identity decision, and is
+  never fully downloaded or buffered.
 - **PKCE** — always S256. If discovery does not advertise
   `code_challenge_methods_supported` containing `S256`, boot **fails** unless you
   set `allowProviderWithoutPkce: true` (it then proceeds with a loud warning;
