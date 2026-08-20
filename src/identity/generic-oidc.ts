@@ -34,6 +34,7 @@ import {
   type GenericOidcEndpoints, type GenericOidcTokenTransport, type DiscoveryTransport, type ResolvedEndpoints, type TokenAuthMethod,
 } from "./generic-oidc-discovery.ts";
 import { createTokenTransport, discoveryDocumentCap, exchangeCodeForToken, tokenResponseCap } from "./generic-oidc-transports.ts";
+import { remoteJwksOptions } from "./jwks-fetch.ts";
 
 export type { GenericOidcEndpoints, GenericOidcManualEndpoints } from "./generic-oidc-discovery.ts";
 
@@ -68,6 +69,9 @@ export interface GenericOidcConfig {
    *  enforcement on the default token transport. Integer domain
    *  [1024, 1048576], default 16384; boot-validated (§17.6 owner decision D5). */
   maxTokenResponseBytes?: number;
+  /** Maximum remote JWKS document size in bytes. Integer [1024, 1048576],
+   *  default 65536; boot-validated in discovery and manual mode (§17.6). */
+  maxJwksDocumentBytes?: number;
 }
 
 export interface GenericOidcAuthorizeRequest {
@@ -200,13 +204,14 @@ export async function createGenericOidcIdentity(config: GenericOidcConfig, opts?
   if (config.clientSecret !== undefined && !config.clientSecret.trim()) throw new Error("generic_oidc_bad_config: clientSecret must be a non-empty string if set (an empty value would silently use public-client auth)");
   if (config.scopes !== undefined && (!config.scopes.trim() || !config.scopes.split(/\s+/).includes("openid"))) throw new Error("generic_oidc_bad_config: scopes must be a non-empty, space-separated list including 'openid' (omit for the default 'openid profile email')");
   if (config.subjectAllowlist !== undefined && (!Array.isArray(config.subjectAllowlist) || !config.subjectAllowlist.every((e) => typeof e === "string"))) throw new Error("generic_oidc_bad_config: subjectAllowlist must be an array of strings");
-  // Both body caps are boot-validated HERE (fail closed on misconfig even in manual
-  // mode, before any fetch or exchange); resolveEndpoints applies the discovery cap
-  // again when it builds the default transport (idempotent, cheap).
+  // All body caps are boot-validated HERE (fail closed on misconfig even in
+  // manual mode, before any fetch or exchange); resolveEndpoints applies the
+  // discovery cap again when it builds the default transport (idempotent, cheap).
   discoveryDocumentCap(config.maxDiscoveryDocumentBytes);
   const maxTokenResponseBytes = tokenResponseCap(config.maxTokenResponseBytes);
+  const jwksOptions = remoteJwksOptions(config.maxJwksDocumentBytes);
   const resolved = await resolveEndpoints(config, opts?.discoveryFetch);
-  const jwks = createRemoteJWKSet(new URL(resolved.jwksUri), { cacheMaxAge: 5 * 60 * 1000 });
+  const jwks = createRemoteJWKSet(new URL(resolved.jwksUri), jwksOptions);
   const validate = opts?.validate ?? ((p, o) => validateGenericOidcIdToken(p, config, o));
   return {
     redirectUri: config.redirectUri,

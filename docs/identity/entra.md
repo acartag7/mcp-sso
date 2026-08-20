@@ -15,6 +15,7 @@ const identity = createEntraRedirectIdentity({
   clientSecret: process.env.ENTRA_CLIENT_SECRET, // omit for a public (PKCE-only) client
   redirectUri:  process.env.ENTRA_REDIRECT_URI!, // must equal issuerOrigin + callbackPath
   subjectAllowlist: [],                          // optional; exact oid or accepted issuer|sub
+  // maxJwksDocumentBytes: 65536,                // default; integer [1024, 1048576]
 }, { scopeCatalog: ["mcp:read", "mcp:write"] });
 ```
 
@@ -70,6 +71,9 @@ For **group-based authorization** (optional, see below), additionally:
 Bridge signing material (`OAUTH_ISSUER`, `OAUTH_RESOURCE`,
 `OAUTH_CONSENT_SIGNING_SECRET`, `OAUTH_SIGNING_PRIVATE_JWK`, optional
 `OAUTH_SIGNING_KEY_ID`) is required and separate from the `ENTRA_*` identity env.
+Direct library callers may set `maxJwksDocumentBytes`; it defaults to 65536 and
+must be an integer in [1024, 1048576], or identity construction fails before
+jose can fetch. The shipped example currently uses the default.
 
 The shipped examples accept the same group authorization object through one
 JSON env variable:
@@ -127,7 +131,8 @@ Verified-context rejections return `identity_rejected` (a 302 redirect with
 | Expired / bad claim / bad alg / unknown key / other `jose` | `entra_token_expired` / `entra_bad_claim` / `entra_unsupported_alg` / `entra_unknown_key` / `entra_token_invalid` |
 
 **Infrastructure / exchange** failures — a token-exchange non-200 or timeout, a
-**token response missing `id_token`**, or a JWKS-fetch failure (`entra_verify_failed`)
+**token response missing `id_token`**, or an unreachable, over-cap, or otherwise
+failed JWKS fetch (`entra_verify_failed`)
 — are classified `exchange_failed` → a 302 `server_error`, and emit **no**
 `identity.verify` audit event; no identity decision was made. (The `entra_id_token_missing`
 reason applies only to the lower-level header-driven / primitives path, where a raw
