@@ -101,7 +101,19 @@ interface BridgeConfig {
   own closure; do not put them in the `createBridgeConfig` input.
 - `issuer` and `resource` are absolute `https://` URLs (the bridge does not run
   over plain http in production); every other scheme is rejected at boot. Their
-  **origins** are computed once and reused.
+  **origins** are computed once and reused. Each raw spelling must also
+  **byte-equal its own WHATWG serialization**: `createBridgeConfig` rejects any
+  string `new URL(value).href` would rewrite — an embedded CR/LF/TAB the parser
+  silently strips (the raw value is emitted verbatim into the RFC 7617 `realm`
+  challenge and the AS metadata `issuer`), an uppercase or percent-encoded
+  host, a query WHATWG moves behind the root path — with an `AuthConfigError`
+  naming the canonical form, exactly as §10.0 requires for redirect entries
+  and this section requires for `allowedOrigins`. The one permitted deviation
+  is the root slash WHATWG appends to an origin-form value
+  (`https://auth.example.com`). The spelling the deployer wrote is stored and
+  emitted **verbatim, never silently normalized** — it is byte-copied into JWT
+  `iss` claims, so a normalized copy would issue tokens under an issuer
+  nobody configured (owner decision 2026-08-19).
   **Local-dev escape hatch:** `dev.allowInsecureLocalhost` permits `http://`
   `issuer`/`resource` **only on loopback** (`localhost`/`127.0.0.1`/`[::1]`); it is
   rejected at boot if either origin is not loopback and it emits a loud warning.

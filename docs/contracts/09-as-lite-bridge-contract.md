@@ -281,6 +281,17 @@ one target, while multiple distinct targets follow the existing post-validation
   `invalid_request` (no Deny redirect, no JTI consumption). Fastify and Hono
   reconstruct URL-encoded form occurrences as arrays so last-wins collapse
   cannot hide a second `approved=true`; Express already preserves arrays.
+  When the checked form body carries **no** `consent_token`, the same handler
+  falls back to the deployer-owned `mcp_idp_consent` cookie (threat-model row 4:
+  the library itself sets no cookie). The cookie value is percent-decoded
+  exactly once; a malformed percent-escape is the same **direct 400
+  `invalid_consent`** as an unparseable form-supplied token — never a 500, and
+  never silently treated as an absent cookie: the malformed value is the
+  consent credential the request presented, and conflating it with "no
+  credential" would misreport a malformed (possibly tampered) transport as a
+  plain missing-parameter request. *(Fixed 2026-08-19: the bare
+  `decodeURIComponent` escaped `handleApprove` as a raw `URIError` mapped to
+  500 `internal_error`.)*
 - **Validate scope state before consuming consent:** on approval, the signed
   consent `scope` claim and the loaded stored-DCR prior scopes must satisfy §11
   and the current `scopeCatalog`; a carried `allowed_scopes` ceiling must also

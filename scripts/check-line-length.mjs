@@ -35,7 +35,7 @@ const EXCEPTIONS = {
   },
   "adapters/bridge.ts": {
     limit: 258,
-    reason: "The pairing admission seam belongs beside Bridge's snapshotted limiter and endpoint guards; splitting would separate one policy owner. Raised 255→258 for the §6.7 stored-DCR runtime admission (D2): the one-line call sits beside the guard it admits through, and the helper already lives in bridge-internals.",
+    reason: "The pairing admission seam belongs beside Bridge's snapshotted limiter and endpoint guards; splitting would separate one policy owner. Raised 255->258 for two changes that both belong beside the guard they act on: the §6.7 stored-DCR runtime admission (D2), whose one-line call sits beside the guard it admits through, and the §9.3 approve-ordering gate, whose origin precheck sits between the form parse and the fallback cookie decode so the CSRF classification stays with the decode it guards.",
   },
 };
 

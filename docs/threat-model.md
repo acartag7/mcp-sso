@@ -532,8 +532,12 @@ deployer acts on.
   is detected per instance only (the shared mysql store closes this — same class
   as consent JTIs). An initiated-but-abandoned flow leaves no server-side trace
   (the cookie simply expires) — accepted as the cost of the stateless-cookie
-  decision. The `upstream:<ip>` rate-limit key bounds flow-initiation abuse, and
-  every callback outcome is audited (`oauth.upstream.callback`). Bounded by the
+  decision. The `upstream:<ip>` rate-limit key bounds flow-initiation abuse and
+  the callback, and every callback outcome is audited
+  (`oauth.upstream.callback`) — with one deliberate exception: a **quota
+  denial** emits no audit row, because denial performs no work (§6.7) and
+  auditing unthrottled denials would hand an attacker the very audit-flood
+  surface the guard exists to bound. Bounded by the
   flow TTL (default 600 s, ≤ 3600 s, [§17.11](./contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-leg-orchestrator-locked-2026-07-06)).
 - **Audit sinks are fail-open by design** (evidence, not a gate —
   [§13](./contracts/13-audit-contract.md#13-audit-contract)): an auth flow never fails because

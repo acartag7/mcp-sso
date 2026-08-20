@@ -74,15 +74,22 @@ How mcp-sso proves a release actually works.
 > evidence rows, zero runtime mismatches, and 12 not-applicable rows. RFC 9207
 > error redirects, scope-hierarchy handling, and narrow CIMD loopback-port
 > elasticity are closed in source. This precise mapping is **not a current-head
-> live conformance claim**: the latest live CIMD provider/client run remains exact
-> runtime commit `af2a61f` from 2026-07-28, before the post-v0.3.5 hardening line.
+> live conformance claim**: the latest full-matrix live CIMD provider/client
+> run is exact runtime commit `d6143b3` from 2026-08-19, after the
+> post-v0.3.5 hardening line and across all three identity legs
+> ([matrix](live-verification.md#matrix)). The same day's later
+> stateless-DCR Entra/claude.ai row (`7909642` on `main`) is newer but is one
+> deployment shape, not a full matrix. The merged head has since gained the
+> stored-registration fail-closed runtime change, which CI covers and no live
+> run does.
 > See [§16.1](contracts/16-spec-conformance-matrix.md#161-cimd-draft--00-requirement-matrix)
 > and the append-only [spec-release receipt](#spec-release-re-verification-completed-2026-08-02).
 >
 > Device flow §17.3 and the dedicated GitHub port in §17.6 remain contract-only,
 > not release claims. Historical Cloudflare Access, Entra, and Google evidence is
 > retained. Current-head live CIMD re-verification was completed on 2026-08-19
-> across all three identity legs. Of the Entra deny/ceiling sweep, the no-group,
+> at exact runtime commit `d6143b3`, the then-current `main` head, across all
+> three identity legs. Of the Entra deny/ceiling sweep, the no-group,
 > no-mapped-group, and group-overage cases were driven that day; wrong-tenant,
 > allowlist, and guest/B2B were not. A second non-Google generic-OIDC issuer
 > remains undriven.

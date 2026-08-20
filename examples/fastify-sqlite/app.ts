@@ -25,7 +25,7 @@
 //
 // Root-exported from `mcp-sso` (consumers import these from the root, not `../../src`):
 //   Bridge, RequestAuthorizer, createBridgeConfig, buildUnauthorizedChallenge, OAuthError,
-//   SystemClock, JsonlFileAudit, originOf, loadOrCreateQuickstartSecrets,
+//   SystemClock, JsonlFileAudit, originOf, prepareQuickstartSecrets,
 //   handlePairingAuthorize, createUpstreamRedirectFlow, isMcpPath,
 //   NormRequest / NormResponse, assertCallbackPath, ensureStateDir, assertRealDir
 //   (the last five are the consumer-facing example helpers — contracts §15 DX).
@@ -48,7 +48,7 @@ import { noopAudit, type AuditPort } from "../../src/ports/audit.ts";
 import type { RateLimitPort } from "../../src/ports/rate-limit.ts";
 import { JsonlFileAudit } from "../../src/audit/jsonl-file.ts";
 import { openSqliteStore } from "../../src/store/sqlite.ts";
-import { loadOrCreateQuickstartSecrets } from "../../src/quickstart.ts";
+import { prepareQuickstartSecrets } from "../../src/quickstart.ts";
 import { ensureStateDir } from "../../src/state-dir.ts";
 import { createCloudflareAccessIdentity } from "../../src/identity/cloudflare-access.ts";
 import { createEntraRedirectIdentity } from "../../src/identity/entra-redirect.ts";
@@ -91,8 +91,8 @@ export interface ExampleOptions {
    *  events are never dropped relative to the Bridge/RequestAuthorizer audit. */
   pairing?: ConsolePairingOptions;
   /** §17.11 upstream redirect-flow identity + callback config. When set, buildApp
-   *  builds `createUpstreamRedirectFlow` with the SAME store/clock/audit the
-   *  Bridge uses (the composition root passes the shared instances — §17.11). */
+   *  builds `createUpstreamRedirectFlow` with the SAME store/clock/audit/rateLimit
+   *  the Bridge uses (the composition root passes the shared instances — §17.11). */
   upstream?: { identity: RedirectIdentityPort; callbackPath?: string; flowTtlSeconds?: number };
   sqliteFile?: string; // defaults to :memory:
   identityHeader?: string;
@@ -156,9 +156,11 @@ export async function buildApp(opts: ExampleOptions) {
   if (opts.upstream) {
     // §17.11 upstream redirect-flow mode: the bridge delegates /oauth/authorize +
     // the callback to the orchestrator, built here with the SAME store/clock/audit
-    // the Bridge uses (the composition root owns the shared instances).
+    // the Bridge uses (the composition root owns the shared instances). The
+    // limiter travels too: one operator-supplied port must cover upstream:<ip>
+    // (authorize + callback, §6.7), not just the Bridge's own keys.
     const upstream = createUpstreamRedirectFlow({
-      bridge, identity: opts.upstream.identity, store, clock, audit,
+      bridge, identity: opts.upstream.identity, store, clock, audit, rateLimit,
       callbackPath: opts.upstream.callbackPath, flowTtlSeconds: opts.upstream.flowTtlSeconds,
     });
     await registerOAuthRoutes(app, { bridge, upstream });
@@ -635,7 +637,11 @@ export async function buildExample(
   const { redirectAllowlist, redirectAllowlistMode } = redirectAllowlistPolicyFromEnv(
     env, "http://localhost,http://127.0.0.1",
   );
-  const secrets = await loadOrCreateQuickstartSecrets({ dir });
+  // §17.8 two-phase composition (mirrors src/bin/templates.ts): prepare read-only,
+  //  validate the COMPLETE config from the prepared secrets, and only then persist —
+  //  a boot that fails validation leaves no state dir, secrets, or .gitignore behind.
+  const preparedSecrets = await prepareQuickstartSecrets({ dir });
+  const secrets = preparedSecrets.secrets;
   const config = createBridgeConfig({
     issuer,
     resource,
@@ -654,6 +660,7 @@ export async function buildExample(
     dev: isLoopback(issuer) ? { allowInsecureLocalhost: true } : undefined,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
+  await preparedSecrets.persist(); // the one write step — AFTER validation
   const { app, store } = await buildApp({ config, pairing: {}, audit, sqliteFile, trustedProxies });
   return { app, store, config, dir };
 }

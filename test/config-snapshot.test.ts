@@ -233,3 +233,28 @@ test("hostile and oversized configuration array lengths fail before iteration", 
     (error: unknown) => error instanceof AuthConfigError,
   );
 });
+
+test("issuer and resource spellings WHATWG would rewrite are boot failures, never silently normalized", () => {
+  const base = baseInput();
+  // Each raw string parses, but new URL(value).href rewrites it: WHATWG strips
+  // raw CR/LF/TAB anywhere, lowercases the host, treats a backslash as a path
+  // separator in special URLs, and moves a query behind the appended root slash.
+  for (const [field, value] of [
+    ["issuer", "https://example.com\r\nEvil"],
+    ["issuer", "https://auth.test?q=1"],
+    ["issuer", "https://AUTH.test"],
+    ["resource", "https://api.test\\mcp"],
+  ] as Array<[keyof BridgeConfig, string]>) {
+    assert.throws(
+      () => createBridgeConfig({ ...base, [field]: value }),
+      (error: unknown) => error instanceof AuthConfigError
+        && /must use canonical WHATWG spelling; use /.test(error.message),
+      `${field} ${JSON.stringify(value)} must be rejected at boot`,
+    );
+  }
+  // Origin-form values keep the root slash WHATWG appends, and the spelling
+  // the deployer wrote is stored VERBATIM - never the href nobody configured.
+  const issuer = "https://auth.test";
+  const config = createBridgeConfig({ ...base, issuer });
+  assert.equal(config.issuer, issuer);
+});

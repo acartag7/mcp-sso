@@ -7,6 +7,7 @@ import type { JWK } from "jose";
 import type { ClientStore } from "./ports/client-store.ts";
 import { AuthConfigError } from "./config-error.ts";
 import { validateAllowedOrigins } from "./allowed-origin.ts";
+import { validateUrl } from "./config-url.ts";
 import { cimdConfigProblem, type CimdOptions } from "./cimd/options.ts";
 import type { RedirectAllowlistMode } from "./redirect.ts";
 import { scopeListProblem } from "./scopes.ts";
@@ -59,8 +60,6 @@ export interface BridgeConfig {
   consentTokenTtlSeconds: number;
   authorizationCodeTtlSeconds: number;
 }
-
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** Every accepted top-level `BridgeConfig` key, in lockstep with the interface
  *  above. `createBridgeConfig` rejects any other own property (string OR symbol)
@@ -198,27 +197,6 @@ export function createBridgeConfig(input: BridgeConfig): BridgeConfig {
     clientCredentials, cimd, accessTokenTtlSeconds, refreshTokenTtlSeconds,
     consentTokenTtlSeconds, authorizationCodeTtlSeconds,
   });
-}
-
-function validateUrl(allowInsecureLocalhost: boolean, label: string, value: unknown): void {
-  if (typeof value !== "string") throw new AuthConfigError(`${label} must be an absolute URL`);
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new AuthConfigError(`${label} must be an absolute URL`);
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new AuthConfigError(`${label} must be https:// or http://`);
-  }
-  if (allowInsecureLocalhost) {
-    if (!LOOPBACK_HOSTS.has(url.hostname)) {
-      throw new AuthConfigError(`dev.allowInsecureLocalhost requires a loopback origin for ${label}`);
-    }
-    // loopback: http or https both permitted
-  } else if (url.protocol !== "https:") {
-    throw new AuthConfigError(`${label} must be https:// (use dev.allowInsecureLocalhost for local http)`);
-  }
 }
 
 function validateTtl(value: number, label: string): void {

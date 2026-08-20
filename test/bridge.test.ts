@@ -447,6 +447,46 @@ test("bridge: duplicate approved or consent_token is invalid_request, not last-w
   assert.ok(new URL(ok.headers.location as string).searchParams.get("code"));
 });
 
+test("bridge: malformed mcp_idp_consent cookie percent-escape is direct 400 invalid_consent, never a 500", async () => {
+  const ctx = setup();
+  // No form consent_token: the cookie is the credential actually read
+  // (formField(body, "consent_token") ?? consentCookie(req) short-circuits
+  // before the cookie when the form supplies one).
+  const res = await ctx.bridge.handleApprove(req({
+    body: { approved: "true" },
+    headers: { origin: "https://auth.test", cookie: "mcp_idp_consent=%E0%A4%A" },
+  }));
+  assert.equal(res.status, 400);
+  assert.deepEqual(res.body, { error: "invalid_consent", error_description: "Consent token is invalid or expired" });
+  assert.equal(res.redirect, undefined);
+  // A present form token keeps precedence: the malformed cookie is never read.
+  const formWins = await ctx.bridge.handleApprove(req({
+    body: { consent_token: "x", approved: "true" },
+    headers: { origin: "https://auth.test", cookie: "mcp_idp_consent=%E0%A4%A" },
+  }));
+  assert.equal(formWins.status, 400);
+  assert.equal((formWins.body as { error: string }).error, "invalid_consent");
+});
+
+test("bridge: a foreign Origin keeps its 403 CSRF classification even with a malformed consent cookie", async () => {
+  // Review P1 on #292: the origin gate must run BEFORE the fallback cookie
+  // decodes, or a cross-origin request with a malformed cookie answers 400
+  // invalid_consent instead of the contractual 403 invalid_origin.
+  const ctx = setup();
+  const foreign = await ctx.bridge.handleApprove(req({
+    body: { approved: "true" },
+    headers: { origin: "https://evil.example", cookie: "mcp_idp_consent=%E0%A4%A" },
+  }));
+  assert.equal(foreign.status, 403);
+  assert.equal((foreign.body as { error: string }).error, "invalid_origin");
+  const missing = await ctx.bridge.handleApprove(req({
+    body: { approved: "true" },
+    headers: { cookie: "mcp_idp_consent=%E0%A4%A" },
+  }));
+  assert.equal(missing.status, 403);
+  assert.equal((missing.body as { error: string }).error, "invalid_origin");
+});
+
 test("bridge: every recognized OAuth form key rejects strict repetition before endpoint audit", async (t) => {
   const routes = [
     {
