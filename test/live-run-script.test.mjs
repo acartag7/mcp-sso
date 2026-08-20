@@ -186,7 +186,7 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
       // A value that trims to nothing is the positive leg in disguise (the
       // example's listEnv would treat it as unset) and is refused — including
       // JS-trimmable Unicode whitespace, which bash-side trimming would miss.
-      for (const blankish of [" , ", " "]) {
+      for (const blankish of [" , ", " ", ""]) {
         const blank = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", {
           MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: blankish,
         });

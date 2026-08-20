@@ -94,6 +94,19 @@ names themselves stay un-allowlisted from the ambient shell, so a wrong value
 reaches a run only through its clearly-marked `MCP_SSO_` channel. Leave both
 unset and the leg runs as the positive-only configuration.
 
+A set channel is validated by `run-support deny-list` — the example's own
+`listEnv` semantics — and EVERY invalid shape is refused before the entry
+runs, because each would silently record the positive leg as deny evidence:
+
+- both channels set at once (tenant validation would mask the allowlist denial)
+- any value that normalizes to an empty list: explicitly empty, separators or
+  whitespace only, including JS-trimmable Unicode whitespace (`U+00A0`, `U+FEFF`)
+- a wrong-tenant list containing your REAL tenant in any hex casing (GUIDs are
+  case-insensitive identifiers)
+
+The normalized list is what reaches the example, so what was validated is
+exactly what ran.
+
 `run.sh` names the runtime commit on stderr and refuses a checkout with
 uncommitted tracked changes — live evidence must name a commit; set
 `MCP_SSO_ALLOW_DIRTY=true` only for a run you will not record as evidence. It

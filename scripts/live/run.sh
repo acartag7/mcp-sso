@@ -149,16 +149,19 @@ if [ "$KIND" != "e2e" ]; then
       # normalization go through run-support's deny-list (never this shell):
       # exactly the example's listEnv semantics — split, Unicode trim, filter —
       # and, for the wrong-tenant channel, exclusion of the REAL tenant.
-      if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" ] && [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST:-}" ]; then
+      # Presence, not -n: an explicitly exported EMPTY channel is still a set
+      # channel and must reach the normalizer (which rejects it) rather than
+      # silently run the positive leg.
+      if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS+x}" ] && [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST+x}" ]; then
         fail "set only ONE Entra deny channel per run: MCP_SSO_ENTRA_ALLOWED_TENANT_IDS (wrong-tenant) or MCP_SSO_ENTRA_SUBJECT_ALLOWLIST (allowlist); both set cannot produce unambiguous evidence"
       fi
-      if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" ]; then
-        ENTRA_ALLOWED_TENANT_IDS="$(printf '%s' "$MCP_SSO_ENTRA_ALLOWED_TENANT_IDS" | support deny-list "$ENTRA_TENANT_ID")" \
+      if [ -n "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS+x}" ]; then
+        ENTRA_ALLOWED_TENANT_IDS="$(printf '%s' "${MCP_SSO_ENTRA_ALLOWED_TENANT_IDS:-}" | support deny-list "$ENTRA_TENANT_ID")" \
           || fail "MCP_SSO_ENTRA_ALLOWED_TENANT_IDS is not a usable wrong-tenant deny list (run-support reports why above)"
         pass ENTRA_ALLOWED_TENANT_IDS
       fi
-      if [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST:-}" ]; then
-        ENTRA_SUBJECT_ALLOWLIST="$(printf '%s' "$MCP_SSO_ENTRA_SUBJECT_ALLOWLIST" | support deny-list)" \
+      if [ -n "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST+x}" ]; then
+        ENTRA_SUBJECT_ALLOWLIST="$(printf '%s' "${MCP_SSO_ENTRA_SUBJECT_ALLOWLIST:-}" | support deny-list)" \
           || fail "MCP_SSO_ENTRA_SUBJECT_ALLOWLIST is not a usable deny allowlist (run-support reports why above)"
         pass ENTRA_SUBJECT_ALLOWLIST
       fi
