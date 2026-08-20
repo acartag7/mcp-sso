@@ -21,14 +21,49 @@ How mcp-sso proves a release actually works.
 > [live-verification matrix](live-verification.md#matrix), not in this
 > document's matrix.
 >
-> **Breaking:** a stored-DCR composition without a bounded `RateLimitPort` no
-> longer boots, because every accepted anonymous registration is a durable write.
+> **Breaking: three configurations no longer boot.** Each previously started and
+> behaved in a way that read as safe and was not. Each is fixed by one
+> configuration change.
+>
+> 1. A stored-DCR composition without a bounded `RateLimitPort`, because every
+>    accepted anonymous registration is a durable write.
 > The example supplies a finite process-local registration limiter. If that
 > limiter later **throws** during stored registration, the bridge returns a direct
 > 503 before request-body selection, durable registration state, or register
 > audit. Stateless registration and the authorize/approve/token/revoke continuity
 > keys remain fail-open on a throw; an explicit limiter denial remains 429. This
 > does not relax the stateless deployment guard.
+>
+> 2. A Hono composition in stored mode with no `clientIp` extractor. Limiter keys
+>    are per source, so without an extractor every request keys on `unknown` and
+>    one caller exhausts each endpoint budget for everyone. Stored mode already
+>    requires a bounded limiter; a required limiter that cannot separate callers
+>    is the same weakness one step removed. Other modes warn rather than refuse.
+> 3. An **internet-facing, limiterless** stateless deployment retaining generic
+>    loopback trust without the acknowledgement. The guard's loopback predicate
+>    matched only root-form entries, so `http://localhost:4321/callback`, the
+>    shape a CLI callback takes, was invisible to it. Any local process can claim
+>    that port either way, so both forms now count as retained starter trust.
+>    This changes boot only where the guard already applies: supplying a bounded
+>    non-`noopRateLimit` limiter returns before the allowlist is inspected, and a
+>    `dev.allowInsecureLocalhost` local-only composition is exempt, so neither
+>    shape is affected.
+>
+> **Also in this release:** `/oauth/callback` now charges `upstream:<ip>`, and
+> both shipped examples pass their limiter into the redirect flow instead of
+> dropping it. That closes the wiring, not the default: the environment-driven
+> examples create a registration limiter only in stored mode, and
+> `buildGatewayExample` supplies none, so a **default stateless** composition
+> still hands the flow `noopRateLimit` and its authorize and callback paths stay
+> unthrottled by this mechanism. Stored Fastify deployments, and any caller that
+> supplies `rateLimit`, are throttled on those paths for the first time. The **default** OIDC discovery and token
+> transports stream-count their bodies against a cap; a supplied custom
+> `discoveryFetch` or token transport is consumed directly, and §17.6 assigns
+> body discipline to that transport rather than wrapping it. A non-numeric Redis
+> reply throws instead of reading as an allow. Issuer and resource values whose
+> raw spelling differs from their WHATWG parse are rejected at boot, with one
+> preserved exception: origin form without the root slash, `https://auth.test`,
+> stays accepted verbatim.
 >
 > **Conformance.** v0.4.0 is the first published version to claim conformance to
 > MCP Authorization `2026-07-28`, **with two recorded deviations**. In the
