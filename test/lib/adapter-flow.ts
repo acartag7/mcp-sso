@@ -157,7 +157,7 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       assert.equal(response.headers.location, undefined);
       assert.equal(JSON.parse(response.body).error, "temporarily_unavailable");
       assert.equal(verifyCalls, 0, "limiter denial precedes IdentityPort.verify");
-      assert.deepEqual(keys, [name === "hono" ? "authorize:unknown" : "authorize:127.0.0.1"]);
+      assert.deepEqual(keys, ["authorize:127.0.0.1"]);
       assert.equal(audit.events.some((event) => event.event === "identity.verify"), false);
     } finally {
       await client.close?.();
@@ -204,7 +204,7 @@ export function runAdapterFlow(name: string, mount: (bridge: Bridge, identity: I
       const response = await client.postForm("/oauth/revoke", { token: "rt_not_processed" });
       assert.equal(response.status, 429);
       assert.equal(JSON.parse(response.body).error, "temporarily_unavailable");
-      assert.deepEqual(keys, [name === "hono" ? "revoke:unknown" : "revoke:127.0.0.1"]);
+      assert.deepEqual(keys, ["revoke:127.0.0.1"]);
       assert.equal(audit.events.length, 0, "denial reaches no revoke audit work");
     } finally {
       await client.close?.();

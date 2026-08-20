@@ -8,14 +8,18 @@ import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
 import type { RateLimitPort } from "../src/ports/rate-limit.ts";
 import type { IdentityPort } from "../src/ports/identity.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
-import { createBridgeConfig } from "../src/config.ts";
+import { AuthConfigError, createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { createOAuthApp } from "../src/adapters/hono.ts";
 import { runAdapterFlow, type AdapterClient, type AdapterResp } from "./lib/adapter-flow.ts";
 import { rawOccurrenceCall } from "./lib/adapter-header-flow.ts";
 
 runAdapterFlow("hono", async (bridge, identity) => {
-  const app = createOAuthApp({ bridge, identity });
+  // §6.7: the flow's stored-DCR leg needs an extractor to construct at all.
+  // This harness rebuilds Requests from a buffered node socket, so no stable
+  // runtime IP survives to extract — the deployer-owned extractor supplies a
+  // constant, exactly as a real deployment's would supply its proxy value.
+  const app = createOAuthApp({ bridge, identity, clientIp: () => "127.0.0.1" });
   const server = createServer(async (incoming, outgoing) => {
     try {
       const chunks: Buffer[] = [];
@@ -63,12 +67,15 @@ runAdapterFlow("hono", async (bridge, identity) => {
 // its own — an attacker-chosen header would select the rate-limit bucket
 // (bucket-per-request = limiter bypass) and forge the audit `ip`.
 function jwk(): JWK { const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" }); return { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK; }
-function honoSetup(clientIp?: (c: Context) => string | undefined): { app: ReturnType<typeof createOAuthApp>; keys: string[]; events: AuthAuditEvent[] } {
+function honoSetup(
+  clientIp?: (c: Context) => string | undefined,
+  dcr: BridgeConfig["dcr"] = { mode: "stateless" },
+): { app: ReturnType<typeof createOAuthApp>; keys: string[]; events: AuthAuditEvent[] } {
   const config = createBridgeConfig({
     issuer: "https://auth.test", resource: "https://api.test/mcp",
     consentSigningSecret: "test-consent-secret-with-enough-entropy", signingPrivateJwk: jwk(), signingKeyId: "k",
     redirectAllowlist: ["https://client.test/callback"], scopeCatalog: ["mcp:read"], defaultScopes: ["mcp:read"],
-    allowedOrigins: ["https://auth.test"], dcr: { mode: "stateless" },
+    allowedOrigins: ["https://auth.test"], dcr,
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   const keys: string[] = [];
@@ -106,4 +113,87 @@ test("hono: a deployer-supplied clientIp extractor keys the rate limit and audit
   await app.request("/oauth/authorize?x=1", { headers: { "cf-access-jwt-assertion": "t" } });
   const verify = events.find((e) => e.event === "identity.verify");
   assert.equal(verify?.ip, "9.9.9.9");
+});
+
+// §6.7/§9.6 boot rule: stored-DCR registration needs per-client limiter keys.
+// Without an extractor every request shares the one "unknown" bucket, so one
+// client could exhaust the anonymous durable-write budget for everyone.
+const storedClients = { async save() {}, async find() { return null; } };
+
+test("hono: stored DCR without a clientIp extractor refuses at createOAuthApp", () => {
+  assert.throws(
+    () => honoSetup(undefined, { mode: "stored", store: storedClients }),
+    (error: unknown) => error instanceof AuthConfigError
+      && /clientIp/.test(error.message)
+      && /stored DCR/.test(error.message),
+  );
+});
+
+test("hono: a clientIp that is not a function refuses at createOAuthApp", () => {
+  // JS callers can pass anything; a non-function silently never extracts and
+  // every request falls back to the shared bucket (review round 3 on #294).
+  assert.throws(
+    () => honoSetup("127.0.0.1" as unknown as () => string, { mode: "stateless" }),
+    (error: unknown) => error instanceof AuthConfigError && /must be a function/.test(error.message),
+  );
+});
+
+test("hono: a stored-DCR extractor that yields no IP rejects registration before any work", async () => {
+  // The runtime half of the boot rule: a CONFIGURED extractor may still return
+  // undefined per request (its declared return type permits it), and the core
+  // must not fall back to the shared "unknown" bucket for the anonymous
+  // durable write — direct 400 before the limiter charge, audit, or save.
+  const { app, keys, events } = honoSetup(() => undefined, { mode: "stored", store: storedClients });
+  const resp = await app.request("/oauth/register", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ redirect_uris: ["https://client.test/callback"] }),
+  });
+  assert.equal(resp.status, 400);
+  assert.match(JSON.parse(await resp.text()).error_description, /requires a client IP/);
+  assert.deepEqual(keys, [], "the rejection precedes the limiter charge");
+  assert.equal(events.length, 0, "and every audit emit");
+  // The reserved literal "unknown" (an extractor's own missing-address
+  // fallback) is the shared bucket key itself — same refusal.
+  const sentinel = honoSetup(() => "unknown", { mode: "stored", store: storedClients });
+  const resp2 = await sentinel.app.request("/oauth/register", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ redirect_uris: ["https://client.test/callback"] }),
+  });
+  assert.equal(resp2.status, 400);
+  assert.deepEqual(sentinel.keys, [], "the literal never reaches the limiter");
+});
+
+test("hono: stateless DCR without clientIp boots and warns once about the shared unknown bucket", () => {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+  let app: ReturnType<typeof createOAuthApp> | undefined;
+  try {
+    ({ app } = honoSetup());
+  } finally {
+    console.warn = original;
+  }
+  assert.ok(app, "stateless app constructs without clientIp");
+  const bucketWarnings = warnings.filter((warning) => warning.includes("clientIp") && warning.includes("unknown"));
+  assert.equal(bucketWarnings.length, 1);
+  assert.match(bucketWarnings[0]!, /shares the one "unknown" rate-limit key/);
+});
+
+test("hono: stored DCR with a clientIp extractor boots silently and keeps per-client keys", async () => {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+  let setup: ReturnType<typeof honoSetup>;
+  try {
+    setup = honoSetup(() => "9.9.9.9", { mode: "stored", store: storedClients });
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(warnings.length, 0, "a supplied extractor emits no boot warning");
+  const response = await setup.app.request("/oauth/register", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ redirect_uris: ["https://client.test/callback"] }),
+  });
+  assert.equal(response.status, 201);
+  assert.deepEqual(setup.keys, ["register:9.9.9.9"], "stored registration keys on the extracted client IP");
 });

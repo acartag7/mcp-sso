@@ -175,3 +175,17 @@ export function consentCookie(req: NormRequest): string | undefined {
     throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
   }
 }
+
+/** §6.7 stored-DCR admission (D2 runtime half): the anonymous durable write
+ *  must key per-client, and a configured extractor that yields nothing for a
+ *  given request must not fall back to the shared "unknown" bucket — the boot
+ *  check cannot see per-request extraction results. The reserved literal
+ *  "unknown" (an extractor's own missing-address fallback) is rejected with
+ *  it: guard() would turn it into exactly the shared key. Direct 400
+ *  invalid_request BEFORE the limiter charge or any durable work; never a
+ *  redirect. */
+export function assertStoredRegistrationIp(mode: "stateless" | "stored", ip: string | undefined): void {
+  if (mode === "stored" && (typeof ip !== "string" || ip === "" || ip === "unknown")) {
+    throw new OAuthError("invalid_request", "stored registration requires a client IP for rate limiting", 400);
+  }
+}

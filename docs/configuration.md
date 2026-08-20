@@ -80,8 +80,10 @@ for the fetch, redirect, and validation contract.
 The API-key gateway and the Fastify/SQLite example's default DCR mode remain
 stateless and do not wire a core `RateLimitPort`. In those stateless production
 compositions, the deployment guard requires at least one application-specific
-HTTPS callback in `OAUTH_REDIRECT_ALLOWLIST`. An empty value, a hosted-client
-default, or a generic loopback origin does not satisfy that boot guard. Supply a
+HTTPS callback in `OAUTH_REDIRECT_ALLOWLIST`, with no loopback entry alongside
+it: an empty value, a hosted-client default, or any loopback entry — root or
+path, `http` or `https` — fails that boot guard, and a loopback entry also
+voids the mitigation an application callback would otherwise provide. Supply a
 real limiter or configure the exact callback used by your opaque DCR client; do
 not add a placeholder callback.
 

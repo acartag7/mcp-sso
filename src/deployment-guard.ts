@@ -16,10 +16,15 @@ function isLoopbackUrl(value: string): boolean {
   catch { return false; }
 }
 
+/** Any redirect entry on a loopback host is starter trust regardless of path,
+ * port, or scheme (§5): native CLI clients choose their callback path at
+ * runtime, and an entry with a path re-widens starter trust exactly like the
+ * root spelling. Query/fragment spellings stay excluded — §10.0 already
+ * rejects them, and this predicate must not widen past origin-form trust. */
 function isGenericLoopbackRedirect(value: string): boolean {
   try {
     const url = new URL(value);
-    return LOOPBACK_HOSTS.has(url.hostname) && url.pathname === "/" && !url.search && !url.hash;
+    return LOOPBACK_HOSTS.has(url.hostname) && !url.search && !url.hash;
   } catch { return false; }
 }
 

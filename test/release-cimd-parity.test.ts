@@ -90,7 +90,9 @@ async function expressAuthorize(bridge: Bridge): Promise<{ status: number; body:
 }
 
 async function honoAuthorize(bridge: Bridge): Promise<{ status: number; body: string; app: ReturnType<typeof createOAuthApp> }> {
-  const app = createOAuthApp({ bridge, identity, identityHeader: "x-release-identity" });
+  // §6.7: this runtime is stored-DCR, so hono construction requires an
+  // extractor; fastify/express derive the same loopback address natively.
+  const app = createOAuthApp({ bridge, identity, identityHeader: "x-release-identity", clientIp: () => "127.0.0.1" });
   const response = await app.fetch(new Request(`https://auth.test${authorizePath()}`, { headers: { "x-release-identity": "ok" } }));
   return { status: response.status, body: await response.text(), app };
 }

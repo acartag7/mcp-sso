@@ -34,8 +34,8 @@ const EXCEPTIONS = {
     reason: "One use-case class whose prepare/approve both depend on its private auditSuccess/auditFailure guards; splitting either method away from those wrappers separates each failure path from the audit that accounts for it, and extracting the two 3-line helpers leaves a fragment.",
   },
   "adapters/bridge.ts": {
-    limit: 258,
-    reason: "The pairing admission seam belongs beside Bridge's snapshotted limiter and endpoint guards; splitting would separate one policy owner. Raised 255→258 for the §9.3 approve-ordering gate: the origin precheck sits between the form parse and the fallback cookie decode, and moving it away separates the CSRF classification from the decode it guards.",
+    limit: 260,
+    reason: "The pairing admission seam belongs beside Bridge's snapshotted limiter and endpoint guards; splitting would separate one policy owner. Raised 255->260 for two changes that both belong beside the guard they act on: the §6.7 stored-DCR runtime admission (D2), whose one-line call sits beside the guard it admits through, and the §9.3 approve-ordering gate, whose origin precheck sits between the form parse and the fallback cookie decode so the CSRF classification stays with the decode it guards.",
   },
 };
 

@@ -169,7 +169,7 @@ test("stored registration limiter outage precedes body selection, durable state,
     rateLimit: { async check() { throw new Error("limiter unavailable"); } },
   });
 
-  const response = await bridge.handleRegister({ query: {}, headers: {}, body });
+  const response = await bridge.handleRegister({ query: {}, headers: {}, body, ip: "203.0.113.7" });
 
   assert.equal(response.status, 503);
   assert.deepEqual({ bodyReads, saves, events }, { bodyReads: 0, saves: 0, events: [] },
@@ -187,7 +187,7 @@ test("stored registration keeps the direct 429 response for an explicit limiter 
   });
 
   const response = await bridge.handleRegister({
-    query: {}, headers: {}, body: { redirect_uris: ["https://client.test/callback"] },
+    query: {}, headers: {}, ip: "198.51.100.12", body: { redirect_uris: ["https://client.test/callback"] },
   });
 
   assert.equal(response.status, 429);

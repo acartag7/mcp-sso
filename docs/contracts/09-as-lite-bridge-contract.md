@@ -468,6 +468,15 @@ deployment preconditions in §6.4. Wiring rules:
   consent work; it then calls `Bridge.handleAuthorize` without an additional
   `authorize:<ip>` charge. Its identity port's optional submitted-code
   `pairing:<ip>` hook remains a separate defense-in-depth budget.
+- **Hono client-IP boot requirement:** `createOAuthApp` applies the §6.7 rule
+  before it registers any route: with `bridge.config.dcr.mode === "stored"` and
+  no `clientIp` extractor, construction throws `AuthConfigError` naming the
+  option. The check reads the bridge's frozen published config once and runs
+  ahead of every route registration, so the refusal leaves no partially wired
+  app. Stateless mode without `clientIp` constructs normally and emits the
+  §6.7 one-time shared-bucket warning; supplying `clientIp` leaves every
+  adapter behavior unchanged. Fastify and Express adapters have no matching
+  check — they key on the framework's validated `req.ip`.
 - **OAuth POST body bound (all framework adapters):** before request-body parsing
   or any Bridge invocation, Fastify, Express, and Hono apply the same fixed
   **262,144-byte (256 KiB)** raw-body budget to `/oauth/register`,
