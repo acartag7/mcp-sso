@@ -50,9 +50,13 @@ How mcp-sso proves a release actually works.
 >    shape is affected.
 >
 > **Also in this release:** `/oauth/callback` now charges `upstream:<ip>`, and
-> both shipped examples pass their limiter into the redirect flow, which they
-> previously dropped, so the marketed Entra and Google compositions were
-> unthrottled on authorize and callback. The **default** OIDC discovery and token
+> both shipped examples pass their limiter into the redirect flow instead of
+> dropping it. That closes the wiring, not the default: the environment-driven
+> examples create a registration limiter only in stored mode, and
+> `buildGatewayExample` supplies none, so a **default stateless** composition
+> still hands the flow `noopRateLimit` and its authorize and callback paths stay
+> unthrottled by this mechanism. Stored Fastify deployments, and any caller that
+> supplies `rateLimit`, are throttled on those paths for the first time. The **default** OIDC discovery and token
 > transports stream-count their bodies against a cap; a supplied custom
 > `discoveryFetch` or token transport is consumed directly, and §17.6 assigns
 > body discipline to that transport rather than wrapping it. A non-numeric Redis
