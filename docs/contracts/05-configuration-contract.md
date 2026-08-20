@@ -301,8 +301,9 @@ modes support native CLI clients whose ephemeral callback needs a portless
 loopback origin in `OAUTH_REDIRECT_ALLOWLIST`: the stateless-DCR composition
 guard remains unchanged, but the example's unconditional bounded limiter is
 the guard's documented escape. Choose stored mode when registrations must
-survive restart; stateless mode carries the signed registration in the client
-identifier. The API-key gateway example retains stateless-only environment
+survive restart and authorization must bind the opaque client ID to its stored
+registration. Stateless mode persists no client metadata and applies the
+global redirect allowlist to opaque IDs at authorization. The API-key gateway example retains stateless-only environment
 wiring and supplies the same bounded limiter.
 
 **Fastify/SQLite registration admission.** Every `POST /oauth/register` mounted

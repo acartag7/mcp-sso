@@ -333,6 +333,14 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.doesNotMatch(PROBE, /\bSKIP\b/, "a skipped leg must never count as evidence");
   assert.doesNotMatch(PROBE, /process\.exit\(/);
   assert.match(PROBE, /process\.exitCode = failures > 0 \? 1 : 0/);
+  assert.match(PROBE, /const dcrMode = process\.env\.OAUTH_DCR_MODE/,
+    "the probe consumes the runner-selected DCR mode");
+  assert.match(PROBE, /dcr: dcrMode === "stored" \? \{ mode: "stored", store: clientStore\.store \} : \{ mode: "stateless" \}/,
+    "the selected mode reaches the built BridgeConfig");
+  assert.match(PROBE, /client_id: "mcpdc_live_probe_unknown"/,
+    "the probe exercises the stored-vs-stateless unknown-client differential");
+  assert.match(PROBE, /if \(dcrMode === "stored" && clientStore !== undefined\)/,
+    "machine-client claims remain restricted to the compatible stored run");
   assert.match(PROBE, /catch \{\s*failures\+\+;\s*out\.push\("FAIL  probe aborted before completion"\)/);
   assert.match(PROBE, /disableMachineClient\(machineDeps, provisioned\.clientId\)/, "the disable helper receives the client id string");
   assert.doesNotMatch(PROBE, /disableMachineClient\([^)]*\{\s*clientId/);
@@ -370,7 +378,7 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.equal((PROBE.match(/expect\("auth\.request", "success", SDK_AUTH_REQUESTS\)/g) ?? []).length, 2,
     "both SDK sessions");
   assert.match(PROBE, /expect\("auth\.request", "failure"\)/);
-  assert.match(PROBE, /expect\("oauth\.token\.client_credentials", "failure", admitted\)/,
+  assert.match(PROBE, /expect\(limiterAuditEvent, "failure", admitted\)/,
     "the limiter burst's admitted calls are accounted for");
   assert.match(PROBE, /const rejectedSecret = secret\("rejected machine client secret"/,
     "the submitted-and-rejected secret is registered, not only the minted one");
@@ -426,6 +434,8 @@ test("CONTENT records: docs, README, and CHECKLIST agree with what the scripts d
     assert.match(record, /replayed predecessor/, `${name}: the probe-e2e row records the replay proof`);
     assert.match(record, /live successor/, `${name}: the probe-e2e row records the revoked family`);
     assert.match(record, /second family/, `${name}: the probe-e2e row records that revocation uses its own family`);
+    assert.match(record, /unknown opaque client/i, `${name}: the probe-e2e row records the DCR mode differential`);
+    assert.match(record, /machine.{0,100}stored/i, `${name}: machine-client evidence is scoped to stored runs`);
   }
   assert.match(README, /MCP_SSO_READINESS_SECONDS/);
   assert.match(DOC, /MCP_SSO_READINESS_SECONDS/);

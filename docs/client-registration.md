@@ -125,7 +125,8 @@ OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http
 The runnable examples' bounded core limiter makes this reusable loopback trust
 admissible in stateless and stored mode. Stored DCR additionally narrows the
 runtime decision back to the concrete callback saved for each native client;
-stateless DCR carries the validated registration in its signed client id. The
+stateless DCR persists no client metadata and re-applies only the global
+redirect allowlist to the presented opaque client id. The
 API-key gateway example does not consume `OAUTH_DCR_MODE`; give a custom gateway
 composition its own shared `ClientStore` when registrations must persist.
 

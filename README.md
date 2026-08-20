@@ -136,7 +136,7 @@ sequenceDiagram
 | Access token | Signed by the bridge; not looked up per call | Carries Alice's subject, scopes, and the one configured resource audience. |
 | Consent and upstream-flow tokens | Signed by the bridge; their one-time identifiers are stored | Carry one in-flight browser flow while the store prevents replay. |
 | Authorization codes and refresh tokens | Only hashes and lifecycle state are stored | A database read cannot reveal the bearer value; the store enforces single use and rotation. |
-| DCR clients | Stored in stored-DCR mode; self-contained in stateless mode | Bind a client identifier to its registered redirect URIs. The generated localhost server uses stored DCR. |
+| DCR clients | Stored in stored-DCR mode; not persisted in stateless mode | Stored mode binds the client identifier to registered redirect URIs; stateless mode applies the global redirect allowlist to opaque IDs. The generated localhost server uses stored DCR. |
 | Audit events | Sent to the configured audit sink | Record metadata about outcomes, never bearer credentials. Audit delivery is evidence, not an authorization gate. |
 
 Identity answers “who is Alice?” Authorization answers “which scopes may she

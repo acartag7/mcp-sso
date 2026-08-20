@@ -101,8 +101,8 @@ that every bridge receive a bounded, non-noop `RateLimitPort`; the example
 already supplies it. Keep an actual HTTPS application callback in the list only
 when that application uses it. The loopback origins permit any path and port on
 their exact host. Stored DCR persists each native client's concrete callback
-and rechecks it during authorization; stateless DCR carries the validated
-registration in its signed client id instead.
+and rechecks it during authorization; stateless DCR persists no client metadata
+and applies the global redirect allowlist to opaque IDs at authorization.
 
 The Fastify/SQLite example supplies two controls in both modes. Its fixed
 fail-closed Fastify budget applies to `POST /oauth/register`: 30 requests per

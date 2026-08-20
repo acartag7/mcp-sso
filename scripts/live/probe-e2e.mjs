@@ -7,9 +7,11 @@
 // Identity is a probe-local port on the probe's OWN in-process app, so this
 // file makes no identity-provider claim — the three provider probes carry
 // those. Machine-client rows live in a process-local store because no shipped
-// store implements the atomic §17.2 extension; DCR clients, codes, refresh
-// families and consent state go through the shipped SQLite store. No secret,
-// token, or provider identifier is written to output.
+// store implements the atomic §17.2 extension. Stored-DCR runs bind that port
+// to SQLite; stateless runs exercise the global opaque-client policy without a
+// registration store. Codes, refresh families and consent state always go
+// through the shipped SQLite store. No secret, token, or provider identifier
+// is written to output.
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,10 +31,14 @@ import {
 } from "./probe-e2e-support.mjs";
 import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
 
-for (const name of ["OAUTH_ISSUER", "OAUTH_CONSENT_SIGNING_SECRET", "REDIS_URL"]) {
+for (const name of ["OAUTH_ISSUER", "OAUTH_CONSENT_SIGNING_SECRET", "OAUTH_DCR_MODE", "REDIS_URL"]) {
   if (typeof process.env[name] !== "string" || process.env[name].length === 0) {
     throw new Error(`${name} must be provided for the end-to-end probe`);
   }
+}
+const dcrMode = process.env.OAUTH_DCR_MODE;
+if (dcrMode !== "stored" && dcrMode !== "stateless") {
+  throw new Error('OAUTH_DCR_MODE must be "stored" or "stateless" for the end-to-end probe');
 }
 let callback;
 try {
@@ -117,7 +123,7 @@ try {
   const rateLimit = createRedisRateLimit(redis, {
     windowSeconds: 60, limit: TOKEN_LIMIT, keyPrefix: `mcp-sso:live:${randomBytes(8).toString("hex")}:`,
   });
-  const clientStore = createProbeClientStore();
+  const clientStore = dcrMode === "stored" ? createProbeClientStore() : undefined;
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const signingJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "live" };
   secret("signing private key", signingJwk.d);
@@ -127,7 +133,9 @@ try {
     consentSigningSecret: process.env.OAUTH_CONSENT_SIGNING_SECRET,
     signingPrivateJwk: signingJwk, signingKeyId: "live",
     redirectAllowlist: [callback], scopeCatalog: ["mcp:read", "mcp:write"], defaultScopes: ["mcp:read"],
-    allowedOrigins: [ISSUER], dcr: { mode: "stored", store: clientStore.store }, clientCredentials: { enabled: true },
+    allowedOrigins: [ISSUER],
+    dcr: dcrMode === "stored" ? { mode: "stored", store: clientStore.store } : { mode: "stateless" },
+    ...(dcrMode === "stored" ? { clientCredentials: { enabled: true } } : {}),
     accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 3_600, consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
   });
   const built = await buildApp({
@@ -135,9 +143,9 @@ try {
   });
   app = built.app;
   store = built.store;
-  clientStore.bind(store);
+  clientStore?.bind(store);
   const clock = new SystemClock();
-  const machineDeps = { store: clientStore.store, clock, audit, catalog: config.scopeCatalog, resource: RESOURCE };
+  if (!ok("probe composition uses the selected DCR mode", config.dcr.mode === dcrMode, dcrMode)) failures++;
 
   // 1. Authorization-code leg through the shipped routes, probe-local identity.
   const registration = await app.inject({
@@ -146,8 +154,35 @@ try {
   });
   const clientId = registration.statusCode === 201 ? registration.json().client_id : undefined;
   expect("oauth.register", "success");
-  if (!ok("DCR registers a client into the shipped SQLite store",
+  const registrationLabel = dcrMode === "stored"
+    ? "DCR registers a client into the shipped SQLite store"
+    : "DCR returns an opaque client without a registration store";
+  if (!ok(registrationLabel,
     registration.statusCode === 201 && typeof clientId === "string", `HTTP ${registration.statusCode}`)) failures++;
+
+  // The #278 mode differential, on the exact running composition: stored mode
+  // rejects an unknown opaque id, while stateless mode applies the global
+  // redirect allowlist and admits it. This proves the selected mode reached
+  // authorization rather than trusting the preflight knob alone.
+  const differential = await app.inject({
+    method: "GET",
+    url: `/oauth/authorize?${new URLSearchParams({
+      response_type: "code", client_id: "mcpdc_live_probe_unknown", redirect_uri: callback,
+      code_challenge: pkceChallenge("live-e2e-differential-verifier-0123456789abcdef"),
+      code_challenge_method: "S256", scope: "mcp:read", state: "live-e2e-differential",
+    })}`,
+    headers: { [IDENTITY_HEADER]: identityToken },
+  });
+  expect("identity.verify", "success");
+  expect("oauth.authorize.prepare", dcrMode === "stored" ? "failure" : "success");
+  const differentialConsent = differential.statusCode === 200
+    ? secret("mode differential consent token", extractConsentToken(differential.body))
+    : undefined;
+  if (!ok("selected DCR mode applies its documented unknown-client policy",
+    dcrMode === "stored"
+      ? differential.statusCode === 401 && differential.json().error === "invalid_client"
+      : typeof differentialConsent === "string" && differentialConsent.length > 0,
+    `${dcrMode}, HTTP ${differential.statusCode}`)) failures++;
 
   /** One authorization-code grant end to end. Each call mints its OWN refresh
    *  family, which is what lets replay revocation and RFC 7009 revocation be
@@ -210,41 +245,54 @@ try {
       && /^Bearer resource_metadata="/.test(unauthenticated.headers.get("www-authenticate") ?? ""),
     `HTTP ${unauthenticated.status}`)) failures++;
 
-  // 3. Machine-client leg: provision, mint, use, refuse a wrong secret, disable.
-  const provisioned = await provisionMachineClient(machineDeps, { allowedScopes: ["mcp:read"], name: "live-probe" });
-  expect("oauth.client.provision", "success");
-  secret("machine client secret", provisioned.clientSecret);
-  if (!ok("machine credential provisioned into the process-local store",
-    /^mcs_[A-Za-z0-9_-]{43}$/.test(provisioned.clientSecret))) failures++;
-  const machineForm = {
-    grant_type: "client_credentials", client_id: provisioned.clientId,
-    client_secret: provisioned.clientSecret, resource: RESOURCE, scope: "mcp:read",
-  };
-  const machineToken = await tokenPost(app, machineForm);
-  expect("oauth.token.client_credentials", "success");
-  const machineAccess = secret("machine access token",
-    machineToken.statusCode === 200 ? machineToken.json().access_token : undefined);
-  if (!ok("client_credentials mints an access token", typeof machineAccess === "string",
-    `HTTP ${machineToken.statusCode}`)) failures++;
-  const machinePing = await sdkPing(base, machineAccess ?? "fixture-no-token");
-  expect("auth.request", "success", SDK_AUTH_REQUESTS);
-  if (!ok("official SDK client completes a tool call with the machine token",
-    machinePing === `pong: ${provisioned.clientId}`,
-    machinePing === undefined ? "no text content" : "tool call answered")) failures++;
-  const rejectedSecret = secret("rejected machine client secret", `mcs_${"A".repeat(43)}`);
-  const wrongSecret = await tokenPost(app, { ...machineForm, client_secret: rejectedSecret });
-  expect("oauth.token.client_credentials", "failure");
-  if (!ok("a wrong client_secret is refused as invalid_client",
-    wrongSecret.statusCode === 401 && wrongSecret.json().error === "invalid_client",
-    `HTTP ${wrongSecret.statusCode}`)) failures++;
-  const disabled = await disableMachineClient(machineDeps, provisioned.clientId);
-  expect("oauth.client.disable", "success");
-  const afterDisable = await tokenPost(app, machineForm);
-  expect("oauth.token.client_credentials", "failure");
-  if (!ok("a disabled credential is refused as invalid_client",
-    disabled.clientId === provisioned.clientId
-      && afterDisable.statusCode === 401 && afterDisable.json().error === "invalid_client",
-    `HTTP ${afterDisable.statusCode}`)) failures++;
+  // 3. Machine clients contractually require stored DCR. Stored runs prove the
+  // whole machine leg; stateless runs retain the user DCR flow and its mode
+  // differential without pretending the incompatible feature was exercised.
+  let limiterAuditEvent = "oauth.token.authorization_code";
+  let limiterRequest = () => tokenPost(app, {
+    grant_type: "authorization_code", code: "live-probe-invalid-code", redirect_uri: callback,
+    client_id: clientId ?? "fixture-registration-failed",
+    code_verifier: "live-e2e-limiter-verifier-0123456789abcdef",
+  });
+  if (dcrMode === "stored" && clientStore !== undefined) {
+    const machineDeps = { store: clientStore.store, clock, audit, catalog: config.scopeCatalog, resource: RESOURCE };
+    const provisioned = await provisionMachineClient(machineDeps, { allowedScopes: ["mcp:read"], name: "live-probe" });
+    expect("oauth.client.provision", "success");
+    secret("machine client secret", provisioned.clientSecret);
+    if (!ok("machine credential provisioned into the process-local store",
+      /^mcs_[A-Za-z0-9_-]{43}$/.test(provisioned.clientSecret))) failures++;
+    const machineForm = {
+      grant_type: "client_credentials", client_id: provisioned.clientId,
+      client_secret: provisioned.clientSecret, resource: RESOURCE, scope: "mcp:read",
+    };
+    const machineToken = await tokenPost(app, machineForm);
+    expect("oauth.token.client_credentials", "success");
+    const machineAccess = secret("machine access token",
+      machineToken.statusCode === 200 ? machineToken.json().access_token : undefined);
+    if (!ok("client_credentials mints an access token", typeof machineAccess === "string",
+      `HTTP ${machineToken.statusCode}`)) failures++;
+    const machinePing = await sdkPing(base, machineAccess ?? "fixture-no-token");
+    expect("auth.request", "success", SDK_AUTH_REQUESTS);
+    if (!ok("official SDK client completes a tool call with the machine token",
+      machinePing === `pong: ${provisioned.clientId}`,
+      machinePing === undefined ? "no text content" : "tool call answered")) failures++;
+    const rejectedSecret = secret("rejected machine client secret", `mcs_${"A".repeat(43)}`);
+    const wrongSecret = await tokenPost(app, { ...machineForm, client_secret: rejectedSecret });
+    expect("oauth.token.client_credentials", "failure");
+    if (!ok("a wrong client_secret is refused as invalid_client",
+      wrongSecret.statusCode === 401 && wrongSecret.json().error === "invalid_client",
+      `HTTP ${wrongSecret.statusCode}`)) failures++;
+    const disabled = await disableMachineClient(machineDeps, provisioned.clientId);
+    expect("oauth.client.disable", "success");
+    const afterDisable = await tokenPost(app, machineForm);
+    expect("oauth.token.client_credentials", "failure");
+    if (!ok("a disabled credential is refused as invalid_client",
+      disabled.clientId === provisioned.clientId
+        && afterDisable.statusCode === 401 && afterDisable.json().error === "invalid_client",
+      `HTTP ${afterDisable.statusCode}`)) failures++;
+    limiterAuditEvent = "oauth.token.client_credentials";
+    limiterRequest = () => tokenPost(app, machineForm);
+  }
 
   // 4a. Rotation, then REPLAY of the consumed predecessor: the replay is
   // refused AND the live successor dies with it, which is family revocation
@@ -297,11 +345,11 @@ try {
   let admitted = 0;
   let limited = 0;
   for (let i = 0; i < burst; i++) {
-    const response = await tokenPost(app, machineForm);
+    const response = await limiterRequest();
     if (response.statusCode === 429) limited++;
     else admitted++;
   }
-  expect("oauth.token.client_credentials", "failure", admitted);
+  expect(limiterAuditEvent, "failure", admitted);
   if (!ok("Redis limiter admits exactly the remaining window budget and refuses past it",
     admitted === remainingBudget && limited === 2,
     `${admitted}/${remainingBudget} admitted, ${limited} refused with 429`)) failures++;

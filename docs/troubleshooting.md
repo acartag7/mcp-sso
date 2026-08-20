@@ -55,8 +55,8 @@ OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http
 ```
 
 Do not add a placeholder HTTPS callback. Stored DCR persists the concrete
-native callback saved for that client; stateless DCR carries the validated
-registration in its signed client id. The API-key gateway example remains
+native callback saved for that client; stateless DCR persists no registration
+metadata and applies the global redirect allowlist at authorization. The API-key gateway example remains
 stateless and supports the same loopback callback with its finite process-local
 core port. The Fastify/SQLite example supplies that port automatically in every
 mode; multi-replica deployments use a shared port such as

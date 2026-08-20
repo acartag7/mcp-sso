@@ -19,13 +19,14 @@ if (RUN_INTEGRATION && !REDIS_URL) {
   throw new Error("REDIS_URL is required when RUN_INTEGRATION is set — probe-e2e.mjs must be exercised.");
 }
 
-function runProbe(redisUrl, secret) {
+function runProbe(redisUrl, secret, dcrMode = "stored") {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["scripts/live/probe-e2e.mjs"], {
       cwd: ROOT,
       env: {
         PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR ?? "/tmp",
         OAUTH_ISSUER: "https://mcp.example", OAUTH_CONSENT_SIGNING_SECRET: secret, REDIS_URL: redisUrl,
+        OAUTH_DCR_MODE: dcrMode,
         PROBE_APP_CALLBACK: "https://mcp.example/app/callback", OAUTH_REDIRECT_ALLOWLIST: "https://mcp.example/app/callback",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -53,27 +54,41 @@ test("probe-e2e: an unreachable Redis is a FAIL row and an abort, never a pass a
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret));
 });
 
-test("probe-e2e: every row passes against a real Redis and no credential reaches the output", { skip: REDIS_URL ? false : "REDIS_URL not set (CI hard-fails via RUN_INTEGRATION)" }, async () => {
-  const secret = randomBytes(24).toString("base64url");
-  const result = await runProbe(REDIS_URL, secret);
-  assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
-  assert.doesNotMatch(result.stdout, /^FAIL/m, result.stdout);
-  assert.match(result.stdout, /^(\d+)\/\1 checks passed$/m, "every row must pass");
-  for (const row of [
-    "DCR registers a client into the shipped SQLite store",
-    "official SDK client completes a tool call with the user token",
-    "official SDK client completes a tool call with the machine token",
-    "a disabled credential is refused as invalid_client",
-    "replaying a consumed refresh token is refused and revokes its whole family",
-    "/oauth/revoke answers 200 and the revoked refresh token is refused as invalid_grant",
-    "Redis limiter admits exactly the remaining window budget and refuses past it",
-    "JSONL and webhook sinks received the same ordered events",
-    "the audit sinks contain exactly the events this run caused, in order",
-    "audit sinks never published the rejected machine client secret",
-    "audit sinks never published the consent signing credential",
-  ]) {
-    assert.match(result.stdout, new RegExp(`^PASS  ${row.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`, "m"), row);
+test("probe-e2e: both DCR modes run their exact policy against Redis without leaking credentials", { skip: REDIS_URL ? false : "REDIS_URL not set (CI hard-fails via RUN_INTEGRATION)" }, async () => {
+  for (const dcrMode of ["stored", "stateless"]) {
+    const secret = randomBytes(24).toString("base64url");
+    const result = await runProbe(REDIS_URL, secret, dcrMode);
+    assert.equal(result.code, 0, `${dcrMode}\n${result.stdout}\n${result.stderr}`);
+    assert.doesNotMatch(result.stdout, /^FAIL/m, result.stdout);
+    assert.match(result.stdout, /^(\d+)\/\1 checks passed$/m, "every row must pass");
+    for (const row of [
+      "probe composition uses the selected DCR mode",
+      "selected DCR mode applies its documented unknown-client policy",
+      "official SDK client completes a tool call with the user token",
+      "replaying a consumed refresh token is refused and revokes its whole family",
+      "/oauth/revoke answers 200 and the revoked refresh token is refused as invalid_grant",
+      "Redis limiter admits exactly the remaining window budget and refuses past it",
+      "JSONL and webhook sinks received the same ordered events",
+      "the audit sinks contain exactly the events this run caused, in order",
+      "audit sinks never published the consent signing credential",
+    ]) {
+      assert.match(result.stdout, new RegExp(`^PASS  ${row.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`, "m"), `${dcrMode}: ${row}`);
+    }
+    if (dcrMode === "stored") {
+      for (const row of [
+        "DCR registers a client into the shipped SQLite store",
+        "official SDK client completes a tool call with the machine token",
+        "a disabled credential is refused as invalid_client",
+        "audit sinks never published the rejected machine client secret",
+      ]) {
+        assert.match(result.stdout, new RegExp(`^PASS  ${row.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`, "m"), row);
+      }
+    } else {
+      assert.match(result.stdout, /^PASS  DCR returns an opaque client without a registration store(?: —|$)/m);
+      assert.doesNotMatch(result.stdout, /machine credential|machine token|rejected machine client secret/,
+        "stateless evidence must not claim the incompatible machine-client leg");
+    }
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret), "the consent signing credential never reaches the output");
+    assert.doesNotMatch(result.stdout, /mcs_[A-Za-z0-9_-]{43}|eyJ[A-Za-z0-9_-]{20,}/, "no minted secret or token in the output");
   }
-  assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret), "the consent signing credential never reaches the output");
-  assert.doesNotMatch(result.stdout, /mcs_[A-Za-z0-9_-]{43}|eyJ[A-Za-z0-9_-]{20,}/, "no minted secret or token in the output");
 });
