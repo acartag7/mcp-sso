@@ -14,6 +14,7 @@ const identity = createCloudflareAccessIdentity({
   certsUrl: process.env.CF_ACCESS_CERTS_URL!,  // https://<team>.cloudflareaccess.com/cdn-cgi/access/certs
   issuer:   process.env.CF_ACCESS_ISSUER!,     // https://<team>.cloudflareaccess.com  (no trailing slash)
   emailAllowlist: [],                          // optional defense-in-depth — see "Who is allowed" below
+  // maxJwksDocumentBytes: 65536,              // default; integer [1024, 1048576]
 });
 ```
 
@@ -27,7 +28,8 @@ Cloudflare **opaque `sub` UUID**, not the email.
 2. Cloudflare Access requires the user to sign in against your Zero Trust policy,
    then injects a `Cf-Access-Jwt-Assertion` JWT on that request.
 3. mcp-sso verifies the assertion: **RS256 only**, exact `aud` match, exact `iss`
-   match, keys fetched from `certsUrl` (JWKS, cached 5 min), 60 s clock tolerance.
+   match, keys fetched from `certsUrl` (JWKS, capped at 65536 bytes by default
+   and cached 5 min), 60 s clock tolerance.
 4. The subject is keyed on the Cloudflare `sub` (opaque per-account UUID), and the
    bridge mints its own ES256 audience-bound access token.
 
@@ -88,6 +90,8 @@ Two conditions fail the **boot** (a misconfiguration, not a degraded default):
   JWT regardless of app.)
 - `certsUrl` or `issuer` not starting with literal `https://` → the factory
   throws (`http` trust roots allow key substitution).
+- `maxJwksDocumentBytes` not an integer in [1024, 1048576] → the factory
+  throws before jose can fetch. The option defaults to 65536.
 
 At verify time, every failure returns `{ ok: false, reason }` with a fixed reason
 code — never a bypass:
@@ -102,7 +106,7 @@ code — never a bypass:
 | Signature alg not RS256 | `access_jwt_unsupported_alg` |
 | No matching key in the Cloudflare JWKS | `access_jwt_unknown_key` |
 | Other `jose` error (incl. JWKS fetch/timeout) | `access_jwt_invalid` |
-| Non-`jose` / unknown error | `access_jwt_verify_failed` |
+| Over-cap, unreachable, or other non-`jose` JWKS error | `access_jwt_verify_failed` |
 
 ## Gotchas
 

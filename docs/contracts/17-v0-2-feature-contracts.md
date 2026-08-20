@@ -1764,7 +1764,7 @@ gate replaces no-gate).
   boot-time fetching), `scopes?` (default `openid profile email`),
   `subjectAllowlist?` (matches `sub`), `allowEmailAllowlist?` (opt-in; only
   matches when `email_verified === true`), `maxDiscoveryDocumentBytes?` /
-  `maxTokenResponseBytes?` (the body caps below).
+  `maxTokenResponseBytes?` / `maxJwksDocumentBytes?` (the body caps below).
 - **`claims.name` (optional, display only).** Present ONLY when
   `email_verified === true` AND `payload.name` is a string whose trimmed length
   is non-zero and whose raw length is at most **256** characters; otherwise the
@@ -1798,16 +1798,24 @@ gate replaces no-gate).
   config, and enterprise IdPs legitimately live on private networks —
   documented rationale. Redirects on the discovery fetch: not followed
   (fail closed).
-- **Body caps on IdP-fetched bodies** (owner decision 2026-08-19, D5): the
+- **Body caps on IdP-fetched bodies** (owner decisions 2026-08-19 D5 and
+  2026-08-20 JWKS closure): the
   default discovery transport caps the discovery document at **65536 bytes**
   and the default token transport caps every token-endpoint response at
-  **16384 bytes**. Both are configurable (`maxDiscoveryDocumentBytes` /
-  `maxTokenResponseBytes`, named for the CIMD `maxDocumentBytes` precedent)
-  with the CIMD cap shape: a closed integer domain **[1024, 1048576]**,
+  **16384 bytes**. jose's remote-JWK-set reader is supplied one shared
+  `customFetch` seam by Cloudflare Access, Entra, and generic OIDC; it caps JWKS
+  documents at **65536 bytes** by default. The JWKS value is deliberately above
+  ordinary few-KB key sets and equal to the discovery-document cap, leaving
+  rotation headroom without admitting an unbounded response. All three body
+  cap options are named as one family after the CIMD `maxDocumentBytes`
+  precedent (`maxDiscoveryDocumentBytes`, `maxTokenResponseBytes`, and
+  `maxJwksDocumentBytes`) and use the CIMD cap shape: a closed integer domain
+  **[1024, 1048576]**,
   boot-validated — a non-integer, `NaN`, `Infinity`, or out-of-domain value
-  fails boot (`generic_oidc_bad_config`), never a silent default, in discovery
-  AND manual mode. Enforcement stream-counts the response body chunk by chunk
-  and CANCELS the download the moment the cap is exceeded, so an oversized
+  fails construction, never a silent default. The generic values are validated
+  in discovery AND manual mode; the JWKS value is validated by every identity
+  factory before jose can fetch. Enforcement stream-counts the response body
+  chunk by chunk and CANCELS the download the moment the cap is exceeded, so an oversized
   body is rejected without being materialized — a hostile or broken IdP (or
   anything between) cannot force the bridge to buffer an arbitrary body
   before any validation runs. The rejection is a fetch/protocol failure in
@@ -1820,8 +1828,12 @@ gate replaces no-gate).
   defaults. The Entra port's default token transport carries the same
   **16384-byte** cap — fixed, not configurable, because its endpoint is
   hardcoded and the port fetches no discovery document; the throw maps to
-  `exchange_failed` under the §17.11 throw rule. The JWKS fetches (all
-  ports) remain jose's remote-JWK-set reader and are tracked separately.
+  `exchange_failed` under the §17.11 throw rule. The JWKS cap rejection has the
+  same classification as an unreachable JWKS: `exchange_failed` for Entra and
+  generic redirect identities, never `identity_rejected`, because no identity
+  decision was made. Cloudflare Access retains its corresponding
+  `access_jwt_verify_failed` infrastructure reason. jose's five-minute
+  `cacheMaxAge` is unchanged.
 - **id_token validation:** `iss` exact-match; `aud` must contain `clientId`
   and multiple-audience tokens are rejected outright (a single-element
   `[clientId]` array is accepted; an array with any second audience is

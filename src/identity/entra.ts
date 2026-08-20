@@ -19,10 +19,12 @@
 //      display names (spoof vector). One invited guest with mapped membership was observed on an
 //      unarchived patched checkout; re-check tenant-specific claim emission before relying on it.
 
-import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWTPayload } from "jose";
+import { createRemoteJWKSet, importJWK, jwtVerify, type JWTPayload } from "jose";
 import type { IdentityClaims, IdentityResult } from "../ports/identity.ts";
 import { type GroupAuthorization, assertGroupAuthorizationMapping, resolveGroupCeiling } from "./entra-groups.ts";
+import { entraJwtErrorReason as jwtErrorReason } from "./entra-errors.ts";
 import { assertHttpsRaw } from "./util.ts";
+import { remoteJwksOptions } from "./jwks-fetch.ts";
 import { AuthConfigError } from "../config.ts";
 
 export interface EntraConfig {
@@ -32,6 +34,9 @@ export interface EntraConfig {
   clientSecret?: string;
   /** The bridge's Entra-callback URL (may be http://localhost for dev). */
   redirectUri: string;
+  /** Maximum remote JWKS document size in bytes. Integer [1024, 1048576],
+   *  default 65536; validated when the identity is constructed (§6.5). */
+  maxJwksDocumentBytes?: number;
   /** Allowed `tid` values; defaults to [tenantId]. */
   allowedTenantIds?: string[];
   /** Optional subject allowlist: normalized `oid`, exact issuer-namespaced
@@ -217,7 +222,7 @@ export function createEntraIdentity(config: EntraConfig, opts?: { scopeCatalog?:
   // §17.4 boot validation: GUID-only keys, non-empty scope values (+ subset ⊆
   // catalog when supplied). Fail closed at construction, never a silent default.
   assertGroupAuthorizationMapping(config.groupAuthorization, opts?.scopeCatalog);
-  const jwks = createRemoteJWKSet(new URL(entraJwksUrl(config.tenantId)), { cacheMaxAge: 5 * 60 * 1000 });
+  const jwks = createRemoteJWKSet(new URL(entraJwksUrl(config.tenantId)), remoteJwksOptions(config.maxJwksDocumentBytes));
   return {
     getAuthorizationUrl: (req) => getAuthorizationUrl(config, req),
     exchangeCodeForToken: (args, transport) => exchangeCodeForToken(config, args, transport),
@@ -232,18 +237,6 @@ export function createEntraIdentity(config: EntraConfig, opts?: { scopeCatalog?:
     },
   };
 }
-function jwtErrorReason(error: unknown): string {
-  if (error instanceof errors.JWTExpired) return "entra_token_expired";
-  if (error instanceof errors.JWTClaimValidationFailed) return "entra_bad_claim";
-  if (error instanceof errors.JOSEAlgNotAllowed) return "entra_unsupported_alg";
-  if (error instanceof errors.JWKSNoMatchingKey) return "entra_unknown_key";
-  // Remote JWKS failures (base JOSEError, JWKSInvalid, JWKSTimeout) ⇒ entra_verify_failed ⇒ exchange_failed (§17.11). Sibling of generic-oidc.ts.
-  if (error instanceof errors.JWKSTimeout || error instanceof errors.JWKSInvalid) return "entra_verify_failed";
-  if (error instanceof errors.JOSEError && error.code === "ERR_JOSE_GENERIC") return "entra_verify_failed";
-  if (error instanceof errors.JOSEError) return "entra_token_invalid";
-  return "entra_verify_failed";
-}
-
 // Public group-authorization API (§17.4) re-exported for the ./identity/entra subpath.
 export { type GroupAuthorization, assertGroupAuthorizationMapping, resolveGroupCeiling } from "./entra-groups.ts";
 export { createEntraRedirectIdentity, type EntraRedirectOptions } from "./entra-redirect.ts";

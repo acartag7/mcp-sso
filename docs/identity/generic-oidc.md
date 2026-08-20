@@ -43,6 +43,7 @@ const identity = await createGenericOidcRedirectIdentity({
   // allowProviderWithoutPkce: true, // only if your issuer omits PKCE (loud)
   // maxDiscoveryDocumentBytes: 65536, // byte cap on the fetched discovery document (default; [1024, 1048576])
   // maxTokenResponseBytes: 16384,     // byte cap on every token-endpoint response (default; [1024, 1048576])
+  // maxJwksDocumentBytes: 65536,      // byte cap on remote JWKS documents (default; [1024, 1048576])
 });
 const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit, callbackPath: "/oauth/callback" });
 ```
@@ -61,7 +62,8 @@ const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit,
 - **Body caps** — the default transports stream-count fetched bodies and abort
   the download the moment the cap is exceeded: the discovery document at
   `maxDiscoveryDocumentBytes` (default 65536) and every token-endpoint response
-  at `maxTokenResponseBytes` (default 16384). Both must be integers in
+  at `maxTokenResponseBytes` (default 16384), plus jose's remote JWKS reader at
+  `maxJwksDocumentBytes` (default 65536). All three must be integers in
   [1024, 1048576] or boot fails. An oversized body is rejected as a fetch
   failure (`exchange_failed` class), never as an identity decision, and is
   never fully downloaded or buffered.

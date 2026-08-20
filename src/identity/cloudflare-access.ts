@@ -14,6 +14,7 @@
 import { createRemoteJWKSet, errors, importJWK, jwtVerify, type JWTPayload } from "jose";
 import type { IdentityClaims, IdentityPort, IdentityResult } from "../ports/identity.ts";
 import { assertHttpsRaw } from "./util.ts";
+import { remoteJwksOptions } from "./jwks-fetch.ts";
 
 export interface CloudflareAccessConfig {
   audience: string;
@@ -21,6 +22,9 @@ export interface CloudflareAccessConfig {
   certsUrl: string;
   /** CF issuer (team URL). MUST be https (addendum 11). */
   issuer: string;
+  /** Maximum remote JWKS document size in bytes. Integer [1024, 1048576],
+   *  default 65536; validated when the identity is constructed (§6.5). */
+  maxJwksDocumentBytes?: number;
   /** Optional defense-in-depth subject/email allowlist (case-insensitive, trimmed).
    *  Empty/undefined delegates WHO is allowed entirely to CF Zero Trust. */
   emailAllowlist?: string[];
@@ -92,7 +96,7 @@ export function createCloudflareAccessIdentity(config: CloudflareAccessConfig): 
   if (!config.audience || !config.audience.trim()) throw new Error("audience is required (a non-empty CF Access AUD tag) — a blank/whitespace audience lets jose enforce aud-presence but skip the value match, accepting any CF JWT regardless of app");
   assertHttpsRaw(config.certsUrl, "certsUrl");
   assertHttpsRaw(config.issuer, "issuer");
-  const jwks = createRemoteJWKSet(new URL(config.certsUrl), { cacheMaxAge: 5 * 60 * 1000 });
+  const jwks = createRemoteJWKSet(new URL(config.certsUrl), remoteJwksOptions(config.maxJwksDocumentBytes));
   const verifyOptions = { algorithms: ["RS256"], audience: config.audience, clockTolerance: 60, issuer: config.issuer };
   return {
     async verify(input: unknown): Promise<IdentityResult> {

@@ -31,7 +31,9 @@ from `https://accounts.google.com/.well-known/openid-configuration` and its
 the authorization, token, and JWKS fields must use the exact fixed hosts
 `accounts.google.com`, `oauth2.googleapis.com`, and `www.googleapis.com`
 respectively. The preset accepts no sibling/suffix match and exposes no option
-to widen that map.
+to widen that map. Its generic-OIDC JWKS reader inherits the fixed 65536-byte
+default cap and five-minute cache; an oversized key set is an
+`exchange_failed` infrastructure failure, not an identity rejection.
 
 ## Set up a Google OAuth client (Google Cloud Console)
 
