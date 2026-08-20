@@ -212,23 +212,25 @@ test("the public preflight snapshots accessor-backed input and returns its bound
   assert.equal(checkReads, 1, "the returned snapshot keeps the one bound check method");
 });
 
-test("example factories reject before opening SQLite and do not coerce malformed acknowledgements", async () => {
+test("example factories' bounded defaults admit stateless starter trust", async () => {
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-unsafe-composition-"));
   try {
     const cases = [
       { file: join(dir, "app.db"), run: () => buildApp({
         config: config(), sqliteFile: join(dir, "app.db"),
-        acknowledgeUnsafeStatelessDefaults: "false" as never,
+        pairing: {},
       }) },
       { file: join(dir, "gateway.db"), run: () => buildGateway({
         config: config(), sqliteFile: join(dir, "gateway.db"),
         backendUrl: "http://127.0.0.1:8788/mcp", getBackendCredential: () => "test",
-        acknowledgeUnsafeStatelessDefaults: "false" as never,
+        pairing: {},
       }) },
     ];
     for (const entry of cases) {
-      await assert.rejects(entry.run, /stateless DCR/);
-      assert.equal(existsSync(entry.file), false, "rejected composition created a SQLite file");
+      const built = await entry.run();
+      assert.equal(existsSync(entry.file), true, "bounded composition boots and opens SQLite");
+      await built.app.close();
+      await built.close();
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

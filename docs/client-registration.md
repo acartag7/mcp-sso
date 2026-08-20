@@ -37,7 +37,10 @@ const bridge = new Bridge({
 `configFromEnv` and both runnable examples retain stateless DCR by default. The
 Fastify/SQLite production entry accepts `OAUTH_DCR_MODE=stored` and backs client
 registrations with its existing `SqliteStore`; the API-key gateway keeps its
-stateless environment wiring. The generated server also supplies its
+stateless environment wiring. Both runnable examples supply a finite
+process-local core `RateLimitPort` in every mode; it bounds aggregate
+registration work and per-IP upstream authorize/callback work. The generated
+server also supplies its
 `SqliteStore` as `dcr.store`, plus a finite process-local registration
 `RateLimitPort`. There is no CIMD environment variable or secret.
 `authorizationServerMetadata` advertises both

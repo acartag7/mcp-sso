@@ -98,7 +98,7 @@ export interface ExampleOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer + pairing. Default noopAudit. */
   audit?: AuditPort;
-  /** Core OAuth limiter. Stored mode receives a finite process-local default. */
+  /** Core OAuth limiter. Every mode receives a finite process-local default. */
   rateLimit?: RateLimitPort;
   /** Mandatory `/mcp` Fastify budget. Defaults to 60 requests / 60 seconds / IP. */
   protectedResourceRateLimit?: ProtectedResourceRateLimitOptions;
@@ -112,8 +112,7 @@ export interface ExampleOptions {
 export async function buildApp(opts: ExampleOptions) {
   const config = opts.config;
   const acknowledged = opts.acknowledgeUnsafeStatelessDefaults === true;
-  const rateLimitCandidate = opts.rateLimit
-    ?? (config.dcr.mode === "stored" ? createDcrRegistrationRateLimitPort() : undefined);
+  const rateLimitCandidate = opts.rateLimit ?? createDcrRegistrationRateLimitPort();
   const rateLimit = assertSafeDeploymentCombination({
     config,
     rateLimit: rateLimitCandidate,
@@ -343,7 +342,7 @@ export function fastifySqliteDcrFromEnv(
 ): ProductionDcrBinding {
   const mode = env.OAUTH_DCR_MODE ?? "stateless";
   if (mode === "stateless") {
-    return { dcr: { mode }, bind() {} };
+    return { dcr: { mode }, rateLimit: createDcrRegistrationRateLimitPort(), bind() {} };
   }
   if (mode !== "stored") {
     throw new AuthConfigError('OAUTH_DCR_MODE must be "stateless" or "stored"');

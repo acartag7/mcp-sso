@@ -63,6 +63,7 @@ import {
 } from "../fastify-sqlite/app.ts";
 import { ensureStateDir } from "../../src/state-dir.ts";
 import { trustedProxiesFromEnv, trustedProxiesFromOptions } from "../fastify-sqlite/trusted-proxy.ts";
+import { createDcrRegistrationRateLimitPort } from "../fastify-sqlite/registration-rate-limit.ts";
 
 export interface GatewayOptions {
   config: BridgeConfig;
@@ -85,7 +86,7 @@ export interface GatewayOptions {
   identityHeader?: string;
   /** Audit sink for the Bridge + RequestAuthorizer (+ pairing). Default noopAudit. */
   audit?: AuditPort;
-  /** Core OAuth limiter. Required when a custom composition selects stored DCR. */
+  /** Core OAuth limiter. Every mode receives a finite process-local default. */
   rateLimit?: RateLimitPort;
   /** Mandatory `/mcp` Fastify budget. Defaults to 60 requests / 60 seconds / IP. */
   protectedResourceRateLimit?: ProtectedResourceRateLimitOptions;
@@ -115,9 +116,10 @@ export async function buildGateway(opts: GatewayOptions): Promise<{
 }> {
   const config = opts.config;
   const acknowledged = opts.acknowledgeUnsafeStatelessDefaults === true;
+  const rateLimitCandidate = opts.rateLimit ?? createDcrRegistrationRateLimitPort();
   const rateLimit = assertSafeDeploymentCombination({
     config,
-    rateLimit: opts.rateLimit,
+    rateLimit: rateLimitCandidate,
     ...(acknowledged ? { acknowledgeUnsafeStatelessDefaults: true } : {}),
   }, { emitAcknowledgementWarning: false });
   const trustedProxies = trustedProxiesFromOptions(opts);
@@ -360,6 +362,7 @@ export async function buildGatewayExample(
   deps: { backendUrl: string; getBackendCredential: () => string; identityFactories?: OidcIdentityFactories },
 ): Promise<{ app: FastifyInstance; store: ReturnType<typeof openSqliteStore>; config: BridgeConfig; dir: string }> {
   assertSingleIdentityProviderSelector(env);
+  const rateLimit = createDcrRegistrationRateLimitPort();
   const trustedProxies = trustedProxiesFromEnv(env);
   const dir = env.MCP_SSO_DIR ?? "./.mcp-sso";
   const sqliteFile = env.OAUTH_SQLITE_FILE ?? join(dir, "auth.db");
@@ -379,9 +382,9 @@ export async function buildGatewayExample(
       groupAuthorization: entraGroupAuthorizationFromEnv(env),
     }, { scopeCatalog: config.scopeCatalog });
     assertUpstreamConfigBeforeState(config, identity.redirectUri, callbackPath);
-    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
+    assertSafeDeploymentCombination({ config, rateLimit }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
-    const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, upstream: { identity, callbackPath }, audit, sqliteFile, trustedProxies });
+    const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, upstream: { identity, callbackPath }, audit, sqliteFile, trustedProxies, rateLimit });
     return { app, store, config, dir };
   }
   if (env.CF_ACCESS_AUDIENCE !== undefined) {
@@ -392,20 +395,20 @@ export async function buildGatewayExample(
       issuer: mustEnv(env, "CF_ACCESS_ISSUER"),
       emailAllowlist: listEnv(env, "CF_ACCESS_EMAIL_ALLOWLIST", ""),
     });
-    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
+    assertSafeDeploymentCombination({ config, rateLimit }, { emitAcknowledgementWarning: false });
     await ensureStateDir(dir);
-    const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, identity, audit, sqliteFile, trustedProxies });
+    const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential, identity, audit, sqliteFile, trustedProxies, rateLimit });
     return { app, store, config, dir };
   }
   if (oidcProviderConfigured(env)) {
     const config = configFromEnv(env);
-    assertSafeDeploymentCombination({ config }, { emitAcknowledgementWarning: false });
+    assertSafeDeploymentCombination({ config, rateLimit }, { emitAcknowledgementWarning: false });
     const upstream = await createOidcUpstreamFromEnv(env, config, deps.identityFactories);
     if (!upstream) throw new Error("OIDC identity branch selected without provider config");
     await ensureStateDir(dir);
     const { app, store } = await buildGateway({
       config, backendUrl: deps.backendUrl, getBackendCredential: deps.getBackendCredential,
-      upstream, audit, sqliteFile, trustedProxies,
+      upstream, audit, sqliteFile, trustedProxies, rateLimit,
     });
     return { app, store, config, dir };
   }
@@ -444,6 +447,6 @@ export async function buildGatewayExample(
   });
   await preparedSecrets.persist(); // the one write step — AFTER validation
   const { app, store } = await buildGateway({ config, backendUrl: deps.backendUrl,
-    getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile, trustedProxies });
+    getBackendCredential: deps.getBackendCredential, pairing: {}, audit, sqliteFile, trustedProxies, rateLimit });
   return { app, store, config, dir };
 }

@@ -59,8 +59,8 @@ DCR preserves the broad admission needed at registration, then binds later
 authorization to the concrete native callback saved for that client. The
 API-key gateway example remains stateless unless its composition root supplies
 a shared `ClientStore` and a bounded core `RateLimitPort`. The Fastify/SQLite
-example supplies a finite process-local registration port automatically in
-stored mode; multi-replica deployments use a shared port such as
+example supplies a finite process-local core port automatically in every mode;
+multi-replica deployments use a shared port such as
 `mcp-sso/rate-limit/redis`.
 
 ## Entra group authorization denials

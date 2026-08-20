@@ -9,10 +9,14 @@
 
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { JWK } from "jose";
 import { buildApp } from "../examples/fastify-sqlite/app.ts";
-import { buildGateway } from "../examples/api-key-gateway/app.ts";
+import { buildGateway, buildGatewayExample } from "../examples/api-key-gateway/app.ts";
+import { FASTIFY_DCR_REGISTER_RATE_LIMIT } from "../examples/fastify-sqlite/registration-rate-limit.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import type { RedirectIdentityPort } from "../src/ports/identity.ts";
 import type { RateLimitPort } from "../src/ports/rate-limit.ts";
@@ -43,6 +47,38 @@ function upstreamConfig(): BridgeConfig {
     consentTokenTtlSeconds: 300,
     authorizationCodeTtlSeconds: 300,
   });
+}
+
+async function proveDefaultUpstreamBudget(
+  app: { inject(input: unknown): Promise<unknown> },
+): Promise<void> {
+  const q = new URLSearchParams({
+    response_type: "code", client_id: "stateless-client", redirect_uri: CLIENT_REDIRECT,
+    code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+    scope: "mcp:read", state: "client-state",
+  });
+  const authorize = async () => await app.inject({
+    method: "GET", url: `/oauth/authorize?${q}`,
+  }) as { statusCode: number; headers: { "set-cookie"?: string } };
+
+  const first = await authorize();
+  assert.equal(first.statusCode, 302, "the first authorize charge is admitted");
+  const cookie = first.headers["set-cookie"]?.split(";", 1)[0];
+  assert.ok(cookie, "authorize minted the upstream flow cookie");
+
+  const callback = await app.inject({
+    method: "GET", url: "/oauth/callback", headers: { cookie },
+  }) as { statusCode: number };
+  assert.equal(callback.statusCode, 400, "callback charge is admitted before its missing-parameter rejection");
+
+  for (let index = 2; index < FASTIFY_DCR_REGISTER_RATE_LIMIT.max; index++) {
+    assert.equal((await authorize()).statusCode, 302, `upstream charge ${index + 1} is admitted`);
+  }
+  assert.equal(
+    (await authorize()).statusCode,
+    429,
+    "authorize and callback consumed the same default upstream:<ip> bucket",
+  );
 }
 
 function stubIdentity(): RedirectIdentityPort {
@@ -114,5 +150,42 @@ test("api-key-gateway example: an operator-supplied limiter covers the upstream 
   } finally {
     await built.app.close();
     await built.close();
+  }
+});
+
+test("fastify-sqlite example: default stateless authorize and callback charge upstream:<ip>", async () => {
+  const built = await buildApp({ config: upstreamConfig(), upstream: { identity: stubIdentity() } });
+  try {
+    await proveDefaultUpstreamBudget(built.app);
+  } finally {
+    await built.app.close();
+    await built.close();
+  }
+});
+
+test("api-key-gateway example: default stateless authorize and callback charge upstream:<ip>", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mcp-sso-gateway-default-limit-"));
+  const dir = join(base, "state");
+  const built = await buildGatewayExample({
+    MCP_SSO_DIR: dir,
+    OAUTH_ISSUER: ISSUER,
+    OAUTH_RESOURCE: `${ISSUER}/mcp`,
+    OAUTH_CONSENT_SIGNING_SECRET: randomBytes(32).toString("base64url"),
+    OAUTH_SIGNING_PRIVATE_JWK: JSON.stringify(signingJwk()),
+    OAUTH_REDIRECT_ALLOWLIST: CLIENT_REDIRECT,
+    OIDC_ISSUER: "https://idp.test",
+    OIDC_CLIENT_ID: "gateway-client",
+    OIDC_REDIRECT_URI: `${ISSUER}/oauth/callback`,
+  }, {
+    backendUrl: "http://127.0.0.1:1/mcp",
+    getBackendCredential: () => "unused",
+    identityFactories: { async genericOidc() { return stubIdentity(); } },
+  });
+  try {
+    await proveDefaultUpstreamBudget(built.app);
+  } finally {
+    await built.app.close();
+    await built.store.close();
+    rmSync(base, { recursive: true, force: true });
   }
 });

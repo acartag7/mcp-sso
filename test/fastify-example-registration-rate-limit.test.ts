@@ -5,6 +5,7 @@ import type { FastifyRateLimitOptions, FastifyRateLimitStore } from "@fastify/ra
 import type { JWK } from "jose";
 import { buildApp } from "../examples/fastify-sqlite/app.ts";
 import {
+  createDcrRegistrationRateLimitPort, EXAMPLE_UPSTREAM_BUCKET_CAP,
   FASTIFY_DCR_REGISTER_RATE_LIMIT,
 } from "../examples/fastify-sqlite/registration-rate-limit.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
@@ -53,6 +54,15 @@ function configFor(
     redirectUri,
   };
 }
+
+test("runnable-example core limiter bounds upstream key cardinality", async () => {
+  const limiter = createDcrRegistrationRateLimitPort();
+  for (let index = 0; index < EXAMPLE_UPSTREAM_BUCKET_CAP; index++) {
+    assert.equal(await limiter.check(`upstream:198.51.${Math.floor(index / 256)}.${index % 256}`), true);
+  }
+  assert.equal(await limiter.check("upstream:203.0.113.1"), false);
+  assert.equal(await limiter.check("token:203.0.113.1"), true, "unowned key classes retain their library policy");
+});
 
 test("Fastify/SQLite registration limiter bounds both DCR modes before parsing and registration effects", async () => {
   for (const mode of ["stateless", "stored"] as const) {
