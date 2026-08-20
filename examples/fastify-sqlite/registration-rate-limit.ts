@@ -7,40 +7,42 @@ export const FASTIFY_DCR_REGISTER_RATE_LIMIT = Object.freeze({
   timeWindow: 60_000,
   groupId: "oauth-client-registration",
 });
-export const EXAMPLE_UPSTREAM_BUCKET_CAP = 1_024;
+export const EXAMPLE_PER_IP_BUCKET_CAP = 1_024;
 
 interface FixedWindow {
   startedAt?: number;
   remaining: number;
 }
 
-/** Bound aggregate registration work and upstream redirect work in one process.
+/** Bound aggregate registration work and anonymous identity work in one process.
  * Registration stays aggregate so rotating source IPs cannot expand durable
- * stored-DCR writes. Upstream uses the exact per-IP key supplied by the flow. */
+ * stored-DCR writes. Direct and upstream identity paths use their exact per-IP
+ * keys, with distinct budgets in one bounded map. */
 export function createDcrRegistrationRateLimitPort(): RateLimitPort {
   const registration: FixedWindow = { remaining: FASTIFY_DCR_REGISTER_RATE_LIMIT.max };
-  const upstream = new Map<string, FixedWindow>();
+  const perIp = new Map<string, FixedWindow>();
   return Object.freeze({
     async check(key: string): Promise<boolean> {
       const registrationKey = key.startsWith("register:");
-      if (!registrationKey && !key.startsWith("upstream:")) return true;
+      const perIpKey = key.startsWith("authorize:") || key.startsWith("upstream:");
+      if (!registrationKey && !perIpKey) return true;
       const now = Date.now();
       if (!Number.isFinite(now)) return false;
       if (registrationKey) return charge(registration, now);
-      let bucket = upstream.get(key);
+      let bucket = perIp.get(key);
       if (!bucket) {
-        if (upstream.size >= EXAMPLE_UPSTREAM_BUCKET_CAP) {
-          for (const [storedKey, window] of upstream) {
+        if (perIp.size >= EXAMPLE_PER_IP_BUCKET_CAP) {
+          for (const [storedKey, window] of perIp) {
             if (window.startedAt !== undefined
               && now - window.startedAt >= FASTIFY_DCR_REGISTER_RATE_LIMIT.timeWindow) {
-              upstream.delete(storedKey);
+              perIp.delete(storedKey);
             }
           }
-          if (upstream.size >= EXAMPLE_UPSTREAM_BUCKET_CAP) return false;
+          if (perIp.size >= EXAMPLE_PER_IP_BUCKET_CAP) return false;
         }
         bucket = { remaining: FASTIFY_DCR_REGISTER_RATE_LIMIT.max };
       }
-      upstream.set(key, bucket);
+      perIp.set(key, bucket);
       return charge(bucket, now);
     },
   });

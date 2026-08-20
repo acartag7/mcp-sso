@@ -70,8 +70,9 @@ How mcp-sso proves a release actually works.
 > current source tree. Both runnable examples now construct the finite
 > process-local core limiter in stateless and stored modes and pass that exact
 > boot snapshot to `createUpstreamRedirectFlow`. Default stateless authorize and
-> callback therefore share a bounded `upstream:<ip>` bucket. Because a bounded
-> limiter is the deployment guard's own safe escape, stateless + generic
+> callback therefore share a bounded `upstream:<ip>` bucket, while direct
+> identity authorization has its own bounded `authorize:<ip>` bucket. Because a
+> bounded limiter is the deployment guard's own safe escape, stateless + generic
 > loopback now boots in both example factories; the library's optional
 > `RateLimitPort` default is unchanged.
 >

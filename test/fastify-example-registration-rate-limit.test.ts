@@ -5,7 +5,7 @@ import type { FastifyRateLimitOptions, FastifyRateLimitStore } from "@fastify/ra
 import type { JWK } from "jose";
 import { buildApp } from "../examples/fastify-sqlite/app.ts";
 import {
-  createDcrRegistrationRateLimitPort, EXAMPLE_UPSTREAM_BUCKET_CAP,
+  createDcrRegistrationRateLimitPort, EXAMPLE_PER_IP_BUCKET_CAP,
   FASTIFY_DCR_REGISTER_RATE_LIMIT,
 } from "../examples/fastify-sqlite/registration-rate-limit.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
@@ -55,14 +55,15 @@ function configFor(
   };
 }
 
-test("runnable-example core limiter bounds upstream key cardinality", async () => {
+test("runnable-example core limiter bounds direct and upstream identity key cardinality", async () => {
   const realNow = Date.now;
   let now = 1_000;
   Date.now = () => now;
   try {
     const limiter = createDcrRegistrationRateLimitPort();
-    for (let index = 0; index < EXAMPLE_UPSTREAM_BUCKET_CAP; index++) {
-      assert.equal(await limiter.check(`upstream:198.51.${Math.floor(index / 256)}.${index % 256}`), true);
+    for (let index = 0; index < EXAMPLE_PER_IP_BUCKET_CAP; index++) {
+      const prefix = index % 2 === 0 ? "authorize" : "upstream";
+      assert.equal(await limiter.check(`${prefix}:198.51.${Math.floor(index / 256)}.${index % 256}`), true);
     }
     assert.equal(await limiter.check("upstream:203.0.113.1"), false);
     now += FASTIFY_DCR_REGISTER_RATE_LIMIT.timeWindow;

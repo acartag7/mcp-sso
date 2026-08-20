@@ -81,10 +81,11 @@ The API-key gateway and the Fastify/SQLite example's default DCR mode remain
 stateless. Both examples wire a finite process-local core `RateLimitPort` in
 every mode, so the deployment guard admits a stateless production composition
 with either an application-specific HTTPS callback or explicitly configured
-generic loopback entries. The example port bounds aggregate registration and
-per-IP upstream authorize/callback work; public multi-replica deployments
-replace it with a conforming shared limiter. Configure only callbacks used by
-real opaque DCR clients; do not add a placeholder callback.
+generic loopback entries. The example port bounds aggregate registration,
+per-IP direct identity authorization, and per-IP upstream authorize/callback
+work; public multi-replica deployments replace it with a conforming shared
+limiter. Configure only callbacks used by real opaque DCR clients; do not add a
+placeholder callback.
 
 The Fastify/SQLite production example exposes that stored composition directly.
 Native CLI clients such as Codex choose an ephemeral loopback port and callback

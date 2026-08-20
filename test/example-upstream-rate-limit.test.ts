@@ -18,7 +18,7 @@ import { buildApp } from "../examples/fastify-sqlite/app.ts";
 import { buildGateway, buildGatewayExample } from "../examples/api-key-gateway/app.ts";
 import { FASTIFY_DCR_REGISTER_RATE_LIMIT } from "../examples/fastify-sqlite/registration-rate-limit.ts";
 import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
-import type { RedirectIdentityPort } from "../src/ports/identity.ts";
+import type { IdentityPort, RedirectIdentityPort } from "../src/ports/identity.ts";
 import type { RateLimitPort } from "../src/ports/rate-limit.ts";
 import { pkceChallenge } from "../src/crypto.ts";
 
@@ -79,6 +79,40 @@ async function proveDefaultUpstreamBudget(
     429,
     "authorize and callback consumed the same default upstream:<ip> bucket",
   );
+}
+
+async function proveDefaultDirectAuthorizeBudget(
+  app: { inject(input: unknown): Promise<unknown> },
+  identityCalls: () => number,
+): Promise<void> {
+  const q = new URLSearchParams({
+    response_type: "code", client_id: "stateless-client", redirect_uri: CLIENT_REDIRECT,
+    code_challenge: pkceChallenge(VERIFIER), code_challenge_method: "S256",
+    scope: "mcp:read", state: "client-state",
+  });
+  for (let index = 0; index < FASTIFY_DCR_REGISTER_RATE_LIMIT.max; index++) {
+    const response = await app.inject({
+      method: "GET", url: `/oauth/authorize?${q}`,
+      headers: { "cf-access-jwt-assertion": "identity-token" },
+    }) as { statusCode: number };
+    assert.equal(response.statusCode, 200, `direct authorize charge ${index + 1} is admitted`);
+  }
+  const denied = await app.inject({
+    method: "GET", url: `/oauth/authorize?${q}`,
+    headers: { "cf-access-jwt-assertion": "identity-token" },
+  }) as { statusCode: number };
+  assert.equal(denied.statusCode, 429, "the default authorize:<ip> bucket denies past its budget");
+  assert.equal(identityCalls(), FASTIFY_DCR_REGISTER_RATE_LIMIT.max,
+    "quota denial occurs before direct identity verification");
+}
+
+function directIdentity(calls: { value: number }): IdentityPort {
+  return {
+    async verify() {
+      calls.value += 1;
+      return { ok: true, identity: { subject: "direct-user" } };
+    },
+  };
 }
 
 function stubIdentity(): RedirectIdentityPort {
@@ -187,5 +221,32 @@ test("api-key-gateway example: default stateless authorize and callback charge u
     await built.app.close();
     await built.store.close();
     rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("fastify-sqlite example: default stateless direct authorize charges authorize:<ip>", async () => {
+  const calls = { value: 0 };
+  const built = await buildApp({ config: upstreamConfig(), identity: directIdentity(calls) });
+  try {
+    await proveDefaultDirectAuthorizeBudget(built.app, () => calls.value);
+  } finally {
+    await built.app.close();
+    await built.close();
+  }
+});
+
+test("api-key-gateway example: default stateless direct authorize charges authorize:<ip>", async () => {
+  const calls = { value: 0 };
+  const built = await buildGateway({
+    config: upstreamConfig(),
+    backendUrl: "http://127.0.0.1:1/mcp",
+    getBackendCredential: () => "unused",
+    identity: directIdentity(calls),
+  });
+  try {
+    await proveDefaultDirectAuthorizeBudget(built.app, () => calls.value);
+  } finally {
+    await built.app.close();
+    await built.close();
   }
 });

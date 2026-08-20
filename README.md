@@ -67,9 +67,10 @@ Use a real identity provider, a persistent conforming store, and a real request
 budget. The repository example demonstrates identity-provider wiring; it is not
 a complete production topology because it uses local SQLite. Both runnable
 examples wire a finite process-local core `RateLimitPort` in stateless and
-stored modes: registration has an aggregate budget, while upstream authorize
-and callback share a per-IP budget. Multi-replica deployments replace that
-example default with the shipped Redis port.
+stored modes: registration has an aggregate budget, direct identity authorize
+has a per-IP budget, and upstream authorize and callback share another per-IP
+budget. Multi-replica deployments replace that example default with the shipped
+Redis port.
 
 Start from an **mcp-sso repository checkout** (not the generated
 `my-mcp-server` directory), copy
