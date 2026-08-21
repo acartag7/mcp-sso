@@ -1,5 +1,7 @@
 # 8. Resource-server verifier contract
 
+**What this protects and why.** What `RequestAuthorizer` checks before your MCP handler runs, and the exact `WWW-Authenticate` challenge it sends when it refuses. This is the half a deployer wires into `/mcp`. It has no unauthenticated mode on purpose.
+
 The RS half. Framework-free. Testable without any HTTP server.
 
 ## 8.1 `verifyAccessToken(token, config, clock?) → VerifiedAccessToken`

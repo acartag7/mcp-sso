@@ -1,5 +1,7 @@
 # 9. AS-lite bridge contract
 
+**What this protects and why.** The authorization-server half: metadata, `POST /oauth/register`, authorize and consent, token exchange, refresh, and revocation, with the order in which each request is checked and which errors go direct versus by redirect. The direct-versus-redirect split is the security decision: an error sent to an untrusted redirect is a leak.
+
 The AS half. Each item is a framework-free use-case or pure metadata builder. A framework adapter exposes it over HTTP.
 
 ## 9.1 Metadata (RFC 8414 / RFC 9728)

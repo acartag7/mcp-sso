@@ -1,5 +1,7 @@
 # 5. Configuration contract
 
+**What this protects and why.** What `createBridgeConfig` accepts, what it refuses at boot, and why it never normalizes what the deployer wrote. Boot is the last moment a bad value can be rejected without a user in the loop, so ambiguity here is a hard failure, never a warning.
+
 `BridgeConfig` is the complete security configuration for one bridge. The library checks it when the bridge starts. Missing, malformed, ambiguous, or insecure values stop startup with `AuthConfigError`. They do not silently turn off authentication or another security gate. Local development still uses the same authenticated OAuth flow as an internet-facing deployment.
 
 ```ts

@@ -1,32 +1,57 @@
 # mcp-sso
 
-> OAuth 2.1 for remote MCP servers: a spec-correct resource-server verifier
-> (RFC 9728, WWW-Authenticate, fail-closed audience checks) plus a small
-> AS-lite bridge that speaks DCR + PKCE + consent to MCP clients while a
-> pluggable upstream IdP (Cloudflare Access, Entra ID, console pairing) stays
-> the identity source. The bridge mints its own audience-bound tokens; upstream
-> tokens never pass through. OAuth in the MCP server, not an API key in the
-> client's config.
+> OAuth 2.1 for remote MCP servers: a resource-server verifier for `/mcp` plus an authorization-server bridge that speaks CIMD or `POST /oauth/register`, PKCE, and consent to MCP clients while an upstream identity provider stays the identity source. TypeScript, `jose` is the only runtime dependency.
 
-## Overview
+Each line names a page, its kind (tutorial, how-to, reference, explanation, history), and what it is for. Current pages describe the source tree at the commit you are reading; history pages describe the date in their heading and are not current reference. Rules for changing this repository are in AGENTS.md.
 
-- [README](README.md): What the library is, what ships today, quickstart, the API-key-gateway shape, machine-to-machine (`client_credentials`), alternatives table, and roadmap.
-- [docs/contracts.md](docs/contracts.md): Status and index for the numbered contract files — ports, schemas, error shapes, redirect policy, and the [§16 spec-conformance matrix](docs/contracts/16-spec-conformance-matrix.md). Read before changing any port/schema/error.
-- [docs/threat-model.md](docs/threat-model.md): STRIDE threat table, the refresh-token replay-detection control, accepted boundaries, and implementation gates. The security-product source of truth.
+## Start here
 
-## Guides
+- [README](README.md): explanation. The problem, the flow, what ships, the trust artifacts, when to use something else.
+- [Get started](docs/getting-started.md): tutorial. The loopback server with console pairing, then the identity-provider path with the repository example.
+- [Documentation index](docs/README.md): reference. Every page routed by "I want to" and by kind.
+- [AGENTS.md](AGENTS.md): reference for agents. Invariants, gates, the pull-request checklist, the writing standard, the decision-disclosure format.
 
-- [docs/gateway-deployment.md](docs/gateway-deployment.md): SSO-in-front-of-a-token-only-backend pattern — the one-gateway-per-backend topology, server-side-only credential injection, and Kubernetes notes (signing material vs. backend credential take separate code paths).
-- [docs/authorization.md](docs/authorization.md): Where IdP-side access control (Entra app assignment / Conditional Access, Cloudflare Access policy) ends and mcp-sso's defense-in-depth gates (subject allowlists, group→scope ceilings) begin.
-- [docs/audit-deployment.md](docs/audit-deployment.md): Audit-logging deployer guide — JSONL file sink, https-only no-redirect webhook sink, `combineAudit` fan-out, and the fail-open residual.
-- [docs/troubleshooting.md](docs/troubleshooting.md): Tunnel gotchas, identity-provider failure modes, and client-integration debugging notes.
-- [docs/live-verification.md](docs/live-verification.md): The provider × client verification matrix (the single source of truth) and per-provider owner-run checklists for real MCP clients (claude.ai, ChatGPT, Claude Code, curl).
+## How-to guides
+
+- [Configure client registration](docs/client-registration.md): how-to. CIMD and `POST /oauth/register`, stateless or stored, loopback callbacks for CLI clients.
+- [Provision a machine client](docs/machine-clients.md): how-to. `client_credentials`, out-of-band provisioning, rotation, custom `MachineClientStore` rules.
+- [Deploy an API-key gateway](docs/gateway-deployment.md): how-to. SSO in front of a backend that only accepts a static key.
+- [Deploy an audit sink](docs/audit-deployment.md): how-to. JSONL file, webhook, combined sinks, what never appears in an event.
+- [Configure an identity provider](docs/identity/README.md): how-to index for Cloudflare Access, Microsoft Entra ID, Google, generic OIDC, and the unshipped GitHub port.
+- [Run live client verification](docs/live-verification.md): how-to. The harness, provider legs, real MCP clients.
+- [Prepare a release](docs/release-checklist.md): how-to. Gates, release matrix, exact-head review, tag and publish.
+- [Troubleshoot a deployment](docs/troubleshooting.md): how-to. Symptoms to causes.
 
 ## Reference
 
-- [docs/dependency-ledger.md](docs/dependency-ledger.md): Every pinned dependency with version + publish date, enforcing the 15-day minimum-release-age rule and the `jose`-only runtime-dep policy.
+- [Configuration](docs/configuration.md): reference. Environment variables and `BridgeConfig` fields.
+- [Capabilities and deployment limits](docs/reference/capabilities.md): reference. What the package ships and what one bridge can protect.
+- [Contracts index](docs/contracts.md): reference. Change routing into the 18 numbered contract files under `docs/contracts/`.
+- [Threat model](docs/threat-model.md): reference. Assets, trust boundaries, required controls, 48 attacker-driven rows, deployment-facing residuals.
+- [Spec conformance matrix](docs/contracts/16-spec-conformance-matrix.md): reference. MCP Authorization 2026-07-28 and CIMD draft -00, row by row, deviations recorded.
+- [Verification status](docs/verification-status.md): reference. The published release, the current source tree, and what the last live campaign did and did not prove.
+- [Client compatibility](docs/client-compatibility.md): reference. Dated results per identity provider and MCP client, and the rule for marking a row Verified.
+- [Release verification requirements](docs/verification.md): reference. The `RM.N` release-matrix rows that `scripts/check-release-matrix.mjs` binds to tests.
+- [Tier 3 evidence fields](docs/verification-live.md): reference. What a live result must record.
+- [Live verification harness](docs/reference/live-harness.md): reference. What each script under `scripts/live/` can establish.
+- [Dependency ledger](docs/dependency-ledger.md): reference. Every pin, its publish date, the 15-day floor, and the advisory exceptions.
 
-## Examples
+## Explanation
 
-- [examples/fastify-sqlite](examples/fastify-sqlite): Full reference app — the bridge wired to Fastify + the recommended `node:sqlite` store, serving a minimal protected `/mcp`; identity selected by env (Cloudflare Access, Entra ID, or zero-setup console pairing). Start here for local dev.
-- [examples/api-key-gateway](examples/api-key-gateway): mcp-sso as the SSO front door for a token-only stub backend MCP server — backend credential isolated behind a `getBackendCredential()` closure, transparent-proxy rules (Origin validation, header allowlisting, client-`Authorization` stripping, SSE streaming) implemented and asserted.
+- [OAuth roles and flow](docs/explanation/oauth-roles-and-flow.md): explanation. Who proves what, why the bridge mints its own token, where a request can stop.
+- [Client registration choices](docs/explanation/client-registration-choices.md): explanation. CIMD versus stateless versus stored DCR and what each protects.
+- [Redirect URI trust](docs/explanation/redirect-uri-trust.md): explanation. Why redirect checks use exact strings and re-check on every read.
+- [Rate limits and client IP trust](docs/explanation/rate-limits-and-client-ip.md): explanation. Why a limiter is only as good as the IP it keys on, proxies, replicas, the stored-registration 503.
+- [Rate-limit outage policy](docs/rate-limit-outage-policy.md): explanation. Why `POST /oauth/register` in stored mode fails closed and everything else continues.
+- [CIMD fetch safety](docs/explanation/cimd-fetch-safety.md): explanation. Why a client-supplied URL the server fetches needs SSRF rules and one generic error.
+- [Authorization model](docs/authorization.md): explanation. Identity-provider gates versus the bridge's own allowlists and scope ceilings.
+- [Verification design](docs/verification-design.md): explanation. Why evidence has three tiers and why the release matrix is separate.
+- [Live verification infrastructure](docs/explanation/live-verification-infrastructure.md): explanation. What the live harness needs and why.
+
+## Contracts (normative)
+
+- [docs/contracts/](docs/contracts.md): reference. Sections 1 to 18: purpose, the two roles, normative references, design principles, configuration, ports, crypto and tokens, the resource-server verifier, the bridge, redirect-URI policy, scopes, store conformance, audit, errors, package and exports, conformance matrix, feature contracts, and the change protocol. If code and a contract disagree, the contract wins until one is deliberately changed.
+
+## Optional
+
+- [Archive index](docs/archive/README.md): history. Dated receipts, superseded results, and implementation records. Not current reference; each page names the version, commit, client, and date its claims are limited to.

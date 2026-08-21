@@ -1,5 +1,7 @@
 # 17. Feature contracts
 
+**What this protects and why.** The contracts for the features added after the core: CIMD, machine clients, device flow (unshipped), Entra groups, console pairing, OIDC and Google, audit sinks, quickstart secrets, the Redis limiter, and the upstream redirect flow. Each section states what the feature protects and where its residuals are, so a later change cannot drop a guard without contradicting a sentence here.
+
 > This file is the current reference for the feature contracts. Dated review and implementation context is in [the contract development archive](../archive/contract-development-history-2026-07-to-2026-08.md).
 
 ## 17.1 CIMD: Client ID Metadata Documents (the SSRF enforcement contract)

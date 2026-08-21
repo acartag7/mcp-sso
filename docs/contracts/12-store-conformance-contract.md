@@ -1,5 +1,7 @@
 # 12. Store-conformance contract
 
+**What this protects and why.** The invariants every store must satisfy and the shared suite that proves them for memory, SQLite, MySQL, and any downstream adapter. Replay detection, single use, and rotation are store properties; a store that gets one wrong breaks it silently for every adapter above it.
+
 Every `StorePort` implementation must satisfy these invariants. The `store-conformance` suite asserts them against `MemoryStore`, `SqliteStore`, and `MysqlStore`. A downstream SQL adapter must pass the same suite.
 
 The suite ships in the package so a downstream adapter can satisfy that requirement: import `runStoreConformance` from `mcp-sso/testing/store-conformance` (and `runClientStoreConformance` from `mcp-sso/testing/client-store-conformance` for a `ClientStore`) and call it once per adapter under `node --test`:

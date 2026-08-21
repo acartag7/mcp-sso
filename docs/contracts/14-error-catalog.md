@@ -1,5 +1,7 @@
 # 14. Error catalog
 
+**What this protects and why.** Every error the library emits, with its code, status, and channel. Errors are part of the contract because clients and tests key on them, and because the wrong channel (a redirect where a direct response was required) is itself a vulnerability.
+
 All are `OAuthError(code, message, status)`. The 401 rows drive §8.2. The 403 row drives §8.3.
 
 | code | status | WWW-Authenticate | When |

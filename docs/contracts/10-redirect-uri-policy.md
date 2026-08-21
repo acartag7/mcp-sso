@@ -1,5 +1,7 @@
 # 10. Redirect-URI policy
 
+**What this protects and why.** One grammar for every redirect entry, wherever it comes from, and one matching rule per consumer. A redirect URI is where the authorization code leaves the server, so every reader re-validates it instead of trusting that someone upstream did.
+
 This file is the current grammar and matching reference. [Why redirect URI checks use exact strings](../explanation/redirect-uri-trust.md) explains the attack and the repeated read-time checks.
 
 ## 10.0 The redirect-entry grammar (ONE definition, every consumer)

@@ -1,5 +1,7 @@
 # 7. Crypto & token contracts
 
+**What this protects and why.** How consent tokens, access tokens, authorization codes, and refresh tokens are signed, stored, and checked. Every rule here serves one aim: a stolen or forged credential must be worth as little as possible, for as short a time as possible.
+
 All signing goes through `jose` (the only runtime dep). **Algorithm pinning is non-negotiable**: consent tokens are HS256, access tokens are ES256 (EC P-256), and verifiers pin the algorithm set so a `none`-alg or key-confusion token is rejected. Consent and access keys are **separate** (the consent secret never validates an access token and vice-versa).
 
 ## 7.1 Consent token (HS256, single-use)

@@ -1,5 +1,7 @@
 # 3. Normative references
 
+**What this protects and why.** The specifications and RFCs this library is held to, with the exact versions and dates that were checked. When a sentence elsewhere says MUST, this is where the obligation comes from.
+
 - RFC 9728. OAuth 2.0 Protected Resource Metadata (PRM). Discovery at `/.well-known/oauth-protected-resource`. `WWW-Authenticate: Bearer resource_metadata="<url>"` (§5).
 - RFC 8414. OAuth 2.0 Authorization Server Metadata.
 - RFC 7591. OAuth 2.0 Dynamic Client Registration Protocol (DCR).

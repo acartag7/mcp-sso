@@ -1,5 +1,7 @@
 # 1. Purpose & scope
 
+**What this protects and why.** This file says what mcp-sso is for and what it refuses to be. It protects the one promise everything else rests on: the bridge mints its own tokens for one resource, and upstream identity-provider credentials never reach an MCP client. Read it first when you are unsure whether a feature belongs in this library.
+
 `mcp-sso` is a spec-correct **OAuth 2.1 layer for remote MCP servers** with two halves, in one framework-free core:
 
 - A resource-server verifier provides RFC 9728 Protected Resource Metadata, `WWW-Authenticate` challenges, fail-closed audience validation, and scope step-up.

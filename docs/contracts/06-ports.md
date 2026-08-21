@@ -1,5 +1,7 @@
 # 6. Ports
 
+**What this protects and why.** The interfaces the core talks through: clock, audit, store, client store, identity, fetcher, rate limit. Each one names what the core may assume and what a custom implementation must never do, because a port is where a deployer's own code can weaken the library's guarantees without touching it.
+
 DDD-lite: pure core (use-cases + ports, no infra imports) and adapters at the edge. Every external capability is a port so the core is testable in isolation.
 
 ## 6.1 `ClockPort`

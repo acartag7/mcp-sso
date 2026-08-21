@@ -6,6 +6,21 @@
 >
 > Current release and conformance status: [verification status](verification-status.md).
 
+## What this protects you from
+
+Plain words first. The table under "Threats" has the exact control for each row and what remains after it; the row numbers here point into it.
+
+- Stolen or forged tokens (rows 1, 2, 3, 6, 10, 39, 40, 43). An access token is a short-lived bearer token. A refresh token is hashed at rest and single use, and a replayed one revokes its whole family. Every verifier pins its algorithm and its audience, so a token minted for one resource is refused at another.
+- Redirect hijack and client impersonation (rows 5, 7, 9, 17, 45). A redirect URI is where the authorization code leaves the server, so every entry is parsed once with one grammar and every reader re-checks it. Loopback port elasticity is the only exception, and only for native clients.
+- Consent and browser attacks (rows 4, 11, 36, 38). The approve request must carry the issuer's own `Origin`, the consent token is single use, and the consent and pairing pages are frame-blocked.
+- The upstream sign-in and the identity provider (rows 12, 22, 29, 30, 31, 32, 33, 35, 37, 44, 47, 48). A signed, single-use flow cookie binds the whole redirect to one browser, upstream PKCE and nonce stop code injection, identity-provider error text is never echoed, and identity-provider responses are size-capped before they are parsed.
+- Server-side fetches for client metadata (rows 13, 25, 35). A CIMD `client_id` is a URL the server fetches, so admission, DNS, blocklist, size, time, and redirect rules bound what it can reach, and every failure collapses to one generic error so the fetch cannot be used as an oracle.
+- Flooding and resource exhaustion (rows 8, 25, 26, 41, 46, 48). Registration, approval, token, revocation, upstream, and CIMD requests are rate-limited per IP. Stored registration refuses to boot without a limiter and returns 503 if the limiter breaks. Request bodies are capped before parsing.
+- Machine clients and local modes (rows 16, 18, 19, 20, 21, 23, 27, 28, 42). Machine secrets are provisioned out of band and stored hashed. Console pairing and the development flag are loopback-only. State files and databases are opened with trust checks.
+- Logs, audit, code hygiene, and the supply chain (rows 14, 15, 24, 34). No credential reaches a log or an audit event, the audit sinks fail open so lost evidence never becomes an outage, property keys are never attacker-chosen, and `jose` is the only runtime dependency, with every pin and its age recorded.
+
+Before you expose a deployment, read [Known residual risks (deployment-facing)](#known-residual-risks-deployment-facing) at the end of this page. Those are the things the library cannot close for you.
+
 ## Assets
 
 - Signing keys. The HS256 consent secret and the ES256 access-token private key. Compromise = minting arbitrary tokens.

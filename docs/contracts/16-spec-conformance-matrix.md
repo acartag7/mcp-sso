@@ -1,5 +1,7 @@
 # 16. Spec-conformance matrix
 
+**What this protects and why.** Requirement by requirement, what the MCP Authorization spec and the CIMD draft demand and what this library does about each, with the deviations stated rather than hidden. Read it before repeating a conformance claim anywhere.
+
 | Requirement | Status | Where |
 |---|---|---|
 | RFC 9728 PRM (root) | ✅ v0.1 | §9.1 |

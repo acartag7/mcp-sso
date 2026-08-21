@@ -1,5 +1,7 @@
 # 2. The two roles
 
+**What this protects and why.** One configuration drives two OAuth roles: the resource server that checks tokens at `/mcp` and the authorization-server bridge that issues them. Keeping both on one `BridgeConfig` is what stops the issuer and the verifier from disagreeing about the audience.
+
 The library plays two OAuth roles against a **single shared configuration**:
 
 | Role | Owns | Endpoints | Tokens |
