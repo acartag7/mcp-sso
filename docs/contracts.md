@@ -13,7 +13,7 @@ Read this index by task. Open the numbered file only when you need its exact con
 | Resource-server authentication | [§8 Verifier](contracts/08-resource-server-verifier-contract.md) and [§11 Scopes](contracts/11-scope-contract.md) |
 | Durable state or audit | [§12 Stores](contracts/12-store-conformance-contract.md) and [§13 Audit](contracts/13-audit-contract.md) |
 | MCP-version claims | [§16 Conformance matrix](contracts/16-spec-conformance-matrix.md) |
-| A v0.2 or v0.3 feature | [§17 Feature contracts](contracts/17-v0-2-feature-contracts.md) |
+| CIMD, machine clients, device flow, Entra groups, console pairing, OIDC and Google, audit sinks, quickstart secrets, the Redis limiter, or the upstream redirect flow | [§17 Feature contracts](contracts/17-v0-2-feature-contracts.md) |
 
 Current release and conformance status: [verification status](verification-status.md).
 
@@ -37,5 +37,5 @@ This is one contract set, not 18 independent specifications. The index owns rout
 14. [Error catalog](contracts/14-error-catalog.md)
 15. [Package & export map](contracts/15-package-and-export-map.md)
 16. [Spec-conformance matrix](contracts/16-spec-conformance-matrix.md)
-17. [v0.2 feature contracts (locked 2026-07-04)](contracts/17-v0-2-feature-contracts.md)
+17. [Feature contracts](contracts/17-v0-2-feature-contracts.md)
 18. [Contract-change protocol](contracts/18-contract-change-protocol.md)
