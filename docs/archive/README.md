@@ -5,7 +5,7 @@ This directory preserves dated verification results and implementation records t
 | Archive | Contents |
 | --- | --- |
 | [Verification history](verification-history.md) | Release-candidate receipts, conformance reviews, and dated live campaigns. |
-| [July 2026 client compatibility](client-compatibility-2026-07.md) | Client and identity-provider results that preceded the current v0.4.0 matrix. |
+| [Client compatibility, July to August 2026](client-compatibility-2026-07.md) | Client and identity-provider results that preceded the current v0.4.0 matrix. |
 | [2026-07-08 API-key gateway field report](2026-07-08-api-key-gateway-field-report.md) | Deployment report for `mcp-sso@0.2.0` with Entra ID. |
 | [2026-08-17 redirect-entry grammar implementation record](2026-08-17-redirect-entry-grammar.md) | Parser measurements, closure obligations, and historical tests behind the current redirect URI contract. |
 | [Internal test catalog through 2026-08-21](internal-test-catalog-2026-08-21.md) | Retired implementation-batch identifiers and the detailed scenarios they named. |

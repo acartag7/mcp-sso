@@ -39,7 +39,7 @@ For example, `HTTPS://CLIENT.EXAMPLE:443/x/../oauth/callback` parses to the same
 | --- | --- |
 | Stateless DCR | Exact entry, trusted origin, or explicitly configured portless loopback origin |
 | Stored DCR with `application_type="web"` | Every saved redirect must still pass the current `BridgeConfig.redirectAllowlist`. The presented URI must then equal the saved raw string. |
-| Stored DCR with `application_type="native"` | Every saved redirect must still pass the current `BridgeConfig.redirectAllowlist`. The presented loopback URI must then keep the saved scheme, host, and path. Queries are forbidden. The runtime port may differ. |
+| Stored DCR with `application_type="native"` | Every saved redirect must still pass the current `BridgeConfig.redirectAllowlist`. The presented URI must then keep the saved scheme, host, and path. Queries are forbidden. The runtime port may differ only when both the saved entry and the presented URI are loopback `http` (`localhost`, `127.0.0.1`, or `[::1]`); any other entry matches exactly, port included. |
 | CIMD | Exact raw string. A validated loopback HTTP entry may vary only its port when `application_type` is `"native"` or absent. |
 
 The loopback port exception exists because native clients bind an available local port at runtime. It does not widen the host or path. A registration for `http://127.0.0.1/callback` does not match `http://127.0.0.1/other`.

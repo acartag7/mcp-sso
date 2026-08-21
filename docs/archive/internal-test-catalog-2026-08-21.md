@@ -192,7 +192,7 @@ In S1b.10, limiter denials do not consume pairing attempt slots. The correct pai
 
 Google live sign-in is Tier 3, not CI.
 
-### T1.S4b: GitHub identity port
+### T1.S4b: GitHub identity port (contract-only, never shipped as of 2026-08-21)
 
 | # | Scenario | Assert |
 |---|---|---|
@@ -204,7 +204,7 @@ Google live sign-in is Tier 3, not CI.
 
 Real GitHub OAuth sign-in is Tier 3. CI uses pure mapping tests and a stubbed transport only if the implementation exposes one without weakening the production contract.
 
-### T1.S5a: device-flow store and authorization endpoint
+### T1.S5a: device-flow store and authorization endpoint (contract-only, never shipped as of 2026-08-21)
 
 | # | Scenario | Assert |
 |---|---|---|
@@ -216,7 +216,7 @@ Real GitHub OAuth sign-in is Tier 3. CI uses pure mapping tests and a stubbed tr
 | S5a.6 | Expired code | Not found/consumed. Sweep removes expired rows. |
 | S5a.7 | Wrong-code attempt cap | Five wrong submissions per IP invalidate the path independently of the external limiter. |
 
-### T1.S5b: device verification, approval, and token grant
+### T1.S5b: device verification, approval, and token grant (contract-only, never shipped as of 2026-08-21)
 
 | # | Scenario | Assert |
 |---|---|---|

@@ -1,6 +1,6 @@
 # 2026-07-08 API-key gateway field report
 
-A real deployment of mcp-sso as an SSO gateway in front of an internal MCP server that only accepted a static API key. Internal details (hostname, scopes, OAuth parameters) are redacted. The tools + flow described here are what shipped.
+Recorded 2026-07-08 against `mcp-sso@0.2.0`; the tools and flow described here are what shipped then, not current reference. A real deployment of mcp-sso as an SSO gateway in front of an internal MCP server that only accepted a static API key. Internal details (hostname, scopes, OAuth parameters) are redacted. The tools + flow described here are what shipped.
 
 ## Problem
 

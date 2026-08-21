@@ -149,6 +149,10 @@ The source correction for issue #280 superseded the stateless example behavior a
 
 The default stateless examples then used a bounded `upstream:<ip>` bucket for authorize and callback requests. Direct identity authorization used a separate `authorize:<ip>` bucket. The library still used `noopRateLimit` when a composition did not supply a `RateLimitPort`.
 
+## 2026-07-26 to 2026-07-28 live-campaign evidence table
+
+This table summarizes the two July campaigns above; it is not evidence for the 2026-08-21 correction under which it previously sat.
+
 | Baseline | Evidence completed | Still pending |
 | --- | --- | --- |
 | Patched, uncommitted checkout based on `ee8994a` (2026-07-26/27) | Observed CIMD happy paths with Cloudflare Access, Entra ID, and Google. Refresh rotation plus replay/family revocation. Retained audit-log search found no backend credential. | Historical observation only: the exact dirty tree was neither committed nor archived, so this campaign does not satisfy the minimum live-row evidence contract and does not qualify as verified. |

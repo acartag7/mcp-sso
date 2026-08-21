@@ -1,4 +1,4 @@
-# July 2026 client compatibility archive
+# Client compatibility archive, July to August 2026
 
 This archive preserves client and provider results recorded during July 2026. These rows apply to the named versions and commits. They do not describe the latest client matrix. See [Client compatibility](../client-compatibility.md) for current results.
 

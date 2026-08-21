@@ -46,7 +46,7 @@ Use this page to choose the type of information you need. Each linked file has o
 
 - [Archive index](archive/README.md)
 - [Verification history](archive/verification-history.md)
-- [July 2026 client compatibility](archive/client-compatibility-2026-07.md)
+- [Client compatibility, July to August 2026](archive/client-compatibility-2026-07.md)
 - [2026-07-08 API-key gateway field report](archive/2026-07-08-api-key-gateway-field-report.md)
 - [2026-08-17 redirect-entry grammar implementation record](archive/2026-08-17-redirect-entry-grammar.md)
 - [Internal test catalog through 2026-08-21](archive/internal-test-catalog-2026-08-21.md)

@@ -52,7 +52,7 @@ OAUTH_ALLOW_INSECURE_LOCALHOST=true
 ```
 
 > [!IMPORTANT]
-> Use the HTTPS profile when the identity provider or MCP client cannot reach a loopback URL. Cloudflare Access requires the HTTPS profile because Cloudflare must front the browser authorization route. `OAUTH_ALLOW_INSECURE_LOCALHOST=true` is for local development only.
+> Use the HTTPS profile when the identity provider or MCP client cannot reach a loopback URL. Cloudflare Access needs the HTTPS profile in practice, because Cloudflare must front the browser authorization route; the library does not enforce that pairing, so a loopback profile with Cloudflare Access boots and then fails at sign-in. `OAUTH_ALLOW_INSECURE_LOCALHOST=true` is for local development only.
 
 Generate the consent secret and private ES256 JWK from the repository checkout:
 

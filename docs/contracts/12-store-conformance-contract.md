@@ -75,106 +75,27 @@ Fresh MySQL schemas use `VARCHAR(384)` for exactly those two subject columns. Mi
 9. **Post-rotation compensation:** after `rotateRefreshToken` succeeds, a response-preparation failure is compensated through `revokeRefreshTokenFamily(familyId, rotatedAtIso)` (§7.4). For that known family, the call leaves every member inactive. Repeating it keeps the family inactive. The use-case reuses the rotation timestamp, so compensation does not introduce a second clock decision after the state mutation.
 10. **Stored DCR grant generation (0.3.2):** `STORED_DCR_GRANT_GENERATION` is the library-owned positive safe integer `1`. It is not deployer configuration and not a per-client policy version. New auth codes and refresh families issued while stored DCR mode is active carry it. Stateless DCR records use `null`. CIMD still does not accumulate scopes, but when it is enabled alongside stored DCR its grants carry the deployment cutover generation too.
 
-    Reference SQL migrations add nullable `grant_generation` to
-    `oauth_auth_codes`, `oauth_refresh_token_families`, and
-    `oauth_refresh_tokens`. There is deliberately no non-null/default clause:
-    an old binary using the previous explicit insert column list writes SQL
-    `NULL`, making either a new family or a successor inserted into an existing
-    current family unambiguously legacy after a rollback. Reference row
-    projection maps missing/malformed values to legacy `null`.
+    Reference SQL migrations add nullable `grant_generation` to `oauth_auth_codes`, `oauth_refresh_token_families`, and `oauth_refresh_tokens`. There is deliberately no non-null/default clause: an old binary using the previous explicit insert column list writes SQL `NULL`, making either a new family or a successor inserted into an existing current family unambiguously legacy after a rollback. Reference row projection maps missing/malformed values to legacy `null`.
 
-    `consumeAuthCode(hash, now, expectedGeneration?, expectedResource?)` burns a selected code whose
-    resource predicate matched, but returns it only when unexpired and its
-    generation equals a supplied expectation. A resource mismatch follows
-    invariant 11 and does not consume. Generation mismatch retains its burn
-    behavior. Client, redirect, and PKCE mismatches occur after a returned record
-    and therefore also retain their documented one-shot consumption behavior.
-    `rotateRefreshToken(hash, next, now, expectedGeneration?)`
-    compares both the family and token-row generations before replay handling,
-    predecessor consumption, or successor insertion. Rotation copies the stored
-    token generation and ignores caller substitution.
-    `findGrantedScopes(subject, clientId, now, expectedGeneration?, expectedResource?)`
-    filters by both generations and, when a resource is supplied, requires the
-    exact resource on both the token and family rows. Thus an old binary
-    cannot write a post-purge grant that a re-upgraded binary accepts or
-    accumulates merely because the client ID currently exists. Nor can a
-    legacy or resource-A refresh row contribute scopes to resource B.
+    `consumeAuthCode(hash, now, expectedGeneration?, expectedResource?)` burns a selected code whose resource predicate matched, but returns it only when unexpired and its generation equals a supplied expectation. A resource mismatch follows invariant 11 and does not consume. Generation mismatch retains its burn behavior. Client, redirect, and PKCE mismatches occur after a returned record and therefore also retain their documented one-shot consumption behavior. `rotateRefreshToken(hash, next, now, expectedGeneration?)` compares both the family and token-row generations before replay handling, predecessor consumption, or successor insertion. Rotation copies the stored token generation and ignores caller substitution. `findGrantedScopes(subject, clientId, now, expectedGeneration?, expectedResource?)` filters by both generations and, when a resource is supplied, requires the exact resource on both the token and family rows. Thus an old binary cannot write a post-purge grant that a re-upgraded binary accepts or accumulates merely because the client ID currently exists. Nor can a legacy or resource-A refresh row contribute scopes to resource B.
 
-    The use-cases repeat returned-record equality before token preparation.
-    Stored DCR mode requires the store capability markers
-    `storedDcrGrantGeneration: 1` and `storedDcrResourceBinding: 1`. An
-    absent/different marker is a boot `AuthConfigError`, preventing a custom
-    store that ignores the new optional parameters from failing open. A
-    current-generation family survives ordinary process/store restarts.
+    The use-cases repeat returned-record equality before token preparation. Stored DCR mode requires the store capability markers `storedDcrGrantGeneration: 1` and `storedDcrResourceBinding: 1`. An absent/different marker is a boot `AuthConfigError`, preventing a custom store that ignores the new optional parameters from failing open. A current-generation family survives ordinary process/store restarts.
 
-11. **Resource predicates (patch-compatible extensions):** the optional trailing `expectedResource` argument is supplied by `OAuthTokenUseCase` in every authorization-code exchange, refresh rotation, and explicit refresh-family revocation. For codes, Memory checks it in the map critical section, SQLite checks it inside `BEGIN IMMEDIATE`, and MySQL checks it while holding the selected row `FOR UPDATE`. A mismatch commits no delete. For refreshes, the reference stores atomically reject a missing, malformed, or different family/token resource before replay handling, predecessor consumption, successor insertion, family revocation, signing, or success audit. A wrong-resource refresh returns `null` without mutation. A correctly bound request can still rotate once. replay still revokes the current family successor. The successor authoritative- copies the selected row's exact resource, and `saveRefreshToken` rejects an attempt to introduce a different or missing family resource. Comparison is exact string equality over stored resource strings. Explicit family revocation checks the family resource inside the same map critical section or SQL update. A mismatch changes no revocation timestamp. The use-case also checks the found token record before calling that mutation, so a wrong-resource token follows the same non-oracular response and audit path as an unrecognized token. `findGrantedScopes` applies the same exact predicate to both active rows before returning their scopes.
+11. **Resource predicates (patch-compatible extensions):** the optional trailing `expectedResource` argument is supplied by `OAuthTokenUseCase` in every authorization-code exchange, refresh rotation, and explicit refresh-family revocation. For codes, Memory checks it in the map critical section, SQLite checks it inside `BEGIN IMMEDIATE`, and MySQL checks it while holding the selected row `FOR UPDATE`. A mismatch commits no delete. For refreshes, the reference stores atomically reject a missing, malformed, or different family/token resource before replay handling, predecessor consumption, successor insertion, family revocation, signing, or success audit. A wrong-resource refresh returns `null` without mutation. A correctly bound request can still rotate once. replay still revokes the current family successor. The successor authoritatively copies the selected row's exact resource, and `saveRefreshToken` rejects an attempt to introduce a different or missing family resource. Comparison is exact string equality over stored resource strings. Explicit family revocation checks the family resource inside the same map critical section or SQL update. A mismatch changes no revocation timestamp. The use-case also checks the found token record before calling that mutation, so a wrong-resource token follows the same non-oracular response and audit path as an unrecognized token. `findGrantedScopes` applies the same exact predicate to both active rows before returning their scopes.
 
-    SQLite and MySQL migrations add nullable `resource` columns to both
-    `oauth_refresh_token_families` and `oauth_refresh_tokens`. Fresh schemas make
-    both columns non-null. The nullable migration deliberately leaves old rows
-    `NULL` rather than guessing from a current `BridgeConfig`. Thus a restart or
-    resource cutover cannot silently rebind a legacy refresh family.
+    SQLite and MySQL migrations add nullable `resource` columns to both `oauth_refresh_token_families` and `oauth_refresh_tokens`. Fresh schemas make both columns non-null. The nullable migration deliberately leaves old rows `NULL` rather than guessing from a current `BridgeConfig`. Thus a restart or resource cutover cannot silently rebind a legacy refresh family.
 
-    The use-case repeats exact equality against `BridgeConfig.resource` after a
-    returned record, so a custom/defective store that ignores either argument
-    cannot cause a wrong-audience token, refresh write, or success audit. The
-    extensions are source-compatible. Custom stores must implement the predicates
-    to satisfy conformance and preserve retry semantics.
+    The use-case repeats exact equality against `BridgeConfig.resource` after a returned record, so a custom/defective store that ignores either argument cannot cause a wrong-audience token, refresh write, or success audit. The extensions are source-compatible. Custom stores must implement the predicates to satisfy conformance and preserve retry semantics.
 
-    The shared conformance row proves that externally observable result across
-    Memory, SQLite, and MySQL. It does not by itself prove every scheduler
-    interleaving. Atomicity evidence comes from the implementations: Memory runs
-    check and delete synchronously without an `await`, SQLite keeps both inside
-    one transaction, and MySQL keeps both under `SELECT... FOR UPDATE` until the
-    transaction commits.
+    The shared conformance row proves that externally observable result across Memory, SQLite, and MySQL. It does not by itself prove every scheduler interleaving. Atomicity evidence comes from the implementations: Memory runs check and delete synchronously without an `await`, SQLite keeps both inside one transaction, and MySQL keeps both under `SELECT... FOR UPDATE` until the transaction commits.
 
 12. **Clock-bound expiry collection:** a live reference store MUST arrange periodic calls to its own `sweepExpired` without requiring a deployer timer. After every boot assertion succeeds, `Bridge` invokes the optional `StorePort.startExpiryCollection(clock)` hook with its exact configured `ClockPort`. A direct store consumer invokes the same hook after readiness. No reference-store scheduler starts before that binding. Rebinding the same store to the same clock object is idempotent. If multiple Bridges share one store with distinct clocks, all are retained and each sweep uses their earliest valid snapshot. Collection therefore never outruns any Bridge that can still accept a signed artifact. An invalid bound clock prevents that run. Separate MySQL replicas cannot observe one another's injected clocks. Their automatic collection therefore subtracts the explicit five-minute `MYSQL_EXPIRY_REPLICA_SKEW_MS` from the earliest locally bound snapshot before calling `sweepExpired`. Replicas in one deployment MUST keep their configured clocks within that bound. This retention horizon covers authorization codes, consent JTIs, and refresh families. A replica at the allowed slow boundary can still consume or rotate an artifact before another replica collects it. Manual `sweepExpired` calls retain their exact supplied-time contract, so a multi-replica caller owns the same horizon subtraction.
 
-    `MemoryStore` is ready immediately. `openSqliteStore` completes admission
-    and migration, then constructs `SqliteStore` with `{ schemaReady: true }`.
-    that declaration permits the later clock binding but does not start a timer.
-    The public `new SqliteStore(callerDatabaseSync)` default remains inert, and
-    a caller that owns migration may declare readiness only after it succeeds.
-    `MysqlStore.migrate()` marks the store ready. `createMysqlStore` completes
-    it before returning. Binding before SQLite/MySQL readiness fails closed, so
-    failed or running migration cannot race scheduled deletion against an
-    unvalidated or partial schema. The first run is delayed by the fixed five-minute
-    `STORE_EXPIRY_SWEEP_INTERVAL_MS`. Each later run is
-    scheduled only after the prior sweep settles, so one store instance never
-    overlaps sweeps. The timer is `unref()`'d and cannot keep an otherwise-idle
-    process alive. Each run snapshots the bound clock once with
-    `finiteClockSnapshot`, derives one canonical UTC ISO timestamp, and invokes
-    the existing conformance boundary. Ambient host time is never substituted.
-    A host clock ahead of a configured clock therefore cannot collect a consent
-    tombstone while that same Bridge still accepts its signed JWT. The `< now`
-    predicates in invariants 2 and 5 remain authoritative, including the 0.3.3
-    tombstone's signed `exp` and exact-expiry retention boundary.
+    `MemoryStore` is ready immediately. `openSqliteStore` completes admission and migration, then constructs `SqliteStore` with `{ schemaReady: true }`. that declaration permits the later clock binding but does not start a timer. The public `new SqliteStore(callerDatabaseSync)` default remains inert, and a caller that owns migration may declare readiness only after it succeeds. `MysqlStore.migrate()` marks the store ready. `createMysqlStore` completes it before returning. Binding before SQLite/MySQL readiness fails closed, so failed or running migration cannot race scheduled deletion against an unvalidated or partial schema. The first run is delayed by the fixed five-minute `STORE_EXPIRY_SWEEP_INTERVAL_MS`. Each later run is scheduled only after the prior sweep settles, so one store instance never overlaps sweeps. The timer is `unref()`'d and cannot keep an otherwise-idle process alive. Each run snapshots the bound clock once with `finiteClockSnapshot`, derives one canonical UTC ISO timestamp, and invokes the existing conformance boundary. Ambient host time is never substituted. A host clock ahead of a configured clock therefore cannot collect a consent tombstone while that same Bridge still accepts its signed JWT. The `< now` predicates in invariants 2 and 5 remain authoritative, including the 0.3.3 tombstone's signed `exp` and exact-expiry retention boundary.
 
-    The timestamp also advances a monotonic sweep watermark atomically with the
-    deletion transaction/critical section. `consumeConsentJti` and
-    `commitConsentApproval` reject a missing JTI when its supplied signed expiry
-    is strictly earlier than that watermark. They still admit an unrelated
-    future-expiry JTI, so physical rows remain collectible. SQLite persists the
-    watermark across reopen. MySQL serializes the shared watermark row against
-    every replica's JTI consume/approval commit. An ahead replica can therefore
-    collect an expired row, but a slower replica cannot resurrect that replay.
+    The timestamp also advances a monotonic sweep watermark atomically with the deletion transaction/critical section. `consumeConsentJti` and `commitConsentApproval` reject a missing JTI when its supplied signed expiry is strictly earlier than that watermark. They still admit an unrelated future-expiry JTI, so physical rows remain collectible. SQLite persists the watermark across reopen. MySQL serializes the shared watermark row against every replica's JTI consume/approval commit. An ahead replica can therefore collect an expired row, but a slower replica cannot resurrect that replay.
 
-    A sweep failure is contained, emits only the fixed stderr diagnostic
-    `[mcp-sso] store expiry sweep failed`, and schedules the next ordinary run.
-    it never echoes a store error, record, path, or connection string. This
-    retry is safe because each store's sweep is already idempotent and
-    transactional/critical-section bounded. `close()` cancels a pending timer,
-    waits for an in-flight sweep before closing the database or owned pool, and
-    is idempotent. No later sweep begins. Therefore eligible auth-code rows,
-    consent-JTI tombstones, refresh-token families/members, and empty families
-    remain at most one successful sweep interval plus sweep duration after
-    eligibility under a healthy Memory/SQLite store. MySQL adds its five-minute
-    replica-skew retention. A storage outage, invalid snapshot, or backward
-    configured clock can extend retention until recovery/catch-up, but cannot
-    collect a still-valid row within the declared topology and skew preconditions.
-    A downstream `StorePort` implementation
-    owns the same scheduler lifecycle and sweep fence. Implementing only the
-    callable `sweepExpired` method is no longer conforming for a long-lived store.
+    A sweep failure is contained, emits only the fixed stderr diagnostic `[mcp-sso] store expiry sweep failed`, and schedules the next ordinary run. it never echoes a store error, record, path, or connection string. This retry is safe because each store's sweep is already idempotent and transactional/critical-section bounded. `close()` cancels a pending timer, waits for an in-flight sweep before closing the database or owned pool, and is idempotent. No later sweep begins. Therefore eligible auth-code rows, consent-JTI tombstones, refresh-token families/members, and empty families remain at most one successful sweep interval plus sweep duration after eligibility under a healthy Memory/SQLite store. MySQL adds its five-minute replica-skew retention. A storage outage, invalid snapshot, or backward configured clock can extend retention until recovery/catch-up, but cannot collect a still-valid row within the declared topology and skew preconditions. A downstream `StorePort` implementation owns the same scheduler lifecycle and sweep fence. Implementing only the callable `sweepExpired` method is no longer conforming for a long-lived store.
 
 ## 12.3 Reference adapters
 - `MemoryStore` (`/store/memory`), in-process maps. Dev/test only, labeled loud. Not HA. Single-process.
