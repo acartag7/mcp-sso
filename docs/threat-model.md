@@ -7,7 +7,7 @@
 > Update this file before any change to auth, tokens, redirect policy, the
 > store, identity, egress, or the publish pipeline.
 >
-> Current release and conformance status: [verification status](verification.md#current-status).
+> Current release and conformance status: [verification status](verification-status.md).
 
 ## Assets
 
