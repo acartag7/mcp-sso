@@ -493,7 +493,7 @@ deployer acts on.
     already collected; arbitrary clock divergence is incompatible with bounded
     garbage collection.
   - Saturation surfaces as a 500 (NOT fail-open — fail-open applies only to
-    `RateLimitPort` per [§6.7](./contracts/06-ports.md#67-ratelimitport-fix-7)); wiring
+    `RateLimitPort` per [§6.7](./contracts/06-ports.md#67-ratelimitport)); wiring
     the Redis `RateLimitPort` is the in-band DoS mitigation.
   - Performance posture: the hot path (the rate-limit check on `/oauth/register`,
     `/oauth/authorize/approve`, direct header-identity `/oauth/authorize`,
