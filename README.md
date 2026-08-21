@@ -65,9 +65,11 @@ production identity provider. See the [runtime configuration](docs/configuration
 
 Use a real identity provider, a persistent conforming store, and a real request
 budget. The repository example demonstrates identity-provider wiring; it is not
-a complete production topology because it uses local SQLite. Its default
-stateless mode does not wire a core `RateLimitPort`; stored mode wires only a
-process-local registration budget. Multi-replica deployments use the shipped
+a complete production topology because it uses local SQLite. Both runnable
+examples wire a finite process-local core `RateLimitPort` in stateless and
+stored modes: registration has an aggregate budget, direct identity authorize
+has a per-IP budget, and upstream authorize and callback share another per-IP
+budget. Multi-replica deployments replace that example default with the shipped
 Redis port.
 
 Start from an **mcp-sso repository checkout** (not the generated
@@ -135,7 +137,7 @@ sequenceDiagram
 | Access token | Signed by the bridge; not looked up per call | Carries Alice's subject, scopes, and the one configured resource audience. |
 | Consent and upstream-flow tokens | Signed by the bridge; their one-time identifiers are stored | Carry one in-flight browser flow while the store prevents replay. |
 | Authorization codes and refresh tokens | Only hashes and lifecycle state are stored | A database read cannot reveal the bearer value; the store enforces single use and rotation. |
-| DCR clients | Stored in stored-DCR mode; self-contained in stateless mode | Bind a client identifier to its registered redirect URIs. The generated localhost server uses stored DCR. |
+| DCR clients | Stored in stored-DCR mode; not persisted in stateless mode | Stored mode binds the client identifier to registered redirect URIs; stateless mode applies the global redirect allowlist to opaque IDs. The generated localhost server uses stored DCR. |
 | Audit events | Sent to the configured audit sink | Record metadata about outcomes, never bearer credentials. Audit delivery is evidence, not an authorization gate. |
 
 Identity answers “who is Alice?” Authorization answers “which scopes may she

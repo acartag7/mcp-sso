@@ -298,10 +298,12 @@ test("run.sh validates before it touches prior state, and never deletes through 
       const empty = await runScript(fx, server, "entra", { FAKE_ENTRA_SECRET: "" });
       assert.equal(empty.code, 1, "an empty client secret output stops the run");
       assert.equal(readFileSync(join(stateRoot, "entra/marker"), "utf8"), "previous evidence");
-      // The runner's own knobs are the sibling of a bad stack output: anything
-      // the example would refuse at boot is refused here, before the state moves.
-      const stateless = await runScript(fx, server, "entra", { MCP_SSO_DCR_MODE: "stateless" });
-      assert.equal(stateless.code, 1, "stateless DCR with the loopback allowlist is refused by the deployment guard before any state moves");
+      // The example's bounded default now admits stateless DCR with loopback;
+      // use a probe entry so this preflight check does not rotate served state.
+      const stateless = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", { MCP_SSO_DCR_MODE: "stateless" });
+      assert.equal(stateless.code, 0, stateless.stderr);
+      assert.equal(stateless.captured.OAUTH_DCR_MODE, "stateless");
+      assert.match(stateless.captured.OAUTH_REDIRECT_ALLOWLIST, /http:\/\/localhost/);
       assert.equal(readFileSync(join(stateRoot, "entra/marker"), "utf8"), "previous evidence");
       const statelessNoLoopback = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", { MCP_SSO_DCR_MODE: "stateless", MCP_SSO_ALLOW_LOOPBACK: "false" });
       assert.equal(statelessNoLoopback.code, 0, statelessNoLoopback.stderr);

@@ -64,8 +64,8 @@ for the fetch, redirect, and validation contract.
 | `OAUTH_CONSENT_SIGNING_SECRET` | required 🔒 | — | HS256 secret for consent + upstream-flow tokens (≥32 chars). |
 | `OAUTH_SIGNING_PRIVATE_JWK` | required 🔒 | — | ES256 access-token signing key, as a JSON JWK. |
 | `OAUTH_SIGNING_KEY_ID` | optional | — | `kid` for the signing JWK. |
-| `OAUTH_DCR_MODE` | optional | `stateless` | Fastify/SQLite production example only: exact `stateless` or `stored`. Use `stored` for native CLI clients with ephemeral loopback callbacks. Blank or unknown values fail before state creation. |
-| `OAUTH_REDIRECT_ALLOWLIST` | required by these stateless production examples | — | Comma-separated application-specific HTTPS redirect origins or exact URIs for opaque DCR clients (for example `https://client.example/callback`). CIMD redirect URIs come from the fetched document. |
+| `OAUTH_DCR_MODE` | optional | `stateless` | Fastify/SQLite production example only: exact `stateless` or `stored`. Use `stored` when registrations must survive a restart; both modes support explicitly allowlisted native CLI loopback callbacks. Blank or unknown values fail before state creation. |
+| `OAUTH_REDIRECT_ALLOWLIST` | optional | empty additions | Comma-separated application-specific HTTPS redirect origins or exact URIs for opaque DCR clients (for example `https://client.example/callback`). Add only callbacks those clients use. Under the default `extend` mode, omission leaves the built-in hosted-client origins; CIMD redirect URIs come from the fetched document. |
 | `OAUTH_REDIRECT_ALLOWLIST_MODE` | optional | `extend` | How the allowlist above composes with the built-in hosted-client origins `https://claude.ai` + `https://chatgpt.com`. `extend` keeps them and adds your entries; `replace` trusts your entries alone. Unset means `extend`, so leaving this out changes nothing. Any other value — including an empty value or `Replace` — fails at boot rather than falling back to `extend`. See the note below for what `replace` does and does not cover. |
 | `OAUTH_SCOPE_CATALOG` | optional | `mcp:read,mcp:write` | The scopes clients may request. |
 | `OAUTH_DEFAULT_SCOPES` | optional | `mcp:read` | Scopes granted when none requested. |
@@ -78,14 +78,14 @@ for the fetch, redirect, and validation contract.
 > file-based secret helper is for local/console-pairing use, not production pods.
 
 The API-key gateway and the Fastify/SQLite example's default DCR mode remain
-stateless and do not wire a core `RateLimitPort`. In those stateless production
-compositions, the deployment guard requires at least one application-specific
-HTTPS callback in `OAUTH_REDIRECT_ALLOWLIST`, with no loopback entry alongside
-it: an empty value, a hosted-client default, or any loopback entry — root or
-path, `http` or `https` — fails that boot guard, and a loopback entry also
-voids the mitigation an application callback would otherwise provide. Supply a
-real limiter or configure the exact callback used by your opaque DCR client; do
-not add a placeholder callback.
+stateless. Both examples wire a finite process-local core `RateLimitPort` in
+every mode, so the deployment guard admits a stateless production composition
+with either an application-specific HTTPS callback or explicitly configured
+generic loopback entries. The example port bounds aggregate registration,
+per-IP direct identity authorization, and per-IP upstream authorize/callback
+work; public multi-replica deployments replace it with a conforming shared
+limiter. Configure only callbacks used by real opaque DCR clients; do not add a
+placeholder callback.
 
 The Fastify/SQLite production example exposes that stored composition directly.
 Native CLI clients such as Codex choose an ephemeral loopback port and callback
@@ -96,19 +96,21 @@ OAUTH_DCR_MODE=stored
 OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
 ```
 
-Stored mode makes this broad loopback trust compatible with the stateless
-redirect rule, but it has its own boot requirement: every stored-DCR bridge must
-receive a bounded, non-noop `RateLimitPort`. Keep an actual HTTPS application
-callback in the list only when that application uses it. The loopback origins
-permit any path and port on their exact host, while stored DCR records each
-native client's concrete callback and rechecks it during authorization.
+The example's bounded core limiter makes this broad loopback trust admissible
+in either DCR mode. Stored mode has the additional library-level requirement
+that every bridge receive a bounded, non-noop `RateLimitPort`; the example
+already supplies it. Keep an actual HTTPS application callback in the list only
+when that application uses it. The loopback origins permit any path and port on
+their exact host. Stored DCR persists each native client's concrete callback
+and rechecks it during authorization; stateless DCR persists no client metadata
+and applies the global redirect allowlist to opaque IDs at authorization.
 
-The Fastify/SQLite example supplies two controls. Its fixed fail-closed Fastify
-budget applies to `POST /oauth/register` in both modes: 30 requests per 60
-seconds per derived client IP, before body parsing or persistence. Stored mode
-also receives a core process-local aggregate budget of 30 registrations per 60
-seconds, which satisfies the boot guard and returns 429 from `Bridge` when
-exhausted. Both default counters are per process. Multi-replica public
+The Fastify/SQLite example supplies two controls in both modes. Its fixed
+fail-closed Fastify budget applies to `POST /oauth/register`: 30 requests per
+60 seconds per derived client IP, before body parsing or persistence. Its core
+port has a separate process-local aggregate budget of 30 registrations per 60
+seconds, satisfies the boot guard, and returns 429 from `Bridge` when exhausted.
+Both default counters are per process. Multi-replica public
 deployments must supply shared controls; use a conforming shared Fastify limiter
 store for the route and a shared core port such as
 `mcp-sso/rate-limit/redis` for the bridge.

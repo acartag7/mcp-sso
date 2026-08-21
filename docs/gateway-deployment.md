@@ -56,22 +56,24 @@ an HTTPS-shaped `client_id` selects CIMD, while a client that uses DCR first
 obtains an opaque id from `/oauth/register`. Neither path changes the upstream
 identity provider.
 
-Codex CLI uses DCR with an ephemeral loopback callback. For the production
-Fastify/SQLite example, enable its existing stored-client capability explicitly:
+Codex CLI uses DCR with an ephemeral loopback callback. Both runnable examples
+admit that callback when both loopback origins are explicit; choose stored mode
+in the Fastify/SQLite example when the registration must survive restart:
 
 ```dotenv
 OAUTH_DCR_MODE=stored
 OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
 ```
 
-That setting is intentionally not a relaxation of the stateless deployment
-guard: stored DCR records each native client's concrete callback in SQLite. The
+The bounded limiter is the stateless deployment guard's documented escape;
+stored DCR additionally records each native client's concrete callback in SQLite. The
 Fastify/SQLite example puts a fixed fail-closed 30-request/60-second per-IP
-budget on `/oauth/register` before parsing or persistence and supplies stored
-mode with a core 30-request/60-second aggregate `RateLimitPort`. Both defaults
-are per process. The API-key gateway's environment builder remains stateless; a
-custom gateway that needs native CLI DCR must supply a shared `ClientStore` and
-a bounded core `RateLimitPort`. See
+budget on `/oauth/register` before parsing or persistence and supplies both
+modes with a core 30-request/60-second aggregate `RateLimitPort`. Both defaults
+are per process. The API-key gateway's environment builder remains stateless
+and supplies the same bounded core port, so native CLI DCR is supported there
+without a `ClientStore`; a custom gateway adds a shared `ClientStore` only when
+registrations must persist and uses a shared limiter for multiple replicas. See
 [client-registration.md](client-registration.md) for the document shape and
 complete registration guidance. CIMD itself needs no environment variable or
 shared `ClientStore`.

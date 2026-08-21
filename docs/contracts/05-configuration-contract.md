@@ -296,12 +296,15 @@ before creating its state directory, signing keys, audit file, or SQLite databas
 `OAUTH_DCR_MODE` value of `"stateless"` or `"stored"`; omission preserves the
 published stateless default, while a blank or unknown value is a pre-state boot
 failure. Stored mode binds `dcr.store` to a `ClientStore` adapter backed by the
-same `SqliteStore` instance that owns the bridge's OAuth state. This is the
-supported composition for native CLI clients whose ephemeral loopback callback
-needs a portless loopback origin in
-`OAUTH_REDIRECT_ALLOWLIST`: the existing stateless-DCR composition guard remains
-unchanged and still rejects that broadly reusable origin. The API-key gateway
-example retains its existing stateless-only environment wiring.
+same `SqliteStore` instance that owns the bridge's OAuth state. Both example
+modes support native CLI clients whose ephemeral callback needs a portless
+loopback origin in `OAUTH_REDIRECT_ALLOWLIST`: the stateless-DCR composition
+guard remains unchanged, but the example's unconditional bounded limiter is
+the guard's documented escape. Choose stored mode when registrations must
+survive restart and authorization must bind the opaque client ID to its stored
+registration. Stateless mode persists no client metadata and applies the
+global redirect allowlist to opaque IDs at authorization. The API-key gateway example retains stateless-only environment
+wiring and supplies the same bounded limiter.
 
 **Fastify/SQLite registration admission.** Every `POST /oauth/register` mounted
 by `examples/fastify-sqlite` carries a fixed Fastify `onRequest` budget of 30
@@ -318,14 +321,44 @@ selects the IP used for both route budgets. The built-in store remains
 per-process, so a public multi-replica deployment needs a conforming shared
 Fastify limiter store or equivalent trusted-edge admission control.
 
-The same example also supplies a process-local `RateLimitPort` with a fixed
-aggregate registration budget to satisfy the stored-DCR boot contract. The
+The same example also supplies both DCR modes a process-local `RateLimitPort`
+with a fixed aggregate registration budget; in stored mode this additionally
+satisfies the stored-DCR boot contract. The
 Fastify per-IP route budget remains a separate earlier control: it rejects before
 body parsing and can use a shared Fastify limiter store, while the core port
 bounds the aggregate registrations that reach `Bridge` in one process. The
 generated starter supplies the same finite process-local registration budget.
 Custom and multi-replica production compositions supply their own bounded port;
 `mcp-sso/rate-limit/redis` is the shipped distributed implementation.
+
+**Runnable-example OAuth admission (owner decision, 2026-08-21).** Both
+`examples/fastify-sqlite` and `examples/api-key-gateway` construct their finite
+process-local core `RateLimitPort` unconditionally when the caller does not
+supply one, in stateless as well as stored DCR mode. The port retains one
+aggregate registration bucket (30 requests per 60 seconds per process) and
+adds a separate `upstream:<ip>` bucket with the same fixed window for each
+derived client IP, plus a separate `authorize:<ip>` bucket for direct identity
+verification. At most 1,024 per-IP buckets across those two key classes exist
+per process; when that set is full the port removes expired windows, then fails
+closed for a new key rather than growing memory without a bound. Both upstream
+authorize and callback charge their one per-IP bucket through the exact port
+passed to `createUpstreamRedirectFlow`; direct header-identity authorization
+charges its distinct per-IP bucket through `Bridge.resolveIdentity`. The
+callback does not receive a second default or the library's `noopRateLimit`.
+An operator-supplied port still replaces this example default; the same bound
+boot snapshot is passed to the Bridge and redirect flow.
+
+The unconditional shape is deliberate: one runnable example has one admission
+posture, and a stateless composition must not silently lose the limiter merely
+because registration itself is non-durable. It also means stateless DCR with a
+generic loopback redirect now passes `assertSafeDeploymentCombination` in both
+example factories. That boot change is intended—the guard's escape is a
+bounded port because it converts unbounded anonymous work into a finite
+per-process budget. This does not change `Bridge`,
+`assertSafeDeploymentCombination`, or custom library compositions: an omitted
+library `RateLimitPort` still becomes `noopRateLimit` wherever §5 otherwise
+admits it. Multi-replica public deployments still replace the process-local
+example port with a conforming shared limiter.
 
 This is a deliberate boot-breaking change approved by owner decision **B1** on
 2026-08-17. Existing stored-DCR compositions that omit `rateLimit` or pass

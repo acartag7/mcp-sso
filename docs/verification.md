@@ -65,6 +65,17 @@ How mcp-sso proves a release actually works.
 > preserved exception: origin form without the root slash, `https://auth.test`,
 > stays accepted verbatim.
 >
+> **Post-release source correction (2026-08-21, issue #280):** the limiter gap
+> described above remains true of published v0.4.0 but is superseded in the
+> current source tree. Both runnable examples now construct the finite
+> process-local core limiter in stateless and stored modes and pass that exact
+> boot snapshot to `createUpstreamRedirectFlow`. Default stateless authorize and
+> callback therefore share a bounded `upstream:<ip>` bucket, while direct
+> identity authorization has its own bounded `authorize:<ip>` bucket. Because a
+> bounded limiter is the deployment guard's own safe escape, stateless + generic
+> loopback now boots in both example factories; the library's optional
+> `RateLimitPort` default is unchanged.
+>
 > **Conformance.** v0.4.0 is the first published version to claim conformance to
 > MCP Authorization `2026-07-28`, **with two recorded deviations**. In the
 > [§16 matrix](contracts/16-spec-conformance-matrix.md): every applicable `MUST`

@@ -662,7 +662,7 @@ test("integration — invalid upstream callback config fails before state creati
   }
 });
 
-test("integration — unsafe OIDC deployment fails before provider discovery in both examples", async () => {
+test("integration — bounded stateless OIDC reaches provider discovery before state in both examples", async () => {
   const providers = [
     {
       name: "Google",
@@ -690,7 +690,7 @@ test("integration — unsafe OIDC deployment fails before provider discovery in 
       let factoryCalls = 0;
       const factory = async () => {
         factoryCalls++;
-        throw new Error("provider discovery ran before deployment guard");
+        throw new Error("provider discovery reached admitted composition");
       };
       const identityFactories = { [provider.factoryKey]: factory };
       const env = {
@@ -709,8 +709,8 @@ test("integration — unsafe OIDC deployment fails before provider discovery in 
             backendUrl: "http://127.0.0.1:1/mcp", getBackendCredential: () => "unused",
             identityFactories,
           });
-        await assert.rejects(boot, /stateless DCR/, `${target} ${provider.name}`);
-        assert.equal(factoryCalls, 0, `${target} ${provider.name}: discovery was not started`);
+        await assert.rejects(boot, /provider discovery reached admitted composition/, `${target} ${provider.name}`);
+        assert.equal(factoryCalls, 1, `${target} ${provider.name}: bounded composition reached discovery`);
         assert.equal(existsSync(dir), false, `${target} ${provider.name}: no state was created`);
       } finally {
         rmSync(base, { recursive: true, force: true });

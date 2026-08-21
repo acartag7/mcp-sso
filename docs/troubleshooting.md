@@ -10,7 +10,7 @@ Start from the symptom:
 | Symptom | Go to |
 | --- | --- |
 | SQLite refuses to boot or migrate | [SQLite persistent-state boot rejection](#sqlite-persistent-state-boot-rejection) |
-| DCR returns `invalid_redirect_uri` for an ephemeral localhost callback | [Native CLI registration](#native-cli-registration-needs-stored-dcr) |
+| DCR returns `invalid_redirect_uri` for an ephemeral localhost callback | [Native CLI registration](#native-cli-registration) |
 | Entra returns `access_denied` after successful sign-in | [Entra group authorization denials](#entra-group-authorization-denials) |
 | A client rejects the OAuth callback when `iss` is present | [Codex CLI callback regression](#codex-cli-01441-callback-regression) |
 | A tunnel connects but the public URL returns an edge 404 | [Anonymous quick tunnels](#anonymous-quick-tunnels-404-at-the-edge) or [named-tunnel ingress](#named-tunnels-need-a-config-file-ingress-rule) |
@@ -40,27 +40,26 @@ fixed warning on the first call in each Windows Node worker/runtime instance to
 or persistent `openSqliteStore`; exact `:memory:` does not consume it. The
 warning does not claim POSIX permission enforcement there.
 
-## Native CLI registration needs stored DCR
+## Native CLI registration
 
 Codex CLI registers an ephemeral native callback such as
 `http://localhost:1455/auth/callback`. An exact allowlist URI cannot predict its
-runtime port and path, while the required portless `http://localhost` origin is
-deliberately rejected in the stateless production composition. For
-`examples/fastify-sqlite`, use its SQLite-backed stored mode and list both
-loopback hosts explicitly:
+runtime port and path, so list both portless loopback hosts explicitly. Both
+runnable examples supply a bounded core limiter and admit this trust in
+stateless mode. For `examples/fastify-sqlite`, choose SQLite-backed stored mode
+when the registration must survive restart:
 
 ```dotenv
 OAUTH_DCR_MODE=stored
 OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
 ```
 
-Do not work around the boot guard or add a placeholder HTTPS callback. Stored
-DCR preserves the broad admission needed at registration, then binds later
-authorization to the concrete native callback saved for that client. The
-API-key gateway example remains stateless unless its composition root supplies
-a shared `ClientStore` and a bounded core `RateLimitPort`. The Fastify/SQLite
-example supplies a finite process-local registration port automatically in
-stored mode; multi-replica deployments use a shared port such as
+Do not add a placeholder HTTPS callback. Stored DCR persists the concrete
+native callback saved for that client; stateless DCR persists no registration
+metadata and applies the global redirect allowlist at authorization. The API-key gateway example remains
+stateless and supports the same loopback callback with its finite process-local
+core port. The Fastify/SQLite example supplies that port automatically in every
+mode; multi-replica deployments use a shared port such as
 `mcp-sso/rate-limit/redis`.
 
 ## Entra group authorization denials

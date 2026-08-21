@@ -72,9 +72,9 @@ function authorizeQuery(clientId: string, redirectUri: string): string {
 }
 
 releaseTest("RM.11 readers 1 and 2: replace refuses a built-in origin at DCR write and stateless authorize", async () => {
-  // Mint under the old/default policy, then restart with the same signing key
-  // under replace. That gives reader 2 a client whose signed registration
-  // genuinely permits BUILT_IN, so only the current global policy can refuse it.
+  // Register under the old/default policy, then restart with the same signing
+  // key under replace. Stateless authorize does not reload registration
+  // metadata, so only the current global policy can refuse this opaque id.
   const signingKey = jwk();
   const { app: extendApp } = await mount("extend", signingKey);
   let builtInClientId: string;

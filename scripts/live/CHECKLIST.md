@@ -29,6 +29,11 @@ concrete substitutions live in the maintainer's project memory. Placeholders her
 3. All legs run **stored DCR with loopback allowlisted** (the `run.sh` default):
    that is the supported shape for CLI clients with ephemeral callback ports,
    and stored DCR requires a bounded limiter (the example supplies one).
+   For the #278 mode differential, set `MCP_SSO_DCR_MODE=stateless` while
+   retaining loopback; the example now supplies the same bounded limiter and
+   the preflight admits that composition. `probe-e2e.mjs` consumes the selected
+   mode and proves the unknown-opaque-client differential; its machine-client
+   rows run only under stored mode because that feature requires stored DCR.
 4. Each leg gets its **own** state directory, `.live-state/<leg>`, from
    `run.sh`; at start the last run's state for that leg is rotated to
    `.live-state/<leg>.previous` when it holds an `audit.jsonl` (a failed start

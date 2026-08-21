@@ -37,7 +37,10 @@ const bridge = new Bridge({
 `configFromEnv` and both runnable examples retain stateless DCR by default. The
 Fastify/SQLite production entry accepts `OAUTH_DCR_MODE=stored` and backs client
 registrations with its existing `SqliteStore`; the API-key gateway keeps its
-stateless environment wiring. The generated server also supplies its
+stateless environment wiring. Both runnable examples supply a finite
+process-local core `RateLimitPort` in every mode; it bounds aggregate
+registration work and per-IP upstream authorize/callback work. The generated
+server also supplies its
 `SqliteStore` as `dcr.store`, plus a finite process-local registration
 `RateLimitPort`. There is no CIMD environment variable or secret.
 `authorizationServerMetadata` advertises both
@@ -110,31 +113,31 @@ error contract is [§17.1](contracts/17-v0-2-feature-contracts.md#171-cimd--clie
 
 Codex CLI uses DCR and binds an ephemeral loopback callback such as
 `http://localhost:1455/auth/callback`. A Fastify/SQLite production deployment
-that serves native CLI clients must use stored DCR plus explicit portless
-loopback origins:
+that serves native CLI clients must configure explicit portless loopback
+origins. Choose stored DCR when registrations must survive restart; stateless
+DCR uses the same redirect trust and bounded example limiter without persistence:
 
 ```dotenv
 OAUTH_DCR_MODE=stored
 OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
 ```
 
-Do not put a loopback entry into the stateless production composition — root or
-path, `http` or `https`. The boot guard rejects that reusable trust shape by
-design, even when the same additive allowlist also contains an
-application-specific HTTPS callback. Stored
-DCR narrows the runtime decision back to the concrete callback saved for each
-native client. The API-key gateway example does not consume `OAUTH_DCR_MODE`;
-give a custom gateway composition its own shared `ClientStore` when it needs the
-same client class.
+The runnable examples' bounded core limiter makes this reusable loopback trust
+admissible in stateless and stored mode. Stored DCR additionally narrows the
+runtime decision back to the concrete callback saved for each native client;
+stateless DCR persists no client metadata and re-applies only the global
+redirect allowlist to the presented opaque client id. The
+API-key gateway example does not consume `OAUTH_DCR_MODE`; give a custom gateway
+composition its own shared `ClientStore` when registrations must persist.
 
 The Fastify/SQLite example bounds `POST /oauth/register` in both modes at 30
 requests per 60 seconds per derived client IP before parsing or persistence. In
-stored mode it also supplies a core process-local aggregate budget of 30
-registrations per 60 seconds. Existing custom stored-DCR integrations must add a
-bounded `rateLimit` dependency before upgrading; omission and `noopRateLimit`
-are boot failures, and `acknowledgeUnsafeStatelessDefaults` does not apply. For
-multiple replicas, use shared controls such as the Redis port shipped at
-`mcp-sso/rate-limit/redis`.
+both modes it also supplies a core process-local aggregate budget of 30
+registrations per 60 seconds. Existing custom stored-DCR integrations must add
+a bounded `rateLimit` dependency before upgrading; omission and
+`noopRateLimit` are boot failures, and `acknowledgeUnsafeStatelessDefaults` does
+not apply. For multiple replicas, use shared controls such as the Redis port
+shipped at `mcp-sso/rate-limit/redis`.
 
 Use stateless DCR when a deployment does not need registrations to survive a
 restart. For a single-process deployment, `SqliteStore` implements both
