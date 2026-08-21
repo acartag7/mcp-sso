@@ -21,7 +21,8 @@ The key prefix separates operation budgets. It does not make the IP trustworthy.
 
 For Fastify, configure `trustProxy`. For Express, configure `trust proxy`. The setting must match the proxies that actually sit between the client and the application.
 
-> [!WARNING] If the framework trusts a hop that clients can reach directly, a caller can choose a forwarded IP address and therefore choose its rate-limit bucket. If the framework trusts no real proxy hop, every proxied caller can share the proxy's bucket and block one another.
+> [!WARNING]
+> If the framework trusts a hop that clients can reach directly, a caller can choose a forwarded IP address and therefore choose its rate-limit bucket. If the framework trusts no real proxy hop, every proxied caller can share the proxy's bucket and block one another.
 
 For Hono, derive `clientIp(c)` from the trusted runtime or a validated proxy chain. Do not return a client-supplied header directly. Hono rejects `BridgeConfig.dcr.mode === "stored"` at boot when `clientIp` is missing. In non-stored configurations, a missing extractor uses `<prefix>:unknown`, so all callers share one bucket.
 

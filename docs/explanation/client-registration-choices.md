@@ -26,7 +26,8 @@ A CIMD client uses the URL of its metadata document as `client_id`. The document
 
 The document is not proof that the display name is trustworthy. The consent page shows the client ID host and redirect host as the identity anchors. It marks `client_name` as self-reported text.
 
-> [!IMPORTANT] A lowercase `https://` client ID selects CIMD. If CIMD is disabled, that client ID returns `invalid_client`. It does not fall back to DCR.
+> [!IMPORTANT]
+> A lowercase `https://` client ID selects CIMD. If CIMD is disabled, that client ID returns `invalid_client`. It does not fall back to DCR.
 
 ## `POST /oauth/register`
 
@@ -36,9 +37,11 @@ Stateless mode validates the request and returns the client ID without calling `
 
 Stored mode calls `ClientStore.save` after validation. Authorization later loads that record, rechecks every registered redirect URI against the current global allowlist, and then applies the stored `applicationType` and registered redirect URI policy. A native loopback callback can keep its scheme, host, and path while selecting a new port at runtime. Redirect URIs cannot contain a query.
 
-> [!IMPORTANT] Stored registration does not grandfather an old redirect policy. If an operator removes an entry from `BridgeConfig.redirectAllowlist`, an existing client that depends on that entry stops authorizing immediately. Restore the entry or register and use a callback that the current policy permits.
+> [!IMPORTANT]
+> Stored registration does not grandfather an old redirect policy. If an operator removes an entry from `BridgeConfig.redirectAllowlist`, an existing client that depends on that entry stops authorizing immediately. Restore the entry or register and use a callback that the current policy permits.
 
-> [!WARNING] `OAUTH_DCR_MODE=stored` lets anonymous callers create durable records. Supply a bounded `RateLimitPort`. If `RateLimitPort.check` throws, `Bridge.handleRegister` returns 503 before it selects request fields or calls `ClientStore.save`.
+> [!WARNING]
+> `OAUTH_DCR_MODE=stored` lets anonymous callers create durable records. Supply a bounded `RateLimitPort`. If `RateLimitPort.check` throws, `Bridge.handleRegister` returns 503 before it selects request fields or calls `ClientStore.save`.
 
 ## Why CIMD does not accumulate old scopes
 

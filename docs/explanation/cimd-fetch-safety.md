@@ -19,7 +19,8 @@ flowchart LR
 
 The guarded fetcher rejects private, loopback, special-use, and rebinding targets in production. This prevents a client from using the authorization server to reach internal services. `dev.allowInsecureLocalhost` opens only the loopback development case.
 
-> [!IMPORTANT] The network guard limits where a request can go. It does not limit how many accepted public URLs a caller can submit.
+> [!IMPORTANT]
+> The network guard limits where a request can go. It does not limit how many accepted public URLs a caller can submit.
 
 ## Repeated requests
 
@@ -37,7 +38,8 @@ The extra one is the request that started each fetch. With the defaults, the bou
 
 The waiter limit exists because single-flight reduces network traffic but does not make waiting requests free. Before the cap, 10,000 same-client resolutions produced one fetch while retaining about 15.4 MB for the waiting request chains. The default of 256 preserves a reasonable same-client startup burst while placing a hard ceiling on that amplification.
 
-> [!WARNING] `cimd:<ip>` uses the optional `RateLimitPort`. If the composition omits that limiter, sequential requests for many distinct valid public client IDs still cause sequential guarded fetches. The network, concurrency, waiter, timeout, and size controls bound each request, but they do not create a per-caller request budget.
+> [!WARNING]
+> `cimd:<ip>` uses the optional `RateLimitPort`. If the composition omits that limiter, sequential requests for many distinct valid public client IDs still cause sequential guarded fetches. The network, concurrency, waiter, timeout, and size controls bound each request, but they do not create a per-caller request budget.
 
 ## The signed carry-forward
 

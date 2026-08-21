@@ -60,7 +60,8 @@ The complete URL-admission, SSRF, size, timeout, redirect, document, cache, and 
 
 Codex CLI uses DCR and binds an ephemeral loopback callback such as `http://localhost:1455/auth/callback`. A Fastify/SQLite production deployment that serves native CLI clients must configure explicit portless loopback origins. Choose stored DCR when registrations must survive restart. Stateless DCR uses the same redirect trust and bounded example limiter without persistence:
 
-> [!WARNING] A portless loopback origin trusts every path and port on that exact loopback host. Add it only for native clients that choose their callback port at runtime. Use an exact callback URI when the port is stable.
+> [!WARNING]
+> A portless loopback origin trusts every path and port on that exact loopback host. Add it only for native clients that choose their callback port at runtime. Use an exact callback URI when the port is stable.
 
 ```dotenv
 OAUTH_DCR_MODE=stored

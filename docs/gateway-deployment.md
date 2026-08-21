@@ -19,7 +19,8 @@ coding agent ──OAuth (CIMD or DCR + PKCE)──▶ gateway ──▶ upstrea
 - The bridge mints its own audience-bound tokens (§7.2). **IdP tokens never pass through to the client**, token passthrough is forbidden by the MCP spec and by this library's design.
 - The backend credential is read **once at boot** from the environment into a closure. It is never logged, audited, placed in token claims, or returned to any client. A missing credential is a **boot failure** (fail-closed, §5). Give it a single accessor (`getBackendCredential()`) so a later swap to a secret-manager fetch is one function.
 
-> [!WARNING] Do not use console pairing for a multi-user gateway. Anyone who can read the pairing code becomes the same `console-operator` subject, which removes per-user audit and entitlement separation. Use an identity-provider port for multi-user access.
+> [!WARNING]
+> Do not use console pairing for a multi-user gateway. Anyone who can read the pairing code becomes the same `console-operator` subject, which removes per-user audit and entitlement separation. Use an identity-provider port for multi-user access.
 
 ## Client registration at the gateway
 
@@ -41,7 +42,8 @@ The shipped `/oauth/authorize` is **header-driven**: it reads one header (`ident
 1. **Assertion-injecting proxy (header model, zero code).** Front the gateway with Cloudflare Access (or any reverse proxy that injects a verified id_token into `identityHeader`). The shipped authorize does the rest.
 2. **The shipped redirect orchestrator (§17.11).** For Entra ID, Google, or a generic OIDC provider, build its shipped redirect identity → pass it to `createUpstreamRedirectFlow` → hand the result to the adapter's `upstream` option (`registerOAuthRoutes(app, { bridge, upstream })`). It owns the whole dance turnkey: per-flow `state`/`nonce`/upstream PKCE, a signed same-browser flow cookie carrying the original MCP authorize params, callback validation + `exchangeCodeForToken` + `verify` (with the `nonce` bound to the login), then `handleAuthorize` with the identity's `allowedScopes` ceiling, consent, and the `identity.verify` + `oauth.upstream.callback` audit events. `buildExample` and `buildGatewayExample` wire it from the matching `ENTRA_*`, `GOOGLE_*`, or `OIDC_*` environment block, copy that. Do not hand-roll the redirect.
 
-> [!WARNING] Do not finish a custom redirect flow by reinjecting the `id_token` into the header path. `resolveIdentity` calls `verify(idToken)` without `expectedNonce`, so that path does not bind the token to the login request. Use `createUpstreamRedirectFlow`, which calls `verify(idToken, { expectedNonce })` on the callback path.
+> [!WARNING]
+> Do not finish a custom redirect flow by reinjecting the `id_token` into the header path. `resolveIdentity` calls `verify(idToken)` without `expectedNonce`, so that path does not bind the token to the login request. Use `createUpstreamRedirectFlow`, which calls `verify(idToken, { expectedNonce })` on the callback path.
 
 ## The `/mcp` handler: three shapes
 

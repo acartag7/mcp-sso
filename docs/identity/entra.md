@@ -106,6 +106,7 @@ Run the checklist at the top of `src/identity/entra.ts` against your tenant befo
 - (groups) A **group-overage** user → `entra_groups_overage`. A **no-mapped-groups** user → `entra_no_mapped_groups`.
 - Confirm the bridge mints its **own** audience-bound token, the Entra `id_token` is verified then discarded.
 
-> [!IMPORTANT] Wrong-tenant, subject-allowlist, and guest/B2B outcomes are not current verified rows. Test them in your tenant before relying on them. The [client compatibility reference](../client-compatibility.md) separates completed evidence from pending cases.
+> [!IMPORTANT]
+> Wrong-tenant, subject-allowlist, and guest/B2B outcomes are not current verified rows. Test them in your tenant before relying on them. The [client compatibility reference](../client-compatibility.md) separates completed evidence from pending cases.
 
 See [`authorization.md`](../authorization.md) for the IdP-gate vs mcp-sso-gate model and [§17.4](../contracts/17-v0-2-feature-contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling) / [§17.11](../contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-flow) for the group-ceiling and redirect-orchestrator contracts.

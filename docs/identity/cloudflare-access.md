@@ -25,7 +25,8 @@ The [client compatibility reference](../client-compatibility.md) records current
 
 ## Cloudflare setup
 
-> [!WARNING] Scope the Access application to `/oauth/authorize*`. A whole-hostname Access application intercepts the MCP client's cookie-less metadata, registration, token, revocation, and `/mcp` calls. Those calls receive a login redirect instead of the OAuth response they require, so the flow cannot complete.
+> [!WARNING]
+> Scope the Access application to `/oauth/authorize*`. A whole-hostname Access application intercepts the MCP client's cookie-less metadata, registration, token, revocation, and `/mcp` calls. Those calls receive a login redirect instead of the OAuth response they require, so the flow cannot complete.
 
 1. In **Cloudflare Zero Trust → Access → Applications**, create an application **path-scoped to `/oauth/authorize*`**, **not** the whole hostname. Access injects `Cf-Access-Jwt-Assertion` only on the browser authorize leg.
 2. Leave the server-side paths **public** (no Access app): `/.well-known/*`, `POST /oauth/register`, `/oauth/token`, `/oauth/revoke`, and `/mcp` (which the bridge's own token protects). A whole-hostname app gates these too, and the client's cookie-less server calls get a `302 → login` instead of reaching the verifier, the flow cannot complete.

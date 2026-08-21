@@ -42,7 +42,8 @@ An upstream token describes an upstream application and audience. The MCP server
 
 `BridgeConfig.resource` is the boundary. The authorization code and refresh-family records carry that exact resource. The access token carries it as the audience. `RequestAuthorizer.authorize()` rejects a token whose audience does not match its configured resource.
 
-> [!WARNING] Do not forward an upstream identity-provider token to the MCP client or backend. Give the MCP client the token minted by `Bridge`, and pass that token through `RequestAuthorizer.authorize()` before protected handler work.
+> [!WARNING]
+> Do not forward an upstream identity-provider token to the MCP client or backend. Give the MCP client the token minted by `Bridge`, and pass that token through `RequestAuthorizer.authorize()` before protected handler work.
 
 ## Where a request stops
 

@@ -15,7 +15,8 @@ exact URI: https://client.example/oauth/callback
 
 An origin intentionally trusts every path on that origin. An exact URI trusts one canonical string. Entries cannot contain a query, fragment, userinfo, wildcard, malformed escape, control character, or non-canonical host, port, or path spelling. Plain HTTP is limited to loopback hosts.
 
-> [!WARNING] Adding `https://client.example` trusts every path on that origin. Use `https://client.example/oauth/callback` when the client has one stable callback.
+> [!WARNING]
+> Adding `https://client.example` trusts every path on that origin. Use `https://client.example/oauth/callback` when the client has one stable callback.
 
 ## Why the server rejects instead of normalizing
 

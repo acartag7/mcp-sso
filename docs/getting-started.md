@@ -22,7 +22,8 @@ claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp
 
 The server prints a one-time code. Paste the code into the browser, approve the request, and call a tool from the MCP client.
 
-> [!WARNING] Console output is the identity channel for this tutorial. Anyone who can read the pairing code can become the shared `console-operator` identity. Keep the process on loopback and keep its output private. The generated server is not a production template.
+> [!WARNING]
+> Console output is the identity channel for this tutorial. Anyone who can read the pairing code can become the shared `console-operator` identity. Keep the process on loopback and keep its output private. The generated server is not a production template.
 
 ## Run the identity-provider tutorial
 
@@ -50,7 +51,8 @@ OAUTH_RESOURCE=http://127.0.0.1:3000/mcp
 OAUTH_ALLOW_INSECURE_LOCALHOST=true
 ```
 
-> [!IMPORTANT] Use the HTTPS profile when the identity provider or MCP client cannot reach a loopback URL. Cloudflare Access requires the HTTPS profile because Cloudflare must front the browser authorization route. `OAUTH_ALLOW_INSECURE_LOCALHOST=true` is for local development only.
+> [!IMPORTANT]
+> Use the HTTPS profile when the identity provider or MCP client cannot reach a loopback URL. Cloudflare Access requires the HTTPS profile because Cloudflare must front the browser authorization route. `OAUTH_ALLOW_INSECURE_LOCALHOST=true` is for local development only.
 
 Generate the consent secret and private ES256 JWK from the repository checkout:
 
@@ -61,7 +63,8 @@ node --input-type=module -e 'import { exportJWK, generateKeyPair } from "jose"; 
 
 Copy the first output into `OAUTH_CONSENT_SIGNING_SECRET` and the one-line JSON output into `OAUTH_SIGNING_PRIVATE_JWK`. Do not add shell syntax such as `$(...)` to `.env`; Node reads the file without shell expansion.
 
-> [!WARNING] Both generated values are credentials. Do not commit `.env`, paste either value into an issue, or reuse them across deployments. Anyone with the private JWK can mint access tokens. Anyone with the consent secret can forge consent and upstream-flow state.
+> [!WARNING]
+> Both generated values are credentials. Do not commit `.env`, paste either value into an issue, or reuse them across deployments. Anyone with the private JWK can mint access tokens. Anyone with the consent secret can forge consent and upstream-flow state.
 
 Now configure exactly one identity provider. The [identity-provider index](identity/README.md) links to the required values for Cloudflare Access, Microsoft Entra ID, Google, and generic OIDC. For Entra, Google, or generic OIDC, register the exact callback `${OAUTH_ISSUER}/oauth/callback` with the provider and put that same URL in `ENTRA_REDIRECT_URI`, `GOOGLE_REDIRECT_URI`, or `OIDC_REDIRECT_URI`. If the provider refuses a loopback HTTP callback, use a reachable HTTPS origin instead.
 
