@@ -1,21 +1,8 @@
 # 15. Package & export map
 
-Single package `mcp-sso`. Root/core runtime dep: **`jose` only**. Framework adapters,
-identity ports, the MySQL/Redis adapters, and the Fastify protected-resource
-rate-limit helper are optional `peerDependencies`
-(the consumer installs only the ones it uses); `node:sqlite` is built-in (no
-dep). No postinstall, no bundler. Dev runs on **Node 24 native TS** (`.ts`
-imports, no build step); the published artifact is plain-`tsc` ESM + `.d.ts`.
-The optional Hono peer range is **`>=4.12.34 <5`**: `4.12.34` is the minimum
-version that fixes the published advisories recorded in the dependency ledger
-and whose `bodyLimit` behavior this adapter verifies; the next major is
-excluded until separately tested.
+Single package `mcp-sso`. Root/core runtime dep: **`jose` only**. Framework adapters, identity ports, the MySQL/Redis adapters, and the Fastify protected-resource rate-limit helper are optional `peerDependencies` (the consumer installs only the ones it uses). `node:sqlite` is built-in (no dep). No postinstall, no bundler. Dev runs on **Node 24 native TS** (`.ts` imports, no build step). The published artifact is plain-`tsc` ESM + `.d.ts`. The optional Hono peer range is **`>=4.12.34 <5`**: `4.12.34` is the minimum version that fixes the published advisories recorded in the dependency ledger and whose `bodyLimit` behavior this adapter verifies. The next major is excluded until separately tested.
 
-Dev/test does **not** consume the package via its own exports: Node 24 native TS
-imports source files directly (e.g. `../src/index.ts`), so there is no build step
-during development. The exports map is **consumer-facing and always points at
-`./dist`**; a `prepublishOnly` hook runs `tsc` → `./dist` (ESM + `.d.ts`) before
-the npm artifact is cut, so the published package is never broken by `.ts` paths:
+Dev/test does **not** consume the package via its own exports: Node 24 native TS imports source files directly (e.g. `../src/index.ts`), so there is no build step during development. The exports map is **consumer-facing and always points at `./dist`**. A `prepublishOnly` hook runs `tsc` → `./dist` (ESM + `.d.ts`) before the npm artifact is cut, so the published package is never broken by `.ts` paths:
 
 ```
 "exports": {
@@ -38,281 +25,22 @@ the npm artifact is cut, so the published package is never broken by `.ts` paths
 }
 ```
 
-The v0.2 reference audit sinks — `JsonlFileAudit`, `WebhookAudit`,
-`combineAudit` (§17.7) — are exported from the **root `.` entry**, not a subpath:
-they carry no runtime dependency (`node:fs` is built-in; `fetch` is native to Node
-24), so there is no optional peer dep to isolate and a single
-`import { JsonlFileAudit } from "mcp-sso"` is the intended consumer shape.
-Quickstart secret persistence (`loadOrCreateQuickstartSecrets`, §17.8) is
-root-exported for the same reason (it depends only on `jose` + node builtins).
-The root also exports `validateAllowedOrigins(value)`, the §5 pure boot
-preflight used by zero-setup composition roots before quickstart persistence;
-`createBridgeConfig` invokes the same function, so early wiring cannot drift
-from the authoritative configuration gate.
-The `./testing/*` subpaths exist because §12 and the threat model's release gate
-require every downstream store adapter to pass the shared conformance suite: a
-`MUST` that names a suite the package did not contain could not be satisfied.
-They export `runStoreConformance` and `runClientStoreConformance`, register rows
-only when called, and depend only on `node:test` and `node:assert`. They are
-part of the public API surface and therefore covered by the compatibility
-promise — a change to what the suite asserts is a contract change (§18).
+The v0.2 reference audit sinks, `JsonlFileAudit`, `WebhookAudit`, `combineAudit` (§17.7), are exported from the **root `.` entry**, not a subpath: they carry no runtime dependency (`node:fs` is built-in. `fetch` is native to Node 24), so there is no optional peer dep to isolate and a single `import { JsonlFileAudit } from "mcp-sso"` is the intended consumer shape. Quickstart secret persistence (`loadOrCreateQuickstartSecrets`, §17.8) is root-exported for the same reason (it depends only on `jose` + node builtins). The root also exports `validateAllowedOrigins(value)`, the §5 pure boot preflight used by zero-setup composition roots before quickstart persistence. `createBridgeConfig` invokes the same function, so early wiring cannot drift from the authoritative configuration gate. The `./testing/*` subpaths exist because §12 and the threat model's release gate require every downstream store adapter to pass the shared conformance suite: a `MUST` that names a suite the package did not contain could not be satisfied. They export `runStoreConformance` and `runClientStoreConformance`, register rows only when called, and depend only on `node:test` and `node:assert`. They are part of the public API surface and therefore covered by the compatibility promise, a change to what the suite asserts is a contract change (§18).
 
-The `./store/sqlite` subpath exports both `openSqliteStore(path)` and the
-`SqliteStore` constructor. Only `openSqliteStore` provides the §12.4 persistent
-filesystem-admission guarantee; `new SqliteStore(callerDatabaseSync)` deliberately
-leaves filesystem provenance, permissions, directory trust, and schema migration
-with the caller. Its default rejects expiry-clock binding; `{ schemaReady: true }`
-is the explicit post-migration declaration that permits collection to start
-when `Bridge` or a direct store consumer supplies the exact `ClockPort`.
-The console-pairing identity (§17.5) ships as the `./identity/console-pairing`
-subpath, parallel to the other identity ports; its framework-free authorize
-helpers (`handlePairingAuthorize`, `renderPairingPage`) are root-exported so a
-consumer can mount the pairing surface alongside the `skipAuthorize` adapter
-option. A Hono consumer also imports `honoOAuthBodyLimit` from `mcp-sso/hono`
-and mounts it before parsing the caller-owned pairing POST; the four built-in
-Hono OAuth POST routes apply it automatically. A Fastify consumer mounts a
-caller-owned pairing POST after `registerOAuthRoutes(..., { skipAuthorize: true })`;
-that registration automatically supplies bounded URL-encoded form parsing and
-clamps the later exact POST `/oauth/authorize` route to the shared budget.
-`addOAuthFormContentTypeParser`, `OAUTH_POST_BODY_MAX_BYTES`, and the shared
-`semanticOAuthBody` media gate remain exported from `mcp-sso/fastify` for
-explicit custom composition, including a caller-owned pairing normalizer, and
-`FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT` is route metadata that exactly mirrors
-§17.5's mandatory framework-free gate. The generated starter and both in-repo
-Fastify examples attach that metadata to pairing GET and POST.
-`registerOAuthRoutes` keeps its catch-all parser encapsulated and its pairing
-limit hook exact-path scoped, so neither replaces parsers or limits on
-unrelated caller routes; the one caller-visible exception is the exact form
-parser it adds in the caller's scope for `skipAuthorize` compatibility, which
-overrides a caller-owned wildcard for urlencoded there (Fastify exposes no
-working wildcard detection — see §9.6). A pairing POST registered after the
-call is clamped to the shared budget; one registered before it keeps its own
-route limit. The in-repo example imports the framework-free helpers
-from source; package consumers import them from the root entry. The
-Express adapter path-scopes bounded parsing to its four built-in POST routes and
-caller-owned pairing POST `/oauth/authorize`; the
-`mcp-sso/express` subpath retains `EXPRESS_OAUTH_BODY_MAX_BYTES` as an exact
-compatibility alias of the shared budget. The framework-free `Bridge` class —
-the central object a consumer constructs and passes to a framework adapter — is
-root-exported
-(`import { Bridge, RequestAuthorizer } from "mcp-sso"`). `isMcpPath(requestUrl)` —
-the `/mcp` Streamable-HTTP path check a consumer's `onRequest` Origin-gate hook uses
-to scope DNS-rebinding protection to MCP paths (it robustly handles the
-absolute-form request-target `POST http://host/mcp`, which a raw `=== "/mcp"` misses;
-run before the bearer check, for every method — see `examples/fastify-sqlite`) — is
-root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recommended
-Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in
-[`docs/audit-deployment.md`](../audit-deployment.md).
+The `./store/sqlite` subpath exports both `openSqliteStore(path)` and the `SqliteStore` constructor. Only `openSqliteStore` provides the §12.4 persistent filesystem-admission guarantee. `new SqliteStore(callerDatabaseSync)` deliberately leaves filesystem provenance, permissions, directory trust, and schema migration with the caller. Its default rejects expiry-clock binding. `{ schemaReady: true }` is the explicit post-migration declaration that permits collection to start when `Bridge` or a direct store consumer supplies the exact `ClockPort`. The console-pairing identity (§17.5) ships as the `./identity/console-pairing` subpath, parallel to the other identity ports. Its framework-free authorize helpers (`handlePairingAuthorize`, `renderPairingPage`) are root-exported so a consumer can mount the pairing surface alongside the `skipAuthorize` adapter option. A Hono consumer also imports `honoOAuthBodyLimit` from `mcp-sso/hono` and mounts it before parsing the caller-owned pairing POST. The four built-in Hono OAuth POST routes apply it automatically. A Fastify consumer mounts a caller-owned pairing POST after `registerOAuthRoutes(..., { skipAuthorize: true })`. That registration automatically supplies bounded URL-encoded form parsing and clamps the later exact POST `/oauth/authorize` route to the shared budget. `addOAuthFormContentTypeParser`, `OAUTH_POST_BODY_MAX_BYTES`, and the shared `semanticOAuthBody` media gate remain exported from `mcp-sso/fastify` for explicit custom composition, including a caller-owned pairing normalizer, and `FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT` is route metadata that exactly mirrors §17.5's mandatory framework-free gate. The generated starter and both in-repo Fastify examples attach that metadata to pairing GET and POST. `registerOAuthRoutes` keeps its catch-all parser encapsulated and its pairing limit hook exact-path scoped, so neither replaces parsers or limits on unrelated caller routes. The one caller-visible exception is the exact form parser it adds in the caller's scope for `skipAuthorize` compatibility, which overrides a caller-owned wildcard for urlencoded there (Fastify exposes no working wildcard detection, see §9.6). A pairing POST registered after the call is clamped to the shared budget. One registered before it keeps its own route limit. The in-repo example imports the framework-free helpers from source. Package consumers import them from the root entry. The Express adapter path-scopes bounded parsing to its four built-in POST routes and caller-owned pairing POST `/oauth/authorize`. The `mcp-sso/express` subpath retains `EXPRESS_OAUTH_BODY_MAX_BYTES` as an exact compatibility alias of the shared budget. The framework-free `Bridge` class, the central object a consumer constructs and passes to a framework adapter, is root-exported (`import { Bridge, RequestAuthorizer } from "mcp-sso"`). `isMcpPath(requestUrl)`, the `/mcp` Streamable-HTTP path check a consumer's `onRequest` Origin-gate hook uses to scope DNS-rebinding protection to MCP paths (it robustly handles the absolute-form request-target `POST http://host/mcp`, which a raw `=== "/mcp"` misses. Run before the bearer check, for every method, see `examples/fastify-sqlite`), is root-exported (`import { isMcpPath } from "mcp-sso"`) so adopters of the recommended Origin-gate pattern need not import an internal adapter path. Deployer guidance for the audit sinks lives in [`docs/audit-deployment.md`](../audit-deployment.md).
 
-`assertRegistrationRedirectPolicy(value, applicationType)` is also exported
-from the root entry. Custom persisted `ClientStore` implementations use this
-existing §10.2 write-time check before saving native or web registrations,
-without importing the internal `src/redirect.ts` module.
+`assertRegistrationRedirectPolicy(value, applicationType)` is also exported from the root entry. Custom persisted `ClientStore` implementations use this existing §10.2 write-time check before saving native or web registrations, without importing the internal `src/redirect.ts` module.
 
-The two runnable Fastify examples apply that `/mcp` gate to Node's raw header
-occurrence metadata before the allowlist decision: `headersFromDistinct` keeps
-multiple `Origin` fields distinct and `readHeader` marks arrays,
-case-duplicated fields, and comma-coalesced values ambiguous. An absent
-`Origin` proceeds; exactly one comma-free string may be matched against
-`allowedOrigins` or the issuer origin; ambiguity is a 403 before body parsing or
-bearer authorization. The generated `server.ts` performs the same
-exactly-one-occurrence decision inline from
-`request.raw.headersDistinct.origin`. These are reference composition-root
-controls, not automatic `/mcp` middleware in the framework adapters.
+The two runnable Fastify examples apply that `/mcp` gate to Node's raw header occurrence metadata before the allowlist decision: `headersFromDistinct` keeps multiple `Origin` fields distinct and `readHeader` marks arrays, case-duplicated fields, and comma-coalesced values ambiguous. An absent `Origin` proceeds. Exactly one comma-free string may be matched against `allowedOrigins` or the issuer origin. Ambiguity is a 403 before body parsing or bearer authorization. The generated `server.ts` performs the same exactly-one-occurrence decision inline from `request.raw.headersDistinct.origin`. These are reference composition-root controls, not automatic `/mcp` middleware in the framework adapters.
 
-Those same three composition roots mount protected routes with the real
-`@fastify/rate-limit` plugin via the isolated
-`mcp-sso/fastify/protected-resource-rate-limit` subpath. The helper validates a
-closed options object (`max` integer 1..10,000; `timeWindowMs` integer
-1,000..3,600,000; defaults 60 / 60,000), registers `onRequest` admission with
-`global: false` and `skipOnError: false`, and returns the snapshotted policy the
-caller places in each protected route's `config.rateLimit`. The examples group
-each method-specific route under the fixed `mcp-protected-resource` id; the
-finite in-memory default is per process and per method route. A supplied custom store is wrapped so
-synchronous throws, rejected thenables from `incr`, callback errors, duplicate
-callbacks, and malformed
-counter results become one fixed 503 error before the route handler. A valid
-increment result is observed once: the wrapper snapshots `current` and `ttl`
-inside the fixed-error boundary, never re-reads either field, and validates and
-returns only those snapshots. The snapshotted `current` is a positive safe
-integer (the current request is already counted) and `ttl` is a non-negative
-safe integer. Post-snapshot accessor changes cannot alter the decision or
-returned result. Zero, negative, fractional, unsafe, wrongly typed, missing, or
-accessor-throwing values reject, never a fail-open request or a raw backend-error
-leak. A normal budget denial is 429.
-The Fastify/SQLite example also reuses that installed plugin for every
-`POST /oauth/register`, with a fixed exact-path `onRequest` hook of 30 requests
-per 60 seconds and the separate `oauth-client-registration` group. The hook
-parses the request target's pathname, so absolute-form requests cannot bypass it,
-and is installed before the OAuth adapter registers its encapsulated routes. It
-therefore runs before Fastify body parsing and before the Bridge can persist or
-success-audit a registration. The policy applies to both DCR modes and cannot
-be removed by changing the separately configurable `/mcp` max/window. This is
-a reference-composition control, not an automatic behavior change for consumers
-of `registerOAuthRoutes` or for the API-key gateway example.
-The two runnable example factories take an optional `trustedProxies` array and
-the production env compositions parse `MCP_SSO_TRUSTED_PROXIES` into that same
-shape. Absence is explicit Fastify `trustProxy: false`: an untrusted socket
-cannot make `X-Forwarded-For` select another bucket. A present value is a
-snapshotted allowlist of 1..32 unique concrete IP or CIDR strings (each at most
-64 characters; CIDR prefixes are 1..32 for IPv4 and 1..128 for IPv6). Blank,
-wrongly typed, sparse/accessor-throwing, duplicate, malformed, or over-limit
-configuration is a boot error before state-directory, SQLite, listener, or
-protected-handler effects. Boolean trust-all, numeric hop-count, custom
-function, and proxy-addr named-range forms are deliberately not exposed. The
-validated array is passed to Fastify's `trustProxy`, so Fastify/proxy-addr walks
-the chain from the socket and stops at the first untrusted address; it does not
-trust a client-supplied forwarded address merely because the header exists.
-The helper is a separate subpath so importing `mcp-sso/fastify` for OAuth route
-wiring does not force the plugin on existing consumers; consumers of the new
-subpath install its optional peer. This does not change the root package's
-`jose`-only runtime graph.
+Those same three composition roots mount protected routes with the real `@fastify/rate-limit` plugin via the isolated `mcp-sso/fastify/protected-resource-rate-limit` subpath. The helper validates a closed options object (`max` integer 1..10,000. `timeWindowMs` integer 1,000..3,600,000. Defaults 60 / 60,000), registers `onRequest` admission with `global: false` and `skipOnError: false`, and returns the snapshotted policy the caller places in each protected route's `config.rateLimit`. The examples group each method-specific route under the fixed `mcp-protected-resource` id. The finite in-memory default is per process and per method route. A supplied custom store is wrapped so synchronous throws, rejected thenables from `incr`, callback errors, duplicate callbacks, and malformed counter results become one fixed 503 error before the route handler. A valid increment result is observed once: the wrapper snapshots `current` and `ttl` inside the fixed-error boundary, never re-reads either field, and validates and returns only those snapshots. The snapshotted `current` is a positive safe integer (the current request is already counted) and `ttl` is a non-negative safe integer. Post-snapshot accessor changes cannot alter the decision or returned result. Zero, negative, fractional, unsafe, wrongly typed, missing, or accessor-throwing values reject, never a fail-open request or a raw backend-error leak. A normal budget denial is 429. The Fastify/SQLite example also reuses that installed plugin for every `POST /oauth/register`, with a fixed exact-path `onRequest` hook of 30 requests per 60 seconds and the separate `oauth-client-registration` group. The hook parses the request target's pathname, so absolute-form requests cannot bypass it, and is installed before the OAuth adapter registers its encapsulated routes. It therefore runs before Fastify body parsing and before the Bridge can persist or success-audit a registration. The policy applies to both DCR modes and cannot be removed by changing the separately configurable `/mcp` max/window. This is a reference-composition control, not an automatic behavior change for consumers of `registerOAuthRoutes` or for the API-key gateway example. The two runnable example factories take an optional `trustedProxies` array and the production env compositions parse `MCP_SSO_TRUSTED_PROXIES` into that same shape. Absence is explicit Fastify `trustProxy: false`: an untrusted socket cannot make `X-Forwarded-For` select another bucket. A present value is a snapshotted allowlist of 1..32 unique concrete IP or CIDR strings (each at most 64 characters. CIDR prefixes are 1..32 for IPv4 and 1..128 for IPv6). Blank, wrongly typed, sparse/accessor-throwing, duplicate, malformed, or over-limit configuration is a boot error before state-directory, SQLite, listener, or protected-handler effects. Boolean trust-all, numeric hop-count, custom function, and proxy-addr named-range forms are deliberately not exposed. The validated array is passed to Fastify's `trustProxy`, so Fastify/proxy-addr walks the chain from the socket and stops at the first untrusted address. It does not trust a client-supplied forwarded address merely because the header exists. The helper is a separate subpath so importing `mcp-sso/fastify` for OAuth route wiring does not force the plugin on existing consumers. Consumers of the new subpath install its optional peer. This does not change the root package's `jose`-only runtime graph.
 
-**Consumer-facing example helpers (DX):** the symbols the in-repo example leans on
-to implement the recommended patterns are root-exported, so a package consumer
-replicating those patterns imports them from `mcp-sso` instead of reimplementing
-them (and re-opening the footguns they centralize): the normalized request/response
-shapes `NormRequest` and `NormResponse` (co-exported with `isMcpPath` — the types
-the already-exported `handlePairingAuthorize` and `createUpstreamRedirectFlow`
-take/return, so a consumer mounting the pairing surface or an upstream callback can
-type-check them); the state-dir security controls `ensureStateDir` (the aggregate
-helper — POSIX atomic restrictive `mkdir 0o700` + `assertRealDir` + the managed
-`*` `.gitignore`; on Windows creation inherits and relies on the deployer-private
-parent ACL. A consumer on the Cloudflare/Entra/gateway path managing its own state
-dir applies it for the SAME platform-applicable bar the example does. It derives
-whether the `.gitignore` may be created
-from `mkdir`'s return, so a caller cannot drop a `*` ignore into a pre-existing tree)
-and `assertRealDir` (the fs-trust bar alone — rejects a symlink on every
-platform and, on POSIX, a group/other-accessible state dir so another local user
-cannot replace `auth.db`; on Windows its first call in a Node worker/runtime
-instance emits the shared permission-gap warning),
-co-exported with `loadOrCreateQuickstartSecrets` and the two-phase
-`prepareQuickstartSecrets` (the raw `ensureGitignore(dir,
-canCreate)` stays internal — its caller-asserted boolean is a footgun); and `assertCallbackPath` (the upstream callback-PATH
-validator — a pure check that the pathname starts with `/`, is plain (no
-query/fragment/whitespace/control or dot-segments), normalizes to itself under the
-issuer origin, and is not a reserved OAuth route or the resource path), co-exported
-with `createUpstreamRedirectFlow`. It validates the PATH only — the
-`identity.redirectUri === issuerOrigin + callbackPath` equality is enforced
-separately, at mount, by `createUpstreamRedirectFlow` (and mirrored by the example's
-`assertUpstreamConfigBeforeState`); a consumer doing early-fail boot validation
-pairs `assertCallbackPath` with its own redirectUri equality check; and
-`assertRedirectAllowlistEntries` (the §10.0 snapshot/parser used before
-quickstart state or listener effects, with `createBridgeConfig` repeating the
-authoritative check). All six are
-dep-free (node builtins / pure string logic), so root-exporting them does not widen
-the `jose`-only runtime posture.
+**Consumer-facing example helpers (DX):** the symbols the in-repo example leans on to implement the recommended patterns are root-exported, so a package consumer replicating those patterns imports them from `mcp-sso` instead of reimplementing them (and re-opening the footguns they centralize): the normalized request/response shapes `NormRequest` and `NormResponse` (co-exported with `isMcpPath`, the types the already-exported `handlePairingAuthorize` and `createUpstreamRedirectFlow` take/return, so a consumer mounting the pairing surface or an upstream callback can type-check them). The state-dir security controls `ensureStateDir` (the aggregate helper, POSIX atomic restrictive `mkdir 0o700` + `assertRealDir` + the managed `*` `.gitignore`. On Windows creation inherits and relies on the deployer-private parent ACL. A consumer on the Cloudflare/Entra/gateway path managing its own state dir applies it for the SAME platform-applicable bar the example does. It derives whether the `.gitignore` may be created from `mkdir`'s return, so a caller cannot drop a `*` ignore into a pre-existing tree) and `assertRealDir` (the fs-trust bar alone, rejects a symlink on every platform and, on POSIX, a group/other-accessible state dir so another local user cannot replace `auth.db`. On Windows its first call in a Node worker/runtime instance emits the shared permission-gap warning), co-exported with `loadOrCreateQuickstartSecrets` and the two-phase `prepareQuickstartSecrets` (the raw `ensureGitignore(dir, canCreate)` stays internal, its caller-asserted boolean is a footgun). `assertCallbackPath` is the upstream callback-path validator. It checks that the pathname starts with `/`, contains no query, fragment, whitespace, control character, or dot segment, normalizes to itself under the issuer origin, and is not a reserved OAuth route or the resource path. It is co-exported with `createUpstreamRedirectFlow`. It validates the path only. `createUpstreamRedirectFlow` separately enforces `identity.redirectUri === issuerOrigin + callbackPath` at mount, and the example mirrors that check in `assertUpstreamConfigBeforeState`. A consumer doing early boot validation pairs `assertCallbackPath` with its own redirect URI equality check. `assertRedirectAllowlistEntries` is the §10.0 snapshot and parser used before quickstart state or listener effects, with `createBridgeConfig` repeating the authoritative check. All six use Node built-ins or pure string logic, so root-exporting them does not widen the `jose`-only runtime posture.
 
-**Init CLI (`npx mcp-sso init`):** the package ships a `bin` — `mcp-sso init [target]`
-(default `.`) — that scaffolds a working zero-setup MCP server a stranger can boot with
-`npm install && npm start` and pair with via a console-printed one-time code (then
-`claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp`). It generates:
-`package.json` (`"type": "module"`, `"start": "node server.ts"`, exact-pinned deps —
-`mcp-sso` at the running version + `fastify` + `@fastify/rate-limit` +
-`@modelcontextprotocol/sdk` at the
-versions mcp-sso is tested against, recorded in `docs/dependency-ledger.md`; Node
-`>=24`, native TS, no build step); `server.ts` (the composition root, built from the
-root exports + the `./fastify`, `./store/sqlite`, `./identity/console-pairing` subpaths
-— quickstart secrets + console pairing + sqlite + the `/mcp` Streamable-HTTP Origin
-gate + mandatory fail-closed protected-resource rate limiting + a protected `/mcp`,
-zero-setup loopback by default). The generated localhost-only server fixes
-Fastify `trustProxy: false` and has no forwarded-IP env escape; production proxy
-trust belongs to the env-driven examples above. The same SQLite instance
-implements both OAuth state and stored user DCR, so a generated client registration
-survives a server restart; the shipped-entrypoint integration test restarts between
-registration and authorization before completing pairing, token exchange, and an
-official-SDK tool call. The generated composition rejects a non-loopback `HOST` before
-creating state. It prepares missing signing material in memory, builds the full
-`BridgeConfig`, then calls the root-exported `assertSafeDeploymentCombination`
-with its finite registration port. Only after both checks pass does it persist
-the same deeply frozen prepared-material snapshot or open SQLite; mutation cannot
-change the later write after validation. It retains the returned bound port for
-`Bridge`, and `Bridge` repeats the
-guard: stored DCR is intentionally confined to the starter's
-single-operator localhost envelope, where an unauthenticated network caller cannot grow
-the persistent client table without first passing the starter's finite process-local
-registration `RateLimitPort`. Internet-facing deployments use the production composition
-with a shared bounded rate limiter and identity provider. `.gitignore`
-(`node_modules/` + the `.mcp-sso/` state dir); `.npmrc` (`ignore-scripts=true` —
-dependency lifecycle scripts disabled unless the operator vets one, the project's
-supply-chain posture); and `README.md` (the run steps +
-pointers to `docs/gateway-deployment.md` / `docs/live-verification.md` for production
-identity providers). The init binary itself is **dep-free** (node builtins only) — it
-adds nothing to the `jose`-only runtime. It refuses to overwrite an existing file or
-follow a symlink (atomic `O_NOFOLLOW|O_EXCL|O_CREAT`; it refuses to write through any
-path component an attacker could swap — a symlinked target/ancestor, a missing segment
-raced in before `mkdir`, or an existing real dir NOT owned by you — when its *real*
-(symlink-followed) parent is group/other-writable; sticky + victim-owned paths, e.g.
-`mkdtemp` under `/tmp`, and system symlinks like macOS `/tmp`→`/private/tmp`, are allowed
-so a normal temp-dir scaffold isn't a false positive). **Filesystem-trust boundary (inherent
-Node limit):** the check covers the common write-redirection paths, but a fully race-free
-secure `mkdir` needs `mkdirat`/`openat` — resolve-and-create relative to a held directory
-fd — which Node's `fs` does not expose. A residual TOCTOU therefore remains in exotic cases
-(a trusted symlink whose *destination's real ancestry* is attacker-swappable, on a
-multi-user host where an attacker has write access to the user's own path); the realistic
-cases are refused, and this residual is inherent to Node, not a logic gap. **Dependency posture:** the generated
-`package.json` pins the top-level deps **exactly** (the versions mcp-sso is tested
-against); the scaffold cannot ship a curated transitive lockfile (that needs network
-resolution at scaffold time), so the operator's `npm install` creates
-`package-lock.json` (to commit) — locking the transitive graph at first install. The
-server is the zero-setup pairing path; a real IdP (Cloudflare Access / Entra / Google /
-OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded
-default — the done-bar is the pairing round-trip, not a production deploy.
-**Config-validation ordering:** `prepareQuickstartSecrets` reads an existing
-secret file or generates missing material in memory without creating the target
-directory, `.gitignore`, or `secrets.json`. The generated server uses that
-material to run `createBridgeConfig` and the stored-DCR deployment guard. It then
-calls the preparation's one-shot `persist()` capability before SQLite. A rejected
-URL, origin, redirect rule, scope shape, DCR/limiter combination, or other bridge
-configuration therefore creates no new quickstart state. Existing state is read
-and validated but is never rewritten by preparation or `persist()`.
+**Init CLI (`npx mcp-sso init`):** the package ships a `bin`, `mcp-sso init [target]` (default `.`), that scaffolds a working zero-setup MCP server a stranger can boot with `npm install && npm start` and pair with via a console-printed one-time code (then `claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp`). It generates: `package.json` (`"type": "module"`, `"start": "node server.ts"`, exact-pinned deps, `mcp-sso` at the running version + `fastify` + `@fastify/rate-limit` + `@modelcontextprotocol/sdk` at the versions mcp-sso is tested against, recorded in `docs/dependency-ledger.md`. Node `>=24`, native TS, no build step). `server.ts` (the composition root, built from the root exports + the `./fastify`, `./store/sqlite`, `./identity/console-pairing` subpaths, quickstart secrets + console pairing + sqlite + the `/mcp` Streamable-HTTP Origin gate + mandatory fail-closed protected-resource rate limiting + a protected `/mcp`, zero-setup loopback by default). The generated localhost-only server fixes Fastify `trustProxy: false` and has no forwarded-IP env escape. Production proxy trust belongs to the env-driven examples above. The same SQLite instance implements both OAuth state and stored user DCR, so a generated client registration survives a server restart. The shipped-entrypoint integration test restarts between registration and authorization before completing pairing, token exchange, and an official-SDK tool call. The generated composition rejects a non-loopback `HOST` before creating state. It prepares missing signing material in memory, builds the full `BridgeConfig`, then calls the root-exported `assertSafeDeploymentCombination` with its finite registration port. Only after both checks pass does it persist the same deeply frozen prepared-material snapshot or open SQLite. Mutation cannot change the later write after validation. It retains the returned bound port for `Bridge`, and `Bridge` repeats the guard: stored DCR is intentionally confined to the starter's single-operator localhost envelope, where an unauthenticated network caller cannot grow the persistent client table without first passing the starter's finite process-local registration `RateLimitPort`. Internet-facing deployments use the production composition with a shared bounded rate limiter and identity provider. `.gitignore` (`node_modules/` + the `.mcp-sso/` state dir). `.npmrc` (`ignore-scripts=true`, dependency lifecycle scripts disabled unless the operator vets one, the project's supply-chain posture). It also generates `README.md` with the run steps and pointers to `docs/gateway-deployment.md` / `docs/live-verification.md` for production identity providers). The init binary itself is **dep-free** (node builtins only), it adds nothing to the `jose`-only runtime. It refuses to overwrite an existing file or follow a symlink (atomic `O_NOFOLLOW|O_EXCL|O_CREAT`. It refuses to write through any path component an attacker could swap, a symlinked target/ancestor, a missing segment raced in before `mkdir`, or an existing real dir NOT owned by you, when its *real* (symlink-followed) parent is group/other-writable. Sticky + victim-owned paths, e.g. `mkdtemp` under `/tmp`, and system symlinks like macOS `/tmp`→`/private/tmp`, are allowed so a normal temp-dir scaffold isn't a false positive). **Filesystem-trust boundary (inherent Node limit):** the check covers the common write-redirection paths, but a fully race-free secure `mkdir` needs `mkdirat`/`openat`, resolve-and-create relative to a held directory fd, which Node's `fs` does not expose. A residual TOCTOU therefore remains in exotic cases (a trusted symlink whose *destination's real ancestry* is attacker-swappable, on a multi-user host where an attacker has write access to the user's own path). The realistic cases are refused, and this residual is inherent to Node, not a logic gap. **Dependency posture:** the generated `package.json` pins the top-level deps **exactly** (the versions mcp-sso is tested against). The scaffold cannot ship a curated transitive lockfile (that needs network resolution at scaffold time), so the operator's `npm install` creates `package-lock.json` (to commit), locking the transitive graph at first install. The server is the zero-setup pairing path. A real IdP (Cloudflare Access / Entra / Google / OIDC) is a documented graduation (see `examples/fastify-sqlite`), not a scaffolded default, the done-bar is the pairing round-trip, not a production deploy. **Config-validation ordering:** `prepareQuickstartSecrets` reads an existing secret file or generates missing material in memory without creating the target directory, `.gitignore`, or `secrets.json`. The generated server uses that material to run `createBridgeConfig` and the stored DCR deployment guard. It then calls the preparation's one-shot `persist()` capability before SQLite. A rejected URL, origin, redirect rule, scope shape, DCR/limiter combination, or other bridge configuration therefore creates no new quickstart state. Existing state is read and validated but is never rewritten by preparation or `persist()`.
 
-**Supply-chain settings:** `packageManager` is the single pnpm version pin;
-`pnpm/action-setup` reads it and workflow steps MUST NOT override it with a
-second `with.version` value. `pnpm-workspace.yaml` sets
-`minimumReleaseAge: 21600` (**minutes** = 15 days — the install-time floor and
-the `docs/dependency-ledger.md` ordinary-pin curation rule are the same
-standard). A published GHSA/CVE fix for a direct npm pin or a transitive
-lockfile resolution may use only the ledger's verified per-package exception
-(`kind: "direct"` binds to the pin + ledger row; `kind: "transitive"` binds
-to a single lockfile resolution of a never-directly-pinned package and
-rejects a second resolved version); it does not lower the global floor;
-the dependency-policy gate requires that value to equal the machine-readable
-`minimumAgeDays * 1440`. CI actions are pinned by SHA; npm publish uses
-`--provenance` from GitHub Actions OIDC only (no local publishes). Every pin is
-recorded in `docs/dependency-ledger.md` with version + publish date.
+**Supply-chain settings:** `packageManager` is the single pnpm version pin. `pnpm/action-setup` reads it and workflow steps MUST NOT override it with a second `with.version` value. `pnpm-workspace.yaml` sets `minimumReleaseAge: 21600` (**minutes** = 15 days, the install-time floor and the `docs/dependency-ledger.md` ordinary-pin curation rule are the same standard). A published GHSA/CVE fix for a direct npm pin or a transitive lockfile resolution may use only the ledger's verified per-package exception (`kind: "direct"` binds to the pin + ledger row. `kind: "transitive"` binds to a single lockfile resolution of a never-directly-pinned package and rejects a second resolved version). It does not lower the global floor. The dependency-policy gate requires that value to equal the machine-readable `minimumAgeDays * 1440`. CI actions are pinned by SHA. Npm publish uses `--provenance` from GitHub Actions OIDC only (no local publishes). Every pin is recorded in `docs/dependency-ledger.md` with version + publish date.
 
-**Dependency-policy gate:** the ledger contains one machine-readable record
-for every direct npm package and GitHub Action pin.
-`check:deps` compares those records with `package.json` and every workflow
-`uses:` entry: missing, extra, unpinned, or mismatched entries reject.
-Advisory-exception records carry a required `kind` — `direct` binds to the
-direct pin and ledger row, `transitive` binds to a single matching lockfile
-resolution (the lockfile parser rejects unrecognized key shapes, so an
-alias-resolved second version cannot hide) — and upstream advisory
-existence, package naming, and minimum-fixing-version evidence is verified
-in the `--verify-remote` CI and pre-publish runs. Each
-third-party Action record binds its immutable commit SHA to the recorded
-release tag and publication date and must be at least 15 days old; the
-first-party `acartag7/engineering-os` exception remains explicit and
-SHA-pinned. CI runs the same gate, including the upstream tag/date check, so a
-manual workflow edit cannot bypass the quarantine or leave the prose ledger
-describing different code. The quarantine age is the upstream release's
-`published_at`, while immutable SHA pins prevent a later tag move from changing
-executed code; the remote check rejects a moved tag until a deliberate local
-pin and ledger change is reviewed. Git author/committer timestamps are not used
-as independent age evidence because the commit creator controls them.
+**Dependency-policy gate:** the ledger contains one machine-readable record for every direct npm package and GitHub Action pin. `check:deps` compares those records with `package.json` and every workflow `uses:` entry: missing, extra, unpinned, or mismatched entries reject. Advisory-exception records carry a required `kind`, `direct` binds to the direct pin and ledger row, `transitive` binds to a single matching lockfile resolution (the lockfile parser rejects unrecognized key shapes, so an alias-resolved second version cannot hide), and upstream advisory existence, package naming, and minimum-fixing-version evidence is verified in the `--verify-remote` CI and pre-publish runs. Each third-party Action record binds its immutable commit SHA to the recorded release tag and publication date and must be at least 15 days old. The first-party `acartag7/engineering-os` exception remains explicit and SHA-pinned. CI runs the same gate, including the upstream tag/date check, so a manual workflow edit cannot bypass the quarantine or leave the prose ledger describing different code. The quarantine age is the upstream release's `published_at`, while immutable SHA pins prevent a later tag move from changing executed code. The remote check rejects a moved tag until a deliberate local pin and ledger change is reviewed. Git author/committer timestamps are not used as independent age evidence because the commit creator controls them.
 
-**Release-authority boundary:** `.github/workflows/publish.yml` has four
-separate jobs. A read-only build job checks out with persisted credentials
-disabled, validates a tag as exactly `v${package.version}` when the event is a
-tag push, runs the source gates, builds once, and uploads the packed tarball
-plus its SHA-256 digest. `workflow_dispatch` has no real-publish input and can
-only invoke a no-OIDC dry-run job against that artifact. The real publish job
-runs only for a matching tag push, receives `id-token: write` but no checkout,
-install, repository scripts, or `contents: write`, verifies the artifact
-digest, and publishes that tarball with provenance and scripts disabled. A
-separate post-publish job receives `contents: write` but no OIDC permission and
-creates the GitHub Release. Before any real tag, the `publish` GitHub
-Environment MUST provide the external second gate: required reviewer approval,
-no admin bypass, and a custom deployment tag policy restricted to `v*.*.*`.
+**Release-authority boundary:** `.github/workflows/publish.yml` has four separate jobs. A read-only build job checks out with persisted credentials disabled, validates a tag as exactly `v${package.version}` when the event is a tag push, runs the source gates, builds once, and uploads the packed tarball plus its SHA-256 digest. `workflow_dispatch` has no real-publish input and can only invoke a no-OIDC dry-run job against that artifact. The real publish job runs only for a matching tag push, receives `id-token: write` but no checkout, install, repository scripts, or `contents: write`, verifies the artifact digest, and publishes that tarball with provenance and scripts disabled. A separate post-publish job receives `contents: write` but no OIDC permission and creates the GitHub Release. Before any real tag, the `publish` GitHub Environment MUST provide the external second gate: required reviewer approval, no admin bypass, and a custom deployment tag policy restricted to `v*.*.*`.

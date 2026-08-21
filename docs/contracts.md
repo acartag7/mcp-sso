@@ -1,16 +1,10 @@
 # Contracts
 
-> **Contract-first.** This index and its numbered files are the source of truth for every port, schema,
-> endpoint, token claim, and error shape in `mcp-sso`. The contract set is written and
-> reviewed **before** implementation code, and it MUST be updated before any change
-> to a port, schema, or error shape. `docs/threat-model.md` reasons about this
-> surface; `docs/dependency-ledger.md` records the pins. If code and the contract set
-> disagree, the contract set wins until one of them is deliberately changed.
+> **Contract-first.** This index and its numbered files are the source of truth for every port, schema, endpoint, token claim, and error shape in `mcp-sso`. The contract set is written and reviewed **before** implementation code, and it MUST be updated before any change to a port, schema, or error shape. `docs/threat-model.md` reasons about this surface. `docs/dependency-ledger.md` records the pins. If code and the contract set disagree, the contract set wins until one of them is deliberately changed.
 
 ## Change routing
 
-Read this index by task; open the numbered file only when you need its exact
-contract:
+Read this index by task. Open the numbered file only when you need its exact contract:
 
 | You are changing… | Start here |
 | --- | --- |
@@ -25,8 +19,7 @@ Current release and conformance status: [verification status](verification-statu
 
 ## Numbered contracts
 
-This is one contract set, not 18 independent specifications. The index owns
-routing; each numbered file owns the exact rules for its section.
+This is one contract set, not 18 independent specifications. The index owns routing. Each numbered file owns the exact rules for its section.
 
 1. [Purpose & scope](contracts/01-purpose-and-scope.md)
 2. [The two roles](contracts/02-the-two-roles.md)

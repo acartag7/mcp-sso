@@ -1,33 +1,23 @@
 # Audit deployment guide
 
-The library **emits** structured, metadata-only audit events
-([§13](./contracts/13-audit-contract.md#13-audit-contract)); getting them to long-term storage,
-indexed, and retained is **your job**. This guide picks the path and states the
-delivery guarantees honestly.
+The library **emits** structured, metadata-only audit events ([§13](./contracts/13-audit-contract.md#13-audit-contract)). Getting them to long-term storage, indexed, and retained is **your job**. This guide picks the path and states the delivery guarantees honestly.
 
-> **tl;dr** — for any deployment where events must survive, run
-> [`JsonlFileAudit`](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage)
-> to a local file and ship it with a log shipper (Splunk Universal Forwarder,
-> Vector, Fluentd). It is the only path durable on disk; the shipper owns retry,
-> buffering, and indexing.
+For a deployment where events must survive process exit, run [`JsonlFileAudit`](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage) to a local file and ship it with Splunk Universal Forwarder, Vector, Fluentd, or another log shipper. This is the shipped path that writes events to disk. The shipper owns retry, buffering, and indexing.
 
-Pick the sink by answering one question: can you accept losing an event while
-the destination is down?
+Pick the sink by answering one question: can you accept losing an event while the destination is down?
 
 - **No:** write JSONL locally and let a log shipper own buffering and retry.
 - **Yes:** a webhook is the smaller at-most-once side channel.
-- **You need transactional or queue-backed delivery:** implement `AuditPort`
-  against that durable system.
+- **You need transactional or queue-backed delivery:** implement `AuditPort` against that durable system.
 
-Authentication does not depend on audit delivery. A sink outage can lose
-evidence, but it does not turn a valid OAuth outcome into an outage.
+Authentication does not depend on audit delivery. A sink outage can lose evidence, but it does not turn a valid OAuth outcome into an outage.
 
 ## Three options
 
 | Path | Delivery | Durability | When |
 |---|---|---|---|
-| **`JsonlFileAudit` + a log shipper** (recommended) | Durable once the OS accepts the append (survives normal process exit). No `fsync` — for power-loss/crash durability use a sync mount or the shipper's buffer. The shipper delivers to your indexer with its own retry/buffer. | **Durable** (disk; not fsync'd) | Production. The shipper absorbs sink outages, retries, and indexing — the layer that should own those concerns. |
-| **`WebhookAudit` → a SIEM HEC** | **At-most-once.** One POST per event. No retry, no buffering, no backgrounding. | Best-effort | Low-volume or loss-tolerant flows; a side-channel into Splunk/Elastic HEC where dropping events under outage is acceptable. |
+| **`JsonlFileAudit` + a log shipper** (recommended) | Durable once the OS accepts the append (survives normal process exit). No `fsync`, for power-loss/crash durability use a sync mount or the shipper's buffer. The shipper delivers to your indexer with its own retry/buffer. | **Durable** (disk. Not fsync'd) | Production. The shipper absorbs sink outages, retries, and indexing, the layer that should own those concerns. |
+| **`WebhookAudit` → a SIEM HEC** | **At-most-once.** One POST per event. No retry, no buffering, no backgrounding. | Best-effort | Low-volume or loss-tolerant flows. A side-channel into Splunk/Elastic HEC where dropping events under outage is acceptable. |
 | **Custom `AuditPort`** | Whatever you implement. | Whatever you implement. | When you need batching, a durable queue (Kafka/SQS), custom retry, or a non-JSONL/non-HTTP shape (e.g. OpenSearch directly). |
 
 ### 1. `JsonlFileAudit` + a log shipper (recommended)
@@ -40,33 +30,7 @@ const bridge = new Bridge({ config, store, clock, audit });
 const authorizer = new RequestAuthorizer({ config, clock, audit });
 ```
 
-The sink creates the file `0600` and appends one JSON line per event. JSON
-encoding escapes `\n`/`\r`, so a hostile `reason` can never start a new line.
-The file is **log-injection-safe by construction**. On hosts exposing Node's
-`O_NOFOLLOW`, the sink opens the final path per event with no-follow and
-nonblocking flags, verifies that the opened descriptor is a regular file, and
-writes through that descriptor. A symlink (including a dangling or swapped
-path), FIFO, socket, device, or directory is dropped fail-open rather than
-receiving audit bytes. The library does **not** rotate the file itself, but its
-per-event open follows normal rename-and-recreate log rotation — point your
-shipper at the configured path and let the shipper rotate. (Mechanism details:
-[§17.7](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage).)
-Concurrent calls to one sink instance are serialized, so a rare short OS write
-cannot splice its records. This is not an interprocess lock: point only one
-`JsonlFileAudit` instance/process at a file when JSONL framing matters, or use
-your own cross-process coordination. If a short-write retry fails after a
-positive prefix, the sink rolls back only its verified descriptor tail; if it
-cannot verify that rollback, that instance drops later events instead of
-appending to the fragment. That disable is permanent for the instance: it does
-not auto-retry because a later append could join a fragment and corrupt JSONL
-framing. The transition emits one fixed stderr line containing
-`audit jsonl disabled: partial_write_rollback_unverified`, with no path, event,
-fragment, or raw error. Alert on that exact line. You may also wire the optional
-`onDisable(reason)` callback into your metrics or paging system; it receives
-only the same fixed reason, exactly once. Callback failures are swallowed and
-the callback starts on a detached `setImmediate` turn after the audit write can
-settle, so even synchronous work before its first `await` cannot change or delay
-the fail-open authentication outcome.
+The sink creates the file `0600` and appends one JSON line per event. JSON encoding escapes `\n`/`\r`, so a hostile `reason` can never start a new line. The file is **log-injection-safe by construction**. On hosts exposing Node's `O_NOFOLLOW`, the sink opens the final path per event with no-follow and nonblocking flags, verifies that the opened descriptor is a regular file, and writes through that descriptor. A symlink (including a dangling or swapped path), FIFO, socket, device, or directory is dropped fail-open rather than receiving audit bytes. The library does **not** rotate the file itself, but its per-event open follows normal rename-and-recreate log rotation, point your shipper at the configured path and let the shipper rotate. (Mechanism details: [§17.7](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage).) Concurrent calls to one sink instance are serialized, so a rare short OS write cannot splice its records. This is not an interprocess lock: point only one `JsonlFileAudit` instance/process at a file when JSONL framing matters, or use your own cross-process coordination. If a short-write retry fails after a positive prefix, the sink rolls back only its verified descriptor tail. If it cannot verify that rollback, that instance drops later events instead of appending to the fragment. That disable is permanent for the instance: it does not auto-retry because a later append could join a fragment and corrupt JSONL framing. The transition emits one fixed stderr line containing `audit jsonl disabled: partial_write_rollback_unverified`, with no path, event, fragment, or raw error. Alert on that exact line. You may also wire the optional `onDisable(reason)` callback into your metrics or paging system. It receives only the same fixed reason, exactly once. Callback failures are swallowed and the callback starts on a detached `setImmediate` turn after the audit write can settle, so even synchronous work before its first `await` cannot change or delay the fail-open authentication outcome.
 
 ```ts
 const audit = new JsonlFileAudit("/var/log/mcp-sso/audit.jsonl", {
@@ -78,28 +42,15 @@ const audit = new JsonlFileAudit("/var/log/mcp-sso/audit.jsonl", {
 });
 ```
 
-Create a replacement sink instance only after an operator has inspected and
-repaired or rotated the fragment. Do not add automatic retry around the
-disabled instance.
+Create a replacement sink instance only after an operator has inspected and repaired or rotated the fragment. Do not add automatic retry around the disabled instance.
 
-Do not put the configured audit filename in a directory writable by an
-untrusted local user. `O_NOFOLLOW` protects the final symlink component, but a
-hard link is still a regular file and is intentionally not rejected in this
-release; a hard-link policy needs a separate contract decision. On a Node host
-without `O_NOFOLLOW` support (notably Windows builds), `JsonlFileAudit` drops
-the event with a fixed redacted diagnostic instead of using an unsafe
-check-then-open fallback. Use a supported POSIX host for a file-backed audit
-trail.
+Do not put the configured audit filename in a directory writable by an untrusted local user. `O_NOFOLLOW` protects the final symlink component, but a hard link is still a regular file and is intentionally not rejected in this release. A hard-link policy needs a separate contract decision. On a Node host without `O_NOFOLLOW` support (notably Windows builds), `JsonlFileAudit` drops the event with a fixed redacted diagnostic instead of using an unsafe check-then-open fallback. Use a supported POSIX host for a file-backed audit trail.
 
 Shippers that work well with append-only JSONL:
 
-- **Splunk Universal Forwarder** — `monitor` input on the file; it tracks the
-  offset and ships to the indexer. Splunk recommends this over HEC for
-  high-volume local files because the UF buffers and retries locally.
-- **Vector** (`file` source → your sink) — in-process `disk` buffers; handles
-  rotation (inode follow) and backpressure.
-- **Fluentd** (`in_tail`) — `pos_file` tracks offset, `read_from_head` on first
-  run.
+- Splunk Universal Forwarder. `monitor` input on the file. It tracks the offset and ships to the indexer. Splunk recommends this over HEC for high-volume local files because the UF buffers and retries locally.
+- **Vector** (`file` source → your sink), in-process `disk` buffers. Handles rotation (inode follow) and backpressure.
+- **Fluentd** (`in_tail`), `pos_file` tracks offset, `read_from_head` on first run.
 
 ### 2. `WebhookAudit` → a SIEM HEC
 
@@ -111,17 +62,13 @@ const webhook = new WebhookAudit("https://siem.example.com/services/collector", 
 });
 ```
 
-Delivery is **at-most-once** — a single `POST` per event with a 5 s timeout, and
-no retry queue. A non-2xx, a timeout, or a thrown `fetch` loses that event.
-Sink construction enforces:
+Delivery is **at-most-once**, a single `POST` per event with a 5 s timeout, and no retry queue. A non-2xx, a timeout, or a thrown `fetch` loses that event. Sink construction enforces:
 
 - The URL must be `https://` (raw prefix check).
-- URLs with userinfo (`user:pass@`) are rejected — credentials belong in
-  `headers`.
+- URLs with userinfo (`user:pass@`) are rejected, credentials belong in `headers`.
 - Redirects are not followed.
 
-Use this for side-channels where loss is tolerable, or fan it out alongside the
-file sink via `combineAudit` so the file stays the source of truth.
+Use this for side-channels where loss is tolerable, or fan it out alongside the file sink via `combineAudit` so the file stays the source of truth.
 
 ### 3. Custom `AuditPort`
 
@@ -135,38 +82,21 @@ class QueuedAudit implements AuditPort {
 }
 ```
 
-The interface is a single async method. This is where to wire guaranteed
-delivery via a durable queue — the library will not do it for you (see below).
+The interface is a single async method. This is where to wire guaranteed delivery via a durable queue, the library will not do it for you (see below).
 
-## Delivery guarantees — what the library does NOT do
+## Delivery guarantees: what the library does NOT do
 
 The library treats audit as **evidence, not a gate**.
 
-- **No buffering, no backgrounding, no redelivery.** Each sink's
-  `writeAuthEvent` is awaited inline by the use-case (verifier, register,
-  authorize, token, pairing). There is no queue, no retry loop, no dead-letter.
-- **Fail-open.** A sink that rejects (disk full, HEC 5xx, network down) must
-  not block the auth operation. Every shipped sink swallows its own errors and
-  surfaces a redacted diagnostic on stderr.
-  - What is redacted: `src/audit/util.ts` scrubs bearer tokens, `key=value`
-    assignments, ≥32-char opaque runs, and configured header/URL-query values
-    before anything reaches stderr.
-- **Events CAN be lost under sink outage** — that is the accepted residual
-  ([threat-model row 24](./threat-model.md)). A failed `WebhookAudit` POST is
-  gone; an ordinary failed `JsonlFileAudit` append is gone and a later event may
-  append once the filesystem recovers. After an unverified partial-write
-  rollback, that instance instead remains disabled and drops every later event;
-  the fixed stderr/callback signal is the operator's cue to repair and replace
-  it.
-- **If your compliance posture requires no lost events**, the file + shipper
-  path is the only supported answer. The file is durable across normal process
-  exit once the OS has accepted the append; the sink does not `fsync`, so for
-  power-loss/crash durability put the audit file on a sync mount and let the
-  shipper's buffer absorb indexer outages.
+- **No buffering, no backgrounding, no redelivery.** Each sink's `writeAuthEvent` is awaited inline by the use-case (verifier, register, authorize, token, pairing). There is no queue, no retry loop, no dead-letter.
+- **Fail-open.** A sink that rejects because the disk is full, the SIEM returns an error, or the network is down does not block the authorization operation. Every shipped sink contains its own error and writes a redacted diagnostic to stderr.
+- **Redacted diagnostics.** `src/audit/util.ts` removes bearer tokens, `key=value` assignments, opaque runs of 32 or more characters, and configured header or URL-query values before a diagnostic reaches stderr.
+- Events CAN be lost under sink outage. That is the accepted residual ([threat-model row 24](./threat-model.md)). A failed `WebhookAudit` POST is gone. An ordinary failed `JsonlFileAudit` append is gone and a later event may append once the filesystem recovers. After an unverified partial-write rollback, that instance instead remains disabled and drops every later event. The fixed stderr/callback signal is the operator's cue to repair and replace it.
+- **No-loss requirements need another durability layer.** Use the file and shipper path when events must survive a normal process exit. The sink does not call `fsync`. Use a synchronous mount when power-loss durability matters, and let the shipper buffer indexer outages.
 
 ## Fan-out with `combineAudit`
 
-Wire multiple sinks; one sink's failure never stops the others:
+Wire multiple sinks. One sink's failure never stops the others:
 
 ```ts
 import { combineAudit, JsonlFileAudit, WebhookAudit } from "mcp-sso";
@@ -175,46 +105,27 @@ const audit = combineAudit(
   new JsonlFileAudit("/var/log/mcp-sso/audit.jsonl"), // source of truth (durable)
   new WebhookAudit("https://siem.example.com/services/collector", {
     headers: { Authorization: `Bearer ${process.env.SIEM_HEC_TOKEN}` },
-  }), // side-channel (at-most-once)
-);
+  }), // side-channel (at-most-once));
 
 const bridge = new Bridge({ config, store, clock, audit });
 const authorizer = new RequestAuthorizer({ config, clock, audit });
 ```
 
-`combineAudit` runs each sink through `Promise.allSettled`. A synchronous throw
-(an `undefined` sink, or a custom sink that throws before returning a promise)
-becomes a rejected promise that `allSettled` absorbs. The composite never
-rejects; the other sinks still run.
+`combineAudit` runs each sink through `Promise.allSettled`. A synchronous throw (an `undefined` sink, or a custom sink that throws before returning a promise) becomes a rejected promise that `allSettled` absorbs. The composite never rejects. The other sinks still run.
 
 ## Defaults
 
-- **`noopAudit` is the default at the composition root** — the example's
-  `buildApp()` and `createConsolePairingIdentity()` default to it.
-- **`Bridge` and `RequestAuthorizer` require `audit` explicitly** —
-  `BridgeDeps.audit` / `RequestAuthDeps.audit` are required, with no fallback.
-  If you construct them directly, pass `noopAudit` yourself.
-- **The use-cases `await` `writeAuthEvent` with no `try/catch`.** A sink that
-  rejects would turn every IO hiccup into a 500 — which is why every shipped
-  sink is fail-open by construction.
-- **`examples/fastify-sqlite` wires a `JsonlFileAudit`** to
-  `${MCP_SSO_DIR}/audit.jsonl`, so events appear on a zero-config boot. The
-  example's `buildApp()` (the path the test suite drives) still defaults to
-  `noopAudit`; pass an `audit` dep to observe events in tests.
+- `noopAudit` is the default at the composition root. The example's `buildApp()` and `createConsolePairingIdentity()` default to it.
+- `Bridge` and `RequestAuthorizer` require `audit` explicitly. `BridgeDeps.audit` / `RequestAuthDeps.audit` are required, with no fallback. If you construct them directly, pass `noopAudit` yourself.
+- **The use-cases `await` `writeAuthEvent` with no `try/catch`.** A sink that rejects would turn every IO hiccup into a 500, which is why every shipped sink is fail-open by construction.
+- **`examples/fastify-sqlite` wires a `JsonlFileAudit`** to `${MCP_SSO_DIR}/audit.jsonl`, so events appear on a zero-config boot. The example's `buildApp()` (the path the test suite drives) still defaults to `noopAudit`. Pass an `audit` dep to observe events in tests.
 
 ## What the events look like
 
-Flat, metadata-only objects ([§13](./contracts/13-audit-contract.md#13-audit-contract)):
-`occurredAt`, `event`, `status`, plus optional `clientId` / `subject` /
-`resource` / `scopes` / `redirectHost` / `reason` / `ip`. No token values, no
-`Authorization` / `Set-Cookie`, no request bodies, and never the console-pairing
-code. The test suite asserts this across every event name
-(`test/audit-no-secrets.test.ts`) and the live pairing flow
-(`test/e2e-pairing.test.ts`).
+Flat, metadata-only objects ([§13](./contracts/13-audit-contract.md#13-audit-contract)): `occurredAt`, `event`, `status`, plus optional `clientId` / `subject` / `resource` / `scopes` / `redirectHost` / `reason` / `ip`. No token values, no `Authorization` / `Set-Cookie`, no request bodies, and never the console-pairing code. The test suite asserts this across every event name (`test/audit-no-secrets.test.ts`) and the live pairing flow (`test/e2e-pairing.test.ts`).
 
 ## See also
 
-- Contracts [§13 (audit contract)](./contracts/13-audit-contract.md#13-audit-contract) and
-  [§17.7 (reference sinks + event coverage)](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage).
-- [Threat model row 24](./threat-model.md) — audit-sink loss / injection.
+- Contracts [§13 (audit contract)](./contracts/13-audit-contract.md#13-audit-contract) and [§17.7 (reference sinks + event coverage)](./contracts/17-v0-2-feature-contracts.md#177-audit-reference-sinks--event-coverage).
+- [Threat model row 24](./threat-model.md), audit-sink loss / injection.
 - The README [audit bullet](../README.md) for one-paragraph positioning.

@@ -29,7 +29,7 @@ const read = (path) => readFileSync(join(ROOT, path), "utf8");
 const PROBE = read("scripts/live/probe-e2e.mjs");
 const README = read("scripts/live/README.md");
 const CHECKLIST = read("scripts/live/CHECKLIST.md");
-const DOC = read("docs/live-verification.md");
+const DOC = read("docs/reference/live-harness.md");
 const GUID_A = "11111111-2222-3333-4444-555555555555";
 const GUID_B = "66666666-7777-8888-9999-aaaaaaaaaaaa";
 const GUID_C = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
@@ -420,13 +420,13 @@ test("CONTENT provider probes: all three share the disposable-state helper befor
   }
 });
 
-test("CONTENT records: docs, README, and CHECKLIST agree with what the scripts do", () => {
+test("CONTENT records: harness reference, README, and CHECKLIST agree with what the scripts do", () => {
   assert.match(DOC, /^\| `probe-e2e\.mjs` \|/m, "the harness table records the e2e probe");
   assert.match(DOC, /`run\.sh`/);
   assert.match(DOC, /`serve\.sh`/);
   assert.match(DOC, /`CHECKLIST\.md`/);
   assert.match(DOC, /scripts\/live\/README\.md/);
-  assert.match(DOC, /none reports\n?`SKIP`/);
+  assert.match(DOC, /none reports\s+`SKIP`/);
   assert.match(README, /run\.sh scripts\/live\/probe-e2e\.mjs/);
   // The records must name what the probe proves: replay detection and family
   // revocation are what an operator reads the receipt for.

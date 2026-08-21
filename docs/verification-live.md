@@ -1,7 +1,6 @@
 # Tier 3 evidence reference
 
-Tier 3 records compatibility with real identity providers and MCP clients.
-Tier 1 remains the required security evidence.
+Tier 3 records compatibility with real identity providers and MCP clients. Tier 1 remains the required security evidence.
 
 ## Evidence by area
 
@@ -45,8 +44,6 @@ Each live result contains:
 6. A result for each named scenario.
 7. Every skipped, simulated, or partial step.
 
-A CIMD flow starts authorization with an HTTPS `client_id`. It does not call
-`POST /oauth/register`. A DCR flow calls `POST /oauth/register`.
+A CIMD flow starts authorization with an HTTPS `client_id`. It does not call `POST /oauth/register`. A DCR flow calls `POST /oauth/register`.
 
-Do not commit credentials, tenant identifiers, private URLs, or raw evidence
-that contains secrets.
+Do not commit credentials, tenant identifiers, private URLs, or raw evidence that contains secrets.

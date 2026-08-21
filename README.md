@@ -1,314 +1,56 @@
 # mcp-sso
 
-**OAuth in your MCP server, not an API key in your client's config.**
+OAuth in your MCP server, without a static API key in every client configuration.
 
-[![npm](https://img.shields.io/npm/v/mcp-sso)](https://www.npmjs.com/package/mcp-sso)
-[![CI](https://img.shields.io/github/actions/workflow/status/acartag7/mcp-sso/ci.yml?branch=main&label=CI)](https://github.com/acartag7/mcp-sso/actions/workflows/ci.yml)
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/acartag7/mcp-sso?label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/acartag7/mcp-sso)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13556/badge)](https://www.bestpractices.dev/projects/13556)
-[![license](https://img.shields.io/github/license/acartag7/mcp-sso)](LICENSE)
-[![node](https://img.shields.io/node/v/mcp-sso)](package.json)
-[![runtime deps](https://img.shields.io/badge/runtime%20deps-1%20(jose)-blue)](docs/dependency-ledger.md)
+[![npm](https://img.shields.io/npm/v/mcp-sso)](https://www.npmjs.com/package/mcp-sso) [![CI](https://img.shields.io/github/actions/workflow/status/acartag7/mcp-sso/ci.yml?branch=main&label=CI)](https://github.com/acartag7/mcp-sso/actions/workflows/ci.yml) [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/acartag7/mcp-sso?label=openssf%20scorecard)](https://scorecard.dev/viewer/?uri=github.com/acartag7/mcp-sso) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13556/badge)](https://www.bestpractices.dev/projects/13556) [![license](https://img.shields.io/github/license/acartag7/mcp-sso)](LICENSE) [![node](https://img.shields.io/node/v/mcp-sso)](package.json) [![runtime deps](https://img.shields.io/badge/runtime%20deps-1%20(jose)-blue)](docs/dependency-ledger.md)
 
-[Choose a path](#choose-your-path) · [How it works](#how-mcp-sso-works) · [Client registration](docs/client-registration.md) · [Configuration](docs/configuration.md) · [Machine-to-machine](#machine-to-machine-client_credentials) · [Security](#security) · [Threat model](docs/threat-model.md)
+[Get started](docs/getting-started.md) · [Documentation](docs/README.md) · [Configuration](docs/configuration.md) · [Security](docs/threat-model.md) · [Current verification status](docs/verification-status.md)
 
 ## The problem
 
-Remote MCP servers need auth. The default is a static API key pasted into every
-client config — no expiry, no per-user identity, no revocation short of rotating
-the one shared secret. It's what leaks in a `git add .` or a support screenshot.
+Remote MCP servers need authentication. A shared API key gives every caller the same identity, has no per-user expiry, and usually requires a full rotation when one copy leaks.
 
-The MCP spec's answer is OAuth 2.1. The remaining gap is that an MCP client must
-identify itself to an authorization server. Newer clients can use **Client ID
-Metadata Documents (CIMD)**; other clients use **Dynamic Client Registration
-(DCR)**. Enterprise identity providers such as Entra ID and Cloudflare Access
-are identity sources, not MCP authorization servers, so they do not provide
-this complete MCP-facing flow.
+MCP uses OAuth 2.1 instead. An MCP client must also identify itself to the authorization server. Clients can publish a Client ID Metadata Document (CIMD) or call `POST /oauth/register`. Identity providers such as Microsoft Entra ID and Cloudflare Access prove who the user is, but they do not expose the complete MCP authorization surface.
 
-**mcp-sso is the bridge.** It accepts CIMD client identities and DCR clients,
-then speaks PKCE and consent to the MCP client while your IdP stays the identity
-source of truth. It mints its **own** audience-bound tokens (each valid only for
-your server). Upstream IdP tokens never pass through.
+`mcp-sso` provides that surface. It accepts CIMD identities and `POST /oauth/register`, runs PKCE and consent with the MCP client, and uses the configured identity provider to authenticate the user. It then mints its own access and refresh tokens for one configured MCP resource. Tokens from the identity provider stay between the identity provider and `mcp-sso`.
 
-## Choose your path
+## The authorization flow
 
-### One operator, on one machine
+Assume Alice connects an MCP client to `https://mcp.example/mcp`.
 
-Use this path to connect your own local MCP client to a server on the same
-computer. It uses console pairing and binds to loopback. The generated server
-refuses a non-loopback host, issuer, or resource before it creates persistent
-state.
-
-```bash
-# LOCALHOST-ONLY. Do not expose this generated server to the internet.
-npx mcp-sso init my-mcp-server
-cd my-mcp-server
-npm install
-npm start
-# In another terminal:
-claude mcp add --transport http my-bridge http://127.0.0.1:3000/mcp
-# → the server prints a one-time code; paste it into the browser, then approve.
-```
-
-This is the safe quickstart, not a production template. It enables CIMD,
-persists DCR registrations in SQLite, and adds loopback redirect trust
-explicitly instead of receiving it from library defaults. The pairing code is
-the identity check, so keep console output private.
-
-The repository's two runnable examples enforce the same no-IdP bind boundary:
-`HOST=0.0.0.0` now fails before creating state. The deliberately unsafe
-`MCP_SSO_UNSAFE_ALLOW_NON_LOOPBACK_PAIRING=true` escape exists only for explicit
-temporary testing and prints a loud warning; it does not make console pairing a
-production identity provider. See the [runtime configuration](docs/configuration.md#runtime).
-
-### Internet-facing, with real users
-
-Use a real identity provider, a persistent conforming store, and a real request
-budget. The repository example demonstrates identity-provider wiring; it is not
-a complete production topology because it uses local SQLite. Both runnable
-examples wire a finite process-local core `RateLimitPort` in stateless and
-stored modes: registration has an aggregate budget, direct identity authorize
-has a per-IP budget, and upstream authorize and callback share another per-IP
-budget. Multi-replica deployments replace that example default with the shipped
-Redis port.
-
-Start from an **mcp-sso repository checkout** (not the generated
-`my-mcp-server` directory), copy
-[`docs/.env.example`](docs/.env.example) to `.env`, configure one of Cloudflare
-Access, Entra ID, Google, or generic OIDC, and explicitly load it when starting
-the env-driven
-[`examples/fastify-sqlite/`](examples/fastify-sqlite) composition root:
-
-```bash
-# From the mcp-sso repository root:
-corepack pnpm install --frozen-lockfile
-cp docs/.env.example .env
-# Edit .env, then:
-node --env-file=.env examples/fastify-sqlite/index.ts
-```
-
-The examples do not load `.env` implicitly. See the
-[configuration reference](docs/configuration.md), [identity-provider
-guides](docs/identity/README.md), and [client-registration
-guide](docs/client-registration.md). Before exposing the service, follow the
-[deployment guide](docs/gateway-deployment.md), add the Redis rate-limit adapter
-or a trusted rate-limiting proxy, choose SQLite for one host or MySQL for shared
-replicas, and run the [live-verification checklist](docs/live-verification.md).
-
-## How mcp-sso works
-
-Imagine Alice connects an MCP client to `https://mcp.example/mcp`:
-
-1. **The client identifies itself.** It presents an HTTPS Client ID Metadata
-   Document (CIMD), or registers through DCR when it does not support CIMD.
-2. **Alice signs in.** The bridge sends her to the configured identity provider.
-   The provider proves who Alice is; its token stays between the provider and
-   the bridge.
-3. **Alice approves access.** The consent page shows the client, resource, and
-   requested scopes. Approval produces a short-lived, single-use authorization
-   code.
-4. **The client exchanges the code.** The bridge checks PKCE and mints its own
-   access and refresh tokens for exactly `https://mcp.example/mcp`.
-5. **Every MCP call is authenticated.** The resource server verifies the bridge
-   token and its audience. Your MCP handler calls `requireScope` for the scope a
-   tool needs. Refresh-token rotation detects reuse and revokes the token family.
+1. The client identifies itself through CIMD or `POST /oauth/register`.
+2. `mcp-sso` sends Alice to the configured identity provider.
+3. Alice returns with a verified identity and approves the requested scopes.
+4. The client exchanges the authorization code and its PKCE verifier for tokens.
+5. The MCP server verifies the access token's audience and required scope on each request.
+6. Refresh-token rotation detects reuse and revokes the token family.
 
 ```mermaid
 sequenceDiagram
     participant C as MCP client
-    participant B as mcp-sso bridge
+    participant B as mcp-sso
     participant I as Identity provider
     participant S as MCP server
-    C->>B: CIMD identity or DCR registration
+    C->>B: CIMD identity or POST /oauth/register
     C->>B: Authorization request with PKCE
     B->>I: Sign Alice in
     I-->>B: Verified identity
-    B-->>C: Consent, then one-time code
-    C->>B: Code plus PKCE proof
+    B-->>C: Consent and authorization code
+    C->>B: Authorization code and PKCE verifier
     B-->>C: Tokens for mcp.example/mcp
-    C->>S: MCP call with bridge token
+    C->>S: MCP request with access token
     S->>S: Verify audience and required scope
 ```
 
-### What is signed, and what is stored?
+The resource-server verifier and the authorization-server bridge share a framework-free core. Fastify, Express, and Hono adapters translate HTTP requests and responses at the edge. Stores and identity providers sit behind ports, so changing deployment infrastructure does not change the OAuth rules.
 
-| Item | Signed or stored? | Why it exists |
-| --- | --- | --- |
-| Access token | Signed by the bridge; not looked up per call | Carries Alice's subject, scopes, and the one configured resource audience. |
-| Consent and upstream-flow tokens | Signed by the bridge; their one-time identifiers are stored | Carry one in-flight browser flow while the store prevents replay. |
-| Authorization codes and refresh tokens | Only hashes and lifecycle state are stored | A database read cannot reveal the bearer value; the store enforces single use and rotation. |
-| DCR clients | Stored in stored-DCR mode; not persisted in stateless mode | Stored mode binds the client identifier to registered redirect URIs; stateless mode applies the global redirect allowlist to opaque IDs. The generated localhost server uses stored DCR. |
-| Audit events | Sent to the configured audit sink | Record metadata about outcomes, never bearer credentials. Audit delivery is evidence, not an authorization gate. |
+## When to use it
 
-Identity answers “who is Alice?” Authorization answers “which scopes may she
-approve?” A **resource** is the exact MCP audience a token is valid for—for
-example, `https://mcp.example/mcp`. v0.3.x protects one resource per bridge;
-deploy separate bridge configurations for separate resources.
+Use `mcp-sso` when your identity provider authenticates users but does not expose MCP-compatible OAuth endpoints. The shipped identity ports cover Cloudflare Access, Microsoft Entra ID, Google, generic OIDC, and local console pairing.
 
-Store choice changes deployment shape, not OAuth semantics: memory is for one
-process, SQLite is durable on one host, and MySQL is the shared-store option for
-multiple replicas. All three implement the same store contract. For the exact
-rules, follow [authorization](docs/authorization.md), the
-[store contract](docs/contracts/12-store-conformance-contract.md), and the
-[token contracts](docs/contracts/07-crypto-and-token-contracts.md).
+Do not add this bridge when your identity provider already exposes the MCP authorization surface and supports a registration method used by your clients. In that case, use a resource-server library such as [`mcp-auth`](https://github.com/mcp-auth/js).
 
-## What it works with
-
-- **Identity providers:** Cloudflare Access, Microsoft Entra ID (redirect flow +
-  group→scope authorization), Google + generic OIDC sign-in, zero-setup console
-  pairing.
-- **Client registration:** CIMD recommended; stateless or stored DCR retained
-  for clients that use it.
-- **Frameworks:** fastify, express, hono — transport adapters apply the shared
-  body budget and normalize framework request data; OAuth domain decisions stay
-  in the framework-free core.
-- **Stores:** `node:sqlite` (recommended, zero-ops), `mysql2`, in-memory — one
-  shared conformance suite.
-- **Grants:** authorization code (PKCE S256), refresh-token rotation with theft
-  detection, `client_credentials` (M2M).
-- **Runtime dependency:** `jose` only.
-
-## Machine-to-machine (`client_credentials`)
-
-For headless callers — CI jobs, service agents, schedulers. Implements the
-official MCP extension `io.modelcontextprotocol/oauth-client-credentials`.
-
-Machine clients are **provisioned out-of-band** — there's no HTTP endpoint for
-it; you run `provisionMachineClient` against the same `MachineClientStore` the
-bridge uses. You implement that port against your database. The shipped
-`/store/sqlite` adapter implements `ClientStore` for user DCR registrations but
-not the atomic `MachineClientStore` lifecycle; `/store/mysql` remains
-`StorePort`-only. Machine create, rotate, and disable use versioned atomic
-mutations that commit the row with its durable audit. The secret is returned
-once and stored only as a SHA-256 hash. A custom
-`ClientStore.find(clientId)` must return the row whose embedded `clientId`
-matches that lookup key; `parseMachineClientRegistration` rejects mismatched or
-malformed machine rows before verification, mutation, or token issuance. Each
-new machine credential is bound to the exact `config.resource` string; custom
-stores must preserve that field across rotation and disable. Old rows with no
-resource must be reprovisioned.
-
-```ts
-import { provisionMachineClient, noopAudit } from "mcp-sso";
-
-const { clientId, clientSecret } = await provisionMachineClient(
-  { store: clientStore, catalog: config.scopeCatalog, resource: config.resource, clock: { nowMs: () => Date.now() }, audit: noopAudit },
-  { name: "nightly-sync", allowedScopes: ["mcp:read"] }, // per-client scope ceiling, fixed at provisioning
-);
-// clientSecret (mcs_…) is returned ONCE — put it in your secret manager now; it cannot be retrieved again.
-```
-
-`resource` is a required `MachineClientDeps` field. TypeScript callers upgrading
-from an earlier lifecycle API must pass the exact `config.resource` value. It
-must be HTTPS, except a loopback HTTP resource (`localhost`, `127.0.0.1`, or
-`[::1]`) is valid for a matching `dev.allowInsecureLocalhost` bridge.
-
-```bash
-curl -s https://auth.example.com/oauth/token -u "$CLIENT_ID:$CLIENT_SECRET" \
-  -d grant_type=client_credentials -d scope=mcp:read
-# → { "access_token": "…", "token_type": "Bearer", "expires_in": …, "scope": "mcp:read" }
-```
-
-Requires stored-DCR mode (`dcr: { mode: "stored", store }`) and
-`clientCredentials: { enabled: true }` in `createBridgeConfig`. **No refresh
-token** (the client already holds a durable credential).
-`RequestAuthorizer.authorize()` returns
-`credentialKind: "machine" | "interactive"` after it verifies the token.
-Use that field for downstream policy; do not decode the JWT or infer from an
-`mcc_…` prefix. Machine classification requires the complete `mcc_` subject,
-`sub === client_id`, and `gty: "client_credentials"` binding — enforced at
-three points, detailed in
-[§17.2](docs/contracts/17-v0-2-feature-contracts.md#172-client_credentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials).
-Rotate with `rotateMachineClientSecret` (the published 24-hour default is also
-the hard maximum; pass a shorter overlap such as 5 minutes explicitly), or
-revoke future token issuance with the atomic
-`disableMachineClient` tombstone.
-
-## API-key gateway: SSO in front of a token-only backend
-
-The common production shape: an internal MCP server that only accepts a static
-API key. Put mcp-sso in front — users authenticate through your real IdP, the
-gateway verifies its own short-lived tokens on `/mcp`, and the static key is
-injected **server-side only**. It never reaches an MCP client, a laptop, or a
-config file. Worked example: [`examples/api-key-gateway/`](examples/api-key-gateway);
-full pattern, topology, and Kubernetes notes in
-[`docs/gateway-deployment.md`](docs/gateway-deployment.md).
-
-## Security
-
-- **Fail-closed everywhere** — ambiguous config, a missing identity, an unknown
-  audience, or a replayed token is a hard failure, never a degraded default.
-- **Finite JWT operation clocks** — access/consent verification rejects
-  non-integer or non-canonical custom `ClockPort` values and preserves the
-  existing typed OAuth failure through the production request and
-  approval paths ([threat-model row 39](docs/threat-model.md)).
-- **Request budgets** — `RateLimitPort` runs before registration,
-  consent approval, token exchange, revocation, and direct header-based identity
-  verification (`Bridge.resolveIdentity`). Upstream redirect, CIMD, and console
-  pairing keep their separate named budgets. Stored DCR requires a bounded,
-  non-noop port at boot; the no-op default remains available only where the
-  stateless deployment guard admits it. Multi-replica deployments wire the Redis
-  adapter.
-- **Reference `/mcp` Origin gates reject ambiguity** — the runnable examples use
-  `headersFromDistinct` plus `readHeader`, and the generated server checks
-  `request.raw.headersDistinct.origin` inline, before parsing or bearer
-  authorization. Custom `/mcp` mounts own the same DNS-rebinding check.
-- **Browser-compatible consent return** — `Bridge.handleAuthorize` sends `Referrer-Policy:
-  same-origin`, so the approval POST retains its issuer `Origin`, and its CSP
-  must omit `form-action` so Chromium can follow the POST's 302 to the client
-  callback. `assertApproveOrigin` keeps its exact issuer-or-allowlist check,
-  with no automatic opaque-Origin fallback.
-- **`jose` is the only runtime dependency**; ordinary pins are ≥15 days old.
-  A direct package may be younger only for a published GHSA/CVE fix recorded in
-  the verified per-package exception ledger. npm publishes run only through
-  GitHub Actions with Sigstore provenance, never from a local machine.
-- **Token handling**: authorization codes and refresh tokens are hashed at rest
-  and single-use (a replayed refresh token revokes its whole family); consent
-  tokens are single-use. `OAuthTokenUseCase.exchangeAuthorizationCode` prepares
-  the signed response before saving refresh state;
-  `OAuthTokenUseCase.refresh` attempts to revoke the rotated family if any later
-  response preparation step fails and returns no token; durable compensation
-  still depends on the configured store accepting that write. Every
-  non-transactional use-case audit write is best effort, so a custom sink outage
-  cannot replace the authoritative OAuth or resource-server outcome. **Access tokens are
-  short-TTL ES256 bearer tokens — like
-  any OAuth access token, a stolen one is valid until `exp`** (no access-token
-  introspection or revocation in v0.2; [threat-model row 1](docs/threat-model.md)).
-  Separate signing keys for consent vs. access; timing-safe PKCE; redirect URIs
-  matched against an explicit allowlist.
-- **Published STRIDE threat model** + a documented two-gate authorization model
-  (IdP-side access control vs. mcp-sso's defense-in-depth allowlists):
-  [`docs/threat-model.md`](docs/threat-model.md),
-  [`docs/authorization.md`](docs/authorization.md).
-
-## Alternatives
-
-Does your identity provider already expose an MCP-compatible OAuth 2.1
-authorization surface, including a registration method your clients support?
-Then you don't need a bridge — use
-[`mcp-auth`](https://github.com/mcp-auth/js) ([compatibility
-list](https://mcp-auth.dev/provider-list)). If your IdP is only the upstream
-identity source (Entra ID, Cloudflare Access, most enterprise SSO), that is what
-mcp-sso bridges.
-
-| Project | Choose it if… |
-| --- | --- |
-| **mcp-sso** (this repo) | Your IdP is not an MCP authorization server — Entra ID, Cloudflare Access, most enterprise SSO. |
-| [`mcp-auth`](https://github.com/mcp-auth/js) | Your IdP already exposes compatible OAuth 2.1 client registration; you just need resource-server wiring. |
-| [`mcp-oauth-server`](https://github.com/wille/mcp-oauth-server) | You need **device flow** today (mcp-sso has `client_credentials`, not device flow). |
-| [`workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) | Your MCP server **is** a Cloudflare Worker. |
-
-## Roadmap
-
-After 0.3.0, the next planned areas are:
-
-- **Device authorization (RFC 8628)** for interactive login from SSH sessions,
-  terminals, and other environments that cannot receive a browser callback.
-- **GitHub identity** for teams that use GitHub as the upstream login provider.
-- **Multi-resource deployments** so one authorization service can protect
-  multiple MCP audiences without weakening audience isolation.
-- **PostgreSQL storage and additional provider presets** when real deployments
-  justify them.
+The [capability reference](docs/reference/capabilities.md) lists the shipped frameworks, stores, grants, registration methods, and deployment limits. The [documentation index](docs/README.md) separates tutorials, procedures, reference, explanation, and dated history.
 
 ## License
 
