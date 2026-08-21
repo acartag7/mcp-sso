@@ -1,6 +1,8 @@
 # 2026-07-08 API-key gateway field report
 
-Recorded 2026-07-08 against `mcp-sso@0.2.0`; the tools and flow described here are what shipped then, not current reference. A real deployment of mcp-sso as an SSO gateway in front of an internal MCP server that only accepted a static API key. Internal details (hostname, scopes, OAuth parameters) are redacted. The tools + flow described here are what shipped.
+Recorded 2026-07-08 against `mcp-sso@0.2.0`. A real deployment of mcp-sso as an SSO gateway in front of an internal MCP server that only accepted a static API key. Internal details such as the hostname, scopes, and OAuth parameters are redacted. The tools and flow described here are what shipped then, not current reference.
+
+Current guidance is in [Deploy an API-key gateway](../gateway-deployment.md), and the current documentation starts at the [documentation index](../README.md). One item below is still open: the current guide tells a gateway never to relay the backend's `WWW-Authenticate`, but neither the guide nor the shipped `examples/api-key-gateway/` translates an upstream 401 or 403 into a 502, so lesson 1 remains a deployment-specific step you implement yourself.
 
 ## Problem
 

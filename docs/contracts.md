@@ -39,3 +39,5 @@ This is one contract set, not 18 independent specifications. The index owns rout
 16. [Spec-conformance matrix](contracts/16-spec-conformance-matrix.md)
 17. [Feature contracts](contracts/17-v0-2-feature-contracts.md)
 18. [Contract-change protocol](contracts/18-contract-change-protocol.md)
+
+Superseded contract wording, and why each correction was made, is kept in the [contract corrections archive](archive/contract-corrections-2026-07-07-to-2026-08-19.md) and the [contract development history](archive/contract-development-history-2026-07-to-2026-08.md).

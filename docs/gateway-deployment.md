@@ -104,3 +104,7 @@ Two gates, documented in [`authorization.md`](authorization.md): the primary gat
 ## Audit
 
 Wire `combineAudit(new JsonlFileAudit(...), new WebhookAudit(...))` into the Bridge and `RequestAuthorizer`, sinks, delivery trade-offs, and the fail-open residual are in [`audit-deployment.md`](audit-deployment.md). A webhook sink pointed at your SIEM's HTTP collector gives the security team the full auth trail (metadata only, never token values) with no extra moving parts.
+
+## A deployment that ran this shape
+
+The [2026-07-08 API-key gateway field report](archive/2026-07-08-api-key-gateway-field-report.md) records a real deployment of this pattern against `mcp-sso@0.2.0`, with the problems it hit and the lessons it produced. It is dated evidence, not current reference, and one of its lessons is still open: translating an upstream 401 or 403 into a 502 is deployment-specific code that neither this guide nor the shipped example implements.
