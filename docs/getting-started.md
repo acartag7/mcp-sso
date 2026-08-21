@@ -33,7 +33,37 @@ corepack pnpm install --frozen-lockfile
 cp docs/.env.example .env
 ```
 
-Edit `.env` and configure one identity provider. The [identity-provider index](identity/README.md) links to the required values for Cloudflare Access, Microsoft Entra ID, Google, and generic OIDC.
+Before you configure an identity provider, replace all four bridge placeholders in `.env`. `OAUTH_ISSUER` is the origin that users and MCP clients can reach. `OAUTH_RESOURCE` is that deployment's protected `/mcp` URL. The two signing values must be newly generated secrets.
+
+For a reachable HTTPS deployment, use your public origin and resource:
+
+```dotenv
+OAUTH_ISSUER=https://bridge.example.com
+OAUTH_RESOURCE=https://bridge.example.com/mcp
+```
+
+For a local development flow on the same computer, use the explicit loopback profile:
+
+```dotenv
+OAUTH_ISSUER=http://127.0.0.1:3000
+OAUTH_RESOURCE=http://127.0.0.1:3000/mcp
+OAUTH_ALLOW_INSECURE_LOCALHOST=true
+```
+
+> [!IMPORTANT] Use the HTTPS profile when the identity provider or MCP client cannot reach a loopback URL. Cloudflare Access requires the HTTPS profile because Cloudflare must front the browser authorization route. `OAUTH_ALLOW_INSECURE_LOCALHOST=true` is for local development only.
+
+Generate the consent secret and private ES256 JWK from the repository checkout:
+
+```bash
+openssl rand -hex 32
+node --input-type=module -e 'import { exportJWK, generateKeyPair } from "jose"; const { privateKey } = await generateKeyPair("ES256", { extractable: true }); console.log(JSON.stringify(await exportJWK(privateKey)))'
+```
+
+Copy the first output into `OAUTH_CONSENT_SIGNING_SECRET` and the one-line JSON output into `OAUTH_SIGNING_PRIVATE_JWK`. Do not add shell syntax such as `$(...)` to `.env`; Node reads the file without shell expansion.
+
+> [!WARNING] Both generated values are credentials. Do not commit `.env`, paste either value into an issue, or reuse them across deployments. Anyone with the private JWK can mint access tokens. Anyone with the consent secret can forge consent and upstream-flow state.
+
+Now configure exactly one identity provider. The [identity-provider index](identity/README.md) links to the required values for Cloudflare Access, Microsoft Entra ID, Google, and generic OIDC. For Entra, Google, or generic OIDC, register the exact callback `${OAUTH_ISSUER}/oauth/callback` with the provider and put that same URL in `ENTRA_REDIRECT_URI`, `GOOGLE_REDIRECT_URI`, or `OIDC_REDIRECT_URI`. If the provider refuses a loopback HTTP callback, use a reachable HTTPS origin instead.
 
 Start the example with the environment file loaded explicitly:
 

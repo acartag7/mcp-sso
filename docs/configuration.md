@@ -2,7 +2,7 @@
 
 mcp-sso's **library** core is configured programmatically with `createBridgeConfig({ … })` (see [§5](contracts/05-configuration-contract.md)). The env vars below are how the **runnable examples** (`examples/fastify-sqlite`, `examples/api-key-gateway`) wire that config, copy this shape into your own composition root, or use it as-is with the examples.
 
-From the repository root, copy [`.env.example`](.env.example) to `.env`, fill in one identity provider, and explicitly load the file when starting an example:
+From the repository root, copy [`.env.example`](.env.example) to `.env`. Replace all four required `OAUTH_*` bridge placeholders, then configure exactly one identity provider. The [identity-provider tutorial](getting-started.md#run-the-identity-provider-tutorial) shows the HTTPS and localhost profiles, the signing-key commands, and the callback relationship. Explicitly load the completed file when starting an example:
 
 ```bash
 cp docs/.env.example .env
