@@ -9,12 +9,12 @@ Tier 3 records compatibility with real identity providers and MCP clients. Tier 
 | Captatum dogfood | Deployed Captatum with mcp-sso | Date, mcp-sso commit or package, Captatum commit, client rows, and caveats |
 | Entra groups | Real tenant with mapped groups | Date, sanitized tenant shape, and results for mapped, unmapped, and overage cases |
 | Google identity | Real Google OAuth app | Stable subject, allowlist results, and hosted-domain behavior when configured |
-| GitHub identity | Real GitHub OAuth app | Numeric subject, verified primary email behavior, and allowlist rejection |
-| Device flow | Real terminal and browser | Code request, approval, denial, polling results, and protected `/mcp` call |
+| GitHub identity (contract-only, not shipped) | Real GitHub OAuth app, once the port ships | Numeric subject, verified primary email behavior, and allowlist rejection |
+| Device flow (contract-only, not shipped) | Real terminal and browser, once the grant ships | Code request, approval, denial, polling results, and protected `/mcp` call |
 | CIMD | Owner-controlled HTTPS metadata URL | Document URL, cache behavior, client result, and exact runtime commit |
 | MCP clients | curl, official MCP SDK, Claude Code, claude.ai, and ChatGPT when available | Date, client version when visible, and a caveat for every partial row |
 
-README compatibility claims require a matching Tier 3 receipt.
+README compatibility claims require a matching Tier 3 receipt. The GitHub identity port and the device authorization grant are contract-only; their rows describe the evidence they will need and are not release claims.
 
 ## Required setup
 

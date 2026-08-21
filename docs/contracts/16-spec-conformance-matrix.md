@@ -110,7 +110,7 @@ These items are not draft `-00` obligations and do not change the matrix count.
 
 ### Verification method
 
-Each row cites its enforcing source and test evidence. Classifications are checked against the complete draft text. Dated reclassifications and the evidence that changed them are in the [verification archive](../archive/verification-history.md).
+Each row cites its enforcing source and test evidence. Classifications are checked against the complete draft text. Two independent adversarial reviews ran over the full `-00` text, this matrix, and every cited line; their corrections are applied above, and the [2026-08 review record](../archive/verification-history.md#2026-08-independent-review-of-the-conformance-matrix) keeps the reasoning, including the row the maintainer defended wrongly twice (D00-4.5.2) before a probe settled it.
 
 ## 16.2 Latest-draft supplemental check (`-02`)
 
