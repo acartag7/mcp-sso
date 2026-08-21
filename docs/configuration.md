@@ -5,7 +5,7 @@ mcp-sso's **library** core is configured programmatically with `createBridgeConf
 From the repository root, copy [`.env.example`](.env.example) to `.env`, fill in one identity provider, and explicitly load the file when starting an example:
 
 ```bash
-cp docs/.env.example.env
+cp docs/.env.example .env
 node --env-file=.env examples/fastify-sqlite/index.ts
 ```
 

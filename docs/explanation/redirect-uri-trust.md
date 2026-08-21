@@ -38,7 +38,7 @@ For example, `HTTPS://CLIENT.EXAMPLE:443/x/../oauth/callback` parses to the same
 | --- | --- |
 | Stateless DCR | Exact entry, trusted origin, or explicitly configured portless loopback origin |
 | Stored DCR with `application_type="web"` | Exact raw string from the stored registration |
-| Stored DCR with `application_type="native"` | Exact scheme, host, path, and query for a loopback URI. The runtime port may differ. |
+| Stored DCR with `application_type="native"` | Exact scheme, host, and path for a loopback URI. Queries are forbidden. The runtime port may differ. |
 | CIMD | Exact raw string. A validated loopback HTTP entry may vary only its port when `application_type` is `"native"` or absent. |
 
 The loopback port exception exists because native clients bind an available local port at runtime. It does not widen the host or path. A registration for `http://127.0.0.1/callback` does not match `http://127.0.0.1/other`.

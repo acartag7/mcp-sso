@@ -46,4 +46,4 @@ Call `RequestAuthorizer.authorize()` for the protected request. Read `credential
 
 Use `rotateMachineClientSecret` to rotate the secret. Pass an overlap shorter than the 24-hour maximum when the caller can switch promptly. Use `disableMachineClient` to stop future token issuance.
 
-The complete record and mutation requirements are in [contract §17.2](contracts/17-v0-2-feature-contracts.md#172-clientcredentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials).
+The complete record and mutation requirements are in [contract §17.2](contracts/17-v0-2-feature-contracts.md#172-client_credentials-grant-mcp-extension-iomodelcontextprotocoloauth-client-credentials).

@@ -30,7 +30,7 @@ Start from an `mcp-sso` repository checkout. The `examples/fastify-sqlite/` exam
 
 ```bash
 corepack pnpm install --frozen-lockfile
-cp docs/.env.example.env
+cp docs/.env.example .env
 ```
 
 Edit `.env` and configure one identity provider. The [identity-provider index](identity/README.md) links to the required values for Cloudflare Access, Microsoft Entra ID, Google, and generic OIDC.

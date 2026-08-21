@@ -34,7 +34,7 @@ The document is not proof that the display name is trustworthy. The consent page
 
 Stateless mode validates the request and returns the client ID without calling `ClientStore.save`. Authorization later applies the global redirect allowlist because no client record exists.
 
-Stored mode calls `ClientStore.save` after validation. Authorization later loads that record and applies the stored `applicationType` and registered redirect URIs. A native loopback callback can keep its scheme, host, path, and query while selecting a new port at runtime.
+Stored mode calls `ClientStore.save` after validation. Authorization later loads that record and applies the stored `applicationType` and registered redirect URIs. A native loopback callback can keep its scheme, host, and path while selecting a new port at runtime. Redirect URIs cannot contain a query.
 
 > [!WARNING] `OAUTH_DCR_MODE=stored` lets anonymous callers create durable records. Supply a bounded `RateLimitPort`. If `RateLimitPort.check` throws, `Bridge.handleRegister` returns 503 before it selects request fields or calls `ClientStore.save`.
 
