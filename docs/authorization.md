@@ -62,10 +62,10 @@ No shipped identity port sets `allowedScopes` except Entra (below), so behavior 
 The ceiling producer for enterprise Entra. Entra group memberships (immutable group object IDs) map to sets of scopes. Their union becomes the `allowedScopes` ceiling above. **A subject can never be granted a scope outside the union of their matched groups** (+ `baseScopes`), and overage-truncated group claims fail closed. Config lives on `EntraConfig.groupAuthorization` (pure core in `src/identity/entra-groups.ts`, wired in `src/identity/entra.ts`):
 
 ```ts
-groupAuthorization: {
+const groupAuthorization = {
   mapping: { "11111111-1111-1111-1111-111111111111": ["mcp:read", "mcp:write"] },
   baseScopes: ["mcp:read"], // scopes every authenticated subject gets; default []
-}
+};
 ```
 
 - **Mapping keys are GUIDs only.** Display names are a spoof vector, any user can create a duplicate-named group, so non-GUID keys are **boot-rejected**. Duplicate case-insensitive keys are also boot-rejected. Matching is case-insensitive.

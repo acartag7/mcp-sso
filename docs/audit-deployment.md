@@ -99,13 +99,15 @@ The library treats audit as **evidence, not a gate**.
 Wire multiple sinks. One sink's failure never stops the others:
 
 ```ts
-import { combineAudit, JsonlFileAudit, WebhookAudit } from "mcp-sso";
+import { Bridge, combineAudit, JsonlFileAudit, RequestAuthorizer, WebhookAudit } from "mcp-sso";
 
 const audit = combineAudit(
   new JsonlFileAudit("/var/log/mcp-sso/audit.jsonl"), // source of truth (durable)
+  // Side channel. Delivery is at most once.
   new WebhookAudit("https://siem.example.com/services/collector", {
     headers: { Authorization: `Bearer ${process.env.SIEM_HEC_TOKEN}` },
-  }), // side-channel (at-most-once));
+  }),
+);
 
 const bridge = new Bridge({ config, store, clock, audit });
 const authorizer = new RequestAuthorizer({ config, clock, audit });
