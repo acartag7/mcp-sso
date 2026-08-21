@@ -21,7 +21,7 @@ contract:
 | MCP-version claims | [§16 Conformance matrix](contracts/16-spec-conformance-matrix.md) |
 | A v0.2 or v0.3 feature | [§17 Feature contracts](contracts/17-v0-2-feature-contracts.md) |
 
-Current release and conformance status: [verification status](verification.md#current-status).
+Current release and conformance status: [verification status](verification-status.md).
 
 ## Numbered contracts
 
