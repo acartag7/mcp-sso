@@ -19,6 +19,14 @@ MCP's answer is OAuth 2.1. That leaves a gap. An MCP client must identify itself
 
 Your identity provider's tokens stay between the provider and `mcp-sso`. The MCP client only ever holds a token that `mcp-sso` minted for your server.
 
+## Install
+
+```bash
+npm install mcp-sso
+```
+
+Node 24 or later. `jose` is the only runtime dependency. Fastify, Express, Hono, `mysql2`, `ioredis`, and `@fastify/rate-limit` are optional peer dependencies: install the ones you use.
+
 ## Try it on one machine
 
 This runs a local server that uses console pairing as the identity check. It listens on loopback and refuses a non-loopback host, issuer, or resource before it writes any state.
