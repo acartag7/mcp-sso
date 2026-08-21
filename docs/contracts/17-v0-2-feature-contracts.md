@@ -19,10 +19,10 @@ cimd?: {
   // fetcher from these caps + allowLoopback (dev.allowInsecureLocalhost only).
   maxDocumentBytes?: number;    // default 5120 (the draft's recommended 5 KB cap)
   fetchTimeoutMs?: number;      // default 5000, one wall-clock deadline, DNS→body
-  cacheTtlCapSeconds?: number;  // default 3600; effectiveTtl=min(max-age,cap)−Age−elapsed (§17.1.6 dec 4)
+  cacheTtlCapSeconds?: number;  // default 3600; effectiveTtl=min(max-age,cap)−Age−elapsed (§17.1.6 cache freshness)
   maxInFlight?: number;         // integer [1, 64], default 8 (global in-flight cap; §17.1.5 rule 21)
   maxWaitersPerFetch?: number;  // integer [1, 4096], default 256, callers parked on ONE in-flight fetch
-                                // (§17.1.6). Total waiters ≤ maxInFlight × maxWaitersPerFetch.
+                                // (§17.1.6). Total waiters ≤ maxInFlight × (maxWaitersPerFetch + 1).
 }
 ```
 

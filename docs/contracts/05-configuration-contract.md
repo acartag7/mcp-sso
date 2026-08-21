@@ -75,7 +75,7 @@ interface BridgeConfig {
     fetchTimeoutMs?: number;      // integer [1000, 30000], default 5000
     cacheTtlCapSeconds?: number;  // integer [60, 86400], default 3600
     maxInFlight?: number;         // integer [1, 64], default 8 (global in-flight cap)
-    maxWaitersPerFetch?: number;  // integer [1, 4096], default 256 (followers parked on ONE fetch; §17.1.6 dec 7)
+    maxWaitersPerFetch?: number;  // integer [1, 4096], default 256 (followers parked on one fetch; §17.1.6)
   };
 
   // --- TTLs (seconds); each MUST be a positive integer ---
