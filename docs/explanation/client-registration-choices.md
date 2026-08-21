@@ -38,6 +38,14 @@ Stored mode calls `ClientStore.save` after validation. Authorization later loads
 
 > [!WARNING] `OAUTH_DCR_MODE=stored` lets anonymous callers create durable records. Supply a bounded `RateLimitPort`. If `RateLimitPort.check` throws, `Bridge.handleRegister` returns 503 before it selects request fields or calls `ClientStore.save`.
 
+## Why CIMD does not accumulate old scopes
+
+Stored DCR records have a durable registration identity and generation. The bridge can bind previously granted scopes to that record and its configured resource.
+
+A CIMD client has no stored registration generation. Existing refresh records also do not record which CIMD document authorized them. Reusing scopes from an older URL-keyed record could therefore carry a grant from unrelated or pre-CIMD state into the current document.
+
+For that reason, each CIMD authorization starts with `priorScopes = []`. Supporting safe accumulation would require immutable registration provenance through authorization code creation, token exchange, refresh-family creation, rotation, and all three stores. The current `cimd_verified` consent claim proves only how the present authorization resolved its client; it does not identify an older refresh record.
+
 ## Example choices
 
 A hosted client that publishes `https://client.example/oauth.json` uses that exact URL as `client_id`. Its document must list the callback it presents.

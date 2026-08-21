@@ -9,7 +9,7 @@
 | RFC 8414 AS metadata | ✅ v0.1 | §9.1 |
 | RFC 7591 DCR (stateless) | ✅ implemented as a deprecated compatibility path. MCP 2026-07-28 retains DCR as `MAY` | §9.2 |
 | Stored-client DCR + `application_type` | ✅ server behavior aligns: raw values are validated, omission defaults to `"web"`, and stored per-type redirect policy is enforced. The final MCP `MUST` to send an appropriate value applies to clients | §9.2, §10.2 |
-| Redirect-entry grammar §10.0 (all nine consumers) | ✅ implemented, the nine-leg differential test passes across every consumer | §10.0, §10.1, §10.2, §17.1.5 rule 20, §17.1.6 dec 1c |
+| Redirect-entry grammar §10.0 (all nine consumers) | ✅ implemented, the nine-leg differential test passes across every consumer | §10.0, §10.1, §10.2, §17.1.5 redirect entries, §17.1.6 signed carry-forward |
 | PKCE S256 (timing-safe) | ✅ v0.1 | §7.5 |
 | RFC 8707 audience fail-closed | ✅ v0.1 | §7.2 |
 | RFC 9207 `iss` + `authorization_response_iss_parameter_supported` | ✅ metadata advertises support. Successful code responses and every library-owned authorization error redirect include the exact configured issuer. Direct errors remain unredirected | §9.1, §9.3 |

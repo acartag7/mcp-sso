@@ -16,6 +16,12 @@ GPT-5.6 Sol, Grok 4.5, and GLM 5.2 reviewed the CIMD security and flow rules. Th
 
 A patched-checkout campaign later exercised CIMD-first clients with Cloudflare Access, Entra ID, and Google. Its dirty tree was not archived, so it did not qualify as release evidence. On 2026-07-28, Claude Code 2.1.220 completed CIMD authorization and protected calls through runtime commit `af2a61f` with all three providers. The official final artifact was checked on 2026-08-02. Current release evidence is in [Verification status](../verification-status.md), and older receipts are in [Verification history](verification-history.md).
 
+## 2026-08-21 internal identifier cleanup
+
+The feature contract once exposed its implementation sequence as Decision 1 through Decision 7, with substeps 1a through 1e. The current contract names those behaviors directly: CIMD upstream redirect mode, client ID dispatch, anti-oracle ordering, signed carry-forward, callback consistency, direct and header mode test seams, consent provenance, shared cache freshness, guarded fetcher construction, overload handling, and the concurrent waiter bound.
+
+The old text also cited issues #90, #100, #106, and #247 as proof that adjacent implementation work had happened. Those issue numbers are development history, not product behavior. Current contracts now state the resulting checks and remaining work without requiring a reader to reconstruct an issue tracker.
+
 ## 2026-07-26 upstream-flow audience binding
 
 The upstream flow cookie originally used one deployment-wide audience. A multi-flow deployment could therefore accept a cookie minted by another configured flow. The contract changed the audience to `"mcp-sso/upstream-flow" + callbackPath`.

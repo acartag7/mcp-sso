@@ -34,6 +34,7 @@ Use this page to choose the type of information you need. Each linked file has o
 
 - [OAuth roles and flow](explanation/oauth-roles-and-flow.md)
 - [Client registration choices](explanation/client-registration-choices.md)
+- [CIMD fetch safety](explanation/cimd-fetch-safety.md)
 - [Rate limits and client IP trust](explanation/rate-limits-and-client-ip.md)
 - [Redirect URI trust](explanation/redirect-uri-trust.md)
 - [Authorization model](authorization.md)

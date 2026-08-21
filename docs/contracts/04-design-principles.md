@@ -9,7 +9,7 @@
 
 ## 4.1 Dynamic-key and parsed-record composition boundary
 
-> **CONTRACT ONLY, implementation is gated.** This is the bounded replacement for a rejected repo-wide own-property sweep. The frozen acceptance rows below land in their own PR before any implementation.
+> **CONTRACT ONLY, implementation is gated.** This is the bounded replacement for a rejected repo-wide own-property sweep. Add the frozen acceptance rows below before changing the implementation.
 
 This contract applies only when an externally controlled value is used as a property key, or when an untrusted parsed record is copied into another record. It does not require generic own-property parsing for fixed, statically named field reads.
 
@@ -26,6 +26,6 @@ The first bounded gates are:
 | Entra group→scope lookup (§17.4) | A verified group GUID can select only an own mapping entry or equivalent `Map` entry. An inherited match contributes no scopes | With groups present, no own mapped group, and empty `baseScopes`: `entra_no_mapped_groups` |
 | CIMD parsed document composition (§17.1.3) | The returned document is the named projection of `client_id`, `client_name`, and `redirect_uris`. The parsed source record is not exposed for a later spread/merge. Unknown `__proto__`/`constructor` members are ignored like other extensions | Malformed known members remain `document_invalid`. The unknown names alone do not reject an otherwise valid document |
 
-The Entra implementation already uses `Object.entries` plus `Map`. That is the compliant pattern and needs an acceptance pin, not a rewrite. Hono normalization and removal of CIMD's unused `raw` record are implementation-pending. Before either changes, a separate frozen-acceptance PR adds one polluted-prototype negative row (plus its ordinary positive control) for each table row. The implementation PR mutation-verifies each row independently.
+The Entra implementation already uses `Object.entries` plus `Map`. That is the compliant pattern and needs an acceptance pin, not a rewrite. Hono normalization and removal of CIMD's unused `raw` record are implementation-pending. Before either changes, add one polluted-prototype negative row and its ordinary positive control for each table row. Mutation-verify each row independently when implementing it.
 
 Pre-existing host-level prototype pollution and deliberately hostile in-process ports or adapters are outside the remote-attacker threat model: code already executing in-process can replace the verifier itself. This residual is explicit in threat-model row 34.
