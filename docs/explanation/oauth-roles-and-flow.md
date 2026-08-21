@@ -52,7 +52,7 @@ A request can stop before user login, after identity verification, at consent, d
 | --- | --- |
 | Client ID or redirect URI is invalid | Authorization returns a direct OAuth error. It does not redirect to an untrusted URI. |
 | Identity provider stops the user before callback | The provider shows its denial. mcp-sso receives no accepted identity and mints no authorization code. |
-| `IdentityPort` rejects the credential after the request reaches mcp-sso | `Bridge.resolveIdentity` returns a direct `401` response with `error=access_denied`. No authorization code is minted. |
+| `IdentityPort` rejects the credential after the request reaches mcp-sso | `Bridge.resolveIdentity` throws an `OAuthError` with `error=access_denied`. The Fastify, Express, and Hono routes catch it and return a direct `401`. A custom adapter must handle the throw on the same direct, pre-validation error path. No authorization code is minted. |
 | User denies consent | The client receives the consent denial through its validated redirect URI. |
 | Authorization code, PKCE verifier, client binding, or resource binding is wrong | `POST /oauth/token` returns `invalid_grant`. No access token is minted. |
 | Access token has the wrong audience or lacks a required scope | `RequestAuthorizer.authorize()` rejects the `/mcp` request. |

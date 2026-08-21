@@ -37,8 +37,8 @@ For example, `HTTPS://CLIENT.EXAMPLE:443/x/../oauth/callback` parses to the same
 | Client path | Match |
 | --- | --- |
 | Stateless DCR | Exact entry, trusted origin, or explicitly configured portless loopback origin |
-| Stored DCR with `application_type="web"` | Exact raw string from the stored registration |
-| Stored DCR with `application_type="native"` | Exact scheme, host, and path for a loopback URI. Queries are forbidden. The runtime port may differ. |
+| Stored DCR with `application_type="web"` | Every saved redirect must still pass the current `BridgeConfig.redirectAllowlist`. The presented URI must then equal the saved raw string. |
+| Stored DCR with `application_type="native"` | Every saved redirect must still pass the current `BridgeConfig.redirectAllowlist`. The presented loopback URI must then keep the saved scheme, host, and path. Queries are forbidden. The runtime port may differ. |
 | CIMD | Exact raw string. A validated loopback HTTP entry may vary only its port when `application_type` is `"native"` or absent. |
 
 The loopback port exception exists because native clients bind an available local port at runtime. It does not widen the host or path. A registration for `http://127.0.0.1/callback` does not match `http://127.0.0.1/other`.
@@ -47,4 +47,4 @@ The loopback port exception exists because native clients bind an available loca
 
 A record or signed token can outlive the code version that created it. Checking only at registration leaves pre-upgrade records, in-flight cookies, consent tokens, and authorization codes able to carry a redirect that the new grammar rejects.
 
-The repeated checks are stored-state siblings. Each consumer validates the value again before it redirects, persists a code, or mints a token. The archived [2026-08-17 implementation record](../archive/2026-08-17-redirect-entry-grammar.md) preserves the parser measurements that led to this design. [Contract §10](../contracts/10-redirect-uri-policy.md) is the current reference.
+The repeated checks are stored-state siblings. Each consumer validates the value again before it redirects, persists a code, or mints a token. Stored DCR authorization also rechecks the saved redirects against the current global allowlist, so removing an allowlist entry takes effect immediately. The archived [2026-08-17 implementation record](../archive/2026-08-17-redirect-entry-grammar.md) preserves the parser measurements that led to this design. [Contract §10](../contracts/10-redirect-uri-policy.md) is the current reference.

@@ -26,7 +26,7 @@ mcp-sso does **not** replace Gate 1. The upstream IdP owns enterprise identity, 
 
 ## Gate 1: IdP-side access control (primary)
 
-Gate 1 runs outside mcp-sso. Its failure path depends on the identity provider and deployment. Cloudflare Access can stop a denied account at the edge, before the request reaches mcp-sso, so mcp-sso writes no audit event. Entra can stop the browser at the provider. If an authorization request reaches mcp-sso without an accepted identity, `Bridge.resolveIdentity` returns a direct `401` response with `error=access_denied`.
+Gate 1 runs outside mcp-sso. Its failure path depends on the identity provider and deployment. Cloudflare Access can stop a denied account at the edge, before the request reaches mcp-sso, so mcp-sso writes no audit event. Entra can stop the browser at the provider. If an authorization request reaches mcp-sso without an accepted identity, `Bridge.resolveIdentity` throws an `OAuthError` with `error=access_denied`. The Fastify, Express, and Hono routes catch it and return a direct `401`. A custom adapter must handle the throw on the same direct, pre-validation error path.
 
 **Microsoft Entra ID**, two controls on the bridge's app registration:
 
