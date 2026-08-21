@@ -1,7 +1,7 @@
 # 4. Design principles
 
 - **Proven core behind generic ports.** The verifier + bridge logic is battle-tested OAuth, extracted behind framework-free ports so any host or adapter can use it without coupling to a specific framework or database.
-- **`StorePort` is the parity boundary.** The in-tree memory, sqlite, and mysql adapters (and **any further downstream SQL adapter**) must all satisfy the §12 invariants, that is exactly what  (documented rotation backfill) makes possible. Parity is asserted by the shared conformance suite, not by copying code.
+- **`StorePort` is the parity boundary.** The in-tree memory, sqlite, and mysql adapters, and any downstream SQL adapter, must satisfy the §12 invariants. During refresh-token rotation, each store copies `clientId`, `subject`, and `scopes` from the consumed row into the next row. §12 calls this behavior rotation backfill. The shared conformance suite checks parity; adapters do not copy one another's implementation.
 - **Identity is pluggable.** The core never depends on a specific IdP. An `IdentityPort` (§6.5) resolves the verified subject. Cloudflare Access, Entra ID, Google, generic OIDC, and console pairing provide concrete implementations.
 - **Fail-closed everywhere.** Ambiguous config, a missing identity, an unknown audience, or a replayed token is a hard failure, never a degraded default.
 
