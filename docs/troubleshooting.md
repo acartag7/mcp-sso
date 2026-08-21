@@ -1,9 +1,6 @@
 # Troubleshooting
 
-Operational gotchas hit while reproducing this repo's own verification steps —
-kept here because they cost real time to work out and aren't obvious from
-`cloudflared --help`. The live client conformance results these relate to are
-in [`live-verification.md`](live-verification.md).
+This guide covers failures found while running the repository's verification procedures. The [client compatibility reference](client-compatibility.md) records the results. The [live verification guide](live-verification.md) contains the procedures.
 
 Start from the symptom:
 
@@ -16,56 +13,28 @@ Start from the symptom:
 | A tunnel connects but the public URL returns an edge 404 | [Anonymous quick tunnels](#anonymous-quick-tunnels-404-at-the-edge) or [named-tunnel ingress](#named-tunnels-need-a-config-file-ingress-rule) |
 | A named tunnel loops on authentication | [Default config credential selection](#default-configyml-can-hijack-your-credentials) |
 
-For OAuth wire errors, configuration failures, and live-flow probes, also use
-the [configuration reference](configuration.md) and
-[live-verification checklist](live-verification.md).
+For OAuth wire errors, configuration failures, and live-flow probes, also use the [configuration reference](configuration.md) and [live-verification checklist](live-verification.md).
 
 ## SQLite persistent-state boot rejection
 
-`openSqliteStore` accepts exact `:memory:` or an ordinary filesystem path. A
-`file:` URI is rejected deliberately; replace it with the underlying path and
-remove URI query options. The parent directory must already exist and be
-private. On POSIX, verify its provenance, then use owner-only permissions (for
-example `chmod 700 <state-directory>`); an existing database must be the
-service user's regular, single-link file with exact mode `0600` (for example
-`chmod 600 <database>` only after verifying that it is the intended file).
+`openSqliteStore` accepts exact `:memory:` or an ordinary filesystem path. A `file:` URI is rejected deliberately. Replace it with the underlying path and remove URI query options. The parent directory must already exist and be private. On POSIX, verify its provenance, then use owner-only permissions (for example `chmod 700 <state-directory>`). An existing database must be the service user's regular, single-link file with exact mode `0600` (for example `chmod 600 <database>` only after verifying that it is the intended file).
 
-The store never chmods, deletes, truncates, or migrates a rejected existing
-object. A symlink, hard link, FIFO, socket, device, directory, unsafe ancestor,
-or attacker-writable immediate directory must be replaced with a real private
-directory and regular owner-only file. On Windows, apply an equivalent private
-directory ACL. The library does not inspect that ACL and prints one shared,
-fixed warning on the first call in each Windows Node worker/runtime instance to
-`loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, `ensureStateDir`,
-or persistent `openSqliteStore`; exact `:memory:` does not consume it. The
-warning does not claim POSIX permission enforcement there.
+The store never chmods, deletes, truncates, or migrates a rejected existing object. A symlink, hard link, FIFO, socket, device, directory, unsafe ancestor, or attacker-writable immediate directory must be replaced with a real private directory and regular owner-only file. On Windows, apply an equivalent private directory ACL. The library does not inspect that ACL and prints one shared, fixed warning on the first call in each Windows Node worker/runtime instance to `loadOrCreateQuickstartSecrets`, standalone `assertRealDir`, `ensureStateDir`, or persistent `openSqliteStore`. Exact `:memory:` does not consume it. The warning does not claim POSIX permission enforcement there.
 
 ## Native CLI registration
 
-Codex CLI registers an ephemeral native callback such as
-`http://localhost:1455/auth/callback`. An exact allowlist URI cannot predict its
-runtime port and path, so list both portless loopback hosts explicitly. Both
-runnable examples supply a bounded core limiter and admit this trust in
-stateless mode. For `examples/fastify-sqlite`, choose SQLite-backed stored mode
-when the registration must survive restart:
+Codex CLI registers an ephemeral native callback such as `http://localhost:1455/auth/callback`. An exact allowlist URI cannot predict its runtime port and path, so list both portless loopback hosts explicitly. Both runnable examples supply a bounded core limiter and admit this trust in stateless mode. For `examples/fastify-sqlite`, choose SQLite-backed stored mode when the registration must survive restart:
 
 ```dotenv
 OAUTH_DCR_MODE=stored
 OAUTH_REDIRECT_ALLOWLIST=https://your-app.example/callback,http://localhost,http://127.0.0.1
 ```
 
-Do not add a placeholder HTTPS callback. Stored DCR persists the concrete
-native callback saved for that client; stateless DCR persists no registration
-metadata and applies the global redirect allowlist at authorization. The API-key gateway example remains
-stateless and supports the same loopback callback with its finite process-local
-core port. The Fastify/SQLite example supplies that port automatically in every
-mode; multi-replica deployments use a shared port such as
-`mcp-sso/rate-limit/redis`.
+Do not add a placeholder HTTPS callback. Stored DCR persists the concrete native callback saved for that client. Stateless DCR persists no registration metadata and applies the global redirect allowlist at authorization. The API-key gateway example remains stateless and supports the same loopback callback with its finite process-local core port. The Fastify/SQLite example supplies that port automatically in every mode. Multi-replica deployments use a shared port such as `mcp-sso/rate-limit/redis`.
 
 ## Entra group authorization denials
 
-After Entra has authenticated the user, the redirect may contain
-`error=access_denied` and one of these fixed, library-authored descriptions:
+After Entra has authenticated the user, the redirect may contain `error=access_denied` and one of these fixed, library-authored descriptions:
 
 | Exact `error_description` | Cause | Remedy |
 | --- | --- | --- |
@@ -73,50 +42,29 @@ After Entra has authenticated the user, the redirect may contain
 | `Entra groups do not authorize this account for this resource` | Entra returned groups, but none of their object IDs matched `groupAuthorization.mapping`, and no `baseScopes` applied. | Add the intended group object ID to `mapping`, assign the user to an already-mapped group, or configure deliberate `baseScopes`. |
 | `Entra group claims exceed the supported limit; operator configuration is required` | Entra emitted a group-overage marker instead of the group list, so mcp-sso failed closed rather than dereferencing `_claim_sources`. | Set `groupMembershipClaims` to `ApplicationGroup` for direct assignments (requires Entra P1), or reduce the user's group sprawl below the claim limit. |
 
-Other identity failures retain `upstream identity verification failed`. Use the
-closed reason code on the `identity.verify` audit event for the operator-only
-detail; raw IdP `error` and `error_description` values are never copied to the
-client or logs.
+Other identity failures retain `upstream identity verification failed`. Use the closed reason code on the `identity.verify` audit event for the operator-only detail. Raw IdP `error` and `error_description` values are never copied to the client or logs.
 
 ## Codex CLI 0.144.1 callback regression
 
-On 2026-07-28 the installed Codex CLI 0.144.1 failed the OAuth callback when
-the authorization response included the RFC 9207 `iss` parameter. Historical
-Codex CLI verification remains valid, but current-version compatibility is
-pending an upstream resolution and retest. mcp-sso continues to emit `iss`
-through `redirectWithCode`; do not disable the protocol binding as a client
-workaround.
+Codex CLI 0.144.1 rejects the OAuth callback when the authorization response includes the RFC 9207 `iss` parameter. Upgrade the client. Codex CLI 0.148.0 completed the same callback with Cloudflare Access, Entra ID, and Google during the 2026-08-19 campaign. mcp-sso continues to emit `iss` through `redirectWithCode`; disabling that protocol binding is not a supported workaround. See the [current compatibility reference](client-compatibility.md) and [archived campaign receipts](archive/verification-history.md).
 
 ## Cloudflare tunnels (claude.ai custom-connector check)
 
 ### Anonymous quick tunnels 404 at the edge
 
-`cloudflared tunnel --url ...` with no account was unreliable, and is not what
-was ultimately used. Three independent quick tunnels each registered cleanly
-with Cloudflare's edge (zero errors in the connector log), and the same local
-server answered correctly over plain `http://localhost` throughout. But every
-public request through each tunnel's hostname returned a **404 straight from
-Cloudflare's edge**, never reaching the app.
+`cloudflared tunnel --url...` with no account was unreliable, and is not what was ultimately used. Three independent quick tunnels each registered cleanly with Cloudflare's edge (zero errors in the connector log), and the same local server answered correctly over plain `http://localhost` throughout. But every public request through each tunnel's hostname returned a **404 straight from Cloudflare's edge**, never reaching the app.
 
-A healthy backend, a healthy connector log, and an edge-level 404 together fit
-the anonymous quick tunnel's single-connector, no-redundancy design.
-`cloudflared`'s own CLI disclaims "no uptime guarantee" for these on every
-startup. This was **not** a bug in the OAuth/DCR code path — the Claude Code
-check verified successfully against the identical server.
+A healthy backend, a healthy connector log, and an edge-level 404 together fit the anonymous quick tunnel's single-connector, no-redundancy design. `cloudflared`'s own CLI disclaims "no uptime guarantee" for these on every startup. This was **not** a bug in the OAuth/DCR code path, the Claude Code check verified successfully against the identical server.
 
 ### Named tunnels need a config-file ingress rule
 
-What actually worked: a named (account-backed) tunnel on a real domain, with an
-explicit `ingress:` hostname rule in a config file — not the ad-hoc shortcut:
+What actually worked: a named (account-backed) tunnel on a real domain, with an explicit `ingress:` hostname rule in a config file, not the ad-hoc shortcut:
 
 ```text
 cloudflared tunnel run --url <url> <tunnel>   # clean edge-level 404, even named + fresh DNS
 ```
 
-The ad-hoc form produced clean edge-level 404s in this session even with a named
-tunnel and a brand-new DNS record. Switching to a config file with an explicit
-`hostname:` / `service:` rule (plus the required catch-all `http_status:404`)
-fixed it immediately. Prefer this form from the start:
+The ad-hoc form produced clean edge-level 404s in this session even with a named tunnel and a brand-new DNS record. Switching to a config file with an explicit `hostname:` / `service:` rule (plus the required catch-all `http_status:404`) fixed it immediately. Prefer this form from the start:
 
 ```yaml
 tunnel: <your-tunnel-id>
@@ -134,14 +82,9 @@ cloudflared tunnel --config tunnel-config.yml run
 
 ### Default config.yml can hijack your credentials
 
-If you already run other named tunnels on the same machine, `cloudflared`'s
-default `~/.cloudflared/config.yml` can silently override which credentials get
-used — even when you pass a *different* tunnel ID on the command line. The
-symptom is a confusing auth-retry loop (`control stream encountered a failure
-while serving`) that looks like a network problem, not a wrong-credentials one.
+If you already run other named tunnels on the same machine, `cloudflared`'s default `~/.cloudflared/config.yml` can silently override which credentials get used, even when you pass a *different* tunnel ID on the command line. The symptom is a confusing auth-retry loop (`control stream encountered a failure while serving`) that looks like a network problem, not a wrong-credentials one.
 
-Pass `--credentials-file` explicitly, or a full `--config`, to be sure which
-tunnel you're authenticating as:
+Pass `--credentials-file` explicitly, or a full `--config`, to be sure which tunnel you're authenticating as:
 
 ```bash
 cloudflared tunnel --credentials-file /path/to/<your-tunnel-id>.json \

@@ -1,10 +1,8 @@
 # 18. Contract-change protocol
 
-1. Update the relevant canonical contract section first
-   (port/schema/error/endpoint/TTL).
-2. If a runtime behavior changed, check the threat model and the store-conformance
-   invariants (§12) — and whether it affects memory/sqlite/mysql parity (and any
-   further downstream SQL adapter).
-3. Then change code; the conformance suite and unit tests must stay green.
-4. Never weaken a fail-closed control to make a test pass. If a test and a
-   fail-closed rule conflict, the rule wins; change the test (and document why).
+**What this protects and why.** The order of operations for changing any contract: update the section, then the threat model, then the code, never the reverse. It exists because the contract set, not the code, is what wins a disagreement.
+
+1. Update the relevant canonical contract section first (port/schema/error/endpoint/TTL).
+2. If a runtime behavior changed, check the threat model and the store-conformance invariants (§12), and whether it affects memory/sqlite/mysql parity (and any further downstream SQL adapter).
+3. Then change code. The conformance suite and unit tests must stay green.
+4. Never weaken a fail-closed control to make a test pass. If a test and a fail-closed rule conflict, the rule wins. Change the test (and document why).

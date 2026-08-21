@@ -98,10 +98,14 @@ test("bridge: full OAuth flow (metadata -> register -> authorize -> approve -> t
 
   const refreshed = await b.handleToken(req({ body: { grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId } }));
   assert.equal(refreshed.status, 200);
-  assert.notEqual((refreshed.body as { refresh_token: string }).refresh_token, refreshToken);
+  const successor = (refreshed.body as { refresh_token: string }).refresh_token;
+  assert.notEqual(successor, refreshToken);
 
   const revoked = await b.handleRevoke(req({ body: { token: refreshToken } }));
   assert.equal(revoked.status, 200);
+  const afterRevoke = await b.handleToken(req({ body: { grant_type: "refresh_token", refresh_token: successor, client_id: clientId } }));
+  assert.equal(afterRevoke.status, 400);
+  assert.equal((afterRevoke.body as { error: string }).error, "invalid_grant");
 });
 
 test("bridge: expiry collection uses the exact configured clock", async (t) => {

@@ -1,291 +1,36 @@
-# Live client verification matrix
+# Run live client verification
 
-The automated suite (`test/e2e-*.test.ts`, `test/integration-*.test.ts`) drives the
-full OAuth flow through the **official MCP SDK client**. Verifying against the
-real-world MCP clients people actually use (claude.ai, ChatGPT, Claude Code, curl)
-is a manual step, tracked in this file as a **provider × client matrix**. This is
-the single source of truth for live verification — the README's
-[Status](../README.md#status) section points here.
+Use this procedure to verify a release candidate with a real MCP client and a real identity provider. Read the [harness reference](reference/live-harness.md) for the checks each probe can establish.
 
-> **The rule for this table — never overclaim.** A row is `✅ verified` ONLY when the
-> named flow was actually driven against the named provider and client, and the
-> outcome recorded here with a date. `✅†` means "DCR/OAuth mechanics verified, but
-> NOT the production identity leg" (see the dagger note below). `⬜ unverified` rows
-> carry an exact owner-run checklist; they flip to `✅` **only when the owner runs
-> them** and appends the date + observed result. A session that did not drive a flow
-> MUST NOT mark it verified — leave it `⬜`. False green here is worse than an empty
-> row: people choose an identity provider based on these checkmarks.
+## Run an automated provider probe
 
-## What "verified" distinguishes
+Start from a clean checkout at the release candidate commit.
 
-Two things get conflated; this table keeps them separate:
+Run the named provider leg through `scripts/live/run.sh`. The exact arguments and private infrastructure variables are in `scripts/live/README.md`.
 
-1. **DCR/OAuth mechanics** — the client self-registers, the user sees a real
-   consent screen, the bridge mints + the client presents an audience-bound token,
-   the tool round-trips. This works regardless of the *identity* backend (a local
-   stub is enough).
-2. **The production identity leg** — the upstream IdP (Cloudflare Access / Entra /
-   etc.) actually authenticates the user and the bridge verifies THAT identity
-   fail-closed. This is what an enterprise deployment depends on.
+Confirm that the probe prints the runtime commit and reports every required check as passed. A run with `MCP_SSO_ALLOW_DIRTY=true` is not release evidence.
 
-The four rows verified on 2026-07-04 cover **(1)** only. Later dated provider
-rows cover **(2)**; remaining `⬜` rows still require their named owner-run
-checklist.
+Record the date, runtime commit, provider, probe result, and any limitation in [Verification status](verification-status.md). Move the previous result to the [verification archive](archive/verification-history.md) when the new run supersedes it.
 
-## Pre-release campaigns
+## Serve provider legs for MCP clients
 
-| Baseline | Evidence completed | Still pending |
-| --- | --- | --- |
-| Patched, uncommitted checkout based on `ee8994a` (2026-07-26/27) | Observed CIMD happy paths with Cloudflare Access, Entra ID, and Google; refresh rotation plus replay/family revocation; retained audit-log search found no backend credential. | Historical observation only: the exact dirty tree was neither committed nor archived, so this campaign does not satisfy the minimum live-row evidence contract and does not qualify as verified. |
-| Clean `main` at `e71a2bb` (2026-07-28) | Three metadata/tokenless-challenge probes and DCR registrations; Cloudflare Access path gating; Entra- and Google-configured gateways resolving a public CIMD document to their authorization redirects; CIMD rejection of literal IP, DNS rebinding, DNS failure, non-200 response, wrong content type, oversized body, and timeout. See the [sanitized receipt](#clean-main-rerun-receipt-2026-07-28). | Browser completion stopped before identity and consent; the exact-runtime campaign below completed those legs. |
-| Exact runtime commit `af2a61f` (2026-07-28) | Claude Code 2.1.220 completed CIMD authorization and protected `status` calls with Cloudflare Access, Entra ID, and Google. A corrected refresh harness proved A→B→C rotation, HTTP 400 `invalid_grant` on replayed A, then HTTP 400 `invalid_grant` on current C. Audit and retained client-result scans found zero backend-credential matches. See the [sanitized receipt](#exact-runtime-live-receipt-2026-07-28). | The claude.ai and ChatGPT CIMD observations were re-driven on a committed runtime in the 2026-08-19 campaign and are now verified rows. Of the Entra deny/ceiling cases, no-group, no-mapped-group, and group-overage were driven on 2026-08-19; wrong-tenant and allowlist are runner-expressible since #279 (through the marked `MCP_SSO_ENTRA_ALLOWED_TENANT_IDS` / `MCP_SSO_ENTRA_SUBJECT_ALLOWLIST` channels) but the drives themselves remain pending, as does guest/B2B. |
+Use `scripts/live/serve.sh` to start the configured legs and the named Cloudflare tunnel. Do not use `cloudflared tunnel --url` for release evidence.
 
-No secrets, tenant/team identifiers, provider subjects, or deployment URLs from
-these campaigns are retained in this public record.
+Wait for `serve.sh` to report readiness for each leg. The script stops if a child process dies or if another process takes a configured port.
 
-### Clean-main rerun receipt (2026-07-28)
+Run the matching rows in `scripts/live/CHECKLIST.md` from the MCP client. For each row, complete authorization, consent, a protected tool call, and the negative case named by the checklist.
 
-The partial rerun used a clean worktree at exact commit
-`e71a2bbaf6902f98502a788a8d1e4bfc604b9bbc`. Provider configuration was loaded
-from uncommitted private environment files; the retained public receipt contains
-no provider value or deployment URL.
+Record the client version, identity provider, registration method, DCR mode, runtime commit, result, and limitation in the [client compatibility reference](client-compatibility.md).
 
-| Probe | Observed result |
-| --- | --- |
-| Discovery and tokenless protected-resource request | All three configured gateways returned their metadata, then rejected a tokenless `/mcp` request with 401 and a `resource_metadata` challenge constructed by `buildUnauthorizedChallenge`. |
-| Dynamic registration | All three gateways returned 201 for a valid DCR registration. |
-| CIMD redirect entry | The Entra- and Google-configured gateways resolved the public CIMD document and redirected to their configured identity provider. This stopped before browser login and is not a provider happy-path claim. |
-| Cloudflare Access path gate | The public metadata, registration, token, and protected-resource paths remained reachable while the browser authorization path required the Access assertion. |
-| Guarded CIMD rejection | Authorization rejected literal-IP admission, DNS rebinding, DNS failure, non-200 response, wrong content type, body over 5 KiB, and timeout cases. These requests exercised `createGuardedFetcher` through the gateway authorization path. |
+## Verify Cloudflare Access
 
-### Exact-runtime live receipt (2026-07-28)
+Create a Cloudflare Access application for `/oauth/authorize*`. Keep `/.well-known/*`, `POST /oauth/register`, `POST /oauth/token`, `POST /oauth/revoke`, and `/mcp` outside the Access application. The MCP client calls those endpoints without a Cloudflare browser session.
 
-The three gateways ran from exact commit
-`af2a61f1aa772a7f3963acfa9dab15c47f676607`; its runtime code is identical to
-`e71a2bb` because the intervening changes are documentation and source comments
-only. Provider secrets and identifiers remained in private environment files.
+Set `CF_ACCESS_ISSUER` to `https://<team>.cloudflareaccess.com` without a trailing slash. Set `CF_ACCESS_AUDIENCE` to the application's Access AUD tag, not its hostname.
 
-| Probe | Observed result |
-| --- | --- |
-| Cloudflare Access CIMD | Claude Code 2.1.220 completed CIMD fetch, Access identity verification, consent approval, authorization-code exchange, and a protected `status` call. The audit `clientId` for the protected call was an HTTPS CIMD identifier. |
-| Entra ID CIMD | Claude Code 2.1.220 completed CIMD fetch, Entra identity verification, upstream callback, consent approval, authorization-code exchange, and a protected `status` call. The audit `clientId` for the protected call was an HTTPS CIMD identifier. |
-| Google CIMD | Claude Code 2.1.220 completed CIMD fetch, Google identity verification, upstream callback, consent approval, authorization-code exchange, and a protected `status` call. The audit `clientId` for the protected call was an HTTPS CIMD identifier. |
-| Refresh replay | A corrected harness required the full response shape: refresh A→B and B→C returned 200; replayed A returned HTTP 400 `invalid_grant`; current C then returned HTTP 400 `invalid_grant`, proving family revocation rather than a generic outage. |
-| Credential containment | All three retained `status` tool results contained only the expected `ok`, `backend`, and `via` fields and contained no backend key. Each provider's audit log also had zero backend-key matches. |
-
-## Matrix
-
-| Provider | Client | Flow driven | Status | Date | Caveat / environment |
-| --- | --- | --- | --- | --- | --- |
-| local stub identity | curl | full OAuth dance + tokenless 401 challenge | ✅ | 2026-07-04 | `examples/fastify-sqlite` locally; DCR/PKCE/consent/token mechanics. Identity was the example's stub; **not** a real-IdP identity leg. |
-| local stub identity | Official MCP SDK client | register→authorize→token→`/mcp`→refresh→replay-revoke→revoke | ✅ | 2026-07-04 | `test/e2e-mcp-sdk.test.ts` (automated; the current equivalent suite stays green). Stub identity; **not** a real-IdP identity leg. |
-| local stub identity | Claude Code | consent (correct scopes) + `ping` round-trip | ✅† | 2026-07-04 | `claude mcp add --transport http` against local `http://localhost`. Originally ran against `DEV_STUB_SUBJECT` (since removed — replaced by console pairing). Mechanics only. |
-| local stub identity | claude.ai (custom connector) | consent (correct scopes) + `ping` round-trip | ✅† | 2026-07-04 | Via a **named Cloudflare tunnel** (transport) on a real domain — see [`troubleshooting.md`](troubleshooting.md) for why ad-hoc `--url` tunnels are unreliable. Originally ran against `DEV_STUB_SUBJECT`. Mechanics only. |
-| Cloudflare Access (production identity leg) | Claude Code (CLI), Codex CLI, claude.ai, ChatGPT, Official MCP SDK client | full flow against CF-Access-injected identity; fail-closed on policy, allowlist, and bypass | ✅ | 2026-07-07 | Five clients completed register→authorize→consent→token→`/mcp`. A denied account was stopped at the Access edge; a gateway allowlist rejection and missing-assertion rejection were audit-confirmed. The Access application was path-scoped to the browser authorize leg. Wrong-`aud` rejection was suite-covered but not separately live-driven. Codex CLI success is historical; see the current-version caveat below. |
-| Cloudflare Access (production identity leg) | Claude Code 2.1.220 | CIMD `client_id`→authorize→Access identity→consent→token→`/mcp` `status` | ✅ | 2026-07-28 | Passed at exact runtime commit `af2a61f1aa772a7f3963acfa9dab15c47f676607`; audit-confirmed CIMD client ID and successful identity, approval, token exchange, and protected call. |
-| Google sign-in (production identity leg) | Claude Code (CLI), Official MCP SDK client | register→authorize→Google login→callback→consent→token→`/mcp` `ping`; tokenless 401; hosted-domain rejection | ✅ | 2026-07-10 | Both clients completed the flow. The stable provider subject was consistent per account and distinct across accounts; no subject values are published. An outside hosted-domain account was rejected before token minting. Google remains the only generic-OIDC-family provider live-driven; a second generic issuer is pending. |
-| Google sign-in (production identity leg) | Claude Code 2.1.220 | CIMD `client_id`→authorize→Google identity→consent→token→`/mcp` `status` | ✅ | 2026-07-28 | Passed at exact runtime commit `af2a61f1aa772a7f3963acfa9dab15c47f676607`; audit-confirmed CIMD client ID and successful identity, callback, approval, token exchange, and protected call. |
-| Google sign-in (production identity leg) | Owner browser + refresh harness | DCR→authorize→Google login→callback→consent→token; refresh A→B→C→replay A→reject current C | ✅ | 2026-07-28 | Passed at exact runtime commit `af2a61f1aa772a7f3963acfa9dab15c47f676607`; replayed A returned HTTP 400 `invalid_grant`, then current C returned HTTP 400 `invalid_grant`, proving family revocation. |
-| Entra ID (redirect flow, §17.11) | Claude Code | register→authorize→Entra login→consent→token→`/mcp` tools | ✅ | 2026-07-08 | The reproducible enterprise happy path used `mcp-sso@0.2.0`. See [`docs/field-report-api-key-gateway.md`](field-report-api-key-gateway.md). |
-| Entra ID (redirect flow, §17.11) | Claude Desktop | register→authorize→Entra login→consent→token→`/mcp` tools | ✅ | 2026-07-08 | The enterprise happy path completed with `mcp-sso@0.2.0`. |
-| Entra ID (redirect flow, §17.11) | Claude Code 2.1.220 | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` `status` | ✅ | 2026-07-28 | Passed at exact runtime commit `af2a61f1aa772a7f3963acfa9dab15c47f676607`; audit-confirmed CIMD client ID and successful identity, callback, approval, token exchange, and protected call. |
-| Entra ID (redirect flow, §17.11) | Owner browser + provider harness | wrong-tenant, allowlist, and guest/B2B outcomes | ⬜ | 2026-07-26/27 | Observed on the patched, uncommitted `ee8994a`-based checkout, whose exact tree was not archived. These three cases still require a clean-main run; wrong-tenant and allowlist are expressible through the runner's marked `MCP_SSO_ENTRA_*` channels since #279. The group-overage, no-group, and no-mapped-group cases of this sweep were driven separately and are recorded in the row below; this row is NOT verified by that campaign. |
-| Entra ID (redirect flow, §17.11) | Owner browser, three provisioned deny fixtures | no-group, no-mapped-group, and group-overage denials through the real provider | ✅ | 2026-08-19 | Driven at exact runtime commit `d6143b3`. Each fixture produced its own audit reason exactly once — `entra_no_groups`, `entra_no_mapped_groups`, `entra_groups_overage` — proving the three denials are distinct server-side decisions rather than one generic rejection. The audit records reason codes, not the client-facing sentences, so the distinctness claim is about the codes. Covers only these three of the six cases named in the row above. |
-| Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ✅ | 2026-08-19 | Completed at exact runtime commit `d6143b3` against the tunnelled `entra` leg. |
-| Entra ID (redirect flow, §17.11) | ChatGPT (custom connector) | CIMD `client_id`→authorize→Entra identity→consent→token→`/mcp` | ✅ | 2026-08-19 | Completed at exact runtime commit `d6143b3` against the tunnelled `entra` leg. A client caveat: ChatGPT reports a denial only as a cancelled connection, so deny-leg results must be read from the audit trail, never the client UI. |
-| Cloudflare Access | ChatGPT custom connector | consent + tool round-trip | ✅ | 2026-07-07 | ChatGPT completed register→authorize→consent→token→`/mcp` `ping` against the same sanitized Cloudflare Access deployment. |
-| Cloudflare Access / Entra / Google | Claude Code 2.1.220 + **api-key-gateway example** | full CIMD proxied round trip: client → gateway → token-only backend | ✅ | 2026-07-28 | All three `status` calls returned the expected allowlisted response shape at exact runtime commit `af2a61f1aa772a7f3963acfa9dab15c47f676607`; retained client results and all three audit logs had zero backend-key matches. |
-| Cloudflare Access, Entra ID, Google (all three production identity legs) | Claude Code, Codex CLI, claude.ai connector (all three legs); ChatGPT connector (Cloudflare Access and Entra only) | register (CIMD and DCR) → authorize → provider identity → consent → token → `/mcp`; refresh rotation and revocation exercised | ✅ | 2026-08-19 | Full client matrix at exact runtime commit `d6143b3`, three legs behind one named tunnel via `scripts/live/serve.sh`. Eleven complete flows, not twelve: four on Cloudflare Access, four on Entra, three on Google. **Google × ChatGPT was not driven** — `scripts/live/CHECKLIST.md` carries ChatGPT rows for Cloudflare Access and Entra only — so no ChatGPT result is claimed for the Google leg — each audit-confirmed as approve→token. A non-admitted Cloudflare account was stopped at the Access edge with **no** audit row on the gateway, which is that case's pass condition. `oauth.token.refresh` on all three legs and `oauth.revoke` on Entra were exercised by the clients unprompted. |
-| Entra ID (redirect flow, §17.11) | claude.ai (custom connector) | stateless-DCR deployment: CIMD `client_id`→authorize→Entra identity→consent→token→refresh→`/mcp` | ✅ | 2026-08-19 | Driven at exact runtime commit `8c08c36` — a pre-merge commit of `docs/live-client-matrix-receipts`, squash-merged to `main` as `7909642`; the two trees differ only in this receipts document, so `7909642` carries the identical runtime — with `OAUTH_DCR_MODE=stateless` and loopback de-allowlisted, which is the only way that mode boots (#280). Audit shows one `oauth.cimd.fetch` and **zero** `oauth.register`: this row establishes that a stateless-configured deployment serves a complete flow, **not** that the stateless DCR registration path works. The consent page rendered the client's self-reported name marked unverified. |
-
-**Codex CLI regression — retested and clear (2026-08-19):** the 0.144.1 client
-observed on 2026-07-28 showed an RFC 9207 `iss` callback regression. Codex CLI
-completed all three identity legs at exact runtime commit `d6143b3`, so the
-regression does not reproduce on the client build that was driven. Two variables
-moved between the two observations — this library and the client — so a clear
-result is **not** evidence that a change here fixed it.
-
-Client builds driven: Codex CLI `0.148.0` (a stable release, supplied by the
-operator — the clients were driven from a different machine than the one holding
-this checkout, so it is recorded on that authority rather than from a local
-install) and Claude Code `2.1.235`. Because `0.148.0` is a stable release, the
-0.144.1 regression is cleared on the stable channel and not only on a
-pre-release.
-
-**Registration mode driven (2026-08-19):** the client matrix ran
-`OAUTH_DCR_MODE=stored` with CIMD enabled. A stateless-configured leg was then
-driven separately and is recorded in the matrix, but note what that row does and
-does not establish: claude.ai authenticated through CIMD, so the audit shows one
-`oauth.cimd.fetch` and **zero** `oauth.register` events. The deployment booted
-and served a full flow under stateless configuration; the stateless **DCR
-registration path itself was not exercised.**
-
-That path is not merely untested — it is unreachable through this harness. DCR is
-used by CLI clients over loopback callbacks, and stateless refuses to boot while a
-generic loopback entry is allowlisted without a bounded limiter, which the example
-supplies only in stored mode (issue #280). The hosted connectors both use CIMD, so
-no available client performs DCR over an HTTPS callback. Until #280 is resolved,
-the mode difference in #278 can be shown at bridge level only.
-
-**Source correction (2026-08-21):** the paragraph above remains the limitation
-of the 2026-08-19 evidence and published v0.4.0, but issue #280 is now resolved
-in the source tree. Both examples and the live preflight supply the bounded core
-limiter in stateless mode, so stateless + generic loopback boots and the #278
-mode differential is reachable through the harness. No live row claims that
-result yet; it remains pending until a real CLI run records stateless DCR.
-
-Neither registration surface can be switched off in the shipped example, so only
-one of the three intended registration shapes is reachable through it. CIMD +
-DCR is driven above. **CIMD-only** needs a `dcr.mode` that can be disabled
-(#152). **DCR-only** is supported by the library — `cimd` is optional and the
-`cimd off` cells are covered in `test/release-registration-matrix.test.ts`, where
-a CIMD client id is refused rather than routed to DCR — but the example hardcodes
-`cimd.enabled` at two composition sites, so it cannot be configured (#281).
-
-### † Dagger note (the four 2026-07-04 rows)
-
-These four rows verify the **DCR/OAuth mechanics, not the production identity leg.**
-At verification time the example used `DEV_STUB_SUBJECT`, a dev bypass that let the
-OAuth dance complete with no real identity provider (MCP clients don't send
-`Cf-Access-Jwt-Assertion` on their own). `DEV_STUB_SUBJECT` is now **removed** —
-replaced by console pairing
-([§17.5](contracts/17-v0-2-feature-contracts.md#175-console-pairing-identity-zero-idp-setup))
-— and the same DCR/OAuth
-mechanics are covered by the automated e2e (`test/e2e-pairing.test.ts`). The real
-Cloudflare Access identity check — header-injected, fail-closed — is now live-verified
-across Claude Code (CLI), Codex CLI, claude.ai, ChatGPT, and the official MCP SDK
-client (matrix row above, 2026-07-07). Console pairing is for
-single-operator/private-console deployments only; **never expose it on a public URL**
-(it erases per-user attribution — see [`gateway-deployment.md`](gateway-deployment.md)).
-
----
-
-## Executable probe harness
-
-`scripts/live/` is the runnable harness: `run.sh` pulls one leg's values from
-the OpenTofu stacks and executes an allowlisted entry, `probe-*.mjs` drive one
-subject each against the shipped `examples/fastify-sqlite` app, `serve.sh`
-exposes one or more legs behind the named tunnel for real MCP clients, and
-`CHECKLIST.md` is the client × leg matrix a human runs against it. Its own
-record is [`scripts/live/README.md`](../scripts/live/README.md); the harness
-changes and its record change in the same pull request. **A harness is not
-evidence.** A matrix row above flips only when the owner runs the probe or the
-checklist against real provider infrastructure and records the observed result
-— running the test suite proves the harness is wired, never that a provider
-accepted anything.
-
-| Harness | Drives | Evidence it can establish | Live-run status |
-| --- | --- | --- | --- |
-| `probe-cloudflare.mjs` | Cloudflare Access | a provider-signed assertion reaches consent; a missing assertion and an attacker signature under the provider key ID are both refused | not run in this change: `run.sh` at `4290b0f` stopped, as designed, at minting the assertion — it needs the operator's own Access login (`cloudflared access login`) first |
-| `probe-entra.mjs` | Entra ID | tenant discovery resolves to the expected JWKS with usable RS256 keys; the authorize redirect targets exactly the discovered endpoint and carries the expected upstream cookie profile; one local group-denial control | 13 live checks and the local control passed on 2026-08-19 through `run.sh` at runtime commit `4290b0f` (the record commit after it is documentation only) |
-| `probe-google.mjs` | Google sign-in | discovery is validated through the shipped resolver before its JWKS is followed; the authorize redirect targets exactly the validated endpoint | 11 live checks passed on 2026-08-19 through `run.sh` at runtime commit `4290b0f` |
-| `probe-e2e.mjs` | the shipped example composition, headless, with a probe-local identity port | The exact `MCP_SSO_DCR_MODE` reaches the built app: after DCR, an unknown opaque client is refused in stored mode and admitted against the global redirect allowlist in stateless mode, exposing the #278 differential rather than trusting the preflight knob. Both modes prove authorization code, refresh rotation, then the replayed predecessor AND its live successor both refused as `invalid_grant` (replay-detection family revocation, not one dead token), `/oauth/revoke` observed as `invalid_grant` on a second family, an official MCP SDK user-token tool call, the tokenless RFC 9728 challenge, the §17.10 Redis limiter, exact matching JSONL/webhook sequences, and credential non-publication. Machine-client rows run only in stored mode, where §17.2 is compatible: provision, mint, official-SDK use, wrong-secret refusal, and disabled-client refusal against a process-local machine store (no shipped store implements the atomic extension). Stateless runs make no machine-client claim; no identity-provider claim in either mode. | 43 stored-mode checks passed on 2026-08-19 through `run.sh` at runtime commit `4290b0f`, against a local Redis. That historical run predates the mode-selection harness change and does not establish stateless behavior. Current `test/live-e2e-probe.test.mjs` spawns both modes in CI against the Redis service; a live stateless run remains pending. |
-
-The 2026-08-19 probe runs in this table name exact runtime commit `4290b0f`, a
-pre-merge commit of the harness branch that PR #276 squash-merged to `main` as
-`d6143b3`; the two trees differ only in this receipts document, so `d6143b3`
-carries the identical runtime.
-
-Each provider probe requires its credentials out of band, and none writes a
-credential or provider identifier to output. Each provider probe builds the
-example against a disposable state directory the library itself creates
-(`ensureStateDir` refuses a pre-existing directory without its managed
-`.gitignore`, so the temp container is never the state directory), and
-`probe-e2e.mjs` composes the example app against a disposable temp directory;
-every probe disposes of the app, the store, and that directory on every exit
-path, so a run never mutates the deployment it is verifying. Each validates its
-DCR callback against the effective redirect allowlist before any provider I/O.
-Every probe either exercises what a row claims or reports `FAIL`; none reports
-`SKIP`.
-
-`run.sh` names the runtime commit and refuses a checkout with uncommitted
-tracked changes (a run declared non-evidence with `MCP_SSO_ALLOW_DIRTY=true`
-says so on stderr), switches off inherited shell tracing before any secret is
-handled, and hands the entry an allowlisted environment — exactly the
-variables it assembled plus `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL` (the
-server also `PORT` and `HOST=127.0.0.1`, loopback only) — so nothing
-inherited (a stale selector, an OAuth override, `HOST`,
-`MCP_SSO_TRUSTED_PROXIES`, `NODE_OPTIONS`) can choose a leg or reshape the run,
-and its own helper processes run under the same minimal environment; validates
-that exact environment through every pre-state gate the example itself runs
-plus the leg's shipped identity constructor before it touches state; reads the
-Google credential file through one descriptor as owner-only data rather than
-sourcing it; hands `probe-e2e.mjs` no provider credential at all; and refuses a
-symlinked or shared `.live-state` parent before rotating a previous leg's state
-to `<leg>.previous` — only a leaf holding an `audit.jsonl` is rotated, so a
-failed start and its retry never cost the last successful run's evidence —
-stopping when that rotation fails. `serve.sh` bounds each leg's readiness wait by wall clock (`MCP_SSO_READINESS_SECONDS`, default 60) rather than by poll count, accepts readiness only from the process it
-started (`lsof` must report that child as the only listener) and re-proves that
-ownership immediately before exposing the tunnel, aborts when a server fails or
-times out during startup, refuses a leg named twice or two
-legs sharing a hostname or port, supervises the tunnel and every server so a
-signal to the script itself still runs cleanup — bounded, so a child that
-ignores termination is killed rather than stalling it — and a server that dies,
-or whose port changes hands, while serving stops the run, and signals only its own children on exit. These properties are exercised by `test/live-run-script.test.mjs` and
-`test/live-serve-script.test.mjs`, which spawn the shipped scripts against
-fixture infrastructure, and `test/live-e2e-probe.test.mjs`, which spawns the
-end-to-end probe.
-
-### Provisioning — the environment is infrastructure-as-code, not hand-built
-
-The identity providers, hostnames, tunnel ports, and test users the harness
-needs are **provisioned by OpenTofu stacks in a separate private repository**,
-one stack per provider leg. Nothing is assembled by hand, and no provider
-secret is stored in this repository or read from a developer's shell profile.
-
-| What the harness needs | Where it comes from |
-| --- | --- |
-| `CF_ACCESS_ISSUER`, `CF_ACCESS_AUDIENCE`, `CF_ACCESS_CERTS_URL` | Cloudflare stack outputs |
-| Public issuer origin + tunnel ingress port, per leg | Cloudflare stack outputs, keyed by leg so legs run side by side |
-| Entra tenant, client id, client secret, redirect URI | Entra stack outputs, read by `run.sh` at run time; the secret is read as a sensitive output and exported only into the allowlisted entry |
-| `ENTRA_GROUP_AUTHORIZATION_JSON` | the Entra stack's group-authorization mapping output, wrapped as `{"mapping": …}` with no `baseScopes` |
-| Deny-leg fixtures — an unmapped group, a group-overage user, a no-group user, a cross-tenant guest | Entra stack outputs; the negative legs are provisioned, not improvised |
-| Google client id and secret | a private owner-only `KEY=VALUE` file that `run.sh` reads as data (`scripts/live/README.md`) |
-
-Two rules make this reproducible rather than a one-off: the mapping is fed in
-through configuration, never by patching source (a run that edits library or
-example code to make a leg pass has verified the patch, not the release); and
-provider credentials reach the process from the stack outputs for the duration
-of the run through `run.sh`, and every probe's output guards keep them out of
-the evidence it prints. The stack handles, repository path, and tunnel id are supplied
-through `MCP_SSO_*` environment variables and recorded in the maintainer's
-project memory, because they name private infrastructure. Everything a run
-*observes* — reason codes, statuses, flows — is public and belongs in the
-matrix above.
-
----
-
-## Owner-run checklists
-
-These repeatable procedures produced the dated matrix evidence above and remain
-the gate for any pending clean-main rerun. A new `⬜` row flips only after the
-owner records the observed result and caveat in the matrix.
-
-### A — Cloudflare Access (production identity leg) × a live client
-
-The goal: prove a real MCP client completes the flow when Cloudflare Access — not a
-local stub — is the identity source, and that a user NOT in the Access policy is
-rejected.
-
-**Create the Access application path-scoped to `/oauth/authorize*` — not the whole
-hostname.** CF Access is the assertion-injecting proxy for the *browser authorize leg
-only*: it must inject `Cf-Access-Jwt-Assertion` on `/oauth/authorize` (the consent
-`/oauth/authorize/approve` is authenticated by the signed `consent_token`, not the CF
-JWT — gating it under `/oauth/authorize*` is optional session-coherence defense-in-depth,
-not required for the flow). The API paths the MCP client calls server-side —
-`/.well-known/*`, `/oauth/register`, `/oauth/token`, `/oauth/revoke`, and `/mcp` (which
-is protected by the bridge's own audience-bound token) — must stay **public**. A
-whole-hostname Access app gates `/mcp` and `/oauth/token` too, so the client's
-no-cookie requests get a login redirect instead of reaching the verifier and the flow
-cannot complete. (Verified the hard way on 2026-07-07: a whole-hostname app returned
-`302 → login` on every path; rescoping to `/oauth/authorize` + `/oauth/authorize/approve`
-left only the authorize leg gated and the flow completed.) Two capture landmines when
-filling the env below: `CF_ACCESS_ISSUER` is `https://<team>.cloudflareaccess.com` with
-**no trailing slash** (jose matches `iss` exactly); `CF_ACCESS_AUDIENCE` is the app's
-hex **AUD tag**, not the hostname.
+Start the Fastify and SQLite example:
 
 ```bash
-# 1. Real signing material + the Cloudflare Access production path on a public https origin:
 OAUTH_ISSUER=https://<your-host> \
 OAUTH_RESOURCE=https://<your-host>/mcp \
 OAUTH_CONSENT_SIGNING_SECRET=$(openssl rand -hex 32) \
@@ -294,96 +39,54 @@ CF_ACCESS_AUDIENCE=<your-app-aud> \
 CF_ACCESS_CERTS_URL=https://<team>.cloudflareaccess.com/cdn-cgi/access/certs \
 CF_ACCESS_ISSUER=https://<team>.cloudflareaccess.com \
 CF_ACCESS_EMAIL_ALLOWLIST=you@example.com \
-node examples/fastify-sqlite/index.ts &
-
-# 2. Expose it via a NAMED Cloudflare tunnel (ad-hoc --url tunnels are unreliable —
-#    see docs/troubleshooting.md):
-cloudflared tunnel route dns <tunnel-id> <your-host>
-cloudflared tunnel --config tunnel-config.yml run
-
-# 3. In the client (Claude Code: `claude mcp add --transport http`; claude.ai: add a
-#    custom connector), point at https://<your-host>/mcp. You should hit the Cloudflare
-#    Access sign-in first; after Access approves you, the mcp-sso consent screen appears;
-#    approve; the tool is callable.
+node examples/fastify-sqlite/index.ts
 ```
 
-**Flips to ✅ when:** a user in the Access policy completes the flow and a tool
-round-trips; AND a user NOT in the policy (or with a wrong-audience/`aud` Access JWT)
-is rejected (fail-closed, direct 401 — never a bypass). Record the date + the Access
-policy shape.
-
-### B — Entra ID (redirect flow) × a live client
-
-The goal: prove the §17.11 upstream redirect-leg orchestrator (`createEntraRedirectIdentity`)
-works against a real Entra tenant, end-to-end through a browser, with a live MCP client.
-
-- Register an Entra app; note `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`,
-  and set `ENTRA_REDIRECT_URI=https://<your-host>/callback` (the orchestrator boot-asserts
-  `identity.redirectUri === originOf(OAUTH_ISSUER) + callbackPath`; `/callback` here is the
-  path you choose — the examples derive `callbackPath` from the URI's pathname).
-- Use the api-key-gateway example (or fastify-sqlite) with `ENTRA_TENANT_ID` set, on a
-  public https origin behind a named tunnel.
-- In Claude Code / claude.ai, point at `https://<your-host>/mcp`. The mcp-sso authorize
-  route redirects to Entra; after Entra sign-in + consent, the mcp-sso consent screen
-  appears; approve; the tool is callable.
-
-**Flips to ✅ when:** a real Entra user completes the redirect flow through a browser
-and a tool round-trips; AND a user outside `ENTRA_SUBJECT_ALLOWLIST` / the wrong tenant
-is rejected. The redirect-mechanics checklist is at the top of
-`src/identity/entra-redirect.ts`; the deny, group-overage, and guest/B2B checklist
-is at the top of `src/identity/entra.ts`. Record both before claiming the combined
-provider flow and deny sweep live-complete.
-
-### C — ChatGPT (custom connector) × a live client
-
-The goal: repeat the historically completed ChatGPT custom-connector flow against
-the release candidate. Pick **Cloudflare Access or Entra** as the identity backend
-(do not use console pairing on a public URL).
-
-- Stand up the example on a public https origin behind a named tunnel, with a real IdP
-  (checklist A or B).
-- In ChatGPT, add the connector at `https://<your-host>/mcp`; complete the OAuth flow;
-  call a tool.
-
-**Completion evidence:** ChatGPT identifies through an HTTPS CIMD `client_id` or
-completes DCR registration, matching the mode named in the matrix row, then
-completes authorization, consent, and a tool round-trip. Record which IdP was
-used.
-
-### D — api-key-gateway example × a live client
-
-The goal: prove the worked gateway example (`examples/api-key-gateway/`) runs standalone
-and that the backend credential is genuinely injected server-side and never reaches the
-client — observed through a real MCP client, not just the automated test.
+Expose the server through the named tunnel:
 
 ```bash
-# 1. Set the backend credential (the static key the gateway injects for the backend):
-BACKEND_API_KEY=$(openssl rand -hex 32) \
-node examples/api-key-gateway/index.ts
-#    → prints the gateway URL + the backend it proxies to; identity is console pairing
-#      (paste the one-time code) by default. For a multi-user run, use the CF Access or
-#      Entra or Google env-switch instead (docs/gateway-deployment.md).
-
-# 2. In Claude Code: claude mcp add --transport http gw http://localhost:3000/mcp
-#    → consent; call the `status` tool; the response comes from the BACKEND through the
-#      gateway (the backend's marker proves the proxy round trip).
-
-# 3. Verify the backend credential never leaked: it is NOT in the client, NOT in any
-#      response the client saw, NOT in ./.mcp-sso/audit.jsonl (the default state dir
-#      when MCP_SSO_DIR is unset and the server is started from the repo root).
-#      (The automated test test/integration-gateway.test.ts asserts this probe already;
-#      the live run confirms it against a real client.)
+cloudflared tunnel route dns <tunnel-id> <your-host>
+cloudflared tunnel --config tunnel-config.yml run
 ```
 
-**Completion evidence:** a real client completes the flow through the gateway, a
-proxied backend tool round-trips, and a manual check confirms the backend
-credential appears in no client-visible output. Record the identity backend used
-(console pairing / Cloudflare Access / Entra / Google) in the matrix row.
+Point the MCP client at `https://<your-host>/mcp`. Complete the Access login, approve the `mcp-sso` consent request, and call a tool.
 
----
+Repeat the request with an account outside the Access policy or with a wrong-audience assertion. The request must stop before consent.
 
-## Tunnel note
+## Verify Microsoft Entra ID
 
-Anonymous quick tunnels (`cloudflared tunnel --url`) are unreliable for OAuth callback
-flows; use a **named tunnel** with an explicit `ingress:` config. Full write-up:
-[`troubleshooting.md`](troubleshooting.md).
+Register an Entra application. Set `ENTRA_REDIRECT_URI` to `https://<your-host>/<callback-path>`. The callback path must match the path mounted by `createUpstreamRedirectFlow`.
+
+Start either runnable example with `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, and `ENTRA_REDIRECT_URI`.
+
+Point the MCP client at `https://<your-host>/mcp`. Complete the Entra login, approve the `mcp-sso` consent request, and call a tool.
+
+Run the wrong-tenant, subject-allowlist, group-overage, no-group, and no-mapped-group cases from `scripts/live/CHECKLIST.md`. Record the audit reason for each denial. The harness feeds the group mapping through `ENTRA_GROUP_AUTHORIZATION_JSON` as `{"mapping": …}` with no `baseScopes`; that empty `baseScopes` is why the no-group fixture produces `entra_no_groups` rather than a default grant, so record the mapping shape with the result. The guest or B2B rejection case is not in `CHECKLIST.md`; the checklist at the top of `src/identity/entra.ts` enumerates it, and [Verification status](verification-status.md) lists it as a remaining live gap until someone drives it.
+
+## Verify ChatGPT
+
+Serve either the Cloudflare Access or Entra leg on a public HTTPS origin. Do not use console pairing on a public URL.
+
+Add a ChatGPT custom connector for `https://<your-host>/mcp`. Complete authorization and call a tool.
+
+Record whether ChatGPT used CIMD or `POST /oauth/register`. Also record the identity provider and the DCR mode.
+
+## Verify the API-key gateway
+
+Start the gateway with a generated backend credential:
+
+```bash
+BACKEND_API_KEY=$(openssl rand -hex 32) node examples/api-key-gateway/index.ts
+```
+
+Add it to Claude Code:
+
+```bash
+claude mcp add --transport http gw http://localhost:3000/mcp
+```
+
+Complete console pairing and consent. Call the `status` tool and confirm that the response contains the backend marker.
+
+Search the client output, responses, and `./.mcp-sso/audit.jsonl` for the backend credential. The credential must not appear.
+
+For a multi-user run, configure Cloudflare Access, Entra, Google, or generic OIDC instead of console pairing.

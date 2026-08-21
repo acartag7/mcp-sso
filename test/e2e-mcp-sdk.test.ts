@@ -62,18 +62,19 @@ test("e2e: register -> authorize -> token -> /mcp (official SDK client) -> refre
     assert.equal(reg.statusCode, 201);
     const clientId = reg.json<{ client_id: string }>().client_id;
 
-    const authPage = await app.inject({ method: "GET", url: `/oauth/authorize?${new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1" })}`, headers: { [IDENTITY_HEADER]: STUB_TOKEN } });
-    assert.equal(authPage.statusCode, 200);
-    const consentToken = extractConsentToken(authPage.body);
-
-    const approve = await app.inject({ method: "POST", url: "/oauth/authorize/approve", headers: { "content-type": "application/x-www-form-urlencoded", origin: ISSUER }, payload: new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString() });
-    assert.equal(approve.statusCode, 302);
-    const code = new URL(approve.headers.location as string).searchParams.get("code");
-    assert.ok(code);
-
-    const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: code as string, redirect_uri: REDIRECT, client_id: clientId, code_verifier: verifier }).toString() });
-    assert.equal(tokenResp.statusCode, 200);
-    const { access_token: accessToken, refresh_token: refreshToken } = tokenResp.json<{ access_token: string; refresh_token: string }>();
+    const authorizationCodeGrant = async (grantVerifier: string, state: string) => {
+      const authPage = await app.inject({ method: "GET", url: `/oauth/authorize?${new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: REDIRECT, code_challenge: pkceChallenge(grantVerifier), code_challenge_method: "S256", scope: "mcp:read", state })}`, headers: { [IDENTITY_HEADER]: STUB_TOKEN } });
+      assert.equal(authPage.statusCode, 200);
+      const consentToken = extractConsentToken(authPage.body);
+      const approve = await app.inject({ method: "POST", url: "/oauth/authorize/approve", headers: { "content-type": "application/x-www-form-urlencoded", origin: ISSUER }, payload: new URLSearchParams({ consent_token: consentToken, approved: "true" }).toString() });
+      assert.equal(approve.statusCode, 302);
+      const code = new URL(approve.headers.location as string).searchParams.get("code");
+      assert.ok(code);
+      const tokenResp = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "authorization_code", code: code as string, redirect_uri: REDIRECT, client_id: clientId, code_verifier: grantVerifier }).toString() });
+      assert.equal(tokenResp.statusCode, 200);
+      return tokenResp.json<{ access_token: string; refresh_token: string }>();
+    };
+    const { access_token: accessToken, refresh_token: refreshToken } = await authorizationCodeGrant(verifier, "s1");
 
     // --- /mcp call via the OFFICIAL MCP SDK client over a REAL loopback socket,
     //     presenting the bridge-minted token. (The inject-mock socket lacks
@@ -106,8 +107,12 @@ test("e2e: register -> authorize -> token -> /mcp (official SDK client) -> refre
     const afterReplay = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: newRefresh, client_id: clientId }).toString() });
     assert.equal(afterReplay.statusCode, 400); // the rotated successor is dead too (family revoked)
 
-    const revoke = await app.inject({ method: "POST", url: "/oauth/revoke", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ token: newRefresh }).toString() });
+    const revocable = await authorizationCodeGrant("revocation-family-verifier-0123456789abcdef012345678901", "s2");
+    const revoke = await app.inject({ method: "POST", url: "/oauth/revoke", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ token: revocable.refresh_token }).toString() });
     assert.equal(revoke.statusCode, 200); // RFC 7009: always 200
+    const afterRevoke = await app.inject({ method: "POST", url: "/oauth/token", headers: { "content-type": "application/x-www-form-urlencoded" }, payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: revocable.refresh_token, client_id: clientId }).toString() });
+    assert.equal(afterRevoke.statusCode, 400);
+    assert.equal(afterRevoke.json<{ error: string }>().error, "invalid_grant");
   } finally {
     await app.close();
     await store.close();
