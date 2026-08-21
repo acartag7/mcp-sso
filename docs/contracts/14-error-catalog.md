@@ -16,8 +16,8 @@ drives §8.3.
 | `unsupported_response_type` | 400 | — | response_type ≠ code |
 | `unsupported_grant_type` | 400 | — | grant_type unsupported |
 | `insufficient_scope` | 403 | `Bearer resource_metadata=…, scope=…, error="insufficient_scope"` | missing required scope (step-up) |
-| `temporarily_unavailable` | 429 | — | a rate-limit quota denial. Four shipped producers: the Bridge endpoint guards (`bridge.ts`), the upstream-redirect guard for `upstream:<ip>` (`upstream-flow.ts`), `CimdResolver`'s guard for `cimd:<ip>` (`cimd/resolve.ts`), and §17.5's in-process pairing-authorize gate (`pairing-flow.ts`). The **`pairing:<ip>` `RateLimitPort`** key is the one exception: it returns the `pairing_rate_limited` identity failure and re-renders the pairing page instead of this row |
-| `temporarily_unavailable` | 503 | — | `RateLimitPort.check` **threw** on `register:<ip>` under `dcr.mode === "stored"` — no quota decision was reached, so it is not 429 (§6.7). Direct channel, never a redirect |
+| `temporarily_unavailable` | 429 | None | A rate-limit quota denial. Four shipped producers return this response: the `Bridge` endpoint guards, the `upstream:<ip>` guard in `createUpstreamRedirectFlow`, the `cimd:<ip>` guard in `CimdResolver`, and the in-process pairing-authorize gate in `handlePairingAuthorize`. `pairing:<ip>` is different: `createConsolePairingIdentity().verify` returns `pairing_rate_limited`, and `handlePairingAuthorize` handles it as a failed verification. |
+| `temporarily_unavailable` | 503 | None | `RateLimitPort.check` threw on `register:<ip>` while `BridgeConfig.dcr.mode === "stored"`. No quota decision was reached, so this is not 429. `Bridge.handleRegister` returns it directly and does not redirect. |
 | `server_error` | 500 | — | internal failure (e.g. refresh generation) |
 | `internal_error` | 500 | — | unexpected (mapped from non-OAuthError) |
 
