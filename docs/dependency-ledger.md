@@ -71,7 +71,7 @@ An OSV/Dependabot scan flagged 8 published advisories. Every one sits in a **dev
 
 ## Optional peer dependencies (not shipped to consumers)
 
-`@fastify/rate-limit`, `fastify`, `express`, `hono`, `mysql2`, and `ioredis` are declared as **optional `peerDependencies`**, a consumer installs only the adapter(s) it uses. They are also installed as **devDependencies** (above) for adapter testing. `jose` remains the sole runtime dep.
+`@fastify/rate-limit`, `fastify`, `express`, `hono`, `mysql2`, and `ioredis` are declared as **optional `peerDependencies`**, a consumer installs only the adapters it uses. They are also installed as **devDependencies** (above) for adapter testing. `jose` remains the sole runtime dep.
 
 | Package | Peer range | Notes |
 |---|---|---|
