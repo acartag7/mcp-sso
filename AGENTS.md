@@ -80,7 +80,7 @@ Every PR follows these checks. Each item exists because a review round caught th
 
 ## Verify before claiming done
 
-Run the real flow, not just unit tests: register → authorize (through the identity port) → token → call a protected `/mcp` with the **official MCP SDK client** → refresh → replay-detection (family revocation observed) → revoke.
+Run the real flow, not just unit tests: register → authorize through the identity port → token → call a protected `/mcp` with the official MCP SDK client → refresh. Use one refresh family to prove that replay kills its live successor. Use a second active family to prove that `POST /oauth/revoke` makes its refresh token unusable. Calling revocation on the family that replay already killed proves only the RFC 7009 response shape.
 
 ## Surfacing a decision to the owner
 

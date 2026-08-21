@@ -18,7 +18,7 @@ flowchart TD
 | --- | --- | --- | --- |
 | CIMD | The validated HTTPS document named by `client_id` | No | Hosted clients that can publish metadata |
 | `POST /oauth/register` with `OAUTH_DCR_MODE=stateless` | `BridgeConfig.redirectAllowlist` | No | Compatibility clients whose registration does not need to survive restart |
-| `POST /oauth/register` with `OAUTH_DCR_MODE=stored` | `BridgeConfig.redirectAllowlist` at registration, then the saved `ClientRegistration` at authorization | Yes | Native clients with ephemeral callbacks or deployments that need durable registration |
+| `POST /oauth/register` with `OAUTH_DCR_MODE=stored` | The current `BridgeConfig.redirectAllowlist` at registration and authorization, then the saved `ClientRegistration` policy | Yes | Native clients with ephemeral callbacks or deployments that need durable registration |
 
 ## CIMD
 
@@ -34,7 +34,9 @@ The document is not proof that the display name is trustworthy. The consent page
 
 Stateless mode validates the request and returns the client ID without calling `ClientStore.save`. Authorization later applies the global redirect allowlist because no client record exists.
 
-Stored mode calls `ClientStore.save` after validation. Authorization later loads that record and applies the stored `applicationType` and registered redirect URIs. A native loopback callback can keep its scheme, host, and path while selecting a new port at runtime. Redirect URIs cannot contain a query.
+Stored mode calls `ClientStore.save` after validation. Authorization later loads that record, rechecks every registered redirect URI against the current global allowlist, and then applies the stored `applicationType` and registered redirect URI policy. A native loopback callback can keep its scheme, host, and path while selecting a new port at runtime. Redirect URIs cannot contain a query.
+
+> [!IMPORTANT] Stored registration does not grandfather an old redirect policy. If an operator removes an entry from `BridgeConfig.redirectAllowlist`, an existing client that depends on that entry stops authorizing immediately. Restore the entry or register and use a callback that the current policy permits.
 
 > [!WARNING] `OAUTH_DCR_MODE=stored` lets anonymous callers create durable records. Supply a bounded `RateLimitPort`. If `RateLimitPort.check` throws, `Bridge.handleRegister` returns 503 before it selects request fields or calls `ClientStore.save`.
 

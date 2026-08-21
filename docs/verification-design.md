@@ -18,7 +18,7 @@ Higher tiers do not replace lower tiers. A successful provider login does not re
 
 A unit test proves one function under its test inputs. OAuth failures often sit between functions: an adapter drops evidence, a store changes semantics, or a generated project omits wiring that the library supports.
 
-The Tier 1 baseline crosses those boundaries. `test/e2e-mcp-sdk.test.ts` runs registration, authorization, token exchange, a protected `/mcp` call through the official MCP SDK, refresh rotation, replay-family revocation, and token revocation. Store invariants use the shared conformance suite so Memory, SQLite, and MySQL receive the same tests.
+The Tier 1 baseline crosses those boundaries. `test/e2e-mcp-sdk.test.ts` runs registration, authorization, token exchange, a protected `/mcp` call through the official MCP SDK, and refresh rotation. It proves replay-family revocation on one family, then revokes a second active family and confirms that its refresh token is refused. Store invariants use the shared conformance suite so Memory, SQLite, and MySQL receive the same tests.
 
 A feature reaches implemented status only after its real-flow Tier 1 row is covered. Unit tests alone do not meet that bar. Every Tier 1 change keeps the official MCP SDK baseline green.
 

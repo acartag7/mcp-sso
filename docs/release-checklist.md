@@ -17,7 +17,7 @@ Use this checklist for a release candidate. The [release verification reference]
    pnpm run build
    ```
 
-4. Confirm that `test/e2e-mcp-sdk.test.ts` completes registration, authorization, token exchange, the protected `/mcp` call, refresh, replay detection, family revocation, and token revocation.
+4. Confirm that `test/e2e-mcp-sdk.test.ts` completes registration, authorization, token exchange, the protected `/mcp` call, and refresh. It must replay the first family's consumed token and confirm that the successor is dead. It must then create a second family, revoke that family while it is active, and confirm that its refresh token is refused.
 5. Start disposable MySQL and Redis services.
 6. Run the release matrix with their connection URLs:
 

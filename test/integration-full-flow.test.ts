@@ -295,25 +295,27 @@ async function driveRoundTrip(base: string, issuer: string, origin: string, opts
   assert.equal(reg.status, 201);
   const clientId = JSON.parse(reg.body).client_id as string;
 
-  const authPage = await http.get(base, `/oauth/authorize?${new URLSearchParams({
-    response_type: "code", client_id: clientId, redirect_uri: REDIRECT,
-    code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read", state: "s1",
-  })}`, { [IDENTITY_HEADER]: STUB_TOKEN });
-  assert.equal(authPage.status, 200);
-  const consentToken = /name="consent_token" value="([^"]+)"/.exec(authPage.body)?.[1];
-  assert.ok(consentToken, "consent token rendered");
-
-  const approve = await http.postForm(base, "/oauth/authorize/approve", { consent_token: consentToken as string, approved: "true" }, { origin });
-  assert.equal(approve.status, 302);
-  const code = new URL(approve.location ?? "").searchParams.get("code");
-  assert.ok(code, "auth code in redirect");
-
-  const token = await http.postForm(base, "/oauth/token", { grant_type: "authorization_code", code: code as string, redirect_uri: REDIRECT, client_id: clientId, code_verifier: verifier });
-  assert.equal(token.status, 200);
-  // threat-model row 1: token responses are non-cacheable (no-store + no-cache).
-  assert.ok((token.headers["cache-control"] ?? "").includes("no-store"), "cache-control: no-store on token response");
-  assert.equal(token.headers["pragma"], "no-cache", "pragma: no-cache on token response");
-  const { access_token: accessToken, refresh_token: refreshToken } = JSON.parse(token.body) as { access_token: string; refresh_token: string };
+  const authorizationCodeGrant = async (grantVerifier: string, state: string) => {
+    const authPage = await http.get(base, `/oauth/authorize?${new URLSearchParams({
+      response_type: "code", client_id: clientId, redirect_uri: REDIRECT,
+      code_challenge: pkceChallenge(grantVerifier), code_challenge_method: "S256", scope: "mcp:read", state,
+    })}`, { [IDENTITY_HEADER]: STUB_TOKEN });
+    assert.equal(authPage.status, 200);
+    const consent = /name="consent_token" value="([^"]+)"/.exec(authPage.body)?.[1];
+    assert.ok(consent, "consent token rendered");
+    const approve = await http.postForm(base, "/oauth/authorize/approve", { consent_token: consent as string, approved: "true" }, { origin });
+    assert.equal(approve.status, 302);
+    const code = new URL(approve.location ?? "").searchParams.get("code");
+    assert.ok(code, "auth code in redirect");
+    const token = await http.postForm(base, "/oauth/token", { grant_type: "authorization_code", code: code as string, redirect_uri: REDIRECT, client_id: clientId, code_verifier: grantVerifier });
+    assert.equal(token.status, 200);
+    assert.ok((token.headers["cache-control"] ?? "").includes("no-store"), "cache-control: no-store on token response");
+    assert.equal(token.headers["pragma"], "no-cache", "pragma: no-cache on token response");
+    const body = JSON.parse(token.body) as { access_token: string; refresh_token: string };
+    return { ...body, consentToken: consent as string };
+  };
+  const firstGrant = await authorizationCodeGrant(verifier, "s1");
+  const { access_token: accessToken, refresh_token: refreshToken, consentToken } = firstGrant;
 
   // Protected /mcp via the OFFICIAL MCP SDK client against the real socket (no fetch shim).
   // Hang-guard: the SDK transport builds its OWN AbortController.signal into each fetch
@@ -349,9 +351,12 @@ async function driveRoundTrip(base: string, issuer: string, origin: string, opts
     // The rotated successor is dead too (family revocation observed).
     const afterReplay = await http.postForm(base, "/oauth/token", { grant_type: "refresh_token", refresh_token: newRefreshToken, client_id: clientId });
     assert.equal(afterReplay.status, 400, "rotated successor died with the family");
-    // RFC 7009: revoke is always 200.
-    const revoke = await http.postForm(base, "/oauth/revoke", { token: newRefreshToken });
+    const revocable = await authorizationCodeGrant("revocation-family-verifier-0123456789abcdef012345678901", "s2");
+    const revoke = await http.postForm(base, "/oauth/revoke", { token: revocable.refresh_token });
     assert.equal(revoke.status, 200);
+    const afterRevoke = await http.postForm(base, "/oauth/token", { grant_type: "refresh_token", refresh_token: revocable.refresh_token, client_id: clientId });
+    assert.equal(afterRevoke.status, 400);
+    assert.equal((JSON.parse(afterRevoke.body) as { error: string }).error, "invalid_grant");
   }
 
   return { clientId, verifier, accessToken, refreshToken, newRefreshToken, consentToken: consentToken as string };
