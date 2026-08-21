@@ -569,139 +569,101 @@ enforcement contract — URL admission, the complete IANA IPv4/IPv6 blocklists,
 DNS pinning, redirect refusal, byte/timeout caps, document validation — is
 locked in **§17.1**.
 
-## 6.7 `RateLimitPort` *(fix #7)*
+## 6.7 `RateLimitPort`
+
 ```ts
-interface RateLimitPort { check(key: string): Promise<boolean>; }
-const noopRateLimit: RateLimitPort = { async check(): Promise<boolean> { return true; } };
+interface RateLimitPort {
+  check(key: string): Promise<boolean>;
+}
+
+const noopRateLimit: RateLimitPort = {
+  async check(): Promise<boolean> { return true; },
+};
 ```
-DoS defense for unauthenticated registration, approval, token exchange,
-revocation, and identity resolution (threat-model #8). A bounded port is
-mandatory at boot for stored DCR because registration creates durable state;
-the no-op default remains available only to §5-admitted stateless
-compositions. `Bridge` calls
-`check("register:<ip>")` / `check("approve:<ip>")` /
-`check("token:<ip>")` before those use-cases, and
-`check("revoke:<ip>")` at the start of `Bridge.handleRevoke`, before its
-`formObject` normalization, token hashing, store access or mutation, and audit
-work. `Bridge.handleApprove` likewise checks `approve:<ip>` before normalizing or
-reading the approval body, validating Origin, or consuming consent state.
-After a register, approve, token, or revoke check admits the request, Bridge
-rejects repeated recognized URL-encoded form members before field selection or
-the endpoint use-case. The duplicate rejection does not skip the admission
-charge and performs no endpoint audit or durable mutation.
-Shipped adapters first apply their own request-body boundary and
-then call `Bridge`, so revocation admission is not an adapter body-parser gate:
-Hono's 256 KiB body cap remains earlier and an over-cap request returns 413
-without consuming a revocation-limit slot.
-`Bridge.resolveIdentity` calls `check("authorize:<ip>")` before
-`IdentityPort.verify`; `false` ⇒ **429 Too Many Requests**. A denied revocation
-does no token-use-case, store, or audit work; an admitted unknown or
-already-revoked token retains RFC 7009's HTTP 200 existence-hiding behavior.
-Upstream redirect and CIMD keep their separate `upstream:<ip>` and `cimd:<ip>`
-budgets. That `upstream:<ip>` budget covers BOTH legs of the redirect flow:
-`flow.handleAuthorize` charges it at its step 1, and `flow.handleCallback`
-charges the same key at entry — before duplicate-parameter analysis, cookie
-reading, or any audit work — with the authorize posture (denied ⇒ direct 429
-`temporarily_unavailable` performing no other work; a thrown `check` ⇒
-fail-open, because the callback is not an anonymous durable write). The
-console-pairing orchestrator calls
-`Bridge.guardPairingAuthorize(ip)` to charge the `authorize:<ip>` guard once per
-GET or POST authorize request, after the duplicate-query occurrence check, the
-POST body-occurrence check, and the POST Origin gate, and
-before OAuth value selection, pairing
-session/code work, verification, consent preparation, store work, or audit. It
-does not call `resolveIdentity`, and
-`Bridge.handleAuthorize` does not add an `authorize:<ip>` charge; direct
-header-based authorization already charges that budget in `resolveIdentity`.
-The console-pairing identity's optional submitted-code `pairing:<ip>` hook stays
-an independent defense-in-depth budget.
-When the same port is supplied to both `Bridge` and an upstream redirect flow,
-the bound boot snapshot retains the source port's identity. The shared CIMD
-resolver therefore charges that counting port once for the request's
-`cimd:<ip>` key, while two genuinely distinct ports both apply.
-The default `noopRateLimit` allows everything and counts as absent for the
-stored-DCR boot rule. A custom always-allow port is nonconforming even though
-the structural boot check cannot distinguish it.
 
-**Outage policy is chosen per operation, by consequence.** A `check` returning
-`false` is a quota denial, and every guard that consumes this port answers it
-with a direct 429 `temporarily_unavailable` (§14) — the Bridge endpoint guards,
-the upstream-redirect guard for `upstream:<ip>`, and `CimdResolver`'s guard for
-`cimd:<ip>`. The single exception is the **`pairing:<ip>`** key, which is
-consumed by the identity rather than a guard: it returns the
-`pairing_rate_limited` failure and re-renders the pairing page. That is distinct
-from §17.5's own in-process pairing-authorize gate, which does answer 429 but
-does not consume this port at all. This paragraph changes none of it. A `check` that
-*throws* means no quota decision was reached, and what happens next depends on
-what the operation does:
+`RateLimitPort.check` returns `true` to admit a request and `false` to deny it.
+The response to a denial or exception depends on the call site.
 
-- **An operation that creates anonymous durable registration state fails
-  closed**. Today that class has exactly one member:
-  `register:<ip>` when `dcr.mode === "stored"`. The rejection is a fixed
-  **503** carrying the §14 `temporarily_unavailable` error code — not 429,
-  because no quota decision was made — emitted on the direct channel, never a
-  redirect, before body selection, registration work, durable state, or success
-  audit. This is the runtime half of the §5 boot rule: a bounded port is
-  required to start, and an unavailable port must not silently restore the
-  unbounded anonymous durable-write path that rule exists to close.
-- **Every other key retains fail-open** — `authorize`, `approve`, `token`,
-  `revoke`, `upstream`, `cimd`, pairing, **and `register:<ip>` when
-  `dcr.mode === "stateless"`**. Stateless registration is named explicitly
-  because the key alone does not decide the direction: stateless registration
-  persists nothing, so it is not in the durable-write class and must not be
-  refused on a limiter outage. An implementation that keys on the `register:`
-  prefix rather than on `dcr.mode` is wrong. A rate-limiter outage must not lock
-  existing clients out of a working deployment; for these operations runtime
-  rate limiting remains defense-in-depth, not an authorization boundary.
+### Boot requirements
 
-The rule is stated by consequence rather than as a list of key prefixes. A new
-surface that performs anonymous durable work states its own outage direction
-when it is introduced; it does not inherit the availability-oriented default by
-omission.
+| Composition | Requirement |
+| --- | --- |
+| `BridgeConfig.dcr.mode === "stored"` | `Bridge` requires a bounded `RateLimitPort`. `noopRateLimit` counts as missing. |
+| `BridgeConfig.dcr.mode === "stateless"` | A composition admitted by §5 may omit `RateLimitPort`. `Bridge` then uses `noopRateLimit`. |
+| Hono with `BridgeConfig.dcr.mode === "stored"` | `createOAuthApp` requires a callable `clientIp`. |
+| Hono with `BridgeConfig.dcr.mode === "stateless"` | `clientIp` is optional. `createOAuthApp` warns once when it is absent. |
 
-This advisory OAuth-port policy does **not** govern the protected resource
-itself. A Fastify host mounts `/mcp` through the separately exported
-`mcp-sso/fastify/protected-resource-rate-limit` helper (§8.4/§15): that helper
-registers the real `@fastify/rate-limit` middleware with a mandatory finite
-per-IP budget, `onRequest` admission, and `skipOnError: false`. A counter-store
-failure therefore rejects before bearer verification or protected handler work;
-it is never converted into the `RateLimitPort` fail-open outcome. Keeping the
-two policies distinct avoids silently inheriting an availability-oriented OAuth
-default at the resource boundary.
-**`req.ip` behind a proxy:** the adapter keys on the framework's `req.ip`, which
-behind a reverse proxy/tunnel is the proxy's address, not the client's. The
-composition root MUST configure the framework to trust the proxy hop
-(`trustProxy`/`trust proxy`) so `req.ip` is the real client — otherwise all proxied
-traffic is attributed to one IP and the limiter is ineffective.
-**Hono has no framework `req.ip`:** the hono adapter takes an explicit
-`clientIp?: (c: Context) => string | undefined` option and NEVER reads
-`X-Forwarded-For` (or any other client-supplied header) on its own — an
-attacker-controlled header must not select the rate-limit bucket
-(bucket-per-request = limiter bypass) or forge the audit `ip`. Without
-`clientIp`, requests carry no IP: the limiter keys everything into the one
-shared `unknown` key and audit events omit `ip`. With a real limiter this
-prevents a client-controlled header from spreading traffic across buckets; the
-no-op limiter default still permits every request. A deployer behind a trusted
-proxy supplies an extractor wired to their actual topology (e.g. the rightmost trusted `X-Forwarded-For`
-hop, or the runtime's connection info).
-Where that shared key would bound an anonymous durable write, the option stops
-being advisory: `createOAuthApp` throws `AuthConfigError` at boot when
-`dcr.mode === "stored"` and `clientIp` is absent. Stored registration needs
-per-client `register:<ip>` keys, and the one shared `unknown` bucket turns one
-client's flood into a site-wide registration outage — the exact collision the
-adapter refuses to construct rather than warn about. Stateless DCR without
-`clientIp` still boots (the §5 composition guard governs it) but emits a
-one-time console warning stating the shared-bucket consequence; per-request
-rate limiting on a stateless bridge is defense-in-depth, not an authorization
-boundary. Fastify and Express need no equivalent option because they key on the
-framework's `req.ip`.
+A custom port that returns `true` for every call does not satisfy the bounded
+port contract. The boot check cannot detect that behavior.
 
-The boot check cannot see per-request extraction results: an extractor whose
-declared return type permits `undefined` may still yield nothing for a given
-request, and the shared-key fallback would silently return. The runtime half
-therefore lives in the core, for every adapter: a stored-DCR registration
-that reaches `Bridge.handleRegister` with no usable `req.ip` (missing, not a
-string, or empty) is rejected with a direct **400** `invalid_request` naming
-the requirement — before the limiter charge, any durable work, or a success
-audit. The limiter key for a stored registration is always
-`register:<extracted-ip>`; it is never `register:unknown`.
+### Checks and early returns
+
+The Fastify, Express, and Hono adapters apply their request-body limits before
+calling a `Bridge` POST handler. A request rejected by an adapter does not call
+`RateLimitPort.check`.
+
+| Surface | `RateLimitPort` call | Work before the call | Work after admission |
+| --- | --- | --- | --- |
+| `POST /oauth/register`, `Bridge.handleRegister` | `check("register:<ip>")` | In stored mode, `assertStoredRegistrationIp` rejects a missing, non-string, empty, or literal `"unknown"` IP with direct 400 `invalid_request`. | Form occurrence checks, field selection, `registerClient`, registration state, and registration audit. |
+| Direct `GET /oauth/authorize`, `Bridge.resolveIdentity` | `check("authorize:<ip>")` | Each adapter rejects repeated authorize parameters before calling `Bridge.resolveIdentity`. | `IdentityPort.verify` and the identity audit. `Bridge.handleAuthorize` does not call the limiter again. |
+| Pairing `GET` or `POST /oauth/authorize`, `Bridge.guardPairingAuthorize` | `check("authorize:<ip>")` | The in-process pairing-authorize gate runs first. The orchestrator then rejects repeated query members. On POST, it also checks repeated body members and Origin. | OAuth value selection, pairing session or code work, verification, consent preparation, store work, and audit. |
+| `POST /oauth/authorize/approve`, `Bridge.handleApprove` | `check("approve:<ip>")` | Adapter request-body limit and normalization. | Form occurrence checks, field selection, Origin validation, consent consumption, authorization-code state, and audit. |
+| `POST /oauth/token`, `Bridge.handleToken` | `check("token:<ip>")` | Adapter request-body limit and normalization. | Form occurrence checks, field selection, grant routing, token state, signing, and audit. |
+| `POST /oauth/revoke`, `Bridge.handleRevoke` | `check("revoke:<ip>")` | Adapter request-body limit and normalization. | Form occurrence checks, field selection, token hashing, revocation state, and audit. An admitted unknown or already-revoked token still returns HTTP 200 under RFC 7009. |
+| Upstream `GET /oauth/authorize`, `createUpstreamRedirectFlow.handleAuthorize` | `check("upstream:<ip>")` | Nothing in the handler. | Duplicate-parameter checks, client selection, CIMD resolution when applicable, flow JWT creation and size check, CIMD success audit when applicable, IdP URL construction, and the redirect response. |
+| Upstream callback, `createUpstreamRedirectFlow.handleCallback` | `check("upstream:<ip>")` | Nothing in the handler. | Cookie read, clock snapshot, duplicate-parameter check, flow-cookie validation, store work, IdP exchange, identity verification, consent preparation, and audit. |
+| CIMD, `CimdResolver.resolve` | `check("cimd:<ip>")` | `CimdResolver.resolve` rejects when CIMD is disabled. | Cache lookup, DNS and fetch on a miss, cache update when allowed, document validation, redirect matching, and CIMD audit. |
+| Submitted pairing code, `createConsolePairingIdentity().verify` | `check("pairing:<ip>")` | Input-shape parsing. Missing or wrongly typed code or nonce returns `pairing_invalid_input` and emits an audit event before the limiter. | Active-code lookup, expiry, code and nonce comparison, attempt count, and pairing audit. |
+
+After the `register`, `approve`, `token`, or `revoke` check admits a request,
+`Bridge` rejects repeated recognized URL-encoded form members before field
+selection. The request has consumed one limiter check, but it performs no
+endpoint audit or durable mutation.
+
+The in-process pairing-authorize gate in §17.5 does not use `RateLimitPort`.
+It can return 429 before `Bridge.guardPairingAuthorize` runs. The
+`pairing:<ip>` check is a separate control for submitted codes.
+
+### Denials and exceptions
+
+| `RateLimitPort.check` result | Call site | Result |
+| --- | --- | --- |
+| `false` | `register:<ip>`, `authorize:<ip>`, `approve:<ip>`, `token:<ip>`, `revoke:<ip>`, `upstream:<ip>`, or `cimd:<ip>` | Direct 429 `temporarily_unavailable`. The work listed after admission does not run. |
+| `false` | `pairing:<ip>` | `createConsolePairingIdentity().verify` emits a failure audit and returns `pairing_rate_limited`. The wrong-attempt count does not increase. `handlePairingAuthorize` then follows its failed-verification path. |
+| Exception | `register:<ip>` with `BridgeConfig.dcr.mode === "stored"` | Direct 503 `temporarily_unavailable` before body selection, registration state, or registration success audit. |
+| Exception | Every other call, including `register:<ip>` with `BridgeConfig.dcr.mode === "stateless"` | The request continues. |
+
+The [rate-limit outage decision](../rate-limit-outage-policy.md) explains why
+`POST /oauth/register` with `BridgeConfig.dcr.mode === "stored"` is the only
+`RateLimitPort` call that returns 503 on an exception.
+
+### Shared ports and CIMD
+
+`Bridge` snapshots a supplied `RateLimitPort` at boot. The snapshot retains the
+source port's identity. If one source port is supplied to both `Bridge` and
+`createUpstreamRedirectFlow`, `CimdResolver` calls it once for `cimd:<ip>`. If
+the two source ports differ, `CimdResolver` calls both. A denial from either
+port denies the request. An exception from either port does not block CIMD.
+
+### Client IP source
+
+| Adapter | IP source |
+| --- | --- |
+| Fastify | Framework `req.ip`. Its value depends on the host's `trustProxy` configuration. |
+| Express | Framework `req.ip`. Its value depends on the host's `trust proxy` configuration. |
+| Hono | The deployer's `clientIp(c)` function. The adapter does not read `X-Forwarded-For` or another client-supplied IP header. |
+
+Without a Hono `clientIp`, non-stored operations use `<prefix>:unknown` and
+audit events omit `ip`. Hono stored DCR rejects the missing extractor at boot.
+For every adapter, `Bridge.handleRegister` rejects `POST /oauth/register` in
+stored mode when the runtime IP is missing, non-string, empty, or the literal
+`"unknown"`. This rejection happens before `RateLimitPort.check`. This endpoint
+and mode do not use `register:unknown`.
+
+### Protected `/mcp`
+
+`RateLimitPort` does not protect `/mcp`. A Fastify host uses
+`mcp-sso/fastify/protected-resource-rate-limit`, described in §8.4 and §15.
+That helper installs `@fastify/rate-limit` at `onRequest` with a finite budget
+and `skipOnError: false`. Its counter-store failure returns 503 before bearer
+verification or protected handler work.
