@@ -35,4 +35,4 @@ If you set `hostedDomain`, the `id_token`'s **`hd` claim** must equal it exactly
 
 ## Verify the deployment
 
-Run the checklist at the top of [`src/identity/google.ts`](../../src/identity/google.ts) after changing `hostedDomain`, `subjectAllowlist`, or the Google OAuth client. The [client compatibility reference](../client-compatibility.md) records current live evidence. It distinguishes a completed sign-in and protected `/mcp` call from the separate negative checks for Workspace and subject restrictions.
+Run the checklist at the top of [`src/identity/google.ts`](../../src/identity/google.ts) after changing `hostedDomain`, `subjectAllowlist`, or the Google OAuth client. The [client compatibility reference](../client-compatibility.md) records the current live evidence: a completed Google sign-in and protected `/mcp` call on 2026-08-19. The hosted-domain (`hd`) and `subjectAllowlist` rejections have only archived live evidence from July 2026 ([client compatibility archive](../archive/client-compatibility-2026-07.md)) plus the automated tests; rerun the checklist above before claiming them for a new release.

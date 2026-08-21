@@ -14,7 +14,7 @@ The review checked the draft's simple-string client ID comparison, production lo
 
 GPT-5.6 Sol, Grok 4.5, and GLM 5.2 reviewed the CIMD security and flow rules. The rules were rechecked on Node 24. The resulting acceptance work covered guarded fetching, anti-oracle behavior, cache handling, carried registration state, and direct and redirect flows.
 
-A patched-checkout campaign later exercised CIMD-first clients with Cloudflare Access, Entra ID, and Google. Its dirty tree was not archived, so it did not qualify as release evidence. On 2026-07-28, Claude Code 2.1.220 completed CIMD authorization and protected calls through runtime commit `af2a61f` with all three providers. The official final artifact was checked on 2026-08-02. Current release evidence is in [Verification status](../verification-status.md), and older receipts are in [Verification history](verification-history.md).
+A patched-checkout campaign later exercised CIMD-first clients with Cloudflare Access, Entra ID, and Google. Its dirty tree was not archived, so it did not qualify as release evidence. On 2026-07-28, Claude Code 2.1.220 completed CIMD authorization and protected calls through runtime commit `af2a61f` with all three providers. The official final artifact was checked on 2026-08-02 and kept CIMD at `SHOULD` level, citing draft `-00`; that is the obligation level mcp-sso conforms to. Current release evidence is in [Verification status](../verification-status.md), and older receipts are in [Verification history](verification-history.md).
 
 ## 2026-08-21 internal identifier cleanup
 

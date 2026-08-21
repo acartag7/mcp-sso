@@ -9,6 +9,8 @@ This reference records the latest client and identity-provider results that appl
 | OAuth mechanics | The client completes registration or CIMD discovery, authorization, consent, token exchange, and a protected `/mcp` call. A local identity stub can establish this level. |
 | Production identity | The upstream identity provider authenticates the user, and `mcp-sso` accepts or rejects that identity through the configured identity adapter. |
 
+A row is `Verified` only when the named flow was driven against the named provider and client and the outcome was recorded with a date and the runtime commit. `Verified with limit` names the step that was not driven. A session that did not drive a flow must not mark it `Verified`: a false green here is worse than an empty row, because people choose an identity provider from this table.
+
 ## Current matrix
 
 | Provider | Client | Flow driven | Status | Date | Limits |

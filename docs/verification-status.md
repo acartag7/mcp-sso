@@ -47,7 +47,7 @@ In those examples, direct identity authorization uses `authorize:<ip>`. Upstream
 | --- | --- |
 | `BridgeConfig.dcr.mode === "stored"` without a bounded `RateLimitPort` | `AuthConfigError` |
 | Hono with `BridgeConfig.dcr.mode === "stored"` and no `clientIp` extractor | `AuthConfigError` |
-| Stateless DCR with generic loopback redirect trust, no bounded `RateLimitPort`, and no application-specific HTTPS redirect | `AuthConfigError`, except for an acknowledged local-only composition whose issuer and resource are both loopback |
+| Stateless DCR with no bounded `RateLimitPort`, unless the allowlist has an application-specific HTTPS redirect and retains no generic loopback entry | `AuthConfigError`. A generic loopback entry is not rescued by an application-specific HTTPS entry beside it. Two compositions are exempt: a `dev.allowInsecureLocalhost` deployment whose issuer and resource are both loopback, and a composition that passes `acknowledgeUnsafeStatelessDefaults`, which is itself refused unless the issuer and resource are both loopback |
 
 If `RateLimitPort.check` throws during `POST /oauth/register` in stored DCR mode, `Bridge.handleRegister` returns 503 before it selects body fields, writes registration state, or emits a registration success audit. The same exception does not block `POST /oauth/register` in stateless DCR mode.
 

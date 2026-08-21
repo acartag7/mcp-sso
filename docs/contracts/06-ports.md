@@ -247,7 +247,7 @@ The [rate-limit outage decision](../rate-limit-outage-policy.md) explains why `P
 | --- | --- |
 | Fastify | Framework `req.ip`. Its value depends on the host's `trustProxy` configuration. |
 | Express | Framework `req.ip`. Its value depends on the host's `trust proxy` configuration. |
-| Hono | The deployer's `clientIp(c)` function. The adapter does not read `X-Forwarded-For` or another client-supplied IP header. |
+| Hono | The deployer's `clientIp?: (c: Context) => string \| undefined` option. It is optional and may return `undefined` for a given request, which is why the per-request 400 rule below exists in the core and cannot be replaced by the boot check. The adapter does not read `X-Forwarded-For` or another client-supplied IP header. A deployer behind a trusted proxy supplies an extractor wired to the actual topology, such as the rightmost trusted `X-Forwarded-For` hop or the runtime's connection information. |
 
 For Fastify and Express behind a reverse proxy, configure `trustProxy` or `trust proxy` for the actual proxy topology. If the framework does not trust the proxy hop, proxied callers share the proxy's bucket. If it trusts a client-reachable hop, a caller can select a bucket through forwarded headers. For Hono, `clientIp(c)` must derive the address from the trusted runtime or validated proxy chain. It must not pass through a client-supplied IP header.
 

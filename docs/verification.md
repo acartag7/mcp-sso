@@ -142,7 +142,9 @@ The release command fails before these rows when `MYSQL_URL` or `REDIS_URL` is a
 
 ### RM.11 — Redirect allowlist mode
 
-The row covers all four readers of `redirectAllowlistMode`: `POST /oauth/register`, stateless authorize, stored-client revalidation, and consent approve or deny. In `"replace"` mode, each reader rejects a built-in origin that is absent from the configured allowlist. Authorize rejects the origin directly. It does not redirect to that origin.
+The row covers all four readers of `redirectAllowlistMode` separately: `POST /oauth/register`, stateless authorize, stored-client revalidation, and consent approve or deny. In `"replace"` mode, each reader rejects a built-in origin that is absent from the configured allowlist. Authorize rejects the origin directly. It does not redirect to that origin.
+
+Readers 3 and 4 prove the time split, not only the reader. Reader 3 seeds a client registered while the built-ins were trusted and proves that it stops authorizing after a restart into `"replace"`. Reader 4 mints a consent token under `"extend"` and proves that both approve and deny are refused under `"replace"`, because a consent token outlives the process that issued it. A test that checks the four readers inside one single-policy process does not satisfy this row.
 
 The configured origin still registers and reaches consent. Omitting `redirectAllowlistMode` retains `"extend"`. An empty allowlist in `"replace"` mode fails at boot.
 
@@ -154,7 +156,7 @@ Both shipped OIDC ports return `claims.name` for a verified identity. They omit 
 
 `JsonlFileAudit`, `WebhookAudit`, and `combineAudit` are root exports. The row runs registration and authorization through Fastify with both sinks. Each sink receives the same number of events.
 
-Neither sink receives the consent token, PKCE verifier, identity header value, consent signing secret, or webhook collector credential. The test injects the webhook transport and makes no network call. A simulated webhook delivery failure remains observable through the sink diagnostic.
+Neither sink receives the consent token, PKCE verifier, identity header value, consent signing secret, or webhook collector credential. The test injects the webhook transport and makes no network call; it proves the wiring and the payload. The row fails if the webhook sink reports a delivery failure, because `WebhookAudit` itself logs the failure and continues, so without that assertion a webhook that never accepted anything would still read as a green fan-out. The unit tests in `test/audit-webhook.test.ts` are what simulate a delivery failure and prove the diagnostic appears.
 
 ### RM.14 — CIMD and DCR coexistence
 

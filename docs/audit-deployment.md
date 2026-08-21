@@ -119,7 +119,7 @@ const authorizer = new RequestAuthorizer({ config, clock, audit });
 
 - `noopAudit` is the default at the composition root. The example's `buildApp()` and `createConsolePairingIdentity()` default to it.
 - `Bridge` and `RequestAuthorizer` require `audit` explicitly. `BridgeDeps.audit` / `RequestAuthDeps.audit` are required, with no fallback. If you construct them directly, pass `noopAudit` yourself.
-- **The use-cases `await` `writeAuthEvent` with no `try/catch`.** A sink that rejects would turn every IO hiccup into a 500, which is why every shipped sink is fail-open by construction.
+- **The use-cases wrap every non-transactional `writeAuthEvent` in `writeAuditBestEffort`.** A sink that throws or rejects is contained there, so a custom sink outage cannot replace the authoritative OAuth or resource-server outcome (contract §13). Every shipped sink is also fail-open by construction, so a sink failure loses only its own evidence, never the request.
 - **`examples/fastify-sqlite` wires a `JsonlFileAudit`** to `${MCP_SSO_DIR}/audit.jsonl`, so events appear on a zero-config boot. The example's `buildApp()` (the path the test suite drives) still defaults to `noopAudit`. Pass an `audit` dep to observe events in tests.
 
 ## What the events look like

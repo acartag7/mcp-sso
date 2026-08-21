@@ -61,7 +61,7 @@ Start either runnable example with `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_
 
 Point the MCP client at `https://<your-host>/mcp`. Complete the Entra login, approve the `mcp-sso` consent request, and call a tool.
 
-Run the wrong-tenant, subject-allowlist, group-overage, no-group, and no-mapped-group cases from `scripts/live/CHECKLIST.md`. Record the audit reason for each denial.
+Run the wrong-tenant, subject-allowlist, group-overage, no-group, and no-mapped-group cases from `scripts/live/CHECKLIST.md`. Record the audit reason for each denial. The harness feeds the group mapping through `ENTRA_GROUP_AUTHORIZATION_JSON` as `{"mapping": …}` with no `baseScopes`; that empty `baseScopes` is why the no-group fixture produces `entra_no_groups` rather than a default grant, so record the mapping shape with the result. The guest or B2B rejection case is not in `CHECKLIST.md`; the checklist at the top of `src/identity/entra.ts` enumerates it, and [Verification status](verification-status.md) lists it as a remaining live gap until someone drives it.
 
 ## Verify ChatGPT
 
