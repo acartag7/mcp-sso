@@ -2,10 +2,24 @@
 
 Use this checklist for a release candidate. The [release verification reference](verification.md) defines each test row. The [Tier 3 evidence reference](verification-live.md) defines live evidence.
 
+## Merge the version bump
+
+1. Push the final versioned runtime tree on a feature branch and open or update its pull request.
+2. Add or update the matching Tier 1 rows in [the release verification reference](verification.md).
+3. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
+4. Read every review and inline thread.
+5. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
+6. Merge the version-bump pull request into `main`.
+
 ## Run the source and package gates
 
-1. Start from a clean tree.
-2. Add or update the matching Tier 1 rows in [the release verification reference](verification.md).
+1. Fetch `origin/main` and create an evidence branch from it. Do not change a runtime, build, publication, or evidence-defining input on this branch.
+2. Record the reachable runtime commit:
+
+   ```bash
+   git rev-parse HEAD
+   ```
+
 3. Run the source checks:
 
    ```bash
@@ -46,14 +60,15 @@ pnpm run check:release-ready
 
 The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence commit, or version mismatch. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
 
-## Approve the final release commit
+## Merge the evidence record
 
-1. Push the final versioned commit on a feature branch and open or update its pull request.
+1. Commit only `docs/client-compatibility.md`. Push the evidence branch and open its pull request.
 2. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
 3. Read every review and inline thread.
 4. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
-5. Merge the pull request into `main`.
-6. Confirm that the commit selected for the tag is on `origin/main`. Do not tag an unmerged branch or a local-only commit.
+5. Merge the evidence pull request into `main`.
+6. Fetch `origin/main` and run `pnpm run check:release-matrix` and `pnpm run check:release-ready` on that exact commit.
+7. Confirm that the commit selected for the tag is on `origin/main`. Do not tag an unmerged branch or a local-only commit.
 
 ## Verify the publish controls
 

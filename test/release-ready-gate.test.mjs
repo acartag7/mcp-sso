@@ -449,8 +449,17 @@ test("publish runs release readiness with full git history and ordinary tests do
   assert.match(workflow, /run: pnpm check:release-ready/);
   assert.ok(workflow.indexOf("run: pnpm check:release-matrix") < workflow.indexOf("run: pnpm check:release-ready"));
   assert.ok(workflow.indexOf("run: pnpm check:release-ready") < workflow.indexOf("run: pnpm install --frozen-lockfile"));
+  for (const marker of [
+    "Merge the version-bump pull request", "git rev-parse HEAD", "pnpm run test:release",
+    "Record the completed export rows", "pnpm run check:release-matrix", "pnpm run check:release-ready",
+    "Commit only `docs/client-compatibility.md`", "Merge the evidence pull request",
+  ]) assert.notEqual(checklist.indexOf(marker), -1, `release checklist is missing: ${marker}`);
+  assert.ok(checklist.indexOf("Merge the version-bump pull request") < checklist.indexOf("pnpm run test:release"));
+  assert.ok(checklist.indexOf("git rev-parse HEAD") < checklist.indexOf("pnpm run test:release"));
   assert.ok(checklist.indexOf("pnpm run test:release") < checklist.indexOf("Record the completed export rows"));
   assert.ok(checklist.indexOf("Record the completed export rows") < checklist.indexOf("pnpm run check:release-matrix"));
   assert.ok(checklist.indexOf("pnpm run check:release-matrix") < checklist.indexOf("pnpm run check:release-ready"));
+  assert.ok(checklist.indexOf("Commit only `docs/client-compatibility.md`") > checklist.indexOf("pnpm run check:release-ready"));
+  assert.ok(checklist.indexOf("Merge the evidence pull request") > checklist.indexOf("Commit only `docs/client-compatibility.md`"));
   assert.equal(packageJson.scripts.test.includes("check:release-ready"), false);
 });
