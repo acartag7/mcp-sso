@@ -164,7 +164,7 @@ function parseProviderRuntimeCommits(source, errors) {
       continue;
     }
     const cells = rawCells.map((cell) => cell.trim());
-    const [provider, client, , status, , limits] = cells;
+    const [provider, client, , status, date, limits] = cells;
     const rawStatus = rawCells[3];
     if (!status || rawStatus !== ` ${status} ` || !/^[A-Za-z]+(?: [A-Za-z]+)*$/.test(status)) {
       errors.push(`provider evidence: ${provider} / ${client} has malformed status`);
@@ -176,6 +176,14 @@ function parseProviderRuntimeCommits(source, errors) {
     }
     const verifiedStatus = status === "Verified" || status === "Verified with limit";
     if (!verifiedStatus) continue;
+    const dateMatch = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const parsedDate = dateMatch
+      ? new Date(Date.UTC(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3])))
+      : undefined;
+    if (!dateMatch || parsedDate.toISOString().slice(0, 10) !== date) {
+      errors.push(`provider evidence: ${provider} / ${client} has missing or malformed date`);
+      continue;
+    }
     const match = limits.match(
       /^Runtime commit `([0-9a-f]{7,40})`(?:, later merged without runtime changes as `([0-9a-f]{7,40})`)?\.(?: |$)/,
     );

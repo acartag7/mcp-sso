@@ -82,6 +82,14 @@ test("release ready gate requires a runtime commit on every verified provider ro
   assert.ok(result.errors.includes("provider evidence: Provider / Client has malformed runtime commit receipt"));
 });
 
+test("release ready gate requires a real date on every verified provider row", () => {
+  for (const date of ["", "2026-02-30", "22-08-2026"]) {
+    const compatibility = compatibilityFor(ancestor).replace("| 2026-08-22 |", `| ${date} |`);
+    const result = fixture({ compatibility });
+    assert.ok(result.errors.includes("provider evidence: Provider / Client has missing or malformed date"));
+  }
+});
+
 test("release ready gate permits an unverified provider row without a runtime commit", () => {
   const compatibility = compatibilityFor(ancestor)
     .replace("| Verified |", "| Not run |")
