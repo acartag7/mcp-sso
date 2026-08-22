@@ -641,6 +641,7 @@ test("all eleven shared callback rows preserve audit, mutation, and redaction pa
     const bridge = await runCallbackRow("bridge", row); const identity = await runCallbackRow("identity", row);
     assert.equal(bridge.reason, reasons.get(row), `bridge row ${row}`); assert.equal(identity.reason, bridge.reason, `identity row ${row}`);
     assert.equal(bridge.cleared, row !== 2, `bridge clear row ${row}`); assert.equal(identity.cleared, bridge.cleared, `identity clear row ${row}`);
+    assert.equal(identity.response.headers["cache-control"], row === 2 ? undefined : "no-store", `identity cache row ${row}`);
     assert.equal(bridge.consumes, expectedConsumes.get(row), `bridge mutation row ${row}`); assert.equal(identity.consumes, bridge.consumes, `identity mutation row ${row}`);
     assert.equal(bridge.exchanges, expectedExchanges.get(row), `bridge exchange row ${row}`); assert.equal(identity.exchanges, bridge.exchanges, `identity exchange row ${row}`);
     assert.equal(identity.response.redirect, undefined, `identity direct response row ${row}`);

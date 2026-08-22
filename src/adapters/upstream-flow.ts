@@ -133,7 +133,8 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
     const clear = (res: NormResponse): NormResponse => {
       if (!cookiePresent) return res;
       if (complete === "bridge") return { ...res, headers: noStoreHeaders({ ...res.headers, "set-cookie": clearCookieValue(cookieProfile) }) };
-      return { ...res, setCookies: [...(res.setCookies ?? []), clearCookieValue(cookieProfile)] };
+      const headers = res.headers["cache-control"] === "no-store" ? res.headers : noStoreHeaders(res.headers);
+      return { ...res, headers, setCookies: [...(res.setCookies ?? []), clearCookieValue(cookieProfile)] };
     };
     let nowIso: string;
     try { nowIso = new Date(finiteClockSnapshot(clock)).toISOString(); }
