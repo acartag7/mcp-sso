@@ -1,0 +1,92 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, test } from "node:test";
+import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
+
+let repo;
+let ancestor;
+let release;
+let unrelated;
+
+function git(args) {
+  return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+function compatibilityFor(commit) {
+  return [
+    "# Client compatibility",
+    "",
+    `Runtime commit \`${commit}\`.`,
+    "",
+    "## Public export live evidence",
+    "",
+    "| Export | Live evidence | Runtime commit |",
+    "| --- | --- | --- |",
+    `| \`.\` | \`RM.1\` | \`${commit}\` |`,
+    `| \`./fastify\` | \`RM.2\` | \`${commit}\` |`,
+  ].join("\n");
+}
+
+function fixture(overrides = {}) {
+  const packageJson = overrides.packageJson ?? { version: "0.5.0", exports: { ".": {}, "./fastify": {} } };
+  const compatibility = overrides.compatibility ?? compatibilityFor(ancestor);
+  const status = overrides.status ?? "| npm package and tag | `mcp-sso@0.5.0` and `v0.5.0` |\n";
+  return evaluateReleaseReadiness({ packageJson, compatibility, status, gitCwd: repo, releaseCommit: release });
+}
+
+before(() => {
+  repo = mkdtempSync(join(tmpdir(), "mcp-sso-release-ready-"));
+  git(["init", "-q"]);
+  git(["config", "user.email", "release-ready@example.invalid"]);
+  git(["config", "user.name", "Release Ready Test"]);
+  git(["commit", "--allow-empty", "-qm", "ancestor"]);
+  ancestor = git(["rev-parse", "HEAD"]);
+  git(["commit", "--allow-empty", "-qm", "release"]);
+  release = git(["rev-parse", "HEAD"]);
+  git(["switch", "-q", "--orphan", "unrelated"]);
+  git(["commit", "--allow-empty", "-qm", "unrelated"]);
+  unrelated = git(["rev-parse", "HEAD"]);
+});
+
+after(() => rmSync(repo, { recursive: true, force: true }));
+
+test("release ready gate accepts complete evidence at an ancestor commit", () => {
+  assert.deepEqual(fixture().errors, []);
+});
+
+test("release ready gate names a runtime commit outside the release history", () => {
+  const result = fixture({ compatibility: compatibilityFor(unrelated) });
+  assert.ok(result.errors.includes(`recorded runtime commit ${unrelated} is not an ancestor of release commit ${release}`));
+});
+
+test("release ready gate checks the recorded main commit for a squash-merged live tree", () => {
+  const compatibility = compatibilityFor(ancestor).replace(
+    `Runtime commit \`${ancestor}\`.`,
+    `Runtime commit \`${unrelated}\`, later merged without runtime changes as \`${ancestor}\`.`,
+  );
+  assert.deepEqual(fixture({ compatibility }).errors, []);
+});
+
+test("release ready gate names a public export without a live evidence row", () => {
+  const result = fixture({ packageJson: { version: "0.5.0", exports: { ".": {}, "./fastify": {}, "./hono": {} } } });
+  assert.ok(result.errors.includes("missing live evidence row for export ./hono"));
+});
+
+test("release ready gate reports package and status versions", () => {
+  const result = fixture({ packageJson: { version: "0.5.1", exports: { ".": {}, "./fastify": {} } } });
+  assert.ok(result.errors.includes("version mismatch: package.json is 0.5.1, docs/verification-status.md is 0.5.0"));
+});
+
+test("publish runs release readiness with full git history and ordinary tests do not", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const root = new URL("..", import.meta.url);
+  const workflow = await readFile(new URL(".github/workflows/publish.yml", root), "utf8");
+  const packageJson = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
+  assert.match(workflow, /fetch-depth: 0/);
+  assert.match(workflow, /run: pnpm check:release-ready/);
+  assert.ok(workflow.indexOf("run: pnpm check:release-ready") < workflow.indexOf("run: pnpm install --frozen-lockfile"));
+  assert.equal(packageJson.scripts.test.includes("check:release-ready"), false);
+});
