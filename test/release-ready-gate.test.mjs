@@ -78,6 +78,14 @@ test("release ready gate permits an unverified provider row without a runtime co
   assert.deepEqual(fixture({ compatibility }).errors, []);
 });
 
+test("release ready gate rejects an unknown provider status instead of treating it as unverified", () => {
+  const compatibility = compatibilityFor(ancestor)
+    .replace("| Verified |", "| Verifed |")
+    .replace(`Runtime commit \`${ancestor}\`.`, "Receipt missing.");
+  const result = fixture({ compatibility });
+  assert.ok(result.errors.includes("provider evidence: Provider / Client has unknown status Verifed"));
+});
+
 test("release ready gate names a public export without a live evidence row", () => {
   const result = fixture({ packageJson: { version: "0.5.0", exports: { ".": {}, "./fastify": {}, "./hono": {} } } });
   assert.ok(result.errors.includes("missing live evidence row for export ./hono"));

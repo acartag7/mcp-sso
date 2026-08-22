@@ -8,6 +8,7 @@ const EXPORT_TABLE_DIVIDER = "| --- | --- | --- |";
 const PROVIDER_HEADING = "## Current matrix";
 const PROVIDER_TABLE_HEADER = "| Provider | Client | Flow driven | Status | Date | Limits |";
 const PROVIDER_TABLE_DIVIDER = "| --- | --- | --- | --- | --- | --- |";
+const PROVIDER_STATUSES = new Set(["Verified", "Verified with limit", "Not run"]);
 const STATUS_HEADING = "## Published release";
 const STATUS_TABLE_HEADER = "| Item | Status |";
 const STATUS_TABLE_DIVIDER = "| --- | --- |";
@@ -167,6 +168,10 @@ function parseProviderRuntimeCommits(source, errors) {
     const rawStatus = rawCells[3];
     if (!status || rawStatus !== ` ${status} ` || !/^[A-Za-z]+(?: [A-Za-z]+)*$/.test(status)) {
       errors.push(`provider evidence: ${provider} / ${client} has malformed status`);
+      continue;
+    }
+    if (!PROVIDER_STATUSES.has(status)) {
+      errors.push(`provider evidence: ${provider} / ${client} has unknown status ${status}`);
       continue;
     }
     const verifiedStatus = status === "Verified" || status === "Verified with limit";
