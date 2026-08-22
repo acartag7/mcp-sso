@@ -75,9 +75,27 @@ function parseExportEvidence(source, errors) {
     if (!/^[0-9a-f]{40}$/.test(commit)) {
       errors.push(`export evidence: ${exportName} has invalid runtime commit ${commit}`);
     }
-    rows.set(exportName, commit);
+    const evidenceIds = [...evidence.matchAll(/`(RM\.\d+)`/g)].map((idMatch) => idMatch[1]);
+    rows.set(exportName, { commit, evidenceIds });
   }
   return rows;
+}
+
+function parseReleaseIds(releaseMatrix, errors) {
+  if (!releaseMatrix || typeof releaseMatrix !== "object" || Array.isArray(releaseMatrix) || !Array.isArray(releaseMatrix.rows)) {
+    errors.push("release matrix: expected an object with a rows array");
+    return new Set();
+  }
+  const ids = new Set();
+  for (const row of releaseMatrix.rows) {
+    if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.id !== "string" || !/^RM\.\d+$/.test(row.id)) {
+      errors.push("release matrix: every row requires an RM.N id");
+      continue;
+    }
+    if (ids.has(row.id)) errors.push(`release matrix: duplicate row ${row.id}`);
+    ids.add(row.id);
+  }
+  return ids;
 }
 
 function recordedRuntimeCommits(source) {
@@ -85,7 +103,7 @@ function recordedRuntimeCommits(source) {
     .map((match) => match[2] ?? match[1]);
 }
 
-export function evaluateReleaseReadiness({ packageJson, compatibility, status, gitCwd, releaseCommit = "HEAD" }) {
+export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd, releaseCommit = "HEAD" }) {
   const errors = [];
   const packageVersion = packageJson?.version;
   const exportsValue = packageJson?.exports;
@@ -102,6 +120,7 @@ export function evaluateReleaseReadiness({ packageJson, compatibility, status, g
   }
 
   const evidenceRows = parseExportEvidence(compatibility, errors);
+  const releaseIds = parseReleaseIds(releaseMatrix, errors);
   const publicExports = exportsValue && typeof exportsValue === "object" && !Array.isArray(exportsValue)
     ? Object.keys(exportsValue)
     : [];
@@ -111,10 +130,15 @@ export function evaluateReleaseReadiness({ packageJson, compatibility, status, g
   for (const exportName of evidenceRows.keys()) {
     if (!publicExports.includes(exportName)) errors.push(`live evidence row names unknown export ${exportName}`);
   }
+  for (const [exportName, row] of evidenceRows) {
+    for (const evidenceId of row.evidenceIds) {
+      if (!releaseIds.has(evidenceId)) errors.push(`unknown live evidence ID ${evidenceId} for export ${exportName}`);
+    }
+  }
 
   const resolvedRelease = resolveCommit(gitCwd, releaseCommit);
   if (!resolvedRelease) errors.push(`release commit is not available in git history: ${releaseCommit}`);
-  const commits = new Set([...recordedRuntimeCommits(compatibility), ...evidenceRows.values()]);
+  const commits = new Set([...recordedRuntimeCommits(compatibility), ...[...evidenceRows.values()].map((row) => row.commit)]);
   for (const commit of commits) {
     if (!SHA.test(commit)) {
       errors.push(`recorded runtime commit is malformed: ${commit}`);

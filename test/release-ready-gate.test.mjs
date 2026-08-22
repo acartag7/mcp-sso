@@ -32,9 +32,10 @@ function compatibilityFor(commit) {
 
 function fixture(overrides = {}) {
   const packageJson = overrides.packageJson ?? { version: "0.5.0", exports: { ".": {}, "./fastify": {} } };
+  const releaseMatrix = overrides.releaseMatrix ?? { rows: [{ id: "RM.1" }, { id: "RM.2" }] };
   const compatibility = overrides.compatibility ?? compatibilityFor(ancestor);
   const status = overrides.status ?? "| npm package and tag | `mcp-sso@0.5.0` and `v0.5.0` |\n";
-  return evaluateReleaseReadiness({ packageJson, compatibility, status, gitCwd: repo, releaseCommit: release });
+  return evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd: repo, releaseCommit: release });
 }
 
 before(() => {
@@ -73,6 +74,12 @@ test("release ready gate checks the recorded main commit for a squash-merged liv
 test("release ready gate names a public export without a live evidence row", () => {
   const result = fixture({ packageJson: { version: "0.5.0", exports: { ".": {}, "./fastify": {}, "./hono": {} } } });
   assert.ok(result.errors.includes("missing live evidence row for export ./hono"));
+});
+
+test("release ready gate names an evidence ID absent from the release matrix", () => {
+  const compatibility = compatibilityFor(ancestor).replace("`RM.2`", "`RM.999`");
+  const result = fixture({ compatibility });
+  assert.ok(result.errors.includes("unknown live evidence ID RM.999 for export ./fastify"));
 });
 
 test("release ready gate reports package and status versions", () => {
