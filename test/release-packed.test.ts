@@ -106,7 +106,9 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
     const installedPackage = realpathSync(join(base, "node_modules", "mcp-sso"));
     assert.ok(installedPackage.startsWith(realBase), `mcp-sso resolved outside the isolated consumer: ${installedPackage}`);
     assert.notEqual(installedPackage, repo, "the consumer did not link the source checkout");
-    const installedPkg = JSON.parse(await readFile(join(installedPackage, "package.json"), "utf8")) as { dependencies: Record<string, string> };
+    const installedPkg = JSON.parse(await readFile(join(installedPackage, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>; exports: Record<string, unknown>;
+    };
     assert.deepEqual(Object.keys(installedPkg.dependencies), ["jose"], "published runtime dependencies remain jose-only");
 
     const installedBin = join(base, "node_modules", ".bin", "mcp-sso");
@@ -137,6 +139,8 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
         `standalone scaffold cannot borrow consumer-only dependency ${undeclared}`);
     }
     const imports = Object.keys(repoPkg.exports).map((entry) => entry === "." ? "mcp-sso" : `mcp-sso/${entry.slice(2)}`);
+    const packedImports = Object.keys(installedPkg.exports).map((entry) => entry === "." ? "mcp-sso" : `mcp-sso/${entry.slice(2)}`);
+    assert.deepEqual(imports, packedImports, "the import probe covers every export in the packed artifact");
     const importCheck = await run(process.execPath, ["--input-type=module", "-e", `await Promise.all(${JSON.stringify(imports)}.map((id)=>import(id)))`], generated);
     assert.equal(importCheck.code, 0, `published export import failed:\n${importCheck.output}`);
 
