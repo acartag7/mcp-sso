@@ -29,9 +29,12 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
       }
     }
     if (malformedName) continue;
+    const limitCount = limits.split("Limit:").length - 1;
+    const notRunCount = limits.split("Not run:").length - 1;
     const verifiedStatus = status === "Verified" || status === "Verified with limit";
     if (!verifiedStatus) {
-      if (rawCells[4] !== "  " || !/^Not run: (?=[^|]*[\p{L}\p{N}])\S(?:.*\S)?\.$/u.test(limits)) {
+      if (limitCount !== 0 || notRunCount !== 1 || rawCells[4] !== "  "
+        || !/^Not run: (?=[^|]*[\p{L}\p{N}])\S(?:.*\S)?\.$/u.test(limits)) {
         errors.push(`provider evidence: ${provider} / ${client} has malformed Not run evidence`);
       }
       continue;
@@ -52,9 +55,14 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
       errors.push(`provider evidence: ${provider} / ${client} has malformed runtime commit receipt`);
       continue;
     }
+    if (status === "Verified" && (limitCount !== 0 || notRunCount !== 0)) {
+      errors.push(`provider evidence: ${provider} / ${client} has contradictory Verified evidence`);
+      continue;
+    }
     if (status === "Verified with limit") {
       const remainder = limits.slice(match[0].length);
-      if (!/^ Limit: (?=[^|]*[\p{L}\p{N}])\S(?:.*\S)?\.(?: |$)/u.test(remainder)) {
+      if (limitCount !== 1 || notRunCount !== 0
+        || !/^ Limit: (?=[^|]*[\p{L}\p{N}])\S(?:.*\S)?\.(?: |$)/u.test(remainder)) {
         errors.push(`provider evidence: ${provider} / ${client} has missing or malformed limitation`);
         continue;
       }

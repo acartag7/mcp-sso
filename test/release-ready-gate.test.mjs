@@ -114,6 +114,22 @@ test("release ready gate requires a stated limit for Verified with limit", () =>
     `Runtime commit \`${ancestor}\`. Limit: Stateless registration was not exercised.`,
   );
   assert.deepEqual(fixture({ compatibility: complete }).errors, []);
+  const duplicate = complete.replace("was not exercised.", "was not exercised. Limit: Refresh was not exercised.");
+  assert.ok(fixture({ compatibility: duplicate }).errors.includes(
+    "provider evidence: Provider / Client has missing or malformed limitation",
+  ));
+});
+
+test("release ready gate rejects limited or unrun payloads on Verified rows", () => {
+  for (const payload of ["Limit: Registration was not exercised.", "Not run: Provider access was unavailable."]) {
+    const compatibility = compatibilityFor(ancestor).replace(
+      `Runtime commit \`${ancestor}\`.`,
+      `Runtime commit \`${ancestor}\`. ${payload}`,
+    );
+    assert.ok(fixture({ compatibility }).errors.includes(
+      "provider evidence: Provider / Client has contradictory Verified evidence",
+    ));
+  }
 });
 
 test("release ready gate permits a canonical Not run row without a runtime commit", () => {
@@ -133,6 +149,15 @@ test("release ready gate rejects contradictory Not run evidence", () => {
   assert.ok(fixture({ compatibility: receipt }).errors.includes(
     "provider evidence: Provider / Client has malformed Not run evidence",
   ));
+  for (const extra of [" Not run: A second reason.", " Limit: A contradictory limit."]) {
+    const compatibility = compatibilityFor(ancestor)
+      .replace("| Verified |", "| Not run |")
+      .replace("| 2026-08-22 |", "|  |")
+      .replace(`Runtime commit \`${ancestor}\`.`, `Not run: Provider access was unavailable.${extra}`);
+    assert.ok(fixture({ compatibility }).errors.includes(
+      "provider evidence: Provider / Client has malformed Not run evidence",
+    ));
+  }
 });
 
 test("release ready gate rejects an unknown provider status instead of treating it as unverified", () => {
