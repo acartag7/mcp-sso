@@ -47,7 +47,7 @@ export function snapshotCompletionResponse(value: unknown): NormResponse {
     return Object.freeze({ status: status as number, headers: Object.freeze(outputHeaders), ...(setCookies ? { setCookies } : {}), ...(bodyMember.present ? { body: bodyMember.value } : {}) });
   }
   const redirect = redirectMember.value;
-  if (typeof redirect !== "string" || !REDIRECT_STATUSES.has(status as number)
+  if (typeof redirect !== "string" || redirect.length === 0 || !REDIRECT_STATUSES.has(status as number)
     || Buffer.byteLength(redirect, "ascii") > 2048 || !isUriReference(redirect)) {
     throw new TypeError("completion redirect is invalid");
   }

@@ -487,7 +487,7 @@ test("identity completion rejects each host response shape at the boundary", asy
     { status: 302, headers: {}, body: "x" }, { status: 200, headers: {}, body: {} },
     { status: 200, headers: {}, body: "untyped" }, { status: 200, headers: { "content-type": "text/plain" }, body: "x".repeat(65_537) },
     { status: 204, headers: {}, body: "" }, { status: 205, headers: {}, body: "" }, { status: 300, headers: {} }, { status: 304, headers: {} },
-    { status: 200, headers: {}, redirect: "/account" },
+    { status: 200, headers: {}, redirect: "/account" }, { status: 302, headers: {}, redirect: "" },
     { status: 200, headers: { connection: "close" } },
     { status: 200, headers: { "X-Test": "one", "x-test": "two" } },
     { status: 200, headers: { "bad header": "value" } }, { status: 200, headers: { "x-test": "line\nbreak" } },
