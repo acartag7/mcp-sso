@@ -8,6 +8,7 @@ const EXPORT_TABLE_DIVIDER = "| --- | --- | --- |";
 const STATUS_HEADING = "## Published release";
 const STATUS_TABLE_HEADER = "| Item | Status |";
 const STATUS_TABLE_DIVIDER = "| --- | --- |";
+const STATUS_VERSION_ITEM = "npm package and tag";
 
 function uniqueSectionAfter(source, heading, label, errors) {
   const lines = source.split("\n");
@@ -59,12 +60,17 @@ function parseStatusVersion(source, errors) {
   const tableRows = renderedTableRows(source, STATUS_HEADING, STATUS_TABLE_HEADER, STATUS_TABLE_DIVIDER, "status version", errors);
   const rows = [];
   for (const line of tableRows) {
-    const firstCell = line.split("|").slice(1, -1)[0]?.trim();
-    if (!firstCell?.includes("npm package and tag")) continue;
-    if (firstCell !== "npm package and tag") {
+    const rawFirstCell = line.split("|").slice(1, -1)[0];
+    const firstCell = rawFirstCell?.trim();
+    if (!firstCell || rawFirstCell !== ` ${firstCell} ` || !/^[A-Za-z0-9]+(?: [A-Za-z0-9]+)*$/.test(firstCell)) {
+      errors.push("status version: malformed item label");
+      continue;
+    }
+    if (firstCell.toLowerCase() === STATUS_VERSION_ITEM && firstCell !== STATUS_VERSION_ITEM) {
       errors.push("status version: malformed npm package and tag row");
       continue;
     }
+    if (firstCell !== STATUS_VERSION_ITEM) continue;
     const match = line.match(/^\| npm package and tag \| `mcp-sso@([^`]+)` and `v([^`]+)` \|$/);
     if (!match) {
       errors.push("status version: malformed npm package and tag row");

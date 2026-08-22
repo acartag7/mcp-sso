@@ -10,6 +10,7 @@ let repo;
 let ancestor;
 let release;
 let runtimeRelease;
+let evidenceRelease;
 let packageRelease;
 let metadataRelease;
 let buildRelease;
@@ -74,6 +75,18 @@ before(() => {
   git(["add", "src/runtime.ts"]);
   git(["commit", "-qm", "runtime release"]);
   runtimeRelease = git(["rev-parse", "HEAD"]);
+  git(["switch", "-q", "-c", "evidence-change", release]);
+  for (const directory of ["examples", "test", "scripts/live", ".github/workflows"]) {
+    mkdirSync(join(repo, directory), { recursive: true });
+  }
+  const evidenceFiles = [
+    "examples/example.ts", "test/evidence.test.ts", "scripts/live/probe.mjs", "scripts/run-release-matrix.mjs",
+    ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json", "tsconfig.build.json",
+  ];
+  for (const file of evidenceFiles) writeFileSync(join(repo, file), "changed\n");
+  git(["add", ...evidenceFiles]);
+  git(["commit", "-qm", "evidence release"]);
+  evidenceRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "-c", "package-change", release]);
   writeFileSync(join(repo, "package.json"), JSON.stringify({ version: "0.4.0", scripts: {}, exports: { ".": {}, "./new": {} } }));
   git(["commit", "-qam", "package release"]);
@@ -116,6 +129,16 @@ test("release ready gate rejects runtime changes after the evidence commit", () 
   assert.ok(result.errors.includes(
     `recorded runtime commit ${ancestor} predates release runtime changes: src/runtime.ts`,
   ));
+});
+
+test("release ready gate rejects evidence-definition changes after the evidence commit", () => {
+  const result = fixture({ releaseCommit: evidenceRelease });
+  const error = result.errors.find((message) => message.startsWith(`recorded runtime commit ${ancestor} predates`));
+  assert.ok(error);
+  for (const file of [
+    "examples/example.ts", "scripts/live/probe.mjs", "scripts/run-release-matrix.mjs", "test/evidence.test.ts",
+    ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.build.json", "tsconfig.json",
+  ]) assert.match(error, new RegExp(file.replaceAll(".", "\\.")));
 });
 
 test("release ready gate rejects package runtime changes after the evidence commit", () => {
@@ -247,8 +270,14 @@ test("release ready gate rejects every malformed or duplicate named status row",
   assert.ok(fixture({ status: conflicting }).errors.includes(
     "status version: expected one npm package and tag row, found 2",
   ));
-  const decorated = `${statusFor()}\n| **npm package and tag** | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
-  assert.ok(fixture({ status: decorated }).errors.includes("status version: malformed npm package and tag row"));
+  for (const label of [
+    "**npm package and tag**", "npm  package and tag", "npm&nbsp;package and tag", "npm package and tag ",
+  ]) {
+    const decorated = `${statusFor()}\n| ${label} | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
+    assert.ok(fixture({ status: decorated }).errors.includes("status version: malformed item label"));
+  }
+  const wrongCase = `${statusFor()}\n| NPM package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
+  assert.ok(fixture({ status: wrongCase }).errors.includes("status version: malformed npm package and tag row"));
 });
 
 test("release ready gate ignores the status label in prose", () => {

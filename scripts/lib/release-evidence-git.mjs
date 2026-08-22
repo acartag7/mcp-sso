@@ -29,7 +29,11 @@ export function isAncestor(cwd, ancestor, descendant) {
 function changedRuntimeInputs(cwd, ancestor, descendant) {
   const output = execFileSync(
     "git",
-    ["diff", "--name-only", "-z", ancestor, descendant, "--", "src", "tsconfig.json", "tsconfig.build.json"],
+    [
+      "diff", "--name-only", "-z", ancestor, descendant, "--",
+      "src", "examples", "test", "scripts/live", "scripts/run-release-matrix.mjs", "tsconfig.json", "tsconfig.build.json",
+      ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
+    ],
     { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
   return output.split("\0").filter(Boolean);
