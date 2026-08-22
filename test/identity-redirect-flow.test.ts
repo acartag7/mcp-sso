@@ -304,6 +304,37 @@ test("RM.17 Fastify, Express, and Hono preserve a validated redirect response", 
   }
 });
 
+test("RM.17 Fastify, Express, and Hono preserve a validated string response", async () => {
+  const adapterHarness = () => harness({ onIdentity: () => ({
+    status: 201, headers: { "Content-Type": "application/x-host", "X-Host": "kept" }, body: "Grüezi 😀",
+  }) });
+  const assertResponse = (status: number, contentType: string | null | undefined, hostHeader: string | null | undefined, body: string): void => {
+    assert.equal(status, 201); assert.equal(contentType, "application/x-host"); assert.equal(hostHeader, "kept"); assert.equal(body, "Grüezi 😀");
+  };
+  {
+    const h = adapterHarness(); const app = Fastify(); await registerOAuthRoutes(app, { bridge: h.bridge, skipAuthorize: true, identityFlow: h.flow });
+    const begin = await app.inject({ method: "GET", url: "/login" }); const state = new URL(begin.headers.location as string).searchParams.get("state") as string;
+    const done = await app.inject({ method: "GET", url: `/login/callback?state=${state}&code=c`, headers: { cookie: String(begin.headers["set-cookie"]).split(";", 1)[0] } });
+    assertResponse(done.statusCode, done.headers["content-type"] as string, done.headers["x-host"] as string, done.body); await app.close();
+  }
+  {
+    const h = adapterHarness(); const app = express(); app.use(createOAuthRouter({ bridge: h.bridge, skipAuthorize: true, identityFlow: h.flow }));
+    const server = app.listen(0, "127.0.0.1"); await new Promise<void>((resolve) => server.once("listening", resolve));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    try {
+      const begin = await fetch(base + "/login", { redirect: "manual" }); const state = new URL(begin.headers.get("location") as string).searchParams.get("state") as string;
+      const done = await fetch(base + `/login/callback?state=${state}&code=c`, { headers: { cookie: begin.headers.get("set-cookie")?.split(";", 1)[0] as string } });
+      assertResponse(done.status, done.headers.get("content-type"), done.headers.get("x-host"), await done.text());
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+  }
+  {
+    const h = adapterHarness(); const app = createOAuthApp({ bridge: h.bridge, skipAuthorize: true, identityFlow: h.flow, clientIp: () => IP });
+    const begin = await app.request("/login"); const state = new URL(begin.headers.get("location") as string).searchParams.get("state") as string;
+    const done = await app.request(`/login/callback?state=${state}&code=c`, { headers: { cookie: begin.headers.get("set-cookie")?.split(";", 1)[0] as string } });
+    assertResponse(done.status, done.headers.get("content-type"), done.headers.get("x-host"), await done.text());
+  }
+});
+
 test("Fastify, Express, and Hono snapshot flow options once before route checks", async () => {
   const mount = async (adapter: "fastify" | "express" | "hono"): Promise<void> => {
     const h = harness();

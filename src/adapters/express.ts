@@ -86,6 +86,7 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
       res.set("set-cookie", cookies.length === 1 ? cookies[0] : cookies);
     }
     if (r.redirect) { res.status(r.status).set("location", r.redirect).end(); return; }
+    if (typeof r.body === "string") { res.status(r.status).end(r.body); return; }
     res.status(r.status).send(r.body);
   };
   // Last-resort handler: route escaped throws through the direct §9.5 path. The
