@@ -56,7 +56,7 @@ CI runs typecheck, `check:lines`, test, and build on pull requests and on `main`
 
 Local mirror of `process-guard`, one time: `git config core.hooksPath .githooks`. The hook finds an `engineering-os` checkout through `$ENGINEERING_OS_DIR`, `../engineering-os`, or `~/project/engineering-os`, and no-ops with a warning if none exists. CI is the real wall.
 
-Release flow: merge the version-bump pull request, tag `vX.Y.Z`, let `publish.yml` publish through OIDC and create the GitHub Release, then edit the release with hand-written notes. Never create the GitHub Release before the workflow runs. Immutable releases are on, so creating and deleting a release burns that tag permanently (`HTTP 422: tag_name was used by an immutable release`) and the workflow's own release step then fails with no recovery. The full procedure is [`docs/release-checklist.md`](docs/release-checklist.md).
+Release flow: merge the version-bump pull request, run live verification from that reachable `origin/main` commit, merge the evidence-only pull request, and tag `vX.Y.Z`. Let `publish.yml` publish through OIDC and create the GitHub Release, then edit the release with hand-written notes. Never create the GitHub Release before the workflow runs. Immutable releases are on, so creating and deleting a release burns that tag permanently (`HTTP 422: tag_name was used by an immutable release`) and the workflow's own release step then fails with no recovery. The full procedure is [`docs/release-checklist.md`](docs/release-checklist.md).
 
 ## Every pull request
 

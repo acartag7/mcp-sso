@@ -13,6 +13,17 @@ for (const row of manifest.rows) {
   if (ids.has(row.id)) errors.push(`duplicate executable row ${row.id}`);
   ids.add(row.id);
   if (!docs.includes(`### ${row.id} — ${row.title}`)) errors.push(`${row.id} is undocumented or its title drifted`);
+  if (!Array.isArray(row.exports) || row.exports.some((name) => typeof name !== "string")) {
+    errors.push(`${row.id} requires an exports array of strings`);
+  } else {
+    if (new Set(row.exports).size !== row.exports.length) errors.push(`${row.id} has duplicate exports`);
+    if (row.exports.length > 0 && row.packedArtifact !== true) {
+      errors.push(`${row.id} requires packedArtifact true before its exports can count`);
+    }
+    for (const exportName of row.exports) {
+      if (!manifest.requiredExports.includes(exportName)) errors.push(`${row.id} names unknown export ${exportName}`);
+    }
+  }
   if (!Array.isArray(row.evidence) || row.evidence.length === 0) errors.push(`${row.id} has no executable evidence`);
   for (const evidence of row.evidence ?? []) {
     const path = resolve(root, evidence.file);

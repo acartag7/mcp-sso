@@ -3,6 +3,7 @@
 // green parents as failing, and truncating a TAP directive counted a SKIPPED
 // test as a pass — a green receipt for evidence that never ran.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { resolveOutcome } from "../scripts/lib/release-matrix-outcome.mjs";
 
@@ -53,4 +54,12 @@ test("release matrix: a name that prefixes another does not borrow its result", 
 
 test("release matrix: an absent test reports missing rather than passing", () => {
   assert.equal(resolveOutcome(tap("# Subtest: beta", "ok 1 - beta"), "alpha"), "missing");
+});
+
+test("release matrix: the current tree is built before evidence runs", async () => {
+  const runner = await readFile(new URL("../scripts/run-release-matrix.mjs", import.meta.url), "utf8");
+  const build = 'const build = await run(pnpmCommand, ["run", "build"]);';
+  assert.ok(runner.includes(build));
+  assert.ok(runner.indexOf(build) < runner.indexOf("const integrity = await run"));
+  assert.ok(runner.indexOf(build) < runner.indexOf("const runs = await Promise.all"));
 });

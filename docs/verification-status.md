@@ -39,7 +39,7 @@ The current source keeps the `v0.4.0` protocol and conformance claims. It also c
 
 In those examples, direct identity authorization uses `authorize:<ip>`. Upstream authorize and callback requests share `upstream:<ip>`. The library still defaults to `noopRateLimit` when a composition does not supply a `RateLimitPort`.
 
-## `v0.4.0` boot changes
+## v0.4.0 boot changes
 
 `v0.4.0` rejects these configurations at boot:
 

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveOutcome } from "./lib/release-matrix-outcome.mjs";
@@ -11,7 +11,6 @@ function fatal(message) { console.error(`release matrix preflight failed: ${mess
 if (process.env.RUN_INTEGRATION !== "true") fatal("RUN_INTEGRATION=true is required");
 if (!process.env.MYSQL_URL) fatal("MYSQL_URL is required; MySQL rows never skip");
 if (!process.env.REDIS_URL) fatal("REDIS_URL is required; Redis rows never skip");
-if (!existsSync(resolve(root, "dist/index.js")) || !existsSync(resolve(root, "dist/bin/init.js"))) fatal("pnpm run build must complete before test:release");
 process.env.RUN_RELEASE_MATRIX = "true";
 
 function run(command, args) {
@@ -20,6 +19,10 @@ function run(command, args) {
       (error, stdout, stderr) => resolveRun({ code: error ? 1 : 0, output: `${stdout}${stderr}` }));
   });
 }
+
+const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const build = await run(pnpmCommand, ["run", "build"]);
+if (build.code !== 0) { process.stderr.write(`release matrix build failed:\n${build.output}`); process.exit(1); }
 
 const integrity = await run(process.execPath, ["scripts/check-release-matrix.mjs"]);
 if (integrity.code !== 0) { process.stderr.write(integrity.output); process.exit(integrity.code ?? 1); }
