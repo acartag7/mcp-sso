@@ -12,8 +12,9 @@ const STATUS_TABLE_DIVIDER = "| --- | --- |";
 function uniqueSectionAfter(source, heading, label, errors) {
   const lines = source.split("\n");
   const starts = lines.flatMap((line, index) => line === heading ? [index] : []);
-  if (starts.length !== 1) {
-    errors.push(`${label}: expected one ${heading} section, found ${starts.length}`);
+  const occurrences = source.split(heading).length - 1;
+  if (starts.length !== 1 || occurrences !== 1) {
+    errors.push(`${label}: expected one canonical ${heading} section, found ${occurrences}`);
     return undefined;
   }
   let end = starts[0] + 1;
@@ -70,7 +71,8 @@ function renderedTableRows(source, heading, header, divider, label, errors) {
   while (tableEnd < lines.length && lines[tableEnd].startsWith("|")) tableEnd += 1;
   for (let index = 0; index < lines.length; index += 1) {
     if (index >= tableStart && index < tableEnd) continue;
-    if (lines[index].trimStart().startsWith("|")) {
+    const unquoted = lines[index].replace(/^\s*(?:>\s*)+/, "");
+    if (unquoted.trimStart().startsWith("|")) {
       errors.push(`${label}: table-shaped row outside the rendered table`);
     }
   }
@@ -79,6 +81,8 @@ function renderedTableRows(source, heading, header, divider, label, errors) {
 
 function parseStatusVersion(source, errors) {
   const tableRows = renderedTableRows(source, STATUS_HEADING, STATUS_TABLE_HEADER, STATUS_TABLE_DIVIDER, "status version", errors);
+  const labelCount = source.split("npm package and tag").length - 1;
+  if (labelCount !== 1) errors.push(`status version: expected one npm package and tag label, found ${labelCount}`);
   const rows = [];
   for (const line of tableRows) {
     const firstCell = line.split("|").slice(1, -1)[0]?.trim();

@@ -103,7 +103,7 @@ test("release ready gate rejects a malformed evidence row beside a valid row", (
 
 test("release ready gate does not count table-shaped rows outside the evidence table", () => {
   const row = `| \`./hono\` | \`RM.1\` | \`${ancestor}\` |`;
-  const wrappers = [`<!--\n${row}\n-->`, `\`\`\`md\n${row}\n\`\`\``, row];
+  const wrappers = [`<!--\n${row}\n-->`, `\`\`\`md\n${row}\n\`\`\``, `> ${row}`, row];
   for (const wrapped of wrappers) {
     const compatibility = `${compatibilityFor(ancestor)}\n\n${wrapped}`;
     const result = fixture({
@@ -132,20 +132,22 @@ test("release ready gate rejects an evidence table hidden by Markdown", () => {
 });
 
 test("release ready gate rejects repeated evidence and status sections", () => {
-  const compatibility = `${compatibilityFor(ancestor)}\n\n## Public export live evidence`;
-  assert.ok(fixture({ compatibility }).errors.includes(
-    "export evidence: expected one ## Public export live evidence section, found 2",
-  ));
-  const status = `${statusFor()}\n\n## Published release`;
-  assert.ok(fixture({ status }).errors.includes(
-    "status version: expected one ## Published release section, found 2",
-  ));
+  for (const suffix of ["", " ", " ##"]) {
+    const compatibility = `${compatibilityFor(ancestor)}\n\n## Public export live evidence${suffix}`;
+    assert.ok(fixture({ compatibility }).errors.includes(
+      "export evidence: expected one canonical ## Public export live evidence section, found 2",
+    ));
+    const status = `${statusFor()}\n\n## Published release${suffix}`;
+    assert.ok(fixture({ status }).errors.includes(
+      "status version: expected one canonical ## Published release section, found 2",
+    ));
+  }
 });
 
 test("release ready gate does not count hidden or out-of-table status rows", () => {
   const base = statusFor().split("\n").filter((line) => !line.includes("npm package and tag")).join("\n");
   const row = "| npm package and tag | `mcp-sso@0.5.0` and `v0.5.0` |";
-  const wrappers = [`<!--\n${row}\n-->`, `\`\`\`md\n${row}\n\`\`\``, row];
+  const wrappers = [`<!--\n${row}\n-->`, `\`\`\`md\n${row}\n\`\`\``, `> ${row}`, row];
   for (const wrapped of wrappers) {
     const result = fixture({ status: `${base}\n\n${wrapped}` });
     assert.ok(result.errors.includes("status version: expected one npm package and tag row, found 0"));
@@ -172,6 +174,7 @@ test("release ready gate rejects a status table hidden by Markdown", () => {
 test("release ready gate rejects every malformed or duplicate named status row", () => {
   const malformed = `${statusFor()}\n| npm package and tag | mcp-sso@0.4.0 and v0.4.0 |`;
   assert.ok(fixture({ status: malformed }).errors.includes("status version: malformed npm package and tag row"));
+  assert.ok(fixture({ status: malformed }).errors.includes("status version: expected one npm package and tag label, found 2"));
   const conflicting = `${statusFor()}\n| npm package and tag | \`mcp-sso@0.4.0\` and \`v0.4.0\` |`;
   assert.ok(fixture({ status: conflicting }).errors.includes(
     "status version: expected one npm package and tag row, found 2",
