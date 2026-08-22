@@ -5,7 +5,25 @@ const RESPONSE_KEYS = new Set(["status", "headers", "setCookies", "body", "redir
 const FORBIDDEN_HEADERS = new Set(["connection", "content-length", "trailer", "transfer-encoding", "upgrade"]);
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
-const URI_REFERENCE = /^(?:[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=]|%[0-9A-Fa-f]{2})+$/u;
+const PCT = "%[0-9A-Fa-f]{2}";
+const UNRESERVED = "[A-Za-z0-9._~-]";
+const SUB_DELIM = "[!$&'()*+,;=]";
+const PCHAR = `(?:${UNRESERVED}|${PCT}|${SUB_DELIM}|[:@])`;
+const SEGMENT = `${PCHAR}*`;
+const PATH_ABEMPTY = `(?:/${SEGMENT})*`;
+const PATH_ABSOLUTE = `/(?:${PCHAR}+(?:/${SEGMENT})*)?`;
+const PATH_ROOTLESS = `${PCHAR}+(?:/${SEGMENT})*`;
+const PATH_NOSCHEME = `(?:${UNRESERVED}|${PCT}|${SUB_DELIM}|@)+(?:/${SEGMENT})*`;
+const IP_LITERAL = "\\[[A-Za-z0-9._~!$&'()*+,;=:-]+\\]";
+const REG_NAME = `(?:${UNRESERVED}|${PCT}|${SUB_DELIM})*`;
+const USER_INFO = `(?:${UNRESERVED}|${PCT}|${SUB_DELIM}|:)*`;
+const AUTHORITY = `(?:${USER_INFO}@)?(?:${IP_LITERAL}|${REG_NAME})(?::[0-9]*)?`;
+const QUERY_OR_FRAGMENT = `(?:${PCHAR}|[/?])*`;
+const URI_REFERENCE = new RegExp(
+  `^(?:(?:[A-Za-z][A-Za-z0-9+.-]*):(?://${AUTHORITY}${PATH_ABEMPTY}|${PATH_ABSOLUTE}|${PATH_ROOTLESS}|)|(?://${AUTHORITY}${PATH_ABEMPTY}|${PATH_ABSOLUTE}|${PATH_NOSCHEME}|))(?:\\?${QUERY_OR_FRAGMENT})?(?:#${QUERY_OR_FRAGMENT})?$`,
+  "u",
+);
+const IPV_FUTURE = /^v[0-9A-Fa-f]+\.(?:[A-Za-z0-9._~!$&'()*+,;=:-])+$/u;
 
 export function snapshotCompletionResponse(value: unknown): NormResponse {
   const response = inspectRecord(value, "completion response");
@@ -30,7 +48,7 @@ export function snapshotCompletionResponse(value: unknown): NormResponse {
   }
   const redirect = redirectMember.value;
   if (typeof redirect !== "string" || !REDIRECT_STATUSES.has(status as number)
-    || Buffer.byteLength(redirect, "ascii") > 2048 || !URI_REFERENCE.test(redirect)) {
+    || Buffer.byteLength(redirect, "ascii") > 2048 || !isUriReference(redirect)) {
     throw new TypeError("completion redirect is invalid");
   }
   if (bodyMember.present) throw new TypeError("completion redirect cannot carry a body");
@@ -38,6 +56,14 @@ export function snapshotCompletionResponse(value: unknown): NormResponse {
   if (location !== undefined && location !== redirect) throw new TypeError("completion Location does not match redirect");
   defineHeader(outputHeaders, "location", redirect);
   return Object.freeze({ status: status as number, headers: Object.freeze(outputHeaders), ...(setCookies ? { setCookies } : {}), redirect });
+}
+
+function isUriReference(value: string): boolean {
+  if (!URI_REFERENCE.test(value)) return false;
+  const literal = value.match(/\[([^\]]+)\]/u)?.[1];
+  if (literal === undefined || IPV_FUTURE.test(literal)) return true;
+  try { new URL(`http://[${literal}]/`); return true; }
+  catch { return false; }
 }
 
 function snapshotHeaders(value: unknown): Record<string, string> {

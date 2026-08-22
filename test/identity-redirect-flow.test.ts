@@ -497,6 +497,7 @@ test("identity completion rejects each host response shape at the boundary", asy
     { status: 200, headers: { "x-test": "x".repeat(8193) } }, { status: 200, headers: oversizedHeaders },
     { status: 302, headers: {}, redirect: "https://example.test/a b" },
     { status: 302, headers: {}, redirect: "/bad%2" }, { status: 302, headers: {}, redirect: "\\bad" },
+    { status: 302, headers: {}, redirect: "https://[" }, { status: 302, headers: {}, redirect: "/path[not-an-ip-literal]" },
     { status: 302, headers: { location: "/other" }, redirect: "/account" },
     { status: 204, headers: { "set-cookie": "" } }, { status: 204, headers: {}, setCookies: [""] },
     { status: 204, headers: { "set-cookie": "x".repeat(4097) } },
@@ -536,6 +537,12 @@ test("identity completion accepts the host response boundary controls", async ()
   const begun = await start(h.flow); const response = await h.flow.handleCallback(callback(begun.state, begun.cookie));
   assert.equal(response.status, 303); assert.equal(response.headers["cache-control"], "no-store");
   assert.equal(response.headers.location, "/account%20home"); assert.equal(response.setCookies?.length, 16);
+
+  for (const redirect of ["https://example.test/account", "//example.test/account", "account/next?tab=profile#name", "https://[::1]/account"]) {
+    const redirectFlow = harness({ onIdentity: () => ({ status: 303, headers: {}, redirect }) });
+    const redirectStart = await start(redirectFlow.flow); const redirectResponse = await redirectFlow.flow.handleCallback(callback(redirectStart.state, redirectStart.cookie));
+    assert.equal(redirectResponse.status, 303); assert.equal(redirectResponse.redirect, redirect);
+  }
 
   const body = harness({ onIdentity: () => ({ status: 200, headers: { "Content-Type": "text/plain", "x-tab": "a\tb" }, body: "Grüezi 😀" }) });
   const bodyStart = await start(body.flow); const bodyResponse = await body.flow.handleCallback(callback(bodyStart.state, bodyStart.cookie));
