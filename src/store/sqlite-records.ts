@@ -4,7 +4,7 @@ import type {
 } from "../ports/store.ts";
 import {
   StoreInputError, assertGrantGeneration, assertSha256Hex,
-  assertRefreshResource, assertUtcIsoTimestamp, grantGenerationForWrite,
+  assertRefreshResource, assertStoreSubject, assertUtcIsoTimestamp, grantGenerationForWrite,
   grantGenerationFromStored, refreshResourceFromStored,
 } from "../ports/store.ts";
 
@@ -32,6 +32,7 @@ export function insertRefreshToken(db: DatabaseSync, input: SaveRefreshTokenInpu
 }
 
 export function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow): SaveRefreshTokenInput {
+  assertStoreSubject(row.subject, "stored subject");
   const resource = refreshResourceFromStored(row.resource);
   if (resource === null) throw new StoreInputError("stored refresh resource is invalid");
   return {
@@ -49,13 +50,15 @@ export function revokeFamily(db: DatabaseSync, familyId: string, revokedAtIso: s
 }
 
 export function validateAuthCode(input: SaveAuthCodeInput): void {
+  assertStoreSubject(input.subject);
   assertSha256Hex(input.codeHash, "codeHash");
   assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
   assertGrantGeneration(input.grantGeneration, "grantGeneration");
   if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
 }
 
-export function validateRefreshToken(input: SaveRefreshTokenInput): void {
+export function validateRefreshToken(input: SaveRefreshTokenInput, validateSubject = true): void {
+  if (validateSubject) assertStoreSubject(input.subject);
   assertSha256Hex(input.tokenHash, "tokenHash");
   if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
   assertRefreshResource(input.resource, "resource");
@@ -65,12 +68,13 @@ export function validateRefreshToken(input: SaveRefreshTokenInput): void {
 
 export function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
   assertSha256Hex(tokenHash, "tokenHash");
-  validateRefreshToken(next);
+  validateRefreshToken(next, false);
   assertUtcIsoTimestamp(nowIso, "nowIso");
   if (next.previousTokenHash !== tokenHash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
 }
 
 export function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {
+  assertStoreSubject(row.subject, "stored subject");
   return {
     codeHash: row.code_hash, clientId: row.client_id, subject: row.subject,
     redirectUri: row.redirect_uri, resource: row.resource,
@@ -81,6 +85,7 @@ export function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {
 }
 
 export function refreshTokenFromRow(row: RefreshTokenRow): RefreshTokenRecord {
+  assertStoreSubject(row.subject, "stored subject");
   return {
     tokenHash: row.token_hash, familyId: row.family_id,
     previousTokenHash: row.previous_token_hash, clientId: row.client_id,

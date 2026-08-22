@@ -13,7 +13,7 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import type { AuthCodeRecord, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput } from "../ports/store.ts";
 import { assertConsentJtiUnique } from "./mysql-index-schema.ts";
 import {
-  StoreInputError, assertGrantGeneration, assertSha256Hex,
+  StoreInputError, assertGrantGeneration, assertSha256Hex, assertStoreSubject,
   assertRefreshResource, assertUtcIsoTimestamp, grantGenerationForWrite,
   grantGenerationFromStored, refreshResourceFromStored,
 } from "../ports/store.ts";
@@ -100,7 +100,6 @@ export async function migrateMysqlStore(conn: PoolConnection): Promise<void> {
   await assertInnoDBEngine(conn);
   await assertConsentJtiUnique(conn);
 }
-
 async function tableExists(conn: PoolConnection, table: string): Promise<boolean> {
   const [rows] = await conn.query<RowDataPacket[]>(
     "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND LOWER(TABLE_NAME) = LOWER(?)", [table]);
@@ -108,7 +107,6 @@ async function tableExists(conn: PoolConnection, table: string): Promise<boolean
     throw new StoreInputError(`${table} must use its exact canonical table name`);
   return rows.length > 0;
 }
-
 async function ensureColumn(conn: PoolConnection, table: string, column: string, definition: string): Promise<void> {
   if (await columnExists(conn, table, column)) return;
   try {
@@ -118,7 +116,6 @@ async function ensureColumn(conn: PoolConnection, table: string, column: string,
       || !await columnExists(conn, table, column)) throw error;
   }
 }
-
 async function columnExists(conn: PoolConnection, table: string, column: string): Promise<boolean> {
   const [rows] = await conn.query<RowDataPacket[]>(
     "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
@@ -126,12 +123,10 @@ async function columnExists(conn: PoolConnection, table: string, column: string)
   );
   return rows.length > 0;
 }
-
 function isMysqlError(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null
     && (error as { code?: unknown }).code === code;
 }
-
 async function assertStrictMode(conn: PoolConnection): Promise<void> {
   const [rows] = await conn.query<RowDataPacket[]>("SELECT @@session.sql_mode AS sql_mode");
   const modes = String((rows[0] as { sql_mode?: string } | undefined)?.sql_mode ?? "").split(",");
@@ -143,7 +138,6 @@ async function assertStrictMode(conn: PoolConnection): Promise<void> {
     );
   }
 }
-
 async function assertColumnCollations(conn: PoolConnection): Promise<void> {
   // Check every character COLUMN's collation, not just the table default: MySQL compares
   // by column collation, and a drifted table can have TABLE_COLLATION=utf8mb4_bin while
@@ -207,27 +201,32 @@ export function isDuplicateEntry(error: unknown): boolean {
 }
 
 export function nextFromRow(input: SaveRefreshTokenInput, row: RefreshTokenRow): SaveRefreshTokenInput {
+  assertStoreSubject(row.subject, "stored subject");
   const resource = refreshResourceFromStored(row.resource);
   if (resource === null) throw new StoreInputError("stored refresh resource is invalid");
   return { ...input, clientId: row.client_id, subject: row.subject, resource, scopes: parseScopes(row.scopes_json), grantGeneration: grantGenerationFromStored(row.grant_generation) };
 }
 
 export function authCodeFromRow(row: AuthCodeRow): AuthCodeRecord {
+  assertStoreSubject(row.subject, "stored subject");
   return { codeHash: row.code_hash, clientId: row.client_id, subject: row.subject, redirectUri: row.redirect_uri, resource: row.resource, scopes: parseScopes(row.scopes_json), codeChallenge: row.code_challenge, codeChallengeMethod: row.code_challenge_method, expiresAt: row.expires_at, grantGeneration: grantGenerationFromStored(row.grant_generation) };
 }
 
 export function refreshTokenFromRow(row: RefreshTokenRow): RefreshTokenRecord {
+  assertStoreSubject(row.subject, "stored subject");
   return { tokenHash: row.token_hash, familyId: row.family_id, previousTokenHash: row.previous_token_hash, clientId: row.client_id, subject: row.subject, resource: refreshResourceFromStored(row.resource), scopes: parseScopes(row.scopes_json), expiresAt: row.expires_at, grantGeneration: grantGenerationFromStored(row.grant_generation) };
 }
 
 export function validateAuthCode(input: SaveAuthCodeInput): void {
+  assertStoreSubject(input.subject);
   assertSha256Hex(input.codeHash, "codeHash");
   assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
   assertGrantGeneration(input.grantGeneration, "grantGeneration");
   if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
 }
 
-export function validateRefreshToken(input: SaveRefreshTokenInput): void {
+export function validateRefreshToken(input: SaveRefreshTokenInput, validateSubject = true): void {
+  if (validateSubject) assertStoreSubject(input.subject);
   assertSha256Hex(input.tokenHash, "tokenHash");
   if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
   assertRefreshResource(input.resource, "resource");
@@ -237,7 +236,7 @@ export function validateRefreshToken(input: SaveRefreshTokenInput): void {
 
 export function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
   assertSha256Hex(tokenHash, "tokenHash");
-  validateRefreshToken(next);
+  validateRefreshToken(next, false);
   assertUtcIsoTimestamp(nowIso, "nowIso");
   if (next.previousTokenHash !== tokenHash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
 }

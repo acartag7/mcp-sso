@@ -9,6 +9,7 @@ mcp-sso keeps your existing identity provider as the source of truth and mints i
 | **Cloudflare Access** | `mcp-sso/identity/cloudflare-access` | [cloudflare-access.md](./cloudflare-access.md) | Header assertion (Access fronts `/oauth/authorize`) |
 | **Microsoft Entra ID** | `mcp-sso/identity/entra` | [entra.md](./entra.md) | OIDC redirect flow (+ optional group → scope) |
 | **Google** | `mcp-sso/identity/google` | [google.md](./google.md) | OIDC redirect flow (Workspace `hd` gate) |
+| **Website session** | root `createUpstreamRedirectFlow` export | [website-login.md](./website-login.md) | Verified claims callback without MCP consent or tokens |
 | **Generic OIDC** | `mcp-sso/identity/generic-oidc` | [generic-oidc.md](./generic-oidc.md) | Any OIDC provider (Keycloak, Okta, Auth0, Dex, …) |
 | **Console pairing** | `mcp-sso/identity/console-pairing` | | Zero IdP setup. Local / single-operator only |
 

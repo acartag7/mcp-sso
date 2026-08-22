@@ -8,9 +8,10 @@ import type { IdentityPort } from "../ports/identity.ts";
 import { pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
+import { assertDistinctUpstreamFlowRoutes, assertUpstreamFlowCompletion } from "./upstream-flow-routes.ts";
 import {
   formBodySnapshot, headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
-  semanticOAuthBody, type NormRequest, type NormResponse,
+  responseSetCookies, semanticOAuthBody, type NormRequest, type NormResponse,
 } from "./http.ts";
 import { hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import { OAuthError } from "../errors.ts";
@@ -45,9 +46,16 @@ export interface ExpressAdapterOptions {
    *  → upstream.handleAuthorize and GET upstream.callbackPath → upstream.handleCallback.
    *  Mutually exclusive with `identity`/`identityHeader` and `skipAuthorize`. */
   upstream?: UpstreamRedirectFlow;
+  /** Claims-only redirect flow mounted at GET /login and its callback path. */
+  identityFlow?: UpstreamRedirectFlow;
 }
 
 export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
+  if (opts.upstream && (opts.identity || opts.skipAuthorize)) throw new Error("createOAuthRouter: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  const flows = [opts.upstream, opts.identityFlow].filter((flow): flow is UpstreamRedirectFlow => flow !== undefined);
+  if (opts.upstream) assertUpstreamFlowCompletion(opts.upstream, "bridge");
+  if (opts.identityFlow) assertUpstreamFlowCompletion(opts.identityFlow, "identity");
+  if (flows.length > 0) assertDistinctUpstreamFlowRoutes(opts.bridge, flows);
   const router = Router();
   // Keep the framework parser boundary aligned with the core-supported OAuth
   // request domain. This lives inside the returned router, so unrelated app
@@ -58,7 +66,7 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
     urlencoded({ extended: false, limit: OAUTH_POST_BODY_MAX_BYTES }),
     raw({ limit: OAUTH_POST_BODY_MAX_BYTES, type: () => true }),
   );
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, identityFlow } = opts;
 
   const toNorm = (req: Request): NormRequest => {
     const headers = headersFromDistinct(req.headersDistinct, req.headers as NormRequest["headers"]);
@@ -73,6 +81,7 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   };
   const send = (res: Response, r: NormResponse): void => {
     for (const [key, value] of Object.entries(r.headers)) res.set(key, value);
+    if (r.setCookies) res.set("set-cookie", responseSetCookies(r));
     if (r.redirect) { res.redirect(r.status, r.redirect); return; }
     res.status(r.status).send(r.body);
   };
@@ -89,9 +98,6 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   router.get(`/.well-known/oauth-protected-resource${resourcePath}`, wrap(async (_req, res) => send(res, await bridge.handleProtectedResourceMetadata())));
   router.get("/oauth/jwks", wrap(async (_req, res) => send(res, await bridge.handleJwks())));
   router.post("/oauth/register", wrap(async (req, res) => send(res, await bridge.handleRegister(toNorm(req)))));
-  if (upstream && (identity || skipAuthorize)) {
-    throw new Error("createOAuthRouter: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
-  }
   if (upstream) {
     const up = upstream;
     router.get("/oauth/authorize", wrap(async (req, res) => send(res, await up.handleAuthorize(toNorm(req)))));
@@ -111,6 +117,11 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
       const identityResolved = await bridge.resolveIdentity(id, headerString(request.headers, identityHeader), request.ip);
       send(res, await bridge.handleAuthorize(request, identityResolved));
     }));
+  }
+  if (identityFlow) {
+    const login = identityFlow;
+    router.get("/login", wrap(async (req, res) => send(res, await login.handleAuthorize(toNorm(req)))));
+    router.get(login.callbackPath, wrap(async (req, res) => send(res, await login.handleCallback(toNorm(req)))));
   }
   router.post("/oauth/authorize/approve", wrap(async (req, res) => send(res, await bridge.handleApprove(toNorm(req)))));
   router.post("/oauth/token", wrap(async (req, res) => send(res, await bridge.handleToken(toNorm(req)))));

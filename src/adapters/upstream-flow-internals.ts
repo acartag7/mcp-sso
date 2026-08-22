@@ -19,7 +19,8 @@ export { OAUTH_SINGLETON_PARAM_KEYS, findDuplicatedKeys, findRepeatedKeys } from
 // The flow JWT moved to its own module (250-line limit); re-exported here so
 // every existing importer of these names keeps working unchanged.
 export {
-  FLOW_AUDIENCE, flowAudience, signFlowToken, verifyFlowToken, type FlowClaims,
+  FLOW_AUDIENCE, IDENTITY_FLOW_AUDIENCE, flowAudience, signFlowToken, verifyFlowToken,
+  type FlowClaims, type CompleteFlowClaims, type BridgeFlowClaims, type IdentityFlowClaims, type FlowCompletion,
 } from "./upstream-flow-jwt.ts";
 
 /** Callback query params checked for RFC 6749 §3.1 duplicates (failure row 1). */
@@ -41,10 +42,11 @@ export interface CookieProfile {
 /** Decide the cookie profile at boot from the issuer scheme. https ⇒ `__Host-`
  *  prefix (Path=/, Secure, no Domain per RFC 6265bis); http loopback (legal only
  *  under §5 dev.allowInsecureLocalhost) ⇒ the non-prefixed name without Secure. */
-export function resolveCookieProfile(issuer: string): CookieProfile {
+export function resolveCookieProfile(issuer: string, complete: "bridge" | "identity" = "bridge"): CookieProfile {
   let protocol = "https:";
   try { protocol = new URL(issuer).protocol; } catch { /* config already validated */ }
-  return protocol === "https:" ? { name: "__Host-mcp-sso-upstream", secure: true } : { name: "mcp-sso-upstream", secure: false };
+  const stem = complete === "bridge" ? "upstream" : "identity";
+  return protocol === "https:" ? { name: `__Host-mcp-sso-${stem}`, secure: true } : { name: `mcp-sso-${stem}`, secure: false };
 }
 
 /** Serialize a Set-Cookie value. Same attributes for set and clear (the clear
@@ -113,9 +115,17 @@ export function assertCallbackPath(path: string, issuerOrigin: string, resourceP
   let normalized: string;
   try { normalized = new URL(issuerOrigin + path).pathname; } catch { throw new AuthConfigError("callbackPath is not a valid path under the issuer origin"); }
   if (normalized !== path) throw new AuthConfigError(`callbackPath must equal its normalized form (got '${normalized}')`);
-  if (RESERVED_CALLBACK_ROUTES.includes(path) || path === resourcePath || path.startsWith("/.well-known/")) {
+  const key = effectiveRouteKey(path);
+  if (RESERVED_CALLBACK_ROUTES.some((route) => effectiveRouteKey(route) === key)
+    || key === effectiveRouteKey(resourcePath)
+    || key === "/.well-known" || key.startsWith("/.well-known/")) {
     throw new AuthConfigError(`callbackPath must not be a reserved route: ${path}`);
   }
+}
+
+export function effectiveRouteKey(path: string): string {
+  const folded = path.replace(/[A-Z]/g, (character) => character.toLowerCase());
+  return folded.length > 1 && folded.endsWith("/") ? folded.slice(0, -1) : folded;
 }
 
 /** Timing-safe string compare; length mismatch fails (returns false). */

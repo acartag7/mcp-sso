@@ -367,6 +367,20 @@
           "name": "RM.16 a downstream adapter runs the shipped conformance suite from the packed artifact"
         }
       ]
+    },
+    {
+      "id": "RM.17",
+      "title": "Claims-only redirect completion",
+      "evidence": [
+        { "file": "test/release-identity-completion.test.ts", "name": "RM.17 the packed root exports the claims-only flow and route-set assertion" },
+        { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 claims-only completion returns verified claims and remains single-use" },
+        { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 claims-only authorize and callback charge only website-login" },
+        { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 onIdentity throw is redacted, consumes the jti, and returns no host cookie" },
+        { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 a yielding onIdentity timeout takes completion_failed and discards its late cookie" },
+        { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 a malformed host response cannot escape the fixed completion failure" },
+        { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 identity denial and rejection share one direct anti-oracle response" },
+        { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 Fastify, Express, and Hono each deliver both Set-Cookie values" }
+      ]
     }
   ]
 }

@@ -1,7 +1,7 @@
 // Crypto and token contracts (§7): pinned algorithms, separate keys, cached imports.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { SignJWT, importJWK, jwtVerify, type JWK, type JWTPayload } from "jose";
-import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts";
+import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts"; import { identitySubject } from "./identity-boundary.ts";
 import type { BridgeConfig } from "./config.ts";
 import { scopeString, type CredentialKind } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
@@ -88,7 +88,7 @@ export function pkceChallenge(verifier: string): string {
 }
 
 export async function signConsentToken(claims: ConsentRequestClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
-  const now = nowSeconds(clock, config.consentTokenTtlSeconds);
+  const subject = identitySubject(claims.subject); const now = nowSeconds(clock, config.consentTokenTtlSeconds);
   const storeInstanceId = claims.storeInstanceId ?? await consentStoreInstanceId(config);
   const token = await new SignJWT({
     typ: CONSENT_TYP,
@@ -106,7 +106,7 @@ export async function signConsentToken(claims: ConsentRequestClaims, config: Bri
   }).setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setIssuer(config.issuer)
     .setAudience(CONSENT_AUDIENCE)
-    .setSubject(claims.subject)
+    .setSubject(subject)
     .setIssuedAt(now)
     .setExpirationTime(now + config.consentTokenTtlSeconds)
     .sign(consentSecret(config));
@@ -136,12 +136,12 @@ export async function verifyConsentToken(token: string, config: BridgeConfig, cl
 }
 
 export async function signAccessToken(claims: AccessTokenClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
-  const now = nowSeconds(clock, config.accessTokenTtlSeconds);
+  const subject = identitySubject(claims.subject); const now = nowSeconds(clock, config.accessTokenTtlSeconds);
   const key = await signKey(config);
   return await new SignJWT({ client_id: claims.clientId, scope: scopeString(claims.scopes), ...(claims.machine ? { gty: "client_credentials" } : {}) })
     .setProtectedHeader({ alg: "ES256", kid: keyId(config), typ: "JWT" })
     .setIssuer(config.issuer)
-    .setSubject(claims.subject)
+    .setSubject(subject)
     .setAudience(config.resource)
     .setIssuedAt(now)
     .setExpirationTime(now + config.accessTokenTtlSeconds)
@@ -191,7 +191,7 @@ function consentClaims(payload: JWTPayload): ConsentRequestClaims {
     codeChallenge: requiredString(payload.code_challenge, "code_challenge"),
     codeChallengeMethod: "S256",
     state: stringClaim(payload.state),
-    subject: requiredString(payload.sub, "sub"),
+    subject: identitySubject(requiredString(payload.sub, "sub")),
     allowedScopes,
     storeInstanceId: stringClaim(payload.store_instance),
     ...cimdVerifiedClaim(payload),
@@ -208,7 +208,7 @@ function cimdVerifiedClaim(payload: JWTPayload): { cimdVerified?: true } {
 }
 
 function accessClaims(payload: JWTPayload): VerifiedAccessToken {
-  const subject = requiredString(payload.sub, "sub");
+  const subject = identitySubject(requiredString(payload.sub, "sub"));
   const clientId = requiredString(payload.client_id, "client_id");
   return {
     subject,

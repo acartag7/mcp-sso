@@ -178,6 +178,12 @@ The row packs and installs the npm artifact. It runs `runStoreConformance` and `
 
 Importing `mcp-sso/testing/store-conformance-grants` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`. Only the two complete suite entry points are public.
 
+### RM.17 — Claims-only redirect completion
+
+This row starts `createUpstreamRedirectFlow({ complete: "identity" })` through the public `/login` route, completes the callback with verified `IdentityClaims`, and confirms that no consent response or MCP token is produced. It proves that both legs charge `website-login:<ip>`, callback replay cannot invoke the identity provider or `onIdentity` twice, and IdP denial and verified identity rejection use the same direct response.
+
+The failure cases prove that a thrown, timed-out, or malformed host completion returns the fixed `completion_failed` response after the jti is consumed. A late completion result is discarded. The adapter case runs Fastify, Express, and Hono and requires both the host session cookie and the flow-cookie deletion to survive their response mapping.
+
 ## Harness helpers
 
 Shared helpers:

@@ -107,7 +107,7 @@ app.post("/mcp", async (request, reply) => {
 
 | Area | Shipped in `mcp-sso@0.4.0` |
 | --- | --- |
-| Identity providers | Cloudflare Access, Microsoft Entra ID (redirect flow plus group-to-scope ceilings), Google, generic OIDC, console pairing for local use |
+| Identity providers | Cloudflare Access, Microsoft Entra ID (redirect flow plus group-to-scope ceilings), Google, generic OIDC, console pairing for local use, and claims-only website login |
 | Client registration | CIMD, and `POST /oauth/register` in stateless or stored mode |
 | Frameworks | Fastify, Express, Hono. OAuth decisions stay in the framework-free core |
 | Stores | `node:sqlite` (one host), MySQL (shared replicas), memory (one process). One shared conformance suite, also published as `mcp-sso/testing/*` |

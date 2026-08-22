@@ -934,16 +934,15 @@ function adapterMutualExclusion(label: string, mount: (mode: "upstream+identity"
   });
 }
 
-function stubFlow(c: BridgeConfig): ReturnType<typeof makeFlow>["flow"] {
-  return makeFlow(c, fakeIdentity(c)).flow;
-}
 function headerIdentity() { return { async verify(): Promise<{ ok: true; identity: { subject: string } }> { return { ok: true, identity: { subject: "x" } }; } }; }
-function adapterBase(c: BridgeConfig): Bridge { return new Bridge({ config: c, store: new MemoryStore(), clock: new FakeClock(NOW_MS), audit: new MemoryAudit() }); }
 function adapterOpts(mode: string, c: BridgeConfig): Record<string, unknown> {
-  const opts: Record<string, unknown> = { bridge: adapterBase(c) };
-  if (mode === "upstream+identity") { opts.upstream = stubFlow(c); opts.identity = headerIdentity() as never; }
-  else if (mode === "upstream+skip") { opts.upstream = stubFlow(c); opts.skipAuthorize = true; }
-  else if (mode === "upstream-only") { opts.upstream = stubFlow(c); }
+  const store = new MemoryStore(), clock = new FakeClock(NOW_MS), audit = new MemoryAudit();
+  const bridge = new Bridge({ config: c, store, clock, audit });
+  const upstream = createUpstreamRedirectFlow({ bridge, identity: fakeIdentity(c).identity, store, clock, audit });
+  const opts: Record<string, unknown> = { bridge };
+  if (mode === "upstream+identity") { opts.upstream = upstream; opts.identity = headerIdentity() as never; }
+  else if (mode === "upstream+skip") { opts.upstream = upstream; opts.skipAuthorize = true; }
+  else if (mode === "upstream-only") { opts.upstream = upstream; }
   else { opts.identity = headerIdentity() as never; }
   return opts;
 }
