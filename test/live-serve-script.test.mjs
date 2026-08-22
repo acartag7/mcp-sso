@@ -107,13 +107,16 @@ esac
   executable(join(bin, "cloudflared"), `#!/usr/bin/env bash
 [[ "$1 $2" == "tunnel --config" ]] || exit 9
 cp -- "$3" "$TUNNEL_CONFIG_COPY"
-printf started > "$TUNNEL_STARTED"
 if [[ "$CLOUDFLARED_MODE" == "ignore" ]]; then
   # Receives the signal and keeps running: only a bounded reap stops it.
   trap 'printf ignored > "$TUNNEL_IGNORED"' TERM INT
 else
   trap 'printf stopped > "$TUNNEL_STOPPED"; exit 143' TERM INT
 fi
+[[ -z "$TUNNEL_START_DELAY" ]] || /bin/sleep "$TUNNEL_START_DELAY"
+# Publish readiness only after the signal handlers are installed. Tests may
+# signal the fixture as soon as this file exists.
+printf started > "$TUNNEL_STARTED"
 case "$TUNNEL_MODE" in
   normal) exit 0 ;;
   failure) exit 7 ;;
@@ -143,13 +146,20 @@ printf 'x' >> "$STATE/lsof-calls"
 case "$LSOF_MODE" in
   busy) echo 424242 ;;
   foreign) [[ -f "$STATE/ready.$port" ]] && echo 424242 ;;
-  steal)
+  stale)
     # Truthful through the busy-port precheck and the readiness proof; the port
     # changes hands before the final gate.
-    if [[ "$(wc -c < "$STATE/lsof-calls" | tr -d ' ')" -le "$STEAL_AFTER" ]]; then
+    if [[ "$(wc -c < "$STATE/lsof-calls" | tr -d ' ')" -le "$STALE_AFTER" ]]; then
       [[ -f "$STATE/ready.$port" ]] && cat "$STATE/pid.$port"
     else
       echo 424242
+    fi
+    ;;
+  steal)
+    # Change hands only after the tunnel fixture has actually started. Process
+    # scheduling must not move this serving-stage scenario into the startup gate.
+    if [[ -f "$TUNNEL_STARTED" ]]; then echo 424242
+    else [[ -f "$STATE/ready.$port" ]] && cat "$STATE/pid.$port"
     fi
     ;;
   *) [[ -f "$STATE/ready.$port" ]] && cat "$STATE/pid.$port" ;;
@@ -169,13 +179,12 @@ exit 0
       STARTUP_EXIT: mode === "startup-failure" ? "23" : "",
       TUNNEL_MODE: ["normal", "failure", "startup-timeout"].includes(mode) ? mode : "signal",
       LSOF_MODE: mode === "port-busy" ? "busy" : mode === "foreign-listener" ? "foreign"
-        : ["stale-listener", "steal-while-serving"].includes(mode) ? "steal" : "",
+        : mode === "stale-listener" ? "stale" : mode === "steal-while-serving" ? "steal" : "",
       CURL_MODE: mode === "stalled-readiness" ? "stall" : "",
-      // stale-listener steals at the pre-tunnel gate (call 3 per leg);
-      // steal-while-serving lets that gate pass and steals in supervision.
-      STEAL_AFTER: String((mode === "steal-while-serving" ? 3 : 2) * legs.length),
+      STALE_AFTER: String(2 * legs.length),
       TUNNEL_STARTED: tunnelStarted, TUNNEL_STOPPED: tunnelStopped, TUNNEL_IGNORED: tunnelIgnored,
       TUNNEL_CONFIG_COPY: tunnelConfig, RELEASE_TUNNEL: releaseTunnel,
+      TUNNEL_START_DELAY: mode === "steal-while-serving" ? "2" : "",
       CLOUDFLARED_MODE: mode === "stubborn-tunnel" ? "ignore" : "",
     },
     stdio: ["ignore", "pipe", "pipe"],
