@@ -181,11 +181,11 @@ test("release ready gate rejects duplicate provider evidence subjects", () => {
   const row = compatibility.split("\n").find((line) => line.startsWith("| Provider | Client | Flow |"));
   assert.ok(row);
   const canonical = row.replace("| Provider |", "| Provider Name |");
-  const contradictory = canonical.replace("| Provider Name |", "| Provider  Name |")
+  const contradictory = canonical.replace("| Provider Name |", "| ` Provider Name ` |")
     .replace("| Verified | 2026-08-22 |", "| Not run |  |")
     .replace(`Runtime commit \`${ancestor}\`.`, "Not run: The flow was not exercised.");
   const result = fixture({ compatibility: compatibility.replace(row, `${canonical}\n${contradictory}`) });
-  assert.ok(result.errors.includes("provider evidence: duplicate row for Provider  Name / Client / Flow"));
+  assert.ok(result.errors.includes("provider evidence: duplicate row for ` Provider Name ` / Client / Flow"));
 });
 
 test("release ready gate names a public export without a live evidence row", () => {

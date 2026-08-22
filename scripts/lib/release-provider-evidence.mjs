@@ -1,5 +1,9 @@
 const PROVIDER_STATUSES = new Set(["Verified", "Verified with limit", "Not run"]);
 
+function renderedSubjectCell(value) {
+  return value.replace(/`([^`\r\n]+)`/g, "$1").replace(/\s+/gu, " ").trim();
+}
+
 export function parseProviderRuntimeCommits(tableRows, errors) {
   const receipts = [];
   const subjects = new Set();
@@ -30,8 +34,7 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
       }
     }
     if (malformedName) continue;
-    const subject = JSON.stringify([provider, client, flow]
-      .map((value) => value.replace(/`([^`]+)`/g, "$1").replace(/\s+/gu, " ")));
+    const subject = JSON.stringify([provider, client, flow].map(renderedSubjectCell));
     if (subjects.has(subject)) {
       errors.push(`provider evidence: duplicate row for ${provider} / ${client} / ${flow}`);
       continue;
