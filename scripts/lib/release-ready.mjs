@@ -14,6 +14,30 @@ const STATUS_TABLE_HEADER = "| Item | Status |";
 const STATUS_TABLE_DIVIDER = "| --- | --- |";
 const STATUS_VERSION_ITEM = "npm package and tag";
 const HTML_ENTITY = /&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);/;
+const CANONICAL_H2 = /^## [A-Za-z0-9](?:[A-Za-z0-9 .-]*[A-Za-z0-9])?$/;
+
+function hasNoncanonicalHeading(lines) {
+  const renderedLines = lines.map((line) => line.replace(/^\s*(?:>\s*)+/, ""));
+  return renderedLines.some((line, index) => {
+    if (/^[ ]{0,3}##(?:[ \t]+|$)/.test(line) && !CANONICAL_H2.test(lines[index])) return true;
+    if (/<\/?h2\b/i.test(line)) return true;
+    return /^[ ]{0,3}-+[ \t]*$/.test(line) && index > 0 && renderedLines[index - 1].trim() !== "";
+  });
+}
+
+function hasNoncanonicalTableMarkup(line) {
+  let outsideCode = "";
+  let cursor = 0;
+  for (const match of line.matchAll(/`([^`\r\n]+)`/g)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (/^[\p{L}\p{N}]$/u.test(line[start - 1] ?? "") || /^[\p{L}\p{N}]$/u.test(line[end] ?? "")) return true;
+    outsideCode += line.slice(cursor, start);
+    cursor = end;
+  }
+  outsideCode += line.slice(cursor);
+  return HTML_ENTITY.test(line) || /[`\\*_~[\]<>]/.test(outsideCode);
+}
 
 function uniqueSectionAfter(source, heading, label, errors) {
   const lines = source.split("\n");
@@ -24,11 +48,8 @@ function uniqueSectionAfter(source, heading, label, errors) {
     return headingPattern.test(unquoted) ? [index] : [];
   });
   const starts = lines.flatMap((line, index) => line === heading ? [index] : []);
-  if (lines.some((line) => {
-    const unquoted = line.replace(/^\s*(?:>\s*)+/, "");
-    return /^##[ \t]+/.test(unquoted) && HTML_ENTITY.test(unquoted);
-  })) {
-    errors.push(`${label}: HTML entities are not allowed in section headings`);
+  if (hasNoncanonicalHeading(lines)) {
+    errors.push(`${label}: evidence documents require canonical level-two headings`);
     return undefined;
   }
   if (starts.length !== 1 || renderedHeadings.length !== 1) {
@@ -63,8 +84,8 @@ function renderedTableRows(source, heading, header, divider, label, errors) {
   }
   let tableEnd = tableStart + 2;
   while (tableEnd < lines.length && lines[tableEnd].startsWith("|")) tableEnd += 1;
-  if (lines.slice(tableStart + 2, tableEnd).some((line) => HTML_ENTITY.test(line))) {
-    errors.push(`${label}: HTML entities are not allowed in table rows`);
+  if (lines.slice(tableStart + 2, tableEnd).some(hasNoncanonicalTableMarkup)) {
+    errors.push(`${label}: table rows contain noncanonical Markdown`);
   }
   for (let index = 0; index < lines.length; index += 1) {
     if (index >= tableStart && index < tableEnd) continue;

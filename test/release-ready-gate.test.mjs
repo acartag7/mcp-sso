@@ -246,37 +246,47 @@ test("release ready gate rejects an evidence table hidden by Markdown", () => {
 });
 
 test("release ready gate rejects repeated evidence and status sections", () => {
-  for (const suffix of ["", " ", " ##"]) {
-    const compatibility = `${compatibilityFor(ancestor)}\n\n## Public export live evidence${suffix}`;
+  const compatibility = `${compatibilityFor(ancestor)}\n\n## Public export live evidence`;
+  assert.ok(fixture({ compatibility }).errors.includes(
+    "export evidence: expected one canonical ## Public export live evidence section, found 2",
+  ));
+  const status = `${statusFor()}\n\n## Published release`;
+  assert.ok(fixture({ status }).errors.includes(
+    "status version: expected one canonical ## Published release section, found 2",
+  ));
+});
+
+test("release ready gate rejects noncanonical level-two headings", () => {
+  const variants = [
+    "## Public export live evidence ##",
+    " ## Public export live evidence",
+    "## Public export live evidenc&#101;",
+    "## Public export live **evidence**",
+    "<h2>Public export live evidence</h2>",
+    "Public export live evidence\n---",
+  ];
+  for (const variant of variants) {
+    const compatibility = `${compatibilityFor(ancestor)}\n\n${variant}`;
     assert.ok(fixture({ compatibility }).errors.includes(
-      "export evidence: expected one canonical ## Public export live evidence section, found 2",
-    ));
-    const status = `${statusFor()}\n\n## Published release${suffix}`;
-    assert.ok(fixture({ status }).errors.includes(
-      "status version: expected one canonical ## Published release section, found 2",
+      "export evidence: evidence documents require canonical level-two headings",
     ));
   }
-});
-
-test("release ready gate rejects HTML entities in section headings", () => {
-  const compatibility = `${compatibilityFor(ancestor)}\n\n## Public export live evidenc&#101;`;
-  assert.ok(fixture({ compatibility }).errors.includes(
-    "export evidence: HTML entities are not allowed in section headings",
-  ));
   const status = `${statusFor()}\n\n## Published releas&#101;`;
   assert.ok(fixture({ status }).errors.includes(
-    "status version: HTML entities are not allowed in section headings",
+    "status version: evidence documents require canonical level-two headings",
   ));
 });
 
-test("release ready gate rejects HTML entities in provider evidence rows", () => {
-  const compatibility = compatibilityFor(ancestor).replace(
-    `Runtime commit \`${ancestor}\`.`,
-    `Runtime commit \`${ancestor}\`. Limi&#116;: Refresh was not exercised.`,
-  );
-  assert.ok(fixture({ compatibility }).errors.includes(
-    "provider evidence: HTML entities are not allowed in table rows",
-  ));
+test("release ready gate rejects Markdown that disguises provider evidence markers", () => {
+  for (const marker of ["Limi&#116;:", "Limi**t:**", "Limi[t](https://example.invalid):", "Limit\\:", "Limi`t`:"]) {
+    const compatibility = compatibilityFor(ancestor).replace(
+      `Runtime commit \`${ancestor}\`.`,
+      `Runtime commit \`${ancestor}\`. ${marker} Refresh was not exercised.`,
+    );
+    assert.ok(fixture({ compatibility }).errors.includes(
+      "provider evidence: table rows contain noncanonical Markdown",
+    ));
+  }
 });
 
 test("release ready gate ignores section titles in prose and links", () => {
