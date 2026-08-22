@@ -58,6 +58,7 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
   const stateDir = join(base, "state");
   const repoPkg = JSON.parse(await readFile(join(repo, "package.json"), "utf8")) as {
     version: string; packageManager: string; dependencies: Record<string, string>; devDependencies: Record<string, string>;
+    exports: Record<string, unknown>;
   };
   let server: GeneratedServer | undefined;
   try {
@@ -135,10 +136,7 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
       assert.equal(existsSync(join(scaffoldRoot, "node_modules", undeclared)), false,
         `standalone scaffold cannot borrow consumer-only dependency ${undeclared}`);
     }
-    const imports = ["mcp-sso", "mcp-sso/store/memory", "mcp-sso/store/sqlite", "mcp-sso/store/mysql", "mcp-sso/rate-limit/redis",
-      "mcp-sso/fastify/protected-resource-rate-limit",
-      "mcp-sso/fastify", "mcp-sso/express", "mcp-sso/hono", "mcp-sso/identity/cloudflare-access", "mcp-sso/identity/entra",
-      "mcp-sso/identity/console-pairing", "mcp-sso/identity/generic-oidc", "mcp-sso/identity/google"];
+    const imports = Object.keys(repoPkg.exports).map((entry) => entry === "." ? "mcp-sso" : `mcp-sso/${entry.slice(2)}`);
     const importCheck = await run(process.execPath, ["--input-type=module", "-e", `await Promise.all(${JSON.stringify(imports)}.map((id)=>import(id)))`], generated);
     assert.equal(importCheck.code, 0, `published export import failed:\n${importCheck.output}`);
 

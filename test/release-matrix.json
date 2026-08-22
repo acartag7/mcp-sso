@@ -28,8 +28,9 @@
   "rows": [
     {
       "id": "RM.1",
-      "title": "Packed generated server",
-      "exports": [".", "./store/sqlite", "./fastify/protected-resource-rate-limit", "./fastify", "./identity/console-pairing"],
+      "title": "Packed generated server and public exports",
+      "packedArtifact": true,
+      "exports": [".", "./store/memory", "./store/sqlite", "./store/mysql", "./rate-limit/redis", "./fastify/protected-resource-rate-limit", "./fastify", "./express", "./hono", "./identity/cloudflare-access", "./identity/entra", "./identity/console-pairing", "./identity/generic-oidc", "./identity/google", "./testing/store-conformance", "./testing/client-store-conformance"],
       "evidence": [
         {
           "file": "test/release-packed.test.ts",
@@ -40,7 +41,7 @@
     {
       "id": "RM.2",
       "title": "Fastify production-style header flow",
-      "exports": ["./store/sqlite", "./rate-limit/redis", "./fastify", "./identity/cloudflare-access"],
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-fastify-stack.test.ts",
@@ -51,7 +52,7 @@
     {
       "id": "RM.3",
       "title": "Express redirect flow",
-      "exports": ["./store/mysql", "./express", "./identity/entra"],
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-express-stack.test.ts",
@@ -62,7 +63,7 @@
     {
       "id": "RM.4",
       "title": "Hono CIMD flow",
-      "exports": ["./store/memory", "./hono", "./identity/generic-oidc"],
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-hono-stack.test.ts",
@@ -73,7 +74,7 @@
     {
       "id": "RM.5",
       "title": "Identity sibling proof",
-      "exports": ["./identity/cloudflare-access", "./identity/entra", "./identity/console-pairing", "./identity/generic-oidc", "./identity/google"],
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-identity-routes.test.ts",
@@ -102,7 +103,7 @@
     {
       "id": "RM.6",
       "title": "Three-adapter CIMD route parity",
-      "exports": ["./fastify", "./express", "./hono"],
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-cimd-parity.test.ts",
@@ -162,7 +163,7 @@
     {
       "id": "RM.10",
       "title": "Store and service parity",
-      "exports": ["./store/memory", "./store/sqlite", "./store/mysql", "./rate-limit/redis"],
+      "exports": [],
       "evidence": [
         {
           "file": "test/e2e-mcp-sdk.test.ts",
@@ -376,6 +377,7 @@
     {
       "id": "RM.16",
       "title": "Shipped conformance suite",
+      "packedArtifact": true,
       "exports": ["./testing/store-conformance", "./testing/client-store-conformance"],
       "evidence": [
         {
@@ -387,6 +389,7 @@
     {
       "id": "RM.17",
       "title": "Claims-only redirect completion",
+      "packedArtifact": true,
       "exports": ["."],
       "evidence": [
         { "file": "test/release-identity-completion.test.ts", "name": "RM.17 the packed root exports the claims-only flow and route-set assertion" },
@@ -402,7 +405,7 @@
     {
       "id": "RM.18",
       "title": "Live claims-only redirect completion",
-      "exports": [".", "./rate-limit/redis", "./fastify", "./express", "./hono"],
+      "exports": [],
       "evidence": [
         { "file": "test/live-e2e-probe.test.mjs", "name": "RM.18 probe-e2e runs both DCR modes and live identity completion without leaking credentials" }
       ]

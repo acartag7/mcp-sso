@@ -29,22 +29,22 @@ Each row proves that the package entry point participated in the listed executab
 
 | Export | Live evidence | Runtime commit |
 | --- | --- | --- |
-| `.` | `RM.1`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/memory` | `RM.4`, `RM.10` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/sqlite` | `RM.1`, `RM.2`, `RM.10` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/mysql` | `RM.3`, `RM.10` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./rate-limit/redis` | `RM.2`, `RM.10`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `.` | `RM.1`, `RM.17` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/memory` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/sqlite` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/mysql` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./rate-limit/redis` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
 | `./fastify/protected-resource-rate-limit` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./fastify` | `RM.1`, `RM.2`, `RM.6`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./express` | `RM.3`, `RM.6`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./hono` | `RM.4`, `RM.6`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/cloudflare-access` | `RM.2`, `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/entra` | `RM.3`, `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/console-pairing` | `RM.1`, `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/generic-oidc` | `RM.4`, `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/google` | `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./testing/store-conformance` | `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./testing/client-store-conformance` | `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./fastify` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./express` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./hono` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/cloudflare-access` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/entra` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/console-pairing` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/generic-oidc` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/google` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./testing/store-conformance` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./testing/client-store-conformance` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
 
 ## Client versions
 

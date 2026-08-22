@@ -17,6 +17,9 @@ for (const row of manifest.rows) {
     errors.push(`${row.id} requires an exports array of strings`);
   } else {
     if (new Set(row.exports).size !== row.exports.length) errors.push(`${row.id} has duplicate exports`);
+    if (row.exports.length > 0 && row.packedArtifact !== true) {
+      errors.push(`${row.id} requires packedArtifact true before its exports can count`);
+    }
     for (const exportName of row.exports) {
       if (!manifest.requiredExports.includes(exportName)) errors.push(`${row.id} names unknown export ${exportName}`);
     }

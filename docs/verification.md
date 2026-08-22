@@ -82,7 +82,7 @@ The evidence class names describe what each test runs. `test/release-matrix.json
 | Cross-resource machine isolation | Complete protocol flow | RM.7 |
 | Wrong-resource rejection before success audit/state mutation | Complete protocol flow | RM.7/RM.8 |
 
-### RM.1 — Packed generated server
+### RM.1 — Packed generated server and public exports
 
 The row packs the npm artifact in a private directory and installs it with scripts disabled. It invokes the installed `.bin/mcp-sso` command and installs the generated project from its exact dependency pins.
 

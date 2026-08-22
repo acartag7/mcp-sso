@@ -201,6 +201,10 @@ function parseReleaseRows(releaseMatrix, errors) {
     }
     const coveredExports = new Set(row.exports);
     if (coveredExports.size !== row.exports.length) errors.push(`release matrix: ${row.id} has duplicate exports`);
+    if (row.exports.length > 0 && row.packedArtifact !== true) {
+      errors.push(`release matrix: ${row.id} requires packedArtifact true before its exports can count`);
+      executable = false;
+    }
     rows.set(row.id, executable ? coveredExports : new Set());
   }
   return rows;

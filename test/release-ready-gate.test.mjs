@@ -187,12 +187,16 @@ test("release ready gate names an evidence ID absent from the release matrix", (
   assert.ok(result.errors.includes("unknown live evidence ID RM.999 for export ./fastify"));
 });
 
-test("release ready gate requires executable release-matrix rows", () => {
-  const base = { id: "RM.1", title: "Root flow", exports: ["."], evidence: [{ file: "test/root.test.ts", name: "root flow" }] };
+test("release ready gate requires executable packed-artifact release-matrix rows", () => {
+  const base = {
+    id: "RM.1", title: "Root flow", packedArtifact: true, exports: ["."],
+    evidence: [{ file: "test/root.test.ts", name: "root flow" }],
+  };
   const cases = [
     [{ ...base, title: "" }, "release matrix: RM.1 requires a non-empty title"],
     [{ ...base, evidence: [] }, "release matrix: RM.1 requires executable evidence with file and name"],
     [{ ...base, evidence: [{ file: "", name: "root flow" }] }, "release matrix: RM.1 requires executable evidence with file and name"],
+    [{ ...base, packedArtifact: false }, "release matrix: RM.1 requires packedArtifact true before its exports can count"],
   ];
   for (const [row, expected] of cases) {
     const result = fixture({ releaseMatrix: { rows: [row] } });
