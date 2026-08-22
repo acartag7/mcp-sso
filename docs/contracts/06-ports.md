@@ -220,6 +220,8 @@ The Fastify, Express, and Hono adapters apply their request-body limits before c
 | `POST /oauth/revoke`, `Bridge.handleRevoke` | `check("revoke:<ip>")` | Adapter request-body limit and normalization. | Form occurrence checks, field selection, token hashing, revocation state, and audit. An admitted unknown or already-revoked token still returns HTTP 200 under RFC 7009. |
 | Upstream `GET /oauth/authorize`, `createUpstreamRedirectFlow.handleAuthorize` | `check("upstream:<ip>")` | Nothing in the handler. | Duplicate-parameter checks, client selection, CIMD resolution when applicable, flow JWT creation and size check, CIMD success audit when applicable, IdP URL construction, and the redirect response. |
 | Upstream callback, `createUpstreamRedirectFlow.handleCallback` | `check("upstream:<ip>")` | Nothing in the handler. | Cookie read, clock snapshot, duplicate-parameter check, flow-cookie validation, store work, IdP exchange, identity verification, consent preparation, and audit. |
+| Claims-only `GET /login`, `createUpstreamRedirectFlow({ complete: "identity" }).handleAuthorize` | `check("website-login:<ip>")` | Nothing in the handler. | Flow JWT creation and size check, IdP URL construction, and the redirect response. |
+| Claims-only callback, `createUpstreamRedirectFlow({ complete: "identity" }).handleCallback` | `check("website-login:<ip>")` | Nothing in the handler. | Cookie read, clock snapshot, duplicate-parameter check, flow-cookie validation, store work, IdP exchange, identity verification, `onIdentity`, response snapshot, and audit. |
 | CIMD, `CimdResolver.resolve` | `check("cimd:<ip>")` | `CimdResolver.resolve` rejects when CIMD is disabled. | Cache lookup, DNS and fetch on a miss, cache update when allowed, document validation, redirect matching, and CIMD audit. |
 | Submitted pairing code, `createConsolePairingIdentity().verify` | `check("pairing:<ip>")` | Input-shape parsing. Missing or wrongly typed code or nonce returns `pairing_invalid_input` and emits an audit event before the limiter. | Active-code lookup, expiry, code and nonce comparison, attempt count, and pairing audit. |
 
@@ -231,12 +233,12 @@ The in-process pairing-authorize gate in §17.5 does not use `RateLimitPort`. It
 
 | `RateLimitPort.check` result | Call site | Result |
 | --- | --- | --- |
-| `false` | `register:<ip>`, `authorize:<ip>`, `approve:<ip>`, `token:<ip>`, `revoke:<ip>`, `upstream:<ip>`, or `cimd:<ip>` | Direct 429 `temporarily_unavailable`. The work listed after admission does not run. |
+| `false` | `register:<ip>`, `authorize:<ip>`, `approve:<ip>`, `token:<ip>`, `revoke:<ip>`, `upstream:<ip>`, `website-login:<ip>`, or `cimd:<ip>` | Direct 429 `temporarily_unavailable`. The work listed after admission does not run. |
 | `false` | `pairing:<ip>` | `createConsolePairingIdentity().verify` emits a failure audit and returns `pairing_rate_limited`. The wrong-attempt count does not increase. `handlePairingAuthorize` then follows its failed-verification path. |
 | Exception | `register:<ip>` with `BridgeConfig.dcr.mode === "stored"` | Direct 503 `temporarily_unavailable` before body selection, registration state, or registration success audit. |
 | Exception | The current call sites listed above other than `register:<ip>` with `BridgeConfig.dcr.mode === "stored"` | The request continues. This includes `register:<ip>` with `BridgeConfig.dcr.mode === "stateless"`. |
 
-The [rate-limit outage decision](../rate-limit-outage-policy.md) explains why `POST /oauth/register` with `BridgeConfig.dcr.mode === "stored"` is the current `RateLimitPort` call that returns 503 on an exception. A new call site that can create anonymous durable state must define its outage result in its contract. It does not inherit the request-continues result from the current call sites.
+The [rate-limit outage decision](../rate-limit-outage-policy.md) explains why `POST /oauth/register` with `BridgeConfig.dcr.mode === "stored"` is the current `RateLimitPort` call that returns 503 on an exception. A new call site that can create anonymous durable state must define its outage result in its contract. It does not inherit the request-continues result from the current call sites. Claims-only completion runs only after verified identity, so its optional `website-login:<ip>` check remains fail-open on limiter exceptions like `upstream:<ip>`.
 
 ### Shared ports and CIMD
 
