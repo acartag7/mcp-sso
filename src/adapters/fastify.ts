@@ -119,8 +119,7 @@ async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdap
     for (const [key, value] of Object.entries(res.headers)) if (key.toLowerCase() !== "set-cookie") reply.header(key, value);
     const cookies = responseSetCookies(res);
     if (cookies.length > 0) {
-      // This sends already-serialized Set-Cookie response fields to the client; it does not persist them.
-      // codeql[js/clear-text-storage-of-sensitive-data]
+      // lgtm[js/clear-text-storage-of-sensitive-data] Outgoing response fields are transported, not persisted.
       reply.header("set-cookie", cookies.length === 1 ? cookies[0] : cookies);
     }
     if (res.redirect) { await reply.redirect(res.redirect, res.status); return; }
