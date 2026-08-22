@@ -381,6 +381,13 @@
         { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 identity denial and rejection share one direct anti-oracle response" },
         { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 Fastify, Express, and Hono each deliver both Set-Cookie values" }
       ]
+    },
+    {
+      "id": "RM.18",
+      "title": "Live claims-only redirect completion",
+      "evidence": [
+        { "file": "test/live-e2e-probe.test.mjs", "name": "RM.18 probe-e2e runs both DCR modes and live identity completion without leaking credentials" }
+      ]
     }
   ]
 }

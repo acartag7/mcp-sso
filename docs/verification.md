@@ -184,6 +184,14 @@ This row starts `createUpstreamRedirectFlow({ complete: "identity" })` through t
 
 The failure cases prove that a thrown, timed-out, or malformed host completion returns the fixed `completion_failed` response after the jti is consumed. A late completion result is discarded. The adapter cases run Fastify, Express, and Hono. They require both the host session cookie and the flow-cookie deletion to survive response mapping. They also require a redirect's validated status, `Location`, `Content-Type`, custom header, and empty body; a string response's status, `Content-Type`, custom header, and Unicode body; and a bodyless 2xx response's status and custom header without an inferred `Content-Type` to remain identical across the three frameworks.
 
+### RM.18 — Live claims-only redirect completion
+
+This row spawns `scripts/live/probe-e2e.mjs` in stored and stateless DCR modes with real Redis. The probe builds the shipped Fastify and SQLite example, then adds one claims-only leg with the same bridge, store, clock, audit sink, and Redis-backed limiter.
+
+The leg drives GET `/login` and the callback through Fastify, Express, and Hono. It requires `onIdentity` to receive verified `IdentityClaims` and requires the client to receive the host response. Each adapter must deliver both the host session cookie and the flow-cookie deletion. The callback produces no consent HTML or MCP token. Both flow requests use only `website-login:<ip>` keys.
+
+The failure case makes `onIdentity` throw after identity verification. It requires the flow jti to remain consumed, the flow cookie to be cleared, and the response to be the fixed direct 500. The captured audit record uses `completion_failed`. The thrown text must not reach the response, audit records, probe output, or captured stderr.
+
 ## Harness helpers
 
 Shared helpers:

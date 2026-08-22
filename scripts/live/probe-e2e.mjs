@@ -29,6 +29,7 @@ import { createRedisRateLimit } from "../../src/rate-limit/redis.ts";
 import {
   containsCredential, createProbeClientStore, extractConsentToken, form, parseJsonl, sdkPing,
 } from "./probe-e2e-support.mjs";
+import { runIdentityCompletionLeg } from "./probe-e2e-identity-support.mjs";
 import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
 
 for (const name of ["OAUTH_ISSUER", "OAUTH_CONSENT_SIGNING_SECRET", "OAUTH_DCR_MODE", "REDIS_URL"]) {
@@ -63,6 +64,8 @@ const secrets = [];
 const secret = (label, value) => { secrets.push([label, value]); return value; };
 const identityToken = secret("probe identity token", randomBytes(24).toString("base64url"));
 const collectorToken = secret("webhook collector token", randomBytes(24).toString("base64url"));
+const sessionValue = secret("identity completion session cookie", randomBytes(24).toString("base64url"));
+const completionThrowText = secret("identity completion thrown text", randomBytes(24).toString("base64url"));
 // Every audit event this run expects, recorded where it is caused so the
 // receipt cannot fall behind the flow either. Compared as an exact sequence.
 const expected = [];
@@ -146,6 +149,30 @@ try {
   clientStore?.bind(store);
   const clock = new SystemClock();
   if (!ok("probe composition uses the selected DCR mode", config.dcr.mode === dcrMode, dcrMode)) failures++;
+
+  // Claims-only website login uses the same shipped bridge dependencies, then
+  // crosses every framework adapter. The helper returns booleans only; no
+  // cookie, credential, provider name, or thrown text reaches probe output.
+  const identityCompletion = await runIdentityCompletionLeg({
+    bridge: built.bridge, store, clock, audit, rateLimit, sessionValue, throwText: completionThrowText,
+  });
+  for (let i = 0; i < 3; i++) {
+    expect("identity.verify", "success");
+    expect("oauth.upstream.callback", "success");
+    expect("identity.verify", "success");
+    expect("oauth.upstream.callback", "failure");
+    expect("oauth.upstream.callback", "failure");
+  }
+  if (!ok("claims-only completion delivers verified claims and the host response through all adapters",
+    identityCompletion.verifiedClaimsAndResponse)) failures++;
+  if (!ok("claims-only completion preserves both Set-Cookie fields through all adapters",
+    identityCompletion.twoCookies)) failures++;
+  if (!ok("claims-only completion produces no consent HTML or MCP token",
+    identityCompletion.noOAuthArtifacts)) failures++;
+  if (!ok("claims-only completion failure is consumed, cleared, fixed, audited, and redacted",
+    identityCompletion.failureContract)) failures++;
+  if (!ok("claims-only completion charges only website-login keys",
+    identityCompletion.websiteLoginKeys)) failures++;
 
   // 1. Authorization-code leg through the shipped routes, probe-local identity.
   const registration = await app.inject({
