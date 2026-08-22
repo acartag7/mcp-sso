@@ -12,6 +12,7 @@ let release;
 let runtimeRelease;
 let packageRelease;
 let metadataRelease;
+let buildRelease;
 let unrelated;
 
 function git(args) {
@@ -48,7 +49,9 @@ function statusFor(version = "0.5.0") {
 
 function fixture(overrides = {}) {
   const packageJson = overrides.packageJson ?? { version: "0.5.0", exports: { ".": {}, "./fastify": {} } };
-  const releaseMatrix = overrides.releaseMatrix ?? { rows: [{ id: "RM.1" }, { id: "RM.2" }] };
+  const releaseMatrix = overrides.releaseMatrix ?? {
+    rows: [{ id: "RM.1", exports: ["."] }, { id: "RM.2", exports: ["./fastify"] }],
+  };
   const compatibility = overrides.compatibility ?? compatibilityFor(ancestor);
   const status = overrides.status ?? statusFor();
   const releaseCommit = overrides.releaseCommit ?? release;
@@ -79,11 +82,19 @@ before(() => {
   writeFileSync(join(repo, "package.json"), JSON.stringify({
     version: "0.5.0",
     description: "updated",
-    scripts: { release: "true" },
+    scripts: { "check:release-ready": "node gate.mjs" },
     exports: { ".": {} },
   }));
   git(["commit", "-qam", "metadata release"]);
   metadataRelease = git(["rev-parse", "HEAD"]);
+  git(["switch", "-q", "-c", "build-change", release]);
+  writeFileSync(join(repo, "package.json"), JSON.stringify({
+    version: "0.4.0",
+    scripts: { build: "node different-build.mjs" },
+    exports: { ".": {} },
+  }));
+  git(["commit", "-qam", "build release"]);
+  buildRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "--orphan", "unrelated"]);
   git(["commit", "--allow-empty", "-qm", "unrelated"]);
   unrelated = git(["rev-parse", "HEAD"]);
@@ -118,6 +129,13 @@ test("release ready gate permits release metadata after the evidence commit", ()
   assert.deepEqual(fixture({ releaseCommit: metadataRelease }).errors, []);
 });
 
+test("release ready gate rejects a build-command change after the evidence commit", () => {
+  const result = fixture({ releaseCommit: buildRelease });
+  assert.ok(result.errors.includes(
+    `recorded runtime commit ${ancestor} predates release runtime changes: package.json:scripts`,
+  ));
+});
+
 test("release ready gate checks the recorded main commit for a squash-merged live tree", () => {
   const compatibility = compatibilityFor(ancestor).replace(
     `Runtime commit \`${ancestor}\`.`,
@@ -135,6 +153,15 @@ test("release ready gate names an evidence ID absent from the release matrix", (
   const compatibility = compatibilityFor(ancestor).replace("`RM.2`", "`RM.999`");
   const result = fixture({ compatibility });
   assert.ok(result.errors.includes("unknown live evidence ID RM.999 for export ./fastify"));
+});
+
+test("release ready gate rejects an existing evidence row that does not cover the export", () => {
+  const compatibility = compatibilityFor(ancestor).replace(
+    `| \`./fastify\` | \`RM.2\` |`,
+    `| \`./fastify\` | \`RM.1\` |`,
+  );
+  const result = fixture({ compatibility });
+  assert.ok(result.errors.includes("live evidence ID RM.1 does not cover export ./fastify"));
 });
 
 test("release ready gate rejects a malformed evidence row beside a valid row", () => {
@@ -220,6 +247,8 @@ test("release ready gate rejects every malformed or duplicate named status row",
   assert.ok(fixture({ status: conflicting }).errors.includes(
     "status version: expected one npm package and tag row, found 2",
   ));
+  const decorated = `${statusFor()}\n| **npm package and tag** | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
+  assert.ok(fixture({ status: decorated }).errors.includes("status version: malformed npm package and tag row"));
 });
 
 test("release ready gate ignores the status label in prose", () => {

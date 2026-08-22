@@ -60,7 +60,11 @@ function parseStatusVersion(source, errors) {
   const rows = [];
   for (const line of tableRows) {
     const firstCell = line.split("|").slice(1, -1)[0]?.trim();
-    if (firstCell !== "npm package and tag") continue;
+    if (!firstCell?.includes("npm package and tag")) continue;
+    if (firstCell !== "npm package and tag") {
+      errors.push("status version: malformed npm package and tag row");
+      continue;
+    }
     const match = line.match(/^\| npm package and tag \| `mcp-sso@([^`]+)` and `v([^`]+)` \|$/);
     if (!match) {
       errors.push("status version: malformed npm package and tag row");
@@ -114,21 +118,28 @@ function parseExportEvidence(source, errors) {
   return rows;
 }
 
-function parseReleaseIds(releaseMatrix, errors) {
+function parseReleaseRows(releaseMatrix, errors) {
   if (!releaseMatrix || typeof releaseMatrix !== "object" || Array.isArray(releaseMatrix) || !Array.isArray(releaseMatrix.rows)) {
     errors.push("release matrix: expected an object with a rows array");
-    return new Set();
+    return new Map();
   }
-  const ids = new Set();
+  const rows = new Map();
   for (const row of releaseMatrix.rows) {
     if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.id !== "string" || !/^RM\.\d+$/.test(row.id)) {
       errors.push("release matrix: every row requires an RM.N id");
       continue;
     }
-    if (ids.has(row.id)) errors.push(`release matrix: duplicate row ${row.id}`);
-    ids.add(row.id);
+    if (rows.has(row.id)) errors.push(`release matrix: duplicate row ${row.id}`);
+    if (!Array.isArray(row.exports) || row.exports.some((name) => typeof name !== "string")) {
+      errors.push(`release matrix: ${row.id} requires an exports array of strings`);
+      rows.set(row.id, new Set());
+      continue;
+    }
+    const coveredExports = new Set(row.exports);
+    if (coveredExports.size !== row.exports.length) errors.push(`release matrix: ${row.id} has duplicate exports`);
+    rows.set(row.id, coveredExports);
   }
-  return ids;
+  return rows;
 }
 
 function recordedRuntimeCommits(source) {
@@ -153,7 +164,7 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
   }
 
   const evidenceRows = parseExportEvidence(compatibility, errors);
-  const releaseIds = parseReleaseIds(releaseMatrix, errors);
+  const releaseRows = parseReleaseRows(releaseMatrix, errors);
   const publicExports = exportsValue && typeof exportsValue === "object" && !Array.isArray(exportsValue)
     ? Object.keys(exportsValue)
     : [];
@@ -165,7 +176,14 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
   }
   for (const [exportName, row] of evidenceRows) {
     for (const evidenceId of row.evidenceIds) {
-      if (!releaseIds.has(evidenceId)) errors.push(`unknown live evidence ID ${evidenceId} for export ${exportName}`);
+      const coveredExports = releaseRows.get(evidenceId);
+      if (!coveredExports) errors.push(`unknown live evidence ID ${evidenceId} for export ${exportName}`);
+      else if (!coveredExports.has(exportName)) errors.push(`live evidence ID ${evidenceId} does not cover export ${exportName}`);
+    }
+  }
+  for (const [evidenceId, coveredExports] of releaseRows) {
+    for (const exportName of coveredExports) {
+      if (!publicExports.includes(exportName)) errors.push(`release matrix row ${evidenceId} names unknown export ${exportName}`);
     }
   }
 

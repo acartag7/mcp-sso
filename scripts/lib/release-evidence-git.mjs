@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 
 const NON_RUNTIME_PACKAGE_FIELDS = new Set([
-  "author", "bugs", "contributors", "description", "funding", "homepage", "keywords", "license", "repository", "scripts", "version",
+  "author", "bugs", "contributors", "description", "funding", "homepage", "keywords", "license", "repository", "version",
 ]);
 
 function gitOutput(cwd, args) {
@@ -56,9 +56,18 @@ function changedRuntimePackageFields(cwd, ancestor, descendant) {
   const fields = new Set([...Object.keys(before), ...Object.keys(after)]);
   return [...fields]
     .filter((field) => !NON_RUNTIME_PACKAGE_FIELDS.has(field))
-    .filter((field) => JSON.stringify(canonicalJson(before[field])) !== JSON.stringify(canonicalJson(after[field])))
+    .filter((field) => {
+      const beforeValue = field === "scripts" ? withoutReleaseReadyScript(before[field]) : before[field];
+      const afterValue = field === "scripts" ? withoutReleaseReadyScript(after[field]) : after[field];
+      return JSON.stringify(canonicalJson(beforeValue)) !== JSON.stringify(canonicalJson(afterValue));
+    })
     .sort()
     .map((field) => `package.json:${field}`);
+}
+
+function withoutReleaseReadyScript(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return Object.fromEntries(Object.entries(value).filter(([name]) => name !== "check:release-ready"));
 }
 
 export function changedEvidenceInputs(cwd, ancestor, descendant) {
