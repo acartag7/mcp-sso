@@ -84,7 +84,7 @@ The evidence class names describe what each test runs. `test/release-matrix.json
 
 ### RM.1 — Packed generated server and public exports
 
-The row packs the npm artifact in a private directory and installs it with scripts disabled. It invokes the installed `.bin/mcp-sso` command and installs the generated project from its exact dependency pins.
+The release runner rebuilds the current tree immediately before matrix execution. RM.1 then packs the npm artifact in a private directory and installs it with scripts disabled. It invokes the installed `.bin/mcp-sso` command and installs the generated project from its exact dependency pins.
 
 The generated server completes stored DCR, PKCE, consent approval and denial, token exchange, an official MCP SDK `ping`, refresh rotation, replay-family revocation, reauthorization, and RFC 7009 revocation. The row restarts both the server and SQLite during the flow. It checks the JSONL audit for secrets.
 

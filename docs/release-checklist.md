@@ -25,6 +25,8 @@ Use this checklist for a release candidate. The [release verification reference]
    RUN_INTEGRATION=true MYSQL_URL='mysql://…' REDIS_URL='redis://…' pnpm run test:release
    ```
 
+   The command rebuilds the current tree after checking the required service variables and before running any matrix row.
+
 7. Confirm that every `RM.N` row passes. A missing service variable, missing evidence file, skipped selected test, undocumented row, removed export, or removed example makes the command fail.
 8. Run `npm pack --dry-run`.
 9. Confirm that the tarball root contains only `dist/`, `docs/`, `README.md`, `LICENSE`, and `package.json`.

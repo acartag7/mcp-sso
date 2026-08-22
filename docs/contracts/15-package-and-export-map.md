@@ -59,4 +59,4 @@ The gate requires exactly one `Published release` section and one rendered `npm 
 
 When a live worktree commit was squash-merged, the compatibility page records the tested evidence-input digest and the main commit. The export table records the main commit.
 
-The publish build checks out full history, runs `pnpm run check:release-matrix`, and then runs `pnpm run check:release-ready` before dependency installation, tests, build, packing, publication, or GitHub Release creation. The release checklist runs the same commands before the tag is created. Ordinary `pnpm test` does not run them.
+The publish build checks out full history, runs `pnpm run check:release-matrix`, and then runs `pnpm run check:release-ready` before dependency installation, tests, build, packing, publication, or GitHub Release creation. The release checklist runs the same commands before the tag is created. `pnpm run test:release` rebuilds the current tree after its service preflight and immediately before matrix integrity and evidence execution, so RM.1 cannot pack a previous `dist/` tree. Ordinary `pnpm test` does not run the readiness gate.
