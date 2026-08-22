@@ -30,7 +30,8 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
       }
     }
     if (malformedName) continue;
-    const subject = JSON.stringify([provider, client, flow].map((value) => value.replace(/`([^`]+)`/g, "$1")));
+    const subject = JSON.stringify([provider, client, flow]
+      .map((value) => value.replace(/`([^`]+)`/g, "$1").replace(/\s+/gu, " ")));
     if (subjects.has(subject)) {
       errors.push(`provider evidence: duplicate row for ${provider} / ${client} / ${flow}`);
       continue;

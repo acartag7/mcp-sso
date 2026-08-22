@@ -180,10 +180,12 @@ test("release ready gate rejects duplicate provider evidence subjects", () => {
   const compatibility = compatibilityFor(ancestor);
   const row = compatibility.split("\n").find((line) => line.startsWith("| Provider | Client | Flow |"));
   assert.ok(row);
-  const contradictory = row.replace("| Verified | 2026-08-22 |", "| Not run |  |")
+  const canonical = row.replace("| Provider |", "| Provider Name |");
+  const contradictory = canonical.replace("| Provider Name |", "| Provider  Name |")
+    .replace("| Verified | 2026-08-22 |", "| Not run |  |")
     .replace(`Runtime commit \`${ancestor}\`.`, "Not run: The flow was not exercised.");
-  const result = fixture({ compatibility: compatibility.replace(row, `${row}\n${contradictory}`) });
-  assert.ok(result.errors.includes("provider evidence: duplicate row for Provider / Client / Flow"));
+  const result = fixture({ compatibility: compatibility.replace(row, `${canonical}\n${contradictory}`) });
+  assert.ok(result.errors.includes("provider evidence: duplicate row for Provider  Name / Client / Flow"));
 });
 
 test("release ready gate names a public export without a live evidence row", () => {
@@ -259,19 +261,19 @@ test("release ready gate rejects an evidence table hidden by Markdown", () => {
   }
 });
 
-test("release ready gate rejects raw HTML tables in every evidence section", () => {
-  const html = "<table><tr><td>contradictory evidence</td></tr></table>";
+test("release ready gate rejects raw HTML wrappers in every evidence section", () => {
+  const html = "<div>contradictory evidence</div>";
   const compatibility = compatibilityFor(ancestor);
   for (const heading of ["## Current matrix", "## Public export live evidence"]) {
     const changed = compatibility.replace(heading, `${heading}\n\n${html}`);
     const label = heading.includes("Current") ? "provider evidence" : "export evidence";
     assert.ok(fixture({ compatibility: changed }).errors.includes(
-      `${label}: raw HTML table elements are not allowed in the table section`,
+      `${label}: raw angle-bracket markup is not allowed in the table section`,
     ));
   }
   const status = statusFor().replace("## Published release", `## Published release\n\n${html}`);
   assert.ok(fixture({ status }).errors.includes(
-    "status version: raw HTML table elements are not allowed in the table section",
+    "status version: raw angle-bracket markup is not allowed in the table section",
   ));
 });
 
