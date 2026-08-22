@@ -11,6 +11,7 @@ import type { IdentityPort } from "../ports/identity.ts";
 import { AuthConfigError, pathAfterOrigin } from "../config.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
+import { assertDistinctUpstreamFlowRoutes, assertUpstreamFlowCompletion } from "./upstream-flow-routes.ts";
 import {
   formBodySnapshot, headerString, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
   semanticOAuthBody, type NormRequest, type NormResponse,
@@ -31,6 +32,8 @@ export interface HonoAdapterOptions {
    *  → upstream.handleAuthorize and GET upstream.callbackPath → upstream.handleCallback.
    *  Mutually exclusive with `identity`/`identityHeader` and `skipAuthorize`. */
   upstream?: UpstreamRedirectFlow;
+  /** Claims-only redirect flow mounted at GET /login and its callback path. */
+  identityFlow?: UpstreamRedirectFlow;
   /** Client-IP extractor for the rate-limit key (§6.7) and the audit `ip` field.
    *  Hono has no framework-validated `req.ip` (fastify/express key on theirs,
    *  gated by trustProxy config), so the deployer supplies one wired to their
@@ -130,8 +133,13 @@ export const honoOAuthBodyLimit: MiddlewareHandler = async (c, next) => {
 };
 
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, identityFlow, clientIp } = opts;
+  if (upstream && (identity || skipAuthorize)) throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  const flows = [upstream, identityFlow].filter((flow): flow is UpstreamRedirectFlow => flow !== undefined);
+  if (upstream) assertUpstreamFlowCompletion(upstream, "bridge");
+  if (identityFlow) assertUpstreamFlowCompletion(identityFlow, "identity");
+  if (flows.length > 0) assertDistinctUpstreamFlowRoutes(bridge, flows);
   const app = new Hono();
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, clientIp } = opts;
   // §6.7/§9.6 boot rule, ahead of every route registration: stored-DCR
   // registration needs per-client limiter keys, and without an extractor every
   // request shares the one "unknown" bucket — one client could exhaust the
@@ -174,13 +182,15 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   const send = (_c: Context, r: NormResponse): Response => {
     const headers = new Headers();
     for (const [key, value] of Object.entries(r.headers)) headers.set(key, value);
+    for (const cookie of r.setCookies ?? []) headers.append("set-cookie", cookie);
     if (r.redirect) {
       headers.set("location", r.redirect);
       return new Response(null, { status: r.status, headers });
     }
     if (typeof r.body === "string") return new Response(r.body, { status: r.status, headers });
+    if (r.body === undefined) return new Response(null, { status: r.status, headers });
     if (!headers.has("content-type")) headers.set("content-type", "application/json; charset=utf-8");
-    return new Response(r.body === undefined || r.body === null ? null : JSON.stringify(r.body), { status: r.status, headers });
+    return new Response(r.body === null ? null : JSON.stringify(r.body), { status: r.status, headers });
   };
 
   const resourcePath = pathAfterOrigin(bridge.config.resource);
@@ -189,9 +199,6 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
   app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (c) => send(c, await bridge.handleProtectedResourceMetadata()));
   app.get("/oauth/jwks", async (c) => send(c, await bridge.handleJwks()));
   app.post("/oauth/register", honoOAuthBodyLimit, async (c) => send(c, await bridge.handleRegister(await toNorm(c))));
-  if (upstream && (identity || skipAuthorize)) {
-    throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
-  }
   if (upstream) {
     const up = upstream;
     app.get("/oauth/authorize", async (c) => send(c, await up.handleAuthorize(await toNorm(c))));
@@ -216,6 +223,11 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       }
       return send(c, await bridge.handleAuthorize(req, identityResolved));
     });
+  }
+  if (identityFlow) {
+    const login = identityFlow;
+    app.get("/login", async (c) => send(c, await login.handleAuthorize(await toNorm(c))));
+    app.get(login.callbackPath, async (c) => send(c, await login.handleCallback(await toNorm(c))));
   }
   app.post("/oauth/authorize/approve", honoOAuthBodyLimit, async (c) => send(c, await bridge.handleApprove(await toNorm(c))));
   app.post("/oauth/token", honoOAuthBodyLimit, async (c) => send(c, await bridge.handleToken(await toNorm(c))));

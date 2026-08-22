@@ -19,6 +19,23 @@ export interface StoreConformanceOptions {
    *  still runs the expiry rows against it. A store with neither fails; the
    *  rows are never skipped, because a skipped row is not evidence. */
   startExpiryCollection?: (store: StorePort, clock: ClockPort) => void;
+  /** Test-only raw fixture seam for proving that pre-boundary durable rows fail
+   *  closed. The callback bypasses StorePort writes deliberately. */
+  seedLegacySubjectRows?: (store: StorePort, fixture: LegacySubjectFixture) => Promise<void> | void;
+  inspectLegacySubjectRows?: (store: StorePort, fixture: LegacySubjectFixture) => Promise<LegacySubjectState> | LegacySubjectState;
+}
+
+export interface LegacySubjectFixture {
+  authCode: SaveAuthCodeInput;
+  refreshToken: SaveRefreshTokenInput;
+  successorHash: string;
+}
+
+export interface LegacySubjectState {
+  authCodeExists: boolean;
+  predecessorConsumed: boolean;
+  familyRevoked: boolean;
+  successorExists: boolean;
 }
 
 export const NOW = "2026-07-03T12:00:00.000Z";

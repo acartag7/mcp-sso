@@ -105,9 +105,9 @@ app.post("/mcp", async (request, reply) => {
 
 ## What ships
 
-| Area | Shipped in `mcp-sso@0.4.0` |
+| Area | Current source |
 | --- | --- |
-| Identity providers | Cloudflare Access, Microsoft Entra ID (redirect flow plus group-to-scope ceilings), Google, generic OIDC, console pairing for local use |
+| Identity providers | Cloudflare Access, Microsoft Entra ID (redirect flow plus group-to-scope ceilings), Google, generic OIDC, console pairing for local use, and claims-only website login |
 | Client registration | CIMD, and `POST /oauth/register` in stateless or stored mode |
 | Frameworks | Fastify, Express, Hono. OAuth decisions stay in the framework-free core |
 | Stores | `node:sqlite` (one host), MySQL (shared replicas), memory (one process). One shared conformance suite, also published as `mcp-sso/testing/*` |
@@ -121,7 +121,7 @@ Not shipped: a GitHub identity port and the device authorization grant are contr
 
 Security products earn trust with artifacts, not adjectives. These are the ones this project publishes.
 
-- A [STRIDE threat model](docs/threat-model.md) with 48 attacker-driven rows, the control for each, and the residual risk that remains.
+- A [STRIDE threat model](docs/threat-model.md) with 49 attacker-driven rows, the control for each, and the residual risk that remains.
 - A [conformance matrix](docs/contracts/16-spec-conformance-matrix.md) against MCP Authorization `2026-07-28` and CIMD draft `-00`, row by row, with the two deviations recorded rather than hidden.
 - A [release verification matrix](docs/verification.md) that binds every shipped feature to a test row, plus packed-artifact checks, plus a dated [live client matrix](docs/client-compatibility.md) against real identity providers and real MCP clients.
 - A [dependency ledger](docs/dependency-ledger.md): `jose` is the only runtime dependency, every pin is recorded with its publish date, and ordinary updates wait 15 days. npm publishes run only from GitHub Actions with OIDC provenance, never from a laptop.

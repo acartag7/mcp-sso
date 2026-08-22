@@ -10,9 +10,10 @@ import { pathAfterOrigin } from "../config.ts";
 import { OAuthError } from "../errors.ts";
 import { asDirectOAuth, Bridge } from "./bridge.ts";
 import type { UpstreamRedirectFlow } from "./upstream-flow.ts";
+import { assertDistinctUpstreamFlowRoutes, assertUpstreamFlowCompletion } from "./upstream-flow-routes.ts";
 import {
   formBodySnapshot, headerString, headersFromDistinct, oauthErrorResponse, OAUTH_POST_BODY_MAX_BYTES,
-  semanticOAuthBody, type NormRequest, type NormResponse,
+  responseSetCookies, semanticOAuthBody, type NormRequest, type NormResponse,
 } from "./http.ts";
 import { formOccurrencesFromUrlEncoded, hasDuplicatedAuthorizeParams, queryOccurrencesFromUrl } from "./authorize-params.ts";
 import {
@@ -44,6 +45,8 @@ export interface FastifyAdapterOptions {
    *  → upstream.handleAuthorize and GET upstream.callbackPath → upstream.handleCallback.
    *  Mutually exclusive with `identity`/`identityHeader` and `skipAuthorize`. */
   upstream?: UpstreamRedirectFlow;
+  /** Claims-only redirect flow mounted at GET /login and its callback path. */
+  identityFlow?: UpstreamRedirectFlow;
 }
 
 export function addOAuthFormContentTypeParser(app: FastifyInstance): void {
@@ -61,7 +64,13 @@ export function addOAuthFormContentTypeParser(app: FastifyInstance): void {
 }
 
 export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
-  if (opts.skipAuthorize && !opts.upstream) {
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, identityFlow } = opts;
+  if (upstream && (identity || skipAuthorize)) throw new Error("registerOAuthRoutes: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  const flows = [upstream, identityFlow].filter((flow): flow is UpstreamRedirectFlow => flow !== undefined);
+  if (upstream) assertUpstreamFlowCompletion(upstream, "bridge");
+  if (identityFlow) assertUpstreamFlowCompletion(identityFlow, "identity");
+  if (flows.length > 0) assertDistinctUpstreamFlowRoutes(bridge, flows);
+  if (skipAuthorize && !upstream) {
     // Pre-A1 compatibility: caller-owned pairing routes registered after this
     // function inherit automatic form parsing. Keep only the catch-all parser in
     // the child scope so unrelated unknown media retain caller semantics.
@@ -76,11 +85,13 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
       );
     });
   }
-  await app.register(async (scope) => registerScopedOAuthRoutes(scope, opts));
+  await app.register(async (scope) => registerScopedOAuthRoutes(scope, {
+    bridge, identity, identityHeader, skipAuthorize, upstream, identityFlow,
+  }));
 }
 
 async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream } = opts;
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, identityFlow } = opts;
 
   // This encapsulated scope owns duplicate-preserving semantics for the four
   // built-in POST routes. Removing an inherited exact parser here does not
@@ -105,7 +116,12 @@ async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdap
     };
   };
   const send = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
-    for (const [key, value] of Object.entries(res.headers)) reply.header(key, value);
+    for (const [key, value] of Object.entries(res.headers)) if (key.toLowerCase() !== "set-cookie") reply.header(key, value);
+    const cookies = responseSetCookies(res);
+    if (cookies.length > 0) {
+      // lgtm[js/clear-text-storage-of-sensitive-data] Outgoing response fields are transported, not persisted.
+      reply.header("set-cookie", cookies.length === 1 ? cookies[0] : cookies);
+    }
     if (res.redirect) { await reply.redirect(res.redirect, res.status); return; }
     reply.code(res.status).send(res.body);
   };
@@ -116,9 +132,6 @@ async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdap
   app.get(`/.well-known/oauth-protected-resource${resourcePath}`, async (_req, reply) => send(reply, await bridge.handleProtectedResourceMetadata()));
   app.get("/oauth/jwks", async (_req, reply) => send(reply, await bridge.handleJwks()));
   app.post("/oauth/register", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => send(reply, await bridge.handleRegister(toNorm(req))));
-  if (upstream && (identity || skipAuthorize)) {
-    throw new Error("registerOAuthRoutes: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
-  }
   if (upstream) {
     const up = upstream;
     app.get("/oauth/authorize", async (req, reply) => send(reply, await up.handleAuthorize(toNorm(req))));
@@ -145,6 +158,11 @@ async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdap
       }
       await send(reply, await bridge.handleAuthorize(request, identityResolved));
     });
+  }
+  if (identityFlow) {
+    const login = identityFlow;
+    app.get("/login", async (req, reply) => send(reply, await login.handleAuthorize(toNorm(req))));
+    app.get(login.callbackPath, async (req, reply) => send(reply, await login.handleCallback(toNorm(req))));
   }
   app.post("/oauth/authorize/approve", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => send(reply, await bridge.handleApprove(toNorm(req))));
   app.post("/oauth/token", { bodyLimit: OAUTH_POST_BODY_MAX_BYTES }, async (req, reply) => send(reply, await bridge.handleToken(toNorm(req))));

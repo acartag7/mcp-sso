@@ -18,7 +18,7 @@ import type { CimdTransport, DnsResolver } from "../cimd/guarded-fetcher.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import { cimdRedirectMatches, isCimdClientId, isSchemeShaped, type CimdRegistration } from "../cimd/registration.ts";
 import { resolveOpaqueRedirect } from "../authorize-internals.ts";
-import type { FlowClaims } from "./upstream-flow-internals.ts";
+import type { BridgeFlowClaims } from "./upstream-flow-internals.ts";
 
 export interface UpstreamCimdOutcome {
   readonly registration?: CimdRegistration;
@@ -66,7 +66,7 @@ export async function resolveUpstreamAuthorizeClient(args: {
  *  true when the flow may proceed; false ⇒ the caller answers a DIRECT 400
  *  `invalid_request` audited `flow_cookie_invalid`, WITHOUT consuming the jti,
  *  exchanging, or emitting any redirect-channel response. */
-export function assertCallbackCimdPolicy(config: BridgeConfig, claims: FlowClaims): boolean {
+export function assertCallbackCimdPolicy(config: BridgeConfig, claims: BridgeFlowClaims): boolean {
   const clientId = claims.params.client_id;
   const carried = claims.cimd;
   if (typeof clientId !== "string" || clientId === "") return false;

@@ -11,6 +11,7 @@ import type {
 import { StoreExpiryLifecycle } from "./expiry-lifecycle.ts";
 import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertGrantGeneration, assertStoreInstanceId,
+  assertStoreSubject,
   assertRefreshResource, assertSha256Hex, assertUtcIsoTimestamp, grantGenerationForWrite,
   normalizeRefreshTokenWrite, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
@@ -70,6 +71,7 @@ export class MemoryStore implements StorePort {
     assertUtcIsoTimestamp(nowIso, "nowIso");
     const record = this.authCodes.get(codeHash) ?? null;
     if (record && expectedResource !== undefined && record.resource !== expectedResource) return null;
+    if (record) assertStoreSubject(record.subject, "stored subject");
     this.authCodes.delete(codeHash);
     return record && record.expiresAt > nowIso
       && (expectedGrantGeneration === undefined || record.grantGeneration === expectedGrantGeneration) ? record : null;
@@ -107,7 +109,9 @@ export class MemoryStore implements StorePort {
     validateRotation(tokenHash, next, nowIso);
     const current = this.refreshTokens.get(tokenHash) ?? null;
     const family = current ? this.families.get(current.familyId) : undefined;
-    if (!current || !family || family.revokedAt
+    if (!current || !family) return null;
+    assertStoreSubject(current.subject, "stored subject");
+    if (family.revokedAt
       || (expectedGrantGeneration !== undefined
         && (family.grantGeneration !== expectedGrantGeneration
           || current.grantGeneration !== expectedGrantGeneration))) return null;
@@ -143,11 +147,14 @@ export class MemoryStore implements StorePort {
   async findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
     const t = this.refreshTokens.get(tokenHash);
-    return t ? toRecord(t) : null;
+    if (!t) return null;
+    assertStoreSubject(t.subject, "stored subject");
+    return toRecord(t);
   }
 
   async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<string[]> {
     this.ensureOpen();
+    assertStoreSubject(subject);
     assertUtcIsoTimestamp(nowIso, "nowIso");
     const out: string[] = [];
     for (const t of this.refreshTokens.values()) {
@@ -211,13 +218,15 @@ function toRecord(stored: StoredRefresh): RefreshTokenRecord {
 }
 
 function validateAuthCode(input: SaveAuthCodeInput): void {
+  assertStoreSubject(input.subject);
   assertSha256Hex(input.codeHash, "codeHash");
   assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
   assertGrantGeneration(input.grantGeneration, "grantGeneration");
   if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
 }
 
-function validateRefreshToken(input: SaveRefreshTokenInput): void {
+function validateRefreshToken(input: SaveRefreshTokenInput, validateSubject = true): void {
+  if (validateSubject) assertStoreSubject(input.subject);
   assertSha256Hex(input.tokenHash, "tokenHash");
   if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
   assertRefreshResource(input.resource, "resource");
@@ -227,7 +236,7 @@ function validateRefreshToken(input: SaveRefreshTokenInput): void {
 
 function validateRotation(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string): void {
   assertSha256Hex(tokenHash, "tokenHash");
-  validateRefreshToken(next);
+  validateRefreshToken(next, false);
   assertUtcIsoTimestamp(nowIso, "nowIso");
   if (next.previousTokenHash !== tokenHash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
 }

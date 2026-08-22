@@ -25,7 +25,8 @@ export async function buildUpstreamAuthorizationUrl(
 export async function exchangeUpstreamIdentity(
   identity: RedirectIdentityPort,
   request: ExchangeRequest,
+  includeClaims = false,
 ): Promise<RedirectExchangeResult> {
   return await callPort("RedirectIdentityPort", "exchangeAndVerify", async () =>
-    snapshotRedirectExchangeResult(await identity.exchangeAndVerify(request)));
+    snapshotRedirectExchangeResult(await identity.exchangeAndVerify(request), includeClaims));
 }

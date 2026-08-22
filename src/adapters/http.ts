@@ -23,10 +23,18 @@ export interface NormRequest {
 export interface NormResponse {
   status: number;
   headers: Record<string, string>;
+  /** Additional Set-Cookie field values, appended after any header-map value. */
+  setCookies?: string[];
   /** JSON body (when not a redirect). */
   body?: unknown;
   /** When set, the adapter issues a 302 to this URL (with `status`). */
   redirect?: string;
+}
+
+export function responseSetCookies(response: NormResponse): string[] {
+  const header = Object.entries(response.headers)
+    .find(([name]) => name.toLowerCase() === "set-cookie")?.[1];
+  return [...(header === undefined ? [] : [header]), ...(response.setCookies ?? [])];
 }
 
 export interface HeaderRead {

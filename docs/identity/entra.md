@@ -64,7 +64,7 @@ Use Entra group object IDs from your tenant in place of the placeholder GUID. Wh
 
 ## Fail-closed behavior
 
-Verified-context rejections return `identity_rejected` (a 302 redirect with `access_denied`) with a fixed reason:
+Verified-context rejections return `identity_rejected` with a fixed reason. Bridge completion redirects the MCP client with `access_denied`. Claims-only completion deliberately collapses the rejection with IdP denial into the fixed direct 400 described in [Website login with verified identity claims](./website-login.md#website-login-with-verified-identity-claims):
 
 | Condition | Reason code |
 |---|---|
@@ -82,7 +82,7 @@ Verified-context rejections return `identity_rejected` (a 302 redirect with `acc
 | Groups present but none mapped + empty `baseScopes` | `entra_no_mapped_groups` |
 | Expired / bad claim / bad alg / unknown key / other `jose` | `entra_token_expired` / `entra_bad_claim` / `entra_unsupported_alg` / `entra_unknown_key` / `entra_token_invalid` |
 
-**Infrastructure / exchange** failures, a token-exchange non-200 or timeout, a **token response missing `id_token`**, or an unreachable, over-cap, or otherwise failed JWKS fetch (`entra_verify_failed`), are classified `exchange_failed` → a 302 `server_error`, and emit **no** `identity.verify` audit event. No identity decision was made. (The `entra_id_token_missing` reason applies only to the lower-level header-driven / primitives path, where a raw `id_token` is passed to `verify()`, not to this redirect flow.)
+**Infrastructure / exchange** failures, a token-exchange non-200 or timeout, a **token response missing `id_token`**, or an unreachable, over-cap, or otherwise failed JWKS fetch (`entra_verify_failed`), are classified `exchange_failed` and emit **no** `identity.verify` audit event. Bridge completion redirects the MCP client with `server_error`; claims-only completion returns a generic direct 500. No identity decision was made. (The `entra_id_token_missing` reason applies only to the lower-level header-driven / primitives path, where a raw `id_token` is passed to `verify()`, not to this redirect flow.)
 
 Malformed `groupAuthorization` config is a **boot** `AuthConfigError` (never a silent "no ceiling" default): a non-object `groupAuthorization`, a non-GUID mapping key, a duplicate case-insensitive key, an empty/non-single-token scope value, a scope outside the catalog, or a non-array `baseScopes`.
 

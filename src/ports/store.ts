@@ -6,6 +6,7 @@
 // must satisfy the §12 invariants, asserted by the store-conformance suite.
 
 import type { ClockPort } from "./clock.ts";
+import { identitySubject } from "../identity-boundary.ts";
 
 export interface AuthCodeRecord {
   /** sha256(raw code). */
@@ -156,6 +157,11 @@ const STORE_INSTANCE_ID = /^[A-Za-z0-9_-]{22,128}$/u;
 
 export class StoreInputError extends Error {
   readonly code = "invalid_store_input";
+}
+
+export function assertStoreSubject(value: unknown, label = "subject"): asserts value is string {
+  try { identitySubject(value); }
+  catch { throw new StoreInputError(`${label} is malformed`); }
 }
 
 export function assertStoreInstanceId(value: unknown): asserts value is string {

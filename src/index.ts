@@ -126,6 +126,7 @@ export { renderPairingPage, type PairingPageInput } from "./adapters/pairing-pag
 // (e.g. createEntraRedirectIdentity via ./identity/entra) and the `upstream`
 // option on the framework adapters.
 export { createUpstreamRedirectFlow, type UpstreamRedirectFlow, type UpstreamFlowDeps } from "./adapters/upstream-flow.ts";
+export { assertDistinctUpstreamFlowRoutes } from "./adapters/upstream-flow-routes.ts";
 // assertCallbackPath — the upstream callback-PATH validator (§17.11): the pathname
 // starts with '/', is plain (no ?#%\/ whitespace/control or dot-segments), normalizes
 // to itself under the issuer origin, and is not a reserved OAuth route / the resource

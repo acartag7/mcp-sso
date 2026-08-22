@@ -2,7 +2,7 @@ import { createPool, type Pool, type PoolConnection, type PoolOptions, type RowD
 import type { ClockPort } from "../ports/clock.ts";
 import type { AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort } from "../ports/store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertRefreshResource, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertRefreshResource, assertSha256Hex, assertStoreInstanceId, assertStoreSubject, assertUtcIsoTimestamp,
   grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
@@ -61,6 +61,7 @@ export class MysqlStore implements StorePort {
       const row = rows[0] as AuthCodeRow | undefined;
       if (!row) return null;
       if (expectedResource !== undefined && row.resource !== expectedResource) return null;
+      assertStoreSubject(row.subject, "stored subject");
       await conn.query(`DELETE FROM oauth_auth_codes WHERE code_hash = ?`, [codeHash]);
       const record = authCodeFromRow(row);
       return row.expires_at > nowIso
@@ -104,7 +105,9 @@ export class MysqlStore implements StorePort {
         [tokenHash],
       );
       const row = rows[0] as RefreshTokenRow | undefined;
-      if (!row || row.f_revoked_at !== null) return null;
+      if (!row) return null;
+      assertStoreSubject(row.subject, "stored subject");
+      if (row.f_revoked_at !== null) return null;
       if (expectedGrantGeneration !== undefined
         && (grantGenerationFromStored(row.f_grant_generation) !== expectedGrantGeneration
           || grantGenerationFromStored(row.grant_generation) !== expectedGrantGeneration)) return null;
@@ -131,7 +134,6 @@ export class MysqlStore implements StorePort {
     if (expectedResource !== undefined) assertRefreshResource(expectedResource, "expectedResource");
     await this.transaction(async (conn) => { await revokeFamily(conn, familyId, revokedAtIso, expectedResource); });
   }
-
   async findRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null> {
     this.ensureOpen();
     const [rows] = await this.pool.query<RowDataPacket[]>(
@@ -141,9 +143,9 @@ export class MysqlStore implements StorePort {
     const row = rows[0] as RefreshTokenRow | undefined;
     return row ? refreshTokenFromRow(row) : null;
   }
-
   async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<string[]> {
     this.ensureOpen();
+    assertStoreSubject(subject);
     assertUtcIsoTimestamp(nowIso, "nowIso");
     const generationClause = expectedGrantGeneration === undefined
       ? "" : " AND f.grant_generation = ? AND t.grant_generation = ?";
@@ -154,7 +156,7 @@ export class MysqlStore implements StorePort {
     if (expectedResource !== undefined) params.push(expectedResource, expectedResource);
     const [rows] = await this.pool.query<RowDataPacket[]>(
       `SELECT t.scopes_json FROM oauth_refresh_tokens t JOIN oauth_refresh_token_families f ON f.family_id = t.family_id
-       WHERE t.subject = ? AND t.client_id = ? AND t.consumed_at IS NULL
+       WHERE BINARY t.subject = BINARY ? AND t.client_id = ? AND t.consumed_at IS NULL
        AND f.revoked_at IS NULL AND t.expires_at > ?${generationClause}${resourceClause}`,
       params,
     );
@@ -162,7 +164,6 @@ export class MysqlStore implements StorePort {
     for (const row of rows as { scopes_json: string }[]) for (const s of parseScopes(row.scopes_json)) if (!out.includes(s)) out.push(s);
     return out;
   }
-
   async sweepExpired(nowIso: string): Promise<void> {
     this.ensureOpen();
     assertUtcIsoTimestamp(nowIso, "nowIso");

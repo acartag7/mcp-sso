@@ -10,6 +10,7 @@ import type {
 } from "./ports/store.ts";
 import { MAX_SCOPE_ENTRIES } from "./scopes.ts";
 import { callPort } from "./port-failure.ts";
+import { identitySubject, snapshotIdentityClaims } from "./identity-boundary.ts";
 
 export async function readGrantedScopeSnapshot(
   store: StorePort,
@@ -69,10 +70,7 @@ export function snapshotIdentityResult(value: IdentityResult): IdentityResult {
   }
   if (ok !== true) throw new TypeError("IdentityPort.verify result must have an ok discriminant");
   const identity = requiredRecord(record.identity, "IdentityPort.verify identity");
-  const subject = identity.subject;
-  if (typeof subject !== "string" || subject.length === 0) {
-    throw new TypeError("IdentityPort.verify identity must have a non-empty subject");
-  }
+  const subject = identitySubject(identity.subject);
   const allowedScopes = snapshotPortScopeCarrier(identity.allowedScopes);
   return {
     ok: true,
@@ -83,15 +81,16 @@ export function snapshotIdentityResult(value: IdentityResult): IdentityResult {
   };
 }
 
-export function snapshotRedirectExchangeResult(value: RedirectExchangeResult): RedirectExchangeResult {
+export function snapshotRedirectExchangeResult(
+  value: RedirectExchangeResult,
+  includeClaims = false,
+): RedirectExchangeResult {
   const record = requiredRecord(value, "RedirectIdentityPort.exchangeAndVerify result");
   const ok = record.ok;
   if (ok === true) {
     const identity = requiredRecord(record.identity, "redirect identity result");
-    const subject = identity.subject;
-    if (typeof subject !== "string" || subject.length === 0) {
-      throw new TypeError("redirect identity result must have a non-empty subject");
-    }
+    if (includeClaims) return { ok: true, identity: snapshotIdentityClaims(identity, true) };
+    const subject = identitySubject(identity.subject);
     const allowedScopes = snapshotPortScopeCarrier(identity.allowedScopes);
     return {
       ok: true,
@@ -175,10 +174,14 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function validIdentitySubject(value: unknown): value is string {
+  try { identitySubject(value); return true; } catch { return false; }
+}
+
 function validAuthCodeSnapshot(value: Record<string, unknown>): boolean {
   return nonEmptyString(value.codeHash)
     && nonEmptyString(value.clientId)
-    && nonEmptyString(value.subject)
+    && validIdentitySubject(value.subject)
     && nonEmptyString(value.redirectUri)
     && nonEmptyString(value.resource)
     && Array.isArray(value.scopes)
@@ -193,7 +196,7 @@ function validRefreshSnapshot(value: Record<string, unknown>): boolean {
     && nonEmptyString(value.familyId)
     && (value.previousTokenHash === null || nonEmptyString(value.previousTokenHash))
     && nonEmptyString(value.clientId)
-    && nonEmptyString(value.subject)
+    && validIdentitySubject(value.subject)
     && (value.resource === null || nonEmptyString(value.resource))
     && Array.isArray(value.scopes)
     && nonEmptyString(value.expiresAt)

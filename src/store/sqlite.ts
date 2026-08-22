@@ -1,12 +1,11 @@
 // SqliteStore — persistent StorePort + user ClientStore (contracts §6.4, §12.3).
-
 import { DatabaseSync } from "node:sqlite";
 import type { ClockPort } from "../ports/clock.ts";
 import type {
   AuthCodeRecord, ConsentApprovalCommitResult, RefreshTokenRecord, SaveAuthCodeInput, SaveRefreshTokenInput, StorePort,
 } from "../ports/store.ts";
 import { STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError, assertSha256Hex, assertStoreInstanceId, assertUtcIsoTimestamp,
-  assertRefreshResource, grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
+  assertRefreshResource, assertStoreSubject, grantGenerationForWrite, grantGenerationFromStored, normalizeRefreshTokenWrite,
   refreshResourceFromStored, UNBOUND_REFRESH_RESOURCE,
 } from "../ports/store.ts";
 import { migrateSqliteStore } from "./sqlite-schema.ts";
@@ -34,17 +33,14 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
   constructor(db: DatabaseSync, options: { schemaReady?: true } = {}) {
     super(db); if (options.schemaReady === true) this.expiry.markReady();
   }
-
   async getStoreInstanceId(): Promise<string> {
     this.ensureOpen();
     return readSqliteStoreInstanceId(this.db);
   }
-
   async rotateStoreInstanceId(): Promise<string> {
     this.ensureOpen();
     return this.transaction(() => rotateSqliteStoreInstanceId(this.db));
   }
-
   async commitConsentApproval(
     expectedStoreInstanceId: string, jti: string, expiresAtIso: string, authCode: SaveAuthCodeInput,
   ): Promise<ConsentApprovalCommitResult> {
@@ -55,7 +51,6 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
     return this.transaction(() => commitSqliteConsentApproval(
       this.db, expectedStoreInstanceId, jti, expiresAtIso, authCode));
   }
-
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();
     validateAuthCode(input);
@@ -70,6 +65,7 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
       const row = this.db.prepare(`SELECT * FROM oauth_auth_codes WHERE code_hash = ?`).get(codeHash) as AuthCodeRow | undefined;
       if (!row) return null;
       if (expectedResource !== undefined && row.resource !== expectedResource) return null;
+      assertStoreSubject(row.subject, "stored subject");
       this.db.prepare(`DELETE FROM oauth_auth_codes WHERE code_hash = ?`).run(codeHash);
       const record = authCodeFromRow(row);
       return row.expires_at > nowIso
@@ -112,7 +108,9 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
         `SELECT t.*, f.revoked_at, f.resource AS f_resource, f.grant_generation AS f_grant_generation FROM oauth_refresh_tokens t
          JOIN oauth_refresh_token_families f ON f.family_id = t.family_id WHERE t.token_hash = ?`,
       ).get(tokenHash) as RefreshTokenRow | undefined;
-      if (!row || row.revoked_at !== null) return null;
+      if (!row) return null;
+      assertStoreSubject(row.subject, "stored subject");
+      if (row.revoked_at !== null) return null;
       if (expectedGrantGeneration !== undefined
         && (grantGenerationFromStored(row.f_grant_generation) !== expectedGrantGeneration
           || grantGenerationFromStored(row.grant_generation) !== expectedGrantGeneration)) return null;
@@ -152,6 +150,7 @@ export class SqliteStore extends SqliteClientStoreBase implements StorePort {
 
   async findGrantedScopes(subject: string, clientId: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<string[]> {
     this.ensureOpen();
+    assertStoreSubject(subject);
     assertUtcIsoTimestamp(nowIso, "nowIso");
     return this.transaction(() => {
       const generationClause = expectedGrantGeneration === undefined
