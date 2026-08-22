@@ -15,10 +15,11 @@ import { MemoryStore } from "../src/store/memory.ts";
 import { registerOAuthRoutes } from "../src/adapters/fastify.ts";
 import { createOAuthRouter } from "../src/adapters/express.ts";
 import { createOAuthApp } from "../src/adapters/hono.ts";
+import { pkceChallenge } from "../src/crypto.ts";
 
 const NOW = Date.parse("2026-08-22T10:00:00.000Z");
 const IP = "203.0.113.9";
-class Clock { nowMs(): number { return NOW; } }
+class Clock { private ms = NOW; nowMs(): number { return this.ms; } advance(seconds: number): void { this.ms += seconds * 1000; } }
 class Audit implements AuditPort {
   events: AuthAuditEvent[] = [];
   async writeAuthEvent(event: AuthAuditEvent): Promise<void> { this.events.push(event); }
@@ -246,4 +247,59 @@ test("claims and completion header projections preserve inert keys on null-proto
   assert.equal(response.status, 204); assert.equal(Object.getPrototypeOf(observed?.claims), null); assert.equal(Object.isFrozen(observed?.claims), true);
   assert.equal(Object.getPrototypeOf(response.headers), null);
   for (const key of ["__proto__", "constructor", "prototype"]) assert.equal(Object.hasOwn(response.headers, key), true);
+});
+
+function bridgeHarness(result?: RedirectExchangeResult) {
+  const cfg = config(), store = new MemoryStore(), clock = new Clock(), audit = new Audit(); let exchanges = 0;
+  const identity: RedirectIdentityPort = {
+    redirectUri: "https://auth.test/oauth/callback",
+    buildAuthorizationUrl(args) { return `https://idp.test/authorize?state=${args.state}`; },
+    async exchangeAndVerify() { exchanges += 1; return result ?? { ok: true, identity: { subject: "person-1" } }; },
+  };
+  const bridge = new Bridge({ config: cfg, store, clock, audit });
+  const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit });
+  return { flow, audit, clock, exchanges: () => exchanges };
+}
+
+async function startBridge(flow: ReturnType<typeof bridgeHarness>["flow"]): Promise<{ state: string; cookie: string }> {
+  const response = await flow.handleAuthorize({
+    query: { response_type: "code", client_id: "client", redirect_uri: "https://client.test/callback", code_challenge: pkceChallenge("v".repeat(43)), code_challenge_method: "S256", scope: "mcp:read", state: "client-state" },
+    body: undefined, headers: {}, ip: IP,
+  });
+  return { state: new URL(response.redirect as string).searchParams.get("state") as string, cookie: (response.headers["set-cookie"] as string).split(";", 1)[0] as string };
+}
+
+type MatrixRow = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+async function runCallbackRow(complete: "bridge" | "identity", row: MatrixRow): Promise<{ reason: string | undefined; cleared: boolean; audit: string }> {
+  const outcome = row === 10 ? { ok: false, kind: "exchange_failed", reason: "poison detail" } as const
+    : row === 11 ? { ok: false, kind: "identity_rejected", reason: "poison detail" } as const : undefined;
+  const h = complete === "bridge" ? bridgeHarness(outcome) : harness({ result: outcome });
+  let begun = row === 2 ? { state: "missing", cookie: "" }
+    : complete === "bridge" ? await startBridge(h.flow) : await start(h.flow);
+  if (row === 3) begun = { ...begun, cookie: "__Host-mcp-sso-upstream=garbage" };
+  if (row === 3 && complete === "identity") begun = { ...begun, cookie: "__Host-mcp-sso-identity=garbage" };
+  if (row === 4) h.clock.advance(601);
+  if (row === 6) await h.flow.handleCallback(callback(begun.state, begun.cookie));
+  const query: NormRequest["query"] = row === 1 ? { state: [begun.state, begun.state], code: "c" }
+    : row === 5 ? { state: "wrong", code: "c" }
+    : row === 7 ? { state: begun.state, error: "access_denied" }
+    : row === 8 ? { state: begun.state, error: "poison query detail" }
+    : row === 9 ? { state: begun.state }
+    : { state: begun.state, code: "c" };
+  const response = await h.flow.handleCallback({ query, body: undefined, headers: begun.cookie ? { cookie: begun.cookie } : {}, ip: IP });
+  const cleared = complete === "bridge"
+    ? (response.headers["set-cookie"] ?? "").includes("Max-Age=0")
+    : (response.setCookies ?? []).some((cookie) => cookie.includes("Max-Age=0"));
+  const events = JSON.stringify(h.audit.events);
+  return { reason: h.audit.events.filter((event) => event.event === "oauth.upstream.callback").at(-1)?.reason, cleared, audit: events };
+}
+
+test("all eleven shared callback rows preserve audit, mutation, and redaction parity", async () => {
+  const reasons = new Map<MatrixRow, string>([[1, "duplicate_params"], [2, "flow_cookie_missing"], [3, "flow_cookie_invalid"], [4, "flow_expired"], [5, "state_mismatch"], [6, "flow_replayed"], [7, "upstream_denied"], [8, "upstream_error"], [9, "missing_code"], [10, "exchange_failed"], [11, "identity_rejected"]]);
+  for (const row of reasons.keys()) {
+    const bridge = await runCallbackRow("bridge", row); const identity = await runCallbackRow("identity", row);
+    assert.equal(bridge.reason, reasons.get(row), `bridge row ${row}`); assert.equal(identity.reason, bridge.reason, `identity row ${row}`);
+    assert.equal(bridge.cleared, row !== 2, `bridge clear row ${row}`); assert.equal(identity.cleared, bridge.cleared, `identity clear row ${row}`);
+    assert.equal(bridge.audit.includes("poison"), false); assert.equal(identity.audit.includes("poison"), false);
+  }
 });
