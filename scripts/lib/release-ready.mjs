@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { changedEvidenceInputs, isAncestor, resolveCommit } from "./release-evidence-git.mjs";
 
 const SHA = /^[0-9a-f]{7,40}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -22,30 +22,6 @@ function uniqueSectionAfter(source, heading, label, errors) {
   return lines.slice(starts[0] + 1, end).join("\n");
 }
 
-function gitOutput(cwd, args) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-}
-
-function resolveCommit(cwd, value) {
-  try {
-    return gitOutput(cwd, ["rev-parse", "--verify", `${value}^{commit}`]);
-  } catch {
-    return undefined;
-  }
-}
-
-function isAncestor(cwd, ancestor, descendant) {
-  try {
-    execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
-      cwd,
-      stdio: "ignore",
-    });
-    return true;
-  } catch (error) {
-    if (error && typeof error === "object" && "status" in error && error.status === 1) return false;
-    throw error;
-  }
-}
 
 function renderedTableRows(source, heading, header, divider, label, errors) {
   const section = uniqueSectionAfter(source, heading, label, errors);
@@ -81,8 +57,6 @@ function renderedTableRows(source, heading, header, divider, label, errors) {
 
 function parseStatusVersion(source, errors) {
   const tableRows = renderedTableRows(source, STATUS_HEADING, STATUS_TABLE_HEADER, STATUS_TABLE_DIVIDER, "status version", errors);
-  const labelCount = source.split("npm package and tag").length - 1;
-  if (labelCount !== 1) errors.push(`status version: expected one npm package and tag label, found ${labelCount}`);
   const rows = [];
   for (const line of tableRows) {
     const firstCell = line.split("|").slice(1, -1)[0]?.trim();
@@ -210,6 +184,13 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
     }
     if (resolvedRelease && !isAncestor(gitCwd, resolvedRuntime, resolvedRelease)) {
       errors.push(`recorded runtime commit ${commit} is not an ancestor of release commit ${resolvedRelease}`);
+      continue;
+    }
+    if (resolvedRelease) {
+      const changedInputs = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedRelease);
+      if (changedInputs.length > 0) {
+        errors.push(`recorded runtime commit ${commit} predates release runtime changes: ${changedInputs.join(", ")}`);
+      }
     }
   }
   return { errors, releaseCommit: resolvedRelease, exportCount: publicExports.length, version: packageVersion };

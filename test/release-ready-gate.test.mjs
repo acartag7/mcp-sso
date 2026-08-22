@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -9,6 +9,9 @@ import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
 let repo;
 let ancestor;
 let release;
+let runtimeRelease;
+let packageRelease;
+let metadataRelease;
 let unrelated;
 
 function git(args) {
@@ -48,7 +51,8 @@ function fixture(overrides = {}) {
   const releaseMatrix = overrides.releaseMatrix ?? { rows: [{ id: "RM.1" }, { id: "RM.2" }] };
   const compatibility = overrides.compatibility ?? compatibilityFor(ancestor);
   const status = overrides.status ?? statusFor();
-  return evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd: repo, releaseCommit: release });
+  const releaseCommit = overrides.releaseCommit ?? release;
+  return evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd: repo, releaseCommit });
 }
 
 before(() => {
@@ -56,10 +60,30 @@ before(() => {
   git(["init", "-q"]);
   git(["config", "user.email", "release-ready@example.invalid"]);
   git(["config", "user.name", "Release Ready Test"]);
-  git(["commit", "--allow-empty", "-qm", "ancestor"]);
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ version: "0.4.0", scripts: {}, exports: { ".": {} } }));
+  git(["add", "package.json"]);
+  git(["commit", "-qm", "ancestor"]);
   ancestor = git(["rev-parse", "HEAD"]);
   git(["commit", "--allow-empty", "-qm", "release"]);
   release = git(["rev-parse", "HEAD"]);
+  mkdirSync(join(repo, "src"));
+  writeFileSync(join(repo, "src", "runtime.ts"), "export const changed = true;\n");
+  git(["add", "src/runtime.ts"]);
+  git(["commit", "-qm", "runtime release"]);
+  runtimeRelease = git(["rev-parse", "HEAD"]);
+  git(["switch", "-q", "-c", "package-change", release]);
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ version: "0.4.0", scripts: {}, exports: { ".": {}, "./new": {} } }));
+  git(["commit", "-qam", "package release"]);
+  packageRelease = git(["rev-parse", "HEAD"]);
+  git(["switch", "-q", "-c", "metadata-change", release]);
+  writeFileSync(join(repo, "package.json"), JSON.stringify({
+    version: "0.5.0",
+    description: "updated",
+    scripts: { release: "true" },
+    exports: { ".": {} },
+  }));
+  git(["commit", "-qam", "metadata release"]);
+  metadataRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "--orphan", "unrelated"]);
   git(["commit", "--allow-empty", "-qm", "unrelated"]);
   unrelated = git(["rev-parse", "HEAD"]);
@@ -74,6 +98,24 @@ test("release ready gate accepts complete evidence at an ancestor commit", () =>
 test("release ready gate names a runtime commit outside the release history", () => {
   const result = fixture({ compatibility: compatibilityFor(unrelated) });
   assert.ok(result.errors.includes(`recorded runtime commit ${unrelated} is not an ancestor of release commit ${release}`));
+});
+
+test("release ready gate rejects runtime changes after the evidence commit", () => {
+  const result = fixture({ releaseCommit: runtimeRelease });
+  assert.ok(result.errors.includes(
+    `recorded runtime commit ${ancestor} predates release runtime changes: src/runtime.ts`,
+  ));
+});
+
+test("release ready gate rejects package runtime changes after the evidence commit", () => {
+  const result = fixture({ releaseCommit: packageRelease });
+  assert.ok(result.errors.includes(
+    `recorded runtime commit ${ancestor} predates release runtime changes: package.json:exports`,
+  ));
+});
+
+test("release ready gate permits release metadata after the evidence commit", () => {
+  assert.deepEqual(fixture({ releaseCommit: metadataRelease }).errors, []);
 });
 
 test("release ready gate checks the recorded main commit for a squash-merged live tree", () => {
@@ -174,11 +216,15 @@ test("release ready gate rejects a status table hidden by Markdown", () => {
 test("release ready gate rejects every malformed or duplicate named status row", () => {
   const malformed = `${statusFor()}\n| npm package and tag | mcp-sso@0.4.0 and v0.4.0 |`;
   assert.ok(fixture({ status: malformed }).errors.includes("status version: malformed npm package and tag row"));
-  assert.ok(fixture({ status: malformed }).errors.includes("status version: expected one npm package and tag label, found 2"));
   const conflicting = `${statusFor()}\n| npm package and tag | \`mcp-sso@0.4.0\` and \`v0.4.0\` |`;
   assert.ok(fixture({ status: conflicting }).errors.includes(
     "status version: expected one npm package and tag row, found 2",
   ));
+});
+
+test("release ready gate ignores the status label in prose", () => {
+  const status = `${statusFor()}\n\nThe npm package and tag are published together.`;
+  assert.deepEqual(fixture({ status }).errors, []);
 });
 
 test("release ready gate reports package and status versions", () => {
