@@ -23,7 +23,9 @@ A row is `Verified` only when the named flow was driven against the named provid
 
 ## Public export live evidence
 
-These rows record the release matrix run against real MySQL and Redis services at live worktree commit `28d9744e0f155d67dbb79389971be2d470491003`. GitHub squash-merged the same runtime tree as main commit `965d8f410b0dfd0b219a9b26a0bfe555fd2488db`, which the table records. The rows prove that the named package entry point participated in the listed executable release row. They do not claim that a real external identity provider was contacted; the provider matrix above owns that separate claim.
+These rows record the release matrix run against real MySQL and Redis services at live worktree commit `28d9744e0f155d67dbb79389971be2d470491003`. GitHub squash-merged the same runtime tree as main commit `965d8f410b0dfd0b219a9b26a0bfe555fd2488db`. The table records the main commit.
+
+Each row proves that the package entry point participated in the listed executable release row. The rows do not prove contact with an external identity provider. The provider matrix above owns that claim.
 
 | Export | Live evidence | Runtime commit |
 | --- | --- | --- |

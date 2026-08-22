@@ -180,9 +180,13 @@ Importing `mcp-sso/testing/store-conformance-grants` fails with `ERR_PACKAGE_PAT
 
 ### RM.17 — Claims-only redirect completion
 
-This row starts `createUpstreamRedirectFlow({ complete: "identity" })` through the public `/login` route, completes the callback with verified `IdentityClaims`, and confirms that no consent response or MCP token is produced. It proves that both legs charge `website-login:<ip>`, callback replay cannot invoke the identity provider or `onIdentity` twice, and IdP denial and verified identity rejection use the same direct response.
+This row starts `createUpstreamRedirectFlow({ complete: "identity" })` through the public `/login` route and completes the callback with verified `IdentityClaims`. It confirms that the flow produces no consent response or MCP token.
 
-The failure cases prove that a thrown, timed-out, or malformed host completion returns the fixed `completion_failed` response after the jti is consumed. A late completion result is discarded. The adapter cases run Fastify, Express, and Hono. They require both the host session cookie and the flow-cookie deletion to survive response mapping. They also require a redirect's validated status, `Location`, `Content-Type`, custom header, and empty body; a string response's status, `Content-Type`, custom header, and Unicode body; and a bodyless 2xx response's status and custom header without an inferred `Content-Type` to remain identical across the three frameworks.
+Both legs charge `website-login:<ip>`. A callback replay cannot invoke the identity provider or `onIdentity` twice. IdP denial and verified identity rejection use the same direct response.
+
+The failure cases prove that a thrown, timed-out, or malformed host completion returns the fixed `completion_failed` response after the jti is consumed. A late completion result is discarded.
+
+The adapter cases run Fastify, Express, and Hono. Both the host session cookie and the flow-cookie deletion must survive response mapping. Redirect responses preserve the validated status, `Location`, `Content-Type`, custom header, and empty body. String responses preserve the status, `Content-Type`, custom header, and Unicode body. Bodyless 2xx responses preserve the status and custom header without an inferred `Content-Type`.
 
 ### RM.18 — Live claims-only redirect completion
 
