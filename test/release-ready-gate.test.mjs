@@ -149,7 +149,9 @@ test("release ready gate rejects contradictory Not run evidence", () => {
   assert.ok(fixture({ compatibility: receipt }).errors.includes(
     "provider evidence: Provider / Client has malformed Not run evidence",
   ));
-  for (const extra of [" Not run: A second reason.", " Limit: A contradictory limit."]) {
+  for (const extra of [
+    " Not run: A second reason.", " Limit: A contradictory limit.", ` Runtime commit \`${ancestor}\` was unavailable.`,
+  ]) {
     const compatibility = compatibilityFor(ancestor)
       .replace("| Verified |", "| Not run |")
       .replace("| 2026-08-22 |", "|  |")

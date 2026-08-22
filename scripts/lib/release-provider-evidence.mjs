@@ -31,9 +31,10 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
     if (malformedName) continue;
     const limitCount = limits.split("Limit:").length - 1;
     const notRunCount = limits.split("Not run:").length - 1;
+    const receiptCount = limits.split("Runtime commit").length - 1;
     const verifiedStatus = status === "Verified" || status === "Verified with limit";
     if (!verifiedStatus) {
-      if (limitCount !== 0 || notRunCount !== 1 || rawCells[4] !== "  "
+      if (limitCount !== 0 || notRunCount !== 1 || receiptCount !== 0 || rawCells[4] !== "  "
         || !/^Not run: (?=[^|]*[\p{L}\p{N}])\S(?:.*\S)?\.$/u.test(limits)) {
         errors.push(`provider evidence: ${provider} / ${client} has malformed Not run evidence`);
       }
@@ -50,7 +51,6 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
     const match = limits.match(
       /^Runtime commit `([0-9a-f]{7,40})`(?:, later merged without runtime changes as `([0-9a-f]{7,40})`)?\./,
     );
-    const receiptCount = limits.split("Runtime commit").length - 1;
     if (!match || receiptCount !== 1) {
       errors.push(`provider evidence: ${provider} / ${client} has malformed runtime commit receipt`);
       continue;
