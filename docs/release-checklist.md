@@ -6,7 +6,14 @@ Use this checklist for a release candidate. The [release verification reference]
 
 1. Start from a clean tree.
 2. Add or update the matching Tier 1 rows in [the release verification reference](verification.md).
-3. Run the source checks:
+3. Record the completed export rows and their runtime commit in [the client compatibility reference](client-compatibility.md#public-export-live-evidence), then run the release-readiness gate before creating the tag:
+
+   ```bash
+   pnpm run check:release-ready
+   ```
+
+   The command names a non-ancestor runtime commit, missing export row, or version mismatch. Do not create the tag while it fails.
+4. Run the source checks:
 
    ```bash
    pnpm run typecheck
@@ -17,17 +24,17 @@ Use this checklist for a release candidate. The [release verification reference]
    pnpm run build
    ```
 
-4. Confirm that `test/e2e-mcp-sdk.test.ts` completes registration, authorization, token exchange, the protected `/mcp` call, and refresh. It must replay the first family's consumed token and confirm that the successor is dead. It must then create a second family, revoke that family while it is active, and confirm that its refresh token is refused.
-5. Start disposable MySQL and Redis services.
-6. Run the release matrix with their connection URLs:
+5. Confirm that `test/e2e-mcp-sdk.test.ts` completes registration, authorization, token exchange, the protected `/mcp` call, and refresh. It must replay the first family's consumed token and confirm that the successor is dead. It must then create a second family, revoke that family while it is active, and confirm that its refresh token is refused.
+6. Start disposable MySQL and Redis services.
+7. Run the release matrix with their connection URLs:
 
    ```bash
    RUN_INTEGRATION=true MYSQL_URL='mysql://…' REDIS_URL='redis://…' pnpm run test:release
    ```
 
-7. Confirm that every `RM.N` row passes. A missing service variable, missing evidence file, skipped selected test, undocumented row, removed export, or removed example makes the command fail.
-8. Run `npm pack --dry-run`.
-9. Confirm that the tarball root contains only `dist/`, `docs/`, `README.md`, `LICENSE`, and `package.json`.
+8. Confirm that every `RM.N` row passes. A missing service variable, missing evidence file, skipped selected test, undocumented row, removed export, or removed example makes the command fail.
+9. Run `npm pack --dry-run`.
+10. Confirm that the tarball root contains only `dist/`, `docs/`, `README.md`, `LICENSE`, and `package.json`.
 
 ## Record live compatibility claims
 

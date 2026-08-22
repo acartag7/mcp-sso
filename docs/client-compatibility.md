@@ -21,6 +21,29 @@ A row is `Verified` only when the named flow was driven against the named provid
 | Cloudflare Access, Entra ID, and Google | Claude Code and Codex CLI on all three providers. claude.ai on all three providers. ChatGPT on Cloudflare Access and Entra ID | CIMD or DCR → authorization → provider identity → consent → token → `/mcp`. Clients also exercised refresh rotation and revocation. | Verified | 2026-08-19 | Runtime commit `d6143b3`. Eleven flows completed: four on Cloudflare Access, four on Entra ID, and three on Google. Google with ChatGPT was not run. A non-admitted Cloudflare account stopped at the Access edge and produced no gateway audit row, which was the expected result. The clients exercised `oauth.token.refresh` on all three providers and `oauth.revoke` on Entra ID. |
 | Entra ID | claude.ai custom connector | Deployment configured with `OAUTH_DCR_MODE=stateless`: CIMD `client_id` → authorization → Entra identity → consent → token → refresh → `/mcp` | Verified with limit | 2026-08-19 | Runtime commit `8c08c36`, later merged without runtime changes as `7909642`. The audit contained one `oauth.cimd.fetch` event and no `oauth.register` event. This row proves a complete CIMD flow under stateless configuration. It does not exercise stateless `POST /oauth/register`. |
 
+## Public export live evidence
+
+These rows record the release matrix run against real MySQL and Redis services. They prove that the named package entry point participated in the listed executable release row. They do not claim that a real external identity provider was contacted; the provider matrix above owns that separate claim.
+
+| Export | Live evidence | Runtime commit |
+| --- | --- | --- |
+| `.` | `RM.1`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./store/memory` | `RM.4`, `RM.10` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./store/sqlite` | `RM.1`, `RM.2`, `RM.10` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./store/mysql` | `RM.3`, `RM.10` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./rate-limit/redis` | `RM.2`, `RM.10`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./fastify/protected-resource-rate-limit` | `RM.2` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./fastify` | `RM.1`, `RM.2`, `RM.6`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./express` | `RM.3`, `RM.6`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./hono` | `RM.4`, `RM.6`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./identity/cloudflare-access` | `RM.2`, `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./identity/entra` | `RM.3`, `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./identity/console-pairing` | `RM.1`, `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./identity/generic-oidc` | `RM.4`, `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./identity/google` | `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./testing/store-conformance` | `RM.16` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `./testing/client-store-conformance` | `RM.16` | `28d9744e0f155d67dbb79389971be2d470491003` |
+
 ## Client versions
 
 The 2026-08-19 matrix used Codex CLI 0.148.0 and Claude Code 2.1.235. The operator supplied the Codex CLI version because the clients ran on a different machine from this checkout.
