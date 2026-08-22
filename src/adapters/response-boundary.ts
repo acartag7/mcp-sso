@@ -23,7 +23,7 @@ const URI_REFERENCE = new RegExp(
   `^(?:(?:[A-Za-z][A-Za-z0-9+.-]*):(?://${AUTHORITY}${PATH_ABEMPTY}|${PATH_ABSOLUTE}|${PATH_ROOTLESS}|)|(?://${AUTHORITY}${PATH_ABEMPTY}|${PATH_ABSOLUTE}|${PATH_NOSCHEME}|))(?:\\?${QUERY_OR_FRAGMENT})?(?:#${QUERY_OR_FRAGMENT})?$`,
   "u",
 );
-const IPV_FUTURE = /^v[0-9A-Fa-f]+\.(?:[A-Za-z0-9._~!$&'()*+,;=:-])+$/u;
+const IPV_FUTURE = /^v[0-9A-Fa-f]+\.(?:[A-Za-z0-9._~!$&'()*+,;=:-])+$/iu;
 
 export function snapshotCompletionResponse(value: unknown): NormResponse {
   const response = inspectRecord(value, "completion response");

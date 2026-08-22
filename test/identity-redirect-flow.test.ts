@@ -498,6 +498,9 @@ test("identity completion rejects each host response shape at the boundary", asy
     { status: 302, headers: {}, redirect: "https://example.test/a b" },
     { status: 302, headers: {}, redirect: "/bad%2" }, { status: 302, headers: {}, redirect: "\\bad" },
     { status: 302, headers: {}, redirect: "https://[" }, { status: 302, headers: {}, redirect: "/path[not-an-ip-literal]" },
+    { status: 302, headers: {}, redirect: "https://]" }, { status: 302, headers: {}, redirect: "https://[gg]/" },
+    { status: 302, headers: {}, redirect: "/path?bracket=[x]" }, { status: 302, headers: {}, redirect: "//user@@example.test/" },
+    { status: 302, headers: {}, redirect: "//example.test:not-a-port/" },
     { status: 302, headers: { location: "/other" }, redirect: "/account" },
     { status: 204, headers: { "set-cookie": "" } }, { status: 204, headers: {}, setCookies: [""] },
     { status: 204, headers: { "set-cookie": "x".repeat(4097) } },
@@ -538,7 +541,7 @@ test("identity completion accepts the host response boundary controls", async ()
   assert.equal(response.status, 303); assert.equal(response.headers["cache-control"], "no-store");
   assert.equal(response.headers.location, "/account%20home"); assert.equal(response.setCookies?.length, 16);
 
-  for (const redirect of ["https://example.test/account", "//example.test/account", "account/next?tab=profile#name", "https://[::1]/account"]) {
+  for (const redirect of ["https://example.test/account", "//example.test/account", "account/next?tab=/profile?view#name", "https://[::1]/account", "scheme://[Vf.identity:part]/account"]) {
     const redirectFlow = harness({ onIdentity: () => ({ status: 303, headers: {}, redirect }) });
     const redirectStart = await start(redirectFlow.flow); const redirectResponse = await redirectFlow.flow.handleCallback(callback(redirectStart.state, redirectStart.cookie));
     assert.equal(redirectResponse.status, 303); assert.equal(redirectResponse.redirect, redirect);
