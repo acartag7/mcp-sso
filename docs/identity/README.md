@@ -2,9 +2,9 @@
 
 mcp-sso keeps your existing identity provider as the source of truth and mints its **own** audience-bound tokens for MCP clients. Upstream IdP tokens are verified and then discarded, they never pass through to the client. Pick the port that matches the IdP you already run. Env-var wiring for every port is in [configuration.md](../configuration.md).
 
-## Shipped ports
+## Shipped identity options
 
-| Provider | Import | Guide | Shape |
+| Identity option | Import | Guide | Shape |
 |---|---|---|---|
 | **Cloudflare Access** | `mcp-sso/identity/cloudflare-access` | [cloudflare-access.md](./cloudflare-access.md) | Header assertion (Access fronts `/oauth/authorize`) |
 | **Microsoft Entra ID** | `mcp-sso/identity/entra` | [entra.md](./entra.md) | OIDC redirect flow (+ optional group → scope) |
@@ -19,8 +19,8 @@ Not yet available: [**GitHub**](./github.md) (contract-locked. GitHub OAuth is n
 
 Every port follows the same authorization model (see [`authorization.md`](../authorization.md)):
 
-1. **The IdP is the primary gate.** Cloudflare Access policy, Entra app assignment / Conditional Access, or the OIDC provider's own policy decides who can sign in. With **Cloudflare Access** a denied user is blocked at the Cloudflare edge and never reaches the gateway. With **bridge completion** for the Entra, Google, or generic OIDC redirect flow, an IdP denial reaches the callback, which audits `oauth.upstream.callback` with reason `upstream_denied` and redirects the MCP client with `access_denied`; no bridge token is minted. With **claims-only completion**, the same denial reaches the callback and produces the fixed direct 400 described in [Website login with verified identity claims](./website-login.md#website-login-with-verified-identity-claims).
-2. mcp-sso's allowlist is optional defense-in-depth. Never a replacement: `emailAllowlist` (Cloudflare) or `subjectAllowlist` (Entra / Google / generic OIDC, matched against the **immutable** subject, not the email, unless you opt in). An **empty** allowlist delegates the decision entirely to the IdP.
+1. The IdP is the primary gate. Cloudflare Access policy, Entra app assignment and Conditional Access, or the OIDC provider policy decides who can sign in. Cloudflare Access can block a denied user at the edge before the request reaches the gateway. For bridge completion through Entra, Google, or generic OIDC, an IdP denial reaches the callback. The callback audits `oauth.upstream.callback` with reason `upstream_denied`, redirects the MCP client with `access_denied`, and mints no bridge token. For claims-only completion, the callback returns the fixed direct 400 described in [Website login with verified identity claims](./website-login.md#website-login-with-verified-identity-claims).
+2. The mcp-sso allowlist is optional defense in depth, not a replacement for IdP policy. Use `emailAllowlist` with Cloudflare Access. Use `subjectAllowlist` with Entra, Google, and generic OIDC. `subjectAllowlist` matches the immutable subject instead of email unless the deployment opts in to email matching. An empty allowlist delegates the decision to the IdP.
 
 Blank config counts as missing config. The example's env wiring rejects blank required values (`mustEnv`) and selects each provider branch by *presence*, so a blank required env var fails the **boot** instead of silently falling back to console pairing. Factories also reject their security-critical blank required fields at construction (Cloudflare's `audience`. OIDC / Google's `clientId`, `issuer`, and `redirectUri`. Entra's `tenantId` and `clientId`). Callers still reject blank environment values before selecting a provider branch, as the example's `mustEnv` does.
 

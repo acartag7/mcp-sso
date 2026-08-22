@@ -95,6 +95,7 @@
     "check:deps": "node scripts/check-dependency-policy.mjs",
     "check:deps:remote": "node scripts/check-dependency-policy.mjs --verify-remote",
     "check:release-matrix": "node scripts/check-release-matrix.mjs",
+    "check:release-ready": "node scripts/check-release-ready.mjs",
     "test:release": "pnpm test && node scripts/run-release-matrix.mjs"
   },
   "dependencies": {

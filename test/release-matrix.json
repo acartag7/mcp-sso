@@ -28,7 +28,9 @@
   "rows": [
     {
       "id": "RM.1",
-      "title": "Packed generated server",
+      "title": "Packed generated server and public exports",
+      "packedArtifact": true,
+      "exports": [".", "./store/memory", "./store/sqlite", "./store/mysql", "./rate-limit/redis", "./fastify/protected-resource-rate-limit", "./fastify", "./express", "./hono", "./identity/cloudflare-access", "./identity/entra", "./identity/console-pairing", "./identity/generic-oidc", "./identity/google", "./testing/store-conformance", "./testing/client-store-conformance"],
       "evidence": [
         {
           "file": "test/release-packed.test.ts",
@@ -39,6 +41,7 @@
     {
       "id": "RM.2",
       "title": "Fastify production-style header flow",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-fastify-stack.test.ts",
@@ -49,6 +52,7 @@
     {
       "id": "RM.3",
       "title": "Express redirect flow",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-express-stack.test.ts",
@@ -59,6 +63,7 @@
     {
       "id": "RM.4",
       "title": "Hono CIMD flow",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-hono-stack.test.ts",
@@ -69,6 +74,7 @@
     {
       "id": "RM.5",
       "title": "Identity sibling proof",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-identity-routes.test.ts",
@@ -97,6 +103,7 @@
     {
       "id": "RM.6",
       "title": "Three-adapter CIMD route parity",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-cimd-parity.test.ts",
@@ -107,6 +114,7 @@
     {
       "id": "RM.7",
       "title": "Machine credential lifecycle",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-machine-route.test.ts",
@@ -117,6 +125,7 @@
     {
       "id": "RM.8",
       "title": "Cross-resource OAuth lifecycle",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-cross-resource.test.ts",
@@ -127,6 +136,7 @@
     {
       "id": "RM.9",
       "title": "Gateway",
+      "exports": [],
       "evidence": [
         {
           "file": "test/integration-gateway.test.ts",
@@ -153,6 +163,7 @@
     {
       "id": "RM.10",
       "title": "Store and service parity",
+      "exports": [],
       "evidence": [
         {
           "file": "test/e2e-mcp-sdk.test.ts",
@@ -219,6 +230,7 @@
     {
       "id": "RM.11",
       "title": "Redirect allowlist mode",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-redirect-mode.test.ts",
@@ -245,6 +257,7 @@
     {
       "id": "RM.12",
       "title": "Identity display name",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-identity-name.test.ts",
@@ -283,6 +296,7 @@
     {
       "id": "RM.13",
       "title": "Audit sink fan-out",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-audit-sinks.test.ts",
@@ -293,6 +307,7 @@
     {
       "id": "RM.14",
       "title": "CIMD and DCR coexistence",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-cimd-dcr-coexistence.test.ts",
@@ -311,6 +326,7 @@
     {
       "id": "RM.15",
       "title": "Registration dispatch matrix",
+      "exports": [],
       "evidence": [
         {
           "file": "test/release-registration-matrix.test.ts",
@@ -361,6 +377,8 @@
     {
       "id": "RM.16",
       "title": "Shipped conformance suite",
+      "packedArtifact": true,
+      "exports": ["./testing/store-conformance", "./testing/client-store-conformance"],
       "evidence": [
         {
           "file": "test/release-conformance-suite.test.ts",
@@ -371,6 +389,8 @@
     {
       "id": "RM.17",
       "title": "Claims-only redirect completion",
+      "packedArtifact": true,
+      "exports": ["."],
       "evidence": [
         { "file": "test/release-identity-completion.test.ts", "name": "RM.17 the packed root exports the claims-only flow and route-set assertion" },
         { "file": "test/identity-redirect-flow.test.ts", "name": "RM.17 claims-only completion returns verified claims and remains single-use" },
@@ -385,6 +405,7 @@
     {
       "id": "RM.18",
       "title": "Live claims-only redirect completion",
+      "exports": [],
       "evidence": [
         { "file": "test/live-e2e-probe.test.mjs", "name": "RM.18 probe-e2e runs both DCR modes and live identity completion without leaking credentials" }
       ]

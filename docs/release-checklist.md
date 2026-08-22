@@ -31,9 +31,18 @@ Use this checklist for a release candidate. The [release verification reference]
 
 ## Record live compatibility claims
 
-For each provider or client claim, complete the matching Tier 3 row after the source and package gates pass. Record the result in the [client compatibility reference](client-compatibility.md#current-matrix).
+For each provider or client claim, complete the matching Tier 3 row after the source and package gates pass. Record the result in the [client compatibility reference](client-compatibility.md#current-matrix). Record the completed export rows and the commit used for the release-matrix run in the [public export evidence table](client-compatibility.md#public-export-live-evidence).
 
 Do not use a live result as the only evidence for a security property.
+
+Run the evidence gates after recording both sets of results:
+
+```bash
+pnpm run check:release-matrix
+pnpm run check:release-ready
+```
+
+The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence input, or version mismatch. Do not create the tag while either command fails.
 
 ## Approve the final release commit
 

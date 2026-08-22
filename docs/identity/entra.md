@@ -82,7 +82,11 @@ Verified-context rejections return `identity_rejected` with a fixed reason. Brid
 | Groups present but none mapped + empty `baseScopes` | `entra_no_mapped_groups` |
 | Expired / bad claim / bad alg / unknown key / other `jose` | `entra_token_expired` / `entra_bad_claim` / `entra_unsupported_alg` / `entra_unknown_key` / `entra_token_invalid` |
 
-**Infrastructure / exchange** failures, a token-exchange non-200 or timeout, a **token response missing `id_token`**, or an unreachable, over-cap, or otherwise failed JWKS fetch (`entra_verify_failed`), are classified `exchange_failed` and emit **no** `identity.verify` audit event. Bridge completion redirects the MCP client with `server_error`; claims-only completion returns a generic direct 500. No identity decision was made. (The `entra_id_token_missing` reason applies only to the lower-level header-driven / primitives path, where a raw `id_token` is passed to `verify()`, not to this redirect flow.)
+### Infrastructure and exchange failures
+
+A token-exchange non-200 or timeout, a token response without `id_token`, or an unreachable, over-cap, or otherwise failed JWKS fetch is classified as `exchange_failed`. The JWKS failure reason is `entra_verify_failed`. These failures emit no `identity.verify` audit event because no identity decision was made. Bridge completion redirects the MCP client with `server_error`. Claims-only completion returns a generic direct 500.
+
+The `entra_id_token_missing` reason applies only to the lower-level header-driven primitives path, where the caller passes a raw `id_token` to `verify()`. It does not apply to the redirect flow.
 
 Malformed `groupAuthorization` config is a **boot** `AuthConfigError` (never a silent "no ceiling" default): a non-object `groupAuthorization`, a non-GUID mapping key, a duplicate case-insensitive key, an empty/non-single-token scope value, a scope outside the catalog, or a non-array `baseScopes`.
 
