@@ -30,8 +30,8 @@ Each row proves that the package entry point participated in the listed executab
 | Export | Live evidence | Runtime commit |
 | --- | --- | --- |
 | `.` | `RM.1`, `RM.17` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/memory` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/sqlite` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/memory` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/sqlite` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
 | `./store/mysql` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
 | `./rate-limit/redis` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
 | `./fastify/protected-resource-rate-limit` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
