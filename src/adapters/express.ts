@@ -79,8 +79,9 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
     };
   };
   const send = (res: Response, r: NormResponse): void => {
-    for (const [key, value] of Object.entries(r.headers)) res.set(key, value);
-    if (r.setCookies) res.set("set-cookie", responseSetCookies(r));
+    for (const [key, value] of Object.entries(r.headers)) if (key.toLowerCase() !== "set-cookie") res.set(key, value);
+    const cookies = responseSetCookies(r);
+    if (cookies.length > 0) res.set("set-cookie", cookies.length === 1 ? cookies[0] : cookies);
     if (r.redirect) { res.redirect(r.status, r.redirect); return; }
     res.status(r.status).send(r.body);
   };

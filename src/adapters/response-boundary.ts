@@ -57,7 +57,8 @@ function snapshotHeaders(value: unknown): Record<string, string> {
     if (typeof item !== "string") throw new TypeError("completion header value must be a string");
     const limit = lower === "set-cookie" ? 4096 : 8192;
     if (lower === "set-cookie" && item.length === 0) throw new TypeError("completion cookie is empty");
-    validateAsciiValue(item, limit, "completion header value");
+    if (lower === "set-cookie") validateCookieValue(item);
+    else validateAsciiValue(item, limit, "completion header value");
     bytes += Buffer.byteLength(key, "ascii") + Buffer.byteLength(item, "ascii");
     if (bytes > 32_768) throw new TypeError("completion headers are too large");
     defineHeader(output, key, item);
@@ -76,10 +77,15 @@ function snapshotCookies(value: unknown): string[] {
   for (let index = 0; index < value.length; index += 1) {
     const item = descriptorValue(descriptors[String(index)], "completion cookie");
     if (typeof item !== "string" || item.length === 0) throw new TypeError("completion cookie must be a non-empty string");
-    validateAsciiValue(item, 4096, "completion cookie");
+    validateCookieValue(item);
     output.push(item);
   }
   return Object.freeze(output) as string[];
+}
+
+function validateCookieValue(value: string): void {
+  validateAsciiValue(value, 4096, "completion cookie");
+  if (value.includes("\t")) throw new TypeError("completion cookie is invalid");
 }
 
 function validateAsciiValue(value: string, limit: number, label: string): void {

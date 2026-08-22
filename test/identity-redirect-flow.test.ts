@@ -10,12 +10,16 @@ import { createBridgeConfig, type BridgeConfig } from "../src/config.ts";
 import { Bridge } from "../src/adapters/bridge.ts";
 import { createUpstreamRedirectFlow } from "../src/adapters/upstream-flow.ts";
 import { assertDistinctUpstreamFlowRoutes } from "../src/adapters/upstream-flow-routes.ts";
+import { registerUpstreamFlowMetadata } from "../src/adapters/upstream-flow-routes.ts";
 import type { NormRequest, NormResponse } from "../src/adapters/http.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { registerOAuthRoutes } from "../src/adapters/fastify.ts";
 import { createOAuthRouter } from "../src/adapters/express.ts";
 import { createOAuthApp } from "../src/adapters/hono.ts";
 import { pkceChallenge } from "../src/crypto.ts";
+import {
+  changingIdentitySubject, INVALID_IDENTITY_SUBJECTS, VALID_IDENTITY_SUBJECTS,
+} from "./lib/identity-subject-cases.ts";
 
 const NOW = Date.parse("2026-08-22T10:00:00.000Z");
 const IP = "203.0.113.9";
@@ -82,6 +86,41 @@ function callback(state: string, cookie: string, extra: Record<string, string | 
   return { query: { state, code: "upstream-code", ...extra }, body: undefined, headers: { cookie }, ip: IP };
 }
 
+function flowFor(
+  h: ReturnType<typeof harness>, complete: "bridge" | "identity", callbackPath: string,
+) {
+  const identity: RedirectIdentityPort = {
+    redirectUri: `https://auth.test${callbackPath}`,
+    buildAuthorizationUrl(args) { return `https://idp.test/authorize?state=${args.state}`; },
+    async exchangeAndVerify() { return { ok: true, identity: { subject: "person" } }; },
+  };
+  return createUpstreamRedirectFlow({
+    bridge: h.bridge, identity, store: h.store, clock: h.clock, audit: h.audit,
+    complete, callbackPath, ...(complete === "identity" ? { onIdentity: () => ({ status: 204, headers: {} }) } : {}),
+  } as never);
+}
+
+test("identity completion boot options fail closed and are snapshotted", () => {
+  const h = harness();
+  const base = { bridge: h.bridge, identity: h.identity, store: h.store, clock: h.clock, audit: h.audit };
+  assert.throws(() => createUpstreamRedirectFlow({ ...base, complete: "unknown" } as never));
+  assert.throws(() => createUpstreamRedirectFlow({ ...base, complete: "bridge", onIdentity: () => ({ status: 204, headers: {} }) } as never));
+  assert.throws(() => createUpstreamRedirectFlow({ ...base, complete: "bridge", completionTimeoutMs: 1000 } as never));
+  assert.throws(() => createUpstreamRedirectFlow({ ...base, complete: "identity" } as never));
+  assert.throws(() => createUpstreamRedirectFlow({ ...base, complete: "identity", onIdentity: "not-callable" } as never));
+  for (const completionTimeoutMs of [999, 1000.5, 30_001, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => createUpstreamRedirectFlow({ ...base, complete: "identity", completionTimeoutMs, onIdentity: () => ({ status: 204, headers: {} }) }));
+  }
+  let reads = 0;
+  const deps = { ...base, complete: "identity" } as Record<string, unknown>;
+  Object.defineProperty(deps, "onIdentity", { enumerable: true, get() { reads += 1; return () => ({ status: 204, headers: {} }); } });
+  const flow = createUpstreamRedirectFlow(deps as never);
+  assert.equal(reads, 1); assert.equal(flow.complete, "identity"); assert.equal(flow.callbackPath, "/login/callback"); assert.equal(Object.isFrozen(flow), true);
+  for (const completionTimeoutMs of [1000, 10_000, 30_000]) {
+    assert.doesNotThrow(() => createUpstreamRedirectFlow({ ...base, complete: "identity", completionTimeoutMs, onIdentity: () => ({ status: 204, headers: {} }) }));
+  }
+});
+
 test("RM.17 claims-only completion returns verified claims and remains single-use", async () => {
   let observed: unknown;
   const h = harness({ onIdentity(identity) { observed = identity; return { status: 204, headers: {}, setCookies: ["session=host; Path=/; Secure; HttpOnly"] }; } });
@@ -93,6 +132,18 @@ test("RM.17 claims-only completion returns verified claims and remains single-us
   assert.equal(Object.isFrozen(observed), true); assert.equal(h.completions(), 1);
   const replay = await h.flow.handleCallback(callback(begun.state, begun.cookie));
   assert.equal(replay.status, 400); assert.equal(h.exchanges(), 1); assert.equal(h.completions(), 1);
+});
+
+test("default bridge and identity flows coexist with distinct cookies and audiences", async () => {
+  const h = harness(); const bridgeFlow = flowFor(h, "bridge", "/oauth/callback");
+  const bridgeStart = await startBridge(bridgeFlow); const identityStart = await start(h.flow);
+  assert.match(bridgeStart.cookie, /^__Host-mcp-sso-upstream=/); assert.match(identityStart.cookie, /^__Host-mcp-sso-identity=/);
+  const cookies = `${bridgeStart.cookie}; ${identityStart.cookie}`;
+  const bridgeResponse = await bridgeFlow.handleCallback({ ...callback(bridgeStart.state, cookies), headers: { cookie: cookies } });
+  const identityResponse = await h.flow.handleCallback({ ...callback(identityStart.state, cookies), headers: { cookie: cookies } });
+  assert.equal(bridgeResponse.status, 200); assert.equal(identityResponse.status, 204);
+  assert.match(bridgeResponse.headers["set-cookie"] ?? "", /^__Host-mcp-sso-upstream=/);
+  assert.equal(identityResponse.setCookies?.some((cookie) => cookie.startsWith("__Host-mcp-sso-identity=")), true);
 });
 
 test("RM.17 claims-only authorize and callback charge only website-login", async () => {
@@ -129,6 +180,21 @@ test("RM.17 a yielding onIdentity timeout takes completion_failed and discards i
   assert.equal(h.completions(), 2); assert.equal(freshResponse.setCookies?.some((cookie) => cookie.startsWith("late=")), true);
 });
 
+test("prompt identity completion clears the losing timeout on success and failure", async () => {
+  for (const fails of [false, true]) {
+    const h = harness({ onIdentity() { if (fails) throw new Error("fixed test failure"); return { status: 204, headers: {} }; } });
+    const begun = await start(h.flow); const originalSet = globalThis.setTimeout; const originalClear = globalThis.clearTimeout;
+    let scheduled = 0, cleared = 0;
+    globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+      scheduled += 1; return originalSet(...args);
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((...args: Parameters<typeof clearTimeout>) => { cleared += 1; return originalClear(...args); }) as typeof clearTimeout;
+    try { assert.equal((await h.flow.handleCallback(callback(begun.state, begun.cookie))).status, fails ? 500 : 204); }
+    finally { globalThis.setTimeout = originalSet; globalThis.clearTimeout = originalClear; }
+    assert.equal(scheduled, 1); assert.equal(cleared, 1);
+  }
+});
+
 test("RM.17 a malformed host response cannot escape the fixed completion failure", async () => {
   const poison = "hostile-header-value";
   const h = harness({ onIdentity: () => ({ status: 200, headers: { "x-test": `${poison}\r\nset-cookie: stolen=1` } }) });
@@ -147,27 +213,28 @@ test("RM.17 identity denial and rejection share one direct anti-oracle response"
 });
 
 test("RM.17 Fastify, Express, and Hono each deliver both Set-Cookie values", async () => {
+  const adapterHarness = () => harness({ onIdentity: () => ({ status: 204, headers: { "SeT-CoOkIe": "session=host; Path=/; Secure; HttpOnly" } }) });
   {
-    const h = harness(); const app = Fastify(); await registerOAuthRoutes(app, { bridge: h.bridge, skipAuthorize: true, identityFlow: h.flow });
+    const h = adapterHarness(); const app = Fastify(); await registerOAuthRoutes(app, { bridge: h.bridge, skipAuthorize: true, identityFlow: h.flow });
     const begin = await app.inject({ method: "GET", url: "/login" }); const state = new URL(begin.headers.location as string).searchParams.get("state") as string;
     const done = await app.inject({ method: "GET", url: `/login/callback?state=${state}&code=c`, headers: { cookie: String(begin.headers["set-cookie"]).split(";", 1)[0] } });
-    assert.equal((done.headers["set-cookie"] as string[]).length, 2); await app.close();
+    assert.deepEqual((done.headers["set-cookie"] as string[]).map((cookie) => cookie.split(";", 1)[0]), ["session=host", "__Host-mcp-sso-identity="]); await app.close();
   }
   {
-    const h = harness(); const app = express(); app.use(createOAuthRouter({ bridge: h.bridge, skipAuthorize: true, identityFlow: h.flow }));
+    const h = adapterHarness(); const app = express(); app.use(createOAuthRouter({ bridge: h.bridge, skipAuthorize: true, identityFlow: h.flow }));
     const server = app.listen(0, "127.0.0.1"); await new Promise<void>((resolve) => server.once("listening", resolve));
     const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     try {
       const begin = await fetch(base + "/login", { redirect: "manual" }); const state = new URL(begin.headers.get("location") as string).searchParams.get("state") as string;
       const done = await fetch(base + `/login/callback?state=${state}&code=c`, { headers: { cookie: begin.headers.get("set-cookie")?.split(";", 1)[0] as string } });
-      assert.equal(done.headers.getSetCookie().length, 2);
+      assert.deepEqual(done.headers.getSetCookie().map((cookie) => cookie.split(";", 1)[0]), ["session=host", "__Host-mcp-sso-identity="]);
     } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   }
   {
-    const h = harness(); const app = createOAuthApp({ bridge: h.bridge, skipAuthorize: true, identityFlow: h.flow, clientIp: () => IP });
+    const h = adapterHarness(); const app = createOAuthApp({ bridge: h.bridge, skipAuthorize: true, identityFlow: h.flow, clientIp: () => IP });
     const begin = await app.request("/login"); const state = new URL(begin.headers.get("location") as string).searchParams.get("state") as string;
     const done = await app.request(`/login/callback?state=${state}&code=c`, { headers: { cookie: begin.headers.get("set-cookie")?.split(";", 1)[0] as string } });
-    assert.equal(done.headers.getSetCookie().length, 2);
+    assert.deepEqual(done.headers.getSetCookie().map((cookie) => cookie.split(";", 1)[0]), ["session=host", "__Host-mcp-sso-identity="]);
   }
 });
 
@@ -217,53 +284,79 @@ test("route-set assertion admits one bridge plus one identity flow and rejects w
   Object.defineProperty(accessor, "0", { enumerable: true, get() { throw new Error("slot getter poison"); } });
   assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, accessor));
 
-  const shared = (complete: "bridge" | "identity", callbackPath: string) => {
-    const identity: RedirectIdentityPort = {
-      redirectUri: `https://auth.test${callbackPath}`,
-      buildAuthorizationUrl(args) { return `https://idp.test/authorize?state=${args.state}`; },
-      async exchangeAndVerify() { return { ok: true, identity: { subject: "person" } }; },
-    };
-    return createUpstreamRedirectFlow({
-      bridge: h.bridge, identity, store: h.store, clock: h.clock, audit: h.audit,
-      complete, callbackPath, ...(complete === "identity" ? { onIdentity: () => ({ status: 204, headers: {} }) } : {}),
-    } as never);
-  };
-  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [shared("bridge", "/shared"), shared("identity", "/SHARED/")]));
-  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [shared("bridge", "/bridge-a"), shared("bridge", "/bridge-b")]));
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [flowFor(h, "bridge", "/shared"), flowFor(h, "identity", "/SHARED/")]));
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [flowFor(h, "bridge", "/bridge-a"), flowFor(h, "bridge", "/bridge-b")]));
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [flowFor(h, "identity", "/identity-a"), flowFor(h, "identity", "/identity-b")]));
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, new Proxy([h.flow], { ownKeys() { throw new Error("descriptor poison"); } })));
+  for (const [index, callbackPath] of ["/collision", "/COLLISION", "/COLLISION/"].entries()) {
+    const left = flowFor(h, "bridge", `/left-${index}`); const right = flowFor(h, "identity", `/right-${index}`);
+    registerUpstreamFlowMetadata(left, h.bridge, "bridge", "/collision");
+    registerUpstreamFlowMetadata(right, h.bridge, "identity", callbackPath);
+    assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [left, right]));
+  }
+  for (const [complete, callbackPath] of [["bridge", "/LOGIN/"], ["identity", "/OAUTH/AUTHORIZE/"]] as const) {
+    const flow = flowFor(h, complete, `/metadata-${complete}`);
+    registerUpstreamFlowMetadata(flow, h.bridge, complete, callbackPath);
+    assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [flow, complete === "bridge" ? h.flow : bridgeFlow]));
+  }
 });
 
 test("flow factories reject effective callback and initiation route aliases", () => {
-  for (const callbackPath of ["/login", "/LOGIN/", "/oauth/jwks", "/OAUTH/JWKS/", "/mcp", "/MCP/", "/.well-known/provider"]) {
-    const cfg = config(), store = new MemoryStore(), clock = new Clock(), audit = new Audit();
-    const bridge = new Bridge({ config: cfg, store, clock, audit });
-    const identity: RedirectIdentityPort = {
-      redirectUri: `https://auth.test${callbackPath}`,
-      buildAuthorizationUrl() { return "https://idp.test/authorize"; },
-      async exchangeAndVerify() { return { ok: true, identity: { subject: "person" } }; },
-    };
-    assert.throws(() => createUpstreamRedirectFlow({ bridge, identity, store, clock, audit, complete: "identity", callbackPath, onIdentity: () => ({ status: 204, headers: {} }) }), Error, callbackPath);
+  const adapterRoutes = [
+    "/oauth/authorize", "/login", "/oauth/authorize/approve", "/oauth/token",
+    "/oauth/register", "/oauth/revoke", "/oauth/jwks",
+    "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/mcp", "/.well-known/provider", "/mcp",
+  ];
+  for (const complete of ["bridge", "identity"] as const) {
+    for (const route of adapterRoutes) {
+      for (const callbackPath of new Set([route, route.toUpperCase(), route.endsWith("/") ? route : `${route}/`])) {
+        const h = harness();
+        assert.throws(() => flowFor(h, complete, callbackPath), Error, `${complete}:${callbackPath}`);
+      }
+    }
   }
-  for (const [resourcePath, complete, callbackPath] of [["/LOGIN/", "identity", "/callback"], ["/OAUTH/AUTHORIZE/", "bridge", "/callback"]] as const) {
-    const cfg = config(resourcePath), store = new MemoryStore(), clock = new Clock(), audit = new Audit();
-    const bridge = new Bridge({ config: cfg, store, clock, audit });
-    const identity: RedirectIdentityPort = {
-      redirectUri: `https://auth.test${callbackPath}`,
-      buildAuthorizationUrl() { return "https://idp.test/authorize"; },
-      async exchangeAndVerify() { return { ok: true, identity: { subject: "person" } }; },
-    };
-    const deps = { bridge, identity, store, clock, audit, complete, callbackPath, onIdentity: () => ({ status: 204, headers: {} }) };
-    assert.throws(() => createUpstreamRedirectFlow(deps as never), Error, `${complete}:${resourcePath}`);
+  for (const [initiation, complete] of [["/login", "identity"], ["/oauth/authorize", "bridge"]] as const) {
+    for (const resourcePath of [initiation, initiation.toUpperCase(), `${initiation}/`]) {
+      const cfg = config(resourcePath), store = new MemoryStore(), clock = new Clock(), audit = new Audit();
+      const bridge = new Bridge({ config: cfg, store, clock, audit });
+      const h = { ...harness(), bridge, store, clock, audit };
+      assert.throws(() => flowFor(h, complete, `/callback-${complete}`), Error, `${complete}:${resourcePath}`);
+    }
   }
+  const h = harness();
+  assert.doesNotThrow(() => flowFor(h, "bridge", "/bridge-callback"));
+  assert.doesNotThrow(() => flowFor(h, "identity", "/identity-callback"));
 });
 
 test("all adapters reject flows in the wrong completion slot before registration", async () => {
   const h = harness();
+  const bridgeFlow = flowFor(h, "bridge", "/bridge-callback");
   const cases = [
     async () => { const app = Fastify(); await assert.rejects(registerOAuthRoutes(app, { bridge: h.bridge, upstream: h.flow })); assert.equal(app.hasRoute({ method: "GET", url: "/oauth/jwks" }), false); await app.close(); },
     async () => { assert.throws(() => createOAuthRouter({ bridge: h.bridge, upstream: h.flow })); },
     async () => { assert.throws(() => createOAuthApp({ bridge: h.bridge, upstream: h.flow, clientIp: () => IP })); },
+    async () => { const app = Fastify(); await assert.rejects(registerOAuthRoutes(app, { bridge: h.bridge, skipAuthorize: true, identityFlow: bridgeFlow })); assert.equal(app.hasRoute({ method: "GET", url: "/oauth/jwks" }), false); await app.close(); },
+    async () => { assert.throws(() => createOAuthRouter({ bridge: h.bridge, skipAuthorize: true, identityFlow: bridgeFlow })); },
+    async () => { assert.throws(() => createOAuthApp({ bridge: h.bridge, skipAuthorize: true, identityFlow: bridgeFlow, clientIp: () => IP })); },
   ];
   for (const run of cases) await run();
+});
+
+test("all adapters reject wrong-bridge and sibling-route collisions before mounting", async () => {
+  const owner = harness(); const other = harness();
+  const collidedBridge = flowFor(owner, "bridge", "/shared-callback");
+  const collidedIdentity = flowFor(owner, "identity", "/SHARED-CALLBACK");
+  const options = [
+    { bridge: other.bridge, skipAuthorize: true, identityFlow: owner.flow },
+    { bridge: owner.bridge, upstream: collidedBridge, identityFlow: collidedIdentity },
+  ];
+  for (const option of options) {
+    const app = Fastify(); await assert.rejects(registerOAuthRoutes(app, option));
+    assert.equal(app.hasRoute({ method: "GET", url: "/oauth/jwks" }), false); await app.close();
+    assert.throws(() => createOAuthRouter(option));
+    assert.throws(() => createOAuthApp({ ...option, clientIp: () => IP }));
+  }
 });
 
 test("identity completion rejects malformed subjects and claims before onIdentity", async () => {
@@ -271,9 +364,9 @@ test("identity completion rejects malformed subjects and claims before onIdentit
   const accessor: Record<string, unknown> = {};
   Object.defineProperty(accessor, "value", { enumerable: true, get() { throw new Error("claim getter poison"); } });
   const inherited = Object.create({ inherited: true }) as Record<string, unknown>;
+  const trapped = new Proxy({}, { ownKeys() { throw new Error("claims enumeration poison"); } });
   const identities = [
-    { subject: "" }, { subject: " person" }, { subject: "person " }, { subject: "bad\uFFFD" },
-    { subject: "\uD800" }, { subject: "\uDC00" }, { subject: "x".repeat(385) }, { subject: "😀".repeat(385) },
+    ...INVALID_IDENTITY_SUBJECTS.map((subject) => ({ subject })),
     { subject: "person", claims: { value: Number.NaN } },
     { subject: "person", claims: { value: BigInt(1) } },
     { subject: "person", claims: { value: Symbol("x") } },
@@ -281,7 +374,7 @@ test("identity completion rejects malformed subjects and claims before onIdentit
     { subject: "person", claims: { value: Number.POSITIVE_INFINITY } },
     { subject: "person", claims: { value: [undefined] } },
     { subject: "person", claims: { value: [, "sparse"] } },
-    { subject: "person", claims: accessor },
+    { subject: "person", claims: accessor }, { subject: "person", claims: trapped },
     { subject: "person", claims: inherited },
     { subject: "person", claims: cycle },
     { subject: "person", claims: { a: { b: { c: { d: { e: {} } } } } } },
@@ -294,15 +387,40 @@ test("identity completion rejects malformed subjects and claims before onIdentit
     const h = harness({ result: { ok: true, identity } as never }); const begun = await start(h.flow);
     const response = await h.flow.handleCallback(callback(begun.state, begun.cookie));
     assert.equal(response.status, 500, `malformed identity ${index}`); assert.equal(h.completions(), 0);
-    assert.equal(h.audit.events.some((event) => event.event === "identity.verify"), false);
-    assert.equal(h.audit.events.at(-1)?.reason, "exchange_failed");
+    assert.deepEqual(response.setCookies?.map((cookie) => cookie.split(";", 1)[0]), ["__Host-mcp-sso-identity="]);
+    assert.deepEqual(h.audit.events.map((event) => [event.event, event.status, event.reason]), [
+      ["oauth.upstream.callback", "failure", "exchange_failed"],
+    ]);
+    assert.equal(JSON.stringify(h.audit.events).includes("poison"), false);
   }
 });
 
 test("identity subject accepts one and exactly 384 Unicode scalars", async () => {
-  for (const subject of ["x", "x".repeat(384), "😀".repeat(384)]) {
+  for (const subject of VALID_IDENTITY_SUBJECTS) {
     const h = harness({ result: { ok: true, identity: { subject } } }); const begun = await start(h.flow);
     assert.equal((await h.flow.handleCallback(callback(begun.state, begun.cookie))).status, 204);
+  }
+});
+
+test("both redirect completions apply the complete subject grammar and snapshot a changing getter once", async () => {
+  for (const subject of INVALID_IDENTITY_SUBJECTS) {
+    const h = bridgeHarness({ ok: true, identity: { subject } }); const begun = await startBridge(h.flow);
+    const response = await h.flow.handleCallback(callback(begun.state, begun.cookie));
+    assert.equal(response.status, 302); assert.equal(h.audit.events.at(-1)?.reason, "exchange_failed");
+  }
+  for (const subject of VALID_IDENTITY_SUBJECTS) {
+    const h = bridgeHarness({ ok: true, identity: { subject } }); const begun = await startBridge(h.flow);
+    assert.equal((await h.flow.handleCallback(callback(begun.state, begun.cookie))).status, 200);
+  }
+  for (const complete of ["bridge", "identity"] as const) {
+    const changing = changingIdentitySubject();
+    const h = complete === "bridge"
+      ? bridgeHarness({ ok: true, identity: changing.identity })
+      : harness({ result: { ok: true, identity: changing.identity } });
+    const begun = complete === "bridge" ? await startBridge(h.flow) : await start(h.flow);
+    const response = await h.flow.handleCallback(callback(begun.state, begun.cookie));
+    assert.equal(response.status, complete === "bridge" ? 200 : 204);
+    assert.equal(changing.reads(), 1);
   }
 });
 
@@ -322,17 +440,23 @@ test("identity completion rejects each host response shape at the boundary", asy
   const accessorCookies = ["first=x"];
   Object.defineProperty(accessorCookies, "0", { enumerable: true, get() { throw new Error("cookie getter poison"); } });
   const oversizedHeaders = Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`x-${index}`, "x".repeat(7000)]));
+  const proxyResponse = new Proxy({ status: 204, headers: {} }, {});
+  const proxyHeaders = new Proxy({}, {});
+  const proxyCookies = new Proxy(["session=x"], {});
   const bad: unknown[] = [
-    null, inheritedResponse, symbolResponse, nonEnumerableResponse,
+    null, proxyResponse, inheritedResponse, symbolResponse, nonEnumerableResponse,
+    { status: 204, headers: proxyHeaders },
     { status: 204, headers: inheritedHeaders }, { status: 204, headers: symbolHeaders }, { status: 204, headers: nonEnumerableHeaders },
-    { status: 200, headers: {}, extra: true }, { status: 200.5, headers: {} },
+    { status: 200, headers: {}, extra: true }, { status: 200.5, headers: {} }, { status: 199, headers: {} },
     { status: 200, headers: {}, body: undefined }, { status: 200, headers: {}, redirect: undefined },
     { status: 200, headers: {}, setCookies: undefined },
     { status: 302, headers: {}, body: "x" }, { status: 200, headers: {}, body: {} },
     { status: 200, headers: {}, body: "untyped" }, { status: 200, headers: { "content-type": "text/plain" }, body: "x".repeat(65_537) },
-    { status: 204, headers: {}, body: "" }, { status: 205, headers: {}, body: "" }, { status: 304, headers: {} },
+    { status: 204, headers: {}, body: "" }, { status: 205, headers: {}, body: "" }, { status: 300, headers: {} }, { status: 304, headers: {} },
+    { status: 200, headers: {}, redirect: "/account" },
     { status: 200, headers: { connection: "close" } },
     { status: 200, headers: { "X-Test": "one", "x-test": "two" } },
+    { status: 200, headers: { "bad header": "value" } }, { status: 200, headers: { "x-test": "line\nbreak" } },
     { status: 200, headers: { "x-test": " leading" } }, { status: 200, headers: { "x-test": "trailing " } },
     { status: 200, headers: { "x-test": "café" } }, { status: 200, headers: { "x-test": "😀" } },
     { status: 200, headers: { ["x".repeat(257)]: "value" } },
@@ -343,16 +467,28 @@ test("identity completion rejects each host response shape at the boundary", asy
     { status: 204, headers: { "set-cookie": "" } }, { status: 204, headers: {}, setCookies: [""] },
     { status: 204, headers: { "set-cookie": "x".repeat(4097) } },
     { status: 204, headers: {}, setCookies: ["x".repeat(4097)] },
+    { status: 204, headers: { "set-cookie": " session=x" } }, { status: 204, headers: {}, setCookies: ["session=x "] },
+    { status: 204, headers: { "set-cookie": "session=café" } }, { status: 204, headers: {}, setCookies: ["session=😀"] },
+    { status: 204, headers: { "set-cookie": "session=x\npoison" } }, { status: 204, headers: {}, setCookies: ["session=x\tpoison"] },
     { status: 204, headers: {}, setCookies: "session=x" }, { status: 204, headers: {}, setCookies: sparseCookies },
-    { status: 204, headers: {}, setCookies: accessorCookies },
+    { status: 204, headers: {}, setCookies: accessorCookies }, { status: 204, headers: {}, setCookies: proxyCookies },
     { status: 204, headers: {}, setCookies: Array.from({ length: 16 }, (_, index) => `s${index}=x`) },
     accessor,
   ];
-  for (const value of bad) {
-    const h = harness({ onIdentity: () => value as NormResponse }); const begun = await start(h.flow);
-    const response = await h.flow.handleCallback(callback(begun.state, begun.cookie));
-    assert.equal(response.status, 500); assert.equal(h.audit.events.at(-1)?.reason, "completion_failed");
-  }
+  const stderr: string[] = []; const saved = console.error;
+  console.error = (...values: unknown[]) => { stderr.push(values.join(" ")); };
+  try {
+    for (const value of bad) {
+      const h = harness({ onIdentity: () => value as NormResponse }); const begun = await start(h.flow);
+      const response = await h.flow.handleCallback(callback(begun.state, begun.cookie));
+      assert.equal(response.status, 500); assert.deepEqual(response.setCookies?.map((cookie) => cookie.split(";", 1)[0]), ["__Host-mcp-sso-identity="]);
+      assert.deepEqual(h.audit.events.map((event) => [event.event, event.status, event.reason]), [
+        ["identity.verify", "success", undefined], ["oauth.upstream.callback", "failure", "completion_failed"],
+      ]);
+      assert.equal(JSON.stringify(h.audit.events).includes("poison"), false);
+    }
+  } finally { console.error = saved; }
+  assert.equal(stderr.length, 0);
 });
 
 test("identity completion accepts the host response boundary controls", async () => {
@@ -405,6 +541,13 @@ test("claims and completion header projections preserve inert keys on null-proto
   assert.equal(Object.getPrototypeOf(observedList[0]), null); assert.equal(Object.isFrozen(observedList[0]), true);
   assert.equal(Object.getPrototypeOf(response.headers), null);
   for (const key of ["__proto__", "constructor", "prototype"]) assert.equal(Object.hasOwn(response.headers, key), true);
+
+  const ordinaryHeaders: Record<string, string> = {};
+  for (const key of ["__proto__", "constructor", "prototype"]) Object.defineProperty(ordinaryHeaders, key, { value: `ordinary-${key}`, enumerable: true });
+  const ordinary = harness({ onIdentity: () => ({ status: 204, headers: ordinaryHeaders }) });
+  const ordinaryStart = await start(ordinary.flow); const ordinaryResponse = await ordinary.flow.handleCallback(callback(ordinaryStart.state, ordinaryStart.cookie));
+  assert.equal(Object.getPrototypeOf(ordinaryResponse.headers), null);
+  for (const key of ["__proto__", "constructor", "prototype"]) assert.equal(Object.hasOwn(ordinaryResponse.headers, key), true);
 });
 
 function bridgeHarness(result?: RedirectExchangeResult) {
@@ -416,7 +559,7 @@ function bridgeHarness(result?: RedirectExchangeResult) {
   };
   const bridge = new Bridge({ config: cfg, store, clock, audit });
   const flow = createUpstreamRedirectFlow({ bridge, identity, store, clock, audit });
-  return { flow, audit, clock, exchanges: () => exchanges };
+  return { flow, audit, store, clock, exchanges: () => exchanges };
 }
 
 async function startBridge(flow: ReturnType<typeof bridgeHarness>["flow"]): Promise<{ state: string; cookie: string }> {
@@ -428,10 +571,14 @@ async function startBridge(flow: ReturnType<typeof bridgeHarness>["flow"]): Prom
 }
 
 type MatrixRow = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
-async function runCallbackRow(complete: "bridge" | "identity", row: MatrixRow): Promise<{ reason: string | undefined; cleared: boolean; audit: string }> {
+async function runCallbackRow(complete: "bridge" | "identity", row: MatrixRow): Promise<{
+  reason: string | undefined; cleared: boolean; audit: string; consumes: number; exchanges: number; response: NormResponse;
+}> {
   const outcome = row === 10 ? { ok: false, kind: "exchange_failed", reason: "poison detail" } as const
     : row === 11 ? { ok: false, kind: "identity_rejected", reason: "poison detail" } as const : undefined;
   const h = complete === "bridge" ? bridgeHarness(outcome) : harness({ result: outcome });
+  let consumes = 0; const consume = h.store.consumeConsentJti.bind(h.store);
+  h.store.consumeConsentJti = async (...args) => { consumes += 1; return consume(...args); };
   let begun = row === 2 ? { state: "missing", cookie: "" }
     : complete === "bridge" ? await startBridge(h.flow) : await start(h.flow);
   if (row === 3) begun = { ...begun, cookie: "__Host-mcp-sso-upstream=garbage" };
@@ -449,15 +596,21 @@ async function runCallbackRow(complete: "bridge" | "identity", row: MatrixRow): 
     ? (response.headers["set-cookie"] ?? "").includes("Max-Age=0")
     : (response.setCookies ?? []).some((cookie) => cookie.includes("Max-Age=0"));
   const events = JSON.stringify(h.audit.events);
-  return { reason: h.audit.events.filter((event) => event.event === "oauth.upstream.callback").at(-1)?.reason, cleared, audit: events };
+  return { reason: h.audit.events.filter((event) => event.event === "oauth.upstream.callback").at(-1)?.reason, cleared, audit: events, consumes, exchanges: h.exchanges(), response };
 }
 
 test("all eleven shared callback rows preserve audit, mutation, and redaction parity", async () => {
   const reasons = new Map<MatrixRow, string>([[1, "duplicate_params"], [2, "flow_cookie_missing"], [3, "flow_cookie_invalid"], [4, "flow_expired"], [5, "state_mismatch"], [6, "flow_replayed"], [7, "upstream_denied"], [8, "upstream_error"], [9, "missing_code"], [10, "exchange_failed"], [11, "identity_rejected"]]);
+  const expectedConsumes = new Map<MatrixRow, number>([[1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 2], [7, 1], [8, 1], [9, 1], [10, 1], [11, 1]]);
+  const expectedExchanges = new Map<MatrixRow, number>([[1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 1], [7, 0], [8, 0], [9, 0], [10, 1], [11, 1]]);
   for (const row of reasons.keys()) {
     const bridge = await runCallbackRow("bridge", row); const identity = await runCallbackRow("identity", row);
     assert.equal(bridge.reason, reasons.get(row), `bridge row ${row}`); assert.equal(identity.reason, bridge.reason, `identity row ${row}`);
     assert.equal(bridge.cleared, row !== 2, `bridge clear row ${row}`); assert.equal(identity.cleared, bridge.cleared, `identity clear row ${row}`);
+    assert.equal(bridge.consumes, expectedConsumes.get(row), `bridge mutation row ${row}`); assert.equal(identity.consumes, bridge.consumes, `identity mutation row ${row}`);
+    assert.equal(bridge.exchanges, expectedExchanges.get(row), `bridge exchange row ${row}`); assert.equal(identity.exchanges, bridge.exchanges, `identity exchange row ${row}`);
+    assert.equal(identity.response.redirect, undefined, `identity direct response row ${row}`);
+    assert.equal(bridge.response.redirect !== undefined, [7, 8, 10, 11].includes(row), `bridge redirect response row ${row}`);
     assert.equal(bridge.audit.includes("poison"), false); assert.equal(identity.audit.includes("poison"), false);
   }
 });

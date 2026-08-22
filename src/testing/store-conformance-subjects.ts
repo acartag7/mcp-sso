@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { StoreInputError } from "../ports/store.ts";
 import {
-  authCode, FUTURE, NOW, refresh, sha256Hex, type MakeStore, type StoreConformanceOptions,
+  authCode, FUTURE, NOW, refresh, sha256Hex, type LegacySubjectFixture, type MakeStore, type StoreConformanceOptions,
 } from "./store-conformance-fixtures.ts";
 
 const INVALID_SUBJECTS = [
@@ -11,7 +11,7 @@ const INVALID_SUBJECTS = [
   "x".repeat(385), "😀".repeat(385),
 ] as const;
 
-export function registerSubjectRows(label: string, make: MakeStore, _options: StoreConformanceOptions = {}): void {
+export function registerSubjectRows(label: string, make: MakeStore, options: StoreConformanceOptions = {}): void {
   test(`${label}: identity-bearing writes reject every malformed subject before mutation`, async () => {
     const store = await make();
     for (const [index, subject] of INVALID_SUBJECTS.entries()) {
@@ -37,6 +37,33 @@ export function registerSubjectRows(label: string, make: MakeStore, _options: St
         (error: unknown) => error instanceof StoreInputError,
       );
       assert.equal(await store.consumeConsentJti(jti, FUTURE), true, "rejected approval did not consume its jti");
+    }
+    await store.close();
+  });
+
+  if ((options.seedLegacySubjectRows === undefined) !== (options.inspectLegacySubjectRows === undefined)) {
+    throw new TypeError("legacy subject conformance requires both the raw seeder and inspector");
+  }
+  if (options.seedLegacySubjectRows && options.inspectLegacySubjectRows) test(`${label}: pre-boundary malformed stored subjects cannot mutate or contribute grants`, async () => {
+    const store = await make();
+    for (const [index, subject] of ["legacy ", "legacy\uFFFD"].entries()) {
+      const rawCode = `legacy-subject-code-${index}`;
+      const rawRefresh = `legacy-subject-refresh-${index}`;
+      const rawSuccessor = `legacy-subject-successor-${index}`;
+      const fixture: LegacySubjectFixture = {
+        authCode: { ...authCode(rawCode, FUTURE), subject },
+        refreshToken: { ...refresh(rawRefresh, `legacy-subject-family-${index}`, null, FUTURE), subject },
+        successorHash: sha256Hex(rawSuccessor),
+      };
+      await options.seedLegacySubjectRows?.(store, fixture);
+      await assert.rejects(store.consumeAuthCode(fixture.authCode.codeHash, NOW), StoreInputError);
+      await assert.rejects(store.rotateRefreshToken(fixture.refreshToken.tokenHash, {
+        ...refresh(rawSuccessor, fixture.refreshToken.familyId, fixture.refreshToken.tokenHash, FUTURE), subject: "",
+      }, NOW), StoreInputError);
+      assert.deepEqual(await options.inspectLegacySubjectRows?.(store, fixture), {
+        authCodeExists: true, predecessorConsumed: false, familyRevoked: false, successorExists: false,
+      });
+      assert.deepEqual(await store.findGrantedScopes("legacy", "client-1", NOW), []);
     }
     await store.close();
   });

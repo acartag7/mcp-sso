@@ -116,8 +116,9 @@ async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdap
     };
   };
   const send = async (reply: FastifyReply, res: NormResponse): Promise<void> => {
-    for (const [key, value] of Object.entries(res.headers)) reply.header(key, value);
-    if (res.setCookies) reply.header("set-cookie", responseSetCookies(res));
+    for (const [key, value] of Object.entries(res.headers)) if (key.toLowerCase() !== "set-cookie") reply.header(key, value);
+    const cookies = responseSetCookies(res);
+    if (cookies.length > 0) reply.header("set-cookie", cookies.length === 1 ? cookies[0] : cookies);
     if (res.redirect) { await reply.redirect(res.redirect, res.status); return; }
     reply.code(res.status).send(res.body);
   };

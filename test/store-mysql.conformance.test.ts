@@ -19,6 +19,7 @@ import { MYSQL_OAUTH_TABLES } from "../src/store/mysql-schema.ts";
 import { MYSQL_SUBJECT_CAPACITY } from "../src/store/mysql-subject-schema.ts";
 import { entraIssuer, validateEntraIdToken } from "../src/identity/entra.ts";
 import { runStoreConformance } from "../src/testing/store-conformance.ts";
+import type { LegacySubjectFixture, LegacySubjectState } from "../src/testing/store-conformance-fixtures.ts";
 
 const RUN_INTEGRATION = process.env.RUN_INTEGRATION === "true";
 const MYSQL_URL = process.env.MYSQL_URL;
@@ -90,6 +91,40 @@ function make(): StorePort {
 
 async function makeMigrated(): Promise<StorePort> {
   return createMysqlStore(MYSQL_URL as string);
+}
+
+async function seedMysqlLegacy(_store: StorePort, fixture: LegacySubjectFixture): Promise<void> {
+  const code = fixture.authCode;
+  await admin!.query(
+    `INSERT INTO oauth_auth_codes
+     (code_hash, client_id, subject, redirect_uri, resource, scopes_json, code_challenge, code_challenge_method, expires_at, grant_generation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [code.codeHash, code.clientId, code.subject, code.redirectUri, code.resource, JSON.stringify(code.scopes), code.codeChallenge, code.codeChallengeMethod, code.expiresAt, STORED_DCR_GRANT_GENERATION],
+  );
+  const refresh = fixture.refreshToken;
+  await admin!.query(
+    "INSERT INTO oauth_refresh_token_families (family_id, resource, revoked_at, grant_generation) VALUES (?, ?, NULL, ?)",
+    [refresh.familyId, refresh.resource, STORED_DCR_GRANT_GENERATION],
+  );
+  await admin!.query(
+    `INSERT INTO oauth_refresh_tokens
+     (token_hash, family_id, previous_token_hash, client_id, subject, resource, scopes_json, expires_at, consumed_at, grant_generation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+    [refresh.tokenHash, refresh.familyId, refresh.previousTokenHash, refresh.clientId, refresh.subject, refresh.resource, JSON.stringify(refresh.scopes), refresh.expiresAt, STORED_DCR_GRANT_GENERATION],
+  );
+}
+
+async function inspectMysqlLegacy(_store: StorePort, fixture: LegacySubjectFixture): Promise<LegacySubjectState> {
+  const [codes] = await admin!.query<RowDataPacket[]>("SELECT 1 AS found FROM oauth_auth_codes WHERE code_hash = ?", [fixture.authCode.codeHash]);
+  const [tokens] = await admin!.query<RowDataPacket[]>("SELECT consumed_at FROM oauth_refresh_tokens WHERE token_hash = ?", [fixture.refreshToken.tokenHash]);
+  const [families] = await admin!.query<RowDataPacket[]>("SELECT revoked_at FROM oauth_refresh_token_families WHERE family_id = ?", [fixture.refreshToken.familyId]);
+  const [successors] = await admin!.query<RowDataPacket[]>("SELECT 1 AS found FROM oauth_refresh_tokens WHERE token_hash = ?", [fixture.successorHash]);
+  return {
+    authCodeExists: codes.length === 1,
+    predecessorConsumed: tokens.length === 1 && tokens[0]!.consumed_at !== null,
+    familyRevoked: families.length === 1 && families[0]!.revoked_at !== null,
+    successorExists: successors.length === 1,
+  };
 }
 
 if (RUN) {
@@ -525,7 +560,9 @@ if (RUN) {
     );
   });
 
-  runStoreConformance("MysqlStore", makeMigrated);
+  runStoreConformance("MysqlStore", makeMigrated, {
+    seedLegacySubjectRows: seedMysqlLegacy, inspectLegacySubjectRows: inspectMysqlLegacy,
+  });
 
   test("MysqlStore: two store instances serialize matching and mismatching resource consumes", async () => {
     const wrongResourceStore = make();

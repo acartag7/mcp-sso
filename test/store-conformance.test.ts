@@ -10,13 +10,76 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { STORED_DCR_GRANT_GENERATION } from "../src/ports/store.ts";
+import { STORED_DCR_GRANT_GENERATION, type AuthCodeRecord, type RefreshTokenRecord, type StorePort } from "../src/ports/store.ts";
 import { MemoryStore } from "../src/store/memory.ts";
 import { openSqliteStore } from "../src/store/sqlite.ts";
 import { runStoreConformance } from "../src/testing/store-conformance.ts";
+import type { LegacySubjectFixture, LegacySubjectState } from "../src/testing/store-conformance-fixtures.ts";
 
-runStoreConformance("MemoryStore", () => new MemoryStore());
-runStoreConformance("SqliteStore", () => openSqliteStore(":memory:"));
+function seedMemoryLegacy(store: StorePort, fixture: LegacySubjectFixture): void {
+  const memory = store as unknown as {
+    authCodes: Map<string, AuthCodeRecord>;
+    refreshTokens: Map<string, RefreshTokenRecord & { consumedAt: string | null }>;
+    families: Map<string, { revokedAt: string | null; grantGeneration: number; resource: string }>;
+  };
+  memory.authCodes.set(fixture.authCode.codeHash, { ...fixture.authCode, grantGeneration: STORED_DCR_GRANT_GENERATION });
+  memory.families.set(fixture.refreshToken.familyId, {
+    revokedAt: null, grantGeneration: STORED_DCR_GRANT_GENERATION, resource: fixture.refreshToken.resource,
+  });
+  memory.refreshTokens.set(fixture.refreshToken.tokenHash, {
+    ...fixture.refreshToken, grantGeneration: STORED_DCR_GRANT_GENERATION, consumedAt: null,
+  });
+}
+
+function inspectMemoryLegacy(store: StorePort, fixture: LegacySubjectFixture): LegacySubjectState {
+  const memory = store as unknown as {
+    authCodes: Map<string, unknown>;
+    refreshTokens: Map<string, { consumedAt: string | null }>;
+    families: Map<string, { revokedAt: string | null }>;
+  };
+  return {
+    authCodeExists: memory.authCodes.has(fixture.authCode.codeHash),
+    predecessorConsumed: memory.refreshTokens.get(fixture.refreshToken.tokenHash)?.consumedAt != null,
+    familyRevoked: memory.families.get(fixture.refreshToken.familyId)?.revokedAt != null,
+    successorExists: memory.refreshTokens.has(fixture.successorHash),
+  };
+}
+
+function sqliteDb(store: StorePort): DatabaseSync {
+  return (store as unknown as { db: DatabaseSync }).db;
+}
+
+function seedSqliteLegacy(store: StorePort, fixture: LegacySubjectFixture): void {
+  const db = sqliteDb(store);
+  const code = fixture.authCode;
+  db.prepare(`INSERT INTO oauth_auth_codes
+    (code_hash, client_id, subject, redirect_uri, resource, scopes_json, code_challenge, code_challenge_method, expires_at, grant_generation)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(code.codeHash, code.clientId, code.subject, code.redirectUri, code.resource, JSON.stringify(code.scopes), code.codeChallenge, code.codeChallengeMethod, code.expiresAt, STORED_DCR_GRANT_GENERATION);
+  const refresh = fixture.refreshToken;
+  db.prepare("INSERT INTO oauth_refresh_token_families (family_id, resource, revoked_at, grant_generation) VALUES (?, ?, NULL, ?)")
+    .run(refresh.familyId, refresh.resource, STORED_DCR_GRANT_GENERATION);
+  db.prepare(`INSERT INTO oauth_refresh_tokens
+    (token_hash, family_id, previous_token_hash, client_id, subject, resource, scopes_json, expires_at, consumed_at, grant_generation)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`)
+    .run(refresh.tokenHash, refresh.familyId, refresh.previousTokenHash, refresh.clientId, refresh.subject, refresh.resource, JSON.stringify(refresh.scopes), refresh.expiresAt, STORED_DCR_GRANT_GENERATION);
+}
+
+function inspectSqliteLegacy(store: StorePort, fixture: LegacySubjectFixture): LegacySubjectState {
+  const db = sqliteDb(store);
+  const code = db.prepare("SELECT 1 AS found FROM oauth_auth_codes WHERE code_hash = ?").get(fixture.authCode.codeHash);
+  const token = db.prepare("SELECT consumed_at FROM oauth_refresh_tokens WHERE token_hash = ?").get(fixture.refreshToken.tokenHash) as { consumed_at: string | null } | undefined;
+  const family = db.prepare("SELECT revoked_at FROM oauth_refresh_token_families WHERE family_id = ?").get(fixture.refreshToken.familyId) as { revoked_at: string | null } | undefined;
+  const successor = db.prepare("SELECT 1 AS found FROM oauth_refresh_tokens WHERE token_hash = ?").get(fixture.successorHash);
+  return { authCodeExists: !!code, predecessorConsumed: token?.consumed_at != null, familyRevoked: family?.revoked_at != null, successorExists: !!successor };
+}
+
+runStoreConformance("MemoryStore", () => new MemoryStore(), {
+  seedLegacySubjectRows: seedMemoryLegacy, inspectLegacySubjectRows: inspectMemoryLegacy,
+});
+runStoreConformance("SqliteStore", () => openSqliteStore(":memory:"), {
+  seedLegacySubjectRows: seedSqliteLegacy, inspectLegacySubjectRows: inspectSqliteLegacy,
+});
 
 test("independent MemoryStore instances have distinct consent bindings", async () => {
   const first = new MemoryStore();
