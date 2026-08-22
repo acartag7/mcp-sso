@@ -34,6 +34,9 @@ concrete substitutions live in the maintainer's project memory. Placeholders her
    the preflight admits that composition. `probe-e2e.mjs` consumes the selected
    mode and proves the unknown-opaque-client differential; its machine-client
    rows run only under stored mode because that feature requires stored DCR.
+   The same probe also drives claims-only completion through Fastify, Express,
+   and Hono in both modes. A pass requires both callback cookies and the fixed,
+   redacted completion-failure response.
 4. Each leg gets its **own** state directory, `.live-state/<leg>`, from
    `run.sh`; at start the last run's state for that leg is rotated to
    `.live-state/<leg>.previous` when it holds an `audit.jsonl` (a failed start

@@ -54,7 +54,7 @@ test("probe-e2e: an unreachable Redis is a FAIL row and an abort, never a pass a
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret));
 });
 
-test("probe-e2e: both DCR modes run their exact policy against Redis without leaking credentials", { skip: REDIS_URL ? false : "REDIS_URL not set (CI hard-fails via RUN_INTEGRATION)" }, async () => {
+test("RM.18 probe-e2e runs both DCR modes and live identity completion without leaking credentials", { skip: REDIS_URL ? false : "REDIS_URL not set (CI hard-fails via RUN_INTEGRATION)" }, async () => {
   for (const dcrMode of ["stored", "stateless"]) {
     const secret = randomBytes(24).toString("base64url");
     const result = await runProbe(REDIS_URL, secret, dcrMode);
@@ -65,6 +65,11 @@ test("probe-e2e: both DCR modes run their exact policy against Redis without lea
       "probe composition uses the selected DCR mode",
       "selected DCR mode applies its documented unknown-client policy",
       "official SDK client completes a tool call with the user token",
+      "claims-only completion delivers verified claims and the host response through all adapters",
+      "claims-only completion preserves both Set-Cookie fields through all adapters",
+      "claims-only completion produces no consent HTML or MCP token",
+      "claims-only completion failure is consumed, cleared, fixed, audited, and redacted",
+      "claims-only completion charges only website-login keys",
       "replaying a consumed refresh token is refused and revokes its whole family",
       "/oauth/revoke answers 200 and the revoked refresh token is refused as invalid_grant",
       "Redis limiter admits exactly the remaining window budget and refuses past it",

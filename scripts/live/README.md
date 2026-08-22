@@ -132,7 +132,10 @@ leg that `serve.sh` is currently serving — that rotates the live server's stat
 out from under it. The probes never touch `.live-state`; each provider probe
 builds the example from a disposable temp directory the library creates, and
 `probe-e2e.mjs` composes the example app against one, removed on every exit
-path.
+path. Its claims-only leg reuses the built bridge dependencies and drives GET
+`/login` plus the callback through Fastify, Express, and Hono. The leg fails if
+either `Set-Cookie` field is lost or if the fixed completion failure leaks host
+text.
 
 ## Probes — no browser required
 

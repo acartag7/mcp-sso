@@ -27,6 +27,7 @@ import {
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const read = (path) => readFileSync(join(ROOT, path), "utf8");
 const PROBE = read("scripts/live/probe-e2e.mjs");
+const IDENTITY_COMPLETION = read("scripts/live/probe-e2e-identity-support.mjs");
 const README = read("scripts/live/README.md");
 const CHECKLIST = read("scripts/live/CHECKLIST.md");
 const DOC = read("docs/reference/live-harness.md");
@@ -383,7 +384,8 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.match(PROBE, /const rejectedSecret = secret\("rejected machine client secret"/,
     "the submitted-and-rejected secret is registered, not only the minted one");
   for (const registered of ["probe identity token", "webhook collector token", "signing private key",
-    "consent signing credential", "machine client secret", "machine access token",
+    "consent signing credential", "identity completion session cookie", "identity completion thrown text",
+    "machine client secret", "machine access token",
     "replay family rotated refresh token", "revocation family rotated access token"]) {
     assert.match(PROBE, new RegExp(`secret\\("${registered}"`), `${registered} is registered`);
   }
@@ -404,6 +406,15 @@ test("CONTENT probe-e2e: exercises every subject it reports and prints no creden
   assert.ok(PROBE.indexOf("redis.disconnect()") < PROBE.indexOf("await rm(stateDir, { recursive: true, force: true })"));
   assert.match(PROBE, /FAIL  probe limiter cleanup failed/);
   assert.match(PROBE, /FAIL  probe state cleanup failed/);
+  assert.match(PROBE, /await runIdentityCompletionLeg\(/, "the claims-only leg runs inside the existing probe");
+  assert.doesNotMatch(IDENTITY_COMPLETION, /\bSKIP\b/, "identity completion cannot count a skipped leg as evidence");
+  for (const adapter of ["fastifyDriver", "expressDriver", "honoDriver"]) {
+    assert.match(IDENTITY_COMPLETION, new RegExp(`\\b${adapter}\\b`), `${adapter} is part of the live leg`);
+  }
+  assert.match(IDENTITY_COMPLETION, /headers\.getSetCookie\(\)/, "the Fetch adapters assert separate Set-Cookie fields");
+  assert.match(IDENTITY_COMPLETION, /\["probe-session", "__Host-mcp-sso-identity"\]/, "the host and clearing cookies are both asserted");
+  assert.match(IDENTITY_COMPLETION, /"completion_failed"/, "the fixed audit reason is asserted");
+  assert.match(IDENTITY_COMPLETION, /console\.error = \(\.\.\.values\)/, "stderr is captured around the thrown completion");
 });
 
 test("CONTENT provider probes: all three share the disposable-state helper before boot and dispose last", () => {
