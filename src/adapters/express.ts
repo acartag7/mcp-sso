@@ -85,7 +85,7 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
       // lgtm[js/clear-text-storage-of-sensitive-data] Outgoing response fields are transported, not persisted.
       res.set("set-cookie", cookies.length === 1 ? cookies[0] : cookies);
     }
-    if (r.redirect) { res.redirect(r.status, r.redirect); return; }
+    if (r.redirect) { res.status(r.status).set("location", r.redirect).end(); return; }
     res.status(r.status).send(r.body);
   };
   // Last-resort handler: route escaped throws through the direct §9.5 path. The
