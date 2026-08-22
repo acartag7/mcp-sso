@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
-import type { JWK } from "jose";
+import { decodeJwt, type JWK } from "jose";
 import Fastify from "fastify";
 import express from "express";
 import type { AuditPort, AuthAuditEvent } from "../src/ports/audit.ts";
@@ -138,12 +138,46 @@ test("default bridge and identity flows coexist with distinct cookies and audien
   const h = harness(); const bridgeFlow = flowFor(h, "bridge", "/oauth/callback");
   const bridgeStart = await startBridge(bridgeFlow); const identityStart = await start(h.flow);
   assert.match(bridgeStart.cookie, /^__Host-mcp-sso-upstream=/); assert.match(identityStart.cookie, /^__Host-mcp-sso-identity=/);
+  assert.equal(decodeJwt(bridgeStart.cookie.split("=", 2)[1] as string).aud, "mcp-sso/upstream-flow/oauth/callback");
+  assert.equal(decodeJwt(identityStart.cookie.split("=", 2)[1] as string).aud, "mcp-sso/identity-flow/login/callback");
   const cookies = `${bridgeStart.cookie}; ${identityStart.cookie}`;
   const bridgeResponse = await bridgeFlow.handleCallback({ ...callback(bridgeStart.state, cookies), headers: { cookie: cookies } });
   const identityResponse = await h.flow.handleCallback({ ...callback(identityStart.state, cookies), headers: { cookie: cookies } });
   assert.equal(bridgeResponse.status, 200); assert.equal(identityResponse.status, 204);
   assert.match(bridgeResponse.headers["set-cookie"] ?? "", /^__Host-mcp-sso-upstream=/);
   assert.equal(identityResponse.setCookies?.some((cookie) => cookie.startsWith("__Host-mcp-sso-identity=")), true);
+});
+
+test("Fastify, Express, and Hono mount both default flows and preserve each flow cookie", async () => {
+  const assertCookies = (bridgeCookie: string | null | undefined, identityCookie: string | null | undefined) => {
+    assert.match(String(bridgeCookie), /^__Host-mcp-sso-upstream=/);
+    assert.match(String(identityCookie), /^__Host-mcp-sso-identity=/);
+  };
+  {
+    const h = harness(); const bridgeFlow = flowFor(h, "bridge", "/oauth/callback"); const app = Fastify();
+    await registerOAuthRoutes(app, { bridge: h.bridge, upstream: bridgeFlow, identityFlow: h.flow });
+    const bridgeStart = await app.inject({ method: "GET", url: "/oauth/authorize", query: { response_type: "code", client_id: "client", redirect_uri: "https://client.test/callback", code_challenge: pkceChallenge("v".repeat(43)), code_challenge_method: "S256" } });
+    const identityStart = await app.inject({ method: "GET", url: "/login" });
+    assertCookies(String(bridgeStart.headers["set-cookie"]), String(identityStart.headers["set-cookie"])); await app.close();
+  }
+  {
+    const h = harness(); const bridgeFlow = flowFor(h, "bridge", "/oauth/callback"); const app = express();
+    app.use(createOAuthRouter({ bridge: h.bridge, upstream: bridgeFlow, identityFlow: h.flow }));
+    const server = app.listen(0, "127.0.0.1"); await new Promise<void>((resolve) => server.once("listening", resolve));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    try {
+      const bridgeStart = await fetch(base + `/oauth/authorize?response_type=code&client_id=client&redirect_uri=${encodeURIComponent("https://client.test/callback")}&code_challenge=${pkceChallenge("v".repeat(43))}&code_challenge_method=S256`, { redirect: "manual" });
+      const identityStart = await fetch(base + "/login", { redirect: "manual" });
+      assertCookies(bridgeStart.headers.get("set-cookie"), identityStart.headers.get("set-cookie"));
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+  }
+  {
+    const h = harness(); const bridgeFlow = flowFor(h, "bridge", "/oauth/callback");
+    const app = createOAuthApp({ bridge: h.bridge, upstream: bridgeFlow, identityFlow: h.flow, clientIp: () => IP });
+    const query = `/oauth/authorize?response_type=code&client_id=client&redirect_uri=${encodeURIComponent("https://client.test/callback")}&code_challenge=${pkceChallenge("v".repeat(43))}&code_challenge_method=S256`;
+    const bridgeStart = await app.request(query); const identityStart = await app.request("/login");
+    assertCookies(bridgeStart.headers.get("set-cookie"), identityStart.headers.get("set-cookie"));
+  }
 });
 
 test("RM.17 claims-only authorize and callback charge only website-login", async () => {
