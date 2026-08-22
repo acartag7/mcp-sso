@@ -44,7 +44,7 @@ pnpm run check:release-matrix
 pnpm run check:release-ready
 ```
 
-The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence input, or version mismatch. Do not create the tag while either command fails.
+The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence commit, or version mismatch. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
 
 ## Approve the final release commit
 

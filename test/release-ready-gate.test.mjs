@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
+import { formatReleaseReadinessFailure, parseReleaseReadyArgs } from "../scripts/lib/release-ready-output.mjs";
 import {
   ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceDigestFor, evidenceRelease, fixture,
   metadataRelease, modeRelease, packageRelease, release, runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated,
@@ -18,27 +19,23 @@ test("release ready gate names a runtime commit outside the release history", ()
 
 test("release ready gate rejects runtime changes after the evidence commit", () => {
   const result = fixture({ releaseCommit: runtimeRelease });
-  assert.ok(result.errors.includes(
-    `recorded runtime commit ${ancestor} predates release runtime changes: src/runtime.ts`,
-  ));
+  assert.deepEqual(result.staleEvidence, [{ commit: ancestor, changedInputs: ["src/runtime.ts"] }]);
 });
 
 test("release ready gate rejects evidence-definition changes after the evidence commit", () => {
   const result = fixture({ releaseCommit: evidenceRelease });
-  const error = result.errors.find((message) => message.startsWith(`recorded runtime commit ${ancestor} predates`));
-  assert.ok(error);
+  const stale = result.staleEvidence.find((entry) => entry.commit === ancestor);
+  assert.ok(stale);
   for (const file of [
     "examples/example.ts", "scripts/live/probe.mjs", "scripts/run-release-matrix.mjs", "test/evidence.test.ts",
     "scripts/check-release-matrix.mjs", "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md",
     ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
-  ]) assert.match(error, new RegExp(file.replaceAll(".", "\\.")));
+  ]) assert.ok(stale.changedInputs.includes(file));
 });
 
 test("release ready gate rejects package runtime changes after the evidence commit", () => {
   const result = fixture({ releaseCommit: packageRelease });
-  assert.ok(result.errors.includes(
-    `recorded runtime commit ${ancestor} predates release runtime changes: package.json:exports`,
-  ));
+  assert.deepEqual(result.staleEvidence, [{ commit: ancestor, changedInputs: ["package.json:exports"] }]);
 });
 
 test("release ready gate permits descriptive metadata and its own command after the evidence commit", () => {
@@ -47,16 +44,51 @@ test("release ready gate permits descriptive metadata and its own command after 
 
 test("release ready gate rejects a package version change after the evidence commit", () => {
   const result = fixture({ releaseCommit: versionRelease });
-  assert.ok(result.errors.includes(
-    `recorded runtime commit ${ancestor} predates release runtime changes: package.json:version`,
-  ));
+  assert.deepEqual(result.staleEvidence, [{ commit: ancestor, changedInputs: ["package.json:version"] }]);
 });
 
 test("release ready gate rejects a build-command change after the evidence commit", () => {
   const result = fixture({ releaseCommit: buildRelease });
-  assert.ok(result.errors.includes(
-    `recorded runtime commit ${ancestor} predates release runtime changes: package.json:scripts`,
-  ));
+  assert.deepEqual(result.staleEvidence, [{ commit: ancestor, changedInputs: ["package.json:scripts"] }]);
+});
+
+test("release ready gate summarizes stale evidence and keeps changed paths behind --verbose", () => {
+  const staleEvidence = [{
+    commit: "d6143b3f00d1234567890abcdef1234567890abc",
+    changedInputs: ["src/a.ts", "src/b.ts", "examples/server.ts", "scripts/live/probe.mjs", "package.json:version"],
+  }];
+  const compact = formatReleaseReadinessFailure({
+    errors: ["version mismatch: package.json is 0.5.1, docs/verification-status.md is 0.5.0"],
+    staleEvidence,
+    releaseTarget: "HEAD",
+    verbose: false,
+  });
+  assert.match(compact, /- 1 recorded evidence commit predates release runtime changes/);
+  assert.match(compact, /d6143b3  5 changed inputs \(src\/, examples\/, scripts\/live\/, package\.json:version\)/);
+  assert.doesNotMatch(compact, /src\/a\.ts/);
+  assert.match(compact, /Re-run live verification against HEAD and record the new commit in\n  docs\/client-compatibility\.md\./);
+  assert.match(compact, /- version mismatch: package\.json is 0\.5\.1, docs\/verification-status\.md is 0\.5\.0/);
+  const detailed = formatReleaseReadinessFailure({ errors: [], staleEvidence, releaseTarget: "HEAD", verbose: true });
+  assert.match(detailed, /      - src\/a\.ts/);
+  assert.match(detailed, /      - package\.json:version/);
+});
+
+test("release ready gate keeps compact commit names unambiguous", () => {
+  const staleEvidence = [
+    { commit: "abcdef0123456789012345678901234567890123", changedInputs: ["src/a.ts"] },
+    { commit: "abcdef0987654321098765432109876543210987", changedInputs: ["src/b.ts"] },
+  ];
+  const output = formatReleaseReadinessFailure({ errors: [], staleEvidence, releaseTarget: "HEAD", verbose: false });
+  assert.match(output, /abcdef01  1 changed input \(src\/\)/);
+  assert.match(output, /abcdef09  1 changed input \(src\/\)/);
+});
+
+test("release ready gate accepts no CLI argument except --verbose", () => {
+  assert.deepEqual(parseReleaseReadyArgs([]), { verbose: false });
+  assert.deepEqual(parseReleaseReadyArgs(["--verbose"]), { verbose: true });
+  for (const args of [["--unknown"], ["--verbose", "--verbose"]]) {
+    assert.throws(() => parseReleaseReadyArgs(args), /usage: pnpm run check:release-ready \[--verbose\]/);
+  }
 });
 
 test("release ready gate verifies a squash evidence digest against the recorded main commit", () => {

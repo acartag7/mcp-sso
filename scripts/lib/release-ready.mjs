@@ -215,6 +215,7 @@ function parseReleaseRows(releaseMatrix, errors) {
 
 export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd, releaseCommit = "HEAD" }) {
   const errors = [];
+  const staleEvidence = [];
   const packageVersion = packageJson?.version;
   const exportsValue = packageJson?.exports;
   if (typeof packageVersion !== "string" || !VERSION.test(packageVersion)) {
@@ -301,9 +302,9 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
     if (resolvedRelease) {
       const changedInputs = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedRelease);
       if (changedInputs.length > 0) {
-        errors.push(`recorded runtime commit ${commit} predates release runtime changes: ${changedInputs.join(", ")}`);
+        staleEvidence.push({ commit, changedInputs });
       }
     }
   }
-  return { errors, releaseCommit: resolvedRelease, exportCount: publicExports.length, version: packageVersion };
+  return { errors, staleEvidence, releaseCommit: resolvedRelease, exportCount: publicExports.length, version: packageVersion };
 }

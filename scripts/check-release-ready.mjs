@@ -2,8 +2,17 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { evaluateReleaseReadiness } from "./lib/release-ready.mjs";
+import { formatReleaseReadinessFailure, parseReleaseReadyArgs } from "./lib/release-ready-output.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
+let verbose;
+try {
+  ({ verbose } = parseReleaseReadyArgs(process.argv.slice(2)));
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`release readiness failed:\n- ${message}`);
+  process.exit(1);
+}
 
 function readJson(path, label) {
   try {
@@ -26,9 +35,13 @@ const result = evaluateReleaseReadiness({
   releaseCommit: process.env.RELEASE_COMMIT ?? "HEAD",
 });
 
-if (result.errors.length > 0) {
-  console.error("release readiness failed:");
-  for (const error of result.errors) console.error(`- ${error}`);
+if (result.errors.length > 0 || result.staleEvidence.length > 0) {
+  console.error(formatReleaseReadinessFailure({
+    errors: result.errors,
+    staleEvidence: result.staleEvidence,
+    releaseTarget: process.env.RELEASE_COMMIT ?? "HEAD",
+    verbose,
+  }));
   process.exit(1);
 }
 
