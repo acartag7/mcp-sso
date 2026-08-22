@@ -5,6 +5,9 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const EXPORT_HEADING = "## Public export live evidence";
 const EXPORT_TABLE_HEADER = "| Export | Live evidence | Runtime commit |";
 const EXPORT_TABLE_DIVIDER = "| --- | --- | --- |";
+const STATUS_HEADING = "## Published release";
+const STATUS_TABLE_HEADER = "| Item | Status |";
+const STATUS_TABLE_DIVIDER = "| --- | --- |";
 
 function sectionAfter(source, heading) {
   const start = source.indexOf(`${heading}\n`);
@@ -39,8 +42,46 @@ function isAncestor(cwd, ancestor, descendant) {
   }
 }
 
+function renderedTableRows(source, heading, header, divider, label, errors) {
+  const section = sectionAfter(source, heading);
+  if (section === undefined) {
+    errors.push(`${label}: missing ${heading} section`);
+    return [];
+  }
+  const lines = section.split("\n");
+  if (section.includes("<!--") || section.includes("-->")) {
+    errors.push(`${label}: HTML comments are not allowed in the table section`);
+  }
+  if (lines.some((line) => /^\s*(?:`{3,}|~{3,})/.test(line))) {
+    errors.push(`${label}: fenced blocks are not allowed in the table section`);
+  }
+  const tableStarts = lines.flatMap((line, index) => line === header ? [index] : []);
+  if (tableStarts.length !== 1) {
+    errors.push(`${label}: expected one rendered table, found ${tableStarts.length}`);
+    return [];
+  }
+  const tableStart = tableStarts[0];
+  if (lines[tableStart + 1] !== divider) {
+    errors.push(`${label}: rendered table has a malformed divider`);
+    return [];
+  }
+  let tableEnd = tableStart + 2;
+  while (tableEnd < lines.length && lines[tableEnd].startsWith("|")) tableEnd += 1;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (index >= tableStart && index < tableEnd) continue;
+    if (lines[index].trimStart().startsWith("|")) {
+      errors.push(`${label}: table-shaped row outside the rendered table`);
+    }
+  }
+  return lines.slice(tableStart + 2, tableEnd);
+}
+
 function parseStatusVersion(source, errors) {
-  const rows = [...source.matchAll(/^\| npm package and tag \| `mcp-sso@([^`]+)` and `v([^`]+)` \|$/gm)];
+  const tableRows = renderedTableRows(source, STATUS_HEADING, STATUS_TABLE_HEADER, STATUS_TABLE_DIVIDER, "status version", errors);
+  const rows = tableRows.flatMap((line) => {
+    const match = line.match(/^\| npm package and tag \| `mcp-sso@([^`]+)` and `v([^`]+)` \|$/);
+    return match ? [match] : [];
+  });
   if (rows.length !== 1) {
     errors.push(`status version: expected one npm package and tag row, found ${rows.length}`);
     return undefined;
@@ -59,38 +100,9 @@ function parseStatusVersion(source, errors) {
 }
 
 function parseExportEvidence(source, errors) {
-  const section = sectionAfter(source, EXPORT_HEADING);
-  if (section === undefined) {
-    errors.push(`export evidence: missing ${EXPORT_HEADING} section`);
-    return new Map();
-  }
-  const lines = section.split("\n");
-  if (section.includes("<!--") || section.includes("-->")) {
-    errors.push("export evidence: HTML comments are not allowed in the evidence section");
-  }
-  if (lines.some((line) => /^\s*(?:`{3,}|~{3,})/.test(line))) {
-    errors.push("export evidence: fenced blocks are not allowed in the evidence section");
-  }
-  const tableStarts = lines.flatMap((line, index) => line === EXPORT_TABLE_HEADER ? [index] : []);
-  if (tableStarts.length !== 1) {
-    errors.push(`export evidence: expected one rendered table, found ${tableStarts.length}`);
-    return new Map();
-  }
-  const tableStart = tableStarts[0];
-  if (lines[tableStart + 1] !== EXPORT_TABLE_DIVIDER) {
-    errors.push("export evidence: rendered table has a malformed divider");
-    return new Map();
-  }
-  let tableEnd = tableStart + 2;
-  while (tableEnd < lines.length && lines[tableEnd].startsWith("|")) tableEnd += 1;
-  for (let index = 0; index < lines.length; index += 1) {
-    if (index >= tableStart && index < tableEnd) continue;
-    if (lines[index].trimStart().startsWith("|")) {
-      errors.push("export evidence: table-shaped row outside the rendered evidence table");
-    }
-  }
   const rows = new Map();
-  for (const line of lines.slice(tableStart + 2, tableEnd)) {
+  const tableRows = renderedTableRows(source, EXPORT_HEADING, EXPORT_TABLE_HEADER, EXPORT_TABLE_DIVIDER, "export evidence", errors);
+  for (const line of tableRows) {
     const match = line.match(/^\| `([^`]+)` \| ([^|]+) \| `([^`]+)` \|$/);
     if (!match) {
       const namedExport = line.match(/^\| `([^`]+)` \|/)?.[1];

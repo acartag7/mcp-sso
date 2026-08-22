@@ -30,11 +30,24 @@ function compatibilityFor(commit) {
   ].join("\n");
 }
 
+function statusFor(version = "0.5.0") {
+  return [
+    "# Current verification status",
+    "",
+    "## Published release",
+    "",
+    "| Item | Status |",
+    "| --- | --- |",
+    `| npm package and tag | \`mcp-sso@${version}\` and \`v${version}\` |`,
+    "| Conformance claim | Current |",
+  ].join("\n");
+}
+
 function fixture(overrides = {}) {
   const packageJson = overrides.packageJson ?? { version: "0.5.0", exports: { ".": {}, "./fastify": {} } };
   const releaseMatrix = overrides.releaseMatrix ?? { rows: [{ id: "RM.1" }, { id: "RM.2" }] };
   const compatibility = overrides.compatibility ?? compatibilityFor(ancestor);
-  const status = overrides.status ?? "| npm package and tag | `mcp-sso@0.5.0` and `v0.5.0` |\n";
+  const status = overrides.status ?? statusFor();
   return evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd: repo, releaseCommit: release });
 }
 
@@ -98,7 +111,7 @@ test("release ready gate does not count table-shaped rows outside the evidence t
       packageJson: { version: "0.5.0", exports: { ".": {}, "./fastify": {}, "./hono": {} } },
     });
     assert.ok(result.errors.includes("missing live evidence row for export ./hono"));
-    assert.ok(result.errors.includes("export evidence: table-shaped row outside the rendered evidence table"));
+    assert.ok(result.errors.includes("export evidence: table-shaped row outside the rendered table"));
   }
 });
 
@@ -110,11 +123,38 @@ test("release ready gate rejects an evidence table hidden by Markdown", () => {
     source.replace(tableStart, `\`\`\`md\n${tableStart}`) + "\n\`\`\`",
   ];
   const expected = [
-    "export evidence: HTML comments are not allowed in the evidence section",
-    "export evidence: fenced blocks are not allowed in the evidence section",
+    "export evidence: HTML comments are not allowed in the table section",
+    "export evidence: fenced blocks are not allowed in the table section",
   ];
   for (const [index, compatibility] of cases.entries()) {
     assert.ok(fixture({ compatibility }).errors.includes(expected[index]));
+  }
+});
+
+test("release ready gate does not count hidden or out-of-table status rows", () => {
+  const base = statusFor().split("\n").filter((line) => !line.includes("npm package and tag")).join("\n");
+  const row = "| npm package and tag | `mcp-sso@0.5.0` and `v0.5.0` |";
+  const wrappers = [`<!--\n${row}\n-->`, `\`\`\`md\n${row}\n\`\`\``, row];
+  for (const wrapped of wrappers) {
+    const result = fixture({ status: `${base}\n\n${wrapped}` });
+    assert.ok(result.errors.includes("status version: expected one npm package and tag row, found 0"));
+    assert.ok(result.errors.includes("status version: table-shaped row outside the rendered table"));
+  }
+});
+
+test("release ready gate rejects a status table hidden by Markdown", () => {
+  const source = statusFor();
+  const tableStart = "| Item | Status |";
+  const cases = [
+    source.replace(tableStart, `<!--\n${tableStart}`) + "\n-->",
+    source.replace(tableStart, `\`\`\`md\n${tableStart}`) + "\n\`\`\`",
+  ];
+  const expected = [
+    "status version: HTML comments are not allowed in the table section",
+    "status version: fenced blocks are not allowed in the table section",
+  ];
+  for (const [index, status] of cases.entries()) {
+    assert.ok(fixture({ status }).errors.includes(expected[index]));
   }
 });
 
