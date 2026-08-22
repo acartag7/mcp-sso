@@ -239,6 +239,18 @@ test("release ready gate rejects repeated evidence and status sections", () => {
   }
 });
 
+test("release ready gate ignores section titles in prose and links", () => {
+  const compatibility = compatibilityFor(ancestor).replace(
+    "## Current matrix",
+    "The `## Public export live evidence` section is also available through [Public export live evidence](#public-export-live-evidence).\n\n## Current matrix",
+  );
+  const status = statusFor().replace(
+    "## Published release",
+    "The `## Published release` table is linked as [Published release](#published-release).\n\n## Published release",
+  );
+  assert.deepEqual(fixture({ compatibility, status }).errors, []);
+});
+
 test("release ready gate does not count hidden or out-of-table status rows", () => {
   const base = statusFor().split("\n").filter((line) => !line.includes("npm package and tag")).join("\n");
   const row = "| npm package and tag | `mcp-sso@0.5.0` and `v0.5.0` |";

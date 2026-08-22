@@ -16,14 +16,19 @@ const STATUS_VERSION_ITEM = "npm package and tag";
 
 function uniqueSectionAfter(source, heading, label, errors) {
   const lines = source.split("\n");
+  const title = heading.slice(3).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const headingPattern = new RegExp(`^##[ \\t]+${title}(?:[ \\t]+#+)?[ \\t]*$`);
+  const renderedHeadings = lines.flatMap((line, index) => {
+    const unquoted = line.replace(/^\s*(?:>\s*)+/, "");
+    return headingPattern.test(unquoted) ? [index] : [];
+  });
   const starts = lines.flatMap((line, index) => line === heading ? [index] : []);
-  const occurrences = source.split(heading).length - 1;
-  if (starts.length !== 1 || occurrences !== 1) {
-    errors.push(`${label}: expected one canonical ${heading} section, found ${occurrences}`);
+  if (starts.length !== 1 || renderedHeadings.length !== 1) {
+    errors.push(`${label}: expected one canonical ${heading} section, found ${renderedHeadings.length}`);
     return undefined;
   }
   let end = starts[0] + 1;
-  while (end < lines.length && !lines[end].startsWith("## ")) end += 1;
+  while (end < lines.length && !/^##[ \t]+/.test(lines[end])) end += 1;
   return lines.slice(starts[0] + 1, end).join("\n");
 }
 
