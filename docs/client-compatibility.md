@@ -23,26 +23,26 @@ A row is `Verified` only when the named flow was driven against the named provid
 
 ## Public export live evidence
 
-These rows record the release matrix run against real MySQL and Redis services. They prove that the named package entry point participated in the listed executable release row. They do not claim that a real external identity provider was contacted; the provider matrix above owns that separate claim.
+These rows record the release matrix run against real MySQL and Redis services at live worktree commit `28d9744e0f155d67dbb79389971be2d470491003`. GitHub squash-merged the same runtime tree as main commit `965d8f410b0dfd0b219a9b26a0bfe555fd2488db`, which the table records. The rows prove that the named package entry point participated in the listed executable release row. They do not claim that a real external identity provider was contacted; the provider matrix above owns that separate claim.
 
 | Export | Live evidence | Runtime commit |
 | --- | --- | --- |
-| `.` | `RM.1`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./store/memory` | `RM.4`, `RM.10` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./store/sqlite` | `RM.1`, `RM.2`, `RM.10` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./store/mysql` | `RM.3`, `RM.10` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./rate-limit/redis` | `RM.2`, `RM.10`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./fastify/protected-resource-rate-limit` | `RM.2` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./fastify` | `RM.1`, `RM.2`, `RM.6`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./express` | `RM.3`, `RM.6`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./hono` | `RM.4`, `RM.6`, `RM.18` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./identity/cloudflare-access` | `RM.2`, `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./identity/entra` | `RM.3`, `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./identity/console-pairing` | `RM.1`, `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./identity/generic-oidc` | `RM.4`, `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./identity/google` | `RM.5` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./testing/store-conformance` | `RM.16` | `28d9744e0f155d67dbb79389971be2d470491003` |
-| `./testing/client-store-conformance` | `RM.16` | `28d9744e0f155d67dbb79389971be2d470491003` |
+| `.` | `RM.1`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/memory` | `RM.4`, `RM.10` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/sqlite` | `RM.1`, `RM.2`, `RM.10` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/mysql` | `RM.3`, `RM.10` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./rate-limit/redis` | `RM.2`, `RM.10`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./fastify/protected-resource-rate-limit` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./fastify` | `RM.1`, `RM.2`, `RM.6`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./express` | `RM.3`, `RM.6`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./hono` | `RM.4`, `RM.6`, `RM.18` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/cloudflare-access` | `RM.2`, `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/entra` | `RM.3`, `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/console-pairing` | `RM.1`, `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/generic-oidc` | `RM.4`, `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/google` | `RM.5` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./testing/store-conformance` | `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./testing/client-store-conformance` | `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
 
 ## Client versions
 
