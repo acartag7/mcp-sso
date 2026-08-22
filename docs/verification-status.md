@@ -6,11 +6,11 @@ This page describes the published release and the current source tree. Supersede
 
 | Item | Status |
 | --- | --- |
-| npm package and tag | `mcp-sso@0.4.0` and `v0.4.0` |
+| npm package and tag | `mcp-sso@0.5.0` and `v0.5.0` |
 | MCP Authorization target | `2026-07-28` |
 | Conformance claim | Conformant with two recorded deviations |
 | First release with this claim | `v0.4.0` |
-| Earlier releases | `v0.3.5` has no conformance claim. `v0.3.4` retains the `2025-11-25` baseline. |
+| Earlier releases | `v0.4.0` carries the same claim. `v0.3.5` has no conformance claim. `v0.3.4` retains the `2025-11-25` baseline. |
 
 The [section 16 conformance matrix](contracts/16-spec-conformance-matrix.md) maps all 44 statements from CIMD draft `-00`. It records 29 conformant rows, one conformant row with a development-only caveat, two deviations, and 12 rows that do not apply. No row has an unresolved evidence gap or a runtime mismatch.
 
@@ -33,15 +33,23 @@ The remaining live gaps are:
 - A second generic OIDC provider other than Google.
 - The GitHub identity port and device flow. Both remain contract-only and are not release claims.
 
+## What `v0.5.0` adds
+
+`createUpstreamRedirectFlow` accepts `complete: "identity"` with an `onIdentity` callback. The flow runs the same state, nonce, PKCE, single-use flow cookie, callback validation, and exchange it already ran, then hands verified `IdentityClaims` to the host instead of calling `bridge.handleAuthorize`. There is no consent page and no MCP token. `complete: "bridge"` stays the default and is unchanged.
+
+The host owns what happens next: its own session cookie, its own user binding, and any further gating on `emailVerified` for data it stores. `mcp-sso` never sets a session cookie.
+
+Remote JWKS documents are byte-capped on every identity port. Both runnable examples create a finite process-local `RateLimitPort` in stateless as well as stored DCR mode, and pass that same instance to `createUpstreamRedirectFlow`, so a default stateless deployment no longer leaves upstream authorize and callback uncounted.
+
 ## Current source tree
 
-The current source keeps the `v0.4.0` protocol and conformance claims. It also contains the current example limiter correction. Both runnable examples now create a finite process-local `RateLimitPort` in stateless and stored DCR modes. They pass the same `RateLimitPort` instance to `createUpstreamRedirectFlow`.
+The current source keeps the `v0.5.0` protocol and conformance claims.
 
 In those examples, direct identity authorization uses `authorize:<ip>`. Upstream authorize and callback requests share `upstream:<ip>`. The library still defaults to `noopRateLimit` when a composition does not supply a `RateLimitPort`.
 
-## `v0.4.0` boot changes
+## Configurations rejected at boot
 
-`v0.4.0` rejects these configurations at boot:
+These refusals were introduced in `v0.4.0` and still apply in `v0.5.0`. Each one previously started and behaved in a way that read as safe:
 
 | Configuration | Result |
 | --- | --- |

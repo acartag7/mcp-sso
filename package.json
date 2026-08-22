@@ -1,6 +1,6 @@
 {
   "name": "mcp-sso",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "OAuth 2.1 and enterprise SSO for remote MCP servers\u2014without API keys in client configs.",
   "license": "MIT",
   "type": "module",
