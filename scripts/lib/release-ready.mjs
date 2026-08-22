@@ -93,8 +93,8 @@ function renderedTableRows(source, heading, header, divider, label, errors) {
   for (let index = 0; index < lines.length; index += 1) {
     if (index >= tableStart && index < tableEnd) continue;
     const unquoted = lines[index].replace(/^\s*(?:>\s*)+/, "");
-    if (unquoted.trimStart().startsWith("|")) {
-      errors.push(`${label}: table-shaped row outside the rendered table`);
+    if (unquoted.replace(/`[^`\r\n]*`/g, "").includes("|")) {
+      errors.push(`${label}: table-shaped content outside the rendered table`);
     }
   }
   return lines.slice(tableStart + 2, tableEnd);

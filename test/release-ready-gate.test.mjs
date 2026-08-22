@@ -241,7 +241,7 @@ test("release ready gate does not count table-shaped rows outside the evidence t
       packageJson: { version: "0.5.0", exports: { ".": {}, "./fastify": {}, "./hono": {} } },
     });
     assert.ok(result.errors.includes("missing live evidence row for export ./hono"));
-    assert.ok(result.errors.includes("export evidence: table-shaped row outside the rendered table"));
+    assert.ok(result.errors.includes("export evidence: table-shaped content outside the rendered table"));
   }
 });
 
@@ -259,6 +259,13 @@ test("release ready gate rejects an evidence table hidden by Markdown", () => {
   for (const [index, compatibility] of cases.entries()) {
     assert.ok(fixture({ compatibility }).errors.includes(expected[index]));
   }
+});
+
+test("release ready gate rejects pipe-less tables outside the canonical table", () => {
+  const status = `${statusFor()}\n\nItem | Status\n--- | ---\nnpm package and tag | mcp-sso@9.9.9 and v9.9.9`;
+  assert.ok(fixture({ status }).errors.includes(
+    "status version: table-shaped content outside the rendered table",
+  ));
 });
 
 test("release ready gate rejects raw HTML wrappers in every evidence section", () => {
@@ -340,7 +347,7 @@ test("release ready gate does not count hidden or out-of-table status rows", () 
   for (const wrapped of wrappers) {
     const result = fixture({ status: `${base}\n\n${wrapped}` });
     assert.ok(result.errors.includes("status version: expected one npm package and tag row, found 0"));
-    assert.ok(result.errors.includes("status version: table-shaped row outside the rendered table"));
+    assert.ok(result.errors.includes("status version: table-shaped content outside the rendered table"));
   }
 });
 
