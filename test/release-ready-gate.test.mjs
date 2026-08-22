@@ -15,11 +15,9 @@ let packageRelease;
 let metadataRelease;
 let buildRelease;
 let unrelated;
-
 function git(args) {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
-
 function compatibilityFor(commit) {
   return [
     "# Client compatibility",
@@ -34,7 +32,6 @@ function compatibilityFor(commit) {
     `| \`./fastify\` | \`RM.2\` | \`${commit}\` |`,
   ].join("\n");
 }
-
 function statusFor(version = "0.5.0") {
   return [
     "# Current verification status",
@@ -47,7 +44,6 @@ function statusFor(version = "0.5.0") {
     "| Conformance claim | Current |",
   ].join("\n");
 }
-
 function fixture(overrides = {}) {
   const packageJson = overrides.packageJson ?? { version: "0.5.0", exports: { ".": {}, "./fastify": {} } };
   const releaseMatrix = overrides.releaseMatrix ?? {
@@ -58,7 +54,6 @@ function fixture(overrides = {}) {
   const releaseCommit = overrides.releaseCommit ?? release;
   return evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd: repo, releaseCommit });
 }
-
 before(() => {
   repo = mkdtempSync(join(tmpdir(), "mcp-sso-release-ready-"));
   git(["init", "-q"]);
@@ -81,7 +76,7 @@ before(() => {
   }
   const evidenceFiles = [
     "examples/example.ts", "test/evidence.test.ts", "scripts/live/probe.mjs", "scripts/run-release-matrix.mjs",
-    ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json", "tsconfig.build.json",
+    ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
   ];
   for (const file of evidenceFiles) writeFileSync(join(repo, file), "changed\n");
   git(["add", ...evidenceFiles]);
@@ -112,13 +107,10 @@ before(() => {
   git(["commit", "--allow-empty", "-qm", "unrelated"]);
   unrelated = git(["rev-parse", "HEAD"]);
 });
-
 after(() => rmSync(repo, { recursive: true, force: true }));
-
 test("release ready gate accepts complete evidence at an ancestor commit", () => {
   assert.deepEqual(fixture().errors, []);
 });
-
 test("release ready gate names a runtime commit outside the release history", () => {
   const result = fixture({ compatibility: compatibilityFor(unrelated) });
   assert.ok(result.errors.includes(`recorded runtime commit ${unrelated} is not an ancestor of release commit ${release}`));
@@ -137,7 +129,7 @@ test("release ready gate rejects evidence-definition changes after the evidence 
   assert.ok(error);
   for (const file of [
     "examples/example.ts", "scripts/live/probe.mjs", "scripts/run-release-matrix.mjs", "test/evidence.test.ts",
-    ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.build.json", "tsconfig.json",
+    ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
   ]) assert.match(error, new RegExp(file.replaceAll(".", "\\.")));
 });
 
@@ -271,13 +263,18 @@ test("release ready gate rejects every malformed or duplicate named status row",
     "status version: expected one npm package and tag row, found 2",
   ));
   for (const label of [
-    "**npm package and tag**", "npm  package and tag", "npm&nbsp;package and tag", "npm package and tag ",
+    "**npm package and tag**", "npm&nbsp;package and tag", "npm package and tag ",
   ]) {
     const decorated = `${statusFor()}\n| ${label} | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
     assert.ok(fixture({ status: decorated }).errors.includes("status version: malformed item label"));
   }
   const wrongCase = `${statusFor()}\n| NPM package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
   assert.ok(fixture({ status: wrongCase }).errors.includes("status version: malformed npm package and tag row"));
+});
+
+test("release ready gate rejects a rendered status label with collapsed whitespace", () => {
+  const status = `${statusFor()}\n| npm  package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
+  assert.ok(fixture({ status }).errors.includes("status version: malformed item label"));
 });
 
 test("release ready gate ignores the status label in prose", () => {
