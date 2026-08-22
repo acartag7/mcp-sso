@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 const SHA = /^[0-9a-f]{7,40}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const EXPORT_HEADING = "## Public export live evidence";
+const EXPORT_TABLE_HEADER = "| Export | Live evidence | Runtime commit |";
+const EXPORT_TABLE_DIVIDER = "| --- | --- | --- |";
 
 function sectionAfter(source, heading) {
   const start = source.indexOf(`${heading}\n`);
@@ -62,9 +64,33 @@ function parseExportEvidence(source, errors) {
     errors.push(`export evidence: missing ${EXPORT_HEADING} section`);
     return new Map();
   }
+  const lines = section.split("\n");
+  if (section.includes("<!--") || section.includes("-->")) {
+    errors.push("export evidence: HTML comments are not allowed in the evidence section");
+  }
+  if (lines.some((line) => /^\s*(?:`{3,}|~{3,})/.test(line))) {
+    errors.push("export evidence: fenced blocks are not allowed in the evidence section");
+  }
+  const tableStarts = lines.flatMap((line, index) => line === EXPORT_TABLE_HEADER ? [index] : []);
+  if (tableStarts.length !== 1) {
+    errors.push(`export evidence: expected one rendered table, found ${tableStarts.length}`);
+    return new Map();
+  }
+  const tableStart = tableStarts[0];
+  if (lines[tableStart + 1] !== EXPORT_TABLE_DIVIDER) {
+    errors.push("export evidence: rendered table has a malformed divider");
+    return new Map();
+  }
+  let tableEnd = tableStart + 2;
+  while (tableEnd < lines.length && lines[tableEnd].startsWith("|")) tableEnd += 1;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (index >= tableStart && index < tableEnd) continue;
+    if (lines[index].trimStart().startsWith("|")) {
+      errors.push("export evidence: table-shaped row outside the rendered evidence table");
+    }
+  }
   const rows = new Map();
-  for (const line of section.split("\n")) {
-    if (!line.startsWith("|") || line === "| Export | Live evidence | Runtime commit |" || line === "| --- | --- | --- |") continue;
+  for (const line of lines.slice(tableStart + 2, tableEnd)) {
     const match = line.match(/^\| `([^`]+)` \| ([^|]+) \| `([^`]+)` \|$/);
     if (!match) {
       const namedExport = line.match(/^\| `([^`]+)` \|/)?.[1];

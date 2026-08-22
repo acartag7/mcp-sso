@@ -88,6 +88,36 @@ test("release ready gate rejects a malformed evidence row beside a valid row", (
   assert.ok(result.errors.includes("export evidence: malformed table row for ./fastify"));
 });
 
+test("release ready gate does not count table-shaped rows outside the evidence table", () => {
+  const row = `| \`./hono\` | \`RM.1\` | \`${ancestor}\` |`;
+  const wrappers = [`<!--\n${row}\n-->`, `\`\`\`md\n${row}\n\`\`\``, row];
+  for (const wrapped of wrappers) {
+    const compatibility = `${compatibilityFor(ancestor)}\n\n${wrapped}`;
+    const result = fixture({
+      compatibility,
+      packageJson: { version: "0.5.0", exports: { ".": {}, "./fastify": {}, "./hono": {} } },
+    });
+    assert.ok(result.errors.includes("missing live evidence row for export ./hono"));
+    assert.ok(result.errors.includes("export evidence: table-shaped row outside the rendered evidence table"));
+  }
+});
+
+test("release ready gate rejects an evidence table hidden by Markdown", () => {
+  const source = compatibilityFor(ancestor);
+  const tableStart = "| Export | Live evidence | Runtime commit |";
+  const cases = [
+    source.replace(tableStart, `<!--\n${tableStart}`) + "\n-->",
+    source.replace(tableStart, `\`\`\`md\n${tableStart}`) + "\n\`\`\`",
+  ];
+  const expected = [
+    "export evidence: HTML comments are not allowed in the evidence section",
+    "export evidence: fenced blocks are not allowed in the evidence section",
+  ];
+  for (const [index, compatibility] of cases.entries()) {
+    assert.ok(fixture({ compatibility }).errors.includes(expected[index]));
+  }
+});
+
 test("release ready gate reports package and status versions", () => {
   const result = fixture({ packageJson: { version: "0.5.1", exports: { ".": {}, "./fastify": {} } } });
   assert.ok(result.errors.includes("version mismatch: package.json is 0.5.1, docs/verification-status.md is 0.5.0"));
