@@ -188,8 +188,9 @@ export function createOAuthApp(opts: HonoAdapterOptions): Hono {
       return new Response(null, { status: r.status, headers });
     }
     if (typeof r.body === "string") return new Response(r.body, { status: r.status, headers });
+    if (r.body === undefined) return new Response(null, { status: r.status, headers });
     if (!headers.has("content-type")) headers.set("content-type", "application/json; charset=utf-8");
-    return new Response(r.body === undefined || r.body === null ? null : JSON.stringify(r.body), { status: r.status, headers });
+    return new Response(r.body === null ? null : JSON.stringify(r.body), { status: r.status, headers });
   };
 
   const resourcePath = pathAfterOrigin(bridge.config.resource);
