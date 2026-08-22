@@ -9,12 +9,16 @@ const STATUS_HEADING = "## Published release";
 const STATUS_TABLE_HEADER = "| Item | Status |";
 const STATUS_TABLE_DIVIDER = "| --- | --- |";
 
-function sectionAfter(source, heading) {
-  const start = source.indexOf(`${heading}\n`);
-  if (start === -1) return undefined;
-  const bodyStart = start + heading.length + 1;
-  const nextHeading = source.indexOf("\n## ", bodyStart);
-  return source.slice(bodyStart, nextHeading === -1 ? undefined : nextHeading);
+function uniqueSectionAfter(source, heading, label, errors) {
+  const lines = source.split("\n");
+  const starts = lines.flatMap((line, index) => line === heading ? [index] : []);
+  if (starts.length !== 1) {
+    errors.push(`${label}: expected one ${heading} section, found ${starts.length}`);
+    return undefined;
+  }
+  let end = starts[0] + 1;
+  while (end < lines.length && !lines[end].startsWith("## ")) end += 1;
+  return lines.slice(starts[0] + 1, end).join("\n");
 }
 
 function gitOutput(cwd, args) {
@@ -43,11 +47,8 @@ function isAncestor(cwd, ancestor, descendant) {
 }
 
 function renderedTableRows(source, heading, header, divider, label, errors) {
-  const section = sectionAfter(source, heading);
-  if (section === undefined) {
-    errors.push(`${label}: missing ${heading} section`);
-    return [];
-  }
+  const section = uniqueSectionAfter(source, heading, label, errors);
+  if (section === undefined) return [];
   const lines = section.split("\n");
   if (section.includes("<!--") || section.includes("-->")) {
     errors.push(`${label}: HTML comments are not allowed in the table section`);
@@ -78,10 +79,17 @@ function renderedTableRows(source, heading, header, divider, label, errors) {
 
 function parseStatusVersion(source, errors) {
   const tableRows = renderedTableRows(source, STATUS_HEADING, STATUS_TABLE_HEADER, STATUS_TABLE_DIVIDER, "status version", errors);
-  const rows = tableRows.flatMap((line) => {
+  const rows = [];
+  for (const line of tableRows) {
+    const firstCell = line.split("|").slice(1, -1)[0]?.trim();
+    if (firstCell !== "npm package and tag") continue;
     const match = line.match(/^\| npm package and tag \| `mcp-sso@([^`]+)` and `v([^`]+)` \|$/);
-    return match ? [match] : [];
-  });
+    if (!match) {
+      errors.push("status version: malformed npm package and tag row");
+      continue;
+    }
+    rows.push(match);
+  }
   if (rows.length !== 1) {
     errors.push(`status version: expected one npm package and tag row, found ${rows.length}`);
     return undefined;

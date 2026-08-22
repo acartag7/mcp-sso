@@ -131,6 +131,17 @@ test("release ready gate rejects an evidence table hidden by Markdown", () => {
   }
 });
 
+test("release ready gate rejects repeated evidence and status sections", () => {
+  const compatibility = `${compatibilityFor(ancestor)}\n\n## Public export live evidence`;
+  assert.ok(fixture({ compatibility }).errors.includes(
+    "export evidence: expected one ## Public export live evidence section, found 2",
+  ));
+  const status = `${statusFor()}\n\n## Published release`;
+  assert.ok(fixture({ status }).errors.includes(
+    "status version: expected one ## Published release section, found 2",
+  ));
+});
+
 test("release ready gate does not count hidden or out-of-table status rows", () => {
   const base = statusFor().split("\n").filter((line) => !line.includes("npm package and tag")).join("\n");
   const row = "| npm package and tag | `mcp-sso@0.5.0` and `v0.5.0` |";
@@ -156,6 +167,15 @@ test("release ready gate rejects a status table hidden by Markdown", () => {
   for (const [index, status] of cases.entries()) {
     assert.ok(fixture({ status }).errors.includes(expected[index]));
   }
+});
+
+test("release ready gate rejects every malformed or duplicate named status row", () => {
+  const malformed = `${statusFor()}\n| npm package and tag | mcp-sso@0.4.0 and v0.4.0 |`;
+  assert.ok(fixture({ status: malformed }).errors.includes("status version: malformed npm package and tag row"));
+  const conflicting = `${statusFor()}\n| npm package and tag | \`mcp-sso@0.4.0\` and \`v0.4.0\` |`;
+  assert.ok(fixture({ status: conflicting }).errors.includes(
+    "status version: expected one npm package and tag row, found 2",
+  ));
 });
 
 test("release ready gate reports package and status versions", () => {
