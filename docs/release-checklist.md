@@ -9,10 +9,11 @@ Use this checklist for a release candidate. The [release verification reference]
 3. Record the completed export rows and their runtime commit in [the client compatibility reference](client-compatibility.md#public-export-live-evidence), then run the release-readiness gate before creating the tag:
 
    ```bash
+   pnpm run check:release-matrix
    pnpm run check:release-ready
    ```
 
-   The command names a non-ancestor runtime commit, missing export row, or version mismatch. Do not create the tag while it fails.
+   The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, or version mismatch. Do not create the tag while either command fails.
 4. Run the source checks:
 
    ```bash

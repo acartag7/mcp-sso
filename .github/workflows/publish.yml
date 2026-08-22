@@ -32,6 +32,8 @@ jobs:
         run: |
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
           test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
+      - name: require executable release matrix
+        run: pnpm check:release-matrix
       - name: require current release evidence
         run: pnpm check:release-ready
       - name: enforce dependency policy

@@ -45,7 +45,10 @@ export function statusFor(version = "0.5.0") {
 export function fixture(overrides = {}) {
   const packageJson = overrides.packageJson ?? { version: "0.5.0", exports: { ".": {}, "./fastify": {} } };
   const releaseMatrix = overrides.releaseMatrix ?? {
-    rows: [{ id: "RM.1", exports: ["."] }, { id: "RM.2", exports: ["./fastify"] }],
+    rows: [
+      { id: "RM.1", title: "Root flow", exports: ["."], evidence: [{ file: "test/root.test.ts", name: "root flow" }] },
+      { id: "RM.2", title: "Fastify flow", exports: ["./fastify"], evidence: [{ file: "test/fastify.test.ts", name: "fastify flow" }] },
+    ],
   };
   const compatibility = overrides.compatibility ?? compatibilityFor(ancestor);
   const status = overrides.status ?? statusFor();

@@ -150,6 +150,18 @@ function parseReleaseRows(releaseMatrix, errors) {
       continue;
     }
     if (rows.has(row.id)) errors.push(`release matrix: duplicate row ${row.id}`);
+    let executable = true;
+    if (typeof row.title !== "string" || row.title.trim() !== row.title || row.title.length === 0) {
+      errors.push(`release matrix: ${row.id} requires a non-empty title`);
+      executable = false;
+    }
+    if (!Array.isArray(row.evidence) || row.evidence.length === 0
+      || row.evidence.some((item) => !item || typeof item !== "object" || Array.isArray(item)
+        || typeof item.file !== "string" || item.file.trim() !== item.file || item.file.length === 0
+        || typeof item.name !== "string" || item.name.trim() !== item.name || item.name.length === 0)) {
+      errors.push(`release matrix: ${row.id} requires executable evidence with file and name`);
+      executable = false;
+    }
     if (!Array.isArray(row.exports) || row.exports.some((name) => typeof name !== "string")) {
       errors.push(`release matrix: ${row.id} requires an exports array of strings`);
       rows.set(row.id, new Set());
@@ -157,7 +169,7 @@ function parseReleaseRows(releaseMatrix, errors) {
     }
     const coveredExports = new Set(row.exports);
     if (coveredExports.size !== row.exports.length) errors.push(`release matrix: ${row.id} has duplicate exports`);
-    rows.set(row.id, coveredExports);
+    rows.set(row.id, executable ? coveredExports : new Set());
   }
   return rows;
 }

@@ -182,6 +182,19 @@ test("release ready gate names an evidence ID absent from the release matrix", (
   assert.ok(result.errors.includes("unknown live evidence ID RM.999 for export ./fastify"));
 });
 
+test("release ready gate requires executable release-matrix rows", () => {
+  const base = { id: "RM.1", title: "Root flow", exports: ["."], evidence: [{ file: "test/root.test.ts", name: "root flow" }] };
+  const cases = [
+    [{ ...base, title: "" }, "release matrix: RM.1 requires a non-empty title"],
+    [{ ...base, evidence: [] }, "release matrix: RM.1 requires executable evidence with file and name"],
+    [{ ...base, evidence: [{ file: "", name: "root flow" }] }, "release matrix: RM.1 requires executable evidence with file and name"],
+  ];
+  for (const [row, expected] of cases) {
+    const result = fixture({ releaseMatrix: { rows: [row] } });
+    assert.ok(result.errors.includes(expected));
+  }
+});
+
 test("release ready gate rejects an existing evidence row that does not cover the export", () => {
   const compatibility = compatibilityFor(ancestor).replace(
     `| \`./fastify\` | \`RM.2\` |`,
@@ -322,9 +335,13 @@ test("publish runs release readiness with full git history and ordinary tests do
   const { readFile } = await import("node:fs/promises");
   const root = new URL("..", import.meta.url);
   const workflow = await readFile(new URL(".github/workflows/publish.yml", root), "utf8");
+  const checklist = await readFile(new URL("docs/release-checklist.md", root), "utf8");
   const packageJson = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
   assert.match(workflow, /fetch-depth: 0/);
+  assert.match(workflow, /run: pnpm check:release-matrix/);
   assert.match(workflow, /run: pnpm check:release-ready/);
+  assert.ok(workflow.indexOf("run: pnpm check:release-matrix") < workflow.indexOf("run: pnpm check:release-ready"));
   assert.ok(workflow.indexOf("run: pnpm check:release-ready") < workflow.indexOf("run: pnpm install --frozen-lockfile"));
+  assert.ok(checklist.indexOf("pnpm run check:release-matrix") < checklist.indexOf("pnpm run check:release-ready"));
   assert.equal(packageJson.scripts.test.includes("check:release-ready"), false);
 });
