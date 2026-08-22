@@ -81,6 +81,8 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   const send = (res: Response, r: NormResponse): void => {
     for (const [key, value] of Object.entries(r.headers)) if (key.toLowerCase() !== "set-cookie") res.set(key, value);
     const cookies = responseSetCookies(r);
+    // This sends already-serialized Set-Cookie response fields to the client; it does not persist them.
+    // codeql[js/clear-text-storage-of-sensitive-data]
     if (cookies.length > 0) res.set("set-cookie", cookies.length === 1 ? cookies[0] : cookies);
     if (r.redirect) { res.redirect(r.status, r.redirect); return; }
     res.status(r.status).send(r.body);
@@ -120,6 +122,9 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
   }
   if (identityFlow) {
     const login = identityFlow;
+    // The flow calls RateLimitPort with website-login:<ip> before parsing or flow work.
+    // CodeQL recognizes named Express limiter middleware, not this library-owned port.
+    // codeql[js/missing-rate-limiting]
     router.get("/login", wrap(async (req, res) => send(res, await login.handleAuthorize(toNorm(req)))));
     router.get(login.callbackPath, wrap(async (req, res) => send(res, await login.handleCallback(toNorm(req)))));
   }
