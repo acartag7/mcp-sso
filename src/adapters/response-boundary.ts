@@ -13,26 +13,27 @@ export function snapshotCompletionResponse(value: unknown): NormResponse {
   const status = dataValue(response.descriptors, "status", true);
   if (!Number.isInteger(status)) throw new TypeError("completion status must be an integer");
   const headers = snapshotHeaders(dataValue(response.descriptors, "headers", true));
-  const setCookiesValue = dataValue(response.descriptors, "setCookies", false);
-  const setCookies = setCookiesValue === undefined ? undefined : snapshotCookies(setCookiesValue);
-  const body = dataValue(response.descriptors, "body", false);
-  const redirect = dataValue(response.descriptors, "redirect", false);
+  const setCookiesMember = optionalDataValue(response.descriptors, "setCookies");
+  const setCookies = setCookiesMember.present ? snapshotCookies(setCookiesMember.value) : undefined;
+  const bodyMember = optionalDataValue(response.descriptors, "body");
+  const redirectMember = optionalDataValue(response.descriptors, "redirect");
   const outputHeaders = withNoStore(headers);
-  if (redirect === undefined) {
+  if (!redirectMember.present) {
     if ((status as number) < 200 || (status as number) > 299) throw new TypeError("completion body status is invalid");
-    if (body !== undefined && typeof body !== "string") throw new TypeError("completion body must be a string");
-    if (typeof body === "string") {
-      if (Buffer.byteLength(body, "utf8") > 65_536) throw new TypeError("completion body is too large");
+    if (bodyMember.present && typeof bodyMember.value !== "string") throw new TypeError("completion body must be a string");
+    if (typeof bodyMember.value === "string") {
+      if (Buffer.byteLength(bodyMember.value, "utf8") > 65_536) throw new TypeError("completion body is too large");
       if (!hasNonEmptyHeader(outputHeaders, "content-type")) throw new TypeError("completion string body requires Content-Type");
     }
-    if (((status as number) === 204 || (status as number) === 205) && body !== undefined) throw new TypeError("completion status cannot carry a body");
-    return Object.freeze({ status: status as number, headers: Object.freeze(outputHeaders), ...(setCookies ? { setCookies } : {}), ...(body === undefined ? {} : { body }) });
+    if (((status as number) === 204 || (status as number) === 205) && bodyMember.present) throw new TypeError("completion status cannot carry a body");
+    return Object.freeze({ status: status as number, headers: Object.freeze(outputHeaders), ...(setCookies ? { setCookies } : {}), ...(bodyMember.present ? { body: bodyMember.value } : {}) });
   }
+  const redirect = redirectMember.value;
   if (typeof redirect !== "string" || !REDIRECT_STATUSES.has(status as number)
     || Buffer.byteLength(redirect, "ascii") > 2048 || !URI_REFERENCE.test(redirect)) {
     throw new TypeError("completion redirect is invalid");
   }
-  if (body !== undefined) throw new TypeError("completion redirect cannot carry a body");
+  if (bodyMember.present) throw new TypeError("completion redirect cannot carry a body");
   const location = headerValue(outputHeaders, "location");
   if (location !== undefined && location !== redirect) throw new TypeError("completion Location does not match redirect");
   defineHeader(outputHeaders, "location", redirect);
@@ -55,6 +56,7 @@ function snapshotHeaders(value: unknown): Record<string, string> {
     const item = descriptorValue(input.descriptors[key], "completion header");
     if (typeof item !== "string") throw new TypeError("completion header value must be a string");
     const limit = lower === "set-cookie" ? 4096 : 8192;
+    if (lower === "set-cookie" && item.length === 0) throw new TypeError("completion cookie is empty");
     validateAsciiValue(item, limit, "completion header value");
     bytes += Buffer.byteLength(key, "ascii") + Buffer.byteLength(item, "ascii");
     if (bytes > 32_768) throw new TypeError("completion headers are too large");
@@ -73,7 +75,7 @@ function snapshotCookies(value: unknown): string[] {
   const output: string[] = [];
   for (let index = 0; index < value.length; index += 1) {
     const item = descriptorValue(descriptors[String(index)], "completion cookie");
-    if (typeof item !== "string") throw new TypeError("completion cookie must be a string");
+    if (typeof item !== "string" || item.length === 0) throw new TypeError("completion cookie must be a non-empty string");
     validateAsciiValue(item, 4096, "completion cookie");
     output.push(item);
   }
@@ -132,6 +134,13 @@ function dataValue(descriptors: PropertyDescriptorMap, key: string, required: bo
     return undefined;
   }
   return descriptorValue(descriptor, `completion response ${key}`);
+}
+
+function optionalDataValue(descriptors: PropertyDescriptorMap, key: string): { present: boolean; value?: unknown } {
+  const descriptor = descriptors[key];
+  return descriptor === undefined
+    ? { present: false }
+    : { present: true, value: descriptorValue(descriptor, `completion response ${key}`) };
 }
 
 function descriptorValue(descriptor: PropertyDescriptor | undefined, label: string): unknown {

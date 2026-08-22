@@ -51,11 +51,12 @@ export interface ExpressAdapterOptions {
 }
 
 export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
-  if (opts.upstream && (opts.identity || opts.skipAuthorize)) throw new Error("createOAuthRouter: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
-  const flows = [opts.upstream, opts.identityFlow].filter((flow): flow is UpstreamRedirectFlow => flow !== undefined);
-  if (opts.upstream) assertUpstreamFlowCompletion(opts.upstream, "bridge");
-  if (opts.identityFlow) assertUpstreamFlowCompletion(opts.identityFlow, "identity");
-  if (flows.length > 0) assertDistinctUpstreamFlowRoutes(opts.bridge, flows);
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, identityFlow } = opts;
+  if (upstream && (identity || skipAuthorize)) throw new Error("createOAuthRouter: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  const flows = [upstream, identityFlow].filter((flow): flow is UpstreamRedirectFlow => flow !== undefined);
+  if (upstream) assertUpstreamFlowCompletion(upstream, "bridge");
+  if (identityFlow) assertUpstreamFlowCompletion(identityFlow, "identity");
+  if (flows.length > 0) assertDistinctUpstreamFlowRoutes(bridge, flows);
   const router = Router();
   // Keep the framework parser boundary aligned with the core-supported OAuth
   // request domain. This lives inside the returned router, so unrelated app
@@ -66,8 +67,6 @@ export function createOAuthRouter(opts: ExpressAdapterOptions): Router {
     urlencoded({ extended: false, limit: OAUTH_POST_BODY_MAX_BYTES }),
     raw({ limit: OAUTH_POST_BODY_MAX_BYTES, type: () => true }),
   );
-  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, identityFlow } = opts;
-
   const toNorm = (req: Request): NormRequest => {
     const headers = headersFromDistinct(req.headersDistinct, req.headers as NormRequest["headers"]);
     // Keyed on the request's Content-Type, not on who filled `req.body`: a parser

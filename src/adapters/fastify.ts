@@ -64,12 +64,13 @@ export function addOAuthFormContentTypeParser(app: FastifyInstance): void {
 }
 
 export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {
-  if (opts.upstream && (opts.identity || opts.skipAuthorize)) throw new Error("registerOAuthRoutes: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
-  const flows = [opts.upstream, opts.identityFlow].filter((flow): flow is UpstreamRedirectFlow => flow !== undefined);
-  if (opts.upstream) assertUpstreamFlowCompletion(opts.upstream, "bridge");
-  if (opts.identityFlow) assertUpstreamFlowCompletion(opts.identityFlow, "identity");
-  if (flows.length > 0) assertDistinctUpstreamFlowRoutes(opts.bridge, flows);
-  if (opts.skipAuthorize && !opts.upstream) {
+  const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, identityFlow } = opts;
+  if (upstream && (identity || skipAuthorize)) throw new Error("registerOAuthRoutes: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
+  const flows = [upstream, identityFlow].filter((flow): flow is UpstreamRedirectFlow => flow !== undefined);
+  if (upstream) assertUpstreamFlowCompletion(upstream, "bridge");
+  if (identityFlow) assertUpstreamFlowCompletion(identityFlow, "identity");
+  if (flows.length > 0) assertDistinctUpstreamFlowRoutes(bridge, flows);
+  if (skipAuthorize && !upstream) {
     // Pre-A1 compatibility: caller-owned pairing routes registered after this
     // function inherit automatic form parsing. Keep only the catch-all parser in
     // the child scope so unrelated unknown media retain caller semantics.
@@ -84,7 +85,9 @@ export async function registerOAuthRoutes(app: FastifyInstance, opts: FastifyAda
       );
     });
   }
-  await app.register(async (scope) => registerScopedOAuthRoutes(scope, opts));
+  await app.register(async (scope) => registerScopedOAuthRoutes(scope, {
+    bridge, identity, identityHeader, skipAuthorize, upstream, identityFlow,
+  }));
 }
 
 async function registerScopedOAuthRoutes(app: FastifyInstance, opts: FastifyAdapterOptions): Promise<void> {

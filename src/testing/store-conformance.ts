@@ -13,6 +13,7 @@ import { registerLifecycleRows } from "./store-conformance-lifecycle.ts";
 import { registerRefreshRows } from "./store-conformance-refresh.ts";
 import { registerRevocationRows } from "./store-conformance-revocation.ts";
 import { registerSweepRows } from "./store-conformance-sweep.ts";
+import { registerSubjectRows } from "./store-conformance-subjects.ts";
 import type { MakeStore, StoreConformanceOptions } from "./store-conformance-fixtures.ts";
 
 export type { MakeStore, StoreConformanceOptions } from "./store-conformance-fixtures.ts";
@@ -22,6 +23,7 @@ const SECTIONS = [
   registerGrantRows,
   registerRefreshRows,
   registerRevocationRows,
+  registerSubjectRows,
   registerSweepRows,
 ] as const;
 

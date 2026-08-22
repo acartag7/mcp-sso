@@ -25,10 +25,10 @@ class Audit implements AuditPort {
   async writeAuthEvent(event: AuthAuditEvent): Promise<void> { this.events.push(event); }
 }
 
-function config(): BridgeConfig {
+function config(resourcePath = "/mcp"): BridgeConfig {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   return createBridgeConfig({
-    issuer: "https://auth.test", resource: "https://auth.test/mcp",
+    issuer: "https://auth.test", resource: `https://auth.test${resourcePath}`,
     consentSigningSecret: "test-consent-secret-with-enough-entropy-0123456789",
     signingPrivateJwk: { ...privateKey.export({ format: "jwk" }), alg: "ES256", kid: "k" } as JWK,
     signingKeyId: "k", redirectAllowlist: ["https://client.test/callback"],
@@ -171,6 +171,33 @@ test("RM.17 Fastify, Express, and Hono each deliver both Set-Cookie values", asy
   }
 });
 
+test("Fastify, Express, and Hono snapshot flow options once before route checks", async () => {
+  const mount = async (adapter: "fastify" | "express" | "hono"): Promise<void> => {
+    const h = harness();
+    const bridgeIdentity: RedirectIdentityPort = {
+      redirectUri: "https://auth.test/oauth/callback",
+      buildAuthorizationUrl(args) { return `https://idp.test/authorize?state=${args.state}`; },
+      async exchangeAndVerify() { return { ok: true, identity: { subject: "person-1" } }; },
+    };
+    const bridgeFlow = createUpstreamRedirectFlow({ bridge: h.bridge, identity: bridgeIdentity, store: h.store, clock: h.clock, audit: h.audit });
+    let reads = 0;
+    const options = { bridge: h.bridge, identityFlow: h.flow } as Record<string, unknown>;
+    Object.defineProperty(options, "upstream", {
+      enumerable: true,
+      get() { reads += 1; if (reads > 1) throw new Error("flow option was read twice"); return bridgeFlow; },
+    });
+    if (adapter === "fastify") {
+      const app = Fastify(); await registerOAuthRoutes(app, options as never); await app.close();
+    } else if (adapter === "express") createOAuthRouter(options as never);
+    else {
+      Object.defineProperty(options, "clientIp", { enumerable: true, value: () => IP });
+      createOAuthApp(options as never);
+    }
+    assert.equal(reads, 1, adapter);
+  };
+  await mount("fastify"); await mount("express"); await mount("hono");
+});
+
 test("route-set assertion admits one bridge plus one identity flow and rejects wrong ownership or duplicates", () => {
   const h = harness();
   const bridgeIdentity: RedirectIdentityPort = {
@@ -183,15 +210,85 @@ test("route-set assertion admits one bridge plus one identity flow and rejects w
   assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [h.flow, h.flow]));
   assert.throws(() => assertDistinctUpstreamFlowRoutes(harness().bridge, [h.flow]));
   assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [{ ...h.flow }] as never));
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, []));
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [bridgeFlow, h.flow, bridgeFlow]));
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [h.flow, , bridgeFlow] as never));
+  const accessor = [h.flow];
+  Object.defineProperty(accessor, "0", { enumerable: true, get() { throw new Error("slot getter poison"); } });
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, accessor));
+
+  const shared = (complete: "bridge" | "identity", callbackPath: string) => {
+    const identity: RedirectIdentityPort = {
+      redirectUri: `https://auth.test${callbackPath}`,
+      buildAuthorizationUrl(args) { return `https://idp.test/authorize?state=${args.state}`; },
+      async exchangeAndVerify() { return { ok: true, identity: { subject: "person" } }; },
+    };
+    return createUpstreamRedirectFlow({
+      bridge: h.bridge, identity, store: h.store, clock: h.clock, audit: h.audit,
+      complete, callbackPath, ...(complete === "identity" ? { onIdentity: () => ({ status: 204, headers: {} }) } : {}),
+    } as never);
+  };
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [shared("bridge", "/shared"), shared("identity", "/SHARED/")]));
+  assert.throws(() => assertDistinctUpstreamFlowRoutes(h.bridge, [shared("bridge", "/bridge-a"), shared("bridge", "/bridge-b")]));
+});
+
+test("flow factories reject effective callback and initiation route aliases", () => {
+  for (const callbackPath of ["/login", "/LOGIN/", "/oauth/jwks", "/OAUTH/JWKS/", "/mcp", "/MCP/", "/.well-known/provider"]) {
+    const cfg = config(), store = new MemoryStore(), clock = new Clock(), audit = new Audit();
+    const bridge = new Bridge({ config: cfg, store, clock, audit });
+    const identity: RedirectIdentityPort = {
+      redirectUri: `https://auth.test${callbackPath}`,
+      buildAuthorizationUrl() { return "https://idp.test/authorize"; },
+      async exchangeAndVerify() { return { ok: true, identity: { subject: "person" } }; },
+    };
+    assert.throws(() => createUpstreamRedirectFlow({ bridge, identity, store, clock, audit, complete: "identity", callbackPath, onIdentity: () => ({ status: 204, headers: {} }) }), Error, callbackPath);
+  }
+  for (const [resourcePath, complete, callbackPath] of [["/LOGIN/", "identity", "/callback"], ["/OAUTH/AUTHORIZE/", "bridge", "/callback"]] as const) {
+    const cfg = config(resourcePath), store = new MemoryStore(), clock = new Clock(), audit = new Audit();
+    const bridge = new Bridge({ config: cfg, store, clock, audit });
+    const identity: RedirectIdentityPort = {
+      redirectUri: `https://auth.test${callbackPath}`,
+      buildAuthorizationUrl() { return "https://idp.test/authorize"; },
+      async exchangeAndVerify() { return { ok: true, identity: { subject: "person" } }; },
+    };
+    const deps = { bridge, identity, store, clock, audit, complete, callbackPath, onIdentity: () => ({ status: 204, headers: {} }) };
+    assert.throws(() => createUpstreamRedirectFlow(deps as never), Error, `${complete}:${resourcePath}`);
+  }
+});
+
+test("all adapters reject flows in the wrong completion slot before registration", async () => {
+  const h = harness();
+  const cases = [
+    async () => { const app = Fastify(); await assert.rejects(registerOAuthRoutes(app, { bridge: h.bridge, upstream: h.flow })); assert.equal(app.hasRoute({ method: "GET", url: "/oauth/jwks" }), false); await app.close(); },
+    async () => { assert.throws(() => createOAuthRouter({ bridge: h.bridge, upstream: h.flow })); },
+    async () => { assert.throws(() => createOAuthApp({ bridge: h.bridge, upstream: h.flow, clientIp: () => IP })); },
+  ];
+  for (const run of cases) await run();
 });
 
 test("identity completion rejects malformed subjects and claims before onIdentity", async () => {
+  const cycle: Record<string, unknown> = {}; cycle.self = cycle;
+  const accessor: Record<string, unknown> = {};
+  Object.defineProperty(accessor, "value", { enumerable: true, get() { throw new Error("claim getter poison"); } });
+  const inherited = Object.create({ inherited: true }) as Record<string, unknown>;
   const identities = [
     { subject: "" }, { subject: " person" }, { subject: "person " }, { subject: "bad\uFFFD" },
     { subject: "\uD800" }, { subject: "\uDC00" }, { subject: "x".repeat(385) }, { subject: "😀".repeat(385) },
     { subject: "person", claims: { value: Number.NaN } },
     { subject: "person", claims: { value: BigInt(1) } },
+    { subject: "person", claims: { value: Symbol("x") } },
+    { subject: "person", claims: { value: () => undefined } },
+    { subject: "person", claims: { value: Number.POSITIVE_INFINITY } },
+    { subject: "person", claims: { value: [undefined] } },
     { subject: "person", claims: { value: [, "sparse"] } },
+    { subject: "person", claims: accessor },
+    { subject: "person", claims: inherited },
+    { subject: "person", claims: cycle },
+    { subject: "person", claims: { a: { b: { c: { d: { e: {} } } } } } },
+    { subject: "person", claims: Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`k${index}`, index])) },
+    { subject: "person", claims: { ["k".repeat(129)]: true } },
+    { subject: "person", claims: { value: "x".repeat(4097) } },
+    { subject: "person", claims: { a: "x".repeat(4096), b: "x".repeat(4096), c: "x".repeat(4096), d: "x".repeat(4096) } },
   ];
   for (const [index, identity] of identities.entries()) {
     const h = harness({ result: { ok: true, identity } as never }); const begun = await start(h.flow);
@@ -213,13 +310,41 @@ test("identity completion rejects each host response shape at the boundary", asy
   const accessor = Object.create(null) as Record<string, unknown>;
   Object.defineProperty(accessor, "status", { enumerable: true, get() { throw new Error("getter poison"); } });
   Object.defineProperty(accessor, "headers", { enumerable: true, value: {} });
+  const inheritedResponse = Object.assign(Object.create({ inherited: true }), { status: 204, headers: {} });
+  const inheritedHeaders = Object.assign(Object.create({ inherited: true }), { "x-test": "value" });
+  const symbolResponse = { status: 204, headers: {}, [Symbol("extra")]: true };
+  const symbolHeaders = { "x-test": "value", [Symbol("extra")]: true };
+  const nonEnumerableResponse = { status: 204, headers: {} };
+  Object.defineProperty(nonEnumerableResponse, "extra", { value: true });
+  const nonEnumerableHeaders = {};
+  Object.defineProperty(nonEnumerableHeaders, "x-test", { value: "value" });
+  const sparseCookies = ["first=x", , "third=x"];
+  const accessorCookies = ["first=x"];
+  Object.defineProperty(accessorCookies, "0", { enumerable: true, get() { throw new Error("cookie getter poison"); } });
+  const oversizedHeaders = Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`x-${index}`, "x".repeat(7000)]));
   const bad: unknown[] = [
-    null, { status: 200, headers: {}, extra: true }, { status: 200.5, headers: {} },
-    { status: 302, headers: {}, body: "x" }, { status: 200, headers: {}, body: "untyped" },
-    { status: 204, headers: {}, body: "" }, { status: 200, headers: { connection: "close" } },
-    { status: 200, headers: { "x-test": " leading" } }, { status: 200, headers: { "x-test": "café" } },
+    null, inheritedResponse, symbolResponse, nonEnumerableResponse,
+    { status: 204, headers: inheritedHeaders }, { status: 204, headers: symbolHeaders }, { status: 204, headers: nonEnumerableHeaders },
+    { status: 200, headers: {}, extra: true }, { status: 200.5, headers: {} },
+    { status: 200, headers: {}, body: undefined }, { status: 200, headers: {}, redirect: undefined },
+    { status: 200, headers: {}, setCookies: undefined },
+    { status: 302, headers: {}, body: "x" }, { status: 200, headers: {}, body: {} },
+    { status: 200, headers: {}, body: "untyped" }, { status: 200, headers: { "content-type": "text/plain" }, body: "x".repeat(65_537) },
+    { status: 204, headers: {}, body: "" }, { status: 205, headers: {}, body: "" }, { status: 304, headers: {} },
+    { status: 200, headers: { connection: "close" } },
+    { status: 200, headers: { "X-Test": "one", "x-test": "two" } },
+    { status: 200, headers: { "x-test": " leading" } }, { status: 200, headers: { "x-test": "trailing " } },
+    { status: 200, headers: { "x-test": "café" } }, { status: 200, headers: { "x-test": "😀" } },
+    { status: 200, headers: { ["x".repeat(257)]: "value" } },
+    { status: 200, headers: { "x-test": "x".repeat(8193) } }, { status: 200, headers: oversizedHeaders },
     { status: 302, headers: {}, redirect: "https://example.test/a b" },
+    { status: 302, headers: {}, redirect: "/bad%2" }, { status: 302, headers: {}, redirect: "\\bad" },
     { status: 302, headers: { location: "/other" }, redirect: "/account" },
+    { status: 204, headers: { "set-cookie": "" } }, { status: 204, headers: {}, setCookies: [""] },
+    { status: 204, headers: { "set-cookie": "x".repeat(4097) } },
+    { status: 204, headers: {}, setCookies: ["x".repeat(4097)] },
+    { status: 204, headers: {}, setCookies: "session=x" }, { status: 204, headers: {}, setCookies: sparseCookies },
+    { status: 204, headers: {}, setCookies: accessorCookies },
     { status: 204, headers: {}, setCookies: Array.from({ length: 16 }, (_, index) => `s${index}=x`) },
     accessor,
   ];
@@ -230,9 +355,37 @@ test("identity completion rejects each host response shape at the boundary", asy
   }
 });
 
+test("identity completion accepts the host response boundary controls", async () => {
+  const cookies = Array.from({ length: 15 }, (_, index) => `s${index}=x`);
+  const h = harness({ onIdentity: () => ({
+    status: 303,
+    headers: { "Content-Type": "text/plain", "Cache-Control": "public", Location: "/account%20home", "Set-Cookie": "primary=x" },
+    setCookies: cookies,
+    redirect: "/account%20home",
+  }) });
+  const begun = await start(h.flow); const response = await h.flow.handleCallback(callback(begun.state, begun.cookie));
+  assert.equal(response.status, 303); assert.equal(response.headers["cache-control"], "no-store");
+  assert.equal(response.headers.location, "/account%20home"); assert.equal(response.setCookies?.length, 16);
+
+  const body = harness({ onIdentity: () => ({ status: 200, headers: { "Content-Type": "text/plain", "x-tab": "a\tb" }, body: "Grüezi 😀" }) });
+  const bodyStart = await start(body.flow); const bodyResponse = await body.flow.handleCallback(callback(bodyStart.state, bodyStart.cookie));
+  assert.equal(bodyResponse.body, "Grüezi 😀"); assert.equal(bodyResponse.status, 200);
+});
+
+test("bridge completion ignores optional attributes that identity completion rejects", async () => {
+  const claims: Record<string, unknown> = {};
+  Object.defineProperty(claims, "value", { enumerable: true, get() { throw new Error("ignored claim poison"); } });
+  const h = bridgeHarness({ ok: true, identity: { subject: "person-1", claims } });
+  const begun = await startBridge(h.flow); const response = await h.flow.handleCallback(callback(begun.state, begun.cookie));
+  assert.equal(response.status, 200);
+});
+
 test("claims and completion header projections preserve inert keys on null-prototype frozen records", async () => {
   const claims = Object.create(null) as Record<string, unknown>;
   for (const key of ["__proto__", "constructor", "prototype"]) Object.defineProperty(claims, key, { value: key, enumerable: true });
+  const nested: Record<string, unknown> = { kept: "value", omitted: undefined };
+  for (const key of ["__proto__", "constructor", "prototype"]) Object.defineProperty(nested, key, { value: `nested-${key}`, enumerable: true });
+  claims.nested = nested; claims.list = [{ value: true }];
   let observed: { claims?: Record<string, unknown> } | undefined;
   const h = harness({
     result: { ok: true, identity: { subject: "person", claims } },
@@ -245,6 +398,11 @@ test("claims and completion header projections preserve inert keys on null-proto
   });
   const begun = await start(h.flow); const response = await h.flow.handleCallback(callback(begun.state, begun.cookie));
   assert.equal(response.status, 204); assert.equal(Object.getPrototypeOf(observed?.claims), null); assert.equal(Object.isFrozen(observed?.claims), true);
+  const observedNested = observed?.claims?.nested as Record<string, unknown>;
+  const observedList = observed?.claims?.list as Array<Record<string, unknown>>;
+  assert.equal(Object.getPrototypeOf(observedNested), null); assert.equal(Object.hasOwn(observedNested, "omitted"), false);
+  assert.equal(Object.isFrozen(observedNested), true); assert.equal(Object.isFrozen(observedList), true);
+  assert.equal(Object.getPrototypeOf(observedList[0]), null); assert.equal(Object.isFrozen(observedList[0]), true);
   assert.equal(Object.getPrototypeOf(response.headers), null);
   for (const key of ["__proto__", "constructor", "prototype"]) assert.equal(Object.hasOwn(response.headers, key), true);
 });

@@ -133,8 +133,8 @@ export const honoOAuthBodyLimit: MiddlewareHandler = async (c, next) => {
 };
 
 export function createOAuthApp(opts: HonoAdapterOptions): Hono {
-  if (opts.upstream && (opts.identity || opts.skipAuthorize)) throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
   const { bridge, identity, identityHeader = "cf-access-jwt-assertion", skipAuthorize = false, upstream, identityFlow, clientIp } = opts;
+  if (upstream && (identity || skipAuthorize)) throw new Error("createOAuthApp: 'upstream' is mutually exclusive with 'identity'/'identityHeader' and 'skipAuthorize' (exactly one authorize mode — §17.11)");
   const flows = [upstream, identityFlow].filter((flow): flow is UpstreamRedirectFlow => flow !== undefined);
   if (upstream) assertUpstreamFlowCompletion(upstream, "bridge");
   if (identityFlow) assertUpstreamFlowCompletion(identityFlow, "identity");
