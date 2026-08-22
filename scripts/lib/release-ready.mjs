@@ -69,7 +69,12 @@ function parseStatusVersion(source, errors) {
   const tableRows = renderedTableRows(source, STATUS_HEADING, STATUS_TABLE_HEADER, STATUS_TABLE_DIVIDER, "status version", errors);
   const rows = [];
   for (const line of tableRows) {
-    const rawFirstCell = line.split("|").slice(1, -1)[0];
+    const rawCells = line.split("|").slice(1, -1);
+    if (rawCells.length !== 2) {
+      errors.push("status version: malformed table row");
+      continue;
+    }
+    const rawFirstCell = rawCells[0];
     const firstCell = rawFirstCell?.trim();
     if (!firstCell || rawFirstCell !== ` ${firstCell} ` || !/^[A-Za-z0-9]+(?: [A-Za-z0-9]+)*$/.test(firstCell)) {
       errors.push("status version: malformed item label");

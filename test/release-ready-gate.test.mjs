@@ -28,6 +28,7 @@ test("release ready gate rejects evidence-definition changes after the evidence 
   assert.ok(error);
   for (const file of [
     "examples/example.ts", "scripts/live/probe.mjs", "scripts/run-release-matrix.mjs", "test/evidence.test.ts",
+    "scripts/check-release-matrix.mjs", "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md",
     ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
   ]) assert.match(error, new RegExp(file.replaceAll(".", "\\.")));
 });
@@ -293,6 +294,13 @@ test("release ready gate rejects every malformed or duplicate named status row",
   }
   const wrongCase = `${statusFor()}\n| NPM package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
   assert.ok(fixture({ status: wrongCase }).errors.includes("status version: malformed npm package and tag row"));
+});
+
+test("release ready gate rejects the wrong column count on every status row", () => {
+  for (const row of ["| Conformance claim |", "| Conformance claim | Current | contradictory |"]) {
+    const status = statusFor().replace("| Conformance claim | Current |", row);
+    assert.ok(fixture({ status }).errors.includes("status version: malformed table row"));
+  }
 });
 
 test("release ready gate rejects a rendered status label with collapsed whitespace", () => {

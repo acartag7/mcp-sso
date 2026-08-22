@@ -31,7 +31,8 @@ function changedRuntimeInputs(cwd, ancestor, descendant) {
     "git",
     [
       "diff", "--name-only", "-z", ancestor, descendant, "--",
-      "src", "examples", "test", "scripts/live", "scripts/run-release-matrix.mjs", "tsconfig.json", "tsconfig.build.json",
+      "src", "examples", "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
+      "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", "tsconfig.json", "tsconfig.build.json",
       ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
     ],
     { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },

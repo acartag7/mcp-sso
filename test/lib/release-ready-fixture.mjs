@@ -71,11 +71,12 @@ export function setupReleaseReadyFixture() {
   git(["commit", "-qm", "runtime release"]);
   runtimeRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "-c", "evidence-change", release]);
-  for (const directory of ["examples", "test", "scripts/live", ".github/workflows"]) {
+  for (const directory of ["examples", "test", "scripts/live", "scripts/lib", "docs", ".github/workflows"]) {
     mkdirSync(join(repo, directory), { recursive: true });
   }
   const evidenceFiles = [
     "examples/example.ts", "test/evidence.test.ts", "scripts/live/probe.mjs", "scripts/run-release-matrix.mjs",
+    "scripts/check-release-matrix.mjs", "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md",
     ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
   ];
   for (const file of evidenceFiles) writeFileSync(join(repo, file), "changed\n");
