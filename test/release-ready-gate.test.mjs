@@ -82,19 +82,57 @@ test("release ready gate requires a runtime commit on every verified provider ro
   assert.ok(result.errors.includes("provider evidence: Provider / Client has malformed runtime commit receipt"));
 });
 
-test("release ready gate requires a real date on every verified provider row", () => {
-  for (const date of ["", "2026-02-30", "22-08-2026"]) {
+test("release ready gate requires a real canonical date on every verified provider row", () => {
+  for (const date of ["", "2026-02-30", "22-08-2026", " 2026-08-22 "]) {
     const compatibility = compatibilityFor(ancestor).replace("| 2026-08-22 |", `| ${date} |`);
     const result = fixture({ compatibility });
     assert.ok(result.errors.includes("provider evidence: Provider / Client has missing or malformed date"));
   }
 });
 
-test("release ready gate permits an unverified provider row without a runtime commit", () => {
+test("release ready gate requires names for every provider row", () => {
+  const names = ["Provider", "Client", "Flow"];
+  for (const [index, label] of ["Provider", "Client", "Flow driven"].entries()) {
+    const cells = [...names];
+    cells[index] = "";
+    const compatibility = compatibilityFor(ancestor).replace(
+      "| Provider | Client | Flow | Verified |",
+      `| ${cells.join(" | ")} | Verified |`,
+    );
+    const result = fixture({ compatibility });
+    assert.ok(result.errors.includes(`provider evidence: row has missing or malformed ${label} cell`));
+  }
+});
+
+test("release ready gate requires a stated limit for Verified with limit", () => {
+  const missing = compatibilityFor(ancestor).replace("| Verified |", "| Verified with limit |");
+  assert.ok(fixture({ compatibility: missing }).errors.includes(
+    "provider evidence: Provider / Client has missing or malformed limitation",
+  ));
+  const complete = missing.replace(
+    `Runtime commit \`${ancestor}\`.`,
+    `Runtime commit \`${ancestor}\`. Limit: Stateless registration was not exercised.`,
+  );
+  assert.deepEqual(fixture({ compatibility: complete }).errors, []);
+});
+
+test("release ready gate permits a canonical Not run row without a runtime commit", () => {
   const compatibility = compatibilityFor(ancestor)
     .replace("| Verified |", "| Not run |")
-    .replace(`Runtime commit \`${ancestor}\`.`, "No evidence.");
+    .replace("| 2026-08-22 |", "|  |")
+    .replace(`Runtime commit \`${ancestor}\`.`, "Not run: Provider access was unavailable.");
   assert.deepEqual(fixture({ compatibility }).errors, []);
+});
+
+test("release ready gate rejects contradictory Not run evidence", () => {
+  const dated = compatibilityFor(ancestor).replace("| Verified |", "| Not run |");
+  assert.ok(fixture({ compatibility: dated }).errors.includes(
+    "provider evidence: Provider / Client has malformed Not run evidence",
+  ));
+  const receipt = dated.replace("| 2026-08-22 |", "|  |");
+  assert.ok(fixture({ compatibility: receipt }).errors.includes(
+    "provider evidence: Provider / Client has malformed Not run evidence",
+  ));
 });
 
 test("release ready gate rejects an unknown provider status instead of treating it as unverified", () => {

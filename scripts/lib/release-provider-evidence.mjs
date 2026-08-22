@@ -1,0 +1,65 @@
+const PROVIDER_STATUSES = new Set(["Verified", "Verified with limit", "Not run"]);
+
+export function parseProviderRuntimeCommits(tableRows, errors) {
+  const receipts = [];
+  for (const line of tableRows) {
+    const rawCells = line.split("|").slice(1, -1);
+    if (rawCells.length !== 6) {
+      errors.push("provider evidence: malformed current-matrix row");
+      continue;
+    }
+    const cells = rawCells.map((cell) => cell.trim());
+    const [provider, client, flow, status, date, limits] = cells;
+    const rawStatus = rawCells[3];
+    if (!status || rawStatus !== ` ${status} ` || !/^[A-Za-z]+(?: [A-Za-z]+)*$/.test(status)) {
+      errors.push(`provider evidence: ${provider} / ${client} has malformed status`);
+      continue;
+    }
+    if (!PROVIDER_STATUSES.has(status)) {
+      errors.push(`provider evidence: ${provider} / ${client} has unknown status ${status}`);
+      continue;
+    }
+    let malformedName = false;
+    for (const [label, value, rawValue] of [
+      ["Provider", provider, rawCells[0]], ["Client", client, rawCells[1]], ["Flow driven", flow, rawCells[2]],
+    ]) {
+      if (rawValue !== ` ${value} ` || !/[\p{L}\p{N}]/u.test(value)) {
+        errors.push(`provider evidence: row has missing or malformed ${label} cell`);
+        malformedName = true;
+      }
+    }
+    if (malformedName) continue;
+    const verifiedStatus = status === "Verified" || status === "Verified with limit";
+    if (!verifiedStatus) {
+      if (rawCells[4] !== "  " || !/^Not run: (?=[^|]*[\p{L}\p{N}])\S(?:.*\S)?\.$/u.test(limits)) {
+        errors.push(`provider evidence: ${provider} / ${client} has malformed Not run evidence`);
+      }
+      continue;
+    }
+    const dateMatch = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const parsedDate = dateMatch
+      ? new Date(Date.UTC(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3])))
+      : undefined;
+    if (!dateMatch || rawCells[4] !== ` ${date} ` || parsedDate.toISOString().slice(0, 10) !== date) {
+      errors.push(`provider evidence: ${provider} / ${client} has missing or malformed date`);
+      continue;
+    }
+    const match = limits.match(
+      /^Runtime commit `([0-9a-f]{7,40})`(?:, later merged without runtime changes as `([0-9a-f]{7,40})`)?\./,
+    );
+    const receiptCount = limits.split("Runtime commit").length - 1;
+    if (!match || receiptCount !== 1) {
+      errors.push(`provider evidence: ${provider} / ${client} has malformed runtime commit receipt`);
+      continue;
+    }
+    if (status === "Verified with limit") {
+      const remainder = limits.slice(match[0].length);
+      if (!/^ Limit: (?=[^|]*[\p{L}\p{N}])\S(?:.*\S)?\.(?: |$)/u.test(remainder)) {
+        errors.push(`provider evidence: ${provider} / ${client} has missing or malformed limitation`);
+        continue;
+      }
+    }
+    receipts.push({ provider, client, runtimeCommit: match[1], mergeCommit: match[2] });
+  }
+  return receipts;
+}

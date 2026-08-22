@@ -1,4 +1,5 @@
 import { changedEvidenceInputs, isAncestor, resolveCommit } from "./release-evidence-git.mjs";
+import { parseProviderRuntimeCommits } from "./release-provider-evidence.mjs";
 
 const SHA = /^[0-9a-f]{7,40}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
@@ -8,7 +9,6 @@ const EXPORT_TABLE_DIVIDER = "| --- | --- | --- |";
 const PROVIDER_HEADING = "## Current matrix";
 const PROVIDER_TABLE_HEADER = "| Provider | Client | Flow driven | Status | Date | Limits |";
 const PROVIDER_TABLE_DIVIDER = "| --- | --- | --- | --- | --- | --- |";
-const PROVIDER_STATUSES = new Set(["Verified", "Verified with limit", "Not run"]);
 const STATUS_HEADING = "## Published release";
 const STATUS_TABLE_HEADER = "| Item | Status |";
 const STATUS_TABLE_DIVIDER = "| --- | --- |";
@@ -152,51 +152,6 @@ function parseReleaseRows(releaseMatrix, errors) {
   return rows;
 }
 
-function parseProviderRuntimeCommits(source, errors) {
-  const tableRows = renderedTableRows(
-    source, PROVIDER_HEADING, PROVIDER_TABLE_HEADER, PROVIDER_TABLE_DIVIDER, "provider evidence", errors,
-  );
-  const receipts = [];
-  for (const line of tableRows) {
-    const rawCells = line.split("|").slice(1, -1);
-    if (rawCells.length !== 6) {
-      errors.push("provider evidence: malformed current-matrix row");
-      continue;
-    }
-    const cells = rawCells.map((cell) => cell.trim());
-    const [provider, client, , status, date, limits] = cells;
-    const rawStatus = rawCells[3];
-    if (!status || rawStatus !== ` ${status} ` || !/^[A-Za-z]+(?: [A-Za-z]+)*$/.test(status)) {
-      errors.push(`provider evidence: ${provider} / ${client} has malformed status`);
-      continue;
-    }
-    if (!PROVIDER_STATUSES.has(status)) {
-      errors.push(`provider evidence: ${provider} / ${client} has unknown status ${status}`);
-      continue;
-    }
-    const verifiedStatus = status === "Verified" || status === "Verified with limit";
-    if (!verifiedStatus) continue;
-    const dateMatch = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    const parsedDate = dateMatch
-      ? new Date(Date.UTC(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3])))
-      : undefined;
-    if (!dateMatch || parsedDate.toISOString().slice(0, 10) !== date) {
-      errors.push(`provider evidence: ${provider} / ${client} has missing or malformed date`);
-      continue;
-    }
-    const match = limits.match(
-      /^Runtime commit `([0-9a-f]{7,40})`(?:, later merged without runtime changes as `([0-9a-f]{7,40})`)?\.(?: |$)/,
-    );
-    const receiptCount = limits.split("Runtime commit").length - 1;
-    if (!match || receiptCount !== 1) {
-      errors.push(`provider evidence: ${provider} / ${client} has malformed runtime commit receipt`);
-      continue;
-    }
-    receipts.push({ provider, client, runtimeCommit: match[1], mergeCommit: match[2] });
-  }
-  return receipts;
-}
-
 export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd, releaseCommit = "HEAD" }) {
   const errors = [];
   const packageVersion = packageJson?.version;
@@ -240,7 +195,10 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
   const resolvedRelease = resolveCommit(gitCwd, releaseCommit);
   if (!resolvedRelease) errors.push(`release commit is not available in git history: ${releaseCommit}`);
   const providerCommits = [];
-  for (const receipt of parseProviderRuntimeCommits(compatibility, errors)) {
+  const providerRows = renderedTableRows(
+    compatibility, PROVIDER_HEADING, PROVIDER_TABLE_HEADER, PROVIDER_TABLE_DIVIDER, "provider evidence", errors,
+  );
+  for (const receipt of parseProviderRuntimeCommits(providerRows, errors)) {
     const resolvedRuntime = resolveCommit(gitCwd, receipt.runtimeCommit);
     if (!resolvedRuntime) {
       errors.push(`provider evidence: ${receipt.provider} / ${receipt.client} runtime commit is unavailable: ${receipt.runtimeCommit}`);
