@@ -51,7 +51,7 @@ Those same three composition roots mount protected routes with the real `@fastif
 
 Every key in `package.json.exports` requires one exact row in the `Public export live evidence` table. Each row names the export, at least one executed `RM.N` row, and the full main commit that contains the tested runtime tree. Every named `RM.N` must exist in `test/release-matrix.json`.
 
-The gate rejects an unknown evidence ID, a missing or duplicate export row, an invalid or unresolved runtime commit, and a runtime commit that is not an ancestor of the release commit. It also rejects a package version that differs from the `mcp-sso@X.Y.Z` and `vX.Y.Z` pair in the status table. Each error names the affected evidence ID, export, commit, or version.
+The gate rejects a malformed evidence-table row, an unknown evidence ID, a missing or duplicate export row, an invalid or unresolved runtime commit, and a runtime commit that is not an ancestor of the release commit. It also rejects a package version that differs from the `mcp-sso@X.Y.Z` and `vX.Y.Z` pair in the status table. Each error names the affected evidence ID, export, commit, or version when the malformed input makes that value readable.
 
 When a live worktree commit was squash-merged, the compatibility page names both commits. The export table records the main commit. A provider row uses `later merged without runtime changes as` to identify the main commit.
 
