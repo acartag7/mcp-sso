@@ -14,6 +14,7 @@ export let metadataRelease;
 export let versionRelease;
 export let buildRelease;
 export let unrelated;
+export let squashSource;
 
 function git(args) {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -61,6 +62,7 @@ export function setupReleaseReadyFixture() {
   git(["add", "package.json"]);
   git(["commit", "-qm", "ancestor"]);
   ancestor = git(["rev-parse", "HEAD"]);
+  squashSource = git(["commit-tree", "-m", "squash source", `${ancestor}^{tree}`]);
   git(["commit", "--allow-empty", "-qm", "release"]);
   release = git(["rev-parse", "HEAD"]);
   mkdirSync(join(repo, "src"));

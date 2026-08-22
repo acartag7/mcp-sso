@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import {
   ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceRelease, fixture, metadataRelease,
-  packageRelease, release, runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated, versionRelease,
+  packageRelease, release, runtimeRelease, setupReleaseReadyFixture, squashSource, statusFor, unrelated, versionRelease,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -60,9 +60,20 @@ test("release ready gate rejects a build-command change after the evidence commi
 test("release ready gate checks the recorded main commit for a squash-merged live tree", () => {
   const compatibility = compatibilityFor(ancestor).replace(
     `Runtime commit \`${ancestor}\`.`,
-    `Runtime commit \`${unrelated}\`, later merged without runtime changes as \`${ancestor}\`.`,
+    `Runtime commit \`${squashSource}\`, later merged without runtime changes as \`${ancestor}\`.`,
   );
   assert.deepEqual(fixture({ compatibility }).errors, []);
+});
+
+test("release ready gate rejects a runtime-different pre-squash provider commit", () => {
+  const compatibility = compatibilityFor(ancestor).replace(
+    `Runtime commit \`${ancestor}\`.`,
+    `Runtime commit \`${unrelated}\`, later merged without runtime changes as \`${ancestor}\`.`,
+  );
+  const result = fixture({ compatibility });
+  assert.ok(result.errors.includes(
+    `provider evidence: Provider / Client runtime commit ${unrelated} differs from merge commit ${ancestor}: package.json (unreadable)`,
+  ));
 });
 
 test("release ready gate requires a runtime commit on every verified provider row", () => {

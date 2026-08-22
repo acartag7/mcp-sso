@@ -156,7 +156,7 @@ function parseProviderRuntimeCommits(source, errors) {
   const tableRows = renderedTableRows(
     source, PROVIDER_HEADING, PROVIDER_TABLE_HEADER, PROVIDER_TABLE_DIVIDER, "provider evidence", errors,
   );
-  const commits = [];
+  const receipts = [];
   for (const line of tableRows) {
     const rawCells = line.split("|").slice(1, -1);
     if (rawCells.length !== 6) {
@@ -184,9 +184,9 @@ function parseProviderRuntimeCommits(source, errors) {
       errors.push(`provider evidence: ${provider} / ${client} has malformed runtime commit receipt`);
       continue;
     }
-    commits.push(match[2] ?? match[1]);
+    receipts.push({ provider, client, runtimeCommit: match[1], mergeCommit: match[2] });
   }
-  return commits;
+  return receipts;
 }
 
 export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd, releaseCommit = "HEAD" }) {
@@ -231,10 +231,32 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
 
   const resolvedRelease = resolveCommit(gitCwd, releaseCommit);
   if (!resolvedRelease) errors.push(`release commit is not available in git history: ${releaseCommit}`);
-  const commits = new Set([
-    ...parseProviderRuntimeCommits(compatibility, errors),
-    ...[...evidenceRows.values()].map((row) => row.commit),
-  ]);
+  const providerCommits = [];
+  for (const receipt of parseProviderRuntimeCommits(compatibility, errors)) {
+    const resolvedRuntime = resolveCommit(gitCwd, receipt.runtimeCommit);
+    if (!resolvedRuntime) {
+      errors.push(`provider evidence: ${receipt.provider} / ${receipt.client} runtime commit is unavailable: ${receipt.runtimeCommit}`);
+      continue;
+    }
+    if (!receipt.mergeCommit) {
+      providerCommits.push(resolvedRuntime);
+      continue;
+    }
+    const resolvedMerge = resolveCommit(gitCwd, receipt.mergeCommit);
+    if (!resolvedMerge) {
+      errors.push(`provider evidence: ${receipt.provider} / ${receipt.client} merge commit is unavailable: ${receipt.mergeCommit}`);
+      continue;
+    }
+    const parityChanges = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedMerge);
+    if (parityChanges.length > 0) {
+      errors.push(
+        `provider evidence: ${receipt.provider} / ${receipt.client} runtime commit ${receipt.runtimeCommit} differs from merge commit ${receipt.mergeCommit}: ${parityChanges.join(", ")}`,
+      );
+      continue;
+    }
+    providerCommits.push(resolvedMerge);
+  }
+  const commits = new Set([...providerCommits, ...[...evidenceRows.values()].map((row) => row.commit)]);
   for (const commit of commits) {
     if (!SHA.test(commit)) {
       errors.push(`recorded runtime commit is malformed: ${commit}`);
