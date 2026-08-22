@@ -492,6 +492,8 @@ test("identity completion rejects each host response shape at the boundary", asy
     { status: 200, headers: { "X-Test": "one", "x-test": "two" } },
     { status: 200, headers: { "bad header": "value" } }, { status: 200, headers: { "x-test": "line\nbreak" } },
     { status: 200, headers: { "x-test": " leading" } }, { status: 200, headers: { "x-test": "trailing " } },
+    { status: 200, headers: { "x-test": "\tleading" } }, { status: 200, headers: { "x-test": "trailing\t" } },
+    { status: 200, headers: { "content-type": "\t" }, body: "must fail before success" },
     { status: 200, headers: { "x-test": "café" } }, { status: 200, headers: { "x-test": "😀" } },
     { status: 200, headers: { ["x".repeat(257)]: "value" } },
     { status: 200, headers: { "x-test": "x".repeat(8193) } }, { status: 200, headers: oversizedHeaders },

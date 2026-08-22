@@ -115,8 +115,10 @@ function validateCookieValue(value: string): void {
 }
 
 function validateAsciiValue(value: string, limit: number, label: string): void {
+  const first = value[0];
+  const last = value.at(-1);
   if (Buffer.byteLength(value, "ascii") > limit || /[^\x09\x20-\x7E]/u.test(value)
-    || (value.length > 0 && (value[0] === " " || value.at(-1) === " "))) throw new TypeError(`${label} is invalid`);
+    || (value.length > 0 && (first === " " || first === "\t" || last === " " || last === "\t"))) throw new TypeError(`${label} is invalid`);
 }
 
 function withNoStore(headers: Record<string, string>): Record<string, string> {
