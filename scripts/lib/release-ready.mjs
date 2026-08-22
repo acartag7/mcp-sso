@@ -63,7 +63,16 @@ function parseExportEvidence(source, errors) {
     return new Map();
   }
   const rows = new Map();
-  for (const match of section.matchAll(/^\| `([^`]+)` \| ([^|]+) \| `([^`]+)` \|$/gm)) {
+  for (const line of section.split("\n")) {
+    if (!line.startsWith("|") || line === "| Export | Live evidence | Runtime commit |" || line === "| --- | --- | --- |") continue;
+    const match = line.match(/^\| `([^`]+)` \| ([^|]+) \| `([^`]+)` \|$/);
+    if (!match) {
+      const namedExport = line.match(/^\| `([^`]+)` \|/)?.[1];
+      errors.push(namedExport
+        ? `export evidence: malformed table row for ${namedExport}`
+        : "export evidence: malformed table row");
+      continue;
+    }
     const [, exportName, evidence, commit] = match;
     if (rows.has(exportName)) {
       errors.push(`export evidence: duplicate row for ${exportName}`);

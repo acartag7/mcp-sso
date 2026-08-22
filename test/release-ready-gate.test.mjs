@@ -82,6 +82,12 @@ test("release ready gate names an evidence ID absent from the release matrix", (
   assert.ok(result.errors.includes("unknown live evidence ID RM.999 for export ./fastify"));
 });
 
+test("release ready gate rejects a malformed evidence row beside a valid row", () => {
+  const compatibility = `${compatibilityFor(ancestor)}\n| \`./fastify\` | RM.2 | not-a-commit |`;
+  const result = fixture({ compatibility });
+  assert.ok(result.errors.includes("export evidence: malformed table row for ./fastify"));
+});
+
 test("release ready gate reports package and status versions", () => {
   const result = fixture({ packageJson: { version: "0.5.1", exports: { ".": {}, "./fastify": {} } } });
   assert.ok(result.errors.includes("version mismatch: package.json is 0.5.1, docs/verification-status.md is 0.5.0"));
