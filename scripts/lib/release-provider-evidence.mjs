@@ -2,6 +2,7 @@ const PROVIDER_STATUSES = new Set(["Verified", "Verified with limit", "Not run"]
 
 export function parseProviderRuntimeCommits(tableRows, errors) {
   const receipts = [];
+  const subjects = new Set();
   for (const line of tableRows) {
     const rawCells = line.split("|").slice(1, -1);
     if (rawCells.length !== 6) {
@@ -29,6 +30,12 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
       }
     }
     if (malformedName) continue;
+    const subject = JSON.stringify([provider, client, flow].map((value) => value.replace(/`([^`]+)`/g, "$1")));
+    if (subjects.has(subject)) {
+      errors.push(`provider evidence: duplicate row for ${provider} / ${client} / ${flow}`);
+      continue;
+    }
+    subjects.add(subject);
     const limitCount = limits.split("Limit:").length - 1;
     const notRunCount = limits.split("Not run:").length - 1;
     const receiptCount = limits.split("Runtime commit").length - 1

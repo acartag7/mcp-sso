@@ -176,6 +176,16 @@ test("release ready gate rejects an unknown provider status instead of treating 
   assert.ok(result.errors.includes("provider evidence: Provider / Client has unknown status Verifed"));
 });
 
+test("release ready gate rejects duplicate provider evidence subjects", () => {
+  const compatibility = compatibilityFor(ancestor);
+  const row = compatibility.split("\n").find((line) => line.startsWith("| Provider | Client | Flow |"));
+  assert.ok(row);
+  const contradictory = row.replace("| Verified | 2026-08-22 |", "| Not run |  |")
+    .replace(`Runtime commit \`${ancestor}\`.`, "Not run: The flow was not exercised.");
+  const result = fixture({ compatibility: compatibility.replace(row, `${row}\n${contradictory}`) });
+  assert.ok(result.errors.includes("provider evidence: duplicate row for Provider / Client / Flow"));
+});
+
 test("release ready gate names a public export without a live evidence row", () => {
   const result = fixture({ packageJson: { version: "0.5.0", exports: { ".": {}, "./fastify": {}, "./hono": {} } } });
   assert.ok(result.errors.includes("missing live evidence row for export ./hono"));
@@ -247,6 +257,22 @@ test("release ready gate rejects an evidence table hidden by Markdown", () => {
   for (const [index, compatibility] of cases.entries()) {
     assert.ok(fixture({ compatibility }).errors.includes(expected[index]));
   }
+});
+
+test("release ready gate rejects raw HTML tables in every evidence section", () => {
+  const html = "<table><tr><td>contradictory evidence</td></tr></table>";
+  const compatibility = compatibilityFor(ancestor);
+  for (const heading of ["## Current matrix", "## Public export live evidence"]) {
+    const changed = compatibility.replace(heading, `${heading}\n\n${html}`);
+    const label = heading.includes("Current") ? "provider evidence" : "export evidence";
+    assert.ok(fixture({ compatibility: changed }).errors.includes(
+      `${label}: raw HTML table elements are not allowed in the table section`,
+    ));
+  }
+  const status = statusFor().replace("## Published release", `## Published release\n\n${html}`);
+  assert.ok(fixture({ status }).errors.includes(
+    "status version: raw HTML table elements are not allowed in the table section",
+  ));
 });
 
 test("release ready gate rejects repeated evidence and status sections", () => {

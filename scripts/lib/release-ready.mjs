@@ -14,6 +14,7 @@ const STATUS_TABLE_HEADER = "| Item | Status |";
 const STATUS_TABLE_DIVIDER = "| --- | --- |";
 const STATUS_VERSION_ITEM = "npm package and tag";
 const HTML_ENTITY = /&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);/;
+const HTML_TABLE_ELEMENT = /<\/?(?:table|thead|tbody|tfoot|tr|th|td)\b/i;
 const CANONICAL_H2 = /^## [A-Za-z0-9](?:[A-Za-z0-9 .-]*[A-Za-z0-9])?$/;
 
 function hasNoncanonicalHeading(lines) {
@@ -68,6 +69,9 @@ function renderedTableRows(source, heading, header, divider, label, errors) {
   const lines = section.split("\n");
   if (section.includes("<!--") || section.includes("-->")) {
     errors.push(`${label}: HTML comments are not allowed in the table section`);
+  }
+  if (HTML_TABLE_ELEMENT.test(section)) {
+    errors.push(`${label}: raw HTML table elements are not allowed in the table section`);
   }
   if (lines.some((line) => /^\s*(?:`{3,}|~{3,})/.test(line))) {
     errors.push(`${label}: fenced blocks are not allowed in the table section`);

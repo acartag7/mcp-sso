@@ -13,6 +13,12 @@ const repo = fileURLToPath(new URL("..", import.meta.url));
 const allowedPackageRoots = new Set(["dist", "docs", "README.md", "LICENSE", "package.json"]);
 const releaseTest = process.env.RUN_RELEASE_MATRIX === "true" ? test : test.skip;
 
+function exportTargets(value: unknown, label: string): string[] {
+  if (typeof value === "string") return [value];
+  assert.ok(value && typeof value === "object" && !Array.isArray(value), `${label} is a string or condition map`);
+  return Object.entries(value).flatMap(([condition, target]) => exportTargets(target, `${label}.${condition}`));
+}
+
 function jsonArray(output: string): unknown[] {
   const start = output.indexOf("["); const end = output.lastIndexOf("]");
   if (start < 0 || end < start) throw new Error(`expected JSON array in output:\n${output}`);
@@ -110,6 +116,15 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
       dependencies: Record<string, string>; exports: Record<string, unknown>;
     };
     assert.deepEqual(Object.keys(installedPkg.dependencies), ["jose"], "published runtime dependencies remain jose-only");
+    assert.deepEqual(installedPkg.exports, repoPkg.exports, "the packed export map matches the reviewed package map");
+    for (const [entry, conditions] of Object.entries(installedPkg.exports)) {
+      for (const target of exportTargets(conditions, `exports.${entry}`)) {
+        assert.match(target, /^\.\//, `packed export ${entry} uses a package-relative target`);
+        const resolvedTarget = resolve(installedPackage, target);
+        assert.ok(resolvedTarget.startsWith(`${installedPackage}/`) && existsSync(resolvedTarget),
+          `packed export ${entry} target exists: ${target}`);
+      }
+    }
 
     const installedBin = join(base, "node_modules", ".bin", "mcp-sso");
     assert.ok(installedBin.startsWith(base) && installedBin.includes("node_modules/.bin/mcp-sso") && existsSync(installedBin),
@@ -143,6 +158,13 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
     assert.deepEqual(imports, packedImports, "the import probe covers every export in the packed artifact");
     const importCheck = await run(process.execPath, ["--input-type=module", "-e", `await Promise.all(${JSON.stringify(imports)}.map((id)=>import(id)))`], generated);
     assert.equal(importCheck.code, 0, `published export import failed:\n${importCheck.output}`);
+    const typeImports = imports.map((entry, index) => `import * as entry${index} from ${JSON.stringify(entry)};\nvoid entry${index};`).join("\n");
+    await writeFile(join(base, "all-exports.ts"), typeImports);
+    await writeFile(join(base, "tsconfig.exports.json"), JSON.stringify({ compilerOptions: { module: "nodenext",
+      moduleResolution: "nodenext", target: "ES2023", strict: true, noEmit: true, skipLibCheck: true, types: ["node"] },
+    include: ["all-exports.ts"] }, null, 2));
+    const exportTypecheck = await run(join(base, "node_modules", ".bin", "tsc"), ["-p", join(base, "tsconfig.exports.json")], base);
+    assert.equal(exportTypecheck.code, 0, `published export declaration check failed:\n${exportTypecheck.output}`);
 
     await writeFile(join(generated, "tsconfig.json"), JSON.stringify({ compilerOptions: { module: "nodenext", moduleResolution: "nodenext",
       target: "ES2023", strict: true, noEmit: true, skipLibCheck: true, types: ["node"],
