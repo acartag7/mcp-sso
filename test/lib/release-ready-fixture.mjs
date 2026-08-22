@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { evidenceInputDigest } from "../../scripts/lib/release-evidence-git.mjs";
 import { evaluateReleaseReadiness } from "../../scripts/lib/release-ready.mjs";
 
 let repo;
@@ -9,12 +10,12 @@ export let ancestor;
 export let release;
 export let runtimeRelease;
 export let evidenceRelease;
+export let modeRelease;
 export let packageRelease;
 export let metadataRelease;
 export let versionRelease;
 export let buildRelease;
 export let unrelated;
-export let squashSource;
 
 function git(args) {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -31,6 +32,10 @@ export function compatibilityFor(commit) {
     `| \`.\` | \`RM.1\` | \`${commit}\` |`,
     `| \`./fastify\` | \`RM.2\` | \`${commit}\` |`,
   ].join("\n");
+}
+
+export function evidenceDigestFor(commit) {
+  return evidenceInputDigest(repo, commit);
 }
 
 export function statusFor(version = "0.5.0") {
@@ -65,7 +70,6 @@ export function setupReleaseReadyFixture() {
   git(["add", "package.json"]);
   git(["commit", "-qm", "ancestor"]);
   ancestor = git(["rev-parse", "HEAD"]);
-  squashSource = git(["commit-tree", "-m", "squash source", `${ancestor}^{tree}`]);
   git(["commit", "--allow-empty", "-qm", "release"]);
   release = git(["rev-parse", "HEAD"]);
   mkdirSync(join(repo, "src"));
@@ -86,6 +90,10 @@ export function setupReleaseReadyFixture() {
   git(["add", ...evidenceFiles]);
   git(["commit", "-qm", "evidence release"]);
   evidenceRelease = git(["rev-parse", "HEAD"]);
+  chmodSync(join(repo, "scripts/live/probe.mjs"), 0o755);
+  git(["add", "scripts/live/probe.mjs"]);
+  git(["commit", "-qm", "evidence mode release"]);
+  modeRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "-c", "package-change", release]);
   writeFileSync(join(repo, "package.json"), JSON.stringify({ version: "0.4.0", scripts: {}, exports: { ".": {}, "./new": {} } }));
   git(["commit", "-qam", "package release"]);

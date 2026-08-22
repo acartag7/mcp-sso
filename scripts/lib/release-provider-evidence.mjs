@@ -31,7 +31,8 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
     if (malformedName) continue;
     const limitCount = limits.split("Limit:").length - 1;
     const notRunCount = limits.split("Not run:").length - 1;
-    const receiptCount = limits.split("Runtime commit").length - 1;
+    const receiptCount = limits.split("Runtime commit").length - 1
+      + limits.split("Runtime evidence digest").length - 1;
     const verifiedStatus = status === "Verified" || status === "Verified with limit";
     if (!verifiedStatus) {
       if (limitCount !== 0 || notRunCount !== 1 || receiptCount !== 0 || rawCells[4] !== "  "
@@ -48,11 +49,12 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
       errors.push(`provider evidence: ${provider} / ${client} has missing or malformed date`);
       continue;
     }
-    const match = limits.match(
-      /^Runtime commit `([0-9a-f]{7,40})`(?:, later merged without runtime changes as `([0-9a-f]{7,40})`)?\./,
+    const directMatch = limits.match(/^Runtime commit `([0-9a-f]{7,40})`\./);
+    const squashMatch = limits.match(
+      /^Runtime evidence digest `sha256:([0-9a-f]{64})`, merged as `([0-9a-f]{7,40})`\./,
     );
-    if (!match || receiptCount !== 1) {
-      errors.push(`provider evidence: ${provider} / ${client} has malformed runtime commit receipt`);
+    if (receiptCount !== 1 || (directMatch === null) === (squashMatch === null)) {
+      errors.push(`provider evidence: ${provider} / ${client} has malformed runtime evidence receipt`);
       continue;
     }
     if (status === "Verified" && (limitCount !== 0 || notRunCount !== 0)) {
@@ -60,14 +62,16 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
       continue;
     }
     if (status === "Verified with limit") {
-      const remainder = limits.slice(match[0].length);
+      const remainder = limits.slice((directMatch ?? squashMatch)[0].length);
       if (limitCount !== 1 || notRunCount !== 0
         || !/^ Limit: (?=[^|]*[\p{L}\p{N}])\S(?:.*\S)?\.(?: |$)/u.test(remainder)) {
         errors.push(`provider evidence: ${provider} / ${client} has missing or malformed limitation`);
         continue;
       }
     }
-    receipts.push({ provider, client, runtimeCommit: match[1], mergeCommit: match[2] });
+    receipts.push(directMatch
+      ? { provider, client, runtimeCommit: directMatch[1] }
+      : { provider, client, evidenceDigest: squashMatch[1], mergeCommit: squashMatch[2] });
   }
   return receipts;
 }

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import {
-  ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceRelease, fixture, metadataRelease,
-  packageRelease, release, runtimeRelease, setupReleaseReadyFixture, squashSource, statusFor, unrelated, versionRelease,
+  ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceDigestFor, evidenceRelease, fixture,
+  metadataRelease, modeRelease, packageRelease, release, runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated,
+  versionRelease,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -58,29 +59,33 @@ test("release ready gate rejects a build-command change after the evidence commi
   ));
 });
 
-test("release ready gate checks the recorded main commit for a squash-merged live tree", () => {
+test("release ready gate verifies a squash evidence digest against the recorded main commit", () => {
   const compatibility = compatibilityFor(ancestor).replace(
     `Runtime commit \`${ancestor}\`.`,
-    `Runtime commit \`${squashSource}\`, later merged without runtime changes as \`${ancestor}\`.`,
+    `Runtime evidence digest \`sha256:${evidenceDigestFor(ancestor)}\`, merged as \`${ancestor}\`.`,
   );
   assert.deepEqual(fixture({ compatibility }).errors, []);
 });
 
-test("release ready gate rejects a runtime-different pre-squash provider commit", () => {
+test("release ready gate rejects a squash evidence digest that does not match the main commit", () => {
   const compatibility = compatibilityFor(ancestor).replace(
     `Runtime commit \`${ancestor}\`.`,
-    `Runtime commit \`${unrelated}\`, later merged without runtime changes as \`${ancestor}\`.`,
+    `Runtime evidence digest \`sha256:${"0".repeat(64)}\`, merged as \`${ancestor}\`.`,
   );
   const result = fixture({ compatibility });
   assert.ok(result.errors.includes(
-    `provider evidence: Provider / Client runtime commit ${unrelated} differs from merge commit ${ancestor}: package.json (unreadable)`,
+    `provider evidence: Provider / Client evidence digest does not match merge commit ${ancestor}`,
   ));
+});
+
+test("release evidence digests include executable file modes", () => {
+  assert.notEqual(evidenceDigestFor(evidenceRelease), evidenceDigestFor(modeRelease));
 });
 
 test("release ready gate requires a runtime commit on every verified provider row", () => {
   const compatibility = compatibilityFor(ancestor).replace(`Runtime commit \`${ancestor}\`.`, "Receipt missing.");
   const result = fixture({ compatibility });
-  assert.ok(result.errors.includes("provider evidence: Provider / Client has malformed runtime commit receipt"));
+  assert.ok(result.errors.includes("provider evidence: Provider / Client has malformed runtime evidence receipt"));
 });
 
 test("release ready gate requires a real canonical date on every verified provider row", () => {
@@ -251,6 +256,27 @@ test("release ready gate rejects repeated evidence and status sections", () => {
       "status version: expected one canonical ## Published release section, found 2",
     ));
   }
+});
+
+test("release ready gate rejects HTML entities in section headings", () => {
+  const compatibility = `${compatibilityFor(ancestor)}\n\n## Public export live evidenc&#101;`;
+  assert.ok(fixture({ compatibility }).errors.includes(
+    "export evidence: HTML entities are not allowed in section headings",
+  ));
+  const status = `${statusFor()}\n\n## Published releas&#101;`;
+  assert.ok(fixture({ status }).errors.includes(
+    "status version: HTML entities are not allowed in section headings",
+  ));
+});
+
+test("release ready gate rejects HTML entities in provider evidence rows", () => {
+  const compatibility = compatibilityFor(ancestor).replace(
+    `Runtime commit \`${ancestor}\`.`,
+    `Runtime commit \`${ancestor}\`. Limi&#116;: Refresh was not exercised.`,
+  );
+  assert.ok(fixture({ compatibility }).errors.includes(
+    "provider evidence: HTML entities are not allowed in table rows",
+  ));
 });
 
 test("release ready gate ignores section titles in prose and links", () => {

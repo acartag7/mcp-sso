@@ -1,4 +1,4 @@
-import { changedEvidenceInputs, isAncestor, resolveCommit } from "./release-evidence-git.mjs";
+import { changedEvidenceInputs, evidenceInputDigest, isAncestor, resolveCommit } from "./release-evidence-git.mjs";
 import { parseProviderRuntimeCommits } from "./release-provider-evidence.mjs";
 
 const SHA = /^[0-9a-f]{7,40}$/;
@@ -13,6 +13,7 @@ const STATUS_HEADING = "## Published release";
 const STATUS_TABLE_HEADER = "| Item | Status |";
 const STATUS_TABLE_DIVIDER = "| --- | --- |";
 const STATUS_VERSION_ITEM = "npm package and tag";
+const HTML_ENTITY = /&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);/;
 
 function uniqueSectionAfter(source, heading, label, errors) {
   const lines = source.split("\n");
@@ -23,6 +24,13 @@ function uniqueSectionAfter(source, heading, label, errors) {
     return headingPattern.test(unquoted) ? [index] : [];
   });
   const starts = lines.flatMap((line, index) => line === heading ? [index] : []);
+  if (lines.some((line) => {
+    const unquoted = line.replace(/^\s*(?:>\s*)+/, "");
+    return /^##[ \t]+/.test(unquoted) && HTML_ENTITY.test(unquoted);
+  })) {
+    errors.push(`${label}: HTML entities are not allowed in section headings`);
+    return undefined;
+  }
   if (starts.length !== 1 || renderedHeadings.length !== 1) {
     errors.push(`${label}: expected one canonical ${heading} section, found ${renderedHeadings.length}`);
     return undefined;
@@ -55,6 +63,9 @@ function renderedTableRows(source, heading, header, divider, label, errors) {
   }
   let tableEnd = tableStart + 2;
   while (tableEnd < lines.length && lines[tableEnd].startsWith("|")) tableEnd += 1;
+  if (lines.slice(tableStart + 2, tableEnd).some((line) => HTML_ENTITY.test(line))) {
+    errors.push(`${label}: HTML entities are not allowed in table rows`);
+  }
   for (let index = 0; index < lines.length; index += 1) {
     if (index >= tableStart && index < tableEnd) continue;
     const unquoted = lines[index].replace(/^\s*(?:>\s*)+/, "");
@@ -221,28 +232,28 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
     compatibility, PROVIDER_HEADING, PROVIDER_TABLE_HEADER, PROVIDER_TABLE_DIVIDER, "provider evidence", errors,
   );
   for (const receipt of parseProviderRuntimeCommits(providerRows, errors)) {
+    if (receipt.evidenceDigest) {
+      const resolvedMerge = resolveCommit(gitCwd, receipt.mergeCommit);
+      if (!resolvedMerge) {
+        errors.push(`provider evidence: ${receipt.provider} / ${receipt.client} merge commit is unavailable: ${receipt.mergeCommit}`);
+        continue;
+      }
+      const actualDigest = evidenceInputDigest(gitCwd, resolvedMerge);
+      if (actualDigest !== receipt.evidenceDigest) {
+        errors.push(
+          `provider evidence: ${receipt.provider} / ${receipt.client} evidence digest does not match merge commit ${receipt.mergeCommit}`,
+        );
+        continue;
+      }
+      providerCommits.push(resolvedMerge);
+      continue;
+    }
     const resolvedRuntime = resolveCommit(gitCwd, receipt.runtimeCommit);
     if (!resolvedRuntime) {
       errors.push(`provider evidence: ${receipt.provider} / ${receipt.client} runtime commit is unavailable: ${receipt.runtimeCommit}`);
       continue;
     }
-    if (!receipt.mergeCommit) {
-      providerCommits.push(resolvedRuntime);
-      continue;
-    }
-    const resolvedMerge = resolveCommit(gitCwd, receipt.mergeCommit);
-    if (!resolvedMerge) {
-      errors.push(`provider evidence: ${receipt.provider} / ${receipt.client} merge commit is unavailable: ${receipt.mergeCommit}`);
-      continue;
-    }
-    const parityChanges = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedMerge);
-    if (parityChanges.length > 0) {
-      errors.push(
-        `provider evidence: ${receipt.provider} / ${receipt.client} runtime commit ${receipt.runtimeCommit} differs from merge commit ${receipt.mergeCommit}: ${parityChanges.join(", ")}`,
-      );
-      continue;
-    }
-    providerCommits.push(resolvedMerge);
+    providerCommits.push(resolvedRuntime);
   }
   const commits = new Set([...providerCommits, ...[...evidenceRows.values()].map((row) => row.commit)]);
   for (const commit of commits) {
