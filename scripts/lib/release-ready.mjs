@@ -5,6 +5,9 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const EXPORT_HEADING = "## Public export live evidence";
 const EXPORT_TABLE_HEADER = "| Export | Live evidence | Runtime commit |";
 const EXPORT_TABLE_DIVIDER = "| --- | --- | --- |";
+const PROVIDER_HEADING = "## Current matrix";
+const PROVIDER_TABLE_HEADER = "| Provider | Client | Flow driven | Status | Date | Limits |";
+const PROVIDER_TABLE_DIVIDER = "| --- | --- | --- | --- | --- | --- |";
 const STATUS_HEADING = "## Published release";
 const STATUS_TABLE_HEADER = "| Item | Status |";
 const STATUS_TABLE_DIVIDER = "| --- | --- |";
@@ -148,9 +151,37 @@ function parseReleaseRows(releaseMatrix, errors) {
   return rows;
 }
 
-function recordedRuntimeCommits(source) {
-  return [...source.matchAll(/Runtime commit `([^`]+)`(?:, later merged without runtime changes as `([^`]+)`)?/g)]
-    .map((match) => match[2] ?? match[1]);
+function parseProviderRuntimeCommits(source, errors) {
+  const tableRows = renderedTableRows(
+    source, PROVIDER_HEADING, PROVIDER_TABLE_HEADER, PROVIDER_TABLE_DIVIDER, "provider evidence", errors,
+  );
+  const commits = [];
+  for (const line of tableRows) {
+    const rawCells = line.split("|").slice(1, -1);
+    if (rawCells.length !== 6) {
+      errors.push("provider evidence: malformed current-matrix row");
+      continue;
+    }
+    const cells = rawCells.map((cell) => cell.trim());
+    const [provider, client, , status, , limits] = cells;
+    const rawStatus = rawCells[3];
+    if (!status || rawStatus !== ` ${status} ` || !/^[A-Za-z]+(?: [A-Za-z]+)*$/.test(status)) {
+      errors.push(`provider evidence: ${provider} / ${client} has malformed status`);
+      continue;
+    }
+    const verifiedStatus = status === "Verified" || status === "Verified with limit";
+    if (!verifiedStatus) continue;
+    const match = limits.match(
+      /^Runtime commit `([0-9a-f]{7,40})`(?:, later merged without runtime changes as `([0-9a-f]{7,40})`)?\.(?: |$)/,
+    );
+    const receiptCount = limits.split("Runtime commit").length - 1;
+    if (!match || receiptCount !== 1) {
+      errors.push(`provider evidence: ${provider} / ${client} has malformed runtime commit receipt`);
+      continue;
+    }
+    commits.push(match[2] ?? match[1]);
+  }
+  return commits;
 }
 
 export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd, releaseCommit = "HEAD" }) {
@@ -195,7 +226,10 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
 
   const resolvedRelease = resolveCommit(gitCwd, releaseCommit);
   if (!resolvedRelease) errors.push(`release commit is not available in git history: ${releaseCommit}`);
-  const commits = new Set([...recordedRuntimeCommits(compatibility), ...[...evidenceRows.values()].map((row) => row.commit)]);
+  const commits = new Set([
+    ...parseProviderRuntimeCommits(compatibility, errors),
+    ...[...evidenceRows.values()].map((row) => row.commit),
+  ]);
   for (const commit of commits) {
     if (!SHA.test(commit)) {
       errors.push(`recorded runtime commit is malformed: ${commit}`);

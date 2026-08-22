@@ -1,113 +1,12 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
+import {
+  ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceRelease, fixture, metadataRelease,
+  packageRelease, release, runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated, versionRelease,
+} from "./lib/release-ready-fixture.mjs";
 
-let repo;
-let ancestor;
-let release;
-let runtimeRelease;
-let evidenceRelease;
-let packageRelease;
-let metadataRelease;
-let buildRelease;
-let unrelated;
-function git(args) {
-  return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-}
-function compatibilityFor(commit) {
-  return [
-    "# Client compatibility",
-    "",
-    `Runtime commit \`${commit}\`.`,
-    "",
-    "## Public export live evidence",
-    "",
-    "| Export | Live evidence | Runtime commit |",
-    "| --- | --- | --- |",
-    `| \`.\` | \`RM.1\` | \`${commit}\` |`,
-    `| \`./fastify\` | \`RM.2\` | \`${commit}\` |`,
-  ].join("\n");
-}
-function statusFor(version = "0.5.0") {
-  return [
-    "# Current verification status",
-    "",
-    "## Published release",
-    "",
-    "| Item | Status |",
-    "| --- | --- |",
-    `| npm package and tag | \`mcp-sso@${version}\` and \`v${version}\` |`,
-    "| Conformance claim | Current |",
-  ].join("\n");
-}
-function fixture(overrides = {}) {
-  const packageJson = overrides.packageJson ?? { version: "0.5.0", exports: { ".": {}, "./fastify": {} } };
-  const releaseMatrix = overrides.releaseMatrix ?? {
-    rows: [{ id: "RM.1", exports: ["."] }, { id: "RM.2", exports: ["./fastify"] }],
-  };
-  const compatibility = overrides.compatibility ?? compatibilityFor(ancestor);
-  const status = overrides.status ?? statusFor();
-  const releaseCommit = overrides.releaseCommit ?? release;
-  return evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility, status, gitCwd: repo, releaseCommit });
-}
-before(() => {
-  repo = mkdtempSync(join(tmpdir(), "mcp-sso-release-ready-"));
-  git(["init", "-q"]);
-  git(["config", "user.email", "release-ready@example.invalid"]);
-  git(["config", "user.name", "Release Ready Test"]);
-  writeFileSync(join(repo, "package.json"), JSON.stringify({ version: "0.4.0", scripts: {}, exports: { ".": {} } }));
-  git(["add", "package.json"]);
-  git(["commit", "-qm", "ancestor"]);
-  ancestor = git(["rev-parse", "HEAD"]);
-  git(["commit", "--allow-empty", "-qm", "release"]);
-  release = git(["rev-parse", "HEAD"]);
-  mkdirSync(join(repo, "src"));
-  writeFileSync(join(repo, "src", "runtime.ts"), "export const changed = true;\n");
-  git(["add", "src/runtime.ts"]);
-  git(["commit", "-qm", "runtime release"]);
-  runtimeRelease = git(["rev-parse", "HEAD"]);
-  git(["switch", "-q", "-c", "evidence-change", release]);
-  for (const directory of ["examples", "test", "scripts/live", ".github/workflows"]) {
-    mkdirSync(join(repo, directory), { recursive: true });
-  }
-  const evidenceFiles = [
-    "examples/example.ts", "test/evidence.test.ts", "scripts/live/probe.mjs", "scripts/run-release-matrix.mjs",
-    ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
-  ];
-  for (const file of evidenceFiles) writeFileSync(join(repo, file), "changed\n");
-  git(["add", ...evidenceFiles]);
-  git(["commit", "-qm", "evidence release"]);
-  evidenceRelease = git(["rev-parse", "HEAD"]);
-  git(["switch", "-q", "-c", "package-change", release]);
-  writeFileSync(join(repo, "package.json"), JSON.stringify({ version: "0.4.0", scripts: {}, exports: { ".": {}, "./new": {} } }));
-  git(["commit", "-qam", "package release"]);
-  packageRelease = git(["rev-parse", "HEAD"]);
-  git(["switch", "-q", "-c", "metadata-change", release]);
-  writeFileSync(join(repo, "package.json"), JSON.stringify({
-    version: "0.5.0",
-    description: "updated",
-    scripts: { "check:release-ready": "node gate.mjs" },
-    exports: { ".": {} },
-  }));
-  git(["commit", "-qam", "metadata release"]);
-  metadataRelease = git(["rev-parse", "HEAD"]);
-  git(["switch", "-q", "-c", "build-change", release]);
-  writeFileSync(join(repo, "package.json"), JSON.stringify({
-    version: "0.4.0",
-    scripts: { build: "node different-build.mjs" },
-    exports: { ".": {} },
-  }));
-  git(["commit", "-qam", "build release"]);
-  buildRelease = git(["rev-parse", "HEAD"]);
-  git(["switch", "-q", "--orphan", "unrelated"]);
-  git(["commit", "--allow-empty", "-qm", "unrelated"]);
-  unrelated = git(["rev-parse", "HEAD"]);
-});
-after(() => rmSync(repo, { recursive: true, force: true }));
+before(setupReleaseReadyFixture);
+after(cleanupReleaseReadyFixture);
 test("release ready gate accepts complete evidence at an ancestor commit", () => {
   assert.deepEqual(fixture().errors, []);
 });
@@ -140,8 +39,15 @@ test("release ready gate rejects package runtime changes after the evidence comm
   ));
 });
 
-test("release ready gate permits release metadata after the evidence commit", () => {
+test("release ready gate permits descriptive metadata and its own command after the evidence commit", () => {
   assert.deepEqual(fixture({ releaseCommit: metadataRelease }).errors, []);
+});
+
+test("release ready gate rejects a package version change after the evidence commit", () => {
+  const result = fixture({ releaseCommit: versionRelease });
+  assert.ok(result.errors.includes(
+    `recorded runtime commit ${ancestor} predates release runtime changes: package.json:version`,
+  ));
 });
 
 test("release ready gate rejects a build-command change after the evidence commit", () => {
@@ -156,6 +62,19 @@ test("release ready gate checks the recorded main commit for a squash-merged liv
     `Runtime commit \`${ancestor}\`.`,
     `Runtime commit \`${unrelated}\`, later merged without runtime changes as \`${ancestor}\`.`,
   );
+  assert.deepEqual(fixture({ compatibility }).errors, []);
+});
+
+test("release ready gate requires a runtime commit on every verified provider row", () => {
+  const compatibility = compatibilityFor(ancestor).replace(`Runtime commit \`${ancestor}\`.`, "Receipt missing.");
+  const result = fixture({ compatibility });
+  assert.ok(result.errors.includes("provider evidence: Provider / Client has malformed runtime commit receipt"));
+});
+
+test("release ready gate permits an unverified provider row without a runtime commit", () => {
+  const compatibility = compatibilityFor(ancestor)
+    .replace("| Verified |", "| Not run |")
+    .replace(`Runtime commit \`${ancestor}\`.`, "No evidence.");
   assert.deepEqual(fixture({ compatibility }).errors, []);
 });
 

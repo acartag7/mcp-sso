@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 
 const NON_RUNTIME_PACKAGE_FIELDS = new Set([
-  "author", "bugs", "contributors", "description", "funding", "homepage", "keywords", "license", "repository", "version",
+  "author", "bugs", "contributors", "description", "funding", "homepage", "keywords", "license", "repository",
 ]);
 
 function gitOutput(cwd, args) {
