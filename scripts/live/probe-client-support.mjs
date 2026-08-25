@@ -65,7 +65,11 @@ export function deniedFlowHolds(events, reason) {
   return verify?.reason === reason && callback?.reason === "identity_rejected" && !minted;
 }
 
-/** True when any of the values appears in the audit text. */
+/** True when any of the values appears in the audit text. Fails closed: no
+ *  audit text to search, or nothing to search for, counts as a leak, so the
+ *  check can never pass by having compared nothing. */
 export function auditLeaks(text, values) {
+  if (typeof text !== "string" || text.length === 0) return true;
+  if (!Array.isArray(values) || values.length === 0) return true;
   return values.some((value) => typeof value !== "string" || value.length === 0 || text.includes(value));
 }

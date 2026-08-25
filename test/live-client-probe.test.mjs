@@ -62,6 +62,8 @@ test("BEHAVIOUR client audit assertions: only the events one flow added, in orde
   assert.equal(auditLeaks("… code=abc …", ["abc"]), true);
   assert.equal(auditLeaks("clean", ["abc"]), false);
   assert.equal(auditLeaks("clean", [undefined]), true, "a missing secret fails closed");
+  assert.equal(auditLeaks("", ["abc"]), true, "no audit text to search is a failure, not a clean result");
+  assert.equal(auditLeaks("clean", []), true, "nothing to search for is a failure, not a clean result");
 });
 
 test("BEHAVIOUR serve generations: consecutive rows sharing a generation run in one serve.sh lifetime", () => {
@@ -77,6 +79,7 @@ test("BEHAVIOUR serve generations: consecutive rows sharing a generation run in 
   assert.equal(served[1].rows[0].args.includes("entra_bad_tid"), true);
   assert.equal(served[2].rows[0].args.includes("entra_subject_not_allowed"), true);
   assert.ok(groups.filter((group) => group.serve === undefined).every((group) => group.rows.length === 1), "standalone rows stand alone");
+  assert.equal(ROWS.find((row) => row.id === "access-edge-denial").expect, "denied_at_access_edge", "E1 expects the edge, never the login, to deny");
   assert.equal(classifyServeFailure("serve.sh: tunnel credentials file is missing for the given tunnel UUID").reason, "tunnel_credentials_absent");
   assert.equal(classifyServeFailure("serve.sh: cloudflared is required on PATH").reason, "cloudflared_unavailable");
   assert.deepEqual(classifyServeFailure("example server for leg entra failed readiness"), { status: "FAIL", reason: "serve_failed" });

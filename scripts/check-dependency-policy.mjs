@@ -45,6 +45,7 @@ export async function loadDependencyPolicy(root = process.cwd()) {
   const policy = object(policyJson(markdown), "dependency policy");
   object(policy.packages, "dependency policy packages");
   object(policy.actions, "dependency policy actions");
+  object(policy.binaries ?? {}, "dependency policy binaries");
   if (!Number.isInteger(policy.minimumAgeDays) || policy.minimumAgeDays < 1) {
     throw new Error("dependency policy minimumAgeDays must be a positive integer");
   }
@@ -85,6 +86,13 @@ function assertRecordShape(policy) {
     if (typeof record.version !== "string" || record.version === "") errors.push(`${name}: version is invalid`);
     if (!validDate(record.published)) errors.push(`${name}: published date is invalid`);
   }
+  for (const [name, recordValue] of Object.entries(policy.binaries ?? {})) {
+    const record = object(recordValue, `binary ${name}`);
+    if (!/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/releases\/download\/[^\s]+$/.test(record.url ?? "")) errors.push(`${name}: binary url must be a GitHub release asset`);
+    if (!/^[0-9a-f]{64}$/.test(record.sha256 ?? "")) errors.push(`${name}: sha256 must be 64 lowercase hex characters`);
+    if (typeof record.version !== "string" || record.version === "") errors.push(`${name}: binary version is invalid`);
+    if (!validDate(record.published)) errors.push(`${name}: binary published date is invalid`);
+  }
   for (const [name, recordValue] of Object.entries(policy.actions)) {
     const record = object(recordValue, `action ${name}`);
     if (!/^[0-9a-f]{40}$/.test(record.sha)) errors.push(`${name}: sha must be 40 lowercase hex characters`);
@@ -120,6 +128,21 @@ async function packagePins(root) {
   if (!manager) throw new Error("packageManager must be an exact pnpm@version pin");
   pins.pnpm = manager[1];
   return pins;
+}
+
+/** Every `curl ... -o <file> <url>` followed by a `sha256sum -c` line in the
+ *  workflows: the binaries a job downloads and verifies by digest. */
+async function workflowBinaries(root) {
+  const dir = resolve(root, ".github/workflows");
+  const files = (await readdir(dir)).filter((name) => /\.ya?ml$/.test(name)).sort();
+  const found = [];
+  for (const file of files) {
+    const text = await readFile(resolve(dir, file), "utf8");
+    for (const match of text.matchAll(/curl [^\n]*?(https:\/\/github\.com\/[^\s"']+\/releases\/download\/[^\s"']+)[^\n]*\n\s*echo "([0-9a-f]{64})  [^"]+" \| sha256sum -c -/g)) {
+      found.push({ file, url: match[1], sha256: match[2] });
+    }
+  }
+  return found;
 }
 
 async function workflowPins(root) {
@@ -220,6 +243,25 @@ export async function verifyLocalDependencyPolicy(root = process.cwd(), now = ne
   }
   for (const name of Object.keys(policy.actions).sort()) {
     if (!used.has(name)) errors.push(`${name}: ledger action is unused`);
+  }
+
+  const binaries = policy.binaries ?? {};
+  const downloaded = await workflowBinaries(root);
+  const usedBinaries = new Set();
+  for (const download of downloaded) {
+    const entry = Object.entries(binaries).find(([, record]) => record.url === download.url);
+    if (!entry) {
+      errors.push(`${download.file}: downloaded binary ${download.url} is missing from the ledger`);
+      continue;
+    }
+    const [name, record] = entry;
+    usedBinaries.add(name);
+    if (record.sha256 !== download.sha256) errors.push(`${download.file}: ${name} digest does not match the ledger`);
+    if (!download.url.includes(`/${record.version}/`)) errors.push(`${download.file}: ${name} url does not name ledger version ${record.version}`);
+    assertAge(name, record.published, policy.minimumAgeDays, now, errors);
+  }
+  for (const name of Object.keys(binaries).sort()) {
+    if (!usedBinaries.has(name)) errors.push(`${name}: ledger binary is not downloaded by any workflow`);
   }
   fail(errors);
   return policy;

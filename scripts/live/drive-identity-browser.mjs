@@ -54,7 +54,7 @@ export async function signInMicrosoft(page, policy, user, password, trace) {
     if (kind === "elsewhere") return undefined;
     if (kind === "kmsi") { await page.locator("#idBtn_Back").click({ timeout: STEP_TIMEOUT_MS }).catch(() => {}); continue; }
     if (kind === "mfa_interstitial") return "blocked_mfa_interstitial";
-    if (kind === "error") return "denied_at_provider";
+    if (kind === "error") return "denied_at_login";
     await page.waitForTimeout(1_000);
   }
   return "timeout";
@@ -81,7 +81,7 @@ export async function cloudflareAssertion({ context, origin, idpName, user, pass
     if (!policy.allowed(url)) return { outcome: "unexpected_host" };
     const kind = classifyAccessPage({ url, text: await bodyText(page) });
     trace.push(`${policy.classify(url)}:${kind}`);
-    if (kind === "denied") return { outcome: "denied_at_provider" };
+    if (kind === "denied") return { outcome: "denied_at_access_edge" };
     const assertion = extractAssertionCookie(await context.cookies(origin), origin);
     if (assertion !== undefined) return { outcome: "approved", assertion };
     await page.waitForTimeout(1_000);
@@ -121,7 +121,7 @@ export async function driveAuthorize({ context, origin, authorizeUrl, callback, 
     if (cls === "access") {
       const kind = classifyAccessPage({ url, text: await bodyText(page) });
       trace.push(`access:${kind}`);
-      if (kind === "denied") return { outcome: "denied_at_provider" };
+      if (kind === "denied") return { outcome: "denied_at_access_edge" };
       if (!idpChosen) {
         await page.getByText(idpName, { exact: false }).first().click();
         idpChosen = true;

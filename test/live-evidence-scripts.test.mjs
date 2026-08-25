@@ -23,6 +23,7 @@ import {
   assertBasePreflight, assertLegPreflight, gatewayPortForLeg, groupAuthorizationJsonFromMapping,
   issuerOriginForLeg, prepareLiveStateDir, readGoogleCredentialFile,
 } from "../scripts/live/run-support.mjs";
+import { BLOCKED_REASON_NAMES } from "../scripts/live/rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const read = (path) => readFileSync(join(ROOT, path), "utf8");
@@ -481,7 +482,8 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(workflow, /^\s+id-token: write/m);
   assert.match(workflow, /branches: \["rehearsal\/\*"\]/, "pushes run only for rehearsal branches, with the pattern the environment policy uses");
   assert.match(workflow, /role-to-assume: \$\{\{ secrets\.MCP_SSO_LIVE_ROLE_ARN \}\}/, "the role ARN is a masked secret, not a variable");
-  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /run: google-chrome --version/, "the browser the driver runs is checked once, up front");
+  assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 2, "neither job persists a checkout credential");
   assert.match(workflow, /node scripts\/live\/ci\/mask-bundle\.mjs/, "private values are masked before the probes print");
   assert.ok(workflow.indexOf("mask-bundle.mjs") < workflow.indexOf("rehearsal.mjs"), "masking precedes the run");
   assert.match(workflow, /rm -rf -- "\$MCP_SSO_BUNDLE_DIR"/, "the bundle is removed on every exit path");
@@ -534,7 +536,10 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   const jobs = workflow.split(/^  record:$/m);
   assert.equal(jobs.length, 2, "one record job");
   assert.doesNotMatch(jobs[0].slice(jobs[0].indexOf("  rehearse:")), /contents: write|pull-requests: write/, "the rehearsal job holds no write token");
-  assert.doesNotMatch(jobs[1], /environment: live|configure-aws-credentials/, "the record job holds no AWS role");
+  assert.doesNotMatch(jobs[1], /environment:|configure-aws-credentials/, "the record job holds no AWS role");
+  assert.doesNotMatch(jobs[1], /pnpm install|pnpm\/action-setup/, "the job with the write token installs no third-party code");
+  assert.match(jobs[1], /persist-credentials: false/);
+  assert.match(jobs[1], /--require-head/, "the record binds the receipt to the checked-out commit");
   assert.match(jobs[1], /if: github\.event_name == 'workflow_dispatch' && inputs\.record && github\.ref == 'refs\/heads\/main'/, "recording is opt-in and main only");
   assert.match(jobs[1], /render-evidence\.mjs --receipt .* --write/);
   assert.match(README, /render-evidence\.mjs/);
@@ -546,6 +551,19 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(README, /live\.yml/);
   assert.match(README, /fetch-bundle\.mjs/);
   assert.match(README, /gh workflow run live\.yml/);
+  // Every BLOCKED reason the code can record is named in both records, and no
+  // record still speaks the retired undifferentiated denial.
+  for (const reason of BLOCKED_REASON_NAMES) {
+    assert.match(README, new RegExp(`\`${reason}\``), `README names ${reason}`);
+    assert.match(DOC, new RegExp(`\`${reason}\``), `harness reference names ${reason}`);
+  }
+  const everything = readdirSync(join(ROOT, "scripts/live"), { recursive: true, withFileTypes: true }).filter((e) => e.isFile())
+    .map((e) => read(`${e.parentPath.slice(ROOT.length)}/${e.name}`)).join("\n") + DOC + read("docs/live-verification.md");
+  assert.doesNotMatch(everything, /denied_at_provider/, "the retired outcome name survives nowhere");
+  // Every live test file is named in the harness reference.
+  for (const name of readdirSync(join(ROOT, "test")).filter((n) => /^live-.*\.test\.mjs$/.test(n))) {
+    assert.match(DOC, new RegExp(`\`test/${name.replace(/\./g, "\\.")}\``), `harness reference lists ${name}`);
+  }
 });
 
 test("CONTENT hygiene: scripts/live and its records name no private infrastructure", () => {

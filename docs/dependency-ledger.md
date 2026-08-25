@@ -193,6 +193,14 @@ The following block is the machine-readable source used by `check:deps`. The hum
       "published": "2026-07-19T02:55:07Z",
       "firstPartyException": true
     }
+  },
+  "binaries": {
+    "cloudflared": {
+      "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-amd64",
+      "version": "2026.7.3",
+      "sha256": "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17",
+      "published": "2026-07-23T10:19:16Z"
+    }
   }
 }
 ```
@@ -202,7 +210,7 @@ The following block is the machine-readable source used by `check:deps`. The hum
 
 | Binary | Version | Published | 15-day check | SHA-256 | Purpose |
 |---|---|---|---|---|---|
-| [`cloudflared`](https://github.com/cloudflare/cloudflared) (`cloudflared-linux-amd64` release asset) | `2026.7.3` | 2026-07-23 | ✅ | `9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17` | The tunnel connector `serve.sh` runs so the live workflow's served legs are reachable on their public hostnames. Downloaded from the release, verified against this digest with `sha256sum -c` before it is installed, never from a package repository or an install script. |
+| [`cloudflared`](https://github.com/cloudflare/cloudflared) (`cloudflared-linux-amd64` release asset) | `2026.7.3` | 2026-07-23 | ✅ | `9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17` | The tunnel connector `serve.sh` runs so the live workflow's served legs are reachable on their public hostnames. Downloaded from the release, verified against this digest with `sha256sum -c` before it is installed, never from a package repository or an install script. `check:deps` binds the workflow's download URL and digest to the `binaries` entry in the machine-readable block and applies the 15-day rule to it, the same way it binds every Action. |
 
 ### CI integration containers (image tags)
 
@@ -212,7 +220,7 @@ CI verification, `process-guard`, and CodeQL use ephemeral GitHub-hosted `ubuntu
 
 Release publishing remains separately isolated in `publish.yml` on GitHub-hosted `ubuntu-latest` behind the tag-only `publish` environment and the no-checkout OIDC publishing job.
 
-The live rehearsal in `live.yml` runs on GitHub-hosted `ubuntu-latest` behind two environments: `live` (branch policy `main`, unattended) and `live-branch` (branch policy `rehearsal/*`, a required reviewer approves each run before the role is assumed). It never subscribes to pull requests and its first step refuses any other ref. The job's only write permission is `id-token`, used to assume the AWS role that reads the live secrets; the checkout credential is not persisted, and the fetched bundle is removed at the end of the job.
+The live rehearsal in `live.yml` runs on GitHub-hosted `ubuntu-latest` behind two environments: `live` (branch policy `main`, unattended) and `live-branch` (branch policy `rehearsal/*`, a required reviewer approves each run before the role is assumed). It never subscribes to pull requests and its first step refuses any other ref. The job's only write permission is `id-token`, used to assume the AWS role that reads the live secrets; the checkout credential is not persisted, the release-matrix row runs with an explicit environment that holds neither the AWS session nor the bundle location, and the fetched bundle and tunnel credentials are removed at the end of the job. The `record` job, the only one with a write token, installs no dependency and persists no checkout credential.
 
 ## Verification & change protocol
 

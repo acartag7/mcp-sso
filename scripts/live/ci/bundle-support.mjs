@@ -92,26 +92,37 @@ export function bundleOutput(bundle, name, format) {
   throw new BundleError("output is not a scalar; -raw needs a string, number, or boolean");
 }
 
-/** Every string leaf of a bundle long enough to be a private value (a
- *  credential, an identifier, a hostname), plus the bare hostname of any leaf
+/** Keys whose values are private at any length: credentials, identities, and
+ *  the names an operator would recognise. Every other string leaf counts only
+ *  from MIN_PRIVATE_LENGTH characters, so ports and scope names are not
+ *  masked and ordinary output stays readable. */
+export const ALWAYS_PRIVATE_KEYS = Object.freeze(new Set([
+  "entra_client_secret", "test_user_password", "cf_access_idp_name", "cf_access_audience", "entra_tenant_id", "entra_client_id",
+  "unmapped_group_object_id_do_not_map", "TunnelSecret", "TunnelID", "AccountTag", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+  "apiKey", "projectId",
+]));
+
+/** Every private string of a bundle: the values under ALWAYS_PRIVATE_KEYS at
+ *  any length, every other string leaf of MIN_PRIVATE_LENGTH characters or
+ *  more, each line of a multi-line value, and the bare hostname of any value
  *  that is a URL, so a log that prints `host=<name>` is masked as well as one
- *  that prints the origin. Short leaves such as ports and scope names are
- *  left alone; they are not private and would over-mask ordinary output. */
-export function privateValues(value, out = new Set()) {
+ *  that prints the origin. */
+export function privateValues(value, out = new Set(), key = undefined) {
   if (typeof value === "string") {
-    if (value.length >= MIN_PRIVATE_LENGTH && !/[\r\n]/.test(value)) {
-      out.add(value);
+    for (const line of value.split(/\r?\n/)) {
+      if (line.length === 0) continue;
+      if (line.length >= MIN_PRIVATE_LENGTH || ALWAYS_PRIVATE_KEYS.has(key)) out.add(line);
       try {
-        const host = new URL(value).hostname;
-        if (host.length >= MIN_PRIVATE_LENGTH) out.add(host);
+        const host = new URL(line).hostname;
+        if (host.length > 0 && (host.length >= MIN_PRIVATE_LENGTH || ALWAYS_PRIVATE_KEYS.has(key))) out.add(host);
       } catch { /* not a URL */ }
     }
     return out;
   }
   if (Array.isArray(value)) {
-    for (const item of value) privateValues(item, out);
+    for (const item of value) privateValues(item, out, key);
   } else if (isPlainObject(value)) {
-    for (const item of Object.values(value)) privateValues(item, out);
+    for (const [childKey, item] of Object.entries(value)) privateValues(item, out, childKey);
   }
   return out;
 }
@@ -120,4 +131,10 @@ export function privateValues(value, out = new Set()) {
 export function leaksPrivateValue(text, values) {
   for (const value of values) if (text.includes(value)) return true;
   return false;
+}
+
+/** One `::add-mask::` workflow command, encoded the way the Actions runner
+ *  decodes it (`%`, CR, and LF), so the registered mask is the value itself. */
+export function maskCommand(value) {
+  return `::add-mask::${value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}`;
 }

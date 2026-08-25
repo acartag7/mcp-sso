@@ -10,7 +10,7 @@
 #           scripts/live/probe-entra.mjs                entra
 #           scripts/live/probe-google.mjs               google
 #           scripts/live/probe-e2e.mjs                  any leg   (needs REDIS_URL)
-#           scripts/live/drive-identity.mjs             any leg   (the headless identity driver)
+#           scripts/live/drive-identity.mjs             cloudflare_access (the headless identity driver)
 #           scripts/live/probe-client.mjs               any leg   (a real client against a SERVED leg)
 #           examples/fastify-sqlite/index.ts            any leg   (used by serve.sh)
 #
@@ -63,7 +63,7 @@ case "$ENTRY:$LEG" in
   scripts/live/probe-entra.mjs:entra) KIND=probe ;;
   scripts/live/probe-google.mjs:google) KIND=probe ;;
   scripts/live/probe-e2e.mjs:cloudflare_access|scripts/live/probe-e2e.mjs:entra|scripts/live/probe-e2e.mjs:google) KIND=e2e ;;
-  scripts/live/drive-identity.mjs:cloudflare_access|scripts/live/drive-identity.mjs:entra|scripts/live/drive-identity.mjs:google) KIND=driver ;;
+  scripts/live/drive-identity.mjs:cloudflare_access) KIND=driver ;;
   scripts/live/probe-client.mjs:cloudflare_access|scripts/live/probe-client.mjs:entra|scripts/live/probe-client.mjs:google) KIND=client ;;
   examples/fastify-sqlite/index.ts:cloudflare_access|examples/fastify-sqlite/index.ts:entra|examples/fastify-sqlite/index.ts:google) KIND=server ;;
   *) fail "unsupported entry/leg pair: $ENTRY $LEG" ;;
@@ -218,7 +218,7 @@ if [ "$KIND" = "probe" ] || [ "$KIND" = "server" ]; then
         else
           command -v cloudflared >/dev/null 2>&1 || fail "cloudflared is required to mint the Access assertion"
           CF_ACCESS_ASSERTION="$(cloudflared access token -app="${OAUTH_ISSUER}/oauth/authorize" 2>/dev/null)" \
-            || fail "cloudflared could not mint an Access assertion; run: cloudflared access login ${OAUTH_ISSUER}/oauth/authorize"
+            || fail "cloudflared could not mint an Access assertion; run: cloudflared access login <the leg issuer origin>/oauth/authorize"
           [ -n "$CF_ACCESS_ASSERTION" ] || fail "cloudflared returned an empty Access assertion"
         fi
         pass CF_ACCESS_ASSERTION

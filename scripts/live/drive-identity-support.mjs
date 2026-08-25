@@ -3,9 +3,17 @@
 // here touches a browser, so every decision the driver makes is testable.
 
 export const TASKS = Object.freeze(["cloudflare-assertion"]);
+/** The driver's whole vocabulary. A denial names WHERE it happened: at the
+ *  Access edge (the policy refused a signed-in account, which is what the
+ *  edge-denial row proves) or at the Microsoft login (a wrong password, a
+ *  disabled fixture), because a broken test account must never read as proof
+ *  that Cloudflare Access stopped it. */
 export const OUTCOMES = Object.freeze([
-  "approved", "denied_at_provider", "blocked_mfa_interstitial", "browser_unavailable", "unexpected_host", "timeout",
+  "approved", "denied_at_access_edge", "denied_at_login", "denied_at_gateway", "blocked_mfa_interstitial", "browser_unavailable",
+  "unexpected_host", "timeout", "driver_error",
 ]);
+/** Outcomes the driver exits 0 for: it did what it was asked and observed a definite answer. */
+export const DEFINITE_OUTCOMES = Object.freeze(["approved", "denied_at_access_edge", "denied_at_login", "denied_at_gateway"]);
 /** The one host a password may be typed on. Anything else is refused before a keystroke. */
 export const CREDENTIAL_HOST = "login.microsoftonline.com";
 const ROLE = /^[a-z]+$/;

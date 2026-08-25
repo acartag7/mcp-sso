@@ -98,7 +98,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: require the browser the driver runs
         # The runner image's Google Chrome is what playwright-core drives; a
-        # missing browser fails here, once, instead of as blocked rows.
+        # missing browser fails here, once, instead of as eight blocked rows.
         run: google-chrome --version
       - name: name the bundle directory
         # The runner context is not available in job-level env.
@@ -153,18 +153,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-20)
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10 (2026-08-03)
+          persist-credentials: false
+      # The renderer imports only scripts/lib and Node built-ins: no install,
+      # so the one job with a write token loads no third-party code.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (2026-07-14)
         with:
           node-version: "24"
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (2026-03-11)
         with:
           name: rehearsal-receipt-${{ github.sha }}-${{ github.run_id }}
           path: ${{ runner.temp }}/receipt
       - name: render the receipt into the evidence record
-        run: node scripts/live/render-evidence.mjs --receipt "$RUNNER_TEMP/receipt/receipt.json" --date "$(date -u +%F)" --write
+        run: node scripts/live/render-evidence.mjs --receipt "$RUNNER_TEMP/receipt/receipt.json" --date "$(date -u +%F)" --write --require-head
       - name: open the evidence pull request
         env:
           GH_TOKEN: ${{ github.token }}
@@ -184,7 +184,10 @@ jobs:
 
           Spec: docs/live-verification.md
           EOF
-          git push -u origin "$BRANCH"
+          # gh authenticates the push from GH_TOKEN through its credential helper,
+          # so no credential lands in .git/config or in a remote URL.
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/${BRANCH}"
           gh pr create --base main --head "$BRANCH" \
             --title "docs(evidence): record the release rehearsal at ${SHORT}" \
             --body "Rendered from the passing receipt of ${RUN_URL} at \`$(git rev-parse HEAD~1)\`. Every rehearsal row passed on a clean tree. This branch was pushed by the workflow token, so its checks did not start: run \`gh pr close <n> && gh pr reopen <n>\` (or push an empty commit) to start them, then review and merge."

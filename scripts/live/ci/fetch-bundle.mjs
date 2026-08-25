@@ -2,8 +2,9 @@
 // that configure-aws-credentials has already authenticated. The two stack
 // bundles are required; the rest are optional and their absence is recorded,
 // never papered over: a row that needs one reports BLOCKED with that reason.
-// Every file is created exclusively with mode 0600 and validated before it is
-// kept. No value is printed.
+// Only what a row consumes is fetched: the hosted-browser key stays in its
+// container until a row reads it. Every file is created exclusively with mode
+// 0600 and validated before it is kept. No value is printed.
 import { execFile } from "node:child_process";
 import { appendFileSync, closeSync, constants, mkdirSync, openSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -22,21 +23,12 @@ export const SECRETS = Object.freeze([
   { name: "cloudflare", file: "cloudflare.json", required: true, validate: parseBundle },
   { name: "google", file: "google.env", required: false, validate: undefined },
   { name: "tunnel-credentials", file: "tunnel-credentials.json", required: false, validate: validateTunnel },
-  { name: "browserbase", file: "browserbase.json", required: false, validate: validateBrowserbase },
 ]);
 
 function validateTunnel(text) {
   const value = parseJsonObject(text);
   for (const key of ["AccountTag", "TunnelSecret", "TunnelID"]) {
     if (typeof value[key] !== "string" || value[key].length === 0) throw new BundleError("tunnel credentials are incomplete");
-  }
-  return value;
-}
-
-function validateBrowserbase(text) {
-  const value = parseJsonObject(text);
-  for (const key of ["apiKey", "projectId"]) {
-    if (typeof value[key] !== "string" || value[key].length === 0) throw new BundleError("browserbase credentials are incomplete");
   }
   return value;
 }

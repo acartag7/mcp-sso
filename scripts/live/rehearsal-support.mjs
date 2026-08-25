@@ -13,11 +13,12 @@ const SERVE_WRONG_TENANT = Object.freeze({ legs: ["entra"], env: { MCP_SSO_ENTRA
 const SERVE_NOT_ALLOWLISTED = Object.freeze({ legs: ["entra"], env: { MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: "00000000-0000-0000-0000-000000000002" } });
 const client = (id, leg, user, expect, serve) => ({ id, kind: "client", entry: CLIENT, leg, env: {}, args: ["--user", user, "--expect", expect], serve });
 
-/** The rows one rehearsal runs, in order. Each is one run.sh invocation. A
- *  `driver` row signs a test user in through the real provider pages and must
- *  end in exactly `expect`; a row that `provides` something hands its result
- *  file to the later row that `needs` it; a `client` row runs against a leg
- *  serve.sh exposes for the rows that share its `serve` generation. */
+/** The rows one rehearsal runs, in order. Each is one run.sh invocation
+ *  (or, for the `command` kind, one repository command). A `driver` row signs
+ *  a test user in through the real provider pages and must end in exactly
+ *  `expect`; a row that `provides` something hands its result file to the
+ *  later row that `needs` it; a `client` row runs against a leg serve.sh
+ *  exposes for the rows that share its `serve` generation. */
 export const ROWS = Object.freeze([
   { id: "release-matrix", kind: "command", command: ["pnpm", "run", "test:release"], env: {} },
   { id: "probe-entra", kind: "probe", entry: "scripts/live/probe-entra.mjs", leg: "entra", env: {} },
@@ -25,7 +26,7 @@ export const ROWS = Object.freeze([
   { id: "access-login", kind: "driver", entry: DRIVER, leg: "cloudflare_access", env: {},
     args: ["cloudflare-assertion", "--user", "member"], expect: "approved", provides: "cloudflare-assertion" },
   { id: "access-edge-denial", kind: "driver", entry: DRIVER, leg: "cloudflare_access", env: {},
-    args: ["cloudflare-assertion", "--user", "nogroups"], expect: "denied_at_provider" },
+    args: ["cloudflare-assertion", "--user", "nogroups"], expect: "denied_at_access_edge" },
   { id: "probe-cloudflare", kind: "probe", entry: "scripts/live/probe-cloudflare.mjs", leg: "cloudflare_access", env: {},
     needs: "cloudflare-assertion" },
   { id: "probe-e2e:stored", kind: "probe", entry: "scripts/live/probe-e2e.mjs", leg: "entra", env: { MCP_SSO_DCR_MODE: "stored" } },
@@ -39,6 +40,10 @@ export const ROWS = Object.freeze([
   client("client-entra:not-allowlisted", "entra", "member", "entra_subject_not_allowed", SERVE_NOT_ALLOWLISTED),
 ]);
 
+/** What a row that `needs` a provided result receives it through. An
+ *  unknown handoff is an error, never a silently unset variable. */
+export const HANDOFF_ENV = Object.freeze({ "cloudflare-assertion": "MCP_SSO_CF_ACCESS_ASSERTION_FILE" });
+
 /** Group consecutive rows by the serve generation they share. Rows without a
  *  generation stand alone. Order is preserved. */
 export function generations(rows) {
@@ -51,24 +56,30 @@ export function generations(rows) {
   return groups;
 }
 
-/** Why a serve generation could not start: armable reasons are BLOCKED. */
-export function classifyServeFailure(stderr) {
-  if (/tunnel credentials file is missing|MCP_SSO_TUNNEL/.test(stderr)) return { status: "BLOCKED", reason: "tunnel_credentials_absent" };
-  if (/cloudflared is required/.test(stderr)) return { status: "BLOCKED", reason: "cloudflared_unavailable" };
-  return { status: "FAIL", reason: "serve_failed" };
-}
-
-/** A row is BLOCKED, not FAILED, only when run.sh refused it for one of these
- *  owner-armable reasons. The patterns are run.sh's own fixed messages; every
- *  other non-zero exit is a FAIL. A BLOCKED row is never evidence and still
- *  turns the rehearsal red; it exists so the summary names what to arm. */
+/** A row is BLOCKED, not FAILED, only when it was refused for one of these
+ *  owner-armable reasons. The patterns are run.sh's and the probes' own fixed
+ *  refusal messages, matched on stderr only when nothing else ran; every other
+ *  non-zero exit is a FAIL. A BLOCKED row is never evidence and still turns
+ *  the rehearsal red; it exists so the summary names what to arm. */
 const BLOCKED_REASONS = Object.freeze([
   { reason: "cloudflare_access_login_required", pattern: /cloudflared (?:could not mint|returned an empty|is required to mint)/ },
   { reason: "google_credentials_absent", pattern: /Google credential file must be/ },
   { reason: "infrastructure_session_expired", pattern: /(?:AWS|Azure) session is not valid/ },
+  { reason: "browser_unavailable", pattern: /^probe-client: browser is unavailable/m },
 ]);
 /** Driver outcomes an operator can arm: a browser to run in, an MFA-free test user. */
 const BLOCKED_OUTCOMES = new Set(["browser_unavailable", "blocked_mfa_interstitial"]);
+/** Outcomes the driver exits 0 for; any other outcome must come with a non-zero exit. */
+const DEFINITE_DRIVER_OUTCOMES = new Set(["approved", "denied_at_access_edge", "denied_at_login", "denied_at_gateway"]);
+const SERVE_BLOCKED = Object.freeze([
+  { reason: "tunnel_credentials_absent", pattern: /tunnel credentials file is missing|MCP_SSO_TUNNEL/ },
+  { reason: "cloudflared_unavailable", pattern: /cloudflared is required/ },
+]);
+/** Every BLOCKED reason the rehearsal can record, for the records that list them. */
+export const BLOCKED_REASON_NAMES = Object.freeze([
+  ...BLOCKED_REASONS.map((entry) => entry.reason), ...BLOCKED_OUTCOMES, "release_services_absent",
+  "tunnel_already_served", ...SERVE_BLOCKED.map((entry) => entry.reason), "prerequisite_row_did_not_pass",
+]);
 
 const LINE = /^(PASS|FAIL|CONTROL)  (.*)$/;
 const SUMMARIES = [
@@ -98,6 +109,7 @@ export function classifyRun({ code, stdout, stderr }) {
   }
   if (failed > 0) return { status: "FAIL", reason: "checks_failed", lines, checks };
   if (checks === undefined || lines.length === 0) return { status: "FAIL", reason: "no_summary", lines, checks };
+  if (checks.passed <= 0) return { status: "FAIL", reason: "no_checks", lines, checks };
   if (checks.total !== undefined && checks.passed !== checks.total) {
     return { status: "FAIL", reason: "summary_mismatch", lines, checks };
   }
@@ -110,46 +122,62 @@ export function classifyRun({ code, stdout, stderr }) {
 }
 
 /** Classify the release-matrix command: every RM row passed, or the services
- *  it needs were not there (BLOCKED), or it failed. */
+ *  it needs were not there (BLOCKED, only when the runner refused before any
+ *  row ran), or it failed. */
 export function classifyCommandRun({ code, stdout, stderr }) {
-  const combined = `${stdout}\n${stderr}`;
-  if (/MYSQL_URL is required|REDIS_URL is required|RUN_INTEGRATION=true is required/.test(combined)) {
-    return { status: "BLOCKED", reason: "release_services_absent", lines: [] };
-  }
   const summary = /^PASS release matrix: (\d+)\/(\d+) required rows$/m.exec(stdout);
   const rowLines = stdout.split("\n").map((line) => /^(PASS|FAIL) (RM\.\d+) (.*)$/.exec(line)).filter(Boolean)
     .map((match) => ({ kind: match[1], text: `${match[2]} ${match[3]}` }));
   const failed = rowLines.filter((line) => line.kind === "FAIL").length;
+  if (code !== 0 && rowLines.length === 0
+    && /^release matrix preflight failed: (?:MYSQL_URL|REDIS_URL|RUN_INTEGRATION=true) is required/m.test(stderr)) {
+    return { status: "BLOCKED", reason: "release_services_absent", lines: [] };
+  }
   if (code === 0 && summary !== null && failed === 0 && +summary[1] === +summary[2] && +summary[1] > 0 && rowLines.length === +summary[1]) {
     return { status: "PASS", lines: rowLines, checks: { passed: +summary[1], total: +summary[2], controls: 0 } };
   }
   return { status: "FAIL", reason: failed > 0 ? "checks_failed" : "matrix_failed", lines: rowLines };
 }
 
-/** Classify one driver outcome: the single `outcome:` line against `expect`. */
+/** Classify one driver outcome: the last `outcome:` line against `expect`,
+ *  and the exit code against the outcome (a definite outcome exits 0; a
+ *  process that died after printing one is not a pass). */
 export function classifyDriverRun({ code, stdout, stderr, expect }) {
-  const match = /^outcome: ([a-z_]+)$/m.exec(stdout);
-  if (match === null) {
+  const matches = [...stdout.matchAll(/^outcome: ([a-z_]+)$/gm)];
+  if (matches.length === 0) {
     const reason = blockedReason(stderr);
     if (reason !== undefined && code !== 0) return { status: "BLOCKED", reason, lines: [] };
     return { status: "FAIL", reason: "runner_refused", lines: [] };
   }
-  const outcome = match[1];
+  const outcome = matches[matches.length - 1][1];
   const lines = [{ kind: outcome === expect ? "PASS" : "FAIL", text: `sign-in outcome ${outcome}, expected ${expect}` }];
+  if (DEFINITE_DRIVER_OUTCOMES.has(outcome) !== (code === 0)) {
+    return { status: "FAIL", reason: "driver_exit_mismatch", outcome, lines: [{ kind: "FAIL", text: `outcome ${outcome} with exit ${code}` }] };
+  }
   if (outcome === expect) return { status: "PASS", outcome, lines };
   if (BLOCKED_OUTCOMES.has(outcome)) return { status: "BLOCKED", reason: outcome, outcome, lines };
   return { status: "FAIL", reason: `outcome_${outcome}`, outcome, lines };
 }
 
-/** The receipt. Row output is kept only when it carries no private value;
- *  a leak turns the row into a FAIL whose lines are replaced by a fixed note. */
-export function buildReceipt({ runtimeCommit, dirty, startedAt, finishedAt, rows, runner }) {
-  const evidence = dirty !== true && rows.every((row) => row.status === "PASS");
+/** Why a serve generation could not start: armable reasons are BLOCKED. */
+export function classifyServeFailure(stderr) {
+  for (const { reason, pattern } of SERVE_BLOCKED) if (pattern.test(stderr)) return { status: "BLOCKED", reason };
+  return { status: "FAIL", reason: "serve_failed" };
+}
+
+/** The receipt. `complete` says whether every row in ROWS ran; `evidence`
+ *  requires that, a clean tree, and every row PASS. Row output is kept only
+ *  when it carries no private value; a leak turns the row into a FAIL whose
+ *  lines are replaced by a fixed note. */
+export function buildReceipt({ runtimeCommit, dirty, startedAt, finishedAt, rows, runner, totalRows = ROWS.length }) {
+  const complete = rows.length === totalRows;
+  const evidence = complete && rows.length > 0 && dirty !== true && rows.every((row) => row.status === "PASS");
   return {
     schema: 1,
     kind: "mcp-sso-release-rehearsal",
     runtimeCommit,
     dirty: dirty === true,
+    complete,
     evidence,
     runner,
     startedAt,
@@ -173,7 +201,8 @@ export function formatSummary(receipt) {
   const counts = { PASS: 0, FAIL: 0, BLOCKED: 0 };
   for (const row of receipt.rows) counts[row.status]++;
   out.push("");
-  out.push(`rehearsal at ${receipt.runtimeCommit}${receipt.dirty ? " (DIRTY TREE, not evidence)" : ""}: `
+  out.push(`rehearsal at ${receipt.runtimeCommit}${receipt.dirty ? " (DIRTY TREE, not evidence)" : ""}`
+    + `${receipt.complete ? "" : " (PARTIAL, not evidence)"}: `
     + `${counts.PASS} passed, ${counts.FAIL} failed, ${counts.BLOCKED} blocked; evidence=${receipt.evidence}`);
   return out.join("\n");
 }

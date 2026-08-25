@@ -7,8 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
-  CREDENTIAL_HOST, classifyAccessPage, classifyMicrosoftPage, extractAssertionCookie, hostPolicy, parseDriverArgs,
+  CREDENTIAL_HOST, DEFINITE_OUTCOMES, OUTCOMES, classifyAccessPage, classifyMicrosoftPage, extractAssertionCookie, hostPolicy, parseDriverArgs,
 } from "../scripts/live/drive-identity-support.mjs";
+import { signInMicrosoft } from "../scripts/live/drive-identity-browser.mjs";
 import { readAssertionFile, testUsersJson } from "../scripts/live/run-support.mjs";
 
 const JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln";
@@ -40,6 +41,63 @@ test("BEHAVIOUR host policy: the password may be typed on exactly one host, navi
   assert.deepEqual(["https://leg.example/a", "https://x.cloudflareaccess.com/", `https://${CREDENTIAL_HOST}/`, "about:blank", "https://evil.example/"].map((u) => policy.classify(u)),
     ["leg", "access", "microsoft", "blank", "other"], "the trace names a class, never a host");
   assert.throws(() => hostPolicy("leg.example"), /not a URL/);
+});
+
+test("BEHAVIOUR driver vocabulary: every outcome is named, and a definite one names where a denial happened", () => {
+  for (const outcome of ["approved", "denied_at_access_edge", "denied_at_login", "denied_at_gateway", "blocked_mfa_interstitial",
+    "browser_unavailable", "unexpected_host", "timeout", "driver_error"]) {
+    assert.ok(OUTCOMES.includes(outcome), outcome);
+  }
+  assert.ok(!OUTCOMES.includes("denied_at_provider"), "an undifferentiated provider denial is not a vocabulary word");
+  assert.ok(DEFINITE_OUTCOMES.every((outcome) => OUTCOMES.includes(outcome)));
+  assert.ok(!DEFINITE_OUTCOMES.includes("timeout") && !DEFINITE_OUTCOMES.includes("driver_error") && !DEFINITE_OUTCOMES.includes("browser_unavailable"));
+});
+
+/** A page-like object that scripts the Microsoft sign-in: `urls` are the URLs
+ *  the page reports in turn, `texts` the body texts. Records every fill. */
+function fakePage({ urls, texts = [] }) {
+  let step = 0;
+  const fills = [];
+  const locator = (selector) => ({
+    fill: async (value) => { fills.push({ selector, value }); },
+    click: async () => { step += 1; },
+    waitFor: async () => {},
+    innerText: async () => texts[Math.min(step, texts.length - 1)] ?? "",
+  });
+  return {
+    fills,
+    url: () => urls[Math.min(step, urls.length - 1)],
+    waitForURL: async () => {},
+    waitForLoadState: async () => {},
+    waitForTimeout: async () => { step += 1; },
+    locator,
+  };
+}
+
+test("BEHAVIOUR sign-in: the password is typed only when the page is on the credential host", async () => {
+  const policy = hostPolicy("https://leg.example");
+  const ms = `https://${CREDENTIAL_HOST}/common/oauth2/v2.0/authorize`;
+  // The login field is on the credential host; by the time the password field
+  // is reached the page has moved to a lookalike. Nothing is typed there.
+  const hijacked = fakePage({ urls: [ms, "https://login.microsoftonline.com.evil.example/passwd"] });
+  const trace = [];
+  assert.equal(await signInMicrosoft(hijacked, policy, "user@fixture.example", "s3cret-password", trace), "unexpected_host");
+  assert.deepEqual(hijacked.fills.map((fill) => fill.value), ["user@fixture.example"], "the login name was typed, the password was not");
+  assert.deepEqual(trace, ["microsoft:login:typed"]);
+  const plainHttp = fakePage({ urls: [`http://${CREDENTIAL_HOST}/x`] });
+  assert.equal(await signInMicrosoft(plainHttp, policy, "user@fixture.example", "s3cret-password", []), "unexpected_host");
+  assert.deepEqual(plainHttp.fills, [], "nothing is typed over plain http");
+  // The happy path: both fields on the credential host, then the page leaves.
+  const good = fakePage({ urls: [ms, ms, ms, "https://leg.example/oauth/callback?code=x"], texts: ["Sign in", "Enter password", "", ""] });
+  const goodTrace = [];
+  assert.equal(await signInMicrosoft(good, policy, "user@fixture.example", "s3cret-password", goodTrace), undefined, "leaving the login host means the sign-in went through");
+  assert.deepEqual(good.fills.map((fill) => fill.value), ["user@fixture.example", "s3cret-password"]);
+  assert.ok(goodTrace.includes("microsoft:password:typed"));
+  // A wrong password is a denial at the login, never at the edge.
+  const wrong = fakePage({ urls: [ms, ms, ms, ms], texts: ["Sign in", "Enter password", "Enter password\nYour account or password is incorrect.", "Enter password\nYour account or password is incorrect."] });
+  assert.equal(await signInMicrosoft(wrong, policy, "user@fixture.example", "s3cret-password", []), "denied_at_login");
+  const mfa = fakePage({ urls: [ms, ms, ms, ms], texts: ["Sign in", "Enter password", "More information required", "More information required"] });
+  assert.equal(await signInMicrosoft(mfa, policy, "user@fixture.example", "s3cret-password", []), "blocked_mfa_interstitial");
 });
 
 test("BEHAVIOUR page classification: the stable markers of the Microsoft and Access pages", () => {
@@ -86,7 +144,7 @@ test("BEHAVIOUR run-support: test users and the driver's result file are validat
     const write = (text, mode = 0o600) => { writeFileSync(file, text, { mode }); chmodSync(file, mode); };
     write(JSON.stringify({ task: "cloudflare-assertion", user: "member", outcome: "approved", assertion: JWT }));
     assert.equal(readAssertionFile(file), JWT);
-    write(JSON.stringify({ outcome: "denied_at_provider" }));
+    write(JSON.stringify({ outcome: "denied_at_access_edge" }));
     assert.throws(() => readAssertionFile(file), /not an approved/, "a denial never yields an assertion");
     write(JSON.stringify({ outcome: "approved", assertion: "not.a" }));
     assert.throws(() => readAssertionFile(file), /compact JWT/);

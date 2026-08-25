@@ -7,7 +7,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
-import { privateValues, readPrivateJson } from "./bundle-support.mjs";
+import { maskCommand, privateValues, readPrivateJson } from "./bundle-support.mjs";
 import { readGoogleCredentialFile } from "../run-support.mjs";
 
 export function maskLines(dir) {
@@ -17,7 +17,7 @@ export function maskLines(dir) {
     if (name.endsWith(".json")) privateValues(readPrivateJson(path), values);
     else if (name === "google.env") privateValues(readGoogleCredentialFile(path), values);
   }
-  return [...values].map((value) => `::add-mask::${value}`);
+  return [...values].map(maskCommand);
 }
 
 const invokedAsMain = () => {

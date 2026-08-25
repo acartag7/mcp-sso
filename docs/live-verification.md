@@ -29,7 +29,7 @@ gh workflow run live.yml
 gh run watch
 ```
 
-The `live` workflow runs the same command on a GitHub-hosted runner with the provider values fetched from the private secret store through the workflow's OIDC role. It also runs nightly and on every push to a `rehearsal/*` branch. Download the `rehearsal-receipt-*` artifact for the receipt. `scripts/live/README.md` describes the credential path and the row rules.
+The `live` workflow runs the same command on a GitHub-hosted runner with the provider values fetched from the private secret store through the workflow's OIDC role. It also runs nightly from `main`, and on every push to a `rehearsal/*` branch after the owner approves that run in the `live-branch` environment. Download the `rehearsal-receipt-*` artifact for the receipt. `scripts/live/README.md` describes the credential path and the row rules.
 
 Record a passing rehearsal the same way as a probe run: date, runtime commit, and the row results, in [Verification status](verification-status.md).
 

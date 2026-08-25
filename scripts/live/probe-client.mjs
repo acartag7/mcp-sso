@@ -8,6 +8,7 @@
 // method, and the served leg's audit file. No application credential.
 //
 //   run.sh scripts/live/probe-client.mjs entra --user nogroups --expect entra_no_groups
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pkceChallenge } from "../../src/crypto.ts";
 import { driveAuthorize, openBrowser } from "./drive-identity-browser.mjs";
@@ -51,7 +52,13 @@ let failures = 0;
 let opened;
 const trace = [];
 const secrets = [];
-try {
+// No browser is a runner-level refusal, reported the way run.sh reports one, so
+// the rehearsal records BLOCKED browser_unavailable and not a failed check.
+opened = await openBrowser();
+if (opened === undefined) {
+  process.stderr.write("probe-client: browser is unavailable; install Chrome or set MCP_SSO_BROWSER_CDP_URL\n");
+  process.exitCode = 1;
+} else try {
   const metadata = await fetch(`${origin}/.well-known/oauth-protected-resource`, { signal: AbortSignal.timeout(15_000) });
   const metadataJson = metadata.ok ? await metadata.json() : {};
   if (!ok("protected resource metadata is served on the public origin",
@@ -68,16 +75,14 @@ try {
   if (!ok("dynamic registration issues a client on the public origin", registration.status === 201 && clientId !== undefined,
     `HTTP ${registration.status}`)) failures++;
 
-  const verifier = `client-probe-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}-0123456789`;
-  const state = `st-${Math.random().toString(36).slice(2)}`;
+  const verifier = randomBytes(32).toString("base64url");
+  const state = randomBytes(16).toString("base64url");
   const query = new URLSearchParams({
     response_type: "code", client_id: clientId ?? "registration-failed", redirect_uri: callback, state,
     code_challenge: pkceChallenge(verifier), code_challenge_method: "S256", scope: "mcp:read",
   });
   const authorizeUrl = `${origin}/oauth/authorize?${query}`;
 
-  opened = await openBrowser();
-  if (opened === undefined) throw new Error("browser_unavailable");
   const result = await driveAuthorize({ context: opened.context, origin, authorizeUrl, callback, user, password, idpName, trace });
   out.push(`NOTE  trace ${trace.join(" > ")}`);
 
@@ -111,7 +116,9 @@ try {
     const audit = readAudit();
     const events = eventsSince(audit, before);
     if (!ok("the served leg's audit records the whole flow in order", inOrder(events, approvedFlowOrder(leg)), `${events.length} events added`)) failures++;
-    if (!ok("the audit holds no code or token from this flow", !auditLeaks(audit, secrets))) failures++;
+    // Five values are searched for (the code, two access tokens, two refresh
+    // tokens); fewer means the flow did not mint them and the check fails.
+    if (!ok("the audit holds no code or token from this flow", secrets.length === 5 && !auditLeaks(audit, secrets), `${secrets.length} values`)) failures++;
   } else {
     if (!ok("the client receives access_denied with the documented description for this fixture",
       result.outcome === "denied_at_gateway" && result.error === "access_denied" && result.state === state
@@ -120,9 +127,9 @@ try {
     if (!ok("the served leg's audit records the exact rejection reason and mints nothing", deniedFlowHolds(events, options.expect),
       `${events.length} events added`)) failures++;
   }
-} catch (error) {
+} catch {
   failures++;
-  out.push(error?.message === "browser_unavailable" ? "FAIL  browser_unavailable" : "FAIL  probe aborted before completion");
+  out.push("FAIL  probe aborted before completion");
 } finally {
   try { await opened?.browser.close(); } catch { /* nothing left to release */ }
   console.log(out.join("\n"));

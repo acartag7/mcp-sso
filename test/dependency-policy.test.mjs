@@ -213,3 +213,26 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
   );
 
 });
+
+test("a binary a workflow downloads is bound to the ledger by URL, digest, version, and age", async (t) => {
+  await t.test("digest drift", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const record = policy.binaries.cloudflared;
+    await replace(join(root, ".github/workflows/live.yml"), `echo "${record.sha256}  `, `echo "${"0".repeat(64)}  `);
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /cloudflared digest does not match the ledger/);
+  });
+  await t.test("undeclared download", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    await replace(join(root, ".github/workflows/live.yml"), policy.binaries.cloudflared.url, policy.binaries.cloudflared.url.replace("2026.7.3", "2026.7.2"));
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /is missing from the ledger|is not downloaded by any workflow/);
+  });
+  await t.test("quarantine", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const young = new Date(NOW.getTime() - DAY_MS).toISOString();
+    await replace(join(root, "docs/dependency-ledger.md"), `"published": "${policy.binaries.cloudflared.published}"`, `"published": "${young}"`);
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), (error) => error instanceof Error && error.message.includes(`cloudflared: ${young} is younger than`));
+  });
+});

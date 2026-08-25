@@ -174,8 +174,8 @@ on a clean tree; that is the only receipt that counts as evidence.
 | `release-matrix` | `pnpm run test:release` against the MySQL and Redis services: the whole suite plus every `RM.N` row in `test/release-matrix.json`. `BLOCKED release_services_absent` without `MYSQL_URL`, `REDIS_URL`, and `RUN_INTEGRATION=true`. |
 | `probe-entra`, `probe-google` | The provider probes above. |
 | `access-login` | `drive-identity.mjs` signs the Entra stack's `member` test user in through the real Cloudflare Access login page, choosing the Entra login method the stack names, and keeps the resulting Access assertion for the next rows. Must end `approved`. |
-| `access-edge-denial` | The same, as the `nogroups` test user, which the Access policy does not admit. Must end `denied_at_provider`: the Cloudflare edge stops the account before anything reaches the gateway. This is checklist row E1, unattended. |
-| `probe-cloudflare` | The Cloudflare probe, with the assertion `access-login` captured (or, when that row did not run, one minted by `cloudflared` from an operator login). |
+| `access-edge-denial` | The same, as the `nogroups` test user, which the Access policy does not admit. Must end `denied_at_access_edge`: the account signed in at Microsoft and the Cloudflare edge stopped it before anything reached the gateway. A denial at the Microsoft login (`denied_at_login`) fails the row. The driver's trace is recorded on every outcome, so the receipt shows the account reached the edge. This is checklist row E1, unattended. |
+| `probe-cloudflare` | The Cloudflare probe, with the assertion `access-login` captured. When `access-login` was selected and did not pass, this row is `BLOCKED prerequisite_row_did_not_pass`; only when `access-login` was not selected at all does `run.sh` fall back to an assertion minted by `cloudflared` from an operator login. |
 | `probe-e2e:stored`, `probe-e2e:stateless` | The end-to-end probe in each DCR mode. |
 | `client-entra:member`, `client-cloudflare:member` | `probe-client.mjs`, a real OAuth client against the SERVED leg on its public hostname: dynamic registration, an authorization the driver completes through the real provider pages as the `member` user, the code exchange, an official MCP SDK tool call, and one refresh. The served leg's audit must record the whole flow in order and hold none of this flow's code or tokens. |
 | `client-entra:nogroups`, `client-entra:wronggroup`, `client-entra:overage` | The same client as each deny fixture. The client must receive `access_denied` with the documented description for that fixture, and the served audit must record `identity.verify` failed with exactly that reason (`entra_no_groups`, `entra_no_mapped_groups`, `entra_groups_overage`) and mint nothing. Checklist rows D1 to D3, unattended. |
@@ -213,13 +213,21 @@ checked with the same parser `check:release-ready` uses, at the receipt's
 commit; a receipt that is not evidence, or a rendering the gate would refuse,
 is an error and writes nothing.
 
+Rows the rehearsal does not drive (the third-party clients) keep their own
+recorded commits. When those are stale against the receipt's commit the
+renderer names them on stderr and still writes, because `check:release-ready`
+will refuse the release until each is re-run or archived, and hiding that
+would not change it. A receipt whose commit is not an ancestor of every row's
+commit is refused outright.
+
 In CI, `gh workflow run live.yml -f record=true` on `main` runs the rehearsal
-and then, from a passing receipt, renders the record and opens the evidence
-pull request on an `evidence/<sha>` branch. That second job never holds the
-AWS role, and the rehearsal job never holds a write token. A branch pushed by
-the workflow token starts no CI run of its own, so the pull request says how
-to start one (`gh pr close <n> && gh pr reopen <n>`). The nightly run and the
-`rehearsal/*` runs never record.
+and then, from a passing receipt whose commit is the checked-out `HEAD`,
+renders the record and opens the evidence pull request on an `evidence/<sha>`
+branch. That second job never holds the AWS role, installs no dependency, and
+never persists a checkout credential; the rehearsal job never holds a write
+token. A branch pushed by the workflow token starts no CI run of its own, so
+the pull request says how to start one (`gh pr close <n> && gh pr reopen <n>`).
+The nightly run and the `rehearsal/*` runs never record.
 
 ### The identity driver
 
@@ -233,32 +241,51 @@ else: a navigation to any host outside the leg origin, Cloudflare Access, and
 that login host ends the task as `unexpected_host` before a keystroke. The
 driver prints exactly one `outcome:` line, never a page's text or URL, and
 writes its result (`approved` with the assertion, or one of
-`denied_at_provider`, `blocked_mfa_interstitial`, `browser_unavailable`,
-`unexpected_host`, `timeout`) to an owner-only file that `run.sh` reads as data
-through `MCP_SSO_CF_ACCESS_ASSERTION_FILE`. A result that is not an approved
-sign-in is refused there, never treated as an empty assertion.
+`denied_at_access_edge`, `denied_at_login`, `blocked_mfa_interstitial`,
+`browser_unavailable`, `unexpected_host`, `timeout`, `driver_error`) and its
+trace to an owner-only file that `run.sh` reads as data through
+`MCP_SSO_CF_ACCESS_ASSERTION_FILE`. A result that is not an approved sign-in
+is refused there, never treated as an empty assertion. The driver exits 0 only
+for a definite answer (`approved` or a denial that names where it happened);
+the rehearsal fails a row whose exit status disagrees with its outcome.
 
 ```sh
 scripts/live/run.sh scripts/live/drive-identity.mjs cloudflare_access cloudflare-assertion --out ./result.json --user member
 ```
 
 A row is `BLOCKED` rather than `FAIL` when it was refused for a reason an
-operator can arm: `cloudflare_access_login_required` (no driver assertion and
-no `cloudflared access login`), `google_credentials_absent` (no credential
-file), `infrastructure_session_expired` (`aws sso login` or `az login`),
-`browser_unavailable` (no Chrome and no CDP endpoint for the driver), or
-`blocked_mfa_interstitial` (the tenant asked the test user to register MFA). A
-`BLOCKED` row still turns the run red and is never evidence; it exists so the
-summary names what is missing instead of hiding it. Any other refusal, any
-`FAIL` line, a missing or mismatched summary, zero checks, or a driver row that
-ends in any outcome other than the one it expects is a `FAIL`. An admitted
-sign-in where a denial was expected is a `FAIL`, not a pass.
+operator can arm, before any of its checks ran: `cloudflare_access_login_required`
+(no driver assertion and no `cloudflared access login`),
+`google_credentials_absent` (no credential file),
+`infrastructure_session_expired` (`aws sso login` or `az login`),
+`browser_unavailable` (no Chrome and no CDP endpoint, for the driver and the
+client rows alike), `blocked_mfa_interstitial` (the tenant asked the test user
+to register MFA), `release_services_absent` (no MySQL, Redis, or
+`RUN_INTEGRATION` for the release matrix), `tunnel_already_served`,
+`tunnel_credentials_absent`, `cloudflared_unavailable` (a serve generation
+could not start), or `prerequisite_row_did_not_pass` (the row that was to
+hand this one its input ran and did not pass, so this row does not fall back
+to an operator's own credential). A `BLOCKED` row still turns the run red and
+is never evidence; it exists so the summary names what is missing instead of
+hiding it. Any other refusal, any `FAIL` line, a missing or mismatched
+summary, zero checks, a driver whose exit status disagrees with its outcome,
+or a driver row that ends in any outcome other than the one it expects is a
+`FAIL`. An admitted sign-in where a denial was expected is a `FAIL`, and so
+is a denial at the Microsoft login where a denial at the Access edge was
+expected: a broken test account is never proof that Cloudflare Access stopped
+it.
 
 The orchestrator also knows every private value the run was configured with
-(from the CI bundle and the Google credential file, when present). A row whose
-output contains one of them is failed as `private_value_in_output` and its lines
-are withheld from the receipt and the log. `--rows probe-entra,probe-e2e:stored`
-selects a subset; `--out <file>` moves the receipt.
+(from the CI bundle and the Google credential file, at the same path `run.sh`
+resolves) and every Access assertion the driver captured. Each chunk of a
+row's output is scanned as it arrives; a row whose output contains one of them
+is failed as `private_value_in_output`, its lines are withheld from the receipt
+and the log, and the serialized receipt is scanned once more before it is
+written. `--rows probe-entra,probe-e2e:stored` selects a subset for a working
+run: its receipt is marked `complete: false`, exits 1, and is never evidence.
+`--out <file>` moves the receipt. A rehearsal that is interrupted or crashes
+stops the served legs and removes the driver's result files on its way out,
+and writes a receipt that says it stopped early.
 
 ### In CI
 
@@ -274,16 +301,25 @@ Environments and nothing else: `live` (branch policy `main`; unattended) and
 `live-branch` (branch policy `rehearsal/*`; the owner approves each run before
 the role is assumed, because a branch run executes whatever that branch
 pushed, the masking step included). The job's first step refuses any other
-ref, and a pull request never triggers the workflow. `scripts/live/ci/fetch-bundle.mjs`
-writes them to a private directory at 0600, refusing a malformed value and
-recording an absent optional one; `scripts/live/ci/mask-bundle.mjs` registers
-every value with the log masker before a probe can print; and
-`MCP_SSO_INFRA_DIR` points at `scripts/live/ci/infra`, whose `scripts/tofu-run.sh`
-answers `run.sh`'s `<stack> output -raw|-json <name>` calls from the bundle.
-`run.sh` itself is unchanged and still validates every value through the
-shipped constructors. The bundle directory is removed on every exit path and
-the receipt is uploaded as a build artifact. A pull request never runs this
-workflow and never holds the role.
+ref, and a pull request never triggers the workflow.
+`scripts/live/ci/fetch-bundle.mjs` writes the bundles to a private directory
+at 0600, refusing a malformed value and recording an absent optional one;
+`scripts/live/ci/mask-bundle.mjs` registers every private value with the log
+masker before a probe can print; and `MCP_SSO_INFRA_DIR` points at
+`scripts/live/ci/infra`, whose `scripts/tofu-run.sh` answers `run.sh`'s
+`<stack> output -raw|-json <name>` calls from the bundle. `run.sh` itself is
+unchanged and still validates every value through the shipped constructors.
+The bundle directory and the tunnel credentials are removed on every exit
+path and the receipt is uploaded as a build artifact.
+
+What "private value" means, in the masker and in the orchestrator's own scan:
+every value under a credential or identity key (the client secrets, the test
+user password, the login method name, the tenant and client ids, the tunnel
+credentials, the Google client values) at any length, every other string of
+12 characters or more, each line of a multi-line value, and the bare hostname
+of any value that is a URL. Shorter values that are not under those keys
+(ports, scope names) are not masked, because masking a four-character string
+would black out ordinary output.
 
 ## Driving a real MCP client
 

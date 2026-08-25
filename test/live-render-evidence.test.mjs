@@ -30,7 +30,7 @@ const document = (() => {
 })();
 
 const receiptFor = (ids, extra = {}) => ({
-  schema: 1, kind: "mcp-sso-release-rehearsal", runtimeCommit: HEAD, dirty: false, evidence: true, runner: "local",
+  schema: 1, kind: "mcp-sso-release-rehearsal", runtimeCommit: HEAD, dirty: false, complete: true, evidence: true, runner: "local",
   startedAt: "s", finishedAt: "f", rows: ids.map((id) => ({ id, status: "PASS", lines: [] })), ...extra,
 });
 const ALL = ROWS.map((row) => row.id);
@@ -71,6 +71,10 @@ test("BEHAVIOUR render-evidence: only an evidence receipt with a full commit is 
     assert.equal(readReceipt(file).runtimeCommit, HEAD);
     write(receiptFor(ALL, { evidence: false }));
     assert.throws(() => readReceipt(file), /not evidence/);
+    write(receiptFor(ALL, { complete: false }));
+    assert.throws(() => readReceipt(file), /partial/, "a --rows subset is never rendered");
+    write(receiptFor(ALL, { complete: undefined }));
+    assert.throws(() => readReceipt(file), /partial/, "an older receipt without the field is not trusted");
     write(receiptFor(ALL, { runtimeCommit: HEAD.slice(0, 7) }));
     assert.throws(() => readReceipt(file), /full runtime commit/);
     write({ kind: "other" });
@@ -90,6 +94,9 @@ test("BEHAVIOUR rehearsal-support: the release-matrix command row passes only on
   assert.equal(classifyCommandRun({ code: 0, stdout: "PASS RM.1 a (1 evidence item)\n", stderr: "" }).reason, "matrix_failed", "no summary is no pass");
   assert.equal(classifyCommandRun({ code: 0, stdout: "PASS RM.1 a (1 evidence item)\n\nPASS release matrix: 2/2 required rows\n", stderr: "" }).reason, "matrix_failed", "the summary must match the rows");
   assert.equal(classifyCommandRun({ code: 1, stdout: "", stderr: "release matrix preflight failed: MYSQL_URL is required; MySQL rows never skip\n" }).reason, "release_services_absent");
+  assert.equal(classifyCommandRun({ code: 0, stdout, stderr: "release matrix preflight failed: REDIS_URL is required\n" }).status, "PASS", "a complete run is never re-labelled by a phrase in its output");
+  assert.equal(classifyCommandRun({ code: 1, stdout: "FAIL RM.2 b: MYSQL_URL is required [fail]\n", stderr: "" }).reason, "checks_failed", "a failing row that mentions the phrase is a failure");
+  assert.equal(classifyCommandRun({ code: 1, stdout: "", stderr: "some test said MYSQL_URL is required\n" }).reason, "matrix_failed", "only the runner's own preflight prefix means the services were absent");
   assert.equal(ROWS[0].id, "release-matrix");
   assert.deepEqual(ROWS[0].command, ["pnpm", "run", "test:release"]);
 });
