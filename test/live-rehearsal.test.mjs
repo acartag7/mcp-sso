@@ -175,7 +175,8 @@ test("BEHAVIOUR adapter + run.sh: the shipped runner assembles a leg from the bu
     assert.deepEqual(JSON.parse(driver.captured.env.IDP_TEST_USERS_JSON), ENTRA.test_users);
     assert.equal(driver.captured.env.IDP_TEST_USER_PASSWORD, ENTRA.test_user_password);
     assert.equal(driver.captured.env.CF_ACCESS_IDP_NAME, "fixture tenant");
-    for (const key of ["CF_ACCESS_AUDIENCE", "CF_ACCESS_ASSERTION", "ENTRA_CLIENT_SECRET", "MCP_SSO_CF_ACCESS_ASSERTION_FILE"]) {
+    for (const key of ["CF_ACCESS_AUDIENCE", "CF_ACCESS_ASSERTION", "ENTRA_CLIENT_SECRET", "MCP_SSO_CF_ACCESS_ASSERTION_FILE",
+      "OAUTH_SIGNING_PRIVATE_JWK", "OAUTH_CONSENT_SIGNING_SECRET"]) {
       assert.equal(driver.captured.env[key], undefined, `${key} never reaches the driver`);
     }
     assert.doesNotMatch(driver.stderr, new RegExp(ENTRA.test_user_password));
@@ -183,6 +184,22 @@ test("BEHAVIOUR adapter + run.sh: the shipped runner assembles a leg from the bu
     assert.equal(entraDriver.code, 0, entraDriver.stderr);
     assert.equal(entraDriver.captured.env.CF_ACCESS_IDP_NAME, undefined, "the login method is a Cloudflare-leg value");
     assert.equal(entraDriver.captured.env.OAUTH_ISSUER, "https://entra.example");
+    // The client kind: the driver's inputs plus which leg it is on and where the
+    // served leg's audit trail is; still no application credential.
+    writeFileSync(join(repo, "scripts/live/probe-client.mjs"), capture);
+    const clientRun = await runScript(["scripts/live/probe-client.mjs", "entra", "--user", "overage", "--expect", "entra_groups_overage"],
+      { MCP_SSO_AUDIT_FILE: "/served/entra/audit.jsonl" });
+    assert.equal(clientRun.code, 0, clientRun.stderr);
+    assert.deepEqual(clientRun.captured.argv, ["--user", "overage", "--expect", "entra_groups_overage"]);
+    assert.equal(clientRun.captured.env.MCP_SSO_LEG, "entra");
+    assert.equal(clientRun.captured.env.MCP_SSO_AUDIT_FILE, "/served/entra/audit.jsonl");
+    assert.equal(clientRun.captured.env.PROBE_APP_CALLBACK, "https://entra.example/app/callback");
+    assert.equal(clientRun.captured.env.IDP_TEST_USER_PASSWORD, ENTRA.test_user_password);
+    for (const key of ["ENTRA_CLIENT_SECRET", "ENTRA_TENANT_ID", "CF_ACCESS_AUDIENCE", "OAUTH_SIGNING_PRIVATE_JWK"]) {
+      assert.equal(clientRun.captured.env[key], undefined, `${key} never reaches the client probe`);
+    }
+    const clientNoAudit = await runScript(["scripts/live/probe-client.mjs", "entra"]);
+    assert.equal(clientNoAudit.captured.env.MCP_SSO_AUDIT_FILE, undefined, "the audit path is passed only when the caller names one");
     // The Cloudflare probe takes its assertion from the driver's result file
     // when one is named, and refuses a result that is not an approved sign-in.
     const approved = join(fixture, "approved.json");
@@ -282,6 +299,8 @@ test("BEHAVIOUR rehearsal-support: run.sh outcomes classify as PASS, FAIL, or an
   assert.equal(classifyRun({ code: 1, stderr: "", stdout: "PASS  a\nFAIL  probe aborted before completion\n\n1/2 checks passed\n" }).reason, "checks_failed");
   assert.deepEqual(ROWS.map((row) => row.id), [
     "probe-entra", "probe-google", "access-login", "access-edge-denial", "probe-cloudflare", "probe-e2e:stored", "probe-e2e:stateless",
+    "client-entra:member", "client-entra:nogroups", "client-entra:wronggroup", "client-entra:overage", "client-cloudflare:member",
+    "client-entra:wrong-tenant", "client-entra:not-allowlisted",
   ]);
   assert.ok(ROWS.findIndex((row) => row.provides === "cloudflare-assertion") < ROWS.findIndex((row) => row.needs === "cloudflare-assertion"),
     "the assertion is produced before the probe that needs it");

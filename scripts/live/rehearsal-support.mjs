@@ -4,11 +4,20 @@
 // testable without a provider.
 
 const DRIVER = "scripts/live/drive-identity.mjs";
+const CLIENT = "scripts/live/probe-client.mjs";
+/** Served generations. Rows that share one run inside one serve.sh lifetime.
+ *  The two deny generations restart the Entra leg with a deliberately wrong
+ *  operator value through run.sh's marked channels (CHECKLIST rows D4, D5). */
+const SERVE_MAIN = Object.freeze({ legs: ["cloudflare_access", "entra"], env: {} });
+const SERVE_WRONG_TENANT = Object.freeze({ legs: ["entra"], env: { MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: "00000000-0000-0000-0000-000000000001" } });
+const SERVE_NOT_ALLOWLISTED = Object.freeze({ legs: ["entra"], env: { MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: "00000000-0000-0000-0000-000000000002" } });
+const client = (id, leg, user, expect, serve) => ({ id, kind: "client", entry: CLIENT, leg, env: {}, args: ["--user", user, "--expect", expect], serve });
 
 /** The rows one rehearsal runs, in order. Each is one run.sh invocation. A
  *  `driver` row signs a test user in through the real provider pages and must
  *  end in exactly `expect`; a row that `provides` something hands its result
- *  file to the later row that `needs` it. */
+ *  file to the later row that `needs` it; a `client` row runs against a leg
+ *  serve.sh exposes for the rows that share its `serve` generation. */
 export const ROWS = Object.freeze([
   { id: "probe-entra", kind: "probe", entry: "scripts/live/probe-entra.mjs", leg: "entra", env: {} },
   { id: "probe-google", kind: "probe", entry: "scripts/live/probe-google.mjs", leg: "google", env: {} },
@@ -20,7 +29,33 @@ export const ROWS = Object.freeze([
     needs: "cloudflare-assertion" },
   { id: "probe-e2e:stored", kind: "probe", entry: "scripts/live/probe-e2e.mjs", leg: "entra", env: { MCP_SSO_DCR_MODE: "stored" } },
   { id: "probe-e2e:stateless", kind: "probe", entry: "scripts/live/probe-e2e.mjs", leg: "entra", env: { MCP_SSO_DCR_MODE: "stateless" } },
+  client("client-entra:member", "entra", "member", "approved", SERVE_MAIN),
+  client("client-entra:nogroups", "entra", "nogroups", "entra_no_groups", SERVE_MAIN),
+  client("client-entra:wronggroup", "entra", "wronggroup", "entra_no_mapped_groups", SERVE_MAIN),
+  client("client-entra:overage", "entra", "overage", "entra_groups_overage", SERVE_MAIN),
+  client("client-cloudflare:member", "cloudflare_access", "member", "approved", SERVE_MAIN),
+  client("client-entra:wrong-tenant", "entra", "member", "entra_bad_tid", SERVE_WRONG_TENANT),
+  client("client-entra:not-allowlisted", "entra", "member", "entra_subject_not_allowed", SERVE_NOT_ALLOWLISTED),
 ]);
+
+/** Group consecutive rows by the serve generation they share. Rows without a
+ *  generation stand alone. Order is preserved. */
+export function generations(rows) {
+  const groups = [];
+  for (const row of rows) {
+    const last = groups[groups.length - 1];
+    if (last !== undefined && last.serve !== undefined && last.serve === row.serve) last.rows.push(row);
+    else groups.push({ serve: row.serve, rows: [row] });
+  }
+  return groups;
+}
+
+/** Why a serve generation could not start: armable reasons are BLOCKED. */
+export function classifyServeFailure(stderr) {
+  if (/tunnel credentials file is missing|MCP_SSO_TUNNEL/.test(stderr)) return { status: "BLOCKED", reason: "tunnel_credentials_absent" };
+  if (/cloudflared is required/.test(stderr)) return { status: "BLOCKED", reason: "cloudflared_unavailable" };
+  return { status: "FAIL", reason: "serve_failed" };
+}
 
 /** A row is BLOCKED, not FAILED, only when run.sh refused it for one of these
  *  owner-armable reasons. The patterns are run.sh's own fixed messages; every

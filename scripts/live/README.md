@@ -176,6 +176,24 @@ on a clean tree; that is the only receipt that counts as evidence.
 | `access-edge-denial` | The same, as the `nogroups` test user, which the Access policy does not admit. Must end `denied_at_provider`: the Cloudflare edge stops the account before anything reaches the gateway. This is checklist row E1, unattended. |
 | `probe-cloudflare` | The Cloudflare probe, with the assertion `access-login` captured (or, when that row did not run, one minted by `cloudflared` from an operator login). |
 | `probe-e2e:stored`, `probe-e2e:stateless` | The end-to-end probe in each DCR mode. |
+| `client-entra:member`, `client-cloudflare:member` | `probe-client.mjs`, a real OAuth client against the SERVED leg on its public hostname: dynamic registration, an authorization the driver completes through the real provider pages as the `member` user, the code exchange, an official MCP SDK tool call, and one refresh. The served leg's audit must record the whole flow in order and hold none of this flow's code or tokens. |
+| `client-entra:nogroups`, `client-entra:wronggroup`, `client-entra:overage` | The same client as each deny fixture. The client must receive `access_denied` with the documented description for that fixture, and the served audit must record `identity.verify` failed with exactly that reason (`entra_no_groups`, `entra_no_mapped_groups`, `entra_groups_overage`) and mint nothing. Checklist rows D1 to D3, unattended. |
+| `client-entra:wrong-tenant`, `client-entra:not-allowlisted` | The Entra leg restarted with a deliberately wrong operator value through `MCP_SSO_ENTRA_ALLOWED_TENANT_IDS` or `MCP_SSO_ENTRA_SUBJECT_ALLOWLIST`; the `member` user must be refused as `entra_bad_tid` or `entra_subject_not_allowed`, with the anti-oracle description. Checklist rows D4 and D5, unattended. |
+
+The client rows run against legs the rehearsal brings up itself through
+`serve.sh`, in **generations**: one `serve.sh cloudflare_access entra` for the
+positive and D1 to D3 rows, then one `serve.sh entra` per deny channel. Each
+generation is stopped before the next starts, and the public hostnames are live
+only while a generation runs. A generation is refused as `BLOCKED
+tunnel_already_served` when a public hostname already answers, because a
+laptop `serve.sh` and this run on one tunnel would split the traffic; it is
+`BLOCKED tunnel_credentials_absent` or `cloudflared_unavailable` when the
+connector cannot start, and `FAIL serve_failed` when the servers or the tunnel
+die or never answer within the readiness budget. Every row of a generation
+that could not start takes that status. In CI, `cloudflared` is installed from
+one release asset verified against a recorded SHA-256, the connector
+credentials come from the bundle (`scripts/live/ci/install-tunnel.mjs` places
+them owner-only under `~/.cloudflared`), and both are removed when the job ends.
 
 ### The identity driver
 

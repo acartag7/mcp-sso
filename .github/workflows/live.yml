@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     # main runs unattended; a rehearsal/* branch waits for the reviewer.
     environment: ${{ github.ref == 'refs/heads/main' && 'live' || 'live-branch' }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       id-token: write # assume the AWS role through GitHub OIDC
       contents: read
@@ -91,11 +91,21 @@ jobs:
         run: node scripts/live/ci/fetch-bundle.mjs
       - name: mask every private value before anything else prints
         run: node scripts/live/ci/mask-bundle.mjs
+      - name: install cloudflared 2026.7.3 (2026-07-23), pinned by digest
+        # The tunnel connector the served legs run behind. No package repository
+        # and no install script: one release asset, one recorded SHA-256.
+        run: |
+          curl -sSL --fail -o "$RUNNER_TEMP/cloudflared" https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-amd64
+          echo "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17  $RUNNER_TEMP/cloudflared" | sha256sum -c -
+          sudo install -m 755 "$RUNNER_TEMP/cloudflared" /usr/local/bin/cloudflared
+          cloudflared --version
+      - name: install the tunnel credentials
+        run: node scripts/live/ci/install-tunnel.mjs
       - name: rehearse
         run: node scripts/live/rehearsal.mjs --out "$RUNNER_TEMP/receipt.json"
-      - name: remove the bundle
+      - name: remove the bundle and the tunnel credentials
         if: always()
-        run: rm -rf -- "$MCP_SSO_BUNDLE_DIR"
+        run: rm -rf -- "$MCP_SSO_BUNDLE_DIR" "$HOME/.cloudflared"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (2026-04-10)
         if: always()
         with:

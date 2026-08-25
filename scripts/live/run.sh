@@ -11,6 +11,7 @@
 #           scripts/live/probe-google.mjs               google
 #           scripts/live/probe-e2e.mjs                  any leg   (needs REDIS_URL)
 #           scripts/live/drive-identity.mjs             any leg   (the headless identity driver)
+#           scripts/live/probe-client.mjs               any leg   (a real client against a SERVED leg)
 #           examples/fastify-sqlite/index.ts            any leg   (used by serve.sh)
 #
 # Nothing here hardcodes a repository path, stack handle, hostname, tenant, or
@@ -63,6 +64,7 @@ case "$ENTRY:$LEG" in
   scripts/live/probe-google.mjs:google) KIND=probe ;;
   scripts/live/probe-e2e.mjs:cloudflare_access|scripts/live/probe-e2e.mjs:entra|scripts/live/probe-e2e.mjs:google) KIND=e2e ;;
   scripts/live/drive-identity.mjs:cloudflare_access|scripts/live/drive-identity.mjs:entra|scripts/live/drive-identity.mjs:google) KIND=driver ;;
+  scripts/live/probe-client.mjs:cloudflare_access|scripts/live/probe-client.mjs:entra|scripts/live/probe-client.mjs:google) KIND=client ;;
   examples/fastify-sqlite/index.ts:cloudflare_access|examples/fastify-sqlite/index.ts:entra|examples/fastify-sqlite/index.ts:google) KIND=server ;;
   *) fail "unsupported entry/leg pair: $ENTRY $LEG" ;;
 esac
@@ -126,10 +128,13 @@ OAUTH_ISSUER="$(output_json "$CLOUDFLARE_STACK" issuer_origins | support issuer-
   || fail "issuer origin output is missing or invalid for the selected leg"
 
 # The identity driver signs a provisioned TEST USER in through the provider's
-# own pages. It receives the leg origin, the Entra stack's test users and their
-# password, and for the Cloudflare leg the login method to choose. It receives
-# no application credential: it is a browser, not the bridge.
-if [ "$KIND" = "driver" ]; then
+# own pages, and the client probe does the same as a real OAuth client against
+# a SERVED leg. Both receive the leg origin, the Entra stack's test users and
+# their password, and for the Cloudflare leg the login method to choose. They
+# receive no application credential: they are a browser and a client, not the
+# bridge. The client probe additionally learns which leg it is on and where the
+# served leg's audit trail is, so it can assert what the server recorded.
+if [ "$KIND" = "driver" ] || [ "$KIND" = "client" ]; then
   ENTRA_STACK="${MCP_SSO_ENTRA_STACK:?set MCP_SSO_ENTRA_STACK to the Entra stack handle}"
   IDP_TEST_USERS_JSON="$(output_json "$ENTRA_STACK" test_users | support test-users)" \
     || fail "test_users output is invalid"
@@ -141,6 +146,10 @@ if [ "$KIND" = "driver" ]; then
   fi
   # A remote browser (CDP endpoint) replaces the machine's own Chrome when set.
   pass MCP_SSO_BROWSER_CDP_URL
+  if [ "$KIND" = "client" ]; then
+    MCP_SSO_LEG="$LEG"
+    pass MCP_SSO_LEG MCP_SSO_AUDIT_FILE
+  fi
 fi
 
 # The end-to-end probe composes its own app and never touches a provider, so it
@@ -250,7 +259,11 @@ OAUTH_DCR_MODE="${MCP_SSO_DCR_MODE:-stored}"
 OAUTH_SCOPE_CATALOG="mcp:read,mcp:write"
 OAUTH_DEFAULT_SCOPES="mcp:read"
 pass OAUTH_ISSUER OAUTH_RESOURCE OAUTH_ALLOWED_ORIGINS OAUTH_REDIRECT_ALLOWLIST
-pass OAUTH_CONSENT_SIGNING_SECRET OAUTH_SIGNING_PRIVATE_JWK OAUTH_SIGNING_KEY_ID
+# The run's signing material goes only to entries that build the bridge. The
+# driver and the client probe are the other side of the wire and never hold it.
+if [ "$KIND" != "driver" ] && [ "$KIND" != "client" ]; then
+  pass OAUTH_CONSENT_SIGNING_SECRET OAUTH_SIGNING_PRIVATE_JWK OAUTH_SIGNING_KEY_ID
+fi
 pass OAUTH_DCR_MODE OAUTH_SCOPE_CATALOG OAUTH_DEFAULT_SCOPES PROBE_CLIENT_REDIRECT PROBE_APP_CALLBACK
 if [ "$KIND" = "e2e" ]; then pass REDIS_URL; fi
 
@@ -261,11 +274,12 @@ if [ "$KIND" = "e2e" ]; then pass REDIS_URL; fi
 # a bad runner knob cannot cost the previous run's evidence.
 if [ "$KIND" = "e2e" ]; then
   env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$SUPPORT" preflight-base || fail "assembled configuration failed the preflight"
-elif [ "$KIND" != "driver" ]; then
+elif [ "$KIND" != "driver" ] && [ "$KIND" != "client" ]; then
   env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$SUPPORT" preflight "$LEG" || fail "stack outputs failed the provider preflight for leg $LEG"
 fi
-# The driver holds no application credential and touches no state, so its
-# inputs were validated where they were read (test-users, a bare issuer).
+# The driver and the client probe hold no application credential and touch no
+# state, so their inputs were validated where they were read (test-users, a
+# bare issuer).
 
 if [ "$KIND" = "server" ]; then
   # Per-leg state for the long-running example server only — the probes build

@@ -90,6 +90,16 @@ D4 and D5 change server configuration, so each needs its own `serve.sh entra`
 invocation with the marked variable exported; they cannot ride the normal
 matrix run. Read both outcomes from the audit trail like every other deny row.
 
+The rehearsal (`scripts/live/rehearsal.mjs`, see the README) drives the OAuth
+mechanics of these rows unattended with the official MCP SDK as the client:
+the positive Entra and Cloudflare flows (`client-entra:member`,
+`client-cloudflare:member`), D1 to D3 (`client-entra:nogroups`,
+`client-entra:wronggroup`, `client-entra:overage`), D4 and D5
+(`client-entra:wrong-tenant`, `client-entra:not-allowlisted`), and E1
+(`access-edge-denial`). What the rows above add is the third-party client
+itself: Claude Code, Codex CLI, the ChatGPT and claude.ai connectors, and the
+Google identity sign-in.
+
 Client commands:
 
 ```sh

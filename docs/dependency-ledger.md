@@ -198,6 +198,12 @@ The following block is the machine-readable source used by `check:deps`. The hum
 ```
 <!-- dependency-policy:end -->
 
+### Pinned binaries in the live workflow
+
+| Binary | Version | Published | 15-day check | SHA-256 | Purpose |
+|---|---|---|---|---|---|
+| [`cloudflared`](https://github.com/cloudflare/cloudflared) (`cloudflared-linux-amd64` release asset) | `2026.7.3` | 2026-07-23 | ✅ | `9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17` | The tunnel connector `serve.sh` runs so the live workflow's served legs are reachable on their public hostnames. Downloaded from the release, verified against this digest with `sha256sum -c` before it is installed, never from a package repository or an install script. |
+
 ### CI integration containers (image tags)
 
 The `verify` job runs the `/store/mysql` and `/rate-limit/redis` integration tests against `mysql:8.4` and `redis:7-alpine` GitHub Actions services (pinned by **tag**, not digest). The ephemeral `ubuntu-latest` runner waits for both service health checks and exposes their fixed loopback ports only for the duration of the job. This is a deliberate, narrower trust boundary than the SHA-pinned Actions above: a service image is a *test fixture*, not a build input that executes in the published artifact. A tag rebuild that changed `sql_mode` defaults, the default authentication plugin, or timezone handling would be caught loudly rather than silently, `migrateMysqlStore` **fail-closed asserts** `STRICT_TRANS_TABLES` in `sql_mode` and `utf8mb4_bin` table collation at boot, so image drift that matters for correctness turns the CI red, not green-with-wrong-results. (If a future change makes these assertions insufficient, promote both images to `@sha256:<digest>` pins recorded here with the same 15-day check.)

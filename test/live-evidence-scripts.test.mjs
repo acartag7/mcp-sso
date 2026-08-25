@@ -495,18 +495,40 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   // The driver: the password reaches exactly one host, and nothing a page
   // shows is ever printed.
   const driver = read("scripts/live/drive-identity.mjs");
+  const browser = read("scripts/live/drive-identity-browser.mjs");
   const driverSupport = read("scripts/live/drive-identity-support.mjs");
   assert.match(driverSupport, /CREDENTIAL_HOST = "login\.microsoftonline\.com"/);
-  const typeGate = driver.indexOf("if (!policy.mayTypeCredential(page.url())) return \"unexpected_host\";");
-  const fill = driver.indexOf('.fill(password)');
+  const typeGate = browser.indexOf("if (!policy.mayTypeCredential(page.url())) return \"unexpected_host\";");
+  const fill = browser.indexOf('.fill(password)');
   assert.ok(typeGate >= 0 && fill > typeGate, "the host is checked before the password is typed");
-  assert.equal((driver.match(/mayTypeCredential\(page\.url\(\)\)/g) ?? []).length, 2, "checked at both the login and the password step");
-  assert.doesNotMatch(driver, /console\.(?:log|error|warn)/, "the driver prints through one fixed outcome line");
+  assert.equal((browser.match(/mayTypeCredential\(page\.url\(\)\)/g) ?? []).length, 2, "checked at both the login and the password step");
+  assert.equal((browser.match(/\.fill\(password\)/g) ?? []).length, 1, "one place types the password");
+  assert.doesNotMatch(`${driver}\n${browser}`, /console\.(?:log|error|warn)/, "the driver prints through one fixed outcome line");
   assert.match(driver, /process\.stdout\.write\(`outcome: \$\{result\.outcome\}\\n`\)/);
-  assert.doesNotMatch(driver, /screenshot|innerHTML|content\(\)/, "no page capture");
+  assert.doesNotMatch(`${driver}\n${browser}`, /screenshot|innerHTML|content\(\)/, "no page capture");
   assert.match(driver, /O_EXCL, 0o600/, "the result file is created owner-only");
   assert.match(README, /access-edge-denial/);
   assert.match(CHECKLIST, /access-edge-denial/, "the checklist points E1 at its automated sibling");
+  // The client probe against a served leg: no skipped subject, the documented
+  // description from the shipped mapping, and the audit as the authority.
+  const client = read("scripts/live/probe-client.mjs");
+  const clientSupport = read("scripts/live/probe-client-support.mjs");
+  assert.doesNotMatch(client, /\bSKIP\b|process\.exit\(/);
+  assert.match(clientSupport, /identityRejectionDescription/, "expected descriptions come from src, never a copy");
+  assert.doesNotMatch(clientSupport, /Entra returned no groups/, "no duplicated reason text");
+  assert.match(client, /deniedFlowHolds\(events, options\.expect\)/, "a denial is proved from the audit reason");
+  assert.match(client, /auditLeaks\(audit, secrets\)/, "the served audit is scanned for this flow's code and tokens");
+  assert.match(client, /sdkPing\(origin, tokens\.access_token/, "the official SDK client is driven on the public origin");
+  assert.doesNotMatch(client, /console\.(?:log|error|warn)\([^\n]*(?:password|user\b|redirectUrl|access_token|refresh_token)/);
+  for (const [name, record] of [["README", README], ["docs", DOC]]) {
+    assert.match(record, /probe-client\.mjs/, `${name}: records the client probe`);
+    assert.match(record, /tunnel_already_served/, `${name}: records the refusal to double-serve`);
+  }
+  assert.match(CHECKLIST, /client-entra:overage/, "the checklist points the deny rows at their automated siblings");
+  assert.match(workflow, /cloudflared-linux-amd64/);
+  assert.match(workflow, /sha256sum -c -/, "the connector binary is verified by digest before it runs");
+  assert.match(workflow, /node scripts\/live\/ci\/install-tunnel\.mjs/);
+  assert.match(workflow, /rm -rf -- "\$MCP_SSO_BUNDLE_DIR" "\$HOME\/\.cloudflared"/, "the tunnel credentials are removed with the bundle");
   assert.match(README, /live\.yml/);
   assert.match(README, /fetch-bundle\.mjs/);
   assert.match(README, /gh workflow run live\.yml/);
