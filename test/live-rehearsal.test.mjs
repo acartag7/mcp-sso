@@ -393,7 +393,10 @@ esac
 node -e 'require("fs").writeFileSync(process.env.TMPDIR + "/command-env.json", JSON.stringify(process.env))'
 printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required rows\\n'
 `);
-    const full = run([], { PATH: `${cmdBin}:${process.env.PATH}`, AWS_SECRET_ACCESS_KEY: "fixture-aws-secret", RUN_INTEGRATION: "true", MYSQL_URL: "mysql://x", REDIS_URL: "redis://y" });
+    const full = run([], {
+      PATH: `${cmdBin}:${process.env.PATH}`, AWS_SECRET_ACCESS_KEY: "fixture-aws-secret", MCP_SSO_ENTRA_STACK: "entra",
+      RUN_INTEGRATION: "true", MYSQL_URL: "mysql://x", REDIS_URL: "redis://y", PNPM_HOME: "/pnpm/home", npm_config_cache: "/npm/cache",
+    });
     assert.equal(full.status, 1, full.stdout + full.stderr);
     const receipt = JSON.parse(readFileSync(out, "utf8"));
     assert.equal(receipt.kind, "mcp-sso-release-rehearsal");
@@ -406,7 +409,10 @@ printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required row
     const commandEnv = JSON.parse(readFileSync(join(tmp, "command-env.json"), "utf8"));
     assert.equal(commandEnv.AWS_SECRET_ACCESS_KEY, undefined, "the release matrix never holds the AWS session");
     assert.equal(commandEnv.MCP_SSO_BUNDLE_DIR, undefined, "nor the bundle location");
+    assert.equal(commandEnv.MCP_SSO_ENTRA_STACK, undefined, "nor any run configuration");
     assert.equal(commandEnv.MYSQL_URL, "mysql://x");
+    assert.equal(commandEnv.PNPM_HOME, "/pnpm/home", "the package manager's own configuration is kept");
+    assert.equal(commandEnv.npm_config_cache, "/npm/cache");
     assert.equal(byId["probe-entra"].status, "PASS");
     assert.deepEqual(byId["probe-entra"].checks, { passed: 1, controls: 1 });
     assert.equal(byId["probe-google"].status, "BLOCKED");

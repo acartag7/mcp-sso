@@ -24,9 +24,14 @@ const ROW_TIMEOUT_MS = 10 * 60_000;
 const SERVE_READY_MS = 120_000;
 const MAX_CAPTURE = 1024 * 1024;
 const LEAK_NOTE = "output withheld: a private value from the run configuration appeared in it";
-/** The only variables a repository command (the release matrix) receives. It
- *  never holds the AWS session, the bundle location, or a provider value. */
+/** The only variables a repository command (the release matrix) receives: the
+ *  services it tests against, and the package-manager and runner configuration
+ *  pnpm needs to find its store and metadata cache. It never holds the AWS
+ *  session, the bundle location, or a provider value. */
 const COMMAND_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CI", "NO_COLOR", "RUN_INTEGRATION", "MYSQL_URL", "REDIS_URL"];
+const COMMAND_ENV_PREFIXES = ["PNPM_", "npm_config_", "COREPACK_", "XDG_", "GITHUB_", "RUNNER_"];
+const commandEnv = (env) => Object.fromEntries(Object.entries(env).filter(([key]) =>
+  COMMAND_ENV_KEYS.includes(key) || COMMAND_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))));
 
 function parseArgs(argv) {
   const options = { out: join(REPO, ".live-state", "receipt.json"), rows: undefined };
@@ -87,7 +92,7 @@ function spawnCapturing(command, args, env, timeoutMs, secrets) {
 
 async function runRow(row, env, args, secrets) {
   const state = row.kind === "command"
-    ? spawnCapturing(row.command[0], row.command.slice(1), Object.fromEntries(COMMAND_ENV_KEYS.filter((k) => env[k] !== undefined).map((k) => [k, env[k]])), ROW_TIMEOUT_MS, secrets)
+    ? spawnCapturing(row.command[0], row.command.slice(1), commandEnv(env), ROW_TIMEOUT_MS, secrets)
     : spawnCapturing(join(REPO, "scripts/live/run.sh"), [row.entry, row.leg, ...args], env, ROW_TIMEOUT_MS, secrets);
   const { code, signal } = await state.exit;
   const leaked = state.leaked || leaksPrivateValue(`${state.stdout}\n${state.stderr}`, secrets);
