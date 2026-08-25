@@ -10,6 +10,11 @@ name: live
 # branch pushed). A job below refuses any other ref before it does anything.
 on:
   workflow_dispatch:
+    inputs:
+      record:
+        description: "Open the evidence pull request from a passing receipt (main only)"
+        type: boolean
+        default: false
   schedule:
     - cron: "17 3 * * *" # nightly ~03:17 UTC (off the :00 mark)
   push:
@@ -35,6 +40,20 @@ jobs:
       contents: read
 
     services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: mcp_sso
+          MYSQL_USER: mcp
+          MYSQL_PASSWORD: mcppw
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u mcp -pmcppw --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=18
       redis:
         image: redis:7-alpine
         ports:
@@ -52,6 +71,9 @@ jobs:
       MCP_SSO_INFRA_DIR: ${{ github.workspace }}/scripts/live/ci/infra
       MCP_SSO_ENTRA_STACK: entra
       MCP_SSO_CLOUDFLARE_STACK: cloudflare
+      # The release-matrix row runs the same services CI's verify job does.
+      RUN_INTEGRATION: "true"
+      MYSQL_URL: mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4
       REDIS_URL: redis://127.0.0.1:6379
 
     steps:
@@ -113,3 +135,56 @@ jobs:
           path: ${{ runner.temp }}/receipt.json
           if-no-files-found: error
           retention-days: 30
+
+  # The evidence pull request, from a passing receipt, on main only and only
+  # when asked. This job never holds the AWS role; the job above never holds a
+  # write token. A branch pushed with the workflow token starts no CI run of
+  # its own, so the pull request body says how to start one.
+  record:
+    name: record the evidence
+    needs: rehearse
+    if: github.event_name == 'workflow_dispatch' && inputs.record && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-20)
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10 (2026-08-03)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (2026-07-14)
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (2026-03-11)
+        with:
+          name: rehearsal-receipt-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/receipt
+      - name: render the receipt into the evidence record
+        run: node scripts/live/render-evidence.mjs --receipt "$RUNNER_TEMP/receipt/receipt.json" --date "$(date -u +%F)" --write
+      - name: open the evidence pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          SHORT="$(git rev-parse --short=7 HEAD)"
+          BRANCH="evidence/${SHORT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add docs/client-compatibility.md
+          git commit -q -F - <<EOF
+          docs(evidence): record the release rehearsal at ${SHORT}
+
+          Rendered from the receipt of ${RUN_URL} by scripts/live/render-evidence.mjs.
+
+          Spec: docs/live-verification.md
+          EOF
+          git push -u origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "docs(evidence): record the release rehearsal at ${SHORT}" \
+            --body "Rendered from the passing receipt of ${RUN_URL} at \`$(git rev-parse HEAD~1)\`. Every rehearsal row passed on a clean tree. This branch was pushed by the workflow token, so its checks did not start: run \`gh pr close <n> && gh pr reopen <n>\` (or push an empty commit) to start them, then review and merge."

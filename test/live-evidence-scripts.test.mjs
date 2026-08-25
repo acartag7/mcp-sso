@@ -525,6 +525,20 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
     assert.match(record, /tunnel_already_served/, `${name}: records the refusal to double-serve`);
   }
   assert.match(CHECKLIST, /client-entra:overage/, "the checklist points the deny rows at their automated siblings");
+  // The evidence record is rendered only from a passing receipt and checked
+  // with the gate's parser; the writing job and the credentialed job are split.
+  const renderer = read("scripts/live/render-evidence.mjs");
+  assert.match(renderer, /receipt\.evidence !== true/, "a receipt that is not evidence is refused");
+  assert.match(renderer, /evaluateReleaseReadiness\(/, "the gate's own parser checks the rendering before it is written");
+  assert.ok(renderer.indexOf("evaluateReleaseReadiness(") < renderer.indexOf("writeFileSync(compatibilityPath"), "checked before written");
+  const jobs = workflow.split(/^  record:$/m);
+  assert.equal(jobs.length, 2, "one record job");
+  assert.doesNotMatch(jobs[0].slice(jobs[0].indexOf("  rehearse:")), /contents: write|pull-requests: write/, "the rehearsal job holds no write token");
+  assert.doesNotMatch(jobs[1], /environment: live|configure-aws-credentials/, "the record job holds no AWS role");
+  assert.match(jobs[1], /if: github\.event_name == 'workflow_dispatch' && inputs\.record && github\.ref == 'refs\/heads\/main'/, "recording is opt-in and main only");
+  assert.match(jobs[1], /render-evidence\.mjs --receipt .* --write/);
+  assert.match(README, /render-evidence\.mjs/);
+  assert.match(DOC, /render-evidence\.mjs/);
   assert.match(workflow, /cloudflared-linux-amd64/);
   assert.match(workflow, /sha256sum -c -/, "the connector binary is verified by digest before it runs");
   assert.match(workflow, /node scripts\/live\/ci\/install-tunnel\.mjs/);

@@ -19,6 +19,7 @@ const client = (id, leg, user, expect, serve) => ({ id, kind: "client", entry: C
  *  file to the later row that `needs` it; a `client` row runs against a leg
  *  serve.sh exposes for the rows that share its `serve` generation. */
 export const ROWS = Object.freeze([
+  { id: "release-matrix", kind: "command", command: ["pnpm", "run", "test:release"], env: {} },
   { id: "probe-entra", kind: "probe", entry: "scripts/live/probe-entra.mjs", leg: "entra", env: {} },
   { id: "probe-google", kind: "probe", entry: "scripts/live/probe-google.mjs", leg: "google", env: {} },
   { id: "access-login", kind: "driver", entry: DRIVER, leg: "cloudflare_access", env: {},
@@ -106,6 +107,23 @@ export function classifyRun({ code, stdout, stderr }) {
     return { status: "FAIL", reason: "summary_mismatch", lines, checks };
   }
   return { status: "PASS", lines, checks };
+}
+
+/** Classify the release-matrix command: every RM row passed, or the services
+ *  it needs were not there (BLOCKED), or it failed. */
+export function classifyCommandRun({ code, stdout, stderr }) {
+  const combined = `${stdout}\n${stderr}`;
+  if (/MYSQL_URL is required|REDIS_URL is required|RUN_INTEGRATION=true is required/.test(combined)) {
+    return { status: "BLOCKED", reason: "release_services_absent", lines: [] };
+  }
+  const summary = /^PASS release matrix: (\d+)\/(\d+) required rows$/m.exec(stdout);
+  const rowLines = stdout.split("\n").map((line) => /^(PASS|FAIL) (RM\.\d+) (.*)$/.exec(line)).filter(Boolean)
+    .map((match) => ({ kind: match[1], text: `${match[2]} ${match[3]}` }));
+  const failed = rowLines.filter((line) => line.kind === "FAIL").length;
+  if (code === 0 && summary !== null && failed === 0 && +summary[1] === +summary[2] && +summary[1] > 0 && rowLines.length === +summary[1]) {
+    return { status: "PASS", lines: rowLines, checks: { passed: +summary[1], total: +summary[2], controls: 0 } };
+  }
+  return { status: "FAIL", reason: failed > 0 ? "checks_failed" : "matrix_failed", lines: rowLines };
 }
 
 /** Classify one driver outcome: the single `outcome:` line against `expect`. */

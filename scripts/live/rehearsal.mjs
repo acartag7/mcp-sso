@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { privateValues, readPrivateJson } from "./ci/bundle-support.mjs";
 import { issuerOriginForLeg, readGoogleCredentialFile } from "./run-support.mjs";
 import {
-  ROWS, buildReceipt, classifyDriverRun, classifyRun, classifyServeFailure, formatSummary, generations,
+  ROWS, buildReceipt, classifyCommandRun, classifyDriverRun, classifyRun, classifyServeFailure, formatSummary, generations,
 } from "./rehearsal-support.mjs";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
@@ -82,7 +82,9 @@ function spawnCapturing(command, args, env, timeoutMs) {
 }
 
 async function runRow(row, env, args) {
-  const state = spawnCapturing(join(REPO, "scripts/live/run.sh"), [row.entry, row.leg, ...args], env, ROW_TIMEOUT_MS);
+  const state = row.kind === "command"
+    ? spawnCapturing(row.command[0], row.command.slice(1), env, ROW_TIMEOUT_MS)
+    : spawnCapturing(join(REPO, "scripts/live/run.sh"), [row.entry, row.leg, ...args], env, ROW_TIMEOUT_MS);
   const { code, signal } = await state.exit;
   return {
     code: signal ? 1 : code, stdout: state.stdout, stderr: signal ? `${state.stderr}\nrow ${signal}` : state.stderr,
@@ -185,7 +187,8 @@ try {
       if (row.kind === "client") env.MCP_SSO_AUDIT_FILE = join(REPO, ".live-state", row.leg, "audit.jsonl");
       if (row.needs !== undefined && provided.has(row.needs)) env[HANDOFF_ENV[row.needs]] = provided.get(row.needs);
       const run = await runRow(row, env, args);
-      const outcome = row.kind === "driver" ? classifyDriverRun({ ...run, expect: row.expect }) : classifyRun(run);
+      const outcome = row.kind === "driver" ? classifyDriverRun({ ...run, expect: row.expect })
+        : row.kind === "command" ? classifyCommandRun(run) : classifyRun(run);
       let { lines, status, reason } = outcome;
       if (row.kind === "driver" && status !== "PASS" && outFile !== undefined && existsSync(outFile)) {
         // The driver's trace names page classes and steps, never a host or text;

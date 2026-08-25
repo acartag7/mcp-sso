@@ -33,7 +33,7 @@ The remaining live gaps are:
 - A second generic OIDC provider other than Google.
 - The GitHub identity port and device flow. Both remain contract-only and are not release claims.
 
-## What `v0.5.0` adds
+## What v0.5.0 adds
 
 `createUpstreamRedirectFlow` accepts `complete: "identity"` with an `onIdentity` callback. The flow runs the same state, nonce, PKCE, single-use flow cookie, callback validation, and exchange it already ran, then hands verified `IdentityClaims` to the host instead of calling `bridge.handleAuthorize`. There is no consent page and no MCP token. `complete: "bridge"` stays the default and is unchanged.
 

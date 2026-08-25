@@ -171,6 +171,7 @@ on a clean tree; that is the only receipt that counts as evidence.
 
 | Row | What runs |
 | --- | --- |
+| `release-matrix` | `pnpm run test:release` against the MySQL and Redis services: the whole suite plus every `RM.N` row in `test/release-matrix.json`. `BLOCKED release_services_absent` without `MYSQL_URL`, `REDIS_URL`, and `RUN_INTEGRATION=true`. |
 | `probe-entra`, `probe-google` | The provider probes above. |
 | `access-login` | `drive-identity.mjs` signs the Entra stack's `member` test user in through the real Cloudflare Access login page, choosing the Entra login method the stack names, and keeps the resulting Access assertion for the next rows. Must end `approved`. |
 | `access-edge-denial` | The same, as the `nogroups` test user, which the Access policy does not admit. Must end `denied_at_provider`: the Cloudflare edge stops the account before anything reaches the gateway. This is checklist row E1, unattended. |
@@ -194,6 +195,31 @@ that could not start takes that status. In CI, `cloudflared` is installed from
 one release asset verified against a recorded SHA-256, the connector
 credentials come from the bundle (`scripts/live/ci/install-tunnel.mjs` places
 them owner-only under `~/.cloudflared`), and both are removed when the job ends.
+
+### Recording a passing receipt
+
+```sh
+node scripts/live/render-evidence.mjs --receipt .live-state/receipt.json --date 2026-08-25 --write
+```
+
+`render-evidence.mjs` turns a receipt whose every row passed on a clean tree
+into the evidence record `docs/client-compatibility.md`: it replaces the
+provider rows the rehearsal proved (the Entra and Cloudflare SDK flows, the
+five Entra deny fixtures, the Google probe with its sign-in limit) and, when
+the `release-matrix` row passed, every public-export row, all at the receipt's
+runtime commit. Rows the rehearsal did not drive (the third-party clients)
+are kept as they are. Before anything is written, the rendered document is
+checked with the same parser `check:release-ready` uses, at the receipt's
+commit; a receipt that is not evidence, or a rendering the gate would refuse,
+is an error and writes nothing.
+
+In CI, `gh workflow run live.yml -f record=true` on `main` runs the rehearsal
+and then, from a passing receipt, renders the record and opens the evidence
+pull request on an `evidence/<sha>` branch. That second job never holds the
+AWS role, and the rehearsal job never holds a write token. A branch pushed by
+the workflow token starts no CI run of its own, so the pull request says how
+to start one (`gh pr close <n> && gh pr reopen <n>`). The nightly run and the
+`rehearsal/*` runs never record.
 
 ### The identity driver
 

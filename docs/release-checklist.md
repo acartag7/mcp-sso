@@ -47,7 +47,16 @@ Use this checklist for a release candidate. The [release verification reference]
 
 ## Record live compatibility claims
 
-For each provider or client claim, complete the matching Tier 3 row after the source and package gates pass. Record the result in the [client compatibility reference](client-compatibility.md#current-matrix). Record the completed export rows and the commit used for the release-matrix run in the [public export evidence table](client-compatibility.md#public-export-live-evidence).
+Run the release rehearsal from the merged `main` commit and let it open the evidence pull request:
+
+```bash
+gh workflow run live.yml --ref main -f record=true
+gh run watch
+```
+
+The `live` workflow runs the release matrix against MySQL and Redis, every provider probe, the headless sign-ins, and the client flows against the served legs, and, when every row passes on a clean tree, renders the receipt into the [client compatibility reference](client-compatibility.md) and opens a pull request on an `evidence/<sha>` branch. `scripts/live/README.md` lists the rows and what each proves. A run with a failed or blocked row opens nothing; fix the cause and run it again.
+
+Record the completed export rows and the commit used for the release-matrix run in the [public export evidence table](client-compatibility.md#public-export-live-evidence): the workflow's `record` job writes them from the receipt's `release-matrix` row. For a client the rehearsal does not drive (Claude Code, Codex CLI, the ChatGPT and claude.ai connectors, the Google sign-in), complete the matching Tier 3 row by hand after the source and package gates pass, on the same evidence branch, in the [client compatibility reference](client-compatibility.md#current-matrix).
 
 Do not use a live result as the only evidence for a security property.
 
@@ -62,7 +71,7 @@ The commands name a malformed matrix row, non-ancestor runtime commit, missing e
 
 ## Merge the evidence record
 
-1. Commit only `docs/client-compatibility.md`. Push the evidence branch and open its pull request.
+1. Commit only `docs/client-compatibility.md` on the evidence branch. The workflow's `record` job does this and opens the pull request; close and reopen that pull request once so the hosted checks start, because a branch pushed by the workflow token starts none on its own.
 2. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
 3. Read every review and inline thread.
 4. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.

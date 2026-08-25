@@ -298,7 +298,7 @@ test("BEHAVIOUR rehearsal-support: run.sh outcomes classify as PASS, FAIL, or an
   assert.equal(classifyRun({ code: 1, stderr: "run.sh: REDIS_URL is required for probe-e2e.mjs\n", stdout: "" }).reason, "runner_refused");
   assert.equal(classifyRun({ code: 1, stderr: "", stdout: "PASS  a\nFAIL  probe aborted before completion\n\n1/2 checks passed\n" }).reason, "checks_failed");
   assert.deepEqual(ROWS.map((row) => row.id), [
-    "probe-entra", "probe-google", "access-login", "access-edge-denial", "probe-cloudflare", "probe-e2e:stored", "probe-e2e:stateless",
+    "release-matrix", "probe-entra", "probe-google", "access-login", "access-edge-denial", "probe-cloudflare", "probe-e2e:stored", "probe-e2e:stateless",
     "client-entra:member", "client-entra:nogroups", "client-entra:wronggroup", "client-entra:overage", "client-cloudflare:member",
     "client-entra:wrong-tenant", "client-entra:not-allowlisted",
   ]);
