@@ -1,7 +1,7 @@
 {
   "name": "mcp-sso",
   "version": "0.5.0",
-  "description": "OAuth 2.1 and enterprise SSO for remote MCP servers\u2014without API keys in client configs.",
+  "description": "OAuth 2.1 and enterprise SSO for remote MCP servers—without API keys in client configs.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -111,15 +111,16 @@
     "hono": "4.12.34",
     "ioredis": "5.11.1",
     "mysql2": "3.22.5",
+    "playwright-core": "1.62.1",
     "typescript": "6.0.3"
   },
   "peerDependencies": {
     "@fastify/rate-limit": ">=11.2.0 <12",
-    "fastify": ">=5",
     "express": ">=5",
+    "fastify": ">=5",
     "hono": ">=4.12.34 <5",
-    "mysql2": ">=3",
-    "ioredis": ">=5"
+    "ioredis": ">=5",
+    "mysql2": ">=3"
   },
   "peerDependenciesMeta": {
     "@fastify/rate-limit": {

@@ -485,7 +485,24 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   for (const [name, record] of [["README", README], ["docs", DOC]]) {
     assert.match(record, /rehearsal\.mjs/, `${name}: records the rehearsal`);
     assert.match(record, /BLOCKED/, `${name}: records the blocked outcome`);
+    assert.match(record, /drive-identity\.mjs/, `${name}: records the identity driver`);
+    assert.match(record, /login\.microsoftonline\.com/, `${name}: records the one host the password is typed on`);
   }
+  // The driver: the password reaches exactly one host, and nothing a page
+  // shows is ever printed.
+  const driver = read("scripts/live/drive-identity.mjs");
+  const driverSupport = read("scripts/live/drive-identity-support.mjs");
+  assert.match(driverSupport, /CREDENTIAL_HOST = "login\.microsoftonline\.com"/);
+  const typeGate = driver.indexOf("if (!policy.mayTypeCredential(page.url())) return \"unexpected_host\";");
+  const fill = driver.indexOf('.fill(password)');
+  assert.ok(typeGate >= 0 && fill > typeGate, "the host is checked before the password is typed");
+  assert.equal((driver.match(/mayTypeCredential\(page\.url\(\)\)/g) ?? []).length, 2, "checked at both the login and the password step");
+  assert.doesNotMatch(driver, /console\.(?:log|error|warn)/, "the driver prints through one fixed outcome line");
+  assert.match(driver, /process\.stdout\.write\(`outcome: \$\{result\.outcome\}\\n`\)/);
+  assert.doesNotMatch(driver, /screenshot|innerHTML|content\(\)/, "no page capture");
+  assert.match(driver, /O_EXCL, 0o600/, "the result file is created owner-only");
+  assert.match(README, /access-edge-denial/);
+  assert.match(CHECKLIST, /access-edge-denial/, "the checklist points E1 at its automated sibling");
   assert.match(README, /live\.yml/);
   assert.match(README, /fetch-bundle\.mjs/);
   assert.match(README, /gh workflow run live\.yml/);

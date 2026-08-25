@@ -163,20 +163,52 @@ either exercises what a row claims or reports `FAIL`; there is no `SKIP`.
 REDIS_URL=redis://127.0.0.1:6379 node scripts/live/rehearsal.mjs
 ```
 
-`rehearsal.mjs` runs `probe-entra`, `probe-google`, `probe-cloudflare`, and
-`probe-e2e` in both DCR modes, each through `run.sh`, in that order, and writes
-`.live-state/receipt.json`: the runtime commit, whether the tree was dirty, and
-per row the status, the probe's own `PASS`/`FAIL`/`CONTROL` lines, the check
-counts, and the duration. It exits 0 only when every row is `PASS` on a clean
-tree; that is the only receipt that counts as evidence.
+`rehearsal.mjs` runs these rows, each through `run.sh`, in this order, and
+writes `.live-state/receipt.json`: the runtime commit, whether the tree was
+dirty, and per row the status, the probe's own `PASS`/`FAIL`/`CONTROL` lines,
+the check counts, and the duration. It exits 0 only when every row is `PASS`
+on a clean tree; that is the only receipt that counts as evidence.
 
-A row is `BLOCKED` rather than `FAIL` when `run.sh` refused it for one of three
-reasons an operator can arm: `cloudflare_access_login_required` (run
-`cloudflared access login` first), `google_credentials_absent` (no credential
-file), or `infrastructure_session_expired` (`aws sso login` or `az login`). A
+| Row | What runs |
+| --- | --- |
+| `probe-entra`, `probe-google` | The provider probes above. |
+| `access-login` | `drive-identity.mjs` signs the Entra stack's `member` test user in through the real Cloudflare Access login page, choosing the Entra login method the stack names, and keeps the resulting Access assertion for the next rows. Must end `approved`. |
+| `access-edge-denial` | The same, as the `nogroups` test user, which the Access policy does not admit. Must end `denied_at_provider`: the Cloudflare edge stops the account before anything reaches the gateway. This is checklist row E1, unattended. |
+| `probe-cloudflare` | The Cloudflare probe, with the assertion `access-login` captured (or, when that row did not run, one minted by `cloudflared` from an operator login). |
+| `probe-e2e:stored`, `probe-e2e:stateless` | The end-to-end probe in each DCR mode. |
+
+### The identity driver
+
+`scripts/live/drive-identity.mjs` is a `run.sh` entry like the probes. It
+drives the machine's own Google Chrome headless through `playwright-core` (or a
+remote browser when `MCP_SSO_BROWSER_CDP_URL` names a CDP endpoint), and it
+receives from `run.sh` only the leg origin, the Entra stack's test users and
+their password, and the Cloudflare login method; never an application
+credential. The password is typed on `login.microsoftonline.com` and nowhere
+else: a navigation to any host outside the leg origin, Cloudflare Access, and
+that login host ends the task as `unexpected_host` before a keystroke. The
+driver prints exactly one `outcome:` line, never a page's text or URL, and
+writes its result (`approved` with the assertion, or one of
+`denied_at_provider`, `blocked_mfa_interstitial`, `browser_unavailable`,
+`unexpected_host`, `timeout`) to an owner-only file that `run.sh` reads as data
+through `MCP_SSO_CF_ACCESS_ASSERTION_FILE`. A result that is not an approved
+sign-in is refused there, never treated as an empty assertion.
+
+```sh
+scripts/live/run.sh scripts/live/drive-identity.mjs cloudflare_access cloudflare-assertion --out ./result.json --user member
+```
+
+A row is `BLOCKED` rather than `FAIL` when it was refused for a reason an
+operator can arm: `cloudflare_access_login_required` (no driver assertion and
+no `cloudflared access login`), `google_credentials_absent` (no credential
+file), `infrastructure_session_expired` (`aws sso login` or `az login`),
+`browser_unavailable` (no Chrome and no CDP endpoint for the driver), or
+`blocked_mfa_interstitial` (the tenant asked the test user to register MFA). A
 `BLOCKED` row still turns the run red and is never evidence; it exists so the
 summary names what is missing instead of hiding it. Any other refusal, any
-`FAIL` line, a missing or mismatched summary, or zero checks is a `FAIL`.
+`FAIL` line, a missing or mismatched summary, zero checks, or a driver row that
+ends in any outcome other than the one it expects is a `FAIL`. An admitted
+sign-in where a denial was expected is a `FAIL`, not a pass.
 
 The orchestrator also knows every private value the run was configured with
 (from the CI bundle and the Google credential file, when present). A row whose

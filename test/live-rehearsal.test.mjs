@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,7 @@ import {
 import { answer } from "../scripts/live/ci/bundle-output.mjs";
 import { fetchBundles } from "../scripts/live/ci/fetch-bundle.mjs";
 import { maskLines } from "../scripts/live/ci/mask-bundle.mjs";
-import { ROWS, buildReceipt, classifyRun, formatSummary } from "../scripts/live/rehearsal-support.mjs";
+import { ROWS, buildReceipt, classifyDriverRun, classifyRun, formatSummary } from "../scripts/live/rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TENANT = "11111111-2222-3333-4444-555555555555";
@@ -35,7 +35,9 @@ const CLOUDFLARE = {
   cf_access_certs_url: "https://team.cloudflareaccess.com/cdn-cgi/access/certs",
   issuer_origins: { cloudflare_access: "https://cf.example", entra: "https://entra.example", google: "https://google.example" },
   tunnel_ingress_ports: { entra: { gateway: 43111, backend: 43112 } }, tunnel_id: "0f0f0f0f-1111-2222-3333-444444444444",
+  cf_access_idp_name: "fixture tenant",
 };
+const JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln";
 const executable = (path, source) => { writeFileSync(path, source); chmodSync(path, 0o700); };
 const privateFile = (path, text) => { writeFileSync(path, text, { mode: 0o600 }); chmodSync(path, 0o600); };
 
@@ -126,18 +128,20 @@ test("BEHAVIOUR adapter + run.sh: the shipped runner assembles a leg from the bu
     }
     chmodSync(join(repo, "scripts/live/run.sh"), 0o700);
     chmodSync(join(repo, "scripts/live/ci/infra/scripts/tofu-run.sh"), 0o700);
-    const capture = 'import { writeFileSync } from "node:fs";\nimport { join } from "node:path";\nwriteFileSync(join(process.env.TMPDIR, "capture.json"), JSON.stringify(process.env));\n';
-    writeFileSync(join(repo, "scripts/live/probe-entra.mjs"), capture);
+    const capture = 'import { writeFileSync } from "node:fs";\nimport { join } from "node:path";\nwriteFileSync(join(process.env.TMPDIR, "capture.json"), JSON.stringify({ env: process.env, argv: process.argv.slice(2) }));\n';
+    for (const entry of ["probe-entra.mjs", "probe-cloudflare.mjs", "drive-identity.mjs"]) writeFileSync(join(repo, "scripts/live", entry), capture);
     const git = (...args) => execFileSync("git", ["-C", repo, "-c", "user.name=f", "-c", "user.email=f@example.test", ...args], { stdio: "ignore" });
     git("init", "-q"); git("add", "-A"); git("commit", "-q", "-m", "fixture");
     const dir = bundleDir();
     const home = join(fixture, "home");
     mkdirSync(home);
-    const result = await new Promise((resolve, reject) => {
-      const child = spawn(join(repo, "scripts/live/run.sh"), ["scripts/live/probe-entra.mjs", "entra"], {
+    const runScript = (args, extraEnv = {}) => new Promise((resolve, reject) => {
+      const runDir = join(fixture, `run-${Math.random().toString(16).slice(2)}`);
+      mkdirSync(runDir);
+      const child = spawn(join(repo, "scripts/live/run.sh"), args, {
         env: {
-          PATH: process.env.PATH, HOME: home, TMPDIR: fixture, MCP_SSO_BUNDLE_DIR: dir,
-          MCP_SSO_INFRA_DIR: join(repo, "scripts/live/ci/infra"), MCP_SSO_ENTRA_STACK: "entra", MCP_SSO_CLOUDFLARE_STACK: "cloudflare",
+          PATH: process.env.PATH, HOME: home, TMPDIR: runDir, MCP_SSO_BUNDLE_DIR: dir,
+          MCP_SSO_INFRA_DIR: join(repo, "scripts/live/ci/infra"), MCP_SSO_ENTRA_STACK: "entra", MCP_SSO_CLOUDFLARE_STACK: "cloudflare", ...extraEnv,
         },
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -145,16 +149,61 @@ test("BEHAVIOUR adapter + run.sh: the shipped runner assembles a leg from the bu
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk) => { stderr += chunk; });
       child.once("error", reject);
-      child.once("exit", (code) => resolve({ code, stderr }));
+      child.once("exit", (code) => {
+        const capturePath = join(runDir, "capture.json");
+        resolve({ code, stderr, captured: existsSync(capturePath) ? JSON.parse(readFileSync(capturePath, "utf8")) : undefined });
+      });
     });
-    assert.equal(result.code, 0, result.stderr);
-    const env = JSON.parse(readFileSync(join(fixture, "capture.json"), "utf8"));
+    const probe = await runScript(["scripts/live/probe-entra.mjs", "entra"]);
+    assert.equal(probe.code, 0, probe.stderr);
+    const env = probe.captured.env;
     assert.equal(env.OAUTH_ISSUER, "https://entra.example");
     assert.equal(env.ENTRA_TENANT_ID, TENANT);
     assert.equal(env.ENTRA_CLIENT_SECRET, ENTRA.entra_client_secret);
     assert.deepEqual(JSON.parse(env.ENTRA_GROUP_AUTHORIZATION_JSON), { mapping: ENTRA.group_authorization_mapping });
     assert.equal(env.MCP_SSO_BUNDLE_DIR, undefined, "the bundle location never reaches the entry");
-    assert.doesNotMatch(result.stderr, new RegExp(ENTRA.entra_client_secret));
+    assert.equal(env.IDP_TEST_USER_PASSWORD, undefined, "a probe never receives the test-user password");
+    assert.deepEqual(probe.captured.argv, [], "a probe receives no arguments unless given");
+    assert.doesNotMatch(probe.stderr, new RegExp(ENTRA.entra_client_secret));
+    // The driver kind: test users and their password, the leg origin, and for
+    // the Cloudflare leg the login method; no application credential; its
+    // arguments forwarded verbatim.
+    const driver = await runScript(["scripts/live/drive-identity.mjs", "cloudflare_access", "cloudflare-assertion", "--out", "/nowhere", "--user", "nogroups"]);
+    assert.equal(driver.code, 0, driver.stderr);
+    assert.deepEqual(driver.captured.argv, ["cloudflare-assertion", "--out", "/nowhere", "--user", "nogroups"]);
+    assert.equal(driver.captured.env.OAUTH_ISSUER, "https://cf.example");
+    assert.deepEqual(JSON.parse(driver.captured.env.IDP_TEST_USERS_JSON), ENTRA.test_users);
+    assert.equal(driver.captured.env.IDP_TEST_USER_PASSWORD, ENTRA.test_user_password);
+    assert.equal(driver.captured.env.CF_ACCESS_IDP_NAME, "fixture tenant");
+    for (const key of ["CF_ACCESS_AUDIENCE", "CF_ACCESS_ASSERTION", "ENTRA_CLIENT_SECRET", "MCP_SSO_CF_ACCESS_ASSERTION_FILE"]) {
+      assert.equal(driver.captured.env[key], undefined, `${key} never reaches the driver`);
+    }
+    assert.doesNotMatch(driver.stderr, new RegExp(ENTRA.test_user_password));
+    const entraDriver = await runScript(["scripts/live/drive-identity.mjs", "entra", "cloudflare-assertion", "--out", "/nowhere"]);
+    assert.equal(entraDriver.code, 0, entraDriver.stderr);
+    assert.equal(entraDriver.captured.env.CF_ACCESS_IDP_NAME, undefined, "the login method is a Cloudflare-leg value");
+    assert.equal(entraDriver.captured.env.OAUTH_ISSUER, "https://entra.example");
+    // The Cloudflare probe takes its assertion from the driver's result file
+    // when one is named, and refuses a result that is not an approved sign-in.
+    const approved = join(fixture, "approved.json");
+    privateFile(approved, JSON.stringify({ task: "cloudflare-assertion", user: "member", outcome: "approved", assertion: JWT }));
+    const withFile = await runScript(["scripts/live/probe-cloudflare.mjs", "cloudflare_access"], { MCP_SSO_CF_ACCESS_ASSERTION_FILE: approved });
+    assert.equal(withFile.code, 0, withFile.stderr);
+    assert.equal(withFile.captured.env.CF_ACCESS_ASSERTION, JWT);
+    assert.equal(withFile.captured.env.MCP_SSO_CF_ACCESS_ASSERTION_FILE, undefined);
+    const denied = join(fixture, "denied.json");
+    privateFile(denied, JSON.stringify({ outcome: "denied_at_provider" }));
+    const withDenied = await runScript(["scripts/live/probe-cloudflare.mjs", "cloudflare_access"], { MCP_SSO_CF_ACCESS_ASSERTION_FILE: denied });
+    assert.equal(withDenied.code, 1);
+    assert.equal(withDenied.captured, undefined, "the probe never starts without an approved assertion");
+    assert.match(withDenied.stderr, /MCP_SSO_CF_ACCESS_ASSERTION_FILE is not an owner-only file holding one compact JWT/);
+    const bin = join(fixture, "bin");
+    mkdirSync(bin);
+    executable(join(bin, "cloudflared"), "#!/usr/bin/env bash\nexit 1\n");
+    const withoutFile = await runScript(["scripts/live/probe-cloudflare.mjs", "cloudflare_access"], { PATH: `${bin}:${process.env.PATH}` });
+    assert.equal(withoutFile.code, 1);
+    assert.match(withoutFile.stderr, /cloudflared could not mint an Access assertion/, "without a file the cloudflared path is the fallback");
+    assert.equal(withoutFile.captured, undefined);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
@@ -231,8 +280,24 @@ test("BEHAVIOUR rehearsal-support: run.sh outcomes classify as PASS, FAIL, or an
   assert.equal(classifyRun({ code: 1, stderr: "run.sh: cloudflared could not mint an Access assertion\n", stdout: "FAIL  x\n" }).status, "FAIL", "a blocked reason after checks ran is a failure");
   assert.equal(classifyRun({ code: 1, stderr: "run.sh: REDIS_URL is required for probe-e2e.mjs\n", stdout: "" }).reason, "runner_refused");
   assert.equal(classifyRun({ code: 1, stderr: "", stdout: "PASS  a\nFAIL  probe aborted before completion\n\n1/2 checks passed\n" }).reason, "checks_failed");
-  assert.equal(ROWS.length, 5);
-  assert.deepEqual(ROWS.map((row) => row.id), ["probe-entra", "probe-google", "probe-cloudflare", "probe-e2e:stored", "probe-e2e:stateless"]);
+  assert.deepEqual(ROWS.map((row) => row.id), [
+    "probe-entra", "probe-google", "access-login", "access-edge-denial", "probe-cloudflare", "probe-e2e:stored", "probe-e2e:stateless",
+  ]);
+  assert.ok(ROWS.findIndex((row) => row.provides === "cloudflare-assertion") < ROWS.findIndex((row) => row.needs === "cloudflare-assertion"),
+    "the assertion is produced before the probe that needs it");
+  assert.equal(classifyDriverRun({ code: 0, stdout: "outcome: approved\n", stderr: "", expect: "approved" }).status, "PASS");
+  assert.equal(classifyDriverRun({ code: 0, stdout: "outcome: denied_at_provider\n", stderr: "", expect: "denied_at_provider" }).status, "PASS");
+  const wrongWay = classifyDriverRun({ code: 0, stdout: "outcome: approved\n", stderr: "", expect: "denied_at_provider" });
+  assert.equal(wrongWay.status, "FAIL", "an admitted account that should have been denied is a failure, not a pass");
+  assert.equal(wrongWay.reason, "outcome_approved");
+  assert.equal(classifyDriverRun({ code: 2, stdout: "outcome: denied_at_provider\n", stderr: "", expect: "approved" }).reason, "outcome_denied_at_provider");
+  assert.equal(classifyDriverRun({ code: 2, stdout: "outcome: browser_unavailable\n", stderr: "", expect: "approved" }).status, "BLOCKED");
+  assert.equal(classifyDriverRun({ code: 2, stdout: "outcome: blocked_mfa_interstitial\n", stderr: "", expect: "approved" }).reason, "blocked_mfa_interstitial");
+  assert.equal(classifyDriverRun({ code: 2, stdout: "outcome: unexpected_host\n", stderr: "", expect: "approved" }).status, "FAIL");
+  assert.equal(classifyDriverRun({ code: 2, stdout: "outcome: timeout\n", stderr: "", expect: "approved" }).status, "FAIL");
+  assert.equal(classifyDriverRun({ code: 1, stdout: "", stderr: "error: AWS session is not valid\n", expect: "approved" }).status, "BLOCKED");
+  assert.equal(classifyDriverRun({ code: 1, stdout: "", stderr: "run.sh: test_users output is invalid\n", expect: "approved" }).reason, "runner_refused");
+  assert.equal(classifyDriverRun({ code: 0, stdout: "outcome: approved\noutcome: approved\n", stderr: "", expect: "approved" }).status, "PASS");
   const rows = [
     { id: "probe-entra", entry: "e", leg: "entra", status: "PASS", checks: { passed: 2, controls: 1 }, durationMs: 10, lines: [] },
     { id: "probe-cloudflare", entry: "c", leg: "cloudflare_access", status: "BLOCKED", reason: "cloudflare_access_login_required", durationMs: 1, lines: [] },
@@ -258,14 +323,18 @@ test("BEHAVIOUR rehearsal.mjs: rows run through run.sh, a leaked private value f
     symlinkSync(join(ROOT, "src"), join(repo, "src"));
     symlinkSync(join(ROOT, "examples"), join(repo, "examples"));
     symlinkSync(join(ROOT, "node_modules"), join(repo, "node_modules"));
-    // A fixture run.sh: each entry/leg pair replays a scripted outcome.
+    // A fixture run.sh: each entry/leg pair replays a scripted outcome. The
+    // driver fixture writes its result file exactly as the real driver does,
+    // and the Cloudflare probe fixture reports whether the handoff reached it.
     executable(join(repo, "scripts/live/run.sh"), `#!/usr/bin/env bash
-case "$1:\${MCP_SSO_DCR_MODE-}" in
-  scripts/live/probe-entra.mjs:) printf 'PASS  a\\nCONTROL  c\\n\\n1 live checks passed; 1 local controls passed\\n' ;;
-  scripts/live/probe-google.mjs:) echo "run.sh: Google credential file must be an owner-only KEY=VALUE file" >&2; exit 1 ;;
-  scripts/live/probe-cloudflare.mjs:) printf 'PASS  a\\nPASS  leaked ${ENTRA.entra_client_secret}\\n\\n2/2 checks passed\\n' ;;
-  scripts/live/probe-e2e.mjs:stored) printf 'PASS  a\\n\\n1/1 checks passed\\n' ;;
-  scripts/live/probe-e2e.mjs:stateless) printf 'PASS  a\\nFAIL  b\\n\\n1/2 checks passed\\n'; exit 1 ;;
+case "$1:\${MCP_SSO_DCR_MODE-}:\${5-}" in
+  scripts/live/probe-entra.mjs::) printf 'PASS  a\\nCONTROL  c\\n\\n1 live checks passed; 1 local controls passed\\n' ;;
+  scripts/live/probe-google.mjs::) echo "run.sh: Google credential file must be an owner-only KEY=VALUE file" >&2; exit 1 ;;
+  scripts/live/drive-identity.mjs::member) printf '{"outcome":"approved","assertion":"${JWT}"}\\n' > "$7"; chmod 600 "$7"; echo "outcome: approved" ;;
+  scripts/live/drive-identity.mjs::nogroups) printf '{"outcome":"denied_at_provider"}\\n' > "$7"; chmod 600 "$7"; echo "outcome: denied_at_provider" ;;
+  scripts/live/probe-cloudflare.mjs::) printf 'PASS  assertion file \${MCP_SSO_CF_ACCESS_ASSERTION_FILE:+present}\\nPASS  leaked ${ENTRA.entra_client_secret}\\n\\n2/2 checks passed\\n'; echo "$MCP_SSO_CF_ACCESS_ASSERTION_FILE" > "\${TMPDIR:-/tmp}/handoff-path" ;;
+  scripts/live/probe-e2e.mjs:stored:) printf 'PASS  a\\n\\n1/1 checks passed\\n' ;;
+  scripts/live/probe-e2e.mjs:stateless:) printf 'PASS  a\\nFAIL  b\\n\\n1/2 checks passed\\n'; exit 1 ;;
   *) exit 9 ;;
 esac
 `);
@@ -273,8 +342,10 @@ esac
     git("init", "-q"); git("add", "-A"); git("commit", "-q", "-m", "fixture");
     const dir = bundleDir();
     const out = join(fixture, "receipt.json");
+    const tmp = join(fixture, "tmp");
+    mkdirSync(tmp);
     const run = (args, extraEnv = {}) => spawnSync(process.execPath, [join(repo, "scripts/live/rehearsal.mjs"), "--out", out, ...args], {
-      env: { PATH: process.env.PATH, HOME: fixture, MCP_SSO_BUNDLE_DIR: dir, ...extraEnv }, encoding: "utf8", cwd: repo,
+      env: { PATH: process.env.PATH, HOME: fixture, TMPDIR: tmp, MCP_SSO_BUNDLE_DIR: dir, ...extraEnv }, encoding: "utf8", cwd: repo,
     });
     const full = run([]);
     assert.equal(full.status, 1, full.stdout + full.stderr);
@@ -288,8 +359,16 @@ esac
     assert.deepEqual(byId["probe-entra"].checks, { passed: 1, controls: 1 });
     assert.equal(byId["probe-google"].status, "BLOCKED");
     assert.equal(byId["probe-google"].reason, "google_credentials_absent");
+    assert.equal(byId["access-login"].status, "PASS");
+    assert.equal(byId["access-login"].outcome, "approved");
+    assert.equal(byId["access-edge-denial"].status, "PASS");
+    assert.equal(byId["access-edge-denial"].outcome, "denied_at_provider");
     assert.equal(byId["probe-cloudflare"].status, "FAIL");
     assert.equal(byId["probe-cloudflare"].reason, "private_value_in_output");
+    const handoffPath = readFileSync(join(tmp, "handoff-path"), "utf8").trim();
+    assert.match(handoffPath, /mcp-sso-rehearsal-.*access-login\.json$/, "the probe received the driver's result file");
+    assert.equal(existsSync(handoffPath), false, "the handoff directory is removed when the run ends");
+    assert.equal(readdirSync(tmp).filter((name) => name.startsWith("mcp-sso-rehearsal-")).length, 0);
     assert.equal(byId["probe-e2e:stored"].status, "PASS");
     assert.equal(byId["probe-e2e:stored"].mode, "stored");
     assert.equal(byId["probe-e2e:stateless"].status, "FAIL");
@@ -297,9 +376,12 @@ esac
     const everything = `${full.stdout}\n${full.stderr}\n${readFileSync(out, "utf8")}`;
     assert.doesNotMatch(everything, new RegExp(ENTRA.entra_client_secret), "a leaked value reaches neither the log nor the receipt");
     assert.match(full.stdout, /^BLOCKED probe-google \[google_credentials_absent\]/m);
-    const green = run(["--rows", "probe-entra,probe-e2e:stored"]);
+    const green = run(["--rows", "probe-entra,access-login,access-edge-denial,probe-e2e:stored"]);
     assert.equal(green.status, 0, green.stdout + green.stderr);
     assert.equal(JSON.parse(readFileSync(out, "utf8")).evidence, true);
+    const noHandoff = run(["--rows", "probe-cloudflare"]);
+    assert.equal(noHandoff.status, 1);
+    assert.equal(readFileSync(join(tmp, "handoff-path"), "utf8").trim(), "", "without the login row the probe gets no assertion file");
     writeFileSync(join(repo, "scripts/live/rehearsal-support.mjs"), "// dirty\n", { flag: "a" });
     const dirty = run(["--rows", "probe-entra"]);
     assert.equal(dirty.status, 1, "a dirty tree is never green");

@@ -90,7 +90,7 @@ export function groupAuthorizationJsonFromMapping(rawJson) {
  *  the regular-file check instead of hanging the open), checked (regular file,
  *  caller-owned, no group or other permission bits, bounded size) on that same
  *  descriptor, and parsed as KEY=VALUE data. It is never sourced. */
-export function readGoogleCredentialFile(path, uid = process.getuid?.()) {
+function readPrivateText(path, uid, maxBytes) {
   if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
     throw new RunSupportError("credential file reads require O_NOFOLLOW");
   }
@@ -100,17 +100,20 @@ export function readGoogleCredentialFile(path, uid = process.getuid?.()) {
   } catch {
     throw new RunSupportError("credential file cannot be opened without following a symlink");
   }
-  let text;
   try {
     const st = fstatSync(fd);
     if (!st.isFile()) throw new RunSupportError("credential file is not a regular file");
     if (uid !== undefined && st.uid !== uid) throw new RunSupportError("credential file is not owned by the caller");
     if ((st.mode & 0o077) !== 0) throw new RunSupportError("credential file must have no group or other permission bits");
-    if (st.size > MAX_CREDENTIAL_FILE_BYTES) throw new RunSupportError("credential file is too large");
-    text = readFileSync(fd, "utf8");
+    if (st.size > maxBytes) throw new RunSupportError("credential file is too large");
+    return readFileSync(fd, "utf8");
   } finally {
     closeSync(fd);
   }
+}
+
+export function readGoogleCredentialFile(path, uid = process.getuid?.()) {
+  const text = readPrivateText(path, uid, MAX_CREDENTIAL_FILE_BYTES);
   const values = new Map();
   for (const rawLine of text.split("\n")) {
     const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
@@ -135,6 +138,37 @@ export function readGoogleCredentialFile(path, uid = process.getuid?.()) {
     throw new RunSupportError("credential file must provide GOOGLE_CLIENT_ID and exactly one client secret");
   }
   return { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: secrets[0] };
+}
+
+/** Validate the `test_users` output for the identity driver: a map of role to
+ *  sign-in name. Returned re-serialized so the runner passes exactly what was
+ *  validated. */
+export function testUsersJson(rawJson) {
+  const users = parseObject(rawJson, "test_users");
+  const entries = Object.entries(users);
+  if (entries.length === 0) throw new RunSupportError("test users are empty");
+  for (const [role, name] of entries) {
+    if (!/^[a-z]+$/.test(role) || typeof name !== "string" || name.length > 320 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(name)) {
+      throw new RunSupportError("test user entry is invalid");
+    }
+  }
+  return JSON.stringify(users);
+}
+
+const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+
+/** Read the identity driver's result file through one descriptor with the
+ *  credential-file checks, and return its assertion: the file must be the
+ *  driver's own JSON, its outcome must be `approved`, and the assertion must be
+ *  one compact JWT. A denied or blocked result is a refusal here, never an
+ *  empty assertion. */
+export function readAssertionFile(path, uid = process.getuid?.()) {
+  const result = parseObject(readPrivateText(path, uid, MAX_CREDENTIAL_FILE_BYTES), "driver result");
+  if (result.outcome !== "approved") throw new RunSupportError("driver result is not an approved sign-in");
+  if (typeof result.assertion !== "string" || !JWT_SHAPE.test(result.assertion)) {
+    throw new RunSupportError("driver result does not hold one compact JWT");
+  }
+  return result.assertion;
 }
 
 const requireEnv = (env, name) => {
@@ -319,6 +353,8 @@ const COMMANDS = {
   "gateway-port": ([leg]) => String(gatewayPortForLeg(readStdin(), leg)),
   "group-authorization": () => groupAuthorizationJsonFromMapping(readStdin()),
   "deny-list": ([real]) => denyListNormalized(readStdin(), real),
+  "test-users": () => testUsersJson(readStdin()),
+  "assertion-file": ([path]) => readAssertionFile(path),
   "google-credential-file": ([path]) => {
     const values = readGoogleCredentialFile(path);
     return `${values.GOOGLE_CLIENT_ID}\n${values.GOOGLE_CLIENT_SECRET}`;

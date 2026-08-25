@@ -53,6 +53,7 @@ There is exactly one runtime dependency by design ([§15](contracts/15-package-a
 | [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | ✅ | Express typings (dev only). |
 | [`mysql2`](https://github.com/sidorares/node-mysql2) | `3.22.5` | 2026-06-06 | ✅ | The `/store/mysql` `StorePort` adapter, dev/test + optional peer. |
 | [`ioredis`](https://github.com/redis/ioredis) | `5.11.1` | 2026-06-04 | ✅ | The `/rate-limit/redis` `RateLimitPort` adapter, dev/test + optional peer. |
+| [`playwright-core`](https://github.com/microsoft/playwright) | `1.62.1` | 2026-07-30 | ✅ | The browser driver the live rehearsal uses to sign the provisioned test users in through the real identity-provider pages (`scripts/live/drive-identity.mjs`). `playwright-core` only: it downloads no browser and drives the Google Chrome already installed on the machine, or a remote browser over CDP. Never loaded by the library, the examples, or `pnpm test`. |
 
 Dev tooling with **no added dependency**: the test runner is `node:test` (built in), assertions `node:assert/strict` (built in), the SQLite store uses `node:sqlite` (built in). No bundler, no test framework, no postinstall, ever.
 
@@ -142,6 +143,7 @@ The following block is the machine-readable source used by `check:deps`. The hum
     "ioredis": { "version": "5.11.1", "published": "2026-06-04T10:14:59.752Z" },
     "jose": { "version": "6.2.3", "published": "2026-04-27T15:23:35.019Z" },
     "mysql2": { "version": "3.22.5", "published": "2026-06-06T08:10:39.646Z" },
+    "playwright-core": { "version": "1.62.1", "published": "2026-07-30T16:36:51.295Z" },
     "pnpm": { "version": "10.34.4", "published": "2026-06-18T22:30:33.318Z" },
     "typescript": { "version": "6.0.3", "published": "2026-04-16T23:38:27.905Z" }
   },

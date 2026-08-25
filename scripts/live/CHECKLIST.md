@@ -127,6 +127,10 @@ Two things the trail catches that a client will not:
   as "connection setup was canceled" with no message, while the audit shows
   `entra_groups_overage` correctly emitted. Absence of a client-side error is not
   absence of a correct server decision.
+- **E1 runs unattended as the rehearsal's `access-edge-denial` row** (see the
+  README): the driver signs in as the `nogroups` test user, which the Access
+  policy does not admit, and must be stopped at the edge. The manual procedure
+  below is the same claim with a browser account of your choosing.
 - **E1's evidence is an unchanged audit count.** Pause every other matrix row,
   then record the current count immediately before the E1 attempt:
 

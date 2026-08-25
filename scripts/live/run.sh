@@ -4,12 +4,13 @@
 # the shipped constructors, and only then executes the entry — with an
 # environment that contains exactly what this script assembled.
 #
-#   scripts/live/run.sh <entry> <leg>
+#   scripts/live/run.sh <entry> <leg> [entry args...]
 #
 #   entry = scripts/live/probe-cloudflare.mjs     leg = cloudflare_access
 #           scripts/live/probe-entra.mjs                entra
 #           scripts/live/probe-google.mjs               google
 #           scripts/live/probe-e2e.mjs                  any leg   (needs REDIS_URL)
+#           scripts/live/drive-identity.mjs             any leg   (the headless identity driver)
 #           examples/fastify-sqlite/index.ts            any leg   (used by serve.sh)
 #
 # Nothing here hardcodes a repository path, stack handle, hostname, tenant, or
@@ -47,8 +48,12 @@ NODE_BIN="$(command -v node)" || fail "node is required on PATH"
 BASE_ENV=("PATH=$PATH" "HOME=$HOME")
 if [ -n "${TMPDIR+x}" ]; then BASE_ENV+=("TMPDIR=$TMPDIR"); fi
 node_clean() { env -i "${BASE_ENV[@]}" "$NODE_BIN" "$@"; }
-ENTRY="${1:?usage: scripts/live/run.sh <entry> <leg>}"
-LEG="${2:?usage: scripts/live/run.sh <entry> <leg>}"
+ENTRY="${1:?usage: scripts/live/run.sh <entry> <leg> [entry args...]}"
+LEG="${2:?usage: scripts/live/run.sh <entry> <leg> [entry args...]}"
+shift 2
+# Anything after the leg is handed to the entry verbatim (the driver's task
+# and its output file). Arguments carry no credential; the environment does.
+ENTRY_ARGS=("$@")
 
 # Fail closed on the entry × leg pair: stack credentials are handed to an
 # allowlisted script only, never to an arbitrary path.
@@ -57,6 +62,7 @@ case "$ENTRY:$LEG" in
   scripts/live/probe-entra.mjs:entra) KIND=probe ;;
   scripts/live/probe-google.mjs:google) KIND=probe ;;
   scripts/live/probe-e2e.mjs:cloudflare_access|scripts/live/probe-e2e.mjs:entra|scripts/live/probe-e2e.mjs:google) KIND=e2e ;;
+  scripts/live/drive-identity.mjs:cloudflare_access|scripts/live/drive-identity.mjs:entra|scripts/live/drive-identity.mjs:google) KIND=driver ;;
   examples/fastify-sqlite/index.ts:cloudflare_access|examples/fastify-sqlite/index.ts:entra|examples/fastify-sqlite/index.ts:google) KIND=server ;;
   *) fail "unsupported entry/leg pair: $ENTRY $LEG" ;;
 esac
@@ -119,10 +125,28 @@ support() { node_clean "$SUPPORT" "$@"; }
 OAUTH_ISSUER="$(output_json "$CLOUDFLARE_STACK" issuer_origins | support issuer-origin "$LEG")" \
   || fail "issuer origin output is missing or invalid for the selected leg"
 
+# The identity driver signs a provisioned TEST USER in through the provider's
+# own pages. It receives the leg origin, the Entra stack's test users and their
+# password, and for the Cloudflare leg the login method to choose. It receives
+# no application credential: it is a browser, not the bridge.
+if [ "$KIND" = "driver" ]; then
+  ENTRA_STACK="${MCP_SSO_ENTRA_STACK:?set MCP_SSO_ENTRA_STACK to the Entra stack handle}"
+  IDP_TEST_USERS_JSON="$(output_json "$ENTRA_STACK" test_users | support test-users)" \
+    || fail "test_users output is invalid"
+  IDP_TEST_USER_PASSWORD="$(output_raw "$ENTRA_STACK" test_user_password)"
+  pass IDP_TEST_USERS_JSON IDP_TEST_USER_PASSWORD
+  if [ "$LEG" = "cloudflare_access" ]; then
+    CF_ACCESS_IDP_NAME="$(output_raw "$CLOUDFLARE_STACK" cf_access_idp_name)"
+    pass CF_ACCESS_IDP_NAME
+  fi
+  # A remote browser (CDP endpoint) replaces the machine's own Chrome when set.
+  pass MCP_SSO_BROWSER_CDP_URL
+fi
+
 # The end-to-end probe composes its own app and never touches a provider, so it
 # receives no provider credential at all; only the provider probes and the
 # example server read the leg's stack outputs.
-if [ "$KIND" != "e2e" ]; then
+if [ "$KIND" = "probe" ] || [ "$KIND" = "server" ]; then
   case "$LEG" in
     entra)
       ENTRA_STACK="${MCP_SSO_ENTRA_STACK:?set MCP_SSO_ENTRA_STACK to the Entra stack handle}"
@@ -173,14 +197,21 @@ if [ "$KIND" != "e2e" ]; then
       pass CF_ACCESS_ISSUER CF_ACCESS_CERTS_URL CF_ACCESS_AUDIENCE
       if [ "$ENTRY" = "scripts/live/probe-cloudflare.mjs" ]; then
         # The identity proof needs a CURRENT provider-signed assertion for the
-        # Access application in front of /oauth/authorize. cloudflared mints one
-        # from the operator's own Access login (once, in a browser:
-        # `cloudflared access login <issuer>/oauth/authorize`); the value never
+        # Access application in front of /oauth/authorize. Either the headless
+        # driver wrote one to an owner-only file (MCP_SSO_CF_ACCESS_ASSERTION_FILE,
+        # read as data through run-support), or cloudflared mints one from the
+        # operator's own Access login (once, in a browser:
+        # `cloudflared access login <issuer>/oauth/authorize`). The value never
         # enters this repository or the terminal.
-        command -v cloudflared >/dev/null 2>&1 || fail "cloudflared is required to mint the Access assertion"
-        CF_ACCESS_ASSERTION="$(cloudflared access token -app="${OAUTH_ISSUER}/oauth/authorize" 2>/dev/null)" \
-          || fail "cloudflared could not mint an Access assertion; run: cloudflared access login ${OAUTH_ISSUER}/oauth/authorize"
-        [ -n "$CF_ACCESS_ASSERTION" ] || fail "cloudflared returned an empty Access assertion"
+        if [ -n "${MCP_SSO_CF_ACCESS_ASSERTION_FILE+x}" ]; then
+          CF_ACCESS_ASSERTION="$(support assertion-file "$MCP_SSO_CF_ACCESS_ASSERTION_FILE")" \
+            || fail "MCP_SSO_CF_ACCESS_ASSERTION_FILE is not an owner-only file holding one compact JWT"
+        else
+          command -v cloudflared >/dev/null 2>&1 || fail "cloudflared is required to mint the Access assertion"
+          CF_ACCESS_ASSERTION="$(cloudflared access token -app="${OAUTH_ISSUER}/oauth/authorize" 2>/dev/null)" \
+            || fail "cloudflared could not mint an Access assertion; run: cloudflared access login ${OAUTH_ISSUER}/oauth/authorize"
+          [ -n "$CF_ACCESS_ASSERTION" ] || fail "cloudflared returned an empty Access assertion"
+        fi
         pass CF_ACCESS_ASSERTION
       fi
       ;;
@@ -230,9 +261,11 @@ if [ "$KIND" = "e2e" ]; then pass REDIS_URL; fi
 # a bad runner knob cannot cost the previous run's evidence.
 if [ "$KIND" = "e2e" ]; then
   env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$SUPPORT" preflight-base || fail "assembled configuration failed the preflight"
-else
+elif [ "$KIND" != "driver" ]; then
   env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$SUPPORT" preflight "$LEG" || fail "stack outputs failed the provider preflight for leg $LEG"
 fi
+# The driver holds no application credential and touches no state, so its
+# inputs were validated where they were read (test-users, a bare issuer).
 
 if [ "$KIND" = "server" ]; then
   # Per-leg state for the long-running example server only — the probes build
@@ -252,4 +285,4 @@ fi
 cd "$REPO" || fail "cannot enter the repository checkout"
 # `env` execs node in place (no fork), so the started PID stays the entry —
 # serve.sh binds readiness and cleanup to that PID.
-exec env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$ENTRY"
+exec env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$ENTRY" ${ENTRY_ARGS[@]+"${ENTRY_ARGS[@]}"}
