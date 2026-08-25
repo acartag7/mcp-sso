@@ -1,0 +1,87 @@
+name: live
+
+# The release rehearsal: every live probe against the real identity providers,
+# unattended. Runs nightly, on demand, and on any push to a rehearsal/* branch
+# (which is how a change to the harness is proved before it merges). Never on
+# a pull request: the `live` environment is the only holder of the OIDC role and
+# its branch policy admits main and rehearsal/* only.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *" # nightly ~03:17 UTC (off the :00 mark)
+  push:
+    branches: ["rehearsal/**"]
+
+permissions: {}
+
+concurrency:
+  # One rehearsal at a time: the probes share the provider applications and a
+  # later phase shares one tunnel.
+  group: live
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    name: release rehearsal
+    runs-on: ubuntu-latest
+    environment: live
+    timeout-minutes: 30
+    permissions:
+      id-token: write # assume the AWS role through GitHub OIDC
+      contents: read
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=5
+
+    env:
+      # The bundle fetched from Secrets Manager stands in for the private
+      # infrastructure checkout: run.sh reads stack outputs through the adapter
+      # at scripts/live/ci/infra and is otherwise unchanged.
+      MCP_SSO_INFRA_DIR: ${{ github.workspace }}/scripts/live/ci/infra
+      MCP_SSO_ENTRA_STACK: entra
+      MCP_SSO_CLOUDFLARE_STACK: cloudflare
+      REDIS_URL: redis://127.0.0.1:6379
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-20)
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10 (2026-08-03)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (2026-07-14)
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: name the bundle directory
+        # The runner context is not available in job-level env.
+        run: echo "MCP_SSO_BUNDLE_DIR=$RUNNER_TEMP/mcp-sso-bundle" >> "$GITHUB_ENV"
+      - name: assume the rehearsal role
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3 (2026-07-22)
+        with:
+          role-to-assume: ${{ vars.MCP_SSO_LIVE_ROLE_ARN }}
+          role-session-name: mcp-sso-release-rehearsal
+          aws-region: eu-central-1
+      - name: fetch the live bundle
+        run: node scripts/live/ci/fetch-bundle.mjs
+      - name: mask every private value before anything else prints
+        run: node scripts/live/ci/mask-bundle.mjs
+      - name: rehearse
+        run: node scripts/live/rehearsal.mjs --out "$RUNNER_TEMP/receipt.json"
+      - name: remove the bundle
+        if: always()
+        run: rm -rf -- "$MCP_SSO_BUNDLE_DIR"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (2026-04-10)
+        if: always()
+        with:
+          name: rehearsal-receipt-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/receipt.json
+          if-no-files-found: error
+          retention-days: 30

@@ -97,6 +97,7 @@ GitHub Actions are pinned **by commit SHA**, not tag, so a compromised tag canno
 - `actions/setup-node`, Node 24 with the pnpm cache enabled on ephemeral GitHub-hosted CI runners. The reviewed v7 major migrates the action's internal bundle to ESM, retains the existing workflow inputs and Node 24 action runtime, adds cache-key outputs that this repository does not consume, and stops exporting a dummy `NODE_AUTH_TOKEN` when none was supplied. The latter is compatible with this repository's tokenless OIDC trusted-publishing job.
 - `pnpm/action-setup`, pnpm via corepack (matches `packageManager`).
 - `actions/upload-artifact` / `actions/download-artifact`, transfer the single packed tarball from the read-only build job into the dry-run or isolated OIDC publish job. Download rejects an artifact-archive digest mismatch. The workflow also verifies the tarball's own SHA-256 file.
+- `aws-actions/configure-aws-credentials`, exchanges the job's GitHub OIDC token for the `mcp-sso-release-rehearsal` AWS role in `.github/workflows/live.yml`. The role trusts exactly one subject, the `live` environment of this repository, and can read only the `/mcp-sso/live/*` secrets the live probes need. The action masks the credentials it exports.
 - `acartag7/engineering-os/process-guard`, the Engineering OS artifact-chain guard (freeze-hash / mixed-diff / stage-artifact) in `.github/workflows/ci.yml`. Pinned to `c697b412abf034be7a22a53f567ec10eecc776e0` (published 2026-07-19). **First-party, documented exception to the 15-day floor (see below).**
 - npm publish step runs `npm publish --provenance` under the GitHub Actions OIDC token (**no `NPM_TOKEN` with publish rights, no local publishes**).
 
@@ -180,6 +181,11 @@ The following block is the machine-readable source used by `check:deps`. The hum
       "tag": "v8.0.1",
       "published": "2026-03-11T15:44:25Z"
     },
+    "aws-actions/configure-aws-credentials": {
+      "sha": "e6de054238d6b7531b4efff3b6587d9aade6a06c",
+      "tag": "v6.2.3",
+      "published": "2026-07-22T18:32:10Z"
+    },
     "acartag7/engineering-os": {
       "sha": "c697b412abf034be7a22a53f567ec10eecc776e0",
       "published": "2026-07-19T02:55:07Z",
@@ -197,6 +203,8 @@ The `verify` job runs the `/store/mysql` and `/rate-limit/redis` integration tes
 CI verification, `process-guard`, and CodeQL use ephemeral GitHub-hosted `ubuntu-latest` runners. CI and CodeQL subscribe to pull requests targeting `main` and to `main` pushes. CodeQL also runs weekly. The CI verify job runs on both events, while `process-guard` runs on pull requests where a base branch is available for its merge-base checks. Pull-request checks attach natively to the PR, so the self-hosted-era `workflow_dispatch` and required-status attestation machinery is removed. CI retains read-only workflow permissions and disables checkout credential persistence. CodeQL installs the frozen dependency graph before analysis for richer JavaScript/TypeScript module resolution.
 
 Release publishing remains separately isolated in `publish.yml` on GitHub-hosted `ubuntu-latest` behind the tag-only `publish` environment and the no-checkout OIDC publishing job.
+
+The live rehearsal in `live.yml` runs on GitHub-hosted `ubuntu-latest` behind the `live` environment, whose branch policy admits `main` and `rehearsal/*`. It never subscribes to pull requests. The job's only write permission is `id-token`, used to assume the AWS role that reads the live secrets; the checkout credential is not persisted, and the fetched bundle is removed at the end of the job.
 
 ## Verification & change protocol
 

@@ -157,6 +157,54 @@ A leg argument is required because the example **boot-refuses more than one
 identity selector** — that is a fail-closed gate, not a limitation. Every probe
 either exercises what a row claims or reports `FAIL`; there is no `SKIP`.
 
+## The rehearsal: every probe, one receipt
+
+```sh
+REDIS_URL=redis://127.0.0.1:6379 node scripts/live/rehearsal.mjs
+```
+
+`rehearsal.mjs` runs `probe-entra`, `probe-google`, `probe-cloudflare`, and
+`probe-e2e` in both DCR modes, each through `run.sh`, in that order, and writes
+`.live-state/receipt.json`: the runtime commit, whether the tree was dirty, and
+per row the status, the probe's own `PASS`/`FAIL`/`CONTROL` lines, the check
+counts, and the duration. It exits 0 only when every row is `PASS` on a clean
+tree; that is the only receipt that counts as evidence.
+
+A row is `BLOCKED` rather than `FAIL` when `run.sh` refused it for one of three
+reasons an operator can arm: `cloudflare_access_login_required` (run
+`cloudflared access login` first), `google_credentials_absent` (no credential
+file), or `infrastructure_session_expired` (`aws sso login` or `az login`). A
+`BLOCKED` row still turns the run red and is never evidence; it exists so the
+summary names what is missing instead of hiding it. Any other refusal, any
+`FAIL` line, a missing or mismatched summary, or zero checks is a `FAIL`.
+
+The orchestrator also knows every private value the run was configured with
+(from the CI bundle and the Google credential file, when present). A row whose
+output contains one of them is failed as `private_value_in_output` and its lines
+are withheld from the receipt and the log. `--rows probe-entra,probe-e2e:stored`
+selects a subset; `--out <file>` moves the receipt.
+
+### In CI
+
+`.github/workflows/live.yml` runs the same command on a GitHub-hosted runner:
+nightly, on `gh workflow run live.yml`, and on every push to a `rehearsal/*`
+branch, which is how a harness change is proved before it merges. There is no
+private infrastructure checkout on the runner. Instead the job, which runs only
+under the `live` environment (branch policy: `main` and `rehearsal/*`), assumes
+an AWS role through GitHub OIDC that can read exactly the `/mcp-sso/live/*`
+secrets: the two stack bundles (the same outputs `run.sh` reads from OpenTofu,
+republished as JSON under the same names), the Google credential file, the
+tunnel credentials, and the hosted-browser key. `scripts/live/ci/fetch-bundle.mjs`
+writes them to a private directory at 0600, refusing a malformed value and
+recording an absent optional one; `scripts/live/ci/mask-bundle.mjs` registers
+every value with the log masker before a probe can print; and
+`MCP_SSO_INFRA_DIR` points at `scripts/live/ci/infra`, whose `scripts/tofu-run.sh`
+answers `run.sh`'s `<stack> output -raw|-json <name>` calls from the bundle.
+`run.sh` itself is unchanged and still validates every value through the
+shipped constructors. The bundle directory is removed on every exit path and
+the receipt is uploaded as a build artifact. A pull request never runs this
+workflow and never holds the role.
+
 ## Driving a real MCP client
 
 ```sh

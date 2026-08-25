@@ -12,6 +12,27 @@ Confirm that the probe prints the runtime commit and reports every required chec
 
 Record the date, runtime commit, provider, probe result, and any limitation in [Verification status](verification-status.md). Move the previous result to the [verification archive](archive/verification-history.md) when the new run supersedes it.
 
+## Run the rehearsal
+
+Run every automated probe at once and get one receipt:
+
+```bash
+REDIS_URL=redis://127.0.0.1:6379 node scripts/live/rehearsal.mjs
+```
+
+Read the summary. A `PASS` row passed every check the probe reports. A `BLOCKED` row names what to arm before the run can count, for example `cloudflare_access_login_required`. A `FAIL` row names the failed check. The receipt at `.live-state/receipt.json` is evidence only when the command exited 0, which requires every row to pass on a clean tree.
+
+To run it from CI instead:
+
+```bash
+gh workflow run live.yml
+gh run watch
+```
+
+The `live` workflow runs the same command on a GitHub-hosted runner with the provider values fetched from the private secret store through the workflow's OIDC role. It also runs nightly and on every push to a `rehearsal/*` branch. Download the `rehearsal-receipt-*` artifact for the receipt. `scripts/live/README.md` describes the credential path and the row rules.
+
+Record a passing rehearsal the same way as a probe run: date, runtime commit, and the row results, in [Verification status](verification-status.md).
+
 ## Serve provider legs for MCP clients
 
 Use `scripts/live/serve.sh` to start the configured legs and the named Cloudflare tunnel. Do not use `cloudflared tunnel --url` for release evidence.

@@ -8,4 +8,6 @@ This design keeps two kinds of data separate. Private infrastructure names and c
 
 The harness passes provider values through an allowlisted environment for one run. It does not source a developer shell profile. A stale selector or `NODE_OPTIONS` value therefore cannot silently change the provider leg.
 
+In CI the same values arrive by a different road that ends in the same place. The stacks' outputs are republished, under the same names, as secrets that one AWS role can read, and the workflow assumes that role through GitHub OIDC from the `live` environment only. `run.sh` reads them through an adapter that answers its stack-output calls from the fetched bundle and still validates every value through the shipped constructors. A scheduled run therefore needs no interactive login, and a pull request, which never runs under that environment, never holds the role.
+
 Provisioned negative cases matter as much as the happy path. The Entra stack creates the unmapped-group, group-overage, no-group, and cross-tenant fixtures before the run. A test that invents those cases during execution cannot be reproduced later.

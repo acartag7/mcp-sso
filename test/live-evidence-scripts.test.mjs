@@ -463,12 +463,44 @@ test("CONTENT records: harness reference, README, and CHECKLIST agree with what 
   assert.match(CHECKLIST, /serve\.sh cloudflare_access entra google/);
 });
 
+test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep the harness's promises", () => {
+  const rehearsal = read("scripts/live/rehearsal.mjs");
+  const support = read("scripts/live/rehearsal-support.mjs");
+  const workflow = read(".github/workflows/live.yml");
+  assert.doesNotMatch(`${rehearsal}\n${support}`, /\bSKIP\b/, "a rehearsal row is PASS, FAIL, or BLOCKED; never skipped");
+  assert.doesNotMatch(rehearsal, /process\.exit\(/, "the receipt is written before the process ends");
+  assert.match(rehearsal, /process\.exitCode = receipt\.evidence \? 0 : 1/, "green means evidence, nothing weaker");
+  assert.match(support, /"BLOCKED", reason/, "a blocked row carries its armable reason");
+  assert.match(rehearsal, /private_value_in_output/, "a leaked configuration value fails the row");
+  assert.doesNotMatch(workflow, /pull_request/, "the live workflow never runs for a pull request");
+  assert.match(workflow, /^permissions: \{\}$/m, "no workflow-level token permissions");
+  assert.match(workflow, /^\s+environment: live$/m, "the OIDC role is reachable only through the live environment");
+  assert.match(workflow, /^\s+id-token: write/m);
+  assert.match(workflow, /branches: \["rehearsal\/\*\*"\]/, "pushes run only for rehearsal branches");
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /node scripts\/live\/ci\/mask-bundle\.mjs/, "private values are masked before the probes print");
+  assert.ok(workflow.indexOf("mask-bundle.mjs") < workflow.indexOf("rehearsal.mjs"), "masking precedes the run");
+  assert.match(workflow, /rm -rf -- "\$MCP_SSO_BUNDLE_DIR"/, "the bundle is removed on every exit path");
+  assert.match(workflow, /MCP_SSO_INFRA_DIR: \$\{\{ github\.workspace \}\}\/scripts\/live\/ci\/infra/, "run.sh reads through the adapter");
+  for (const [name, record] of [["README", README], ["docs", DOC]]) {
+    assert.match(record, /rehearsal\.mjs/, `${name}: records the rehearsal`);
+    assert.match(record, /BLOCKED/, `${name}: records the blocked outcome`);
+  }
+  assert.match(README, /live\.yml/);
+  assert.match(README, /fetch-bundle\.mjs/);
+  assert.match(README, /gh workflow run live\.yml/);
+});
+
 test("CONTENT hygiene: scripts/live and its records name no private infrastructure", () => {
   const allowedHosts = new Set([
     "claude.ai", "chatgpt.com", "login.microsoftonline.com", "accounts.google.com", "127.0.0.1", "localhost",
     "collector.example", "mcp.example", "www.googleapis.com", "oauth2.googleapis.com", "github.com",
   ]);
-  const files = readdirSync(join(ROOT, "scripts/live")).map((name) => `scripts/live/${name}`).concat(["docs/live-verification.md"]);
+  const files = readdirSync(join(ROOT, "scripts/live"), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => `${entry.parentPath.slice(ROOT.length)}/${entry.name}`)
+    .concat(["docs/live-verification.md", ".github/workflows/live.yml"]);
+  assert.ok(files.includes("scripts/live/ci/infra/scripts/tofu-run.sh"), "the scan reaches nested files");
   for (const file of files) {
     const text = read(file);
     for (const match of text.matchAll(/https?:\/\/([A-Za-z0-9.<>_-]+)/g)) {
