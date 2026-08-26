@@ -80,6 +80,10 @@ test("BEHAVIOUR bundle-support: a bundle is read as owner-only data and answered
     const values = privateValues(readBundleFile(join(dir, "cloudflare.json")));
     assert.ok(values.has("https://entra.example") && values.has("entra.example"), "origins and their bare hosts are private");
     assert.ok(values.has("fixture tenant"), "a value under a credential or identity key is private at any length");
+    const nested = privateValues({ test_users: { member: "a@b.co" }, note: "tiny" });
+    assert.ok(nested.has("a@b.co"), "a sign-in name nested under a credential key is private however short it is");
+    assert.equal(nested.has("tiny"), false);
+    assert.ok(credentialValues({ test_users: { member: "a@b.co" } }).has("a@b.co"), "and it is a credential for the served-process scan too");
     assert.ok(!values.has("43111"), "ports are not private");
     const multi = privateValues({ TunnelSecret: "ab", note: "first line long enough\nsecond line long enough", short: "tiny" });
     assert.ok(multi.has("ab") && multi.has("first line long enough") && multi.has("second line long enough") && !multi.has("tiny"),
@@ -429,11 +433,11 @@ test("BEHAVIOUR rehearsal.mjs: rows run through run.sh, a leaked private value f
     // and the Cloudflare probe fixture reports whether the handoff reached it.
     executable(join(repo, "scripts/live/run.sh"), `#!/usr/bin/env bash
 case "$1:\${MCP_SSO_DCR_MODE-}:\${5-}" in
-  scripts/live/probe-entra.mjs::) node -e 'require("fs").writeFileSync(process.env.TMPDIR + "/row-env.json", JSON.stringify(process.env))'; printf 'PASS  a\\nCONTROL  c\\n\\n1 live checks passed; 1 local controls passed\\n' ;;
+  scripts/live/probe-entra.mjs::) node -e 'require("fs").writeFileSync(process.env.HOME + "/row-env.json", JSON.stringify(process.env))'; printf 'PASS  a\\nCONTROL  c\\n\\n1 live checks passed; 1 local controls passed\\n' ;;
   scripts/live/probe-google.mjs::) echo "run.sh: Google credential file must be an owner-only KEY=VALUE file" >&2; exit 1 ;;
   scripts/live/drive-identity.mjs::member) if [ -n "\${FAKE_DRIVER_OUTCOME-}" ]; then printf '{"outcome":"%s","trace":["step:error"]}\\n' "$FAKE_DRIVER_OUTCOME" > "$7"; chmod 600 "$7"; echo "outcome: $FAKE_DRIVER_OUTCOME"; exit 2; fi; printf '{"outcome":"approved","assertion":"${JWT}","trace":["access:start","microsoft:password:typed","leg:elsewhere"]}\\n' > "$7"; chmod 600 "$7"; echo "outcome: approved" ;;
   scripts/live/drive-identity.mjs::nogroups) printf '{"outcome":"denied_at_access_edge","trace":["access:start","microsoft:password:typed","access:denied"]}\\n' > "$7"; chmod 600 "$7"; echo "outcome: denied_at_access_edge" ;;
-  scripts/live/probe-cloudflare.mjs::) printf 'PASS  assertion file \${MCP_SSO_CF_ACCESS_ASSERTION_FILE:+present}\\nPASS  leaked ${ENTRA.entra_client_secret}\\n\\n2/2 checks passed\\n'; echo "$MCP_SSO_CF_ACCESS_ASSERTION_FILE" > "\${TMPDIR:-/tmp}/handoff-path" ;;
+  scripts/live/probe-cloudflare.mjs::) printf 'PASS  assertion file \${MCP_SSO_CF_ACCESS_ASSERTION_FILE:+present}\\nPASS  leaked ${ENTRA.entra_client_secret}\\n\\n2/2 checks passed\\n'; echo "$MCP_SSO_CF_ACCESS_ASSERTION_FILE" > "$HOME/handoff-path" ;;
   scripts/live/probe-e2e.mjs:stored:) printf 'PASS  a\\n\\n1/1 checks passed\\n' ;;
   scripts/live/probe-e2e.mjs:stateless:) printf 'PASS  a\\nFAIL  b\\n\\n1/2 checks passed\\n'; exit 1 ;;
   *) exit 9 ;;
@@ -453,7 +457,7 @@ esac
     const cmdBin = join(fixture, "cmdbin");
     mkdirSync(cmdBin);
     executable(join(cmdBin, "pnpm"), `#!/usr/bin/env bash
-node -e 'require("fs").writeFileSync(process.env.TMPDIR + "/command-env.json", JSON.stringify(process.env))'
+node -e 'require("fs").writeFileSync(process.env.HOME + "/command-env.json", JSON.stringify(process.env))'
 printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required rows\\n'
 `);
     const full = run([], {
@@ -469,7 +473,7 @@ printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required row
     assert.equal(receipt.evidence, false);
     const byId = Object.fromEntries(receipt.rows.map((row) => [row.id, row]));
     assert.equal(byId["release-matrix"].status, "PASS");
-    const commandEnv = JSON.parse(readFileSync(join(tmp, "command-env.json"), "utf8"));
+    const commandEnv = JSON.parse(readFileSync(join(fixture, "command-env.json"), "utf8"));
     assert.equal(commandEnv.AWS_SECRET_ACCESS_KEY, undefined, "the release matrix never holds the AWS session");
     assert.equal(commandEnv.MCP_SSO_BUNDLE_DIR, undefined, "nor the bundle location");
     assert.equal(commandEnv.MCP_SSO_ENTRA_STACK, undefined, "nor any run configuration");
@@ -478,7 +482,7 @@ printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required row
     assert.equal(commandEnv.npm_config_cache, "/npm/cache");
     // With the bundle adapter in use every provider value is already on disk,
     // so no child carries the AWS session that can read the whole secret set.
-    const rowEnv = JSON.parse(readFileSync(join(tmp, "row-env.json"), "utf8"));
+    const rowEnv = JSON.parse(readFileSync(join(fixture, "row-env.json"), "utf8"));
     for (const key of ["AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN", "AWS_PROFILE"]) {
       assert.equal(rowEnv[key], undefined, `${key} never reaches a row child when the bundle is in use`);
     }
@@ -495,7 +499,7 @@ printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required row
     assert.equal(byId["probe-cloudflare"].status, "FAIL");
     assert.equal(byId["probe-cloudflare"].reason, "private_value_in_output");
     assert.ok(receipt.rows.filter((row) => row.kind === "client").every((row) => row.status === "FAIL" && row.reason === "serve_failed"), "client rows without an infrastructure wrapper cannot be served");
-    const handoffPath = readFileSync(join(tmp, "handoff-path"), "utf8").trim();
+    const handoffPath = readFileSync(join(fixture, "handoff-path"), "utf8").trim();
     assert.match(handoffPath, /mcp-sso-rehearsal-.*access-login\.json$/, "the probe received the driver's result file");
     assert.equal(existsSync(handoffPath), false, "the handoff directory is removed when the run ends");
     assert.equal(readdirSync(tmp).filter((name) => name.startsWith("mcp-sso-rehearsal-")).length, 0);
@@ -514,22 +518,22 @@ printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required row
     assert.equal(subsetReceipt.evidence, false);
     assert.ok(subsetReceipt.rows.every((row) => row.status === "PASS"));
     assert.match(subset.stdout, /PARTIAL, not evidence/);
-    rmSync(join(tmp, "handoff-path"), { force: true });
+    rmSync(join(fixture, "handoff-path"), { force: true });
     const noHandoff = run(["--rows", "probe-cloudflare"]);
     assert.equal(noHandoff.status, 1);
-    assert.equal(readFileSync(join(tmp, "handoff-path"), "utf8").trim(), "", "without the login row selected the probe falls back to the operator's login");
-    rmSync(join(tmp, "handoff-path"), { force: true });
+    assert.equal(readFileSync(join(fixture, "handoff-path"), "utf8").trim(), "", "without the login row selected the probe falls back to the operator's login");
+    rmSync(join(fixture, "handoff-path"), { force: true });
     const failedLogin = run(["--rows", "access-login,probe-cloudflare"], { FAKE_DRIVER_OUTCOME: "timeout" });
     assert.equal(failedLogin.status, 1);
     const failedReceipt = Object.fromEntries(JSON.parse(readFileSync(out, "utf8")).rows.map((row) => [row.id, row]));
     assert.equal(failedReceipt["access-login"].reason, "outcome_timeout");
     assert.equal(failedReceipt["probe-cloudflare"].status, "BLOCKED");
     assert.equal(failedReceipt["probe-cloudflare"].reason, "prerequisite_row_did_not_pass");
-    assert.equal(existsSync(join(tmp, "handoff-path")), false, "the probe did not run on an operator credential after the driver failed");
+    assert.equal(existsSync(join(fixture, "handoff-path")), false, "the probe did not run on an operator credential after the driver failed");
     // An interrupted run still writes a receipt: marked interrupted, never
     // evidence, with the rows that had already finished, and it exits the way
     // the signal would have.
-    rmSync(join(tmp, "handoff-path"), { force: true });
+    rmSync(join(fixture, "handoff-path"), { force: true });
     const slow = spawn(process.execPath, [join(repo, "scripts/live/rehearsal.mjs"), "--out", out, "--rows", "probe-entra,probe-google,access-login"], {
       env: { PATH: process.env.PATH, HOME: fixture, TMPDIR: tmp, MCP_SSO_BUNDLE_DIR: dir }, cwd: repo, stdio: ["ignore", "pipe", "pipe"],
     });

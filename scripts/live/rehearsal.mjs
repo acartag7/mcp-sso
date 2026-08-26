@@ -253,6 +253,12 @@ const results = [];
 // Driver results (an Access assertion is one) live here for the run, owner-only,
 // and are removed on every exit path: the finally below and the signal handlers.
 const handoffDir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "mcp-sso-rehearsal-"));
+// Every row child's TMPDIR. A probe's private HOME, its keychain file and its
+// CLI configuration are made with mkdtemp under it, so whatever a probe cannot
+// clean up itself, because a timeout or a signal ended it before its `finally`
+// ran, is removed with this directory when the run ends.
+const scratchDir = join(handoffDir, "scratch");
+mkdirSync(scratchDir, { mode: 0o700 });
 const provided = new Map();
 let serving;
 const served = [];
@@ -302,7 +308,7 @@ try {
       serving = started.serving;
     }
     for (const row of generation.rows) {
-      const env = { ...process.env, ...row.env };
+      const env = { ...process.env, ...row.env, TMPDIR: scratchDir };
       const args = [...(row.args ?? [])];
       let outFile;
       if (row.kind === "driver") {

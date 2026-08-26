@@ -148,6 +148,8 @@ The tunnel and every server run supervised: a signal delivered to `serve.sh` its
 
 ## What these cannot cover
 
-- Provider sign-in and consent (browser, by design — see the checklist)
-- Entra group deny and ceiling reason codes on a real token, which need the deployed gateway because the provider redirects to the public hostname
-- CIMD against a hosted metadata document — nothing serves one yet
+This section is about the probes above, run one at a time. The rehearsal drives more than they do: provider sign-in and consent on the Entra and Cloudflare Access legs, the Entra denial fixtures, and the third-party CLIs are all unattended rows now (see the rehearsal section and `CHECKLIST.md`), and the gateway-backed rows run against legs it serves itself.
+
+- Provider sign-in and consent on the **Google** leg, and the ChatGPT and claude.ai connectors: a person performs those, and the checklist says which rows they are
+- Entra group deny and ceiling reason codes on a real token when a probe runs alone, which need the deployed gateway because the provider redirects to the public hostname; the rehearsal covers them by serving the leg itself (`client-entra:nogroups`, `:wronggroup`, `:overage`)
+- CIMD against a hosted metadata document served by this project — nothing here serves one; the Claude Code rows resolve Anthropic's published document instead

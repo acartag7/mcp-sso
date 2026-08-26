@@ -99,8 +99,13 @@ export function bundleOutput(bundle, name, format) {
 export const ALWAYS_PRIVATE_KEYS = Object.freeze(new Set([
   "entra_client_secret", "test_user_password", "cf_access_idp_name", "cf_access_audience", "entra_tenant_id", "entra_client_id",
   "unmapped_group_object_id_do_not_map", "TunnelSecret", "TunnelID", "AccountTag", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
-  "apiKey", "projectId", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+  "apiKey", "projectId", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "test_users",
 ]));
+
+/** A value nested under a credential key is a credential too: `test_users` is
+ *  a map of role to sign-in name, and a short name (`a@b.co`) would otherwise
+ *  fall through both the key check, which sees the role, and the length floor. */
+const effectiveKey = (parentKey, childKey) => (ALWAYS_PRIVATE_KEYS.has(parentKey) ? parentKey : childKey);
 
 /** Every private string of a bundle: the values under ALWAYS_PRIVATE_KEYS at
  *  any length, every other string leaf of MIN_PRIVATE_LENGTH characters or
@@ -122,7 +127,7 @@ export function privateValues(value, out = new Set(), key = undefined) {
   if (Array.isArray(value)) {
     for (const item of value) privateValues(item, out, key);
   } else if (isPlainObject(value)) {
-    for (const [childKey, item] of Object.entries(value)) privateValues(item, out, childKey);
+    for (const [childKey, item] of Object.entries(value)) privateValues(item, out, effectiveKey(key, childKey));
   }
   return out;
 }
@@ -140,7 +145,7 @@ export function credentialValues(value, out = new Set(), key = undefined) {
   if (Array.isArray(value)) {
     for (const item of value) credentialValues(item, out, key);
   } else if (isPlainObject(value)) {
-    for (const [childKey, item] of Object.entries(value)) credentialValues(item, out, childKey);
+    for (const [childKey, item] of Object.entries(value)) credentialValues(item, out, effectiveKey(key, childKey));
   }
   return out;
 }

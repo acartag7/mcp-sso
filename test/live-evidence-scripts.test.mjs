@@ -604,6 +604,9 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /signalGroup\("SIGTERM"\);[\s\S]{0,200}setTimeout\(\(\) => signalGroup\("SIGKILL"\), graceMs\)/,
     "which asks the whole process group first, so serve.sh runs its cleanup traps and a probe closes its browser, then kills what is left");
   assert.match(orchestrator, /detached: true/, "every child leads its own group, so a stop reaches what it started");
+  assert.match(orchestrator, /TMPDIR: scratchDir/, "a row child's temporary files live in a directory the run owns");
+  assert.ok(orchestrator.indexOf("const scratchDir = join(handoffDir") > 0 && orchestrator.includes("rmSync(handoffDir, { recursive: true, force: true })"),
+    "so a probe killed before its own cleanup leaves nothing behind: the teardown removes the tree");
   assert.equal((orchestrator.match(/\bkill\("SIGKILL"\)/g) ?? []).length, 0, "no path kills a single pid outright");
   assert.match(orchestrator, /collect\(output\?\.value, values, name\)/,
     "a laptop run learns the stack values, so the leak scan means the same thing there as in CI");
@@ -654,7 +657,7 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.doesNotMatch(everything, /denied_at_provider/, "the retired outcome name survives nowhere");
   // Every live test file is named in the harness reference.
   for (const name of readdirSync(join(ROOT, "test")).filter((n) => /^live-.*\.test\.mjs$/.test(n))) {
-    assert.match(DOC, new RegExp(`\`test/${name.replace(/\./g, "\\.")}\``), `harness reference lists ${name}`);
+    assert.ok(DOC.includes(`\`test/${name}\``), `harness reference lists ${name}`);
   }
 });
 
