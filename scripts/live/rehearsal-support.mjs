@@ -72,6 +72,9 @@ const BLOCKED_REASONS = Object.freeze([
   { reason: "google_credentials_absent", pattern: /Google credential file must be/ },
   { reason: "infrastructure_session_expired", pattern: /(?:AWS|Azure) session is not valid/ },
   { reason: "browser_unavailable", pattern: /^probe-(?:client|cli): browser is unavailable/m },
+  // A client row whose driver met an operator-armable outcome refuses at
+  // runner level, so the row records that reason instead of a failed check.
+  { reason: "blocked_mfa_interstitial", pattern: /^probe-(?:client|cli): blocked_mfa_interstitial$/m },
   { reason: "browser_not_local", pattern: /^probe-cli: the CLI rows need a browser on this host/m },
   { reason: "cli_unavailable", pattern: /^probe-cli: (?:claude|codex|python3) is unavailable on PATH/m },
 ]);

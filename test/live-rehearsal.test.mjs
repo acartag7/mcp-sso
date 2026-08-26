@@ -353,6 +353,12 @@ test("BEHAVIOUR rehearsal-support: run.sh outcomes classify as PASS, FAIL, or an
   assert.equal(classifyRun({ code: 1, stderr: "probe-cli: browser is unavailable; install Chrome or set MCP_SSO_BROWSER_CDP_URL\n", stdout: "" }).reason, "browser_unavailable",
     "the CLI probe blocks on a missing browser the way the client probe does");
   assert.equal(classifyRun({ code: 1, stderr: "probe-cli: the CLI rows need a browser on this host; unset MCP_SSO_BROWSER_CDP_URL\n", stdout: "" }).reason, "browser_not_local");
+  for (const probe of ["probe-client", "probe-cli"]) {
+    assert.equal(classifyRun({ code: 1, stderr: `${probe}: blocked_mfa_interstitial\n`, stdout: "" }).reason, "blocked_mfa_interstitial",
+      `${probe}: a tenant that asks the test user to register MFA is armable, not a product failure`);
+  }
+  assert.equal(classifyRun({ code: 1, stderr: "probe-client: blocked_mfa_interstitial\n", stdout: "FAIL  x\n\n0/1 checks passed\n" }).status, "FAIL",
+    "an armable outcome reported after checks ran is still a failure");
   assert.equal(classifyRun({ code: 1, stderr: "probe-cli: claude is unavailable on PATH\n", stdout: "FAIL  x\n\n0/1 checks passed\n" }).status, "FAIL",
     "an absent CLI after checks ran is a failure");
   assert.ok(ROWS.findIndex((row) => row.provides === "cloudflare-assertion") < ROWS.findIndex((row) => row.needs === "cloudflare-assertion"),

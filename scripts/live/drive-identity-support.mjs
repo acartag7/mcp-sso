@@ -14,6 +14,20 @@ export const OUTCOMES = Object.freeze([
 ]);
 /** Outcomes the driver exits 0 for: it did what it was asked and observed a definite answer. */
 export const DEFINITE_OUTCOMES = Object.freeze(["approved", "denied_at_access_edge", "denied_at_login", "denied_at_gateway"]);
+/** Outcomes an operator can arm: the flow was never attempted, so a probe that
+ *  meets one refuses at runner level and the rehearsal records BLOCKED with the
+ *  outcome as its reason, rather than reporting a failed product check. */
+export const ARMABLE_OUTCOMES = new Set(["browser_unavailable", "blocked_mfa_interstitial"]);
+
+/** Thrown by a probe when the driver returned an ARMABLE_OUTCOMES outcome. */
+export class ProbeRefusal extends Error {
+  constructor(outcome) {
+    super(outcome);
+    this.name = "ProbeRefusal";
+    this.outcome = outcome;
+  }
+}
+
 /** The one host a password may be typed on. Anything else is refused before a keystroke. */
 export const CREDENTIAL_HOST = "login.microsoftonline.com";
 const ROLE = /^[a-z]+$/;

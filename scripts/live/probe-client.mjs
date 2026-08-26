@@ -12,6 +12,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pkceChallenge } from "../../src/crypto.ts";
 import { driveAuthorize, openBrowser } from "./drive-identity-browser.mjs";
+import { ARMABLE_OUTCOMES, ProbeRefusal } from "./drive-identity-support.mjs";
 import { assertProbeClientRedirect } from "./probe-redirect-support.mjs";
 import { form, sdkPing } from "./probe-e2e-support.mjs";
 import {
@@ -50,6 +51,7 @@ const idpName = leg === "cloudflare_access" ? requireEnv("CF_ACCESS_IDP_NAME") :
 
 let failures = 0;
 let opened;
+let refusal;
 const trace = [];
 const secrets = [];
 // No browser is a runner-level refusal, reported the way run.sh reports one, so
@@ -84,6 +86,11 @@ if (opened === undefined) {
   const authorizeUrl = `${origin}/oauth/authorize?${query}`;
 
   const result = await driveAuthorize({ context: opened.context, origin, authorizeUrl, callback, user, password, idpName, trace });
+  // An outcome the operator must arm (the tenant asking this test user to
+  // register MFA) is a runner-level refusal, not a failed check: the flow was
+  // never attempted, so the rehearsal records BLOCKED with that reason instead
+  // of reporting the product as broken. The same shape as no browser above.
+  if (ARMABLE_OUTCOMES.has(result.outcome)) throw new ProbeRefusal(result.outcome);
   out.push(`NOTE  trace ${trace.join(" > ")}`);
 
   if (options.expect === "approved") {
@@ -127,12 +134,17 @@ if (opened === undefined) {
     if (!ok("the served leg's audit records the exact rejection reason and mints nothing", deniedFlowHolds(events, options.expect),
       `${events.length} events added`)) failures++;
   }
-} catch {
+} catch (error) {
   failures++;
-  out.push("FAIL  probe aborted before completion");
+  if (error instanceof ProbeRefusal) refusal = error.outcome;
+  else out.push("FAIL  probe aborted before completion");
 } finally {
   try { await opened?.browser.close(); } catch { /* nothing left to release */ }
-  console.log(out.join("\n"));
-  console.log(`\n${out.filter((line) => line.startsWith("PASS")).length}/${out.filter((line) => !line.startsWith("NOTE")).length} checks passed`);
+  if (refusal !== undefined) {
+    process.stderr.write(`probe-client: ${refusal}\n`);
+  } else {
+    console.log(out.join("\n"));
+    console.log(`\n${out.filter((line) => line.startsWith("PASS")).length}/${out.filter((line) => !line.startsWith("NOTE")).length} checks passed`);
+  }
   process.exitCode = failures > 0 ? 1 : 0;
 }

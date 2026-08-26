@@ -559,6 +559,12 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.equal((cliProbe.match(/spawnPty\(\.\.\.loginCommand\(/g) ?? []).length, 2, "both login commands run through the sandbox wrapper");
   assert.match(cliProbe, /existsSync\(join\(home, KEYCHAIN_STORE\)\)/, "the private keychain is proved reached");
   assert.match(cliProbe, /NOTE  tool call skipped/, "a skipped tool call is recorded, never silent");
+  for (const [name, source] of [["probe-client", client], ["probe-cli", cliProbe]]) {
+    assert.match(source, /if \(ARMABLE_OUTCOMES\.has\(result\.outcome\)\) throw new ProbeRefusal\(result\.outcome\);/,
+      `${name}: an operator-armable driver outcome refuses at runner level`);
+    assert.match(source, /error instanceof ProbeRefusal/, `${name}: the refusal is distinguished from a crash`);
+    assert.match(source, /process\.stderr\.write\(`probe-(?:client|cli): \$\{refusal\}\\n`\)/, `${name}: the refusal prints one fixed line and no checks`);
+  }
   const installAt = workflow.indexOf("npm install -g --ignore-scripts");
   const roleAt = workflow.indexOf("configure-aws-credentials@");
   const connectorAt = workflow.indexOf("cloudflared-linux-amd64");

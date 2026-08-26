@@ -289,8 +289,11 @@ client rows alike), `cli_unavailable` (no `claude`, `codex`, or `python3` on
 `PATH` for a third-party client row), `browser_not_local` (a third-party client
 row with `MCP_SSO_BROWSER_CDP_URL` pointing at a browser on another host: the
 CLI listens for its callback on this host's loopback, so a hosted browser
-would deliver the code to its own host instead), `blocked_mfa_interstitial` (the tenant asked the test user
-to register MFA), `release_services_absent` (no MySQL, Redis, or
+would deliver the code to its own host instead), `blocked_mfa_interstitial`
+(the tenant asked the test user to register MFA, whether the row is a driver
+row or a client row: a client probe that meets it refuses at runner level
+instead of reporting a failed check, because the flow was never attempted),
+`release_services_absent` (no MySQL, Redis, or
 `RUN_INTEGRATION` for the release matrix), `tunnel_already_served`,
 `tunnel_credentials_absent`, `cloudflared_unavailable` (a serve generation
 could not start), or `prerequisite_row_did_not_pass` (the row that was to

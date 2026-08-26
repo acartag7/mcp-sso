@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { driveAuthorize, openBrowser } from "./drive-identity-browser.mjs";
+import { ARMABLE_OUTCOMES, ProbeRefusal } from "./drive-identity-support.mjs";
 import {
   BROWSER_LAUNCHERS, CLIS, auditKinds, browserIsLocal, cliLoginHolds, extractAuthorizeUrl, parseCliArgs, plainText, spawnPty, stopPty,
   versionOf, waitForOutput,
@@ -78,6 +79,7 @@ const cliEnv = {
 };
 let opened;
 let login;
+let refusal;
 let failures = 0;
 const trace = [];
 // A runner-level refusal: nothing on stdout, one fixed line on stderr, before
@@ -134,6 +136,10 @@ try {
       context: opened.context, origin, authorizeUrl: authorize.href, callback: authorize.redirectUri, user, password, idpName, trace,
       loopbackCallback: authorize.redirectUri,
     });
+    // An outcome the operator must arm (the tenant asking this test user to
+    // register MFA) is a runner-level refusal, not a failed check, exactly as
+    // in probe-client.mjs: the flow was never attempted.
+    if (ARMABLE_OUTCOMES.has(result.outcome)) throw new ProbeRefusal(result.outcome);
     out.push(`NOTE  trace ${trace.join(" > ")}`);
     if (!ok("the provider sign-in reaches consent and the browser lands on the client's loopback callback", result.outcome === "approved", result.outcome)) failures++;
     // The CLI's listener took the code; it may also accept the same redirect
@@ -174,15 +180,18 @@ try {
     if (!ok("the served leg's audit records the client's registration, identity, and code exchange",
       cliLoginHolds(events, options.cli, { expectProtectedRequest: protectedRequest }), `${events.length} events added`)) failures++;
   }
-} catch {
+} catch (error) {
   failures++;
-  if (out.length > 0) out.push("FAIL  probe aborted before completion");
+  if (error instanceof ProbeRefusal) refusal = error.outcome;
+  else if (out.length > 0) out.push("FAIL  probe aborted before completion");
   else process.stderr.write("probe-cli: the private HOME or the CLI could not be prepared\n");
 } finally {
   if (login !== undefined) await stopPty(login);
   try { await opened?.browser.close(); } catch { /* nothing left to release */ }
   rmSync(home, { recursive: true, force: true });
-  if (out.length > 0) {
+  if (refusal !== undefined) {
+    process.stderr.write(`probe-cli: ${refusal}\n`);
+  } else if (out.length > 0) {
     console.log(out.join("\n"));
     console.log(`\n${out.filter((line) => line.startsWith("PASS")).length}/${out.filter((line) => !line.startsWith("NOTE")).length} checks passed`);
   }
