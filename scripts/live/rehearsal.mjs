@@ -140,7 +140,10 @@ async function stopChild(state, graceMs) {
   };
   signalGroup("SIGTERM");
   const deadline = Date.now() + graceMs;
-  await state.exit;
+  // Bounded: a leader that ignores SIGTERM must not hold the run open until
+  // the job's own timeout. Whatever the leader does, the group is checked and
+  // escalated when the budget runs out.
+  await Promise.race([state.exit, sleep(graceMs)]);
   // A process group outlives its leader: the browser or the CLI a probe
   // started can still be in it after run.sh has gone. Wait for the group
   // itself, and escalate to the group when the budget runs out.

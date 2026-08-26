@@ -18,6 +18,10 @@
 | `ci/` | The same rehearsal on a GitHub-hosted runner (`.github/workflows/live.yml`) | `fetch-bundle.mjs` reads the `/mcp-sso/live/*` secrets through the OIDC-assumed role into 0600 files, `mask-bundle.mjs` registers every private value with the log masker (every value under a credential or identity key, every other string of 12 characters or more, each line of a multi-line value, and the bare hostname of any URL), and `ci/infra/scripts/tofu-run.sh` answers `run.sh`'s stack-output calls from the bundle so `run.sh` runs unchanged. The workflow runs nightly and on demand from `main` under the `live` environment, and on `rehearsal/*` pushes under the `live-branch` environment, whose required reviewer approves each run before the role is assumed; its first step refuses any other ref, and it never runs on pull requests. |
 | `CHECKLIST.md` | Live MCP clients | Lists the client and identity-provider combinations, which of them the rehearsal drives, and which an operator must still run. |
 
+## What the connector can reach
+
+`serve.sh` starts `cloudflared` without the variables that name the run's private files: `MCP_SSO_BUNDLE_DIR`, `MCP_SSO_GOOGLE_ENV`, and `MCP_SSO_CLIENT_KEYS_FILE` are removed from its environment, so the connector is not told where the CI bundle, the Google credential file, or the vendor keys are. It still runs as the user that owns them, and their paths are not secret, so this removes a pointer rather than an ability: the 0600 modes are what actually stands between the connector and those files. Real isolation would run the connector under its own operating-system identity, or in a container with only its tunnel credential mounted, which is not what this harness does today. The connector is pinned to one release asset and verified by SHA-256 before it runs, which is the assumption the current shape rests on.
+
 ## Evidence boundary
 
 A harness run is not provider evidence unless it reaches the named provider infrastructure and records the observed result. A unit or integration test can prove that the harness routes inputs correctly. It cannot prove that a provider accepted a request.

@@ -605,6 +605,12 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
     "which asks the whole process group first, so serve.sh runs its cleanup traps and a probe closes its browser, then kills what is left");
   assert.match(orchestrator, /while \(Date\.now\(\) < deadline && groupAlive\(\)\)/,
     "and waits for the group, not only its leader: a browser or CLI in the group outlives run.sh");
+  assert.match(orchestrator, /await Promise\.race\(\[state\.exit, sleep\(graceMs\)\]\)/,
+    "and never waits for a leader that ignores the signal: the budget is what decides when the group is killed");
+  const serve = read("scripts/live/serve.sh");
+  assert.match(serve, /env -u MCP_SSO_BUNDLE_DIR -u MCP_SSO_GOOGLE_ENV -u MCP_SSO_CLIENT_KEYS_FILE[^\n]*\\\n\s*cloudflared tunnel/,
+    "the connector is not told where the run's private files are");
+  assert.match(DOC, /removes a pointer rather than an ability/, "and the reference says what that does and does not buy");
   assert.match(orchestrator, /detached: true/, "every child leads its own group, so a stop reaches what it started");
   assert.match(orchestrator, /TMPDIR: scratchDir/, "a row child's temporary files live in a directory the run owns");
   assert.ok(orchestrator.indexOf("const scratchDir = join(handoffDir") > 0 && orchestrator.includes("rmSync(handoffDir, { recursive: true, force: true })"),

@@ -82,7 +82,12 @@ A leg argument is required because the example **boot-refuses more than one iden
 ## The rehearsal: every probe, one receipt
 
 ```sh
-REDIS_URL=redis://127.0.0.1:6379 node scripts/live/rehearsal.mjs
+docker run -d --rm --name rehearsal-mysql -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=mcp_sso -e MYSQL_USER=mcp -e MYSQL_PASSWORD=mcppw -p 127.0.0.1:3306:3306 mysql:8.4
+docker run -d --rm --name rehearsal-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+RUN_INTEGRATION=true \
+  MYSQL_URL='mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4' \
+  REDIS_URL=redis://127.0.0.1:6379 \
+  node scripts/live/rehearsal.mjs
 ```
 
 `rehearsal.mjs` runs these rows, each through `run.sh`, in this order, and writes `.live-state/receipt.json`: the runtime commit, whether the tree was dirty, and per row the status, the probe's own `PASS`/`FAIL`/`CONTROL` lines, the check counts, and the duration. It exits 0 only when every row is `PASS` on a clean tree; that is the only receipt that counts as evidence.
