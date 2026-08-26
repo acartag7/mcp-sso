@@ -90,15 +90,20 @@ D4 and D5 change server configuration, so each needs its own `serve.sh entra`
 invocation with the marked variable exported; they cannot ride the normal
 matrix run. Read both outcomes from the audit trail like every other deny row.
 
-The rehearsal (`scripts/live/rehearsal.mjs`, see the README) drives the OAuth
-mechanics of these rows unattended with the official MCP SDK as the client:
-the positive Entra and Cloudflare flows (`client-entra:member`,
-`client-cloudflare:member`), D1 to D3 (`client-entra:nogroups`,
-`client-entra:wronggroup`, `client-entra:overage`), D4 and D5
-(`client-entra:wrong-tenant`, `client-entra:not-allowlisted`), and E1
-(`access-edge-denial`). What the rows above add is the third-party client
-itself: Claude Code, Codex CLI, the ChatGPT and claude.ai connectors, and the
-Google identity sign-in.
+The rehearsal (`scripts/live/rehearsal.mjs`, see the README) drives these rows
+unattended: A1, A2, B1, and B2 with the real CLIs (`claude-code:cloudflare`,
+`claude-code:entra`, `codex-cli:cloudflare`, `codex-cli:entra`), the OAuth
+mechanics of the positive Entra and Cloudflare flows with the official MCP SDK
+as the client (`client-entra:member`, `client-cloudflare:member`), D1 to D3
+(`client-entra:nogroups`, `client-entra:wronggroup`, `client-entra:overage`),
+D4 and D5 (`client-entra:wrong-tenant`, `client-entra:not-allowlisted`), and
+E1 (`access-edge-denial`). For A1, A2, B1, and B2 the consent and the code
+exchange are always driven; Claude Code's connection check on `/mcp` always
+runs; the tool round-trip itself runs only when the client-keys file supplies
+`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, and a row that skipped it says so in
+a `NOTE` line. What remains for an operator is the Google identity sign-in
+(A3, B3) and the hosted connectors (C1, C2, F1 to F3), whose web applications
+an automated browser may not drive under their terms of service.
 
 Client commands:
 

@@ -112,7 +112,11 @@ function readPrivateText(path, uid, maxBytes) {
   }
 }
 
-export function readGoogleCredentialFile(path, uid = process.getuid?.()) {
+/** Read a private KEY=VALUE file through ONE descriptor (opened without
+ *  following symlinks and without blocking, checked regular-file, caller-owned,
+ *  no group or other bits, bounded on that descriptor) and parse it as data
+ *  against an allowlist of keys. It is never sourced. */
+export function readKeyValueFile(path, allowedKeys, uid = process.getuid?.()) {
   const text = readPrivateText(path, uid, MAX_CREDENTIAL_FILE_BYTES);
   const values = new Map();
   for (const rawLine of text.split("\n")) {
@@ -122,7 +126,7 @@ export function readGoogleCredentialFile(path, uid = process.getuid?.()) {
     if (at <= 0) throw new RunSupportError("credential file line is not KEY=VALUE");
     const key = line.slice(0, at);
     const value = line.slice(at + 1);
-    if (!CREDENTIAL_KEYS.has(key)) throw new RunSupportError("credential file contains an unsupported key");
+    if (!allowedKeys.has(key)) throw new RunSupportError("credential file contains an unsupported key");
     if (values.has(key)) throw new RunSupportError("credential file repeats a key");
     if (value.length === 0 || value.length > MAX_VALUE_LENGTH || CONTROL_CHARS.test(value)) {
       throw new RunSupportError("credential file value is empty, oversized, or contains control characters");
@@ -132,12 +136,26 @@ export function readGoogleCredentialFile(path, uid = process.getuid?.()) {
     }
     values.set(key, value);
   }
+  return values;
+}
+
+/** The Google OAuth client file: GOOGLE_CLIENT_ID and exactly one client secret. */
+export function readGoogleCredentialFile(path, uid = process.getuid?.()) {
+  const values = readKeyValueFile(path, CREDENTIAL_KEYS, uid);
   const clientId = values.get("GOOGLE_CLIENT_ID");
   const secrets = [values.get("GOOGLE_CLIENT_SECRET"), values.get("OIDC_CLIENT_SECRET")].filter(Boolean);
   if (clientId === undefined || secrets.length !== 1) {
     throw new RunSupportError("credential file must provide GOOGLE_CLIENT_ID and exactly one client secret");
   }
   return { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: secrets[0] };
+}
+
+/** The optional model-vendor keys the CLI rows use for a tool call. */
+export const CLIENT_KEY_NAMES = new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]);
+
+/** The client-keys file: any subset of CLIENT_KEY_NAMES, as a plain object. */
+export function readClientKeysFile(path, uid = process.getuid?.()) {
+  return Object.fromEntries(readKeyValueFile(path, CLIENT_KEY_NAMES, uid));
 }
 
 /** Validate the `test_users` output for the identity driver: a map of role to

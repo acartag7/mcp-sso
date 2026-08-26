@@ -248,7 +248,7 @@ function upstreamFetch(policy, {
       return Response.json({ sha: record.sha, commit: { committer: { date: record.published } } });
     }
     const name = decodeURIComponent(new URL(url).pathname.slice(1));
-    const record = policy.packages[name] ?? policy.transitivePins[name];
+    const record = policy.packages[name] ?? policy.transitivePins[name] ?? policy.tools?.[name];
     assert.ok(record, `known package URL: ${url}`);
     return Response.json({ time: { [record.version]: record.published } });
   };

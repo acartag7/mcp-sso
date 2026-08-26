@@ -37,6 +37,22 @@ repository, and no probe writes a credential or provider identifier to output.
    any of these checks stops the run before any provider I/O.
 5. A Redis for `probe-e2e.mjs`, supplied through `REDIS_URL` (a local
    `docker run --rm -p 127.0.0.1:6379:6379 redis:7-alpine` is enough).
+6. For the third-party client rows, `claude` (Claude Code) and `codex` (Codex
+   CLI) on `PATH`, and `python3`, which `probe-cli.mjs` uses to give each CLI
+   a pseudo-terminal. A row whose CLI is absent is `BLOCKED cli_unavailable`.
+   To make each CLI finish with a real tool call, put the vendor keys in a
+   private file and point `MCP_SSO_CLIENT_KEYS_FILE` at it:
+
+   ```
+   ANTHROPIC_API_KEY=<key>
+   OPENAI_API_KEY=<key>
+   ```
+
+   The same file rules as the Google credential file apply (`KEY=VALUE`
+   lines, those two keys only, `chmod 600`, read once as data). Without the
+   file the rows still prove the login: the connection check Claude Code
+   makes on `/mcp` needs no key, and the Codex row stops after the code
+   exchange.
 
 The Cloudflare stack supplies the Access application, per-leg hostnames, and
 tunnel ports. The Entra stack supplies the tenant, application, group mapping,
@@ -180,6 +196,7 @@ on a clean tree; that is the only receipt that counts as evidence.
 | `client-entra:member`, `client-cloudflare:member` | `probe-client.mjs`, a real OAuth client against the SERVED leg on its public hostname: dynamic registration, an authorization the driver completes through the real provider pages as the `member` user, the code exchange, an official MCP SDK tool call, and one refresh. The served leg's audit must record the whole flow in order and hold none of this flow's code or tokens. |
 | `client-entra:nogroups`, `client-entra:wronggroup`, `client-entra:overage` | The same client as each deny fixture. The client must receive `access_denied` with the documented description for that fixture, and the served audit must record `identity.verify` failed with exactly that reason (`entra_no_groups`, `entra_no_mapped_groups`, `entra_groups_overage`) and mint nothing. Checklist rows D1 to D3, unattended. |
 | `client-entra:wrong-tenant`, `client-entra:not-allowlisted` | The Entra leg restarted with a deliberately wrong operator value through `MCP_SSO_ENTRA_ALLOWED_TENANT_IDS` or `MCP_SSO_ENTRA_SUBJECT_ALLOWLIST`; the `member` user must be refused as `entra_bad_tid` or `entra_subject_not_allowed`, with the anti-oracle description. Checklist rows D4 and D5, unattended. |
+| `claude-code:entra`, `claude-code:cloudflare`, `codex-cli:entra`, `codex-cli:cloudflare` | `probe-cli.mjs`, the real third-party CLI against the SERVED leg, in a private `HOME` of its own: `claude mcp add` then `claude mcp login --no-browser`, or `codex mcp add`, on a 400-column pseudo-terminal so the authorization URL the CLI prints stays on one line. The row checks that the URL is on the served origin and that the CLI identifies itself the documented way (Claude Code through its published CIMD `client_id`, Codex through a dynamic registration), then the driver completes it through the real provider pages as the `member` user and lands on the CLI's own loopback callback (`http://localhost:<port>/...` or `http://127.0.0.1:<port>/...`, the one exception to the driver's https rule, and only for the loopback origin, host and port, that the CLI named; because that callback is this host's loopback, these rows need the browser on this host and refuse a remote `MCP_SSO_BROWSER_CDP_URL` as `BLOCKED browser_not_local`). The login command must exit 0, Claude Code's `claude mcp list` must show the server connected (a protected `/mcp` request with the minted token), and the served audit must record the registration or CIMD fetch, the identity, the approval, and the code exchange. A tool call runs when `MCP_SSO_CLIENT_KEYS_FILE` supplies the vendor key. The CLI's PATH starts with shims for every browser launcher reached through PATH (`open`, `xdg-open`, `gio`, `gnome-open`, `kde-open`, `sensible-browser`, `x-www-browser`, `wslview`, and `$BROWSER`) that only leave a marker file, so a CLI that opens the URL itself through one of them (Codex does, through `xdg-open` on Linux) reaches the shim and not an operator's desktop browser; on macOS, where a CLI runs `/usr/bin/open` by absolute path, the login command runs under `sandbox-exec` with a profile that denies that one executable. Also on macOS, `security` is `fake-keychain.py`, so Claude Code's OAuth state stays in the private HOME instead of the operator's login keychain (on the Linux runner the CLI uses a file on its own). The row checks that each shim was reached: on Linux the Codex row fails when the marker is missing; the Claude Code row fails when a marker appears despite `--no-browser` or, on macOS, when the private keychain file was never written. A row whose tool call is skipped for want of a key says so in a `NOTE` line. Checklist rows A1, A2, B1, and B2, unattended. |
 
 The client rows run against legs the rehearsal brings up itself through
 `serve.sh`, in **generations**: one `serve.sh cloudflare_access entra` for the
@@ -195,6 +212,15 @@ that could not start takes that status. In CI, `cloudflared` is installed from
 one release asset verified against a recorded SHA-256, the connector
 credentials come from the bundle (`scripts/live/ci/install-tunnel.mjs` places
 them owner-only under `~/.cloudflared`), and both are removed when the job ends.
+CI also installs Claude Code and Codex CLI at the versions the dependency
+ledger's `tools` block records, with install scripts disabled; `check:deps`
+holds the workflow's install line and the ledger together, and refuses an
+unpinned or unledgered global install in any spelling. Claude Code's wrapper
+then needs one vetted script, `install.cjs`, which the workflow runs
+explicitly instead of enabling lifecycle scripts: it copies the native binary
+out of the platform package npm already downloaded, and fetches nothing. The
+step ends with `claude --version` and `codex --version`, so a broken install
+fails there rather than as four `BLOCKED cli_unavailable` rows.
 
 ### Recording a passing receipt
 
@@ -259,7 +285,11 @@ operator can arm, before any of its checks ran: `cloudflare_access_login_require
 `google_credentials_absent` (no credential file),
 `infrastructure_session_expired` (`aws sso login` or `az login`),
 `browser_unavailable` (no Chrome and no CDP endpoint, for the driver and the
-client rows alike), `blocked_mfa_interstitial` (the tenant asked the test user
+client rows alike), `cli_unavailable` (no `claude`, `codex`, or `python3` on
+`PATH` for a third-party client row), `browser_not_local` (a third-party client
+row with `MCP_SSO_BROWSER_CDP_URL` pointing at a browser on another host: the
+CLI listens for its callback on this host's loopback, so a hosted browser
+would deliver the code to its own host instead), `blocked_mfa_interstitial` (the tenant asked the test user
 to register MFA), `release_services_absent` (no MySQL, Redis, or
 `RUN_INTEGRATION` for the release matrix), `tunnel_already_served`,
 `tunnel_credentials_absent`, `cloudflared_unavailable` (a serve generation
@@ -296,7 +326,9 @@ merges. There is no private infrastructure checkout on the runner. Instead the
 job assumes an AWS role through GitHub OIDC that can read exactly the
 `/mcp-sso/live/*` secrets: the two stack bundles (the same outputs `run.sh`
 reads from OpenTofu, republished as JSON under the same names), the Google
-credential file, and the tunnel credentials. The role is held by two GitHub
+credential file, the tunnel credentials, and the optional client-keys file
+(`/mcp-sso/live/client-keys`, the same `KEY=VALUE` shape as
+`MCP_SSO_CLIENT_KEYS_FILE` above). The role is held by two GitHub
 Environments and nothing else: `live` (branch policy `main`; unattended) and
 `live-branch` (branch policy `rehearsal/*`; the owner approves each run before
 the role is assumed, because a branch run executes whatever that branch

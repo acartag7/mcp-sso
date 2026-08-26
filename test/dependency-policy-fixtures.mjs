@@ -15,6 +15,8 @@ async function conformingNow(root = ROOT) {
     ...Object.values(policy.packages),
     ...Object.values(policy.transitivePins),
     ...Object.values(policy.actions).filter((record) => record.firstPartyException !== true),
+    ...Object.values(policy.tools ?? {}),
+    ...Object.values(policy.binaries ?? {}),
   ];
   const newestPublication = Math.max(...ordinaryRecords.map((record) => Date.parse(record.published)));
   const newestAdoption = Math.max(

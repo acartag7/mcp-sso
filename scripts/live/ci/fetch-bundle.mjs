@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 import { promisify } from "node:util";
 import { BundleError, parseBundle, parseJsonObject } from "./bundle-support.mjs";
-import { readGoogleCredentialFile } from "../run-support.mjs";
+import { readClientKeysFile, readGoogleCredentialFile } from "../run-support.mjs";
 
 const execFileAsync = promisify(execFile);
 const PREFIX = "/mcp-sso/live";
@@ -23,6 +23,7 @@ export const SECRETS = Object.freeze([
   { name: "cloudflare", file: "cloudflare.json", required: true, validate: parseBundle },
   { name: "google", file: "google.env", required: false, validate: undefined },
   { name: "tunnel-credentials", file: "tunnel-credentials.json", required: false, validate: validateTunnel },
+  { name: "client-keys", file: "client-keys.env", required: false, validate: undefined },
 ]);
 
 function validateTunnel(text) {
@@ -77,14 +78,16 @@ export async function fetchBundles({ dir, awsBin = "aws", githubEnv }) {
     if (secret.validate !== undefined) secret.validate(text);
     const path = join(dir, secret.file);
     writePrivate(path, text.endsWith("\n") ? text : `${text}\n`);
-    if (secret.name === "google") {
+    if (secret.name === "google" || secret.name === "client-keys") {
       try {
-        readGoogleCredentialFile(path);
+        if (secret.name === "google") readGoogleCredentialFile(path);
+        else readClientKeysFile(path);
       } catch {
         rmSync(path, { force: true });
-        throw new BundleError("google secret is not a valid credential file");
+        throw new BundleError(`${secret.name} secret is not a valid credential file`);
       }
-      if (githubEnv) appendFileSync(githubEnv, `MCP_SSO_GOOGLE_ENV=${path}\n`);
+      const variable = secret.name === "google" ? "MCP_SSO_GOOGLE_ENV" : "MCP_SSO_CLIENT_KEYS_FILE";
+      if (githubEnv) appendFileSync(githubEnv, `${variable}=${path}\n`);
     }
     manifest[secret.name] = "present";
   }

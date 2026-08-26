@@ -14,7 +14,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { leaksPrivateValue, privateValues, readPrivateJson } from "./ci/bundle-support.mjs";
-import { issuerOriginForLeg, readGoogleCredentialFile } from "./run-support.mjs";
+import { issuerOriginForLeg, readClientKeysFile, readGoogleCredentialFile } from "./run-support.mjs";
 import {
   HANDOFF_ENV, ROWS, buildReceipt, classifyCommandRun, classifyDriverRun, classifyRun, classifyServeFailure, formatSummary, generations,
 } from "./rehearsal-support.mjs";
@@ -55,6 +55,8 @@ function collectPrivateValues(env) {
   }
   const googleEnv = env.MCP_SSO_GOOGLE_ENV || join(env.HOME ?? homedir(), ".mcp-sso-google.env");
   if (existsSync(googleEnv)) privateValues(readGoogleCredentialFile(googleEnv), values);
+  const clientKeys = env.MCP_SSO_CLIENT_KEYS_FILE;
+  if (typeof clientKeys === "string" && clientKeys.length > 0 && existsSync(clientKeys)) privateValues(readClientKeysFile(clientKeys), values);
   return values;
 }
 

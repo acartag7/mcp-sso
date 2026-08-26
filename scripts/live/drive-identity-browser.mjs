@@ -6,7 +6,7 @@
 // password is typed only where hostPolicy.mayTypeCredential says so.
 import { chromium } from "playwright-core";
 import {
-  classifyAccessPage, classifyMicrosoftPage, extractAssertionCookie, hostPolicy,
+  classifyAccessPage, classifyLegPage, classifyMicrosoftPage, extractAssertionCookie, hostPolicy,
 } from "./drive-identity-support.mjs";
 
 export const STEP_TIMEOUT_MS = 30_000;
@@ -98,18 +98,18 @@ const CONSENT_APPROVE = 'form[action="/oauth/authorize/approve"] button[name="ap
  *  browser lands on it with the code or the error in the query and the page
  *  URL is the capture. (Playwright does not route redirected requests, so a
  *  route handler on the callback would never see the 302 that carries it.) */
-export async function driveAuthorize({ context, origin, authorizeUrl, callback, user, password, idpName, trace }) {
-  const policy = hostPolicy(origin);
+export async function driveAuthorize({ context, origin, authorizeUrl, callback, user, password, idpName, trace, loopbackCallback }) {
+  const policy = hostPolicy(origin, { loopbackCallback });
   const page = await context.newPage();
   page.setDefaultTimeout(STEP_TIMEOUT_MS);
-  await page.goto(authorizeUrl, { waitUntil: "domcontentloaded" });
-  trace.push(`${policy.classify(page.url())}:start`);
+  const response = await page.goto(authorizeUrl, { waitUntil: "domcontentloaded" });
+  trace.push(`${policy.classify(page.url())}:start:${Number.isInteger(response?.status()) ? response.status() : "none"}`);
   let idpChosen = false;
   let signedIn = false;
   let approved = false;
   for (let round = 0; round < AUTHORIZE_ROUNDS; round++) {
     const url = page.url();
-    if (url === callback || url.startsWith(`${callback}?`)) {
+    if (url === callback || url.startsWith(`${callback}?`) || policy.classify(url) === "callback") {
       const params = new URL(url).searchParams;
       const error = params.get("error");
       trace.push(error === null ? "callback:code" : "callback:error");
@@ -138,11 +138,18 @@ export async function driveAuthorize({ context, origin, authorizeUrl, callback, 
       continue;
     } else if (cls === "leg" && !approved) {
       const approve = page.locator(CONSENT_APPROVE);
-      if (await approve.count() > 0) {
+      const kind = classifyLegPage({ hasConsentForm: await approve.count() > 0, text: await bodyText(page) });
+      if (kind === "consent") {
         await approve.first().click();
         approved = true;
         trace.push("leg:consent:approved");
         continue;
+      }
+      if (kind !== "other") {
+        // The gateway answered the authorize request with a direct error page
+        // (an untrusted redirect_uri is never used as an error channel).
+        trace.push(`leg:${kind}`);
+        return { outcome: "denied_at_gateway", error: kind.split(":")[0], errorDescription: "", state: "" };
       }
     }
     await page.waitForTimeout(500);

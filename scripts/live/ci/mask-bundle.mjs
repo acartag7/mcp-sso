@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { realpathSync } from "node:fs";
 import { maskCommand, privateValues, readPrivateJson } from "./bundle-support.mjs";
-import { readGoogleCredentialFile } from "../run-support.mjs";
+import { readClientKeysFile, readGoogleCredentialFile } from "../run-support.mjs";
 
 export function maskLines(dir) {
   const values = new Set();
@@ -16,6 +16,7 @@ export function maskLines(dir) {
     const path = join(dir, name);
     if (name.endsWith(".json")) privateValues(readPrivateJson(path), values);
     else if (name === "google.env") privateValues(readGoogleCredentialFile(path), values);
+    else if (name === "client-keys.env") privateValues(readClientKeysFile(path), values);
   }
   return [...values].map(maskCommand);
 }

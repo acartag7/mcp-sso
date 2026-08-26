@@ -72,6 +72,7 @@ test("BEHAVIOUR serve generations: consecutive rows sharing a generation run in 
   assert.equal(served.length, 3, "one main generation and one per deny channel");
   assert.deepEqual(served[0].rows.map((row) => row.id), [
     "client-entra:member", "client-entra:nogroups", "client-entra:wronggroup", "client-entra:overage", "client-cloudflare:member",
+    "claude-code:entra", "claude-code:cloudflare", "codex-cli:entra", "codex-cli:cloudflare",
   ]);
   assert.deepEqual(served[0].serve.legs, ["cloudflare_access", "entra"]);
   assert.deepEqual(Object.keys(served[1].serve.env), ["MCP_SSO_ENTRA_ALLOWED_TENANT_IDS"]);

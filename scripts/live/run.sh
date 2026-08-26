@@ -12,6 +12,7 @@
 #           scripts/live/probe-e2e.mjs                  any leg   (needs REDIS_URL)
 #           scripts/live/drive-identity.mjs             cloudflare_access (the headless identity driver)
 #           scripts/live/probe-client.mjs               any leg   (a real client against a SERVED leg)
+#           scripts/live/probe-cli.mjs                  any leg   (Claude Code or Codex CLI against a SERVED leg)
 #           examples/fastify-sqlite/index.ts            any leg   (used by serve.sh)
 #
 # Nothing here hardcodes a repository path, stack handle, hostname, tenant, or
@@ -65,6 +66,7 @@ case "$ENTRY:$LEG" in
   scripts/live/probe-e2e.mjs:cloudflare_access|scripts/live/probe-e2e.mjs:entra|scripts/live/probe-e2e.mjs:google) KIND=e2e ;;
   scripts/live/drive-identity.mjs:cloudflare_access) KIND=driver ;;
   scripts/live/probe-client.mjs:cloudflare_access|scripts/live/probe-client.mjs:entra|scripts/live/probe-client.mjs:google) KIND=client ;;
+  scripts/live/probe-cli.mjs:cloudflare_access|scripts/live/probe-cli.mjs:entra|scripts/live/probe-cli.mjs:google) KIND=client ;;
   examples/fastify-sqlite/index.ts:cloudflare_access|examples/fastify-sqlite/index.ts:entra|examples/fastify-sqlite/index.ts:google) KIND=server ;;
   *) fail "unsupported entry/leg pair: $ENTRY $LEG" ;;
 esac
@@ -149,6 +151,9 @@ if [ "$KIND" = "driver" ] || [ "$KIND" = "client" ]; then
   if [ "$KIND" = "client" ]; then
     MCP_SSO_LEG="$LEG"
     pass MCP_SSO_LEG MCP_SSO_AUDIT_FILE
+    # The optional model-vendor keys for a CLI tool call, read as data by the
+    # one entry that makes such a call.
+    if [ "$ENTRY" = "scripts/live/probe-cli.mjs" ]; then pass MCP_SSO_CLIENT_KEYS_FILE; fi
   fi
 fi
 

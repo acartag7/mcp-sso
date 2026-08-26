@@ -99,7 +99,7 @@ export function bundleOutput(bundle, name, format) {
 export const ALWAYS_PRIVATE_KEYS = Object.freeze(new Set([
   "entra_client_secret", "test_user_password", "cf_access_idp_name", "cf_access_audience", "entra_tenant_id", "entra_client_id",
   "unmapped_group_object_id_do_not_map", "TunnelSecret", "TunnelID", "AccountTag", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
-  "apiKey", "projectId",
+  "apiKey", "projectId", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
 ]));
 
 /** Every private string of a bundle: the values under ALWAYS_PRIVATE_KEYS at

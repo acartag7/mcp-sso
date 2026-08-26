@@ -42,6 +42,18 @@ export const PROVIDER_ROWS = Object.freeze([
     status: "Verified", limits: "",
   },
   {
+    needs: ["claude-code:entra", "claude-code:cloudflare"],
+    provider: "Cloudflare Access and Entra ID", client: "Claude Code, driven by the rehearsal",
+    flow: "CIMD `client_id` → `claude mcp login --no-browser` → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token → connection check on `/mcp`",
+    status: "Verified", limits: "",
+  },
+  {
+    needs: ["codex-cli:entra", "codex-cli:cloudflare"],
+    provider: "Cloudflare Access and Entra ID", client: "Codex CLI, driven by the rehearsal",
+    flow: "`codex mcp add` → DCR → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token",
+    status: "Verified with limit", limits: "Limit: a tool call runs only when the client-keys file supplies `OPENAI_API_KEY`.",
+  },
+  {
     needs: ["probe-google"],
     provider: "Google", client: "Provider probe, driven by the rehearsal",
     flow: "Discovery through the shipped resolver, the JWKS, and the authorize redirect",

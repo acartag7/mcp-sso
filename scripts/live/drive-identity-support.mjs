@@ -40,11 +40,21 @@ export const hostOf = (url) => {
   }
 };
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 /** Which hosts the main frame may land on for a leg. The leg's own origin,
- *  Cloudflare Access, and the Microsoft login host; nothing else. */
-export function hostPolicy(legOrigin) {
+ *  Cloudflare Access, and the Microsoft login host; nothing else, unless a
+ *  `loopbackCallback` is named: the plain-http loopback URL a CLI client
+ *  listens on, which the browser may reach only as the final redirect. */
+export function hostPolicy(legOrigin, { loopbackCallback } = {}) {
   const legHost = hostOf(legOrigin);
   if (legHost === "") throw new Error("leg origin is not a URL");
+  let loopback;
+  if (loopbackCallback !== undefined) {
+    const parsed = new URL(loopbackCallback);
+    if (parsed.protocol !== "http:" || !LOOPBACK_HOSTS.has(parsed.hostname)) throw new Error("a loopback callback must be plain http on a loopback host");
+    loopback = parsed.origin;
+  }
   const secure = (url) => {
     try {
       return new URL(url).protocol === "https:";
@@ -58,6 +68,7 @@ export function hostPolicy(legOrigin) {
     classify(url) {
       const host = hostOf(url);
       if (url === "about:blank") return "blank";
+      if (loopback !== undefined && url.startsWith(`${loopback}/`)) return "callback";
       if (!secure(url)) return "other";
       if (host === legHost) return "leg";
       if (host === CREDENTIAL_HOST) return "microsoft";
@@ -95,6 +106,20 @@ export function classifyAccessPage({ url, text }) {
   const body = typeof text === "string" ? text : "";
   if (/does not have access|not allowed|Access denied|forbidden|is not permitted/i.test(body)) return "denied";
   return "login";
+}
+
+const OAUTH_ERROR_CODES = /\b(invalid_request|invalid_client|invalid_redirect_uri|unauthorized_client|access_denied|unsupported_response_type|invalid_scope|server_error|temporarily_unavailable|invalid_target)\b/;
+
+/** What a page on the leg's own origin is: the consent form, a direct OAuth
+ *  error the gateway rendered (named by its fixed error code, never by its
+ *  description), or something else. */
+export function classifyLegPage({ hasConsentForm, text }) {
+  if (hasConsentForm === true) return "consent";
+  const body = typeof text === "string" ? text : "";
+  const code = body.match(OAUTH_ERROR_CODES);
+  if (code === null) return "other";
+  const cause = /too large/i.test(body) ? ":too_large" : /duplicate request parameters/i.test(body) ? ":duplicate" : /is required/i.test(body) ? ":required" : "";
+  return code[1] + cause;
 }
 
 /** The Access assertion for the leg, from the browser's cookie jar. */

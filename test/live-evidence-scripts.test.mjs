@@ -527,6 +527,52 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
     assert.match(record, /tunnel_already_served/, `${name}: records the refusal to double-serve`);
   }
   assert.match(CHECKLIST, /client-entra:overage/, "the checklist points the deny rows at their automated siblings");
+  // The third-party CLI probe: the real CLI in a private HOME, no desktop
+  // browser, the served audit as the authority, pinned installs in CI.
+  const cliProbe = read("scripts/live/probe-cli.mjs");
+  const cliSupport = read("scripts/live/probe-cli-support.mjs");
+  assert.doesNotMatch(cliProbe, /\bSKIP\b|process\.exit\(/);
+  assert.match(cliProbe, /"--no-browser"/, "Claude Code is told not to open a browser");
+  assert.match(cliProbe, /for \(const name of BROWSER_LAUNCHERS\)/, "a CLI that opens the URL itself reaches a shim, never the operator's browser");
+  const claudeBranch = cliProbe.slice(cliProbe.indexOf('if (options.cli === "claude") {\n      // The connection check'), cliProbe.indexOf("keys.ANTHROPIC_API_KEY"));
+  assert.match(claudeBranch, /\["mcp", "list"\]/, "the connection check runs on every Claude Code row, before any key is consulted");
+  assert.ok(cliProbe.indexOf("const home = mkdtempSync(") < cliProbe.indexOf("openBrowser()"), "the private HOME exists before the browser opens, so every exit path can remove it");
+  assert.ok(cliProbe.indexOf("try {") < cliProbe.indexOf("openBrowser()"), "the browser is opened inside the try whose finally closes it");
+  assert.match(cliProbe, /HOME: home/, "the CLI's configuration and credential store live in a private HOME");
+  assert.match(cliProbe, /process\.platform === "darwin"[\s\S]{0,200}"security"[\s\S]{0,80}FAKE_KEYCHAIN/, "on macOS the CLI's keychain is a file in the private HOME, never the operator's login keychain");
+  assert.match(cliProbe, /FAKE_KEYCHAIN = fileURLToPath\(new URL\("\.\/fake-keychain\.py"/);
+  assert.match(read("scripts/live/fake-keychain.py"), /sys\.exit\(44\)/, "a missing item answers like the real tool");
+  assert.match(cliProbe, /cliLoginHolds\(events, options\.cli/, "the login is proved from the served audit");
+  assert.match(cliProbe, /readClientKeysFile\(/, "vendor keys are read through the owner-only file reader");
+  assert.doesNotMatch(cliProbe, /console\.(?:log|error|warn)\([^\n]*(?:password|redirectUrl|authorize\.href|keys\.)/);
+  assert.match(cliSupport, /pty-run\.py/, "the CLI runs on the wide pseudo-terminal");
+  assert.match(read("scripts/live/pty-run.py"), /TIOCSWINSZ/, "the pseudo-terminal's width is set, wide enough for the URLs these CLIs print");
+  assert.match(cliProbe, /opened = [^\n]*openBrowser\(\)/, "the browser is opened as a preflight");
+  assert.ok(cliProbe.indexOf("openBrowser()") < cliProbe.indexOf("spawnPty("), "the browser preflight runs before the CLI touches the served leg");
+  assert.match(cliProbe, /refuse\("browser is unavailable; install Chrome or set MCP_SSO_BROWSER_CDP_URL"\)/, "a missing browser is a runner-level refusal");
+  assert.match(cliProbe, /refuse\("the CLI rows need a browser on this host/, "a hosted browser is refused: the callback is this host's loopback");
+  assert.match(cliProbe, /OPEN_MARKER/, "the browser shims leave a marker the row checks");
+  assert.match(cliProbe, /\(deny process-exec \(literal "\/usr\/bin\/open"\)\)/, "on macOS the login command cannot run /usr/bin/open");
+  assert.match(cliProbe, /\["sandbox-exec", \["-p", DARWIN_SANDBOX, command, \.\.\.args\]\]/, "the sandbox wraps the login command");
+  assert.equal((cliProbe.match(/spawnPty\(\.\.\.loginCommand\(/g) ?? []).length, 2, "both login commands run through the sandbox wrapper");
+  assert.match(cliProbe, /existsSync\(join\(home, KEYCHAIN_STORE\)\)/, "the private keychain is proved reached");
+  assert.match(cliProbe, /NOTE  tool call skipped/, "a skipped tool call is recorded, never silent");
+  const installAt = workflow.indexOf("npm install -g --ignore-scripts");
+  const roleAt = workflow.indexOf("configure-aws-credentials@");
+  const connectorAt = workflow.indexOf("cloudflared-linux-amd64");
+  assert.ok(installAt > 0 && installAt < roleAt, "third-party code is installed before the role is assumed");
+  assert.ok(connectorAt > 0 && connectorAt < roleAt, "the tunnel connector is installed before the role is assumed");
+  for (const [name, record] of [["README", README], ["docs", DOC]]) {
+    assert.match(record, /probe-cli\.mjs/, `${name}: records the CLI probe`);
+  }
+  assert.match(CHECKLIST, /claude-code:cloudflare/, "the checklist points A1 at its automated sibling");
+  assert.match(CHECKLIST, /codex-cli:entra/, "the checklist points B2 at its automated sibling");
+  assert.match(workflow, /npm install -g --ignore-scripts @anthropic-ai\/claude-code@\d+\.\d+\.\d+ @openai\/codex@\d+\.\d+\.\d+/,
+    "the CLIs are installed at pinned versions with install scripts disabled");
+  assert.match(workflow, /node "\$\(npm root -g\)\/@anthropic-ai\/claude-code\/install\.cjs"/,
+    "the one script the wrapper needs is run explicitly, never by enabling lifecycle scripts");
+  assert.match(workflow, /\n\s+claude --version\n\s+codex --version\n/, "a broken CLI install fails in its own step, not as blocked rows");
+  assert.match(README, /MCP_SSO_CLIENT_KEYS_FILE/);
   // The evidence record is rendered only from a passing receipt and checked
   // with the gate's parser; the writing job and the credentialed job are split.
   const renderer = read("scripts/live/render-evidence.mjs");

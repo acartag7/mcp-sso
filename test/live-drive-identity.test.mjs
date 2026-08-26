@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
-  CREDENTIAL_HOST, DEFINITE_OUTCOMES, OUTCOMES, classifyAccessPage, classifyMicrosoftPage, extractAssertionCookie, hostPolicy, parseDriverArgs,
+  CREDENTIAL_HOST, DEFINITE_OUTCOMES, OUTCOMES, classifyAccessPage, classifyLegPage, classifyMicrosoftPage, extractAssertionCookie, hostPolicy,
+  parseDriverArgs,
 } from "../scripts/live/drive-identity-support.mjs";
 import { signInMicrosoft } from "../scripts/live/drive-identity-browser.mjs";
 import { readAssertionFile, testUsersJson } from "../scripts/live/run-support.mjs";
@@ -116,6 +117,15 @@ test("BEHAVIOUR page classification: the stable markers of the Microsoft and Acc
   assert.equal(cf("That account does not have access."), "denied");
   assert.equal(cf("Forbidden"), "denied");
   assert.equal(classifyAccessPage({ url: "https://leg.example/", text: "does not have access" }), "elsewhere");
+  // A page on the leg is the consent form, a direct OAuth error named by its
+  // fixed code and cause, or something else; a description never leaks.
+  assert.equal(classifyLegPage({ hasConsentForm: true, text: "invalid_request" }), "consent");
+  assert.equal(classifyLegPage({ hasConsentForm: false, text: "Error: invalid_request\nduplicate request parameters" }), "invalid_request:duplicate");
+  assert.equal(classifyLegPage({ hasConsentForm: false, text: "invalid_request: request parameters too large" }), "invalid_request:too_large");
+  assert.equal(classifyLegPage({ hasConsentForm: false, text: "invalid_request: client_id is required" }), "invalid_request:required");
+  assert.equal(classifyLegPage({ hasConsentForm: false, text: "invalid_client: The client could not be verified for user@leak.example" }), "invalid_client");
+  assert.equal(classifyLegPage({ hasConsentForm: false, text: "Signing you in" }), "other");
+  assert.equal(classifyLegPage({ hasConsentForm: false, text: undefined }), "other");
 });
 
 test("BEHAVIOUR assertion cookie: the Access JWT for the leg host, from the jar", () => {

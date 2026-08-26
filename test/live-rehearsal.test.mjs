@@ -201,6 +201,28 @@ test("BEHAVIOUR adapter + run.sh: the shipped runner assembles a leg from the bu
     }
     const clientNoAudit = await runScript(["scripts/live/probe-client.mjs", "entra"]);
     assert.equal(clientNoAudit.captured.env.MCP_SSO_AUDIT_FILE, undefined, "the audit path is passed only when the caller names one");
+    // The third-party CLI probe is the same kind, plus the path of the
+    // client-keys file, which the probe reads itself; the keys never appear
+    // in the environment.
+    writeFileSync(join(repo, "scripts/live/probe-cli.mjs"), capture);
+    const keys = join(fixture, "client-keys.env");
+    privateFile(keys, "ANTHROPIC_API_KEY=fixture-anthropic-key-value\n");
+    const cliRun = await runScript(["scripts/live/probe-cli.mjs", "cloudflare_access", "--cli", "claude"],
+      { MCP_SSO_AUDIT_FILE: "/served/cloudflare_access/audit.jsonl", MCP_SSO_CLIENT_KEYS_FILE: keys });
+    assert.equal(cliRun.code, 0, cliRun.stderr);
+    assert.deepEqual(cliRun.captured.argv, ["--cli", "claude"]);
+    assert.equal(cliRun.captured.env.MCP_SSO_LEG, "cloudflare_access");
+    assert.equal(cliRun.captured.env.MCP_SSO_AUDIT_FILE, "/served/cloudflare_access/audit.jsonl");
+    assert.equal(cliRun.captured.env.MCP_SSO_CLIENT_KEYS_FILE, keys);
+    assert.equal(cliRun.captured.env.CF_ACCESS_IDP_NAME, "fixture tenant");
+    assert.equal(cliRun.captured.env.IDP_TEST_USER_PASSWORD, ENTRA.test_user_password);
+    for (const key of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ENTRA_CLIENT_SECRET", "CF_ACCESS_AUDIENCE", "OAUTH_SIGNING_PRIVATE_JWK"]) {
+      assert.equal(cliRun.captured.env[key], undefined, `${key} never reaches the CLI probe`);
+    }
+    const cliNoKeys = await runScript(["scripts/live/probe-cli.mjs", "entra", "--cli", "codex"]);
+    assert.equal(cliNoKeys.captured.env.MCP_SSO_CLIENT_KEYS_FILE, undefined, "the keys path is passed only when the caller names one");
+    const clientWithKeys = await runScript(["scripts/live/probe-client.mjs", "entra"], { MCP_SSO_CLIENT_KEYS_FILE: keys });
+    assert.equal(clientWithKeys.captured.env.MCP_SSO_CLIENT_KEYS_FILE, undefined, "the keys path reaches only the entry that makes a tool call");
     // The Cloudflare probe takes its assertion from the driver's result file
     // when one is named, and refuses a result that is not an approved sign-in.
     const approved = join(fixture, "approved.json");
@@ -252,7 +274,7 @@ if [ -f "${values}/$name" ]; then cat "${values}/$name"; else echo "An error occ
     const githubEnv = join(fixture, "github.env");
     writeFileSync(githubEnv, "");
     const manifest = await fetchBundles({ dir, awsBin: join(bin, "aws"), githubEnv });
-    assert.deepEqual(manifest, { entra: "present", cloudflare: "present", google: "present", "tunnel-credentials": "absent" });
+    assert.deepEqual(manifest, { entra: "present", cloudflare: "present", google: "present", "tunnel-credentials": "absent", "client-keys": "absent" });
     assert.equal(existsSync(join(dir, "browserbase.json")), false, "a credential no row consumes is never fetched");
     for (const file of ["entra.json", "cloudflare.json", "google.env"]) {
       assert.equal(readFileSync(join(dir, file), "utf8").length > 0, true);
@@ -305,8 +327,16 @@ test("BEHAVIOUR rehearsal-support: run.sh outcomes classify as PASS, FAIL, or an
   assert.deepEqual(ROWS.map((row) => row.id), [
     "release-matrix", "probe-entra", "probe-google", "access-login", "access-edge-denial", "probe-cloudflare", "probe-e2e:stored", "probe-e2e:stateless",
     "client-entra:member", "client-entra:nogroups", "client-entra:wronggroup", "client-entra:overage", "client-cloudflare:member",
+    "claude-code:entra", "claude-code:cloudflare", "codex-cli:entra", "codex-cli:cloudflare",
     "client-entra:wrong-tenant", "client-entra:not-allowlisted",
   ]);
+  assert.equal(classifyRun({ code: 1, stderr: "probe-cli: codex is unavailable on PATH\n", stdout: "" }).reason, "cli_unavailable");
+  assert.equal(classifyRun({ code: 1, stderr: "probe-cli: python3 is unavailable on PATH\n", stdout: "" }).reason, "cli_unavailable");
+  assert.equal(classifyRun({ code: 1, stderr: "probe-cli: browser is unavailable; install Chrome or set MCP_SSO_BROWSER_CDP_URL\n", stdout: "" }).reason, "browser_unavailable",
+    "the CLI probe blocks on a missing browser the way the client probe does");
+  assert.equal(classifyRun({ code: 1, stderr: "probe-cli: the CLI rows need a browser on this host; unset MCP_SSO_BROWSER_CDP_URL\n", stdout: "" }).reason, "browser_not_local");
+  assert.equal(classifyRun({ code: 1, stderr: "probe-cli: claude is unavailable on PATH\n", stdout: "FAIL  x\n\n0/1 checks passed\n" }).status, "FAIL",
+    "an absent CLI after checks ran is a failure");
   assert.ok(ROWS.findIndex((row) => row.provides === "cloudflare-assertion") < ROWS.findIndex((row) => row.needs === "cloudflare-assertion"),
     "the assertion is produced before the probe that needs it");
   assert.equal(classifyDriverRun({ code: 0, stdout: "outcome: approved\n", stderr: "", expect: "approved" }).status, "PASS");

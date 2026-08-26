@@ -18,3 +18,4 @@ coverage/
 
 # Live-verification working state (never committed)
 .live-state/
+__pycache__/

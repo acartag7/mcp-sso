@@ -194,6 +194,10 @@ The following block is the machine-readable source used by `check:deps`. The hum
       "firstPartyException": true
     }
   },
+  "tools": {
+    "@anthropic-ai/claude-code": { "version": "2.1.227", "published": "2026-08-10T20:56:57.591Z" },
+    "@openai/codex": { "version": "0.147.0", "published": "2026-08-07T01:47:21.081Z" }
+  },
   "binaries": {
     "cloudflared": {
       "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-amd64",
@@ -205,6 +209,13 @@ The following block is the machine-readable source used by `check:deps`. The hum
 }
 ```
 <!-- dependency-policy:end -->
+
+### Pinned CLI clients in the live workflow
+
+| Package | Version | Published | 15-day check | Purpose |
+|---|---|---|---|---|
+| [`@anthropic-ai/claude-code`](https://www.npmjs.com/package/@anthropic-ai/claude-code) | `2.1.227` | 2026-08-10 | ✅ | Claude Code, installed globally on the live runner with lifecycle scripts disabled, so the rehearsal drives its real `claude mcp login --no-browser` flow against the served legs. `check:deps` binds the workflow's `npm install -g` line to the `tools` entry and applies the 15-day rule. |
+| [`@openai/codex`](https://www.npmjs.com/package/@openai/codex) | `0.147.0` | 2026-08-07 | ✅ | Codex CLI, likewise, for its `codex mcp add` login flow. |
 
 ### Pinned binaries in the live workflow
 

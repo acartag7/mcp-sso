@@ -5,6 +5,7 @@
 
 const DRIVER = "scripts/live/drive-identity.mjs";
 const CLIENT = "scripts/live/probe-client.mjs";
+const CLI = "scripts/live/probe-cli.mjs";
 /** Served generations. Rows that share one run inside one serve.sh lifetime.
  *  The two deny generations restart the Entra leg with a deliberately wrong
  *  operator value through run.sh's marked channels (CHECKLIST rows D4, D5). */
@@ -12,6 +13,7 @@ const SERVE_MAIN = Object.freeze({ legs: ["cloudflare_access", "entra"], env: {}
 const SERVE_WRONG_TENANT = Object.freeze({ legs: ["entra"], env: { MCP_SSO_ENTRA_ALLOWED_TENANT_IDS: "00000000-0000-0000-0000-000000000001" } });
 const SERVE_NOT_ALLOWLISTED = Object.freeze({ legs: ["entra"], env: { MCP_SSO_ENTRA_SUBJECT_ALLOWLIST: "00000000-0000-0000-0000-000000000002" } });
 const client = (id, leg, user, expect, serve) => ({ id, kind: "client", entry: CLIENT, leg, env: {}, args: ["--user", user, "--expect", expect], serve });
+const cli = (id, leg, which, serve) => ({ id, kind: "client", entry: CLI, leg, env: {}, args: ["--cli", which, "--user", "member"], serve });
 
 /** The rows one rehearsal runs, in order. Each is one run.sh invocation
  *  (or, for the `command` kind, one repository command). A `driver` row signs
@@ -36,6 +38,10 @@ export const ROWS = Object.freeze([
   client("client-entra:wronggroup", "entra", "wronggroup", "entra_no_mapped_groups", SERVE_MAIN),
   client("client-entra:overage", "entra", "overage", "entra_groups_overage", SERVE_MAIN),
   client("client-cloudflare:member", "cloudflare_access", "member", "approved", SERVE_MAIN),
+  cli("claude-code:entra", "entra", "claude", SERVE_MAIN),
+  cli("claude-code:cloudflare", "cloudflare_access", "claude", SERVE_MAIN),
+  cli("codex-cli:entra", "entra", "codex", SERVE_MAIN),
+  cli("codex-cli:cloudflare", "cloudflare_access", "codex", SERVE_MAIN),
   client("client-entra:wrong-tenant", "entra", "member", "entra_bad_tid", SERVE_WRONG_TENANT),
   client("client-entra:not-allowlisted", "entra", "member", "entra_subject_not_allowed", SERVE_NOT_ALLOWLISTED),
 ]);
@@ -65,7 +71,9 @@ const BLOCKED_REASONS = Object.freeze([
   { reason: "cloudflare_access_login_required", pattern: /cloudflared (?:could not mint|returned an empty|is required to mint)/ },
   { reason: "google_credentials_absent", pattern: /Google credential file must be/ },
   { reason: "infrastructure_session_expired", pattern: /(?:AWS|Azure) session is not valid/ },
-  { reason: "browser_unavailable", pattern: /^probe-client: browser is unavailable/m },
+  { reason: "browser_unavailable", pattern: /^probe-(?:client|cli): browser is unavailable/m },
+  { reason: "browser_not_local", pattern: /^probe-cli: the CLI rows need a browser on this host/m },
+  { reason: "cli_unavailable", pattern: /^probe-cli: (?:claude|codex|python3) is unavailable on PATH/m },
 ]);
 /** Driver outcomes an operator can arm: a browser to run in, an MFA-free test user. */
 const BLOCKED_OUTCOMES = new Set(["browser_unavailable", "blocked_mfa_interstitial"]);
