@@ -32,6 +32,23 @@ const COMMAND_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CI", "NO_
 const COMMAND_ENV_PREFIXES = ["PNPM_", "npm_config_", "COREPACK_", "XDG_", "GITHUB_", "RUNNER_"];
 const commandEnv = (env) => Object.fromEntries(Object.entries(env).filter(([key]) =>
   COMMAND_ENV_KEYS.includes(key) || COMMAND_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))));
+/** The variables an assumed AWS session travels in. */
+const AWS_SESSION_KEYS = [
+  "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN",
+  "AWS_CREDENTIAL_EXPIRATION", "AWS_PROFILE", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
+];
+/** With the bundle adapter in use, every provider value has already been read
+ *  from disk and nothing a child runs needs AWS: not run.sh, not the served
+ *  application, and certainly not the tunnel connector, which would otherwise
+ *  hold a session that can read the whole `/mcp-sso/live/*` set for as long as
+ *  a generation is served. The session is removed from every child there. On a
+ *  laptop the wrapper reads the stacks live, so it is kept. */
+function childEnv(env) {
+  if (typeof env.MCP_SSO_BUNDLE_DIR !== "string" || env.MCP_SSO_BUNDLE_DIR.length === 0) return env;
+  const copy = { ...env };
+  for (const key of AWS_SESSION_KEYS) delete copy[key];
+  return copy;
+}
 
 function parseArgs(argv) {
   const options = { out: join(REPO, ".live-state", "receipt.json"), rows: undefined };
@@ -95,7 +112,7 @@ function spawnCapturing(command, args, env, timeoutMs, secrets) {
 async function runRow(row, env, args, secrets, hold) {
   const state = row.kind === "command"
     ? spawnCapturing(row.command[0], row.command.slice(1), commandEnv(env), ROW_TIMEOUT_MS, secrets)
-    : spawnCapturing(join(REPO, "scripts/live/run.sh"), [row.entry, row.leg, ...args], env, ROW_TIMEOUT_MS, secrets);
+    : spawnCapturing(join(REPO, "scripts/live/run.sh"), [row.entry, row.leg, ...args], childEnv(env), ROW_TIMEOUT_MS, secrets);
   hold?.(state);
   const { code, signal } = await state.exit;
   hold?.(undefined);
@@ -120,7 +137,7 @@ const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms)
  *  public origin answers. Resolves to { serving } or to the row status the
  *  generation's rows all take. A note is printed only when it carries no
  *  private value. */
-async function startServing(serve, env, secrets) {
+async function startServing(serve, env, secrets, hold) {
   const infra = env.MCP_SSO_INFRA_DIR;
   const stack = env.MCP_SSO_CLOUDFLARE_STACK;
   let origins;
@@ -135,7 +152,10 @@ async function startServing(serve, env, secrets) {
   }
   const tunnel = tunnelId(env);
   if (tunnel === undefined) return { status: "BLOCKED", reason: "tunnel_credentials_absent" };
-  const serving = spawnCapturing(join(REPO, "scripts/live/serve.sh"), serve.legs, { ...env, ...serve.env, MCP_SSO_TUNNEL: tunnel }, undefined, secrets);
+  const serving = spawnCapturing(join(REPO, "scripts/live/serve.sh"), serve.legs, childEnv({ ...env, ...serve.env, MCP_SSO_TUNNEL: tunnel }), undefined, secrets);
+  // Published before the readiness wait, so an interrupt during startup can
+  // stop this child instead of waiting out the readiness budget.
+  hold?.(serving);
   const deadline = Date.now() + SERVE_READY_MS;
   while (Date.now() < deadline) {
     if (serving.exited !== undefined) {
@@ -215,6 +235,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     // what unblocks the loop so the servers are stopped, the handoff files
     // are removed, and the receipt is written while the operator waits.
     try { running?.child.kill("SIGKILL"); } catch { /* already gone */ }
+    try { serving?.child.kill("SIGKILL"); } catch { /* already gone */ }
   });
 }
 const record = (row, status, reason, extra = {}) => {
@@ -227,8 +248,11 @@ try {
   for (const generation of generations(rows)) {
     if (interrupted !== undefined) break;
     if (generation.serve !== undefined) {
-      const started = await startServing(generation.serve, process.env, secrets);
+      const started = await startServing(generation.serve, process.env, secrets, (state) => { serving = state; });
       if (started.serving === undefined) {
+        // startServing already stopped whatever it had started; drop the
+        // published handle so the teardown does not try to stop it again.
+        serving = undefined;
         if (started.note) process.stdout.write(`${started.note.replace(/^/gm, "    ")}\n`);
         for (const row of generation.rows) record(row, started.status, started.reason);
         continue;

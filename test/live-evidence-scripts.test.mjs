@@ -598,6 +598,14 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /receipt\.interrupted = interrupted/, "an interrupted run still writes its receipt, never as evidence");
   assert.match(orchestrator, /interrupted = signal;[\s\S]{0,400}running\?\.child\.kill\("SIGKILL"\)/,
     "the signal kills the running row at once, so the teardown and the receipt do not wait for it");
+  assert.match(orchestrator, /interrupted = signal;[\s\S]{0,600}serving\?\.child\.kill\("SIGKILL"\)/,
+    "and the serve child, which exists from the moment it is spawned, not only once it is ready");
+  assert.ok(orchestrator.indexOf("hold?.(serving)") < orchestrator.indexOf("const deadline = Date.now() + SERVE_READY_MS"),
+    "the serve child is published before the readiness wait, so an interrupt during startup reaches it");
+  assert.match(orchestrator, /function childEnv\(env\)[\s\S]{0,400}for \(const key of AWS_SESSION_KEYS\) delete copy\[key\]/,
+    "with the bundle adapter in use no child carries the AWS session");
+  assert.match(orchestrator, /childEnv\(\{ \.\.\.env, \.\.\.serve\.env, MCP_SSO_TUNNEL: tunnel \}\)/,
+    "the tunnel connector least of all");
   assert.match(workflow, /BRANCH="evidence\/\$\{SHORT\}-\$\{GITHUB_RUN_ID\}"/,
     "each recording attempt writes its own evidence branch, so a retry never needs a branch deleted by hand");
   assert.match(renderer, /evaluateReleaseReadiness\(/, "the gate's own parser checks the rendering before it is written");

@@ -429,7 +429,7 @@ test("BEHAVIOUR rehearsal.mjs: rows run through run.sh, a leaked private value f
     // and the Cloudflare probe fixture reports whether the handoff reached it.
     executable(join(repo, "scripts/live/run.sh"), `#!/usr/bin/env bash
 case "$1:\${MCP_SSO_DCR_MODE-}:\${5-}" in
-  scripts/live/probe-entra.mjs::) printf 'PASS  a\\nCONTROL  c\\n\\n1 live checks passed; 1 local controls passed\\n' ;;
+  scripts/live/probe-entra.mjs::) node -e 'require("fs").writeFileSync(process.env.TMPDIR + "/row-env.json", JSON.stringify(process.env))'; printf 'PASS  a\\nCONTROL  c\\n\\n1 live checks passed; 1 local controls passed\\n' ;;
   scripts/live/probe-google.mjs::) echo "run.sh: Google credential file must be an owner-only KEY=VALUE file" >&2; exit 1 ;;
   scripts/live/drive-identity.mjs::member) if [ -n "\${FAKE_DRIVER_OUTCOME-}" ]; then printf '{"outcome":"%s","trace":["step:error"]}\\n' "$FAKE_DRIVER_OUTCOME" > "$7"; chmod 600 "$7"; echo "outcome: $FAKE_DRIVER_OUTCOME"; exit 2; fi; printf '{"outcome":"approved","assertion":"${JWT}","trace":["access:start","microsoft:password:typed","leg:elsewhere"]}\\n' > "$7"; chmod 600 "$7"; echo "outcome: approved" ;;
   scripts/live/drive-identity.mjs::nogroups) printf '{"outcome":"denied_at_access_edge","trace":["access:start","microsoft:password:typed","access:denied"]}\\n' > "$7"; chmod 600 "$7"; echo "outcome: denied_at_access_edge" ;;
@@ -476,6 +476,13 @@ printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required row
     assert.equal(commandEnv.MYSQL_URL, "mysql://x");
     assert.equal(commandEnv.PNPM_HOME, "/pnpm/home", "the package manager's own configuration is kept");
     assert.equal(commandEnv.npm_config_cache, "/npm/cache");
+    // With the bundle adapter in use every provider value is already on disk,
+    // so no child carries the AWS session that can read the whole secret set.
+    const rowEnv = JSON.parse(readFileSync(join(tmp, "row-env.json"), "utf8"));
+    for (const key of ["AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN", "AWS_PROFILE"]) {
+      assert.equal(rowEnv[key], undefined, `${key} never reaches a row child when the bundle is in use`);
+    }
+    assert.equal(rowEnv.MCP_SSO_BUNDLE_DIR, dir, "the bundle itself still reaches it");
     assert.equal(byId["probe-entra"].status, "PASS");
     assert.deepEqual(byId["probe-entra"].checks, { passed: 1, controls: 1 });
     assert.equal(byId["probe-google"].status, "BLOCKED");
