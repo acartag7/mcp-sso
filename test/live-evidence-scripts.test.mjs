@@ -617,6 +617,8 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /git\(\["status", "--porcelain"\]\)/, "an untracked file makes the tree dirty: the build compiles all of src");
   assert.match(orchestrator, /await stopChild\(serving, 10_000\);[\s\S]{0,200}classifyServeFailure/,
     "a serve child that died during startup has its group stopped before the failure is reported");
+  assert.equal((orchestrator.match(/timeout: WRAPPER_TIMEOUT_MS/g) ?? []).length, 2,
+    "every synchronous call into the infrastructure wrapper is bounded: it blocks the loop while it runs");
   // Both the assumed session and the means to mint another are dropped as soon
   // as the bundle is on disk, on every path, before any later action runs.
   const dropStep = workflow.slice(workflow.indexOf("- name: drop the job's credentials"), workflow.indexOf("- name: mask every private value"));

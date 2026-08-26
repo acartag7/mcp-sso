@@ -24,6 +24,7 @@ const ROW_TIMEOUT_MS = 10 * 60_000;
 const SERVE_READY_MS = 120_000;
 const MAX_CAPTURE = 1024 * 1024;
 const MAX_SCAN_TAIL = 4_096;
+const WRAPPER_TIMEOUT_MS = 120_000;
 const LEAK_NOTE = "output withheld: a private value from the run configuration appeared in it";
 /** Every credential the job itself holds: the assumed AWS session, and the
  *  runner's own tokens, with which a child could mint a fresh OIDC token for
@@ -86,7 +87,7 @@ function collectPrivateValues(env, collect = privateValues) {
       if (typeof stack !== "string" || stack.length === 0) continue;
       try {
         const raw = execFileSync("./scripts/tofu-run.sh", [stack, "output", "-json"], {
-          cwd: env.MCP_SSO_INFRA_DIR, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120_000,
+          cwd: env.MCP_SSO_INFRA_DIR, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: WRAPPER_TIMEOUT_MS,
         });
         // `tofu output -json` answers {name: {value, type, sensitive}}: the
         // output's own name is the key, so the credential keys classify the
@@ -228,7 +229,12 @@ async function startServing(serve, env, secrets, hold) {
   const stack = env.MCP_SSO_CLOUDFLARE_STACK;
   let origins;
   try {
-    const raw = execFileSync("./scripts/tofu-run.sh", [stack, "output", "-json", "issuer_origins"], { cwd: infra, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    // Bounded like the collection above: on a laptop this wrapper can stall on
+    // a cloud sign-in, and it blocks the event loop while it does, so nothing
+    // else, including a signal, can be handled until it returns.
+    const raw = execFileSync("./scripts/tofu-run.sh", [stack, "output", "-json", "issuer_origins"], {
+      cwd: infra, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: WRAPPER_TIMEOUT_MS,
+    });
     origins = serve.legs.map((leg) => issuerOriginForLeg(raw, leg));
   } catch {
     return { status: "FAIL", reason: "serve_failed", note: "issuer origins are unavailable through the infrastructure wrapper" };
