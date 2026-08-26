@@ -1,0 +1,257 @@
+name: live
+
+# The release rehearsal: every live probe against the real identity providers,
+# unattended. Runs nightly and on demand from main, and on any push to a
+# rehearsal/* branch (how a change to the harness is proved before it merges).
+# Never on a pull request. The AWS role is held by two GitHub Environments and
+# nothing else: `live` (branch policy: main; unattended) and `live-branch`
+# (branch policy: rehearsal/*; a required reviewer approves each run before
+# the role is assumed, because the code a branch run executes is the code that
+# branch pushed). A job below refuses any other ref before it does anything.
+on:
+  workflow_dispatch:
+    inputs:
+      record:
+        description: "Open the evidence pull request from a passing receipt (main only)"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 3 * * *" # nightly ~03:17 UTC (off the :00 mark)
+  push:
+    branches: ["rehearsal/*"]
+
+permissions: {}
+
+concurrency:
+  # One rehearsal at a time: the probes share the provider applications and a
+  # later phase shares one tunnel.
+  group: live
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    name: release rehearsal
+    runs-on: ubuntu-latest
+    # main runs unattended; a rehearsal/* branch waits for the reviewer.
+    environment: ${{ github.ref == 'refs/heads/main' && 'live' || 'live-branch' }}
+    timeout-minutes: 45
+    permissions:
+      id-token: write # assume the AWS role through GitHub OIDC
+      contents: read
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: mcp_sso
+          MYSQL_USER: mcp
+          MYSQL_PASSWORD: mcppw
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u mcp -pmcppw --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=18
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=5
+
+    env:
+      # The bundle fetched from Secrets Manager stands in for the private
+      # infrastructure checkout: run.sh reads stack outputs through the adapter
+      # at scripts/live/ci/infra and is otherwise unchanged.
+      MCP_SSO_INFRA_DIR: ${{ github.workspace }}/scripts/live/ci/infra
+      MCP_SSO_ENTRA_STACK: entra
+      MCP_SSO_CLOUDFLARE_STACK: cloudflare
+      # The release-matrix row runs the same services CI's verify job does.
+      RUN_INTEGRATION: "true"
+      MYSQL_URL: mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4
+      REDIS_URL: redis://127.0.0.1:6379
+
+    steps:
+      - name: refuse any ref but main or rehearsal/*
+        # The environment branch policies are the trust boundary; this step
+        # makes the same rule visible and enforced in the repository too.
+        env:
+          REF: ${{ github.ref }}
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+        run: |
+          case "$REF" in
+            refs/heads/main|refs/heads/rehearsal/*) echo "ref admitted: $REF" ;;
+            *) echo "refusing to rehearse from $REF" >&2; exit 1 ;;
+          esac
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-20)
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10 (2026-08-03)
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (2026-07-14)
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: install the repository's own dependencies
+        env:
+          # No step before the role assumption runs with the job's OIDC request
+          # credential: with `id-token: write` at job scope it is otherwise in
+          # every step's environment, and any third-party code a step executes
+          # could mint a token for the `live` environment with it.
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+        run: pnpm install --frozen-lockfile
+      - name: require the browser the driver runs
+        # The runner image's Google Chrome is what playwright-core drives; a
+        # missing browser fails here, once, instead of as eight blocked rows.
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+        run: google-chrome --version
+      - name: name the bundle directory
+        # The runner context is not available in job-level env.
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+        run: echo "MCP_SSO_BUNDLE_DIR=$RUNNER_TEMP/mcp-sso-bundle" >> "$GITHUB_ENV"
+      # Third-party code the job needs is installed before the role is assumed,
+      # so no credential exists on the runner while it is fetched and run.
+      - name: install cloudflared 2026.7.3 (2026-07-23), pinned by digest
+        # The tunnel connector the served legs run behind. No package repository
+        # and no install script: one release asset, one recorded SHA-256.
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+        run: |
+          curl -sSL --fail -o "$RUNNER_TEMP/cloudflared" https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-amd64
+          echo "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17  $RUNNER_TEMP/cloudflared" | sha256sum -c -
+          sudo install -m 755 "$RUNNER_TEMP/cloudflared" /usr/local/bin/cloudflared
+          cloudflared --version
+      - name: install Claude Code 2.1.227 (2026-08-10) and Codex CLI 0.147.0 (2026-08-07), pinned
+        # The third-party MCP clients the CLI rows drive. Exact versions past the
+        # 15-day floor, recorded in the dependency ledger's tools block, which
+        # check:deps binds to this line. Lifecycle scripts stay disabled.
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+        run: |
+          npm install -g --ignore-scripts @anthropic-ai/claude-code@2.1.227 @openai/codex@0.147.0
+          # One vetted exception, run explicitly rather than by enabling
+          # lifecycle scripts: Claude Code's wrapper needs install.cjs to put
+          # the native binary from its own platform package in place. The
+          # script copies a file out of node_modules and fetches nothing.
+          # Codex resolves its platform package by itself.
+          node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs"
+          claude --version
+          codex --version
+      - name: assume the rehearsal role
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3 (2026-07-22)
+        with:
+          role-to-assume: ${{ secrets.MCP_SSO_LIVE_ROLE_ARN }}
+          role-session-name: mcp-sso-release-rehearsal
+          aws-region: eu-central-1
+      - name: fetch the live bundle
+        run: node scripts/live/ci/fetch-bundle.mjs
+      - name: drop the job's credentials
+        # Nothing after this step needs them: the bundle is on disk and every
+        # later step, this job's own and the actions it calls, reads only
+        # files. Both the assumed session and the means to mint another are
+        # emptied for the rest of the job, so a compromised action can neither
+        # read the /mcp-sso/live/* secrets nor assume the role again. It runs
+        # even when the fetch failed, because the cleanup and the artifact
+        # upload below run then too.
+        if: always()
+        run: |
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN \
+            AWS_CREDENTIAL_EXPIRATION ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN; do
+            echo "$name=" >> "$GITHUB_ENV"
+          done
+      - name: mask every private value before anything else prints
+        run: node scripts/live/ci/mask-bundle.mjs
+      - name: install the tunnel credentials
+        run: node scripts/live/ci/install-tunnel.mjs
+      - name: rehearse
+        run: node scripts/live/rehearsal.mjs --out "$RUNNER_TEMP/receipt.json"
+      - name: remove the bundle and the tunnel credentials
+        if: always()
+        run: rm -rf -- "$MCP_SSO_BUNDLE_DIR" "$HOME/.cloudflared"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (2026-04-10)
+        if: always()
+        with:
+          name: rehearsal-receipt-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # The evidence pull request, from a passing receipt, on main only and only
+  # when asked. This job never holds the AWS role; the job above never holds a
+  # write token. A branch pushed with the workflow token starts no CI run of
+  # its own, so the pull request body says how to start one.
+  record:
+    name: record the evidence
+    needs: rehearse
+    if: github.event_name == 'workflow_dispatch' && inputs.record && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-20)
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The renderer imports only scripts/lib and Node built-ins: no install,
+      # so the one job with a write token loads no third-party code.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (2026-07-14)
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (2026-03-11)
+        with:
+          name: rehearsal-receipt-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/receipt
+      - name: render the receipt into the evidence record
+        run: node scripts/live/render-evidence.mjs --receipt "$RUNNER_TEMP/receipt/receipt.json" --date "$(date -u +%F)" --write --require-head
+      - name: open the evidence pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          SHORT="$(git rev-parse --short=7 HEAD)"
+          # The run id is part of the branch name so a recording that failed
+          # after pushing can simply be dispatched again: a retry writes its
+          # own branch instead of a non-fast-forward push to the first one.
+          BRANCH="evidence/${SHORT}-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add docs/client-compatibility.md
+          git commit -q -F - <<EOF
+          docs(evidence): record the release rehearsal at ${SHORT}
+
+          Rendered from the receipt of ${RUN_URL} by scripts/live/render-evidence.mjs.
+
+          Spec: docs/live-verification.md
+          EOF
+          # gh authenticates the push from GH_TOKEN through its credential helper,
+          # so no credential lands in .git/config or in a remote URL.
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/${BRANCH}"
+          gh pr create --base main --head "$BRANCH" \
+            --title "docs(evidence): record the release rehearsal at ${SHORT}" \
+            --body "Rendered from the passing receipt of ${RUN_URL} at \`$(git rev-parse HEAD~1)\`. Every rehearsal row passed on a clean tree. This branch was pushed by the workflow token, so its checks did not start: run \`gh pr close <n> && gh pr reopen <n>\` (or push an empty commit) to start them, then review and merge."

@@ -23,6 +23,7 @@ import {
   assertBasePreflight, assertLegPreflight, gatewayPortForLeg, groupAuthorizationJsonFromMapping,
   issuerOriginForLeg, prepareLiveStateDir, readGoogleCredentialFile,
 } from "../scripts/live/run-support.mjs";
+import { BLOCKED_REASON_NAMES } from "../scripts/live/rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const read = (path) => readFileSync(join(ROOT, path), "utf8");
@@ -463,12 +464,267 @@ test("CONTENT records: harness reference, README, and CHECKLIST agree with what 
   assert.match(CHECKLIST, /serve\.sh cloudflare_access entra google/);
 });
 
+test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep the harness's promises", () => {
+  const rehearsal = read("scripts/live/rehearsal.mjs");
+  const support = read("scripts/live/rehearsal-support.mjs");
+  const workflow = read(".github/workflows/live.yml");
+  assert.doesNotMatch(`${rehearsal}\n${support}`, /\bSKIP\b/, "a rehearsal row is PASS, FAIL, or BLOCKED; never skipped");
+  // The receipt is written before the process ends. One exit call is allowed,
+  // after the write: the signal-derived exit of an interrupted run.
+  const exits = [...rehearsal.matchAll(/process\.exit\(/g)].map((match) => match.index);
+  const written = rehearsal.indexOf("writeFileSync(options.out");
+  assert.ok(written > 0 && exits.every((at) => at > written), "no exit path ends the run before the receipt is written");
+  assert.equal(exits.length, 1, "the only exit is the signal-derived one");
+  assert.match(rehearsal, /process\.exitCode = receipt\.evidence \? 0 : 1/, "green means evidence, nothing weaker");
+  assert.match(support, /"BLOCKED", reason/, "a blocked row carries its armable reason");
+  assert.match(rehearsal, /private_value_in_output/, "a leaked configuration value fails the row");
+  assert.doesNotMatch(workflow, /pull_request/, "the live workflow never runs for a pull request");
+  assert.match(workflow, /^permissions: \{\}$/m, "no workflow-level token permissions");
+  assert.match(workflow, /environment: \$\{\{ github\.ref == 'refs\/heads\/main' && 'live' \|\| 'live-branch' \}\}/,
+    "main runs unattended under live; any other admitted ref waits for the reviewer under live-branch");
+  assert.match(workflow, /refs\/heads\/main\|refs\/heads\/rehearsal\/\*\) echo "ref admitted/, "the ref rule is enforced in the file, before anything else");
+  assert.ok(workflow.indexOf("refuse any ref but main or rehearsal/*") < workflow.indexOf("actions/checkout@"), "the ref guard is the first step");
+  assert.match(workflow, /^\s+id-token: write/m);
+  assert.match(workflow, /branches: \["rehearsal\/\*"\]/, "pushes run only for rehearsal branches, with the pattern the environment policy uses");
+  assert.match(workflow, /role-to-assume: \$\{\{ secrets\.MCP_SSO_LIVE_ROLE_ARN \}\}/, "the role ARN is a masked secret, not a variable");
+  assert.match(workflow, /run: google-chrome --version/, "the browser the driver runs is checked once, up front");
+  assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 2, "neither job persists a checkout credential");
+  assert.match(workflow, /node scripts\/live\/ci\/mask-bundle\.mjs/, "private values are masked before the probes print");
+  assert.ok(workflow.indexOf("mask-bundle.mjs") < workflow.indexOf("rehearsal.mjs"), "masking precedes the run");
+  assert.match(workflow, /rm -rf -- "\$MCP_SSO_BUNDLE_DIR"/, "the bundle is removed on every exit path");
+  assert.match(workflow, /MCP_SSO_INFRA_DIR: \$\{\{ github\.workspace \}\}\/scripts\/live\/ci\/infra/, "run.sh reads through the adapter");
+  for (const [name, record] of [["README", README], ["docs", DOC]]) {
+    assert.match(record, /rehearsal\.mjs/, `${name}: records the rehearsal`);
+    assert.match(record, /BLOCKED/, `${name}: records the blocked outcome`);
+    assert.match(record, /drive-identity\.mjs/, `${name}: records the identity driver`);
+    assert.match(record, /login\.microsoftonline\.com/, `${name}: records the one host the password is typed on`);
+  }
+  // The driver: the password reaches exactly one host, and nothing a page
+  // shows is ever printed.
+  const driver = read("scripts/live/drive-identity.mjs");
+  const browser = read("scripts/live/drive-identity-pages.mjs");
+  const opener = read("scripts/live/drive-identity-browser.mjs");
+  const driverSupport = read("scripts/live/drive-identity-support.mjs");
+  assert.match(driverSupport, /CREDENTIAL_HOST = "login\.microsoftonline\.com"/);
+  const typeGate = browser.indexOf("if (!policy.mayTypeCredential(page.url())) return \"unexpected_host\";");
+  const fill = browser.indexOf('.fill(password)');
+  assert.ok(typeGate >= 0 && fill > typeGate, "the host is checked before the password is typed");
+  assert.equal((browser.match(/mayTypeCredential\(page\.url\(\)\)/g) ?? []).length, 2, "checked at both the login and the password step");
+  assert.equal((browser.match(/\.fill\(password\)/g) ?? []).length, 1, "one place types the password");
+  assert.doesNotMatch(`${driver}\n${browser}`, /console\.(?:log|error|warn)/, "the driver prints through one fixed outcome line");
+  assert.match(driver, /process\.stdout\.write\(`outcome: \$\{result\.outcome\}\\n`\)/);
+  assert.doesNotMatch(`${driver}\n${browser}`, /screenshot|innerHTML|content\(\)/, "no page capture");
+  assert.match(driver, /O_EXCL, 0o600/, "the result file is created owner-only");
+  assert.doesNotMatch(browser, /playwright/, "the page logic loads no browser, so the tests exercise it without one");
+  assert.equal((opener.match(/from "playwright-core"/g) ?? []).length, 1, "playwright is imported in exactly one file");
+  assert.equal((browser.match(/trace\.push\(`session:cleared:\$\{await clearSessionCookies\(context, origin\)\}`\)/g) ?? []).length, 2,
+    "both browser tasks start from no session, so a reused or hosted browser cannot pass off another account's sign-in");
+  assert.match(README, /access-edge-denial/);
+  assert.match(CHECKLIST, /access-edge-denial/, "the checklist points E1 at its automated sibling");
+  // The client probe against a served leg: no skipped subject, the documented
+  // description from the shipped mapping, and the audit as the authority.
+  const client = read("scripts/live/probe-client.mjs");
+  const clientSupport = read("scripts/live/probe-client-support.mjs");
+  assert.doesNotMatch(client, /\bSKIP\b|process\.exit\(/);
+  assert.match(clientSupport, /identityRejectionDescription/, "expected descriptions come from src, never a copy");
+  assert.doesNotMatch(clientSupport, /Entra returned no groups/, "no duplicated reason text");
+  assert.match(client, /deniedFlowHolds\(events, options\.expect\)/, "a denial is proved from the audit reason");
+  assert.match(client, /auditLeaks\(audit, secrets\)/, "the served audit is scanned for this flow's code and tokens");
+  assert.match(client, /sdkPing\(origin, tokens\.access_token/, "the official SDK client is driven on the public origin");
+  assert.doesNotMatch(client, /console\.(?:log|error|warn)\([^\n]*(?:password|user\b|redirectUrl|access_token|refresh_token)/);
+  for (const [name, record] of [["README", README], ["docs", DOC]]) {
+    assert.match(record, /probe-client\.mjs/, `${name}: records the client probe`);
+    assert.match(record, /tunnel_already_served/, `${name}: records the refusal to double-serve`);
+  }
+  assert.match(CHECKLIST, /client-entra:overage/, "the checklist points the deny rows at their automated siblings");
+  // The third-party CLI probe: the real CLI in a private HOME, no desktop
+  // browser, the served audit as the authority, pinned installs in CI.
+  const cliProbe = read("scripts/live/probe-cli.mjs");
+  const cliSupport = read("scripts/live/probe-cli-support.mjs");
+  assert.doesNotMatch(cliProbe, /\bSKIP\b|process\.exit\(/);
+  assert.match(cliProbe, /"--no-browser"/, "Claude Code is told not to open a browser");
+  assert.match(cliProbe, /for \(const name of BROWSER_LAUNCHERS\)/, "a CLI that opens the URL itself reaches a shim, never the operator's browser");
+  const claudeBranch = cliProbe.slice(cliProbe.indexOf('if (options.cli === "claude") {\n      // The connection check'), cliProbe.indexOf("keys.ANTHROPIC_API_KEY"));
+  assert.match(claudeBranch, /\["mcp", "list"\]/, "the connection check runs on every Claude Code row, before any key is consulted");
+  assert.ok(cliProbe.indexOf("const home = mkdtempSync(") < cliProbe.indexOf("openBrowser()"), "the private HOME exists before the browser opens, so every exit path can remove it");
+  assert.ok(cliProbe.indexOf("try {") < cliProbe.indexOf("openBrowser()"), "the browser is opened inside the try whose finally closes it");
+  assert.match(cliProbe, /HOME: home/, "the CLI's configuration and credential store live in a private HOME");
+  assert.match(cliProbe, /process\.platform === "darwin"[\s\S]{0,200}"security"[\s\S]{0,80}FAKE_KEYCHAIN/, "on macOS the CLI's keychain is a file in the private HOME, never the operator's login keychain");
+  assert.match(cliProbe, /FAKE_KEYCHAIN = fileURLToPath\(new URL\("\.\/fake-keychain\.py"/);
+  assert.match(read("scripts/live/fake-keychain.py"), /sys\.exit\(44\)/, "a missing item answers like the real tool");
+  assert.match(cliProbe, /cliLoginHolds\(events, options\.cli/, "the login is proved from the served audit");
+  assert.match(cliProbe, /readClientKeysFile\(/, "vendor keys are read through the owner-only file reader");
+  assert.doesNotMatch(cliProbe, /console\.(?:log|error|warn)\([^\n]*(?:password|redirectUrl|authorize\.href|keys\.)/);
+  assert.match(cliSupport, /pty-run\.py/, "the CLI runs on the wide pseudo-terminal");
+  assert.match(read("scripts/live/pty-run.py"), /TIOCSWINSZ/, "the pseudo-terminal's width is set, wide enough for the URLs these CLIs print");
+  assert.match(cliProbe, /opened = [^\n]*openBrowser\(\)/, "the browser is opened as a preflight");
+  assert.ok(cliProbe.indexOf("openBrowser()") < cliProbe.indexOf("spawnPty("), "the browser preflight runs before the CLI touches the served leg");
+  assert.match(cliProbe, /refuse\("browser is unavailable; install Chrome or set MCP_SSO_BROWSER_CDP_URL"\)/, "a missing browser is a runner-level refusal");
+  assert.match(cliProbe, /refuse\("the CLI rows need a browser on this host/, "a hosted browser is refused: the callback is this host's loopback");
+  assert.match(cliProbe, /OPEN_MARKER/, "the browser shims leave a marker the row checks");
+  assert.match(cliProbe, /\(deny process-exec \(literal "\/usr\/bin\/open"\)\)/, "on macOS the login command cannot run /usr/bin/open");
+  assert.match(cliProbe, /\["sandbox-exec", \["-p", DARWIN_SANDBOX, command, \.\.\.args\]\]/, "the sandbox wraps the login command");
+  assert.equal((cliProbe.match(/spawnPty\(\.\.\.loginCommand\(/g) ?? []).length, 2, "both login commands run through the sandbox wrapper");
+  assert.match(cliProbe, /existsSync\(join\(home, KEYCHAIN_STORE\)\)/, "the private keychain is proved reached");
+  assert.match(cliProbe, /NOTE  tool call skipped/, "a skipped tool call is recorded, never silent");
+  for (const [name, source] of [["probe-client", client], ["probe-cli", cliProbe]]) {
+    assert.match(source, /if \(ARMABLE_OUTCOMES\.has\(result\.outcome\)\) throw new ProbeRefusal\(result\.outcome\);/,
+      `${name}: an operator-armable driver outcome refuses at runner level`);
+    assert.match(source, /error instanceof ProbeRefusal/, `${name}: the refusal is distinguished from a crash`);
+    assert.match(source, /process\.stderr\.write\(`probe-(?:client|cli): \$\{refusal\}\\n`\)/, `${name}: the refusal prints one fixed line and no checks`);
+  }
+  const installAt = workflow.indexOf("npm install -g --ignore-scripts");
+  const roleAt = workflow.indexOf("configure-aws-credentials@");
+  const connectorAt = workflow.indexOf("cloudflared-linux-amd64");
+  assert.ok(installAt > 0 && installAt < roleAt, "third-party code is installed before the role is assumed");
+  assert.ok(connectorAt > 0 && connectorAt < roleAt, "the tunnel connector is installed before the role is assumed");
+  for (const [name, record] of [["README", README], ["docs", DOC]]) {
+    assert.match(record, /probe-cli\.mjs/, `${name}: records the CLI probe`);
+  }
+  assert.match(CHECKLIST, /claude-code:cloudflare/, "the checklist points A1 at its automated sibling");
+  assert.match(CHECKLIST, /codex-cli:entra/, "the checklist points B2 at its automated sibling");
+  assert.match(workflow, /npm install -g --ignore-scripts @anthropic-ai\/claude-code@\d+\.\d+\.\d+ @openai\/codex@\d+\.\d+\.\d+/,
+    "the CLIs are installed at pinned versions with install scripts disabled");
+  assert.match(workflow, /node "\$\(npm root -g\)\/@anthropic-ai\/claude-code\/install\.cjs"/,
+    "the one script the wrapper needs is run explicitly, never by enabling lifecycle scripts");
+  assert.match(workflow, /\n\s+claude --version\n\s+codex --version\n/, "a broken CLI install fails in its own step, not as blocked rows");
+  assert.match(README, /MCP_SSO_CLIENT_KEYS_FILE/);
+  // The evidence record is rendered only from a passing receipt and checked
+  // with the gate's parser; the writing job and the credentialed job are split.
+  const renderer = read("scripts/live/render-evidence.mjs");
+  assert.match(renderer, /receipt\.evidence !== true/, "a receipt that is not evidence is refused");
+  assert.match(renderer, /expectedRows\.filter\(/, "the row set is re-derived, never taken from the receipt's own summary");
+  assert.match(renderer, /rows\.filter\(\(row\) => row\?\.status !== "PASS"\)/, "every row's status is checked, not the evidence flag alone");
+  const orchestrator = read("scripts/live/rehearsal.mjs");
+  assert.match(orchestrator, /if \(await stopServing\(serving, servedSecrets\)\)/, "a served leg that printed a credential fails the run after shutdown");
+  assert.match(orchestrator, /servedSecrets\.delete\(servedTunnel\)/, "the tunnel id the harness handed serve.sh is not evidence of a leak");
+  assert.match(orchestrator, /receipt\.interrupted = interrupted/, "an interrupted run still writes its receipt, never as evidence");
+  assert.match(orchestrator, /receipt\.treeChanged = /, "a checkout that moved or was written to while the run went is never evidence");
+  assert.match(orchestrator, /const tail = Math\.max\(MIN_SCAN_TAIL, \.\.\.\[\.\.\.secrets\]\.map\(\(value\) => value\.length\)\)/,
+    "and the scan tail is the longest value actually collected, not a constant");
+  assert.match(renderer, /does not name the \$\{row\.version\} version its rows ran/,
+    "a CLI row is not rendered unless the receipt names the version it observed");
+  assert.match(orchestrator, /for \(const state of \[running, serving\]\) \{[\s\S]{0,160}state\.stopping = stopChild\(state, 5_000\)/,
+    "an interrupt stops each child the one bounded way, and keeps the stop");
+  assert.match(orchestrator, /await running\?\.stopping;[\s\S]{0,300}await serving\?\.stopping;/,
+    "so the teardown joins it instead of exiting while a child is still being killed");
+  const serveScript = read("scripts/live/serve.sh");
+  assert.match(serveScript, /mktemp "\$\{TMPDIR:-\/tmp\}\/mcp-sso-tunnel-XXXXXX"/,
+    "the tunnel configuration is written to an explicit temporary directory, never the working tree");
+  assert.match(orchestrator, /signalGroup\("SIGTERM"\);[\s\S]{0,700}signalGroup\("SIGKILL"\)/,
+    "which asks the whole process group first, so serve.sh runs its cleanup traps and a probe closes its browser, then kills what is left");
+  assert.match(orchestrator, /while \(Date\.now\(\) < deadline && groupAlive\(\)\)/,
+    "and waits for the group, not only its leader: a browser or CLI in the group outlives run.sh");
+  assert.match(orchestrator, /await Promise\.race\(\[state\.exit, sleep\(graceMs\)\]\)/,
+    "and never waits for a leader that ignores the signal: the budget is what decides when the group is killed");
+  assert.match(orchestrator, /if \(state === undefined\) return;/,
+    "a leader that is already gone is not the end of the stop: its group can still hold the tunnel");
+  assert.match(orchestrator, /if \(state\.exited === undefined \|\| groupAlive\(\)\) signalGroup\("SIGTERM"\)/,
+    "so the group is asked to stop even when the leader was killed outright");
+  assert.match(orchestrator, /reason = "row_timed_out"/, "a row that ran past its budget fails whatever it exited with");
+  assert.match(orchestrator, /state\.stopping = stopChild\(state, 15_000\)/, "and its stop is kept");
+  assert.match(orchestrator, /if \(state\.stopping !== undefined\) await state\.stopping;/,
+    "and waited for, so the next row never overlaps a browser or CLI still being killed");
+  assert.match(orchestrator, /tails\[stream\] = text\.slice\(-tail\)/,
+    "and a private value split across two reads is still caught");
+  assert.match(orchestrator, /git\(\["status", "--porcelain"\]\)/, "an untracked file makes the tree dirty: the build compiles all of src");
+  assert.match(orchestrator, /await stopChild\(serving, 10_000\);[\s\S]{0,200}classifyServeFailure/,
+    "a serve child that died during startup has its group stopped before the failure is reported");
+  assert.equal((orchestrator.match(/timeout: WRAPPER_TIMEOUT_MS/g) ?? []).length, 2,
+    "every synchronous call into the infrastructure wrapper is bounded: it blocks the loop while it runs");
+  // Both the assumed session and the means to mint another are dropped as soon
+  // as the bundle is on disk, on every path, before any later action runs.
+  const dropStep = workflow.slice(workflow.indexOf("- name: drop the job's credentials"), workflow.indexOf("- name: mask every private value"));
+  assert.ok(dropStep.length > 0, "the drop step exists");
+  assert.match(dropStep, /if: always\(\)/, "it runs even when the fetch failed, because the cleanup and the upload do");
+  for (const name of ["AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]) {
+    assert.match(dropStep, new RegExp(name), `${name} is dropped`);
+  }
+  const afterFetch = workflow.slice(workflow.indexOf("- name: fetch the live bundle"));
+  assert.ok(afterFetch.indexOf("drop the job's credentials") < afterFetch.indexOf("upload-artifact"),
+    "before any later action runs, so a compromised one can neither read the secrets nor assume the role again");
+  const serve = read("scripts/live/serve.sh");
+  assert.match(serve, /env -u MCP_SSO_BUNDLE_DIR -u MCP_SSO_GOOGLE_ENV -u MCP_SSO_CLIENT_KEYS_FILE[^\n]*\\\n\s*cloudflared tunnel/,
+    "the connector is not told where the run's private files are");
+  assert.match(DOC, /removes a pointer rather than an ability/, "and the reference says what that does and does not buy");
+  assert.match(orchestrator, /detached: true/, "every child leads its own group, so a stop reaches what it started");
+  assert.match(orchestrator, /TMPDIR: scratchDir/, "a row child's temporary files live in a directory the run owns");
+  assert.ok(orchestrator.indexOf("const scratchDir = join(handoffDir") > 0 && orchestrator.includes("rmSync(handoffDir, { recursive: true, force: true })"),
+    "so a probe killed before its own cleanup leaves nothing behind: the teardown removes the tree");
+  assert.equal((orchestrator.match(/\bkill\("SIGKILL"\)/g) ?? []).length, 0, "no path kills a single pid outright");
+  assert.match(orchestrator, /collect\(output\?\.value, values, name\)/,
+    "a laptop run learns the stack values, so the leak scan means the same thing there as in CI");
+  assert.match(orchestrator, /\[stack, "output", "-json"\]/, "read through the same wrapper run.sh uses");
+  // No step before the role assumption carries the job's OIDC request
+  // credential, whatever it runs: the rule is mechanical, so a step added
+  // later cannot quietly reintroduce it.
+  const rehearse = workflow.slice(workflow.indexOf("  rehearse:"), workflow.indexOf("      - name: assume the rehearsal role"));
+  const steps = rehearse.split(/\n      - (?=name:|run:|uses:)/).slice(1);
+  const executing = steps.filter((step) => !/uses: aws-actions\/configure-aws-credentials/.test(step));
+  assert.ok(executing.length >= 8, `every step before the role assumption is checked (found ${executing.length})`);
+  for (const step of executing) {
+    const label = (step.match(/name: ([^\n]+)/) ?? step.match(/uses: ([^\n]+)/) ?? step.match(/run: ([^\n]+)/))?.[1] ?? "step";
+    assert.match(step, /ACTIONS_ID_TOKEN_REQUEST_URL: ""/, `${label}: no OIDC request URL`);
+    assert.match(step, /ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""/, `${label}: no OIDC request token`);
+  }
+  assert.match(orchestrator, /interrupted = signal;[\s\S]{0,700}for \(const state of \[running, serving\]\)/,
+    "the signal ends both children at once, so the teardown and the receipt do not wait for the row");
+  assert.ok(orchestrator.indexOf("hold?.(serving)") < orchestrator.indexOf("const deadline = Date.now() + SERVE_READY_MS"),
+    "the serve child is published before the readiness wait, so an interrupt during startup reaches it");
+  assert.match(orchestrator, /function childEnv\(env\)[\s\S]{0,500}for \(const key of JOB_CREDENTIAL_KEYS\) delete copy\[key\]/,
+    "with the bundle adapter in use no child carries a credential of the job's");
+  for (const key of ["AWS_SESSION_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_RUNTIME_TOKEN", "GITHUB_TOKEN"]) {
+    assert.match(orchestrator, new RegExp(`"${key}"`), `${key} is one of them`);
+  }
+  assert.match(orchestrator, /childEnv\(\{ \.\.\.env, \.\.\.serve\.env, MCP_SSO_TUNNEL: tunnel, TMPDIR: scratchDir \}\)/,
+    "the tunnel connector least of all, and its configuration is written in the directory the run owns");
+  assert.match(workflow, /BRANCH="evidence\/\$\{SHORT\}-\$\{GITHUB_RUN_ID\}"/,
+    "each recording attempt writes its own evidence branch, so a retry never needs a branch deleted by hand");
+  assert.match(renderer, /evaluateReleaseReadiness\(/, "the gate's own parser checks the rendering before it is written");
+  assert.ok(renderer.indexOf("evaluateReleaseReadiness(") < renderer.indexOf("writeFileSync(compatibilityPath"), "checked before written");
+  const jobs = workflow.split(/^  record:$/m);
+  assert.equal(jobs.length, 2, "one record job");
+  assert.doesNotMatch(jobs[0].slice(jobs[0].indexOf("  rehearse:")), /contents: write|pull-requests: write/, "the rehearsal job holds no write token");
+  assert.doesNotMatch(jobs[1], /environment:|configure-aws-credentials/, "the record job holds no AWS role");
+  assert.doesNotMatch(jobs[1], /pnpm install|pnpm\/action-setup/, "the job with the write token installs no third-party code");
+  assert.match(jobs[1], /persist-credentials: false/);
+  assert.match(jobs[1], /--require-head/, "the record binds the receipt to the checked-out commit");
+  assert.match(jobs[1], /if: github\.event_name == 'workflow_dispatch' && inputs\.record && github\.ref == 'refs\/heads\/main'/, "recording is opt-in and main only");
+  assert.match(jobs[1], /render-evidence\.mjs --receipt .* --write/);
+  assert.match(README, /render-evidence\.mjs/);
+  assert.match(DOC, /render-evidence\.mjs/);
+  assert.match(workflow, /cloudflared-linux-amd64/);
+  assert.match(workflow, /sha256sum -c -/, "the connector binary is verified by digest before it runs");
+  assert.match(workflow, /node scripts\/live\/ci\/install-tunnel\.mjs/);
+  assert.match(workflow, /rm -rf -- "\$MCP_SSO_BUNDLE_DIR" "\$HOME\/\.cloudflared"/, "the tunnel credentials are removed with the bundle");
+  assert.match(README, /live\.yml/);
+  assert.match(README, /fetch-bundle\.mjs/);
+  assert.match(README, /gh workflow run live\.yml/);
+  // Every BLOCKED reason the code can record is named in both records, and no
+  // record still speaks the retired undifferentiated denial.
+  for (const reason of BLOCKED_REASON_NAMES) {
+    assert.match(README, new RegExp(`\`${reason}\``), `README names ${reason}`);
+    assert.match(DOC, new RegExp(`\`${reason}\``), `harness reference names ${reason}`);
+  }
+  const everything = readdirSync(join(ROOT, "scripts/live"), { recursive: true, withFileTypes: true }).filter((e) => e.isFile())
+    .map((e) => read(`${e.parentPath.slice(ROOT.length)}/${e.name}`)).join("\n") + DOC + read("docs/live-verification.md");
+  assert.doesNotMatch(everything, /denied_at_provider/, "the retired outcome name survives nowhere");
+  // Every live test file is named in the harness reference.
+  for (const name of readdirSync(join(ROOT, "test")).filter((n) => /^live-.*\.test\.mjs$/.test(n))) {
+    assert.ok(DOC.includes(`\`test/${name}\``), `harness reference lists ${name}`);
+  }
+});
+
 test("CONTENT hygiene: scripts/live and its records name no private infrastructure", () => {
   const allowedHosts = new Set([
     "claude.ai", "chatgpt.com", "login.microsoftonline.com", "accounts.google.com", "127.0.0.1", "localhost",
     "collector.example", "mcp.example", "www.googleapis.com", "oauth2.googleapis.com", "github.com",
   ]);
-  const files = readdirSync(join(ROOT, "scripts/live")).map((name) => `scripts/live/${name}`).concat(["docs/live-verification.md"]);
+  const files = readdirSync(join(ROOT, "scripts/live"), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => `${entry.parentPath.slice(ROOT.length)}/${entry.name}`)
+    .concat(["docs/live-verification.md", ".github/workflows/live.yml"]);
+  assert.ok(files.includes("scripts/live/ci/infra/scripts/tofu-run.sh"), "the scan reaches nested files");
   for (const file of files) {
     const text = read(file);
     for (const match of text.matchAll(/https?:\/\/([A-Za-z0-9.<>_-]+)/g)) {

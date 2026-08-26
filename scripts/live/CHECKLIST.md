@@ -1,12 +1,8 @@
 # Live client verification checklist
 
-The repeatable client × leg matrix. `scripts/live/README.md` covers the automated
-probes; this covers the parts that need a real client and a human at a browser,
-which is what `docs/live-verification.md` records as owner-run.
+The repeatable client × leg matrix. `scripts/live/README.md` covers the automated probes; this covers the parts that need a real client and a human at a browser, which is what `docs/live-verification.md` records as owner-run.
 
-Hostnames, tenant identifiers, and test-account names are **not** in this
-repository. They come from the OpenTofu stack outputs — see the README — and the
-concrete substitutions live in the maintainer's project memory. Placeholders here:
+Hostnames, tenant identifiers, and test-account names are **not** in this repository. They come from the OpenTofu stack outputs — see the README — and the concrete substitutions live in the maintainer's project memory. Placeholders here:
 
 | Placeholder | Meaning |
 | --- | --- |
@@ -19,34 +15,11 @@ concrete substitutions live in the maintainer's project memory. Placeholders her
 
 ## Before you start
 
-1. `aws sso login` (and `az login` for the Entra stack) — the only interactive
-   logins for the stacks.
-2. `scripts/live/serve.sh cloudflare_access entra google` — one invocation
-   serves every leg on its own gateway port behind one tunnel ingress; it
-   prints the three URLs and the client commands. Starting legs in separate
-   invocations does not work: a second connector with a different ingress
-   would receive part of the traffic.
-3. All legs run **stored DCR with loopback allowlisted** (the `run.sh` default):
-   that is the supported shape for CLI clients with ephemeral callback ports,
-   and stored DCR requires a bounded limiter (the example supplies one).
-   For the #278 mode differential, set `MCP_SSO_DCR_MODE=stateless` while
-   retaining loopback; the example now supplies the same bounded limiter and
-   the preflight admits that composition. `probe-e2e.mjs` consumes the selected
-   mode and proves the unknown-opaque-client differential; its machine-client
-   rows run only under stored mode because that feature requires stored DCR.
-   The same probe also drives claims-only completion through Fastify, Express,
-   and Hono in both modes. A pass requires both callback cookies and the fixed,
-   redacted completion-failure response.
-4. Each leg gets its **own** state directory, `.live-state/<leg>`, from
-   `run.sh`; at start the last run's state for that leg is rotated to
-   `.live-state/<leg>.previous` when it holds an `audit.jsonl` (a failed start
-   without one is discarded instead), so the last round's `audit.jsonl` is
-   still there to compare against — even after a failed start and a retry. A shared
-   directory would let one leg delete another's database, and every later
-   store write would then fail as a generic `internal_error` that reads exactly
-   like a product bug.
-5. **A fresh private window for every row.** Entra and Cloudflare both reuse
-   sessions; that has produced false failures more than once.
+1. `aws sso login` (and `az login` for the Entra stack) — the only interactive logins for the stacks.
+2. `scripts/live/serve.sh cloudflare_access entra google` — one invocation serves every leg on its own gateway port behind one tunnel ingress; it prints the three URLs and the client commands. Starting legs in separate invocations does not work: a second connector with a different ingress would receive part of the traffic.
+3. All legs run **stored DCR with loopback allowlisted** (the `run.sh` default): that is the supported shape for CLI clients with ephemeral callback ports, and stored DCR requires a bounded limiter (the example supplies one). For the #278 mode differential, set `MCP_SSO_DCR_MODE=stateless` while retaining loopback; the example now supplies the same bounded limiter and the preflight admits that composition. `probe-e2e.mjs` consumes the selected mode and proves the unknown-opaque-client differential; its machine-client rows run only under stored mode because that feature requires stored DCR. The same probe also drives claims-only completion through Fastify, Express, and Hono in both modes. A pass requires both callback cookies and the fixed, redacted completion-failure response.
+4. Each leg gets its **own** state directory, `.live-state/<leg>`, from `run.sh`; at start the last run's state for that leg is rotated to `.live-state/<leg>.previous` when it holds an `audit.jsonl` (a failed start without one is discarded instead), so the last round's `audit.jsonl` is still there to compare against — even after a failed start and a retry. A shared directory would let one leg delete another's database, and every later store write would then fail as a generic `internal_error` that reads exactly like a product bug.
+5. **A fresh private window for every row.** Entra and Cloudflare both reuse sessions; that has produced false failures more than once.
 
 ## Preflight — no browser needed
 
@@ -60,11 +33,7 @@ for h in <CF_HOST> <ENTRA_HOST> <GOOGLE_HOST>; do
 done
 ```
 
-When a CIMD client (Claude Code, the ChatGPT and claude.ai connectors) connects,
-its first `/oauth/authorize` should be a `302` to the identity provider on the
-redirect legs, or the consent page on the Cloudflare leg. A `400` /
-`invalid_client` there means a document-validation or dispatch regression, and it
-is worth resolving before spending a browser session.
+When a CIMD client (Claude Code, the ChatGPT and claude.ai connectors) connects, its first `/oauth/authorize` should be a `302` to the identity provider on the redirect legs, or the consent page on the Cloudflare leg. A `400` / `invalid_client` there means a document-validation or dispatch regression, and it is worth resolving before spending a browser session.
 
 ## The matrix
 
@@ -86,9 +55,9 @@ is worth resolving before spending a browser session.
 | E1 | any | Cloudflare | any account that is **not** `<ADMITTED_EMAIL>` | Cloudflare's own denial page; **no** consent screen, **no** code mail, and the gateway audit count is unchanged from immediately before the attempt |
 | F1–F3 | claude.ai connector | all three | as A1–A3 | consent → tool round-trip |
 
-D4 and D5 change server configuration, so each needs its own `serve.sh entra`
-invocation with the marked variable exported; they cannot ride the normal
-matrix run. Read both outcomes from the audit trail like every other deny row.
+D4 and D5 change server configuration, so each needs its own `serve.sh entra` invocation with the marked variable exported; they cannot ride the normal matrix run. Read both outcomes from the audit trail like every other deny row.
+
+The rehearsal (`scripts/live/rehearsal.mjs`, see the README) drives these rows unattended: A1, A2, B1, and B2 with the real CLIs (`claude-code:cloudflare`, `claude-code:entra`, `codex-cli:cloudflare`, `codex-cli:entra`), the OAuth mechanics of the positive Entra and Cloudflare flows with the official MCP SDK as the client (`client-entra:member`, `client-cloudflare:member`), D1 to D3 (`client-entra:nogroups`, `client-entra:wronggroup`, `client-entra:overage`), D4 and D5 (`client-entra:wrong-tenant`, `client-entra:not-allowlisted`), and E1 (`access-edge-denial`). For A1, A2, B1, and B2 the consent and the code exchange are always driven; Claude Code's connection check on `/mcp` always runs; the tool round-trip itself runs only when the client-keys file supplies `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, and a row that skipped it says so in a `NOTE` line. What remains for an operator is the Google identity sign-in (A3, B3) and the hosted connectors (C1, C2, F1 to F3), whose web applications an automated browser may not drive under their terms of service.
 
 Client commands:
 
@@ -100,9 +69,7 @@ codex  mcp add <name> --url <HOST>/mcp
 
 ## Reading the results
 
-Assert against the **audit trail**, not only the client UI. Each leg writes
-`.live-state/<leg>/audit.jsonl`, and it is the authority when a client's message
-is vague or absent:
+Assert against the **audit trail**, not only the client UI. Each leg writes `.live-state/<leg>/audit.jsonl`, and it is the authority when a client's message is vague or absent:
 
 ```sh
 node --input-type=module -e '
@@ -116,19 +83,13 @@ for (const leg of ["cloudflare_access", "entra", "google"]) {
 }'
 ```
 
-A full success leg shows `oauth.register` (or `oauth.cimd.fetch`) →
-`identity.verify` → `oauth.authorize.prepare` → `oauth.upstream.callback` (redirect
-legs) → `oauth.authorize.approve` → `oauth.token.authorization_code` →
-`auth.request`.
+A full success leg shows `oauth.register` (or `oauth.cimd.fetch`) → `identity.verify` → `oauth.authorize.prepare` → `oauth.upstream.callback` (redirect legs) → `oauth.authorize.approve` → `oauth.token.authorization_code` → `auth.request`.
 
 Two things the trail catches that a client will not:
 
-- **A client may swallow the denial.** ChatGPT reports the D3 overage case only
-  as "connection setup was canceled" with no message, while the audit shows
-  `entra_groups_overage` correctly emitted. Absence of a client-side error is not
-  absence of a correct server decision.
-- **E1's evidence is an unchanged audit count.** Pause every other matrix row,
-  then record the current count immediately before the E1 attempt:
+- **A client may swallow the denial.** ChatGPT reports the D3 overage case only as "connection setup was canceled" with no message, while the audit shows `entra_groups_overage` correctly emitted. Absence of a client-side error is not absence of a correct server decision.
+- **E1 runs unattended as the rehearsal's `access-edge-denial` row** (see the README): the driver signs in as the `nogroups` test user, which the Access policy does not admit, and must be stopped at the edge. The manual procedure below is the same claim with a browser account of your choosing.
+- **E1's evidence is an unchanged audit count.** Pause every other matrix row, then record the current count immediately before the E1 attempt:
 
   ```sh
   E1_AUDIT=.live-state/cloudflare_access/audit.jsonl
@@ -136,8 +97,7 @@ Two things the trail catches that a client will not:
   E1_BEFORE=$(audit_count "$E1_AUDIT")
   ```
 
-  After Cloudflare shows its denial page, record the count again and require no
-  new gateway event:
+  After Cloudflare shows its denial page, record the count again and require no new gateway event:
 
   ```sh
   E1_AFTER=$(audit_count "$E1_AUDIT")
@@ -147,10 +107,6 @@ Two things the trail catches that a client will not:
   }
   ```
 
-  The file may already contain earlier successful rows; absolute emptiness is
-  not the claim. The invariant is that the E1 attempt adds nothing because the
-  Cloudflare edge blocks it before the request reaches the gateway.
+  The file may already contain earlier successful rows; absolute emptiness is not the claim. The invariant is that the E1 attempt adds nothing because the Cloudflare edge blocks it before the request reaches the gateway.
 
-Also worth noticing: a matrix round usually exercises `oauth.token.refresh` and
-sometimes `oauth.revoke` without anyone asking for them, because the clients
-refresh on their own. Check for them before assuming those paths are unverified.
+Also worth noticing: a matrix round usually exercises `oauth.token.refresh` and sometimes `oauth.revoke` without anyone asking for them, because the clients refresh on their own. Check for them before assuming those paths are unverified.

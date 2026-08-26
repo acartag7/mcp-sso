@@ -53,6 +53,7 @@ There is exactly one runtime dependency by design ([§15](contracts/15-package-a
 | [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | ✅ | Express typings (dev only). |
 | [`mysql2`](https://github.com/sidorares/node-mysql2) | `3.22.5` | 2026-06-06 | ✅ | The `/store/mysql` `StorePort` adapter, dev/test + optional peer. |
 | [`ioredis`](https://github.com/redis/ioredis) | `5.11.1` | 2026-06-04 | ✅ | The `/rate-limit/redis` `RateLimitPort` adapter, dev/test + optional peer. |
+| [`playwright-core`](https://github.com/microsoft/playwright) | `1.62.1` | 2026-07-30 | ✅ | The browser driver the live rehearsal uses to sign the provisioned test users in through the real identity-provider pages (`scripts/live/drive-identity.mjs`). `playwright-core` only: it downloads no browser and drives the Google Chrome already installed on the machine, or a remote browser over CDP. Loaded in exactly one file, `scripts/live/drive-identity-browser.mjs`, which only opens a browser; never by the library, the examples, or `pnpm test`, whose driver coverage runs against `scripts/live/drive-identity-pages.mjs`. |
 
 Dev tooling with **no added dependency**: the test runner is `node:test` (built in), assertions `node:assert/strict` (built in), the SQLite store uses `node:sqlite` (built in). No bundler, no test framework, no postinstall, ever.
 
@@ -97,6 +98,7 @@ GitHub Actions are pinned **by commit SHA**, not tag, so a compromised tag canno
 - `actions/setup-node`, Node 24 with the pnpm cache enabled on ephemeral GitHub-hosted CI runners. The reviewed v7 major migrates the action's internal bundle to ESM, retains the existing workflow inputs and Node 24 action runtime, adds cache-key outputs that this repository does not consume, and stops exporting a dummy `NODE_AUTH_TOKEN` when none was supplied. The latter is compatible with this repository's tokenless OIDC trusted-publishing job.
 - `pnpm/action-setup`, pnpm via corepack (matches `packageManager`).
 - `actions/upload-artifact` / `actions/download-artifact`, transfer the single packed tarball from the read-only build job into the dry-run or isolated OIDC publish job. Download rejects an artifact-archive digest mismatch. The workflow also verifies the tarball's own SHA-256 file.
+- `aws-actions/configure-aws-credentials`, exchanges the job's GitHub OIDC token for the `mcp-sso-release-rehearsal` AWS role in `.github/workflows/live.yml`. The role trusts exactly two subjects, this repository's `live` and `live-branch` environments and nothing else, and can read only the `/mcp-sso/live/*` secrets the live probes need. `live` admits `main` and runs unattended; `live-branch` admits `rehearsal/*` and requires the owner's approval before the role is assumed, because a branch run executes the code that branch pushed. The action masks the credentials it exports.
 - `acartag7/engineering-os/process-guard`, the Engineering OS artifact-chain guard (freeze-hash / mixed-diff / stage-artifact) in `.github/workflows/ci.yml`. Pinned to `c697b412abf034be7a22a53f567ec10eecc776e0` (published 2026-07-19). **First-party, documented exception to the 15-day floor (see below).**
 - npm publish step runs `npm publish --provenance` under the GitHub Actions OIDC token (**no `NPM_TOKEN` with publish rights, no local publishes**).
 
@@ -141,6 +143,7 @@ The following block is the machine-readable source used by `check:deps`. The hum
     "ioredis": { "version": "5.11.1", "published": "2026-06-04T10:14:59.752Z" },
     "jose": { "version": "6.2.3", "published": "2026-04-27T15:23:35.019Z" },
     "mysql2": { "version": "3.22.5", "published": "2026-06-06T08:10:39.646Z" },
+    "playwright-core": { "version": "1.62.1", "published": "2026-07-30T16:36:51.295Z" },
     "pnpm": { "version": "10.34.4", "published": "2026-06-18T22:30:33.318Z" },
     "typescript": { "version": "6.0.3", "published": "2026-04-16T23:38:27.905Z" }
   },
@@ -180,15 +183,45 @@ The following block is the machine-readable source used by `check:deps`. The hum
       "tag": "v8.0.1",
       "published": "2026-03-11T15:44:25Z"
     },
+    "aws-actions/configure-aws-credentials": {
+      "sha": "e6de054238d6b7531b4efff3b6587d9aade6a06c",
+      "tag": "v6.2.3",
+      "published": "2026-07-22T18:32:10Z"
+    },
     "acartag7/engineering-os": {
       "sha": "c697b412abf034be7a22a53f567ec10eecc776e0",
       "published": "2026-07-19T02:55:07Z",
       "firstPartyException": true
     }
+  },
+  "tools": {
+    "@anthropic-ai/claude-code": { "version": "2.1.227", "published": "2026-08-10T20:56:57.591Z" },
+    "@openai/codex": { "version": "0.147.0", "published": "2026-08-07T01:47:21.081Z" }
+  },
+  "binaries": {
+    "cloudflared": {
+      "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-amd64",
+      "version": "2026.7.3",
+      "sha256": "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17",
+      "published": "2026-07-23T10:19:16Z"
+    }
   }
 }
 ```
 <!-- dependency-policy:end -->
+
+### Pinned CLI clients in the live workflow
+
+| Package | Version | Published | 15-day check | Purpose |
+|---|---|---|---|---|
+| [`@anthropic-ai/claude-code`](https://www.npmjs.com/package/@anthropic-ai/claude-code) | `2.1.227` | 2026-08-10 | ✅ | Claude Code, installed globally on the live runner with lifecycle scripts disabled, so the rehearsal drives its real `claude mcp login --no-browser` flow against the served legs. `check:deps` binds the workflow's `npm install -g` line to the `tools` entry and applies the 15-day rule. |
+| [`@openai/codex`](https://www.npmjs.com/package/@openai/codex) | `0.147.0` | 2026-08-07 | ✅ | Codex CLI, likewise, for its `codex mcp add` login flow. |
+
+### Pinned binaries in the live workflow
+
+| Binary | Version | Published | 15-day check | SHA-256 | Purpose |
+|---|---|---|---|---|---|
+| [`cloudflared`](https://github.com/cloudflare/cloudflared) (`cloudflared-linux-amd64` release asset) | `2026.7.3` | 2026-07-23 | ✅ | `9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17` | The tunnel connector `serve.sh` runs so the live workflow's served legs are reachable on their public hostnames. Downloaded from the release, verified against this digest with `sha256sum -c` before it is installed, never from a package repository or an install script. `check:deps` binds the workflow's download URL and digest to the `binaries` entry in the machine-readable block and applies the 15-day rule to it, the same way it binds every Action. |
 
 ### CI integration containers (image tags)
 
@@ -197,6 +230,8 @@ The `verify` job runs the `/store/mysql` and `/rate-limit/redis` integration tes
 CI verification, `process-guard`, and CodeQL use ephemeral GitHub-hosted `ubuntu-latest` runners. CI and CodeQL subscribe to pull requests targeting `main` and to `main` pushes. CodeQL also runs weekly. The CI verify job runs on both events, while `process-guard` runs on pull requests where a base branch is available for its merge-base checks. Pull-request checks attach natively to the PR, so the self-hosted-era `workflow_dispatch` and required-status attestation machinery is removed. CI retains read-only workflow permissions and disables checkout credential persistence. CodeQL installs the frozen dependency graph before analysis for richer JavaScript/TypeScript module resolution.
 
 Release publishing remains separately isolated in `publish.yml` on GitHub-hosted `ubuntu-latest` behind the tag-only `publish` environment and the no-checkout OIDC publishing job.
+
+The live rehearsal in `live.yml` runs on GitHub-hosted `ubuntu-latest` behind two environments: `live` (branch policy `main`, unattended) and `live-branch` (branch policy `rehearsal/*`, a required reviewer approves each run before the role is assumed). It never subscribes to pull requests and its first step refuses any other ref. The job's only write permission is `id-token`, used to assume the AWS role that reads the live secrets; the checkout credential is not persisted, the release-matrix row runs with an explicit environment that holds neither the AWS session nor the bundle location, and the fetched bundle and tunnel credentials are removed at the end of the job. The `record` job, the only one with a write token, installs no dependency and persists no checkout credential.
 
 ## Verification & change protocol
 

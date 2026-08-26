@@ -4,12 +4,15 @@
 # the shipped constructors, and only then executes the entry — with an
 # environment that contains exactly what this script assembled.
 #
-#   scripts/live/run.sh <entry> <leg>
+#   scripts/live/run.sh <entry> <leg> [entry args...]
 #
 #   entry = scripts/live/probe-cloudflare.mjs     leg = cloudflare_access
 #           scripts/live/probe-entra.mjs                entra
 #           scripts/live/probe-google.mjs               google
 #           scripts/live/probe-e2e.mjs                  any leg   (needs REDIS_URL)
+#           scripts/live/drive-identity.mjs             cloudflare_access (the headless identity driver)
+#           scripts/live/probe-client.mjs               any leg   (a real client against a SERVED leg)
+#           scripts/live/probe-cli.mjs                  any leg   (Claude Code or Codex CLI against a SERVED leg)
 #           examples/fastify-sqlite/index.ts            any leg   (used by serve.sh)
 #
 # Nothing here hardcodes a repository path, stack handle, hostname, tenant, or
@@ -26,14 +29,16 @@ fail() { echo "run.sh: $1" >&2; exit 1; }
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Live evidence must name the exact runtime commit, and a tree with uncommitted
-# tracked changes cannot (docs/live-verification.md). Refuse it unless the
+# or untracked changes cannot (docs/live-verification.md). Refuse it unless the
 # operator says explicitly that this run is not evidence.
 RUNTIME_COMMIT="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || fail "the checkout is not a git repository; live evidence must name a commit"
-if [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+# Untracked files count too: an untracked file under src/ is compiled into
+# what a probe runs, but is not in the commit the evidence names.
+if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
   if [ "${MCP_SSO_ALLOW_DIRTY:-false}" = "true" ]; then
-    echo "run.sh: runtime commit ${RUNTIME_COMMIT} with UNCOMMITTED tracked changes — this run is not release evidence" >&2
+    echo "run.sh: runtime commit ${RUNTIME_COMMIT} with UNCOMMITTED changes — this run is not release evidence" >&2
   else
-    fail "the checkout has uncommitted tracked changes; commit them, or set MCP_SSO_ALLOW_DIRTY=true for a run that is not evidence"
+    fail "the checkout has uncommitted or untracked changes; commit them, or set MCP_SSO_ALLOW_DIRTY=true for a run that is not evidence"
   fi
 else
   echo "run.sh: runtime commit ${RUNTIME_COMMIT}" >&2
@@ -47,8 +52,12 @@ NODE_BIN="$(command -v node)" || fail "node is required on PATH"
 BASE_ENV=("PATH=$PATH" "HOME=$HOME")
 if [ -n "${TMPDIR+x}" ]; then BASE_ENV+=("TMPDIR=$TMPDIR"); fi
 node_clean() { env -i "${BASE_ENV[@]}" "$NODE_BIN" "$@"; }
-ENTRY="${1:?usage: scripts/live/run.sh <entry> <leg>}"
-LEG="${2:?usage: scripts/live/run.sh <entry> <leg>}"
+ENTRY="${1:?usage: scripts/live/run.sh <entry> <leg> [entry args...]}"
+LEG="${2:?usage: scripts/live/run.sh <entry> <leg> [entry args...]}"
+shift 2
+# Anything after the leg is handed to the entry verbatim (the driver's task
+# and its output file). Arguments carry no credential; the environment does.
+ENTRY_ARGS=("$@")
 
 # Fail closed on the entry × leg pair: stack credentials are handed to an
 # allowlisted script only, never to an arbitrary path.
@@ -57,6 +66,9 @@ case "$ENTRY:$LEG" in
   scripts/live/probe-entra.mjs:entra) KIND=probe ;;
   scripts/live/probe-google.mjs:google) KIND=probe ;;
   scripts/live/probe-e2e.mjs:cloudflare_access|scripts/live/probe-e2e.mjs:entra|scripts/live/probe-e2e.mjs:google) KIND=e2e ;;
+  scripts/live/drive-identity.mjs:cloudflare_access) KIND=driver ;;
+  scripts/live/probe-client.mjs:cloudflare_access|scripts/live/probe-client.mjs:entra|scripts/live/probe-client.mjs:google) KIND=client ;;
+  scripts/live/probe-cli.mjs:cloudflare_access|scripts/live/probe-cli.mjs:entra|scripts/live/probe-cli.mjs:google) KIND=client ;;
   examples/fastify-sqlite/index.ts:cloudflare_access|examples/fastify-sqlite/index.ts:entra|examples/fastify-sqlite/index.ts:google) KIND=server ;;
   *) fail "unsupported entry/leg pair: $ENTRY $LEG" ;;
 esac
@@ -100,17 +112,37 @@ OAUTH_SIGNING_KEY_ID="live"
 
 # Stack reads. Every value is captured and validated; nothing is passed on
 # until the whole leg has been read, and no state is touched until it passes.
+#
+# The wrapper's stderr is never printed: it belongs to a private repository and
+# can name profiles, tenants, and paths. One condition is recognised from it
+# and reported as a fixed sentence of our own, because an operator can arm it
+# and the rehearsal then records BLOCKED infrastructure_session_expired instead
+# of an unexplained failure. Everything else stays the generic message.
+output_failed() {
+  local errors="$1" name="$2"
+  case "$errors" in
+    *"AWS session is not valid"*) fail "AWS session is not valid — run: aws sso login" ;;
+    *"Azure session is not valid"*) fail "Azure session is not valid — run: az login" ;;
+    *) fail "required stack output unavailable: $name" ;;
+  esac
+}
 output_raw() {
-  local value
-  value="$(cd "$INFRA" && ./scripts/tofu-run.sh "$1" output -raw "$2" 2>/dev/null)" \
-    || fail "required stack output unavailable: $2"
+  local value errors errfile
+  errfile="$(mktemp)"
+  value="$(cd "$INFRA" && ./scripts/tofu-run.sh "$1" output -raw "$2" 2>"$errfile")" || {
+    errors="$(cat "$errfile")"; rm -f "$errfile"; output_failed "$errors" "$2";
+  }
+  rm -f "$errfile"
   [ -n "$value" ] || fail "required stack output empty: $2"
   printf '%s' "$value"
 }
 output_json() {
-  local value
-  value="$(cd "$INFRA" && ./scripts/tofu-run.sh "$1" output -json "$2" 2>/dev/null)" \
-    || fail "required stack output unavailable: $2"
+  local value errors errfile
+  errfile="$(mktemp)"
+  value="$(cd "$INFRA" && ./scripts/tofu-run.sh "$1" output -json "$2" 2>"$errfile")" || {
+    errors="$(cat "$errfile")"; rm -f "$errfile"; output_failed "$errors" "$2";
+  }
+  rm -f "$errfile"
   [ -n "$value" ] || fail "required stack output empty: $2"
   printf '%s' "$value"
 }
@@ -119,10 +151,38 @@ support() { node_clean "$SUPPORT" "$@"; }
 OAUTH_ISSUER="$(output_json "$CLOUDFLARE_STACK" issuer_origins | support issuer-origin "$LEG")" \
   || fail "issuer origin output is missing or invalid for the selected leg"
 
+# The identity driver signs a provisioned TEST USER in through the provider's
+# own pages, and the client probe does the same as a real OAuth client against
+# a SERVED leg. Both receive the leg origin, the Entra stack's test users and
+# their password, and for the Cloudflare leg the login method to choose. They
+# receive no application credential: they are a browser and a client, not the
+# bridge. The client probe additionally learns which leg it is on and where the
+# served leg's audit trail is, so it can assert what the server recorded.
+if [ "$KIND" = "driver" ] || [ "$KIND" = "client" ]; then
+  ENTRA_STACK="${MCP_SSO_ENTRA_STACK:?set MCP_SSO_ENTRA_STACK to the Entra stack handle}"
+  IDP_TEST_USERS_JSON="$(output_json "$ENTRA_STACK" test_users | support test-users)" \
+    || fail "test_users output is invalid"
+  IDP_TEST_USER_PASSWORD="$(output_raw "$ENTRA_STACK" test_user_password)"
+  pass IDP_TEST_USERS_JSON IDP_TEST_USER_PASSWORD
+  if [ "$LEG" = "cloudflare_access" ]; then
+    CF_ACCESS_IDP_NAME="$(output_raw "$CLOUDFLARE_STACK" cf_access_idp_name)"
+    pass CF_ACCESS_IDP_NAME
+  fi
+  # A remote browser (CDP endpoint) replaces the machine's own Chrome when set.
+  pass MCP_SSO_BROWSER_CDP_URL
+  if [ "$KIND" = "client" ]; then
+    MCP_SSO_LEG="$LEG"
+    pass MCP_SSO_LEG MCP_SSO_AUDIT_FILE
+    # The optional model-vendor keys for a CLI tool call, read as data by the
+    # one entry that makes such a call.
+    if [ "$ENTRY" = "scripts/live/probe-cli.mjs" ]; then pass MCP_SSO_CLIENT_KEYS_FILE; fi
+  fi
+fi
+
 # The end-to-end probe composes its own app and never touches a provider, so it
 # receives no provider credential at all; only the provider probes and the
 # example server read the leg's stack outputs.
-if [ "$KIND" != "e2e" ]; then
+if [ "$KIND" = "probe" ] || [ "$KIND" = "server" ]; then
   case "$LEG" in
     entra)
       ENTRA_STACK="${MCP_SSO_ENTRA_STACK:?set MCP_SSO_ENTRA_STACK to the Entra stack handle}"
@@ -173,14 +233,21 @@ if [ "$KIND" != "e2e" ]; then
       pass CF_ACCESS_ISSUER CF_ACCESS_CERTS_URL CF_ACCESS_AUDIENCE
       if [ "$ENTRY" = "scripts/live/probe-cloudflare.mjs" ]; then
         # The identity proof needs a CURRENT provider-signed assertion for the
-        # Access application in front of /oauth/authorize. cloudflared mints one
-        # from the operator's own Access login (once, in a browser:
-        # `cloudflared access login <issuer>/oauth/authorize`); the value never
+        # Access application in front of /oauth/authorize. Either the headless
+        # driver wrote one to an owner-only file (MCP_SSO_CF_ACCESS_ASSERTION_FILE,
+        # read as data through run-support), or cloudflared mints one from the
+        # operator's own Access login (once, in a browser:
+        # `cloudflared access login <issuer>/oauth/authorize`). The value never
         # enters this repository or the terminal.
-        command -v cloudflared >/dev/null 2>&1 || fail "cloudflared is required to mint the Access assertion"
-        CF_ACCESS_ASSERTION="$(cloudflared access token -app="${OAUTH_ISSUER}/oauth/authorize" 2>/dev/null)" \
-          || fail "cloudflared could not mint an Access assertion; run: cloudflared access login ${OAUTH_ISSUER}/oauth/authorize"
-        [ -n "$CF_ACCESS_ASSERTION" ] || fail "cloudflared returned an empty Access assertion"
+        if [ -n "${MCP_SSO_CF_ACCESS_ASSERTION_FILE+x}" ]; then
+          CF_ACCESS_ASSERTION="$(support assertion-file "$MCP_SSO_CF_ACCESS_ASSERTION_FILE")" \
+            || fail "MCP_SSO_CF_ACCESS_ASSERTION_FILE is not an owner-only file holding one compact JWT"
+        else
+          command -v cloudflared >/dev/null 2>&1 || fail "cloudflared is required to mint the Access assertion"
+          CF_ACCESS_ASSERTION="$(cloudflared access token -app="${OAUTH_ISSUER}/oauth/authorize" 2>/dev/null)" \
+            || fail "cloudflared could not mint an Access assertion; run: cloudflared access login <the leg issuer origin>/oauth/authorize"
+          [ -n "$CF_ACCESS_ASSERTION" ] || fail "cloudflared returned an empty Access assertion"
+        fi
         pass CF_ACCESS_ASSERTION
       fi
       ;;
@@ -219,7 +286,11 @@ OAUTH_DCR_MODE="${MCP_SSO_DCR_MODE:-stored}"
 OAUTH_SCOPE_CATALOG="mcp:read,mcp:write"
 OAUTH_DEFAULT_SCOPES="mcp:read"
 pass OAUTH_ISSUER OAUTH_RESOURCE OAUTH_ALLOWED_ORIGINS OAUTH_REDIRECT_ALLOWLIST
-pass OAUTH_CONSENT_SIGNING_SECRET OAUTH_SIGNING_PRIVATE_JWK OAUTH_SIGNING_KEY_ID
+# The run's signing material goes only to entries that build the bridge. The
+# driver and the client probe are the other side of the wire and never hold it.
+if [ "$KIND" != "driver" ] && [ "$KIND" != "client" ]; then
+  pass OAUTH_CONSENT_SIGNING_SECRET OAUTH_SIGNING_PRIVATE_JWK OAUTH_SIGNING_KEY_ID
+fi
 pass OAUTH_DCR_MODE OAUTH_SCOPE_CATALOG OAUTH_DEFAULT_SCOPES PROBE_CLIENT_REDIRECT PROBE_APP_CALLBACK
 if [ "$KIND" = "e2e" ]; then pass REDIS_URL; fi
 
@@ -230,9 +301,12 @@ if [ "$KIND" = "e2e" ]; then pass REDIS_URL; fi
 # a bad runner knob cannot cost the previous run's evidence.
 if [ "$KIND" = "e2e" ]; then
   env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$SUPPORT" preflight-base || fail "assembled configuration failed the preflight"
-else
+elif [ "$KIND" != "driver" ] && [ "$KIND" != "client" ]; then
   env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$SUPPORT" preflight "$LEG" || fail "stack outputs failed the provider preflight for leg $LEG"
 fi
+# The driver and the client probe hold no application credential and touch no
+# state, so their inputs were validated where they were read (test-users, a
+# bare issuer).
 
 if [ "$KIND" = "server" ]; then
   # Per-leg state for the long-running example server only — the probes build
@@ -252,4 +326,4 @@ fi
 cd "$REPO" || fail "cannot enter the repository checkout"
 # `env` execs node in place (no fork), so the started PID stays the entry —
 # serve.sh binds readiness and cleanup to that PID.
-exec env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$ENTRY"
+exec env -i "${ENTRY_ENV[@]}" "$NODE_BIN" "$ENTRY" ${ENTRY_ARGS[@]+"${ENTRY_ARGS[@]}"}

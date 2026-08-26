@@ -124,7 +124,9 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-CONF="$(mktemp -t mcp-sso-tunnel-XXXX)" || exit 1
+# An explicit directory: `mktemp -t` picks one differently across platforms and
+# has written this file into the working directory, which is the repository.
+CONF="$(mktemp "${TMPDIR:-/tmp}/mcp-sso-tunnel-XXXXXX")" || exit 1
 {
   printf 'tunnel: %s\n' "$TUNNEL"
   printf 'credentials-file: %s\n' "$CREDENTIALS"
@@ -199,7 +201,14 @@ done
 # process group) still runs cleanup and takes them all down, and a server that
 # dies while serving stops the run instead of leaving the tunnel exposing a
 # dead backend. A foreground tunnel would defer the trap until it exited.
-cloudflared tunnel --config "$CONF" run "$TUNNEL" &
+# The connector is the one third-party binary this script runs, and it needs
+# only its own credentials file. It is not told where the run's private files
+# are: the variables that name the CI bundle, the Google credential file and
+# the vendor keys are removed from its environment. It still runs as this
+# user, so their 0600 modes remain the boundary for the files themselves;
+# docs/reference/live-harness.md records what that does and does not buy.
+env -u MCP_SSO_BUNDLE_DIR -u MCP_SSO_GOOGLE_ENV -u MCP_SSO_CLIENT_KEYS_FILE \
+  cloudflared tunnel --config "$CONF" run "$TUNNEL" &
 TUNNEL_PID=$!
 while kill -0 "$TUNNEL_PID" 2>/dev/null; do
   # Interval first: the gate above proved every leg a moment ago, so the next

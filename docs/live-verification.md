@@ -12,6 +12,34 @@ Confirm that the probe prints the runtime commit and reports every required chec
 
 Record the date, runtime commit, provider, probe result, and any limitation in [Verification status](verification-status.md). Move the previous result to the [verification archive](archive/verification-history.md) when the new run supersedes it.
 
+## Run the rehearsal
+
+Run every automated probe at once and get one receipt:
+
+```bash
+docker run -d --rm --name rehearsal-mysql -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=mcp_sso -e MYSQL_USER=mcp -e MYSQL_PASSWORD=mcppw -p 127.0.0.1:3306:3306 mysql:8.4
+docker run -d --rm --name rehearsal-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+RUN_INTEGRATION=true \
+  MYSQL_URL='mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4' \
+  REDIS_URL=redis://127.0.0.1:6379 \
+  node scripts/live/rehearsal.mjs
+```
+
+The first row runs the release matrix, whose preflight requires all three of `RUN_INTEGRATION`, `MYSQL_URL`, and `REDIS_URL`; without them that row is `BLOCKED release_services_absent` and the run exits non-zero however well the rest went. To leave it out deliberately, name the rows you want instead: `node scripts/live/rehearsal.mjs --rows probe-entra,probe-google`, which is a working run and never evidence.
+
+Read the summary. A `PASS` row passed every check the probe reports. A `BLOCKED` row names what to arm before the run can count, for example `cloudflare_access_login_required`. A `FAIL` row names the failed check. The receipt at `.live-state/receipt.json` is evidence only when the command exited 0, which requires every row to pass on a clean tree.
+
+To run it from CI instead:
+
+```bash
+gh workflow run live.yml
+gh run watch
+```
+
+The `live` workflow runs the same command on a GitHub-hosted runner with the provider values fetched from the private secret store through the workflow's OIDC role. It also runs nightly from `main`, and on every push to a `rehearsal/*` branch after the owner approves that run in the `live-branch` environment. Download the `rehearsal-receipt-*` artifact for the receipt. `scripts/live/README.md` describes the credential path and the row rules.
+
+Record a passing rehearsal the same way as a probe run: date, runtime commit, and the row results, in [Verification status](verification-status.md).
+
 ## Serve provider legs for MCP clients
 
 Use `scripts/live/serve.sh` to start the configured legs and the named Cloudflare tunnel. Do not use `cloudflared tunnel --url` for release evidence.

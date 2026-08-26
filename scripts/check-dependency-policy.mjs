@@ -45,6 +45,8 @@ export async function loadDependencyPolicy(root = process.cwd()) {
   const policy = object(policyJson(markdown), "dependency policy");
   object(policy.packages, "dependency policy packages");
   object(policy.actions, "dependency policy actions");
+  object(policy.binaries ?? {}, "dependency policy binaries");
+  object(policy.tools ?? {}, "dependency policy tools");
   if (!Number.isInteger(policy.minimumAgeDays) || policy.minimumAgeDays < 1) {
     throw new Error("dependency policy minimumAgeDays must be a positive integer");
   }
@@ -85,6 +87,19 @@ function assertRecordShape(policy) {
     if (typeof record.version !== "string" || record.version === "") errors.push(`${name}: version is invalid`);
     if (!validDate(record.published)) errors.push(`${name}: published date is invalid`);
   }
+  for (const [name, recordValue] of Object.entries(policy.binaries ?? {})) {
+    const record = object(recordValue, `binary ${name}`);
+    if (!/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/releases\/download\/[^\s]+$/.test(record.url ?? "")) errors.push(`${name}: binary url must be a GitHub release asset`);
+    if (!/^[0-9a-f]{64}$/.test(record.sha256 ?? "")) errors.push(`${name}: sha256 must be 64 lowercase hex characters`);
+    if (typeof record.version !== "string" || record.version === "") errors.push(`${name}: binary version is invalid`);
+    if (!validDate(record.published)) errors.push(`${name}: binary published date is invalid`);
+  }
+  for (const [name, recordValue] of Object.entries(policy.tools ?? {})) {
+    const record = object(recordValue, `tool ${name}`);
+    if (!validPackageName(name)) errors.push(`${name}: tool package name is invalid`);
+    if (parseStableVersion(record.version) === null) errors.push(`${name}: tool version is invalid`);
+    if (!validDate(record.published)) errors.push(`${name}: tool published date is invalid`);
+  }
   for (const [name, recordValue] of Object.entries(policy.actions)) {
     const record = object(recordValue, `action ${name}`);
     if (!/^[0-9a-f]{40}$/.test(record.sha)) errors.push(`${name}: sha must be 40 lowercase hex characters`);
@@ -120,6 +135,50 @@ async function packagePins(root) {
   if (!manager) throw new Error("packageManager must be an exact pnpm@version pin");
   pins.pnpm = manager[1];
   return pins;
+}
+
+/** Every `curl ... -o <file> <url>` followed by a `sha256sum -c` line in the
+ *  workflows: the binaries a job downloads and verifies by digest. */
+async function workflowBinaries(root) {
+  const dir = resolve(root, ".github/workflows");
+  const files = (await readdir(dir)).filter((name) => /\.ya?ml$/.test(name)).sort();
+  const found = [];
+  for (const file of files) {
+    const text = await readFile(resolve(dir, file), "utf8");
+    // Every fetch of a release asset, by any downloader. The digest counts only
+    // when the line right after it checks the very file the fetch wrote (the
+    // -o or -O target) and lets the check's result stand (no trailing ||).
+    for (const match of text.matchAll(/(?:curl|wget)[^\n]*?(https:\/\/github\.com\/[^\s"']+\/releases\/download\/[^\s"']+)[^\n]*\n(?:\s*echo "([0-9a-f]{64})  ([^"]+)" \| sha256sum -c -([^\n]*))?/g)) {
+      const target = match[0].split("\n")[0].match(/\s-[oO]\s+("[^"]+"|'[^']+'|\S+)/)?.[1]?.replace(/^["']|["']$/g, "");
+      const bound = match[2] !== undefined && target !== undefined && match[3] === target && (match[4] ?? "").trim() === "";
+      found.push({ file, url: match[1], sha256: bound ? match[2] : undefined });
+    }
+  }
+  return found;
+}
+
+/** Every global npm install in the workflows, in any spelling (`npm install -g`,
+ *  `npm i --global`, `npm add -g`): the tools a job installs. Every package on
+ *  such a line must carry an exact version; one that does not is recorded as
+ *  version `unpinned` so the ledger comparison refuses it. */
+async function workflowTools(root) {
+  const dir = resolve(root, ".github/workflows");
+  const files = (await readdir(dir)).filter((name) => /\.ya?ml$/.test(name)).sort();
+  const found = [];
+  for (const file of files) {
+    const text = await readFile(resolve(dir, file), "utf8");
+    for (const line of text.matchAll(/\bnpm\s+(?:i|install|add)\b[^\n]*(?:\s-g\b|--global\b)[^\n]*/g)) {
+      const words = line[0].split(/\s+/).slice(1).filter((word) => !word.startsWith("-") && !["i", "install", "add"].includes(word));
+      for (const word of words) {
+        // A spec the parser cannot read (a URL, a tarball, a variable, an
+        // uppercase name) is refused as an unpinned install, never skipped.
+        const spec = word.match(/^((?:@[a-z0-9-]+\/)?[a-z0-9._-]+)(?:@(.+))?$/);
+        if (!spec) { found.push({ file, name: word, version: "unpinned" }); continue; }
+        found.push({ file, name: spec[1], version: /^\d+\.\d+\.\d+$/.test(spec[2] ?? "") ? spec[2] : "unpinned" });
+      }
+    }
+  }
+  return found;
 }
 
 async function workflowPins(root) {
@@ -221,13 +280,53 @@ export async function verifyLocalDependencyPolicy(root = process.cwd(), now = ne
   for (const name of Object.keys(policy.actions).sort()) {
     if (!used.has(name)) errors.push(`${name}: ledger action is unused`);
   }
+
+  const tools = policy.tools ?? {};
+  const installed = await workflowTools(root);
+  const usedTools = new Set();
+  for (const tool of installed) {
+    const record = tools[tool.name];
+    if (!record) {
+      errors.push(`${tool.file}: installed tool ${tool.name} is missing from the ledger`);
+      continue;
+    }
+    usedTools.add(tool.name);
+    if (record.version !== tool.version) errors.push(`${tool.file}: ${tool.name}@${tool.version} does not match ledger ${record.version}`);
+    assertAge(tool.name, record.published, policy.minimumAgeDays, now, errors);
+  }
+  for (const name of Object.keys(tools).sort()) {
+    if (!usedTools.has(name)) errors.push(`${name}: ledger tool is not installed by any workflow`);
+  }
+
+  const binaries = policy.binaries ?? {};
+  const downloaded = await workflowBinaries(root);
+  const usedBinaries = new Set();
+  for (const download of downloaded) {
+    const entry = Object.entries(binaries).find(([, record]) => record.url === download.url);
+    if (!entry) {
+      errors.push(`${download.file}: downloaded binary ${download.url} is missing from the ledger`);
+      continue;
+    }
+    const [name, record] = entry;
+    usedBinaries.add(name);
+    if (download.sha256 === undefined) errors.push(`${download.file}: ${name} is downloaded without a digest check`);
+    else if (record.sha256 !== download.sha256) errors.push(`${download.file}: ${name} digest does not match the ledger`);
+    if (!download.url.includes(`/${record.version}/`)) errors.push(`${download.file}: ${name} url does not name ledger version ${record.version}`);
+    assertAge(name, record.published, policy.minimumAgeDays, now, errors);
+  }
+  for (const name of Object.keys(binaries).sort()) {
+    if (!usedBinaries.has(name)) errors.push(`${name}: ledger binary is not downloaded by any workflow`);
+  }
   fail(errors);
   return policy;
 }
 
 async function fetchJson(url, fetchImpl, token) {
-  const headers = { Accept: "application/vnd.github+json", "User-Agent": "mcp-sso-dependency-policy" };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const github = new URL(url).hostname === "api.github.com";
+  // The GitHub token authenticates GitHub calls only; the npm registry gets no
+  // credential (its full packument is needed for the publish dates).
+  const headers = { Accept: github ? "application/vnd.github+json" : "application/json", "User-Agent": "mcp-sso-dependency-policy" };
+  if (token && github) headers.Authorization = `Bearer ${token}`;
   const response = await fetchImpl(url, { headers });
   if (!response.ok) throw new Error(`${url}: upstream returned ${response.status}`);
   return await response.json();
@@ -253,11 +352,36 @@ export async function verifyRemoteDependencyPolicy(policy, options = {}) {
       errors.push(`${repo}: ${error instanceof Error ? error.message : "remote verification failed"}`);
     }
   }));
+  // A binary's own record cannot vouch for its age: the release the recorded
+  // URL names is asked when it was published, exactly as an action's tag is.
+  await Promise.all(Object.entries(policy.binaries ?? {}).map(async ([name, record]) => {
+    try {
+      const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)\//.exec(record.url ?? "");
+      if (match === null) {
+        errors.push(`${name}: the ledger URL is not a GitHub release asset`);
+        return;
+      }
+      const release = await fetchJson(`https://api.github.com/repos/${match[1]}/releases/tags/${match[2]}`, fetchImpl, token);
+      if (release.published_at !== record.published) errors.push(`${name}: release date does not match the ledger`);
+    } catch (error) {
+      errors.push(`${name}: ${error instanceof Error ? error.message : "remote verification failed"}`);
+    }
+  }));
   await Promise.all(Object.entries(policy.packages).map(async ([name, record]) => {
     try {
       const packument = await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}`, fetchImpl);
       if (packument.time?.[record.version] !== record.published) {
         errors.push(`${name}: npm publication date does not match the ledger`);
+      }
+    } catch (error) {
+      errors.push(`${name}: ${error instanceof Error ? error.message : "remote verification failed"}`);
+    }
+  }));
+  await Promise.all(Object.entries(policy.tools ?? {}).map(async ([name, record]) => {
+    try {
+      const packument = await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}`, fetchImpl);
+      if (packument.time?.[record.version] !== record.published) {
+        errors.push(`${name}: tool publication date does not match npm`);
       }
     } catch (error) {
       errors.push(`${name}: ${error instanceof Error ? error.message : "remote verification failed"}`);

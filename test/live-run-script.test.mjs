@@ -73,6 +73,9 @@ printf '%s' "$FAKE_ASSERTION"
   // The runner names the runtime commit and refuses uncommitted tracked
   // changes, so the fixture repository is a committed git checkout.
   const git = (...args) => execFileSync("git", ["-C", repo, "-c", "user.name=fixture", "-c", "user.email=fixture@example.test", ...args], { stdio: "ignore" });
+  // The real repository ignores the per-leg state directory a run creates;
+  // the fixture must too, or a run would leave its own tree dirty.
+  writeFileSync(join(repo, ".gitignore"), ".live-state/\n");
   git("init", "-q");
   git("add", "-A");
   git("commit", "-q", "-m", "fixture");
@@ -234,7 +237,7 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
       // Only the two `set` lines that run before tracing is switched off may echo.
       assert.doesNotMatch(traced.stderr, /fixture-entra-secret|\+trace\+ (?!set )/, "xtrace inherited through SHELLOPTS must not echo assignments");
     });
-    await t.test("uncommitted tracked changes are refused unless the run is declared non-evidence", async () => {
+    await t.test("uncommitted or untracked changes are refused unless the run is declared non-evidence", async () => {
       const tracked = join(fx.repo, "scripts/live/probe-entra.mjs");
       const original = readFileSync(tracked, "utf8");
       writeFileSync(tracked, `${original}// local edit\n`);
@@ -243,10 +246,23 @@ test("run.sh assembles the selected leg from stack outputs and clears stale sele
         assert.equal(dirty.code, 1);
         assert.equal(dirty.captured, undefined, "a dirty tree produces no run");
         assert.deepEqual(dirty.tofuCalls, [], "refused before any stack read");
-        assert.match(dirty.stderr, /uncommitted tracked changes/);
+        assert.match(dirty.stderr, /uncommitted or untracked changes/);
         const declared = await runScript(fx, "scripts/live/probe-entra.mjs", "entra", { MCP_SSO_ALLOW_DIRTY: "true" });
         assert.equal(declared.code, 0, declared.stderr);
-        assert.match(declared.stderr, /UNCOMMITTED tracked changes — this run is not release evidence/);
+        assert.match(declared.stderr, /UNCOMMITTED changes — this run is not release evidence/);
+        // An untracked file is a change too: the build compiles all of src.
+        writeFileSync(tracked, original);
+        // At the fixture repository's own root: `src` there is a symlink to
+        // this repository's source, which a test must never write into.
+        const untracked = join(fx.repo, "scripts/live/extra-local.mjs");
+        writeFileSync(untracked, "export const local = 1;\n");
+        try {
+          const withUntracked = await runScript(fx, "scripts/live/probe-entra.mjs", "entra");
+          assert.equal(withUntracked.code, 1, "an untracked source file is not in the commit the evidence names");
+          assert.match(withUntracked.stderr, /uncommitted or untracked changes/);
+        } finally {
+          rmSync(untracked, { force: true });
+        }
       } finally {
         writeFileSync(tracked, original);
       }

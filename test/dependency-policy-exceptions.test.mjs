@@ -241,6 +241,12 @@ function upstreamFetch(policy, {
       });
     }
     if (url.includes("api.github.com/repos/")) {
+      // A ledger binary's release answers for its own publication date.
+      const binary = Object.entries(policy.binaries ?? {}).find(([, entry]) => {
+        const parsed = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)\//.exec(entry.url ?? "");
+        return parsed !== null && url === `https://api.github.com/repos/${parsed[1]}/releases/tags/${parsed[2]}`;
+      });
+      if (binary) return Response.json({ published_at: binary[1].published });
       const action = Object.entries(policy.actions).find(([repo]) => url.includes(`/repos/${repo}/`));
       assert.ok(action, `known action URL: ${url}`);
       const [, record] = action;
@@ -248,7 +254,7 @@ function upstreamFetch(policy, {
       return Response.json({ sha: record.sha, commit: { committer: { date: record.published } } });
     }
     const name = decodeURIComponent(new URL(url).pathname.slice(1));
-    const record = policy.packages[name] ?? policy.transitivePins[name];
+    const record = policy.packages[name] ?? policy.transitivePins[name] ?? policy.tools?.[name];
     assert.ok(record, `known package URL: ${url}`);
     return Response.json({ time: { [record.version]: record.published } });
   };
