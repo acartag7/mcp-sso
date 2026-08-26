@@ -110,17 +110,37 @@ OAUTH_SIGNING_KEY_ID="live"
 
 # Stack reads. Every value is captured and validated; nothing is passed on
 # until the whole leg has been read, and no state is touched until it passes.
+#
+# The wrapper's stderr is never printed: it belongs to a private repository and
+# can name profiles, tenants, and paths. One condition is recognised from it
+# and reported as a fixed sentence of our own, because an operator can arm it
+# and the rehearsal then records BLOCKED infrastructure_session_expired instead
+# of an unexplained failure. Everything else stays the generic message.
+output_failed() {
+  local errors="$1" name="$2"
+  case "$errors" in
+    *"AWS session is not valid"*) fail "AWS session is not valid — run: aws sso login" ;;
+    *"Azure session is not valid"*) fail "Azure session is not valid — run: az login" ;;
+    *) fail "required stack output unavailable: $name" ;;
+  esac
+}
 output_raw() {
-  local value
-  value="$(cd "$INFRA" && ./scripts/tofu-run.sh "$1" output -raw "$2" 2>/dev/null)" \
-    || fail "required stack output unavailable: $2"
+  local value errors errfile
+  errfile="$(mktemp)"
+  value="$(cd "$INFRA" && ./scripts/tofu-run.sh "$1" output -raw "$2" 2>"$errfile")" || {
+    errors="$(cat "$errfile")"; rm -f "$errfile"; output_failed "$errors" "$2";
+  }
+  rm -f "$errfile"
   [ -n "$value" ] || fail "required stack output empty: $2"
   printf '%s' "$value"
 }
 output_json() {
-  local value
-  value="$(cd "$INFRA" && ./scripts/tofu-run.sh "$1" output -json "$2" 2>/dev/null)" \
-    || fail "required stack output unavailable: $2"
+  local value errors errfile
+  errfile="$(mktemp)"
+  value="$(cd "$INFRA" && ./scripts/tofu-run.sh "$1" output -json "$2" 2>"$errfile")" || {
+    errors="$(cat "$errfile")"; rm -f "$errfile"; output_failed "$errors" "$2";
+  }
+  rm -f "$errfile"
   [ -n "$value" ] || fail "required stack output empty: $2"
   printf '%s' "$value"
 }

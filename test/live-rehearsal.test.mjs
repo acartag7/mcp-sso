@@ -223,6 +223,24 @@ test("BEHAVIOUR adapter + run.sh: the shipped runner assembles a leg from the bu
     assert.equal(cliNoKeys.captured.env.MCP_SSO_CLIENT_KEYS_FILE, undefined, "the keys path is passed only when the caller names one");
     const clientWithKeys = await runScript(["scripts/live/probe-client.mjs", "entra"], { MCP_SSO_CLIENT_KEYS_FILE: keys });
     assert.equal(clientWithKeys.captured.env.MCP_SSO_CLIENT_KEYS_FILE, undefined, "the keys path reaches only the entry that makes a tool call");
+    // An expired infrastructure session reaches the rehearsal as its own fixed
+    // sentence, so the row is BLOCKED with a reason an operator can arm; any
+    // other wrapper failure stays generic and its stderr is never printed.
+    const wrapper = join(repo, "scripts/live/ci/infra/scripts/tofu-run.sh");
+    const original = readFileSync(wrapper, "utf8");
+    try {
+      executable(wrapper, '#!/usr/bin/env bash\necho "error: AWS session is not valid — run: aws sso login --profile private-profile-name" >&2\nexit 1\n');
+      const expired = await runScript(["scripts/live/probe-entra.mjs", "entra"], { MCP_SSO_ALLOW_DIRTY: "true" }).catch((error) => error);
+      assert.match(expired.stderr, /^run\.sh: AWS session is not valid — run: aws sso login$/m);
+      assert.doesNotMatch(expired.stderr, /private-profile-name/, "the private wrapper's own stderr is never printed");
+      assert.equal(classifyRun({ code: 1, stderr: expired.stderr, stdout: "" }).reason, "infrastructure_session_expired");
+      executable(wrapper, '#!/usr/bin/env bash\necho "error: state lock held by /Users/someone/private/path" >&2\nexit 1\n');
+      const other = await runScript(["scripts/live/probe-entra.mjs", "entra"], { MCP_SSO_ALLOW_DIRTY: "true" }).catch((error) => error);
+      assert.match(other.stderr, /required stack output unavailable: issuer_origins/);
+      assert.doesNotMatch(other.stderr, /Users\/someone/, "an unrecognised failure reveals nothing of its own");
+    } finally {
+      executable(wrapper, original);
+    }
     // The Cloudflare probe takes its assertion from the driver's result file
     // when one is named, and refuses a result that is not an approved sign-in.
     const approved = join(fixture, "approved.json");
