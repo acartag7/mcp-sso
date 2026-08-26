@@ -208,7 +208,14 @@ const teardown = async () => {
 // it got; the process then exits with the signal's own status.
 let interrupted;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.once(signal, () => { interrupted = signal; });
+  process.once(signal, () => {
+    interrupted = signal;
+    // Kill the row's own child now rather than waiting for it to finish or
+    // time out: it holds the browser and the CLI session, and killing it is
+    // what unblocks the loop so the servers are stopped, the handoff files
+    // are removed, and the receipt is written while the operator waits.
+    try { running?.child.kill("SIGKILL"); } catch { /* already gone */ }
+  });
 }
 const record = (row, status, reason, extra = {}) => {
   results.push({ ...row, mode: row.env.MCP_SSO_DCR_MODE, status, reason, durationMs: 0, lines: [], ...extra });

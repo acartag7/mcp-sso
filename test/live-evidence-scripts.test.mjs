@@ -596,6 +596,10 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /if \(await stopServing\(serving, servedSecrets\)\)/, "a served leg that printed a credential fails the run after shutdown");
   assert.match(orchestrator, /servedSecrets\.delete\(servedTunnel\)/, "the tunnel id the harness handed serve.sh is not evidence of a leak");
   assert.match(orchestrator, /receipt\.interrupted = interrupted/, "an interrupted run still writes its receipt, never as evidence");
+  assert.match(orchestrator, /interrupted = signal;[\s\S]{0,400}running\?\.child\.kill\("SIGKILL"\)/,
+    "the signal kills the running row at once, so the teardown and the receipt do not wait for it");
+  assert.match(workflow, /BRANCH="evidence\/\$\{SHORT\}-\$\{GITHUB_RUN_ID\}"/,
+    "each recording attempt writes its own evidence branch, so a retry never needs a branch deleted by hand");
   assert.match(renderer, /evaluateReleaseReadiness\(/, "the gate's own parser checks the rendering before it is written");
   assert.ok(renderer.indexOf("evaluateReleaseReadiness(") < renderer.indexOf("writeFileSync(compatibilityPath"), "checked before written");
   const jobs = workflow.split(/^  record:$/m);

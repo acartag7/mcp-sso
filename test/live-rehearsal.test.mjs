@@ -528,8 +528,15 @@ printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required row
     });
     let slowOut = "";
     slow.stdout.setEncoding("utf8");
-    slow.stdout.on("data", (chunk) => { slowOut += chunk; if (/PASS\s+probe-entra/.test(slowOut) && !slow.killed) slow.kill("SIGINT"); });
+    let interruptedAt = 0;
+    slow.stdout.on("data", (chunk) => {
+      slowOut += chunk;
+      if (/PASS\s+probe-entra/.test(slowOut) && !slow.killed) { interruptedAt = Date.now(); slow.kill("SIGINT"); }
+    });
     const slowExit = await new Promise((resolveExit) => slow.once("exit", (code, signal) => resolveExit({ code, signal })));
+    // The signal kills the row that is running, so the run ends at once rather
+    // than after the current row finishes or reaches its ten-minute timeout.
+    assert.ok(Date.now() - interruptedAt < 20_000, "the run ended promptly after the signal");
     assert.equal(slowExit.code, 130, `SIGINT exits 128+2, got ${JSON.stringify(slowExit)}`);
     const interruptedReceipt = JSON.parse(readFileSync(out, "utf8"));
     assert.equal(interruptedReceipt.interrupted, "SIGINT");

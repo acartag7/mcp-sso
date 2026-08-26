@@ -188,7 +188,10 @@ jobs:
         run: |
           set -euo pipefail
           SHORT="$(git rev-parse --short=7 HEAD)"
-          BRANCH="evidence/${SHORT}"
+          # The run id is part of the branch name so a recording that failed
+          # after pushing can simply be dispatched again: a retry writes its
+          # own branch instead of a non-fast-forward push to the first one.
+          BRANCH="evidence/${SHORT}-${GITHUB_RUN_ID}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"

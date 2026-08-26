@@ -248,8 +248,9 @@ commit is refused outright.
 
 In CI, `gh workflow run live.yml -f record=true` on `main` runs the rehearsal
 and then, from a passing receipt whose commit is the checked-out `HEAD`,
-renders the record and opens the evidence pull request on an `evidence/<sha>`
-branch. That second job never holds the AWS role, installs no dependency, and
+renders the record and opens the evidence pull request on an
+`evidence/<sha>-<run id>` branch, so a recording interrupted after the push can
+be dispatched again without deleting a branch by hand. That second job never holds the AWS role, installs no dependency, and
 never persists a checkout credential; the rehearsal job never holds a write
 token. A branch pushed by the workflow token starts no CI run of its own, so
 the pull request says how to start one (`gh pr close <n> && gh pr reopen <n>`).
