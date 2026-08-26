@@ -509,6 +509,8 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(driver, /process\.stdout\.write\(`outcome: \$\{result\.outcome\}\\n`\)/);
   assert.doesNotMatch(`${driver}\n${browser}`, /screenshot|innerHTML|content\(\)/, "no page capture");
   assert.match(driver, /O_EXCL, 0o600/, "the result file is created owner-only");
+  assert.equal((browser.match(/trace\.push\(`session:cleared:\$\{await clearSessionCookies\(context, origin\)\}`\)/g) ?? []).length, 2,
+    "both browser tasks start from no session, so a reused or hosted browser cannot pass off another account's sign-in");
   assert.match(README, /access-edge-denial/);
   assert.match(CHECKLIST, /access-edge-denial/, "the checklist points E1 at its automated sibling");
   // The client probe against a served leg: no skipped subject, the documented

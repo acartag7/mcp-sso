@@ -10,7 +10,7 @@ import {
   CREDENTIAL_HOST, DEFINITE_OUTCOMES, OUTCOMES, classifyAccessPage, classifyLegPage, classifyMicrosoftPage, extractAssertionCookie, hostPolicy,
   parseDriverArgs,
 } from "../scripts/live/drive-identity-support.mjs";
-import { signInMicrosoft } from "../scripts/live/drive-identity-browser.mjs";
+import { clearSessionCookies, signInMicrosoft } from "../scripts/live/drive-identity-browser.mjs";
 import { readAssertionFile, testUsersJson } from "../scripts/live/run-support.mjs";
 
 const JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln";
@@ -126,6 +126,31 @@ test("BEHAVIOUR page classification: the stable markers of the Microsoft and Acc
   assert.equal(classifyLegPage({ hasConsentForm: false, text: "invalid_client: The client could not be verified for user@leak.example" }), "invalid_client");
   assert.equal(classifyLegPage({ hasConsentForm: false, text: "Signing you in" }), "other");
   assert.equal(classifyLegPage({ hasConsentForm: false, text: undefined }), "other");
+});
+
+test("BEHAVIOUR clearSessionCookies: a reused browser starts each task with no session for the leg or the sign-in hosts", async () => {
+  const cleared = [];
+  const context = {
+    cookies: async () => [
+      { name: "CF_Authorization", domain: ".leg.example" },
+      { name: "s", domain: "leg.example" },
+      { name: "CF_AppSession", domain: "team.cloudflareaccess.com" },
+      { name: "ESTSAUTH", domain: ".login.microsoftonline.com" },
+      { name: "buc", domain: "login.microsoftonline.com" },
+      { name: "keep", domain: "accounts.google.com" },
+      { name: "keep2", domain: "example.invalid" },
+      { name: "odd", domain: 42 },
+      null,
+    ],
+    clearCookies: async (filter) => { cleared.push(filter.domain); },
+  };
+  const count = await clearSessionCookies(context, "https://leg.example");
+  assert.deepEqual(cleared.sort(), ["leg.example", "login.microsoftonline.com", "team.cloudflareaccess.com"].sort(),
+    "the leg, the Access edge, and the Microsoft login lose their cookies; an unrelated host keeps its own");
+  assert.equal(count, 3);
+  assert.equal(cleared.includes("accounts.google.com"), false, "a hosted profile's other sign-ins survive");
+  const empty = { cookies: async () => { throw new Error("not supported"); }, clearCookies: async () => { throw new Error("unreachable"); } };
+  assert.equal(await clearSessionCookies(empty, "https://leg.example"), 0, "a context that cannot list cookies clears nothing and does not throw");
 });
 
 test("BEHAVIOUR assertion cookie: the Access JWT for the leg host, from the jar", () => {

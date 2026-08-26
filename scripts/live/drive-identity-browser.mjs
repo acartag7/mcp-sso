@@ -6,7 +6,7 @@
 // password is typed only where hostPolicy.mayTypeCredential says so.
 import { chromium } from "playwright-core";
 import {
-  classifyAccessPage, classifyLegPage, classifyMicrosoftPage, extractAssertionCookie, hostPolicy,
+  CREDENTIAL_HOST, classifyAccessPage, classifyLegPage, classifyMicrosoftPage, extractAssertionCookie, hostOf, hostPolicy,
 } from "./drive-identity-support.mjs";
 
 export const STEP_TIMEOUT_MS = 30_000;
@@ -31,6 +31,25 @@ export async function openBrowser(env = process.env) {
 }
 
 export const bodyText = (page) => page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
+
+/** Drop every cookie the context already holds for the leg and for the hosts
+ *  the sign-in passes through, before a task starts. A reused browser (the
+ *  first context of a CDP endpoint, or a hosted profile) can arrive with a
+ *  live Access or provider session belonging to another account, which would
+ *  let a task report `approved` without this run's user ever signing in. */
+export async function clearSessionCookies(context, origin) {
+  const legHost = hostOf(origin);
+  const cookies = await context.cookies().catch(() => []);
+  const domains = new Set();
+  for (const cookie of Array.isArray(cookies) ? cookies : []) {
+    const domain = typeof cookie?.domain === "string" ? cookie.domain.replace(/^\./, "") : "";
+    if (domain === "") continue;
+    const forLeg = domain === legHost || legHost.endsWith(`.${domain}`);
+    if (forLeg || domain.endsWith(".cloudflareaccess.com") || domain === CREDENTIAL_HOST || domain.endsWith(".microsoftonline.com")) domains.add(domain);
+  }
+  for (const domain of domains) await context.clearCookies({ domain });
+  return [...domains].length;
+}
 
 /** Complete the Microsoft sign-in pages. Resolves to an outcome only when the
  *  sign-in did not lead away from the login host; `undefined` means it did. */
@@ -64,6 +83,7 @@ export async function signInMicrosoft(page, policy, user, password, trace) {
  *  capture the assertion cookie, or record the edge's denial. */
 export async function cloudflareAssertion({ context, origin, idpName, user, password, trace }) {
   const policy = hostPolicy(origin);
+  trace.push(`session:cleared:${await clearSessionCookies(context, origin)}`);
   const page = await context.newPage();
   page.setDefaultTimeout(STEP_TIMEOUT_MS);
   await page.goto(`${origin}/oauth/authorize`, { waitUntil: "domcontentloaded" });
@@ -100,6 +120,7 @@ const CONSENT_APPROVE = 'form[action="/oauth/authorize/approve"] button[name="ap
  *  route handler on the callback would never see the 302 that carries it.) */
 export async function driveAuthorize({ context, origin, authorizeUrl, callback, user, password, idpName, trace, loopbackCallback }) {
   const policy = hostPolicy(origin, { loopbackCallback });
+  trace.push(`session:cleared:${await clearSessionCookies(context, origin)}`);
   const page = await context.newPage();
   page.setDefaultTimeout(STEP_TIMEOUT_MS);
   const response = await page.goto(authorizeUrl, { waitUntil: "domcontentloaded" });
