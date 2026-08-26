@@ -29,14 +29,16 @@ fail() { echo "run.sh: $1" >&2; exit 1; }
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Live evidence must name the exact runtime commit, and a tree with uncommitted
-# tracked changes cannot (docs/live-verification.md). Refuse it unless the
+# or untracked changes cannot (docs/live-verification.md). Refuse it unless the
 # operator says explicitly that this run is not evidence.
 RUNTIME_COMMIT="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || fail "the checkout is not a git repository; live evidence must name a commit"
-if [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+# Untracked files count too: an untracked file under src/ is compiled into
+# what a probe runs, but is not in the commit the evidence names.
+if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
   if [ "${MCP_SSO_ALLOW_DIRTY:-false}" = "true" ]; then
-    echo "run.sh: runtime commit ${RUNTIME_COMMIT} with UNCOMMITTED tracked changes — this run is not release evidence" >&2
+    echo "run.sh: runtime commit ${RUNTIME_COMMIT} with UNCOMMITTED changes — this run is not release evidence" >&2
   else
-    fail "the checkout has uncommitted tracked changes; commit them, or set MCP_SSO_ALLOW_DIRTY=true for a run that is not evidence"
+    fail "the checkout has uncommitted or untracked changes; commit them, or set MCP_SSO_ALLOW_DIRTY=true for a run that is not evidence"
   fi
 else
   echo "run.sh: runtime commit ${RUNTIME_COMMIT}" >&2

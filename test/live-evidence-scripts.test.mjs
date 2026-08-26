@@ -611,6 +611,10 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
     "a leader that is already gone is not the end of the stop: its group can still hold the tunnel");
   assert.match(orchestrator, /if \(state\.exited === undefined \|\| groupAlive\(\)\) signalGroup\("SIGTERM"\)/,
     "so the group is asked to stop even when the leader was killed outright");
+  assert.match(orchestrator, /reason = "row_timed_out"/, "a row that ran past its budget fails whatever it exited with");
+  assert.match(orchestrator, /tails\[stream\] = text\.slice\(-MAX_SCAN_TAIL\)/,
+    "and a private value split across two reads is still caught");
+  assert.match(orchestrator, /git\(\["status", "--porcelain"\]\)/, "an untracked file makes the tree dirty: the build compiles all of src");
   assert.match(workflow, /- name: drop the AWS session/, "the role is dropped as soon as the bundle is on disk");
   const afterFetch = workflow.slice(workflow.indexOf("- name: fetch the live bundle"));
   assert.ok(afterFetch.indexOf("drop the AWS session") < afterFetch.indexOf("upload-artifact"),

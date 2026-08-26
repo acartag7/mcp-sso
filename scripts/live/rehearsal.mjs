@@ -23,6 +23,7 @@ const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const ROW_TIMEOUT_MS = 10 * 60_000;
 const SERVE_READY_MS = 120_000;
 const MAX_CAPTURE = 1024 * 1024;
+const MAX_SCAN_TAIL = 4_096;
 const LEAK_NOTE = "output withheld: a private value from the run configuration appeared in it";
 /** Every credential the job itself holds: the assumed AWS session, and the
  *  runner's own tokens, with which a child could mint a fresh OIDC token for
@@ -172,11 +173,21 @@ function spawnCapturing(command, args, env, timeoutMs, secrets) {
   const started = Date.now();
   const child = spawn(command, args, { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
   const state = { child, stdout: "", stderr: "", leaked: false, exited: undefined, timedOut: false, started };
-  const scan = (chunk) => { if (!state.leaked && leaksPrivateValue(chunk, secrets)) state.leaked = true; };
+  // A private value split across two reads is still a leak, and the capture
+  // below is bounded, so the tail of each stream is carried into the next
+  // scan. MAX_SCAN_TAIL is the largest scalar a bundle may hold.
+  const tails = { out: "", err: "" };
+  const scan = (chunk, stream) => {
+    const text = tails[stream] + chunk;
+    if (!state.leaked && leaksPrivateValue(text, secrets)) state.leaked = true;
+    tails[stream] = text.slice(-MAX_SCAN_TAIL);
+  };
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => { scan(chunk); if (state.stdout.length < MAX_CAPTURE) state.stdout += chunk; });
-  child.stderr.on("data", (chunk) => { scan(chunk); if (state.stderr.length < MAX_CAPTURE) state.stderr += chunk; });
+  child.stdout.on("data", (chunk) => { scan(chunk, "out"); if (state.stdout.length < MAX_CAPTURE) state.stdout += chunk; });
+  child.stderr.on("data", (chunk) => { scan(chunk, "err"); if (state.stderr.length < MAX_CAPTURE) state.stderr += chunk; });
+  // A row that runs past its budget is over, whatever it prints or exits
+  // with afterwards: `timedOut` travels with the result and the loop fails it.
   const timer = timeoutMs === undefined ? undefined : setTimeout(() => { state.timedOut = true; stopChild(state, 15_000); }, timeoutMs);
   state.exit = new Promise((resolveExit) => {
     child.once("error", () => { if (timer) clearTimeout(timer); state.exited = { code: 1, signal: null }; state.stderr += "\nprocess could not be started"; resolveExit(state.exited); });
@@ -195,7 +206,7 @@ async function runRow(row, env, args, secrets, hold) {
   const leaked = state.leaked || leaksPrivateValue(`${state.stdout}\n${state.stderr}`, secrets);
   return {
     code: signal ? 1 : code, stdout: state.stdout, stderr: signal ? `${state.stderr}\nrow ${signal}` : state.stderr,
-    durationMs: Date.now() - state.started, leaked,
+    durationMs: Date.now() - state.started, leaked, timedOut: state.timedOut,
   };
 }
 
@@ -265,7 +276,10 @@ const rows = ROWS.filter((row) => options.rows === undefined || options.rows.has
 if (rows.length === 0) throw new Error("no rehearsal rows selected");
 const selected = new Set(rows.map((row) => row.id));
 const runtimeCommit = git(["rev-parse", "HEAD"]);
-const dirty = git(["status", "--porcelain", "--untracked-files=no"]).length > 0;
+// Untracked files count: the build compiles all of `src` and the packed
+// artifact carries `dist`, so a file that is not in the runtime commit can
+// still reach what the release matrix tests and packs.
+const dirty = git(["status", "--porcelain"]).length > 0;
 const secrets = collectPrivateValues(process.env);
 // serve.sh prints the public origins it brings up, which are private values but
 // not credentials, so the served process is scanned against the credential
@@ -371,6 +385,11 @@ try {
           if (Array.isArray(result.trace)) lines = [...lines, { kind: "NOTE", text: `trace ${result.trace.filter((step) => typeof step === "string").join(" > ")}` }];
           if (typeof result.assertion === "string") secrets.add(result.assertion);
         } catch { /* the classification already stands */ }
+      }
+      if (run.timedOut) {
+        status = "FAIL";
+        reason = "row_timed_out";
+        lines = [...lines, { kind: "FAIL", text: `the row ran past its ${Math.round(ROW_TIMEOUT_MS / 60_000)}-minute budget and was stopped` }];
       }
       if (run.leaked) {
         status = "FAIL";

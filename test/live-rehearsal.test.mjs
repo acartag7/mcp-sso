@@ -147,8 +147,11 @@ test("BEHAVIOUR adapter + run.sh: the shipped runner assembles a leg from the bu
     chmodSync(join(repo, "scripts/live/run.sh"), 0o700);
     chmodSync(join(repo, "scripts/live/ci/infra/scripts/tofu-run.sh"), 0o700);
     const capture = 'import { writeFileSync } from "node:fs";\nimport { join } from "node:path";\nwriteFileSync(join(process.env.TMPDIR, "capture.json"), JSON.stringify({ env: process.env, argv: process.argv.slice(2) }));\n';
-    for (const entry of ["probe-entra.mjs", "probe-cloudflare.mjs", "drive-identity.mjs"]) writeFileSync(join(repo, "scripts/live", entry), capture);
+    for (const entry of ["probe-entra.mjs", "probe-cloudflare.mjs", "drive-identity.mjs", "probe-client.mjs", "probe-cli.mjs"]) writeFileSync(join(repo, "scripts/live", entry), capture);
     const git = (...args) => execFileSync("git", ["-C", repo, "-c", "user.name=f", "-c", "user.email=f@example.test", ...args], { stdio: "ignore" });
+    // As in the real repository: the state a run writes is ignored, so a run
+    // does not leave its own tree dirty.
+    writeFileSync(join(repo, ".gitignore"), ".live-state/\n");
     git("init", "-q"); git("add", "-A"); git("commit", "-q", "-m", "fixture");
     const dir = bundleDir();
     const home = join(fixture, "home");
@@ -200,7 +203,6 @@ test("BEHAVIOUR adapter + run.sh: the shipped runner assembles a leg from the bu
     assert.doesNotMatch(driver.stderr, new RegExp(ENTRA.test_user_password));
     // The client kind: the driver's inputs plus which leg it is on and where the
     // served leg's audit trail is; still no application credential.
-    writeFileSync(join(repo, "scripts/live/probe-client.mjs"), capture);
     const clientRun = await runScript(["scripts/live/probe-client.mjs", "entra", "--user", "overage", "--expect", "entra_groups_overage"],
       { MCP_SSO_AUDIT_FILE: "/served/entra/audit.jsonl" });
     assert.equal(clientRun.code, 0, clientRun.stderr);
@@ -217,7 +219,6 @@ test("BEHAVIOUR adapter + run.sh: the shipped runner assembles a leg from the bu
     // The third-party CLI probe is the same kind, plus the path of the
     // client-keys file, which the probe reads itself; the keys never appear
     // in the environment.
-    writeFileSync(join(repo, "scripts/live/probe-cli.mjs"), capture);
     const keys = join(fixture, "client-keys.env");
     privateFile(keys, "ANTHROPIC_API_KEY=fixture-anthropic-key-value\n");
     const cliRun = await runScript(["scripts/live/probe-cli.mjs", "cloudflare_access", "--cli", "claude"],
