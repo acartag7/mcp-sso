@@ -79,6 +79,25 @@ test("BEHAVIOUR render-evidence: only an evidence receipt with a full commit is 
     assert.throws(() => readReceipt(file), /full runtime commit/);
     write({ kind: "other" });
     assert.throws(() => readReceipt(file), /not a rehearsal receipt/);
+    // The flags are re-derived from the rows: a receipt that claims to be
+    // complete evidence while holding a subset, a repeat, a foreign row, a
+    // row that did not pass, a dirty tree, or an unfinished run is refused.
+    write(receiptFor(["probe-entra", "release-matrix"]));
+    assert.throws(() => readReceipt(file), /row\(s\) of the rehearsal are absent/, "a trimmed receipt cannot assert its own completeness");
+    write(receiptFor([...ALL, "probe-entra"]));
+    assert.throws(() => readReceipt(file), /repeats a row/);
+    write(receiptFor([...ALL, "probe-invented"]));
+    assert.throws(() => readReceipt(file), /a row the rehearsal does not define/);
+    write(receiptFor(ALL, { rows: ALL.map((id, index) => ({ id, status: index === 3 ? "BLOCKED" : "PASS", lines: [] })) }));
+    assert.throws(() => readReceipt(file), /1 row\(s\) did not pass/);
+    write(receiptFor(ALL, { dirty: true }));
+    assert.throws(() => readReceipt(file), /dirty tree/);
+    write(receiptFor(ALL, { crashed: "stopped" }));
+    assert.throws(() => readReceipt(file), /did not finish/);
+    write(receiptFor(ALL, { interrupted: "SIGINT" }));
+    assert.throws(() => readReceipt(file), /did not finish/);
+    write(receiptFor(ALL, { rows: "not an array" }));
+    assert.throws(() => readReceipt(file), /absent/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

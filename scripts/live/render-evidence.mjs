@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { evaluateReleaseReadiness } from "../lib/release-ready.mjs";
+import { ROWS } from "./rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const PROVIDER_HEADER = "| Provider | Client | Flow driven | Status | Date | Limits |";
@@ -65,12 +66,27 @@ const subjectOf = (cells) => JSON.stringify(cells.slice(0, 3).map((cell) => cell
 const cellsOf = (line) => line.split("|").slice(1, -1).map((cell) => cell.trim());
 const fence = (value) => value.replace(/\|/g, "");
 
-export function readReceipt(path) {
+/** Read a receipt and re-derive, from its rows, everything the caller would
+ *  otherwise be trusting it to have summarised: the exact row set of the
+ *  rehearsal, once each, all passed, on a clean tree. A truncated or
+ *  hand-edited receipt cannot assert its own completeness. */
+export function readReceipt(path, expectedRows = ROWS.map((row) => row.id)) {
   const receipt = JSON.parse(readFileSync(path, "utf8"));
   if (receipt?.kind !== "mcp-sso-release-rehearsal" || receipt.schema !== 1) throw new Error("not a rehearsal receipt");
+  if (!/^[0-9a-f]{40}$/.test(receipt.runtimeCommit ?? "")) throw new Error("the receipt names no full runtime commit");
+  if (receipt.dirty === true) throw new Error("the receipt was produced from a dirty tree");
+  if (receipt.crashed !== undefined || receipt.interrupted !== undefined) throw new Error("the rehearsal did not finish");
+  const rows = Array.isArray(receipt.rows) ? receipt.rows : [];
+  const ids = rows.map((row) => row?.id);
+  const missing = expectedRows.filter((id) => !ids.includes(id));
+  const unexpected = ids.filter((id) => !expectedRows.includes(id));
+  if (missing.length > 0) throw new Error(`the receipt is partial: ${missing.length} row(s) of the rehearsal are absent`);
+  if (unexpected.length > 0) throw new Error("the receipt holds a row the rehearsal does not define");
+  if (new Set(ids).size !== ids.length) throw new Error("the receipt repeats a row");
+  const failed = rows.filter((row) => row?.status !== "PASS");
+  if (failed.length > 0) throw new Error(`the receipt is not evidence: ${failed.length} row(s) did not pass`);
   if (receipt.complete !== true) throw new Error("the receipt is partial: a --rows subset is never evidence");
   if (receipt.evidence !== true) throw new Error("the receipt is not evidence: a row failed or was blocked, or the tree was dirty");
-  if (!/^[0-9a-f]{40}$/.test(receipt.runtimeCommit ?? "")) throw new Error("the receipt names no full runtime commit");
   return receipt;
 }
 

@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
-  bundleOutput, leaksPrivateValue, maskCommand, parseBundle, privateValues, readBundleFile,
+  bundleOutput, credentialValues, leaksPrivateValue, maskCommand, parseBundle, privateValues, readBundleFile,
 } from "../scripts/live/ci/bundle-support.mjs";
 import { answer } from "../scripts/live/ci/bundle-output.mjs";
 import { fetchBundles } from "../scripts/live/ci/fetch-bundle.mjs";
@@ -87,6 +87,15 @@ test("BEHAVIOUR bundle-support: a bundle is read as owner-only data and answered
     assert.equal(maskCommand("a%b\r\nc"), "::add-mask::a%25b%0D%0Ac", "masks are encoded the way the runner decodes them");
     assert.equal(leaksPrivateValue("host=entra.example port=43111", values), true);
     assert.equal(leaksPrivateValue("PASS  authorize redirects to Entra", values), false);
+    // The credential subset: what a served process must never print. The
+    // origins and hostnames it names by design are not in it.
+    const credentials = credentialValues(readBundleFile(join(dir, "entra.json")));
+    assert.ok(credentials.has(ENTRA.entra_client_secret) && credentials.has(ENTRA.test_user_password));
+    assert.ok(credentials.has(TENANT) && credentials.has(CLIENT), "tenant and client identifiers stay credentials");
+    assert.equal(credentials.has(ENTRA.entra_redirect_uri), false, "a deployment URL is private but not a credential");
+    assert.equal(credentialValues(readBundleFile(join(dir, "cloudflare.json"))).has("https://entra.example"), false);
+    assert.ok(credentialValues(readBundleFile(join(dir, "cloudflare.json"))).has(CLOUDFLARE.cf_access_audience));
+    assert.equal(credentialValues({ note: "a long enough value with no credential key" }).size, 0, "length alone is not a credential");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -510,6 +519,25 @@ printf 'PASS RM.1 a (1 evidence item)\\n\\nPASS release matrix: 1/1 required row
     assert.equal(failedReceipt["probe-cloudflare"].status, "BLOCKED");
     assert.equal(failedReceipt["probe-cloudflare"].reason, "prerequisite_row_did_not_pass");
     assert.equal(existsSync(join(tmp, "handoff-path")), false, "the probe did not run on an operator credential after the driver failed");
+    // An interrupted run still writes a receipt: marked interrupted, never
+    // evidence, with the rows that had already finished, and it exits the way
+    // the signal would have.
+    rmSync(join(tmp, "handoff-path"), { force: true });
+    const slow = spawn(process.execPath, [join(repo, "scripts/live/rehearsal.mjs"), "--out", out, "--rows", "probe-entra,probe-google,access-login"], {
+      env: { PATH: process.env.PATH, HOME: fixture, TMPDIR: tmp, MCP_SSO_BUNDLE_DIR: dir }, cwd: repo, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let slowOut = "";
+    slow.stdout.setEncoding("utf8");
+    slow.stdout.on("data", (chunk) => { slowOut += chunk; if (/PASS\s+probe-entra/.test(slowOut) && !slow.killed) slow.kill("SIGINT"); });
+    const slowExit = await new Promise((resolveExit) => slow.once("exit", (code, signal) => resolveExit({ code, signal })));
+    assert.equal(slowExit.code, 130, `SIGINT exits 128+2, got ${JSON.stringify(slowExit)}`);
+    const interruptedReceipt = JSON.parse(readFileSync(out, "utf8"));
+    assert.equal(interruptedReceipt.interrupted, "SIGINT");
+    assert.equal(interruptedReceipt.evidence, false);
+    assert.equal(interruptedReceipt.complete, false);
+    assert.ok(interruptedReceipt.rows.length >= 1 && interruptedReceipt.rows.length < 3, "the finished rows are recorded and the rest are not");
+    assert.match(slowOut, /rehearsal interrupted by SIGINT/);
+    assert.equal(readdirSync(tmp).filter((name) => name.startsWith("mcp-sso-rehearsal-")).length, 0, "the handoff directory is removed on an interrupt too");
     writeFileSync(join(repo, "scripts/live/rehearsal-support.mjs"), "// dirty\n", { flag: "a" });
     const dirty = run(["--rows", "probe-entra"]);
     assert.equal(dirty.status, 1, "a dirty tree is never green");

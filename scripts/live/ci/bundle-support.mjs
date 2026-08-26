@@ -127,6 +127,24 @@ export function privateValues(value, out = new Set(), key = undefined) {
   return out;
 }
 
+/** The credential subset: the values under ALWAYS_PRIVATE_KEYS only. Used
+ *  where the text being scanned is expected to name the deployment it serves
+ *  (serve.sh prints the public origins it brings up, which are private values
+ *  but not credentials) and the question is only whether a credential escaped
+ *  into it. */
+export function credentialValues(value, out = new Set(), key = undefined) {
+  if (typeof value === "string") {
+    if (ALWAYS_PRIVATE_KEYS.has(key)) for (const line of value.split(/\r?\n/)) if (line.length > 0) out.add(line);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) credentialValues(item, out, key);
+  } else if (isPlainObject(value)) {
+    for (const [childKey, item] of Object.entries(value)) credentialValues(item, out, childKey);
+  }
+  return out;
+}
+
 /** True when any private value appears verbatim in the text. */
 export function leaksPrivateValue(text, values) {
   for (const value of values) if (text.includes(value)) return true;

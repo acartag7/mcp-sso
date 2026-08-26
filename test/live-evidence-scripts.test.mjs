@@ -469,7 +469,12 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   const support = read("scripts/live/rehearsal-support.mjs");
   const workflow = read(".github/workflows/live.yml");
   assert.doesNotMatch(`${rehearsal}\n${support}`, /\bSKIP\b/, "a rehearsal row is PASS, FAIL, or BLOCKED; never skipped");
-  assert.doesNotMatch(rehearsal, /process\.exit\(/, "the receipt is written before the process ends");
+  // The receipt is written before the process ends. One exit call is allowed,
+  // after the write: the signal-derived exit of an interrupted run.
+  const exits = [...rehearsal.matchAll(/process\.exit\(/g)].map((match) => match.index);
+  const written = rehearsal.indexOf("writeFileSync(options.out");
+  assert.ok(written > 0 && exits.every((at) => at > written), "no exit path ends the run before the receipt is written");
+  assert.equal(exits.length, 1, "the only exit is the signal-derived one");
   assert.match(rehearsal, /process\.exitCode = receipt\.evidence \? 0 : 1/, "green means evidence, nothing weaker");
   assert.match(support, /"BLOCKED", reason/, "a blocked row carries its armable reason");
   assert.match(rehearsal, /private_value_in_output/, "a leaked configuration value fails the row");
@@ -585,6 +590,12 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   // with the gate's parser; the writing job and the credentialed job are split.
   const renderer = read("scripts/live/render-evidence.mjs");
   assert.match(renderer, /receipt\.evidence !== true/, "a receipt that is not evidence is refused");
+  assert.match(renderer, /expectedRows\.filter\(/, "the row set is re-derived, never taken from the receipt's own summary");
+  assert.match(renderer, /rows\.filter\(\(row\) => row\?\.status !== "PASS"\)/, "every row's status is checked, not the evidence flag alone");
+  const orchestrator = read("scripts/live/rehearsal.mjs");
+  assert.match(orchestrator, /if \(await stopServing\(serving, servedSecrets\)\)/, "a served leg that printed a credential fails the run after shutdown");
+  assert.match(orchestrator, /servedSecrets\.delete\(servedTunnel\)/, "the tunnel id the harness handed serve.sh is not evidence of a leak");
+  assert.match(orchestrator, /receipt\.interrupted = interrupted/, "an interrupted run still writes its receipt, never as evidence");
   assert.match(renderer, /evaluateReleaseReadiness\(/, "the gate's own parser checks the rendering before it is written");
   assert.ok(renderer.indexOf("evaluateReleaseReadiness(") < renderer.indexOf("writeFileSync(compatibilityPath"), "checked before written");
   const jobs = workflow.split(/^  record:$/m);

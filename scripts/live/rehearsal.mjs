@@ -10,10 +10,10 @@
 // BLOCKED row names what an operator must arm; it is never a pass.
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { constants, homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { leaksPrivateValue, privateValues, readPrivateJson } from "./ci/bundle-support.mjs";
+import { credentialValues, leaksPrivateValue, privateValues, readPrivateJson } from "./ci/bundle-support.mjs";
 import { issuerOriginForLeg, readClientKeysFile, readGoogleCredentialFile } from "./run-support.mjs";
 import {
   HANDOFF_ENV, ROWS, buildReceipt, classifyCommandRun, classifyDriverRun, classifyRun, classifyServeFailure, formatSummary, generations,
@@ -47,16 +47,16 @@ function parseArgs(argv) {
  *  is failed and its output withheld. From the CI bundle when present, and from
  *  the Google credential file at the same path run.sh resolves; values the run
  *  itself produces (a captured Access assertion) are added as they appear. */
-function collectPrivateValues(env) {
+function collectPrivateValues(env, collect = privateValues) {
   const values = new Set();
   const dir = env.MCP_SSO_BUNDLE_DIR;
   if (typeof dir === "string" && dir.length > 0 && existsSync(dir)) {
-    for (const name of readdirSync(dir)) if (name.endsWith(".json")) privateValues(readPrivateJson(join(dir, name)), values);
+    for (const name of readdirSync(dir)) if (name.endsWith(".json")) collect(readPrivateJson(join(dir, name)), values);
   }
   const googleEnv = env.MCP_SSO_GOOGLE_ENV || join(env.HOME ?? homedir(), ".mcp-sso-google.env");
-  if (existsSync(googleEnv)) privateValues(readGoogleCredentialFile(googleEnv), values);
+  if (existsSync(googleEnv)) collect(readGoogleCredentialFile(googleEnv), values);
   const clientKeys = env.MCP_SSO_CLIENT_KEYS_FILE;
-  if (typeof clientKeys === "string" && clientKeys.length > 0 && existsSync(clientKeys)) privateValues(readClientKeysFile(clientKeys), values);
+  if (typeof clientKeys === "string" && clientKeys.length > 0 && existsSync(clientKeys)) collect(readClientKeysFile(clientKeys), values);
   return values;
 }
 
@@ -92,11 +92,13 @@ function spawnCapturing(command, args, env, timeoutMs, secrets) {
   return state;
 }
 
-async function runRow(row, env, args, secrets) {
+async function runRow(row, env, args, secrets, hold) {
   const state = row.kind === "command"
     ? spawnCapturing(row.command[0], row.command.slice(1), commandEnv(env), ROW_TIMEOUT_MS, secrets)
     : spawnCapturing(join(REPO, "scripts/live/run.sh"), [row.entry, row.leg, ...args], env, ROW_TIMEOUT_MS, secrets);
+  hold?.(state);
   const { code, signal } = await state.exit;
+  hold?.(undefined);
   const leaked = state.leaked || leaksPrivateValue(`${state.stdout}\n${state.stderr}`, secrets);
   return {
     code: signal ? 1 : code, stdout: state.stdout, stderr: signal ? `${state.stderr}\nrow ${signal}` : state.stderr,
@@ -145,16 +147,23 @@ async function startServing(serve, env, secrets) {
     if (ready.every(Boolean)) return { serving };
     await sleep(2_000);
   }
-  await stopServing(serving);
+  await stopServing(serving, servedSecrets);
   return { status: "FAIL", reason: "serve_failed", note: "the served origins did not answer within the readiness budget" };
 }
 
-async function stopServing(serving) {
-  if (serving === undefined || serving.exited !== undefined) return;
-  serving.child.kill("SIGTERM");
-  const grace = setTimeout(() => serving.child.kill("SIGKILL"), 30_000);
-  await serving.exit;
-  clearTimeout(grace);
+/** Stop the generation's servers and report whether the serve process printed
+ *  a CREDENTIAL at any point in its life. A leak from a server that stayed
+ *  healthy is only visible here, after shutdown: the readiness check above sees
+ *  the process only while it is starting. */
+async function stopServing(serving, credentials) {
+  if (serving === undefined) return false;
+  if (serving.exited === undefined) {
+    serving.child.kill("SIGTERM");
+    const grace = setTimeout(() => serving.child.kill("SIGKILL"), 30_000);
+    await serving.exit;
+    clearTimeout(grace);
+  }
+  return credentials !== undefined && leaksPrivateValue(`${serving.stdout}\n${serving.stderr}`, credentials);
 }
 
 function git(args) {
@@ -168,6 +177,16 @@ const selected = new Set(rows.map((row) => row.id));
 const runtimeCommit = git(["rev-parse", "HEAD"]);
 const dirty = git(["status", "--porcelain", "--untracked-files=no"]).length > 0;
 const secrets = collectPrivateValues(process.env);
+// serve.sh prints the public origins it brings up, which are private values but
+// not credentials, so the served process is scanned against the credential
+// subset only: the question there is whether a credential escaped into the
+// served application's own output, not whether the deployment named itself.
+const servedSecrets = collectPrivateValues(process.env, credentialValues);
+// serve.sh names the tunnel it was told to run, in its banner and in the
+// connector configuration path, so the id the harness itself handed it is not
+// evidence of a leak. Every other credential still fails the run.
+const servedTunnel = tunnelId(process.env);
+if (servedTunnel !== undefined) servedSecrets.delete(servedTunnel);
 const startedAt = new Date().toISOString();
 const results = [];
 // Driver results (an Access assertion is one) live here for the run, owner-only,
@@ -175,13 +194,21 @@ const results = [];
 const handoffDir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "mcp-sso-rehearsal-"));
 const provided = new Map();
 let serving;
+const served = [];
+let running;
 const teardown = async () => {
-  await stopServing(serving);
+  // The row's own child first: it holds the browser and the CLI session.
+  try { running?.child.kill("SIGKILL"); } catch { /* already gone */ }
+  await stopServing(serving, servedSecrets);
   serving = undefined;
   rmSync(handoffDir, { recursive: true, force: true });
 };
+// An interrupted run still writes its receipt, marked interrupted and never
+// evidence, so the operator and the workflow artifact have a record of how far
+// it got; the process then exits with the signal's own status.
+let interrupted;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.once(signal, () => { teardown().finally(() => process.kill(process.pid, signal)); });
+  process.once(signal, () => { interrupted = signal; });
 }
 const record = (row, status, reason, extra = {}) => {
   results.push({ ...row, mode: row.env.MCP_SSO_DCR_MODE, status, reason, durationMs: 0, lines: [], ...extra });
@@ -191,6 +218,7 @@ process.stdout.write(`rehearsal: runtime commit ${runtimeCommit}${dirty ? " (dir
 let crashed;
 try {
   for (const generation of generations(rows)) {
+    if (interrupted !== undefined) break;
     if (generation.serve !== undefined) {
       const started = await startServing(generation.serve, process.env, secrets);
       if (started.serving === undefined) {
@@ -221,7 +249,8 @@ try {
           continue;
         }
       }
-      const run = await runRow(row, env, args, secrets);
+      if (interrupted !== undefined) break;
+      const run = await runRow(row, env, args, secrets, (state) => { running = state; });
       const outcome = row.kind === "driver" ? classifyDriverRun({ ...run, expect: row.expect })
         : row.kind === "command" ? classifyCommandRun(run) : classifyRun(run);
       let { lines, status, reason } = outcome;
@@ -253,7 +282,12 @@ try {
         if (tail) process.stdout.write(`${tail.replace(/^/gm, "    ")}\n`);
       }
     }
-    await stopServing(serving);
+    // A served leg that printed a private value is a failure of the run even
+    // when every row passed: the leak is only observable once the process has
+    // been stopped and its whole output is in hand.
+    if (await stopServing(serving, servedSecrets)) {
+      served.push({ id: `serve:${generation.serve?.legs.join("+") ?? "leg"}`, kind: "serve", entry: "scripts/live/serve.sh", leg: generation.rows[0]?.leg ?? "", env: {} });
+    }
     serving = undefined;
   }
 } catch (error) {
@@ -261,6 +295,7 @@ try {
 } finally {
   await teardown();
 }
+for (const row of served) record(row, "FAIL", "private_value_in_output", { lines: [{ kind: "FAIL", text: LEAK_NOTE }] });
 const receipt = buildReceipt({
   runtimeCommit, dirty, startedAt, finishedAt: new Date().toISOString(), rows: results,
   runner: process.env.GITHUB_RUN_ID ? `github-actions:${process.env.GITHUB_RUN_ID}` : "local",
@@ -268,6 +303,10 @@ const receipt = buildReceipt({
 if (crashed !== undefined) {
   receipt.evidence = false;
   receipt.crashed = "the rehearsal stopped before every selected row ran";
+}
+if (interrupted !== undefined) {
+  receipt.evidence = false;
+  receipt.interrupted = interrupted;
 }
 // The receipt is the one output that leaves the machine; nothing private may
 // be in it, whatever a row's own scan concluded.
@@ -279,4 +318,10 @@ mkdirSync(dirname(options.out), { recursive: true, mode: 0o700 });
 writeFileSync(options.out, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
 process.stdout.write(`\n${formatSummary(receipt)}\nreceipt: ${options.out}\n`);
 if (crashed !== undefined) process.stdout.write(`rehearsal stopped early: ${crashed?.constructor?.name ?? "error"}\n`);
+if (interrupted !== undefined) {
+  // The receipt is written and every child is stopped; exit the way the signal
+  // would have, so a shell and CI see the interruption for what it was.
+  process.stdout.write(`rehearsal interrupted by ${interrupted}\n`);
+  process.exit(128 + (constants.signals[interrupted] ?? 15));
+}
 process.exitCode = receipt.evidence ? 0 : 1;
