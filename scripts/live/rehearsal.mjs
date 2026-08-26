@@ -173,7 +173,7 @@ async function stopChild(state, graceMs) {
 function spawnCapturing(command, args, env, timeoutMs, secrets) {
   const started = Date.now();
   const child = spawn(command, args, { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
-  const state = { child, stdout: "", stderr: "", leaked: false, exited: undefined, timedOut: false, started };
+  const state = { child, stdout: "", stderr: "", leaked: false, exited: undefined, timedOut: false, stopping: undefined, started };
   // A private value split across two reads is still a leak, and the capture
   // below is bounded, so the tail of each stream is carried into the next
   // scan. MAX_SCAN_TAIL is the largest scalar a bundle may hold.
@@ -189,7 +189,11 @@ function spawnCapturing(command, args, env, timeoutMs, secrets) {
   child.stderr.on("data", (chunk) => { scan(chunk, "err"); if (state.stderr.length < MAX_CAPTURE) state.stderr += chunk; });
   // A row that runs past its budget is over, whatever it prints or exits
   // with afterwards: `timedOut` travels with the result and the loop fails it.
-  const timer = timeoutMs === undefined ? undefined : setTimeout(() => { state.timedOut = true; stopChild(state, 15_000); }, timeoutMs);
+  // The stop is kept, not fired and forgotten: runRow waits for it, so the
+  // next row cannot start while a browser or CLI from this one is still being
+  // killed and still able to reach the served leg.
+  const timer = timeoutMs === undefined ? undefined
+    : setTimeout(() => { state.timedOut = true; state.stopping = stopChild(state, 15_000); }, timeoutMs);
   state.exit = new Promise((resolveExit) => {
     child.once("error", () => { if (timer) clearTimeout(timer); state.exited = { code: 1, signal: null }; state.stderr += "\nprocess could not be started"; resolveExit(state.exited); });
     child.once("exit", (code, signal) => { if (timer) clearTimeout(timer); state.exited = { code, signal }; resolveExit(state.exited); });
@@ -203,6 +207,7 @@ async function runRow(row, env, args, secrets, hold) {
     : spawnCapturing(join(REPO, "scripts/live/run.sh"), [row.entry, row.leg, ...args], childEnv(env), ROW_TIMEOUT_MS, secrets);
   hold?.(state);
   const { code, signal } = await state.exit;
+  if (state.stopping !== undefined) await state.stopping;
   hold?.(undefined);
   const leaked = state.leaked || leaksPrivateValue(`${state.stdout}\n${state.stderr}`, secrets);
   return {

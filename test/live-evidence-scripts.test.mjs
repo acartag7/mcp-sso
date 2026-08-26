@@ -612,6 +612,9 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /if \(state\.exited === undefined \|\| groupAlive\(\)\) signalGroup\("SIGTERM"\)/,
     "so the group is asked to stop even when the leader was killed outright");
   assert.match(orchestrator, /reason = "row_timed_out"/, "a row that ran past its budget fails whatever it exited with");
+  assert.match(orchestrator, /state\.stopping = stopChild\(state, 15_000\)/, "and its stop is kept");
+  assert.match(orchestrator, /if \(state\.stopping !== undefined\) await state\.stopping;/,
+    "and waited for, so the next row never overlaps a browser or CLI still being killed");
   assert.match(orchestrator, /tails\[stream\] = text\.slice\(-MAX_SCAN_TAIL\)/,
     "and a private value split across two reads is still caught");
   assert.match(orchestrator, /git\(\["status", "--porcelain"\]\)/, "an untracked file makes the tree dirty: the build compiles all of src");
