@@ -113,19 +113,41 @@ function tunnelId(env) {
   return undefined;
 }
 
+/** Ask a child's whole process group to stop, then kill what is left. run.sh
+ *  execs a Node probe that owns a browser, a pseudo-terminal and a private
+ *  HOME, and serve.sh supervises the tunnel and the example servers: signalling
+ *  the group is what reaches them, and SIGTERM first is what lets each clean up
+ *  after itself. Every stop in this file goes through here, so the timeout, an
+ *  interrupt and the teardown all end a child the same way. */
+async function stopChild(state, graceMs) {
+  if (state === undefined || state.exited !== undefined) return;
+  const signalGroup = (signal) => {
+    try {
+      process.kill(-state.child.pid, signal);
+    } catch {
+      try { state.child.kill(signal); } catch { /* already gone */ }
+    }
+  };
+  signalGroup("SIGTERM");
+  const grace = setTimeout(() => signalGroup("SIGKILL"), graceMs);
+  await state.exit;
+  clearTimeout(grace);
+}
+
 /** Spawn with both streams captured. Every chunk is scanned for a private
  *  value as it arrives, before the capture is bounded, so a leak past the
- *  bound still marks the run. */
+ *  bound still marks the run. The child leads its own process group, so it can
+ *  be stopped with everything it started. */
 function spawnCapturing(command, args, env, timeoutMs, secrets) {
   const started = Date.now();
-  const child = spawn(command, args, { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
-  const state = { child, stdout: "", stderr: "", leaked: false, exited: undefined, started };
+  const child = spawn(command, args, { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+  const state = { child, stdout: "", stderr: "", leaked: false, exited: undefined, timedOut: false, started };
   const scan = (chunk) => { if (!state.leaked && leaksPrivateValue(chunk, secrets)) state.leaked = true; };
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => { scan(chunk); if (state.stdout.length < MAX_CAPTURE) state.stdout += chunk; });
   child.stderr.on("data", (chunk) => { scan(chunk); if (state.stderr.length < MAX_CAPTURE) state.stderr += chunk; });
-  const timer = timeoutMs === undefined ? undefined : setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => { state.timedOut = true; stopChild(state, 15_000); }, timeoutMs);
   state.exit = new Promise((resolveExit) => {
     child.once("error", () => { if (timer) clearTimeout(timer); state.exited = { code: 1, signal: null }; state.stderr += "\nprocess could not be started"; resolveExit(state.exited); });
     child.once("exit", (code, signal) => { if (timer) clearTimeout(timer); state.exited = { code, signal }; resolveExit(state.exited); });
@@ -201,12 +223,7 @@ async function startServing(serve, env, secrets, hold) {
  *  the process only while it is starting. */
 async function stopServing(serving, credentials) {
   if (serving === undefined) return false;
-  if (serving.exited === undefined) {
-    serving.child.kill("SIGTERM");
-    const grace = setTimeout(() => serving.child.kill("SIGKILL"), 30_000);
-    await serving.exit;
-    clearTimeout(grace);
-  }
+  await stopChild(serving, 30_000);
   return credentials !== undefined && leaksPrivateValue(`${serving.stdout}\n${serving.stderr}`, credentials);
 }
 
@@ -243,12 +260,7 @@ let running;
 const teardown = async () => {
   // The row's own child first: it holds the browser and the CLI session. It is
   // asked to stop, then killed if it does not.
-  if (running !== undefined && running.exited === undefined) {
-    try { running.child.kill("SIGTERM"); } catch { /* already gone */ }
-    const grace = setTimeout(() => { try { running?.child.kill("SIGKILL"); } catch { /* already gone */ } }, 5_000);
-    await running.exit;
-    clearTimeout(grace);
-  }
+  await stopChild(running, 5_000);
   await stopServing(serving, servedSecrets);
   serving = undefined;
   rmSync(handoffDir, { recursive: true, force: true });
@@ -265,9 +277,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     // cloudflared and the example servers from its own EXIT and TERM traps,
     // which a SIGKILL would skip, orphaning the tunnel. SIGTERM here, and the
     // teardown below escalates if a child ignores it.
-    for (const state of [running, serving]) {
-      try { state?.child.kill("SIGTERM"); } catch { /* already gone */ }
-    }
+    for (const state of [running, serving]) void stopChild(state, 5_000);
   });
 }
 const record = (row, status, reason, extra = {}) => {

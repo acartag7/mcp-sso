@@ -163,6 +163,23 @@ test("BEHAVIOUR pty-run.py: a wide terminal, relayed stdin, and the command's ow
       tick();
     });
     assert.equal(gone, true, "the command started under the pty is gone with the relay");
+    // A group signal, which is how the orchestrator stops a timed-out row,
+    // reaches the command under the relay as well as the relay itself.
+    const grouped = spawnPty("sh", ["-c", "echo PID=$$; sleep 60"], { cwd: dir, env });
+    assert.equal(await waitForOutput(grouped, (text) => /PID=\d+/.test(text), 10_000), true);
+    const groupedPid = Number(grouped.output.match(/PID=(\d+)/)[1]);
+    process.kill(grouped.child.pid, "SIGTERM");
+    await grouped.exit;
+    const groupGone = await new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        try { process.kill(groupedPid, 0); } catch { return resolve(true); }
+        if (Date.now() - started > 5_000) return resolve(false);
+        setTimeout(tick, 100);
+      };
+      tick();
+    });
+    assert.equal(groupGone, true, "SIGTERM to the relay ends the command it started");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

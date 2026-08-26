@@ -599,8 +599,12 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /if \(await stopServing\(serving, servedSecrets\)\)/, "a served leg that printed a credential fails the run after shutdown");
   assert.match(orchestrator, /servedSecrets\.delete\(servedTunnel\)/, "the tunnel id the harness handed serve.sh is not evidence of a leak");
   assert.match(orchestrator, /receipt\.interrupted = interrupted/, "an interrupted run still writes its receipt, never as evidence");
-  assert.match(orchestrator, /for \(const state of \[running, serving\]\)[\s\S]{0,120}kill\("SIGTERM"\)/,
-    "an interrupt asks each child to stop, so serve.sh runs its own cleanup traps instead of orphaning the tunnel");
+  assert.match(orchestrator, /for \(const state of \[running, serving\]\) void stopChild\(state, 5_000\)/,
+    "an interrupt stops each child the one bounded way");
+  assert.match(orchestrator, /signalGroup\("SIGTERM"\);[\s\S]{0,200}setTimeout\(\(\) => signalGroup\("SIGKILL"\), graceMs\)/,
+    "which asks the whole process group first, so serve.sh runs its cleanup traps and a probe closes its browser, then kills what is left");
+  assert.match(orchestrator, /detached: true/, "every child leads its own group, so a stop reaches what it started");
+  assert.equal((orchestrator.match(/\bkill\("SIGKILL"\)/g) ?? []).length, 0, "no path kills a single pid outright");
   assert.match(orchestrator, /collect\(output\?\.value, values, name\)/,
     "a laptop run learns the stack values, so the leak scan means the same thing there as in CI");
   assert.match(orchestrator, /\[stack, "output", "-json"\]/, "read through the same wrapper run.sh uses");
