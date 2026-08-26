@@ -122,7 +122,7 @@ const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms)
  *  after itself. Every stop in this file goes through here, so the timeout, an
  *  interrupt and the teardown all end a child the same way. */
 async function stopChild(state, graceMs) {
-  if (state === undefined || state.exited !== undefined) return;
+  if (state === undefined) return;
   const signalGroup = (signal) => {
     try {
       process.kill(-state.child.pid, signal);
@@ -138,12 +138,21 @@ async function stopChild(state, graceMs) {
       return false;
     }
   };
-  signalGroup("SIGTERM");
+  // A leader that is already gone still leaves its group: serve.sh killed
+  // outright, or by the machine, leaves cloudflared and the servers in it. The
+  // group is therefore checked whether or not the leader is still running.
+  // (The check signals the leader's own group id; it runs in the same call as
+  // the termination, so the window in which that id could be reused is the
+  // few milliseconds between the leader's exit and this line.)
   const deadline = Date.now() + graceMs;
-  // Bounded: a leader that ignores SIGTERM must not hold the run open until
-  // the job's own timeout. Whatever the leader does, the group is checked and
-  // escalated when the budget runs out.
-  await Promise.race([state.exit, sleep(graceMs)]);
+  // The group is asked to stop whether or not its leader is still there: when
+  // the leader was killed outright, its children never received the signal.
+  if (state.exited === undefined || groupAlive()) signalGroup("SIGTERM");
+  if (state.exited === undefined) {
+    // Bounded: a leader that ignores SIGTERM must not hold the run open until
+    // the job's own timeout.
+    await Promise.race([state.exit, sleep(graceMs)]);
+  }
   // A process group outlives its leader: the browser or the CLI a probe
   // started can still be in it after run.sh has gone. Wait for the group
   // itself, and escalate to the group when the budget runs out.

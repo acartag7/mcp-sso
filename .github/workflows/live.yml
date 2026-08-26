@@ -166,6 +166,15 @@ jobs:
           aws-region: eu-central-1
       - name: fetch the live bundle
         run: node scripts/live/ci/fetch-bundle.mjs
+      - name: drop the AWS session
+        # Nothing after this step needs the role: the bundle is on disk and
+        # every later step, this job's own and the actions it calls, reads only
+        # files. Emptying the session variables for the rest of the job means a
+        # compromised action cannot read the /mcp-sso/live/* secrets it names.
+        run: |
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN AWS_CREDENTIAL_EXPIRATION; do
+            echo "$name=" >> "$GITHUB_ENV"
+          done
       - name: mask every private value before anything else prints
         run: node scripts/live/ci/mask-bundle.mjs
       - name: install the tunnel credentials

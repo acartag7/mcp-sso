@@ -607,6 +607,14 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
     "and waits for the group, not only its leader: a browser or CLI in the group outlives run.sh");
   assert.match(orchestrator, /await Promise\.race\(\[state\.exit, sleep\(graceMs\)\]\)/,
     "and never waits for a leader that ignores the signal: the budget is what decides when the group is killed");
+  assert.match(orchestrator, /if \(state === undefined\) return;/,
+    "a leader that is already gone is not the end of the stop: its group can still hold the tunnel");
+  assert.match(orchestrator, /if \(state\.exited === undefined \|\| groupAlive\(\)\) signalGroup\("SIGTERM"\)/,
+    "so the group is asked to stop even when the leader was killed outright");
+  assert.match(workflow, /- name: drop the AWS session/, "the role is dropped as soon as the bundle is on disk");
+  const afterFetch = workflow.slice(workflow.indexOf("- name: fetch the live bundle"));
+  assert.ok(afterFetch.indexOf("drop the AWS session") < afterFetch.indexOf("upload-artifact"),
+    "before any later action runs, so a compromised one cannot read the secrets the role can");
   const serve = read("scripts/live/serve.sh");
   assert.match(serve, /env -u MCP_SSO_BUNDLE_DIR -u MCP_SSO_GOOGLE_ENV -u MCP_SSO_CLIENT_KEYS_FILE[^\n]*\\\n\s*cloudflared tunnel/,
     "the connector is not told where the run's private files are");
