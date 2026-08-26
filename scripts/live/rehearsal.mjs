@@ -245,6 +245,11 @@ async function startServing(serve, env, secrets, hold) {
   const deadline = Date.now() + SERVE_READY_MS;
   while (Date.now() < deadline) {
     if (serving.exited !== undefined) {
+      // The leader is gone, which says nothing about its group: a serve.sh
+      // killed outright during startup leaves cloudflared and the servers
+      // running. Stop the group before reporting the failure, because the
+      // caller drops its handle on this path.
+      await stopChild(serving, 10_000);
       const failure = classifyServeFailure(serving.stderr);
       const tail = `${serving.stdout}\n${serving.stderr}`.trim().split("\n").slice(-20).join("\n");
       return { ...failure, note: serving.leaked || leaksPrivateValue(tail, secrets) ? LEAK_NOTE : tail };

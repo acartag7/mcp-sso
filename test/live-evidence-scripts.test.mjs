@@ -615,10 +615,19 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /tails\[stream\] = text\.slice\(-MAX_SCAN_TAIL\)/,
     "and a private value split across two reads is still caught");
   assert.match(orchestrator, /git\(\["status", "--porcelain"\]\)/, "an untracked file makes the tree dirty: the build compiles all of src");
-  assert.match(workflow, /- name: drop the AWS session/, "the role is dropped as soon as the bundle is on disk");
+  assert.match(orchestrator, /await stopChild\(serving, 10_000\);[\s\S]{0,200}classifyServeFailure/,
+    "a serve child that died during startup has its group stopped before the failure is reported");
+  // Both the assumed session and the means to mint another are dropped as soon
+  // as the bundle is on disk, on every path, before any later action runs.
+  const dropStep = workflow.slice(workflow.indexOf("- name: drop the job's credentials"), workflow.indexOf("- name: mask every private value"));
+  assert.ok(dropStep.length > 0, "the drop step exists");
+  assert.match(dropStep, /if: always\(\)/, "it runs even when the fetch failed, because the cleanup and the upload do");
+  for (const name of ["AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]) {
+    assert.match(dropStep, new RegExp(name), `${name} is dropped`);
+  }
   const afterFetch = workflow.slice(workflow.indexOf("- name: fetch the live bundle"));
-  assert.ok(afterFetch.indexOf("drop the AWS session") < afterFetch.indexOf("upload-artifact"),
-    "before any later action runs, so a compromised one cannot read the secrets the role can");
+  assert.ok(afterFetch.indexOf("drop the job's credentials") < afterFetch.indexOf("upload-artifact"),
+    "before any later action runs, so a compromised one can neither read the secrets nor assume the role again");
   const serve = read("scripts/live/serve.sh");
   assert.match(serve, /env -u MCP_SSO_BUNDLE_DIR -u MCP_SSO_GOOGLE_ENV -u MCP_SSO_CLIENT_KEYS_FILE[^\n]*\\\n\s*cloudflared tunnel/,
     "the connector is not told where the run's private files are");
