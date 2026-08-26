@@ -40,15 +40,20 @@ export const bodyText = (page) => page.locator("body").innerText({ timeout: 5_00
 export async function clearSessionCookies(context, origin) {
   const legHost = hostOf(origin);
   const cookies = await context.cookies().catch(() => []);
-  const domains = new Set();
+  // Playwright matches `domain` against the value the cookie is stored under,
+  // so a domain cookie must be cleared by its stored form, leading dot and
+  // all; the dot-less copy is only for deciding which host a cookie is for.
+  const stored = new Set();
   for (const cookie of Array.isArray(cookies) ? cookies : []) {
-    const domain = typeof cookie?.domain === "string" ? cookie.domain.replace(/^\./, "") : "";
+    const domain = typeof cookie?.domain === "string" ? cookie.domain : "";
     if (domain === "") continue;
-    const forLeg = domain === legHost || legHost.endsWith(`.${domain}`);
-    if (forLeg || domain.endsWith(".cloudflareaccess.com") || domain === CREDENTIAL_HOST || domain.endsWith(".microsoftonline.com")) domains.add(domain);
+    const host = domain.replace(/^\./, "");
+    const forLeg = host === legHost || legHost.endsWith(`.${host}`);
+    if (forLeg || host === "cloudflareaccess.com" || host.endsWith(".cloudflareaccess.com")
+      || host === CREDENTIAL_HOST || host === "microsoftonline.com" || host.endsWith(".microsoftonline.com")) stored.add(domain);
   }
-  for (const domain of domains) await context.clearCookies({ domain });
-  return [...domains].length;
+  for (const domain of stored) await context.clearCookies({ domain });
+  return stored.size;
 }
 
 /** Complete the Microsoft sign-in pages. Resolves to an outcome only when the

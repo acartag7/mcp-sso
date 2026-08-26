@@ -145,10 +145,10 @@ test("BEHAVIOUR clearSessionCookies: a reused browser starts each task with no s
     clearCookies: async (filter) => { cleared.push(filter.domain); },
   };
   const count = await clearSessionCookies(context, "https://leg.example");
-  assert.deepEqual(cleared.sort(), ["leg.example", "login.microsoftonline.com", "team.cloudflareaccess.com"].sort(),
-    "the leg, the Access edge, and the Microsoft login lose their cookies; an unrelated host keeps its own");
-  assert.equal(count, 3);
-  assert.equal(cleared.includes("accounts.google.com"), false, "a hosted profile's other sign-ins survive");
+  assert.deepEqual(cleared.sort(), [".leg.example", "leg.example", "team.cloudflareaccess.com", ".login.microsoftonline.com", "login.microsoftonline.com"].sort(),
+    "every cookie is cleared by the domain it is stored under, leading dot and all, or Playwright's filter misses it");
+  assert.equal(count, 5);
+  assert.equal(cleared.some((domain) => domain.replace(/^\./, "") === "accounts.google.com"), false, "a hosted profile's other sign-ins survive");
   const empty = { cookies: async () => { throw new Error("not supported"); }, clearCookies: async () => { throw new Error("unreachable"); } };
   assert.equal(await clearSessionCookies(empty, "https://leg.example"), 0, "a context that cannot list cookies clears nothing and does not throw");
 });
