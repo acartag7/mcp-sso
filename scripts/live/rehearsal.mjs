@@ -75,6 +75,24 @@ function collectPrivateValues(env, collect = privateValues) {
   const dir = env.MCP_SSO_BUNDLE_DIR;
   if (typeof dir === "string" && dir.length > 0 && existsSync(dir)) {
     for (const name of readdirSync(dir)) if (name.endsWith(".json")) collect(readPrivateJson(join(dir, name)), values);
+  } else {
+    // The laptop path: the same values live in the stacks rather than in a
+    // bundle, and the scanner must know them there too, or a row that echoed
+    // a client secret or a test password locally would not be caught. Read
+    // once, through the same wrapper run.sh uses; a session that cannot answer
+    // leaves the run to fail on its first stack read, with nothing scanned yet.
+    for (const stack of [env.MCP_SSO_ENTRA_STACK, env.MCP_SSO_CLOUDFLARE_STACK]) {
+      if (typeof stack !== "string" || stack.length === 0) continue;
+      try {
+        const raw = execFileSync("./scripts/tofu-run.sh", [stack, "output", "-json"], {
+          cwd: env.MCP_SSO_INFRA_DIR, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 120_000,
+        });
+        // `tofu output -json` answers {name: {value, type, sensitive}}: the
+        // output's own name is the key, so the credential keys classify the
+        // same way they do when the value comes from a bundle.
+        for (const [name, output] of Object.entries(JSON.parse(raw))) collect(output?.value, values, name);
+      } catch { /* the first stack read of the run reports this properly */ }
+    }
   }
   const googleEnv = env.MCP_SSO_GOOGLE_ENV || join(env.HOME ?? homedir(), ".mcp-sso-google.env");
   if (existsSync(googleEnv)) collect(readGoogleCredentialFile(googleEnv), values);
@@ -223,8 +241,14 @@ let serving;
 const served = [];
 let running;
 const teardown = async () => {
-  // The row's own child first: it holds the browser and the CLI session.
-  try { running?.child.kill("SIGKILL"); } catch { /* already gone */ }
+  // The row's own child first: it holds the browser and the CLI session. It is
+  // asked to stop, then killed if it does not.
+  if (running !== undefined && running.exited === undefined) {
+    try { running.child.kill("SIGTERM"); } catch { /* already gone */ }
+    const grace = setTimeout(() => { try { running?.child.kill("SIGKILL"); } catch { /* already gone */ } }, 5_000);
+    await running.exit;
+    clearTimeout(grace);
+  }
   await stopServing(serving, servedSecrets);
   serving = undefined;
   rmSync(handoffDir, { recursive: true, force: true });
@@ -236,12 +260,14 @@ let interrupted;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.once(signal, () => {
     interrupted = signal;
-    // Kill the row's own child now rather than waiting for it to finish or
-    // time out: it holds the browser and the CLI session, and killing it is
-    // what unblocks the loop so the servers are stopped, the handoff files
-    // are removed, and the receipt is written while the operator waits.
-    try { running?.child.kill("SIGKILL"); } catch { /* already gone */ }
-    try { serving?.child.kill("SIGKILL"); } catch { /* already gone */ }
+    // End the children now rather than waiting for the row to finish or time
+    // out, but end them the way a shutdown does: serve.sh terminates
+    // cloudflared and the example servers from its own EXIT and TERM traps,
+    // which a SIGKILL would skip, orphaning the tunnel. SIGTERM here, and the
+    // teardown below escalates if a child ignores it.
+    for (const state of [running, serving]) {
+      try { state?.child.kill("SIGTERM"); } catch { /* already gone */ }
+    }
   });
 }
 const record = (row, status, reason, extra = {}) => {

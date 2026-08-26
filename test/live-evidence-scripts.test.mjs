@@ -599,10 +599,15 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /if \(await stopServing\(serving, servedSecrets\)\)/, "a served leg that printed a credential fails the run after shutdown");
   assert.match(orchestrator, /servedSecrets\.delete\(servedTunnel\)/, "the tunnel id the harness handed serve.sh is not evidence of a leak");
   assert.match(orchestrator, /receipt\.interrupted = interrupted/, "an interrupted run still writes its receipt, never as evidence");
-  assert.match(orchestrator, /interrupted = signal;[\s\S]{0,400}running\?\.child\.kill\("SIGKILL"\)/,
-    "the signal kills the running row at once, so the teardown and the receipt do not wait for it");
-  assert.match(orchestrator, /interrupted = signal;[\s\S]{0,600}serving\?\.child\.kill\("SIGKILL"\)/,
-    "and the serve child, which exists from the moment it is spawned, not only once it is ready");
+  assert.match(orchestrator, /for \(const state of \[running, serving\]\)[\s\S]{0,120}kill\("SIGTERM"\)/,
+    "an interrupt asks each child to stop, so serve.sh runs its own cleanup traps instead of orphaning the tunnel");
+  assert.match(orchestrator, /collect\(output\?\.value, values, name\)/,
+    "a laptop run learns the stack values, so the leak scan means the same thing there as in CI");
+  assert.match(orchestrator, /\[stack, "output", "-json"\]/, "read through the same wrapper run.sh uses");
+  assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""/,
+    "the step that runs downloaded code cannot mint an OIDC token for the live environment");
+  assert.match(orchestrator, /interrupted = signal;[\s\S]{0,700}for \(const state of \[running, serving\]\)/,
+    "the signal ends both children at once, so the teardown and the receipt do not wait for the row");
   assert.ok(orchestrator.indexOf("hold?.(serving)") < orchestrator.indexOf("const deadline = Date.now() + SERVE_READY_MS"),
     "the serve child is published before the readiness wait, so an interrupt during startup reaches it");
   assert.match(orchestrator, /function childEnv\(env\)[\s\S]{0,500}for \(const key of JOB_CREDENTIAL_KEYS\) delete copy\[key\]/,

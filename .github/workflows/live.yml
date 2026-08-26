@@ -117,6 +117,14 @@ jobs:
         # The third-party MCP clients the CLI rows drive. Exact versions past the
         # 15-day floor, recorded in the dependency ledger's tools block, which
         # check:deps binds to this line. Lifecycle scripts stay disabled.
+        env:
+          # The job holds id-token: write for the role assumption below, which
+          # puts the OIDC request variables in every step's environment. This
+          # step runs third-party code (npm's resolver, then the one vetted
+          # install script), so they are emptied here: downloaded code must not
+          # be able to mint a token for the live environment.
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
         run: |
           npm install -g --ignore-scripts @anthropic-ai/claude-code@2.1.227 @openai/codex@0.147.0
           # One vetted exception, run explicitly rather than by enabling
