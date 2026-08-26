@@ -82,6 +82,8 @@ jobs:
         # makes the same rule visible and enforced in the repository too.
         env:
           REF: ${{ github.ref }}
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
         run: |
           case "$REF" in
             refs/heads/main|refs/heads/rehearsal/*) echo "ref admitted: $REF" ;;
@@ -95,19 +97,36 @@ jobs:
         with:
           node-version: "24"
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: install the repository's own dependencies
+        env:
+          # No step before the role assumption runs with the job's OIDC request
+          # credential: with `id-token: write` at job scope it is otherwise in
+          # every step's environment, and any third-party code a step executes
+          # could mint a token for the `live` environment with it.
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+        run: pnpm install --frozen-lockfile
       - name: require the browser the driver runs
         # The runner image's Google Chrome is what playwright-core drives; a
         # missing browser fails here, once, instead of as eight blocked rows.
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
         run: google-chrome --version
       - name: name the bundle directory
         # The runner context is not available in job-level env.
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
         run: echo "MCP_SSO_BUNDLE_DIR=$RUNNER_TEMP/mcp-sso-bundle" >> "$GITHUB_ENV"
       # Third-party code the job needs is installed before the role is assumed,
       # so no credential exists on the runner while it is fetched and run.
       - name: install cloudflared 2026.7.3 (2026-07-23), pinned by digest
         # The tunnel connector the served legs run behind. No package repository
         # and no install script: one release asset, one recorded SHA-256.
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
         run: |
           curl -sSL --fail -o "$RUNNER_TEMP/cloudflared" https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-amd64
           echo "9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17  $RUNNER_TEMP/cloudflared" | sha256sum -c -
@@ -118,11 +137,6 @@ jobs:
         # 15-day floor, recorded in the dependency ledger's tools block, which
         # check:deps binds to this line. Lifecycle scripts stay disabled.
         env:
-          # The job holds id-token: write for the role assumption below, which
-          # puts the OIDC request variables in every step's environment. This
-          # step runs third-party code (npm's resolver, then the one vetted
-          # install script), so they are emptied here: downloaded code must not
-          # be able to mint a token for the live environment.
           ACTIONS_ID_TOKEN_REQUEST_URL: ""
           ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
         run: |

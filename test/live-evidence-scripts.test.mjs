@@ -611,8 +611,18 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /collect\(output\?\.value, values, name\)/,
     "a laptop run learns the stack values, so the leak scan means the same thing there as in CI");
   assert.match(orchestrator, /\[stack, "output", "-json"\]/, "read through the same wrapper run.sh uses");
-  assert.match(workflow, /ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""/,
-    "the step that runs downloaded code cannot mint an OIDC token for the live environment");
+  // No step before the role assumption carries the job's OIDC request
+  // credential, whatever it runs: the rule is mechanical, so a step added
+  // later cannot quietly reintroduce it.
+  const rehearse = workflow.slice(workflow.indexOf("  rehearse:"), workflow.indexOf("      - name: assume the rehearsal role"));
+  const steps = rehearse.split(/\n      - (?=name:|run:|uses:)/).slice(1);
+  const executing = steps.filter((step) => /\n?\s*run:/.test(step));
+  assert.ok(executing.length >= 5, `every executing step is checked (found ${executing.length})`);
+  for (const step of executing) {
+    const label = (step.match(/name: ([^\n]+)/) ?? step.match(/run: ([^\n]+)/))?.[1] ?? "step";
+    assert.match(step, /ACTIONS_ID_TOKEN_REQUEST_URL: ""/, `${label}: no OIDC request URL`);
+    assert.match(step, /ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""/, `${label}: no OIDC request token`);
+  }
   assert.match(orchestrator, /interrupted = signal;[\s\S]{0,700}for \(const state of \[running, serving\]\)/,
     "the signal ends both children at once, so the teardown and the receipt do not wait for the row");
   assert.ok(orchestrator.indexOf("hold?.(serving)") < orchestrator.indexOf("const deadline = Date.now() + SERVE_READY_MS"),
