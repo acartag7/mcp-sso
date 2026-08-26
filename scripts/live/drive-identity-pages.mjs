@@ -1,0 +1,164 @@
+// The page-driving half of the identity driver: what to click, what to type,
+// what a page means, and when a task is done. Every function takes a Playwright
+// page or context that the caller opened, so this module imports no browser
+// and `pnpm test` exercises it without one.
+import {
+  CREDENTIAL_HOST, classifyAccessPage, classifyLegPage, classifyMicrosoftPage, extractAssertionCookie, hostOf, hostPolicy,
+} from "./drive-identity-support.mjs";
+
+export const STEP_TIMEOUT_MS = 30_000;
+const SETTLE_ROUNDS = 12;
+const AUTHORIZE_ROUNDS = 40;
+
+export const bodyText = (page) => page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
+
+/** Drop every cookie the context already holds for the leg and for the hosts
+ *  the sign-in passes through, before a task starts. A reused browser (the
+ *  first context of a CDP endpoint, or a hosted profile) can arrive with a
+ *  live Access or provider session belonging to another account, which would
+ *  let a task report `approved` without this run's user ever signing in. */
+export async function clearSessionCookies(context, origin) {
+  const legHost = hostOf(origin);
+  const cookies = await context.cookies().catch(() => []);
+  // Playwright matches `domain` against the value the cookie is stored under,
+  // so a domain cookie must be cleared by its stored form, leading dot and
+  // all; the dot-less copy is only for deciding which host a cookie is for.
+  const stored = new Set();
+  for (const cookie of Array.isArray(cookies) ? cookies : []) {
+    const domain = typeof cookie?.domain === "string" ? cookie.domain : "";
+    if (domain === "") continue;
+    const host = domain.replace(/^\./, "");
+    const forLeg = host === legHost || legHost.endsWith(`.${host}`);
+    if (forLeg || host === "cloudflareaccess.com" || host.endsWith(".cloudflareaccess.com")
+      || host === CREDENTIAL_HOST || host === "microsoftonline.com" || host.endsWith(".microsoftonline.com")) stored.add(domain);
+  }
+  for (const domain of stored) await context.clearCookies({ domain });
+  return stored.size;
+}
+
+/** Complete the Microsoft sign-in pages. Resolves to an outcome only when the
+ *  sign-in did not lead away from the login host; `undefined` means it did. */
+export async function signInMicrosoft(page, policy, user, password, trace) {
+  await page.waitForURL((url) => policy.classify(url.toString()) === "microsoft", { timeout: STEP_TIMEOUT_MS });
+  if (!policy.mayTypeCredential(page.url())) return "unexpected_host";
+  await page.locator('input[name="loginfmt"]').fill(user, { timeout: STEP_TIMEOUT_MS });
+  trace.push("microsoft:login:typed");
+  await page.locator('input[type="submit"]').click();
+  await page.locator('input[name="passwd"]').waitFor({ state: "visible", timeout: STEP_TIMEOUT_MS });
+  if (!policy.mayTypeCredential(page.url())) return "unexpected_host";
+  await page.locator('input[name="passwd"]').fill(password);
+  trace.push("microsoft:password:typed");
+  await page.locator('input[type="submit"]').click();
+  for (let round = 0; round < SETTLE_ROUNDS; round++) {
+    await page.waitForLoadState("domcontentloaded", { timeout: STEP_TIMEOUT_MS }).catch(() => {});
+    const url = page.url();
+    if (!policy.allowed(url)) return "unexpected_host";
+    const kind = classifyMicrosoftPage({ url, text: await bodyText(page) });
+    trace.push(`${policy.classify(url)}:${kind}`);
+    if (kind === "elsewhere") return undefined;
+    if (kind === "kmsi") { await page.locator("#idBtn_Back").click({ timeout: STEP_TIMEOUT_MS }).catch(() => {}); continue; }
+    if (kind === "mfa_interstitial") return "blocked_mfa_interstitial";
+    if (kind === "error") return "denied_at_login";
+    await page.waitForTimeout(1_000);
+  }
+  return "timeout";
+}
+
+/** Sign in through the Access login page of the leg's authorize route and
+ *  capture the assertion cookie, or record the edge's denial. */
+export async function cloudflareAssertion({ context, origin, idpName, user, password, trace }) {
+  const policy = hostPolicy(origin);
+  trace.push(`session:cleared:${await clearSessionCookies(context, origin)}`);
+  const page = await context.newPage();
+  page.setDefaultTimeout(STEP_TIMEOUT_MS);
+  await page.goto(`${origin}/oauth/authorize`, { waitUntil: "domcontentloaded" });
+  trace.push(`${policy.classify(page.url())}:start`);
+  if (!policy.allowed(page.url())) return { outcome: "unexpected_host" };
+  if (policy.classify(page.url()) === "access") {
+    await page.getByText(idpName, { exact: false }).first().click();
+    trace.push("access:idp-chosen");
+    const signIn = await signInMicrosoft(page, policy, user, password, trace);
+    if (signIn !== undefined) return { outcome: signIn };
+  }
+  for (let round = 0; round < SETTLE_ROUNDS; round++) {
+    await page.waitForLoadState("domcontentloaded", { timeout: STEP_TIMEOUT_MS }).catch(() => {});
+    const url = page.url();
+    if (!policy.allowed(url)) return { outcome: "unexpected_host" };
+    const kind = classifyAccessPage({ url, text: await bodyText(page) });
+    trace.push(`${policy.classify(url)}:${kind}`);
+    if (kind === "denied") return { outcome: "denied_at_access_edge" };
+    const assertion = extractAssertionCookie(await context.cookies(origin), origin);
+    if (assertion !== undefined) return { outcome: "approved", assertion };
+    await page.waitForTimeout(1_000);
+  }
+  return { outcome: "timeout" };
+}
+
+const CONSENT_APPROVE = 'form[action="/oauth/authorize/approve"] button[name="approved"][value="true"]';
+
+/** Drive one mcp-sso authorization from its authorize URL to the client
+ *  callback: Access login when the leg is behind it, the Microsoft sign-in,
+ *  the consent page, and the redirect back. The callback is a registered
+ *  https URL on the leg's own origin that the example does not serve, so the
+ *  browser lands on it with the code or the error in the query and the page
+ *  URL is the capture. (Playwright does not route redirected requests, so a
+ *  route handler on the callback would never see the 302 that carries it.) */
+export async function driveAuthorize({ context, origin, authorizeUrl, callback, user, password, idpName, trace, loopbackCallback }) {
+  const policy = hostPolicy(origin, { loopbackCallback });
+  trace.push(`session:cleared:${await clearSessionCookies(context, origin)}`);
+  const page = await context.newPage();
+  page.setDefaultTimeout(STEP_TIMEOUT_MS);
+  const response = await page.goto(authorizeUrl, { waitUntil: "domcontentloaded" });
+  trace.push(`${policy.classify(page.url())}:start:${Number.isInteger(response?.status()) ? response.status() : "none"}`);
+  let idpChosen = false;
+  let signedIn = false;
+  let approved = false;
+  for (let round = 0; round < AUTHORIZE_ROUNDS; round++) {
+    const url = page.url();
+    if (url === callback || url.startsWith(`${callback}?`) || policy.classify(url) === "callback") {
+      const params = new URL(url).searchParams;
+      const error = params.get("error");
+      trace.push(error === null ? "callback:code" : "callback:error");
+      if (error !== null) return { outcome: "denied_at_gateway", error, errorDescription: params.get("error_description") ?? "", state: params.get("state") ?? "" };
+      return { outcome: "approved", redirectUrl: url };
+    }
+    if (!policy.allowed(url)) return { outcome: "unexpected_host" };
+    const cls = policy.classify(url);
+    if (cls === "access") {
+      const kind = classifyAccessPage({ url, text: await bodyText(page) });
+      trace.push(`access:${kind}`);
+      if (kind === "denied") return { outcome: "denied_at_access_edge" };
+      if (!idpChosen) {
+        await page.getByText(idpName, { exact: false }).first().click();
+        idpChosen = true;
+        trace.push("access:idp-chosen");
+        const signIn = await signInMicrosoft(page, policy, user, password, trace);
+        signedIn = true;
+        if (signIn !== undefined) return { outcome: signIn };
+        continue;
+      }
+    } else if (cls === "microsoft" && !signedIn) {
+      const signIn = await signInMicrosoft(page, policy, user, password, trace);
+      signedIn = true;
+      if (signIn !== undefined) return { outcome: signIn };
+      continue;
+    } else if (cls === "leg" && !approved) {
+      const approve = page.locator(CONSENT_APPROVE);
+      const kind = classifyLegPage({ hasConsentForm: await approve.count() > 0, text: await bodyText(page) });
+      if (kind === "consent") {
+        await approve.first().click();
+        approved = true;
+        trace.push("leg:consent:approved");
+        continue;
+      }
+      if (kind !== "other") {
+        // The gateway answered the authorize request with a direct error page
+        // (an untrusted redirect_uri is never used as an error channel).
+        trace.push(`leg:${kind}`);
+        return { outcome: "denied_at_gateway", error: kind.split(":")[0], errorDescription: "", state: "" };
+      }
+    }
+    await page.waitForTimeout(500);
+  }
+  return { outcome: "timeout" };
+}

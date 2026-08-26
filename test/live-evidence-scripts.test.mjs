@@ -502,7 +502,8 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   // The driver: the password reaches exactly one host, and nothing a page
   // shows is ever printed.
   const driver = read("scripts/live/drive-identity.mjs");
-  const browser = read("scripts/live/drive-identity-browser.mjs");
+  const browser = read("scripts/live/drive-identity-pages.mjs");
+  const opener = read("scripts/live/drive-identity-browser.mjs");
   const driverSupport = read("scripts/live/drive-identity-support.mjs");
   assert.match(driverSupport, /CREDENTIAL_HOST = "login\.microsoftonline\.com"/);
   const typeGate = browser.indexOf("if (!policy.mayTypeCredential(page.url())) return \"unexpected_host\";");
@@ -514,6 +515,8 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(driver, /process\.stdout\.write\(`outcome: \$\{result\.outcome\}\\n`\)/);
   assert.doesNotMatch(`${driver}\n${browser}`, /screenshot|innerHTML|content\(\)/, "no page capture");
   assert.match(driver, /O_EXCL, 0o600/, "the result file is created owner-only");
+  assert.doesNotMatch(browser, /playwright/, "the page logic loads no browser, so the tests exercise it without one");
+  assert.equal((opener.match(/from "playwright-core"/g) ?? []).length, 1, "playwright is imported in exactly one file");
   assert.equal((browser.match(/trace\.push\(`session:cleared:\$\{await clearSessionCookies\(context, origin\)\}`\)/g) ?? []).length, 2,
     "both browser tasks start from no session, so a reused or hosted browser cannot pass off another account's sign-in");
   assert.match(README, /access-edge-denial/);
@@ -602,8 +605,11 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
     "and the serve child, which exists from the moment it is spawned, not only once it is ready");
   assert.ok(orchestrator.indexOf("hold?.(serving)") < orchestrator.indexOf("const deadline = Date.now() + SERVE_READY_MS"),
     "the serve child is published before the readiness wait, so an interrupt during startup reaches it");
-  assert.match(orchestrator, /function childEnv\(env\)[\s\S]{0,400}for \(const key of AWS_SESSION_KEYS\) delete copy\[key\]/,
-    "with the bundle adapter in use no child carries the AWS session");
+  assert.match(orchestrator, /function childEnv\(env\)[\s\S]{0,500}for \(const key of JOB_CREDENTIAL_KEYS\) delete copy\[key\]/,
+    "with the bundle adapter in use no child carries a credential of the job's");
+  for (const key of ["AWS_SESSION_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_RUNTIME_TOKEN", "GITHUB_TOKEN"]) {
+    assert.match(orchestrator, new RegExp(`"${key}"`), `${key} is one of them`);
+  }
   assert.match(orchestrator, /childEnv\(\{ \.\.\.env, \.\.\.serve\.env, MCP_SSO_TUNNEL: tunnel \}\)/,
     "the tunnel connector least of all");
   assert.match(workflow, /BRANCH="evidence\/\$\{SHORT\}-\$\{GITHUB_RUN_ID\}"/,

@@ -352,6 +352,21 @@ export async function verifyRemoteDependencyPolicy(policy, options = {}) {
       errors.push(`${repo}: ${error instanceof Error ? error.message : "remote verification failed"}`);
     }
   }));
+  // A binary's own record cannot vouch for its age: the release the recorded
+  // URL names is asked when it was published, exactly as an action's tag is.
+  await Promise.all(Object.entries(policy.binaries ?? {}).map(async ([name, record]) => {
+    try {
+      const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)\//.exec(record.url ?? "");
+      if (match === null) {
+        errors.push(`${name}: the ledger URL is not a GitHub release asset`);
+        return;
+      }
+      const release = await fetchJson(`https://api.github.com/repos/${match[1]}/releases/tags/${match[2]}`, fetchImpl, token);
+      if (release.published_at !== record.published) errors.push(`${name}: release date does not match the ledger`);
+    } catch (error) {
+      errors.push(`${name}: ${error instanceof Error ? error.message : "remote verification failed"}`);
+    }
+  }));
   await Promise.all(Object.entries(policy.packages).map(async ([name, record]) => {
     try {
       const packument = await fetchJson(`https://registry.npmjs.org/${encodeURIComponent(name)}`, fetchImpl);

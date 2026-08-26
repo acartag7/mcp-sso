@@ -180,6 +180,13 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
       });
     }
     if (url.includes("api.github.com/repos/")) {
+      // A ledger binary's release is asked for its publication date the same
+      // way an action's tag is, so the stub answers from either record.
+      const binary = Object.entries(policy.binaries ?? {}).find(([, entry]) => {
+        const parsed = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)\//.exec(entry.url ?? "");
+        return parsed !== null && url === `https://api.github.com/repos/${parsed[1]}/releases/tags/${parsed[2]}`;
+      });
+      if (binary) return Response.json({ published_at: binary[1].published });
       const action = Object.entries(policy.actions).find(([repo]) => url.includes(`/repos/${repo}/`));
       assert.ok(action, `known action URL: ${url}`);
       const [, record] = action;
@@ -210,6 +217,17 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
     if (url.includes("/repos/actions/checkout/commits/")) return Response.json({ sha: "0".repeat(40) });
     return await fetchImpl(input, init);
   };
+  // A binary cannot vouch for its own age: a backdated ledger date is caught
+  // against the release the recorded URL names.
+  const backdatedFetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("/repos/cloudflare/cloudflared/releases/tags/")) return Response.json({ published_at: "2020-01-01T00:00:00Z" });
+    return await fetchImpl(input, init);
+  };
+  await assert.rejects(
+    verifyRemoteDependencyPolicy(policy, { fetchImpl: backdatedFetch, token: "not-a-secret" }),
+    (error) => error instanceof Error && error.message.includes("cloudflared: release date does not match the ledger"),
+  );
   await assert.rejects(
     verifyRemoteDependencyPolicy(policy, { fetchImpl: badFetch, token: "not-a-secret" }),
     (error) => error instanceof Error

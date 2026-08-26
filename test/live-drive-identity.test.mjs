@@ -10,7 +10,7 @@ import {
   CREDENTIAL_HOST, DEFINITE_OUTCOMES, OUTCOMES, classifyAccessPage, classifyLegPage, classifyMicrosoftPage, extractAssertionCookie, hostPolicy,
   parseDriverArgs,
 } from "../scripts/live/drive-identity-support.mjs";
-import { clearSessionCookies, signInMicrosoft } from "../scripts/live/drive-identity-browser.mjs";
+import { clearSessionCookies, signInMicrosoft } from "../scripts/live/drive-identity-pages.mjs";
 import { readAssertionFile, testUsersJson } from "../scripts/live/run-support.mjs";
 
 const JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln";

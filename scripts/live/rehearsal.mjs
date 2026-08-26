@@ -24,6 +24,15 @@ const ROW_TIMEOUT_MS = 10 * 60_000;
 const SERVE_READY_MS = 120_000;
 const MAX_CAPTURE = 1024 * 1024;
 const LEAK_NOTE = "output withheld: a private value from the run configuration appeared in it";
+/** Every credential the job itself holds: the assumed AWS session, and the
+ *  runner's own tokens, with which a child could mint a fresh OIDC token for
+ *  the `live` environment or write to the run's artifacts. */
+const JOB_CREDENTIAL_KEYS = [
+  "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN",
+  "AWS_CREDENTIAL_EXPIRATION", "AWS_PROFILE", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
+  "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_RUNTIME_TOKEN",
+  "GITHUB_TOKEN", "GH_TOKEN",
+];
 /** The only variables a repository command (the release matrix) receives: the
  *  services it tests against, and the package-manager and runner configuration
  *  pnpm needs to find its store and metadata cache. It never holds the AWS
@@ -31,22 +40,19 @@ const LEAK_NOTE = "output withheld: a private value from the run configuration a
 const COMMAND_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CI", "NO_COLOR", "RUN_INTEGRATION", "MYSQL_URL", "REDIS_URL"];
 const COMMAND_ENV_PREFIXES = ["PNPM_", "npm_config_", "COREPACK_", "XDG_", "GITHUB_", "RUNNER_"];
 const commandEnv = (env) => Object.fromEntries(Object.entries(env).filter(([key]) =>
-  COMMAND_ENV_KEYS.includes(key) || COMMAND_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))));
-/** The variables an assumed AWS session travels in. */
-const AWS_SESSION_KEYS = [
-  "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN",
-  "AWS_CREDENTIAL_EXPIRATION", "AWS_PROFILE", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
-];
+  !JOB_CREDENTIAL_KEYS.includes(key)
+  && (COMMAND_ENV_KEYS.includes(key) || COMMAND_ENV_PREFIXES.some((prefix) => key.startsWith(prefix)))));
 /** With the bundle adapter in use, every provider value has already been read
- *  from disk and nothing a child runs needs AWS: not run.sh, not the served
- *  application, and certainly not the tunnel connector, which would otherwise
- *  hold a session that can read the whole `/mcp-sso/live/*` set for as long as
- *  a generation is served. The session is removed from every child there. On a
- *  laptop the wrapper reads the stacks live, so it is kept. */
+ *  from disk and no child needs a credential of the job's: not run.sh, not the
+ *  served application, and certainly not the tunnel connector, which would
+ *  otherwise hold a session that can read the whole `/mcp-sso/live/*` set, and
+ *  the means to mint a new one, for as long as a generation is served. They
+ *  are removed from every child there. On a laptop the wrapper reads the
+ *  stacks live, so the AWS session is kept. */
 function childEnv(env) {
   if (typeof env.MCP_SSO_BUNDLE_DIR !== "string" || env.MCP_SSO_BUNDLE_DIR.length === 0) return env;
   const copy = { ...env };
-  for (const key of AWS_SESSION_KEYS) delete copy[key];
+  for (const key of JOB_CREDENTIAL_KEYS) delete copy[key];
   return copy;
 }
 
