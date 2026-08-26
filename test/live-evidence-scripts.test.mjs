@@ -474,9 +474,13 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(rehearsal, /private_value_in_output/, "a leaked configuration value fails the row");
   assert.doesNotMatch(workflow, /pull_request/, "the live workflow never runs for a pull request");
   assert.match(workflow, /^permissions: \{\}$/m, "no workflow-level token permissions");
-  assert.match(workflow, /^\s+environment: live$/m, "the OIDC role is reachable only through the live environment");
+  assert.match(workflow, /environment: \$\{\{ github\.ref == 'refs\/heads\/main' && 'live' \|\| 'live-branch' \}\}/,
+    "main runs unattended under live; any other admitted ref waits for the reviewer under live-branch");
+  assert.match(workflow, /refs\/heads\/main\|refs\/heads\/rehearsal\/\*\) echo "ref admitted/, "the ref rule is enforced in the file, before anything else");
+  assert.ok(workflow.indexOf("refuse any ref but main or rehearsal/*") < workflow.indexOf("actions/checkout@"), "the ref guard is the first step");
   assert.match(workflow, /^\s+id-token: write/m);
-  assert.match(workflow, /branches: \["rehearsal\/\*\*"\]/, "pushes run only for rehearsal branches");
+  assert.match(workflow, /branches: \["rehearsal\/\*"\]/, "pushes run only for rehearsal branches, with the pattern the environment policy uses");
+  assert.match(workflow, /role-to-assume: \$\{\{ secrets\.MCP_SSO_LIVE_ROLE_ARN \}\}/, "the role ARN is a masked secret, not a variable");
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /node scripts\/live\/ci\/mask-bundle\.mjs/, "private values are masked before the probes print");
   assert.ok(workflow.indexOf("mask-bundle.mjs") < workflow.indexOf("rehearsal.mjs"), "masking precedes the run");

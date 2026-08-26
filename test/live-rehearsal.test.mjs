@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+  chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -233,7 +233,7 @@ if [ -f "${values}/$name" ]; then cat "${values}/$name"; else echo "An error occ
     assert.deepEqual(manifest, { entra: "present", cloudflare: "present", google: "present", "tunnel-credentials": "absent", browserbase: "absent" });
     for (const file of ["entra.json", "cloudflare.json", "google.env"]) {
       assert.equal(readFileSync(join(dir, file), "utf8").length > 0, true);
-      assert.equal(spawnSync("stat", ["-f", "%Lp", join(dir, file)], { encoding: "utf8" }).stdout.trim() || "600", "600");
+      assert.equal(statSync(join(dir, file)).mode & 0o777, 0o600, `${file} is owner-only`);
     }
     assert.equal(existsSync(join(dir, "tunnel-credentials.json")), false);
     assert.match(readFileSync(githubEnv, "utf8"), /^MCP_SSO_GOOGLE_ENV=.*google\.env$/m, "the Google file is announced to later steps");

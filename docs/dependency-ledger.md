@@ -206,7 +206,7 @@ CI verification, `process-guard`, and CodeQL use ephemeral GitHub-hosted `ubuntu
 
 Release publishing remains separately isolated in `publish.yml` on GitHub-hosted `ubuntu-latest` behind the tag-only `publish` environment and the no-checkout OIDC publishing job.
 
-The live rehearsal in `live.yml` runs on GitHub-hosted `ubuntu-latest` behind the `live` environment, whose branch policy admits `main` and `rehearsal/*`. It never subscribes to pull requests. The job's only write permission is `id-token`, used to assume the AWS role that reads the live secrets; the checkout credential is not persisted, and the fetched bundle is removed at the end of the job.
+The live rehearsal in `live.yml` runs on GitHub-hosted `ubuntu-latest` behind two environments: `live` (branch policy `main`, unattended) and `live-branch` (branch policy `rehearsal/*`, a required reviewer approves each run before the role is assumed). It never subscribes to pull requests and its first step refuses any other ref. The job's only write permission is `id-token`, used to assume the AWS role that reads the live secrets; the checkout credential is not persisted, and the fetched bundle is removed at the end of the job.
 
 ## Verification & change protocol
 

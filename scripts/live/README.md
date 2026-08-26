@@ -219,14 +219,18 @@ selects a subset; `--out <file>` moves the receipt.
 ### In CI
 
 `.github/workflows/live.yml` runs the same command on a GitHub-hosted runner:
-nightly, on `gh workflow run live.yml`, and on every push to a `rehearsal/*`
-branch, which is how a harness change is proved before it merges. There is no
-private infrastructure checkout on the runner. Instead the job, which runs only
-under the `live` environment (branch policy: `main` and `rehearsal/*`), assumes
-an AWS role through GitHub OIDC that can read exactly the `/mcp-sso/live/*`
-secrets: the two stack bundles (the same outputs `run.sh` reads from OpenTofu,
-republished as JSON under the same names), the Google credential file, the
-tunnel credentials, and the hosted-browser key. `scripts/live/ci/fetch-bundle.mjs`
+nightly and on `gh workflow run live.yml` from `main`, and on every push to a
+`rehearsal/*` branch, which is how a harness change is proved before it
+merges. There is no private infrastructure checkout on the runner. Instead the
+job assumes an AWS role through GitHub OIDC that can read exactly the
+`/mcp-sso/live/*` secrets: the two stack bundles (the same outputs `run.sh`
+reads from OpenTofu, republished as JSON under the same names), the Google
+credential file, and the tunnel credentials. The role is held by two GitHub
+Environments and nothing else: `live` (branch policy `main`; unattended) and
+`live-branch` (branch policy `rehearsal/*`; the owner approves each run before
+the role is assumed, because a branch run executes whatever that branch
+pushed, the masking step included). The job's first step refuses any other
+ref, and a pull request never triggers the workflow. `scripts/live/ci/fetch-bundle.mjs`
 writes them to a private directory at 0600, refusing a malformed value and
 recording an absent optional one; `scripts/live/ci/mask-bundle.mjs` registers
 every value with the log masker before a probe can print; and

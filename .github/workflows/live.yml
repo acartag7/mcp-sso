@@ -1,16 +1,19 @@
 name: live
 
 # The release rehearsal: every live probe against the real identity providers,
-# unattended. Runs nightly, on demand, and on any push to a rehearsal/* branch
-# (which is how a change to the harness is proved before it merges). Never on
-# a pull request: the `live` environment is the only holder of the OIDC role and
-# its branch policy admits main and rehearsal/* only.
+# unattended. Runs nightly and on demand from main, and on any push to a
+# rehearsal/* branch (how a change to the harness is proved before it merges).
+# Never on a pull request. The AWS role is held by two GitHub Environments and
+# nothing else: `live` (branch policy: main; unattended) and `live-branch`
+# (branch policy: rehearsal/*; a required reviewer approves each run before
+# the role is assumed, because the code a branch run executes is the code that
+# branch pushed). A job below refuses any other ref before it does anything.
 on:
   workflow_dispatch:
   schedule:
     - cron: "17 3 * * *" # nightly ~03:17 UTC (off the :00 mark)
   push:
-    branches: ["rehearsal/**"]
+    branches: ["rehearsal/*"]
 
 permissions: {}
 
@@ -24,7 +27,8 @@ jobs:
   rehearse:
     name: release rehearsal
     runs-on: ubuntu-latest
-    environment: live
+    # main runs unattended; a rehearsal/* branch waits for the reviewer.
+    environment: ${{ github.ref == 'refs/heads/main' && 'live' || 'live-branch' }}
     timeout-minutes: 30
     permissions:
       id-token: write # assume the AWS role through GitHub OIDC
@@ -51,6 +55,16 @@ jobs:
       REDIS_URL: redis://127.0.0.1:6379
 
     steps:
+      - name: refuse any ref but main or rehearsal/*
+        # The environment branch policies are the trust boundary; this step
+        # makes the same rule visible and enforced in the repository too.
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          case "$REF" in
+            refs/heads/main|refs/heads/rehearsal/*) echo "ref admitted: $REF" ;;
+            *) echo "refusing to rehearse from $REF" >&2; exit 1 ;;
+          esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-20)
         with:
           persist-credentials: false
@@ -60,13 +74,17 @@ jobs:
           node-version: "24"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: require the browser the driver runs
+        # The runner image's Google Chrome is what playwright-core drives; a
+        # missing browser fails here, once, instead of as blocked rows.
+        run: google-chrome --version
       - name: name the bundle directory
         # The runner context is not available in job-level env.
         run: echo "MCP_SSO_BUNDLE_DIR=$RUNNER_TEMP/mcp-sso-bundle" >> "$GITHUB_ENV"
       - name: assume the rehearsal role
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3 (2026-07-22)
         with:
-          role-to-assume: ${{ vars.MCP_SSO_LIVE_ROLE_ARN }}
+          role-to-assume: ${{ secrets.MCP_SSO_LIVE_ROLE_ARN }}
           role-session-name: mcp-sso-release-rehearsal
           aws-region: eu-central-1
       - name: fetch the live bundle
