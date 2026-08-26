@@ -113,6 +113,8 @@ function tunnelId(env) {
   return undefined;
 }
 
+const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+
 /** Ask a child's whole process group to stop, then kill what is left. run.sh
  *  execs a Node probe that owns a browser, a pseudo-terminal and a private
  *  HOME, and serve.sh supervises the tunnel and the example servers: signalling
@@ -128,10 +130,26 @@ async function stopChild(state, graceMs) {
       try { state.child.kill(signal); } catch { /* already gone */ }
     }
   };
+  const groupAlive = () => {
+    try {
+      process.kill(-state.child.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   signalGroup("SIGTERM");
-  const grace = setTimeout(() => signalGroup("SIGKILL"), graceMs);
+  const deadline = Date.now() + graceMs;
   await state.exit;
-  clearTimeout(grace);
+  // A process group outlives its leader: the browser or the CLI a probe
+  // started can still be in it after run.sh has gone. Wait for the group
+  // itself, and escalate to the group when the budget runs out.
+  while (Date.now() < deadline && groupAlive()) await sleep(200);
+  if (groupAlive()) {
+    signalGroup("SIGKILL");
+    const hard = Date.now() + 5_000;
+    while (Date.now() < hard && groupAlive()) await sleep(200);
+  }
 }
 
 /** Spawn with both streams captured. Every chunk is scanned for a private
@@ -177,7 +195,6 @@ const answers = async (origin) => {
     return false;
   }
 };
-const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
 /** Bring the generation's legs up through serve.sh and wait until every
  *  public origin answers. Resolves to { serving } or to the row status the

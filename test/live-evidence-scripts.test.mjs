@@ -601,8 +601,10 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /receipt\.interrupted = interrupted/, "an interrupted run still writes its receipt, never as evidence");
   assert.match(orchestrator, /for \(const state of \[running, serving\]\) void stopChild\(state, 5_000\)/,
     "an interrupt stops each child the one bounded way");
-  assert.match(orchestrator, /signalGroup\("SIGTERM"\);[\s\S]{0,200}setTimeout\(\(\) => signalGroup\("SIGKILL"\), graceMs\)/,
+  assert.match(orchestrator, /signalGroup\("SIGTERM"\);[\s\S]{0,700}signalGroup\("SIGKILL"\)/,
     "which asks the whole process group first, so serve.sh runs its cleanup traps and a probe closes its browser, then kills what is left");
+  assert.match(orchestrator, /while \(Date\.now\(\) < deadline && groupAlive\(\)\)/,
+    "and waits for the group, not only its leader: a browser or CLI in the group outlives run.sh");
   assert.match(orchestrator, /detached: true/, "every child leads its own group, so a stop reaches what it started");
   assert.match(orchestrator, /TMPDIR: scratchDir/, "a row child's temporary files live in a directory the run owns");
   assert.ok(orchestrator.indexOf("const scratchDir = join(handoffDir") > 0 && orchestrator.includes("rmSync(handoffDir, { recursive: true, force: true })"),
@@ -616,10 +618,10 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   // later cannot quietly reintroduce it.
   const rehearse = workflow.slice(workflow.indexOf("  rehearse:"), workflow.indexOf("      - name: assume the rehearsal role"));
   const steps = rehearse.split(/\n      - (?=name:|run:|uses:)/).slice(1);
-  const executing = steps.filter((step) => /\n?\s*run:/.test(step));
-  assert.ok(executing.length >= 5, `every executing step is checked (found ${executing.length})`);
+  const executing = steps.filter((step) => !/uses: aws-actions\/configure-aws-credentials/.test(step));
+  assert.ok(executing.length >= 8, `every step before the role assumption is checked (found ${executing.length})`);
   for (const step of executing) {
-    const label = (step.match(/name: ([^\n]+)/) ?? step.match(/run: ([^\n]+)/))?.[1] ?? "step";
+    const label = (step.match(/name: ([^\n]+)/) ?? step.match(/uses: ([^\n]+)/) ?? step.match(/run: ([^\n]+)/))?.[1] ?? "step";
     assert.match(step, /ACTIONS_ID_TOKEN_REQUEST_URL: ""/, `${label}: no OIDC request URL`);
     assert.match(step, /ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""/, `${label}: no OIDC request token`);
   }
