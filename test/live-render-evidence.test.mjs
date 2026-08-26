@@ -29,9 +29,11 @@ const document = (() => {
   return [...lines.slice(0, start), SENTINEL_ROW, ...lines.slice(end)].join("\n");
 })();
 
+const versionNote = (id) => (id.startsWith("claude-code") ? [{ kind: "NOTE", text: "NOTE  claude 2.1.227" }]
+  : id.startsWith("codex-cli") ? [{ kind: "NOTE", text: "NOTE  codex 0.147.0" }] : []);
 const receiptFor = (ids, extra = {}) => ({
   schema: 1, kind: "mcp-sso-release-rehearsal", runtimeCommit: HEAD, dirty: false, complete: true, evidence: true, runner: "local",
-  startedAt: "s", finishedAt: "f", rows: ids.map((id) => ({ id, status: "PASS", lines: [] })), ...extra,
+  startedAt: "s", finishedAt: "f", rows: ids.map((id) => ({ id, status: "PASS", lines: versionNote(id) })), ...extra,
 });
 const ALL = ROWS.map((row) => row.id);
 
@@ -60,6 +62,23 @@ test("BEHAVIOUR render-evidence: a partial receipt renders only what it proved a
   assert.throws(() => render({ document, receipt: receiptFor(["probe-entra"]), date: "2026-08-25", packageJson, releaseMatrix }), /proves no provider row/);
   assert.throws(() => render({ document, receipt: receiptFor(ALL), date: "25-08-2026", packageJson, releaseMatrix }), /YYYY-MM-DD/);
   assert.throws(() => render({ document: "# no tables\n", receipt: receiptFor(ALL), date: "2026-08-25", packageJson, releaseMatrix }), /table not found/);
+});
+
+test("BEHAVIOUR render-evidence: a CLI row names the client version the run observed", () => {
+  const rendered = render({ document, receipt: receiptFor(ALL), date: "2026-08-26", packageJson, releaseMatrix });
+  const claude = rendered.split("\n").find((line) => line.includes("Claude Code, driven by the rehearsal"));
+  const codex = rendered.split("\n").find((line) => line.includes("Codex CLI, driven by the rehearsal"));
+  assert.match(claude, /Client version 2\.1\.227\./, "Tier 3 rows name the client version when it is visible");
+  assert.match(codex, /Client version 0\.147\.0\./);
+  // Two rows on different legs may observe different versions; both are named.
+  const mixed = receiptFor(ALL);
+  mixed.rows.find((row) => row.id === "claude-code:cloudflare").lines = [{ kind: "NOTE", text: "NOTE  claude 2.1.300" }];
+  const both = render({ document, receipt: mixed, date: "2026-08-26", packageJson, releaseMatrix });
+  assert.match(both.split("\n").find((line) => line.includes("Claude Code, driven")), /Client version 2\.1\.227 and 2\.1\.300\./);
+  // A receipt whose CLI rows name no version cannot produce that row at all.
+  const silent = receiptFor(ALL);
+  for (const row of silent.rows) if (row.id.startsWith("codex-cli")) row.lines = [];
+  assert.throws(() => render({ document, receipt: silent, date: "2026-08-26", packageJson, releaseMatrix }), /does not name the codex version/);
 });
 
 test("BEHAVIOUR render-evidence: only an evidence receipt with a full commit is read", () => {

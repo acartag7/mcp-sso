@@ -43,13 +43,13 @@ export const PROVIDER_ROWS = Object.freeze([
     status: "Verified", limits: "",
   },
   {
-    needs: ["claude-code:entra", "claude-code:cloudflare"],
+    needs: ["claude-code:entra", "claude-code:cloudflare"], version: "claude",
     provider: "Cloudflare Access and Entra ID", client: "Claude Code, driven by the rehearsal",
     flow: "CIMD `client_id` → `claude mcp login --no-browser` → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token → connection check on `/mcp`",
     status: "Verified", limits: "",
   },
   {
-    needs: ["codex-cli:entra", "codex-cli:cloudflare"],
+    needs: ["codex-cli:entra", "codex-cli:cloudflare"], version: "codex",
     provider: "Cloudflare Access and Entra ID", client: "Codex CLI, driven by the rehearsal",
     flow: "`codex mcp add` → DCR → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token",
     status: "Verified with limit", limits: "Limit: a tool call runs only when the client-keys file supplies `OPENAI_API_KEY`.",
@@ -104,12 +104,29 @@ function replaceTable(lines, header, transform) {
   return [...lines.slice(0, start + 2), ...rows, ...lines.slice(end)];
 }
 
+/** The client version a CLI row observed, from the row's own NOTE line
+ *  (`NOTE  claude 2.1.227`). Tier 3 rows must name the client version when it
+ *  is visible, and the receipt is where it is visible. */
+function observedVersion(receipt, needs, cli) {
+  const versions = new Set();
+  for (const row of receipt.rows) {
+    if (!needs.includes(row.id)) continue;
+    for (const line of row.lines ?? []) {
+      const match = /^NOTE\s+(\w+)\s+(\d+\.\d+\.\d+)$/.exec(line?.text ?? "");
+      if (match !== null && match[1] === cli) versions.add(match[2]);
+    }
+  }
+  return [...versions].sort().join(" and ");
+}
+
 export function render({ document, receipt, date, packageJson, releaseMatrix }) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("date must be YYYY-MM-DD");
   const done = passed(receipt);
   const commit = receipt.runtimeCommit;
   const newRows = PROVIDER_ROWS.filter((row) => row.needs.every((id) => done.has(id))).map((row) => {
-    const limits = `Runtime commit \`${commit}\`.${row.limits ? ` ${fence(row.limits)}` : ""}`;
+    const version = row.version === undefined ? "" : observedVersion(receipt, row.needs, row.version);
+    if (row.version !== undefined && version === "") throw new Error(`the receipt does not name the ${row.version} version its rows ran`);
+    const limits = `Runtime commit \`${commit}\`.${row.limits ? ` ${fence(row.limits)}` : ""}${version ? ` Client version ${fence(version)}.` : ""}`;
     return `| ${fence(row.provider)} | ${fence(row.client)} | ${fence(row.flow)} | ${row.status} | ${date} | ${limits} |`;
   });
   if (newRows.length === 0) throw new Error("the receipt proves no provider row");

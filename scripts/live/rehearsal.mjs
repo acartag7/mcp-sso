@@ -23,7 +23,7 @@ const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const ROW_TIMEOUT_MS = 10 * 60_000;
 const SERVE_READY_MS = 120_000;
 const MAX_CAPTURE = 1024 * 1024;
-const MAX_SCAN_TAIL = 4_096;
+const MIN_SCAN_TAIL = 4_096;
 const WRAPPER_TIMEOUT_MS = 120_000;
 const LEAK_NOTE = "output withheld: a private value from the run configuration appeared in it";
 /** Every credential the job itself holds: the assumed AWS session, and the
@@ -178,10 +178,14 @@ function spawnCapturing(command, args, env, timeoutMs, secrets) {
   // below is bounded, so the tail of each stream is carried into the next
   // scan. MAX_SCAN_TAIL is the largest scalar a bundle may hold.
   const tails = { out: "", err: "" };
+  // Sized by the longest value actually collected, not by a constant: a bundle
+  // may hold a private value far larger than a scalar output, and a tail
+  // shorter than that value would split it across two scans unseen.
+  const tail = Math.max(MIN_SCAN_TAIL, ...[...secrets].map((value) => value.length));
   const scan = (chunk, stream) => {
     const text = tails[stream] + chunk;
     if (!state.leaked && leaksPrivateValue(text, secrets)) state.leaked = true;
-    tails[stream] = text.slice(-MAX_SCAN_TAIL);
+    tails[stream] = text.slice(-tail);
   };
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -449,8 +453,14 @@ try {
   await teardown();
 }
 for (const row of served) record(row, "FAIL", "private_value_in_output", { lines: [{ kind: "FAIL", text: LEAK_NOTE }] });
+// The tree is read again now: a row, the release matrix, or a concurrent
+// checkout could have moved HEAD or written a file while the run was going,
+// and evidence must name the tree the rows actually ran against.
+const finalCommit = git(["rev-parse", "HEAD"]);
+const finalDirty = git(["status", "--porcelain"]).length > 0;
+const treeChanged = finalCommit !== runtimeCommit || finalDirty !== dirty;
 const receipt = buildReceipt({
-  runtimeCommit, dirty, startedAt, finishedAt: new Date().toISOString(), rows: results,
+  runtimeCommit, dirty: dirty || finalDirty, startedAt, finishedAt: new Date().toISOString(), rows: results,
   runner: process.env.GITHUB_RUN_ID ? `github-actions:${process.env.GITHUB_RUN_ID}` : "local",
 });
 if (crashed !== undefined) {
@@ -460,6 +470,10 @@ if (crashed !== undefined) {
 if (interrupted !== undefined) {
   receipt.evidence = false;
   receipt.interrupted = interrupted;
+}
+if (treeChanged) {
+  receipt.evidence = false;
+  receipt.treeChanged = "the checkout moved or was written to while the rehearsal ran";
 }
 // The receipt is the one output that leaves the machine; nothing private may
 // be in it, whatever a row's own scan concluded.

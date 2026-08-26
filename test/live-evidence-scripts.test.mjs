@@ -599,6 +599,11 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /if \(await stopServing\(serving, servedSecrets\)\)/, "a served leg that printed a credential fails the run after shutdown");
   assert.match(orchestrator, /servedSecrets\.delete\(servedTunnel\)/, "the tunnel id the harness handed serve.sh is not evidence of a leak");
   assert.match(orchestrator, /receipt\.interrupted = interrupted/, "an interrupted run still writes its receipt, never as evidence");
+  assert.match(orchestrator, /receipt\.treeChanged = /, "a checkout that moved or was written to while the run went is never evidence");
+  assert.match(orchestrator, /const tail = Math\.max\(MIN_SCAN_TAIL, \.\.\.\[\.\.\.secrets\]\.map\(\(value\) => value\.length\)\)/,
+    "and the scan tail is the longest value actually collected, not a constant");
+  assert.match(renderer, /does not name the \$\{row\.version\} version its rows ran/,
+    "a CLI row is not rendered unless the receipt names the version it observed");
   assert.match(orchestrator, /for \(const state of \[running, serving\]\) \{[\s\S]{0,160}state\.stopping = stopChild\(state, 5_000\)/,
     "an interrupt stops each child the one bounded way, and keeps the stop");
   assert.match(orchestrator, /await running\?\.stopping;[\s\S]{0,300}await serving\?\.stopping;/,
@@ -620,7 +625,7 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /state\.stopping = stopChild\(state, 15_000\)/, "and its stop is kept");
   assert.match(orchestrator, /if \(state\.stopping !== undefined\) await state\.stopping;/,
     "and waited for, so the next row never overlaps a browser or CLI still being killed");
-  assert.match(orchestrator, /tails\[stream\] = text\.slice\(-MAX_SCAN_TAIL\)/,
+  assert.match(orchestrator, /tails\[stream\] = text\.slice\(-tail\)/,
     "and a private value split across two reads is still caught");
   assert.match(orchestrator, /git\(\["status", "--porcelain"\]\)/, "an untracked file makes the tree dirty: the build compiles all of src");
   assert.match(orchestrator, /await stopChild\(serving, 10_000\);[\s\S]{0,200}classifyServeFailure/,
