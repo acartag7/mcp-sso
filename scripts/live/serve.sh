@@ -124,7 +124,9 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-CONF="$(mktemp -t mcp-sso-tunnel-XXXX)" || exit 1
+# An explicit directory: `mktemp -t` picks one differently across platforms and
+# has written this file into the working directory, which is the repository.
+CONF="$(mktemp "${TMPDIR:-/tmp}/mcp-sso-tunnel-XXXXXX")" || exit 1
 {
   printf 'tunnel: %s\n' "$TUNNEL"
   printf 'credentials-file: %s\n' "$CREDENTIALS"

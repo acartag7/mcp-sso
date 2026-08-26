@@ -1,6 +1,0 @@
-tunnel: 0f0f0f0f-1111-2222-3333-444444444444
-credentials-file: /var/folders/gg/f0qp0m8n2c50n7gs7x1yf54m0000gn/T/mcp-sso-live-serve-UWcWMU/home/.cloudflared/0f0f0f0f-1111-2222-3333-444444444444.json
-ingress:
-  - hostname: entra.example
-    service: http://127.0.0.1:43111
-  - service: http_status:404

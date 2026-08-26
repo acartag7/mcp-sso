@@ -249,7 +249,10 @@ async function startServing(serve, env, secrets, hold) {
   }
   const tunnel = tunnelId(env);
   if (tunnel === undefined) return { status: "BLOCKED", reason: "tunnel_credentials_absent" };
-  const serving = spawnCapturing(join(REPO, "scripts/live/serve.sh"), serve.legs, childEnv({ ...env, ...serve.env, MCP_SSO_TUNNEL: tunnel }), undefined, secrets);
+  // The same run-owned TMPDIR the rows get: the tunnel configuration serve.sh
+  // writes goes there and leaves with the run, whatever ends the process.
+  const serving = spawnCapturing(join(REPO, "scripts/live/serve.sh"), serve.legs,
+    childEnv({ ...env, ...serve.env, MCP_SSO_TUNNEL: tunnel, TMPDIR: scratchDir }), undefined, secrets);
   // Published before the readiness wait, so an interrupt during startup can
   // stop this child instead of waiting out the readiness budget.
   hold?.(serving);
@@ -324,8 +327,11 @@ const served = [];
 let running;
 const teardown = async () => {
   // The row's own child first: it holds the browser and the CLI session. It is
-  // asked to stop, then killed if it does not.
+  // asked to stop, then killed if it does not. A stop a signal already started
+  // is joined rather than started again.
+  await running?.stopping;
   await stopChild(running, 5_000);
+  await serving?.stopping;
   await stopServing(serving, servedSecrets);
   serving = undefined;
   rmSync(handoffDir, { recursive: true, force: true });
@@ -342,7 +348,11 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     // cloudflared and the example servers from its own EXIT and TERM traps,
     // which a SIGKILL would skip, orphaning the tunnel. SIGTERM here, and the
     // teardown below escalates if a child ignores it.
-    for (const state of [running, serving]) void stopChild(state, 5_000);
+    // Each stop is kept so the teardown below can join it: an interrupt must
+    // not exit while a browser or CLI is still being killed.
+    for (const state of [running, serving]) {
+      if (state !== undefined) state.stopping = stopChild(state, 5_000);
+    }
   });
 }
 const record = (row, status, reason, extra = {}) => {
