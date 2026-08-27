@@ -544,3 +544,12 @@ test("a Not run row cannot skip the provenance check", () => {
   assert.ok(result.errors.some((error) => error.includes('has unknown "Recorded by" value typo')),
     `a Not run row with unreadable provenance must fail: ${JSON.stringify(result.errors)}`);
 });
+
+test("a squash digest binds the workflow that produced the row", () => {
+  // A squash receipt's guarantee is that nothing inherited through the merge
+  // escapes the digest. The live workflow installs the pinned clients and
+  // dispatches the rehearsal, so a row digested without it would accept
+  // evidence produced by a different workflow.
+  assert.notEqual(evidenceDigestFor(release), evidenceDigestFor(harnessRelease),
+    "changing only harness inputs, the live workflow among them, changes the digest");
+});

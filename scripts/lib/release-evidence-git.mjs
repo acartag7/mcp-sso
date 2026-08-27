@@ -33,15 +33,15 @@ const HARNESS_PATHS = [
   "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", ".github/workflows/live.yml",
 ];
 
-/** The set `evidenceInputDigest` hashes, frozen as it was when the first digest
- *  was recorded. A digest already in the matrix was taken over exactly these
- *  paths; widening or narrowing the set now would stop it matching, which is a
- *  failure with no fix but re-running the campaign that produced it. */
-const DIGEST_PATHS = [
-  "src", "examples", "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
-  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", "tsconfig.json", "tsconfig.build.json",
-  ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
-];
+/** Everything an evidence receipt depends on, in one list derived from the
+ *  three sets so it cannot drift from them. `evidenceInputDigest` hashes this,
+ *  and a squash receipt binds it: a worktree commit's digest must match the
+ *  merge commit's, so a change inherited through the merge cannot escape.
+ *  Changing any of the three sets changes every digest taken before it, which
+ *  is why the contract says a recorded digest is only valid against the set it
+ *  was taken with. The current matrix records none. */
+const DIGEST_PATHS = [...RUNTIME_PATHS, ...DEPLOYMENT_PATHS, ...HARNESS_PATHS];
+
 
 function gitOutput(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
