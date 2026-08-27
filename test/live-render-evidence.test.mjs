@@ -19,10 +19,10 @@ const status = readFileSync(join(ROOT, "docs/verification-status.md"), "utf8");
 const HEAD = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 // The real document's structure with its recorded rows replaced by one row at
 // HEAD, so the round trip does not depend on commits a shallow checkout lacks.
-const SENTINEL_ROW = `| Entra ID | claude.ai custom connector | CIMD flow | Verified | 2026-08-19 | Runtime commit \`${HEAD}\`. |`;
+const SENTINEL_ROW = `| Entra ID | claude.ai custom connector | CIMD flow | operator | Verified | 2026-08-19 | Runtime commit \`${HEAD}\`. |`;
 const document = (() => {
   const lines = readFileSync(join(ROOT, "docs/client-compatibility.md"), "utf8").split("\n");
-  const start = lines.indexOf("| Provider | Client | Flow driven | Status | Date | Limits |") + 2;
+  const start = lines.indexOf("| Provider | Client | Flow driven | Recorded by | Status | Date | Limits |") + 2;
   let end = start;
   while (end < lines.length && lines[end].startsWith("|")) end += 1;
   assert.ok(start > 1 && end > start, "the real document has a provider table");
@@ -45,7 +45,7 @@ test("BEHAVIOUR render-evidence: a full receipt renders every provider row and t
   const check = evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility: rendered, status, gitCwd: ROOT, releaseCommit: HEAD });
   assert.deepEqual(check.errors, [], "the gate's own parser accepts the rendered document");
   assert.ok(check.staleEvidence.every((stale) => stale.commit !== HEAD), "nothing the receipt recorded is stale at its own commit");
-  for (const row of PROVIDER_ROWS) assert.match(rendered, new RegExp(`^\\| ${row.provider} \\| ${row.client.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\|.*\\| ${row.status} \\| 2026-08-25 \\| Runtime commit \`${HEAD}\`\\.`, "m"));
+  for (const row of PROVIDER_ROWS) assert.match(rendered, new RegExp(`^\\| ${row.provider} \\| ${row.client.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\|.*\\| rehearsal \\| ${row.status} \\| 2026-08-25 \\| Runtime commit \`${HEAD}\`\\.`, "m"));
   for (const name of Object.keys(packageJson.exports)) assert.match(rendered, new RegExp(`^\\| \`${name.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\` \\| .* \\| \`${HEAD}\` \\|$`, "m"));
   assert.match(rendered, /\| Google \| Provider probe, driven by the rehearsal \| .* \| Verified with limit \| 2026-08-25 \| Runtime commit `[0-9a-f]{40}`\. Limit: the Google sign-in was not driven\. \|/);
   assert.equal((rendered.match(/^\| Entra ID \| Rehearsal deny fixtures \|/gm) ?? []).length, 1);

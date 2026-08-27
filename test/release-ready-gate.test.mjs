@@ -134,8 +134,8 @@ test("release ready gate requires names for every provider row", () => {
     const cells = [...names];
     cells[index] = "";
     const compatibility = compatibilityFor(ancestor).replace(
-      "| Provider | Client | Flow | Verified |",
-      `| ${cells.join(" | ")} | Verified |`,
+      "| Provider | Client | Flow | operator |",
+      `| ${cells.join(" | ")} | operator |`,
     );
     const result = fixture({ compatibility });
     assert.ok(result.errors.includes(`provider evidence: row has missing or malformed ${label} cell`));
@@ -520,8 +520,8 @@ test("the leg's own composition ages every row, and the row definitions age the 
     releaseCommit: rowDefinitionRelease,
   });
   assert.deepEqual(renderedAfterDefinition.staleEvidence.map((entry) => entry.commit), [ancestor],
-    "moving the row definitions out of scripts/live did not stop them ageing rendered rows");
-  assert.ok(renderedAfterDefinition.staleEvidence[0].changedInputs.includes("scripts/lib/rendered-provider-rows.mjs"));
+    "the renderer's own row definitions age the rows it writes");
+  assert.ok(renderedAfterDefinition.staleEvidence[0].changedInputs.includes("scripts/live/render-evidence.mjs"));
 
   const operatorAfterDefinition = fixture({
     compatibility: compatibilityFor(ancestor, { exportCommit: rowDefinitionRelease }),

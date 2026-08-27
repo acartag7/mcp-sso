@@ -30,7 +30,7 @@ const DEPLOYMENT_PATHS = [
  *  operator row keeps standing until the thing it observed changes. */
 const HARNESS_PATHS = [
   "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
-  "scripts/lib/release-matrix-outcome.mjs", "scripts/lib/rendered-provider-rows.mjs", "docs/verification.md",
+  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md",
 ];
 
 /** The set `evidenceInputDigest` hashes, frozen as it was when the first digest

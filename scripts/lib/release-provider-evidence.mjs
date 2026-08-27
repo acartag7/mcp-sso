@@ -1,19 +1,22 @@
-import { isRenderedRow, renderedSubjectCell } from "./rendered-provider-rows.mjs";
-
 const PROVIDER_STATUSES = new Set(["Verified", "Verified with limit", "Not run"]);
+const RECORDED_BY = new Set(["rehearsal", "operator"]);
+
+function renderedSubjectCell(value) {
+  return value.replace(/`([^`\r\n]+)`/g, "$1").replace(/\s+/gu, " ").trim();
+}
 
 export function parseProviderRuntimeCommits(tableRows, errors) {
   const receipts = [];
   const subjects = new Set();
   for (const line of tableRows) {
     const rawCells = line.split("|").slice(1, -1);
-    if (rawCells.length !== 6) {
+    if (rawCells.length !== 7) {
       errors.push("provider evidence: malformed current-matrix row");
       continue;
     }
     const cells = rawCells.map((cell) => cell.trim());
-    const [provider, client, flow, status, date, limits] = cells;
-    const rawStatus = rawCells[3];
+    const [provider, client, flow, recordedBy, status, date, limits] = cells;
+    const rawStatus = rawCells[4];
     if (!status || rawStatus !== ` ${status} ` || !/^[A-Za-z]+(?: [A-Za-z]+)*$/.test(status)) {
       errors.push(`provider evidence: ${provider} / ${client} has malformed status`);
       continue;
@@ -44,7 +47,7 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
       + limits.split("Runtime evidence digest").length - 1;
     const verifiedStatus = status === "Verified" || status === "Verified with limit";
     if (!verifiedStatus) {
-      if (limitCount !== 0 || notRunCount !== 1 || receiptCount !== 0 || rawCells[4] !== "  "
+      if (limitCount !== 0 || notRunCount !== 1 || receiptCount !== 0 || rawCells[5] !== "  "
         || !/^Not run: (?=[^|]*[\p{L}\p{N}])\S(?:.*\S)?\.$/u.test(limits)) {
         errors.push(`provider evidence: ${provider} / ${client} has malformed Not run evidence`);
       }
@@ -54,7 +57,7 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
     const parsedDate = dateMatch
       ? new Date(Date.UTC(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3])))
       : undefined;
-    if (!dateMatch || rawCells[4] !== ` ${date} ` || parsedDate.toISOString().slice(0, 10) !== date) {
+    if (!dateMatch || rawCells[5] !== ` ${date} ` || parsedDate.toISOString().slice(0, 10) !== date) {
       errors.push(`provider evidence: ${provider} / ${client} has missing or malformed date`);
       continue;
     }
@@ -78,9 +81,15 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
         continue;
       }
     }
-    // The renderer owns a fixed set of subjects; every other row was recorded
-    // by a person driving a real client, and the two age differently.
-    const harnessDriven = isRenderedRow(provider, client, flow);
+    // Provenance is recorded, never inferred from display text: a rendered
+    // row's wording can change, and a row that stopped matching would have been
+    // reclassified as an operator's. Anything but an explicit `operator` ages
+    // strictly, so an unreadable or absent value cannot loosen the rule.
+    if (rawCells[3] !== ` ${recordedBy} ` || !RECORDED_BY.has(recordedBy)) {
+      errors.push(`provider evidence: ${provider} / ${client} has unknown "Recorded by" value ${recordedBy}`);
+      continue;
+    }
+    const harnessDriven = recordedBy !== "operator";
     receipts.push(directMatch
       ? { provider, client, harnessDriven, runtimeCommit: directMatch[1] }
       : { provider, client, harnessDriven, evidenceDigest: squashMatch[1], mergeCommit: squashMatch[2] });

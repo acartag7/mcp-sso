@@ -32,6 +32,7 @@ const IDENTITY_COMPLETION = read("scripts/live/probe-e2e-identity-support.mjs");
 const README = read("scripts/live/README.md");
 const CHECKLIST = read("scripts/live/CHECKLIST.md");
 const DOC = read("docs/reference/live-harness.md");
+const REHEARSAL_SUPPORT = read("scripts/live/rehearsal-support.mjs");
 const GUID_A = "11111111-2222-3333-4444-555555555555";
 const GUID_B = "66666666-7777-8888-9999-aaaaaaaaaaaa";
 const GUID_C = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
@@ -567,6 +568,14 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.equal((cliProbe.match(/spawnPty\(\.\.\.loginCommand\(/g) ?? []).length, 2, "both login commands run through the sandbox wrapper");
   assert.match(cliProbe, /existsSync\(join\(home, KEYCHAIN_STORE\)\)/, "the private keychain is proved reached");
   assert.match(cliProbe, /NOTE  tool call skipped/, "a skipped tool call is recorded, never silent");
+  // The receipt has to keep those NOTE lines and the records have to say so:
+  // the renderer reads the client version out of them, and a record that
+  // promised only PASS/FAIL/CONTROL described a receipt nothing could record.
+  assert.match(REHEARSAL_SUPPORT, /\(PASS\|FAIL\|CONTROL\|NOTE\)/, "the classifier keeps NOTE lines");
+  for (const [name, record] of [["README", README], ["harness reference", DOC]]) {
+    assert.match(record, /`NOTE`/, `the ${name} says the receipt keeps NOTE lines`);
+    assert.match(record, /client version/, `the ${name} says what reads them`);
+  }
   for (const [name, source] of [["probe-client", client], ["probe-cli", cliProbe]]) {
     assert.match(source, /if \(ARMABLE_OUTCOMES\.has\(result\.outcome\)\) throw new ProbeRefusal\(result\.outcome\);/,
       `${name}: an operator-armable driver outcome refuses at runner level`);

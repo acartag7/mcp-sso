@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evidenceInputDigest } from "../../scripts/lib/release-evidence-git.mjs";
-import { PROVIDER_ROWS } from "../../scripts/lib/rendered-provider-rows.mjs";
+import { PROVIDER_ROWS } from "../../scripts/live/render-evidence.mjs";
 import { evaluateReleaseReadiness } from "../../scripts/lib/release-ready.mjs";
 
 let repo;
@@ -31,12 +31,12 @@ function git(args) {
  *  operator recorded. */
 export function compatibilityFor(commit, { exportCommit = commit, rendered = false } = {}) {
   const row = rendered
-    ? `| ${PROVIDER_ROWS[0].provider} | ${PROVIDER_ROWS[0].client} | ${PROVIDER_ROWS[0].flow} | Verified | 2026-08-22 | Runtime commit \`${commit}\`. |`
-    : `| Provider | Client | Flow | Verified | 2026-08-22 | Runtime commit \`${commit}\`. |`;
+    ? `| Provider | Client | Flow | rehearsal | Verified | 2026-08-22 | Runtime commit \`${commit}\`. |`
+    : `| Provider | Client | Flow | operator | Verified | 2026-08-22 | Runtime commit \`${commit}\`. |`;
   return [
     "# Client compatibility", "", "## Current matrix", "",
-    "| Provider | Client | Flow driven | Status | Date | Limits |",
-    "| --- | --- | --- | --- | --- | --- |",
+    "| Provider | Client | Flow driven | Recorded by | Status | Date | Limits |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
     row,
     "", "## Public export live evidence", "",
     "| Export | Live evidence | Runtime commit |", "| --- | --- | --- |",
@@ -143,9 +143,9 @@ export function setupReleaseReadyFixture() {
   deploymentRelease = git(["rev-parse", "HEAD"]);
   // The definition of what the record run renders moves.
   git(["switch", "-q", "-c", "row-definition-change", release]);
-  mkdirSync(join(repo, "scripts/lib"), { recursive: true });
-  writeFileSync(join(repo, "scripts/lib/rendered-provider-rows.mjs"), "export const PROVIDER_ROWS = [];\n");
-  git(["add", "scripts/lib/rendered-provider-rows.mjs"]);
+  mkdirSync(join(repo, "scripts/live"), { recursive: true });
+  writeFileSync(join(repo, "scripts/live/render-evidence.mjs"), "export const PROVIDER_ROWS = [];\n");
+  git(["add", "scripts/live/render-evidence.mjs"]);
   git(["commit", "-qm", "row definition release"]);
   rowDefinitionRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "--orphan", "unrelated"]);
