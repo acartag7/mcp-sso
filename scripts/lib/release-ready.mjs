@@ -187,6 +187,11 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts,
     const covering = (byExport.get(name) ?? []).filter((id) => provenRows.has(id));
     if (covering.length === 0) errors.push(`no live evidence covers export ${name}`);
   }
+  // A row claiming an export the package no longer declares is a mapping left
+  // behind, and it would keep looking like coverage of something.
+  for (const [name, rows] of byExport) {
+    if (!publicExports.includes(name)) errors.push(`release matrix: ${rows.join(", ")} names export ${name}, which the package does not declare`);
+  }
   for (const { label, receipt } of valid) {
     const resolvedRuntime = resolveCommit(gitCwd, receipt.runtimeCommit);
     if (!resolvedRuntime) {

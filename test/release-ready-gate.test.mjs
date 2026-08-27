@@ -96,6 +96,18 @@ test("a receipt cannot claim a release-matrix row the matrix does not define", (
     "and it cannot stand in for the row that would have covered an export");
 });
 
+test("a matrix row cannot name an export the package does not declare", () => {
+  const stale = fixture({
+    releaseMatrix: { rows: [
+      { id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "a", name: "b" }] },
+      { id: "RM.2", title: "Fastify", packedArtifact: true, exports: ["./fastify"], evidence: [{ file: "a", name: "b" }] },
+      { id: "RM.3", title: "Removed", packedArtifact: true, exports: ["./gone"], evidence: [{ file: "a", name: "b" }] },
+    ] },
+  });
+  assert.ok(stale.errors.some((error) => error.includes("names export ./gone, which the package does not declare")),
+    `a mapping left behind keeps looking like coverage: ${JSON.stringify(stale.errors)}`);
+});
+
 test("the published-release row must be in the section's rendered table", () => {
   const table = statusFor();
   // A row outside the rendered table is not published status: it cannot
