@@ -104,15 +104,19 @@ function replaceTable(lines, header, transform) {
   return [...lines.slice(0, start + 2), ...rows, ...lines.slice(end)];
 }
 
-/** The client version a CLI row observed, from the row's own NOTE line
- *  (`NOTE  claude 2.1.227`). Tier 3 rows must name the client version when it
- *  is visible, and the receipt is where it is visible. */
+/** The client version a CLI row observed, from the row's own NOTE line. The
+ *  probe prints `NOTE  claude 2.1.247`; `classifyRun` splits that into a kind
+ *  and the text after it, so what reaches the receipt is
+ *  `{ kind: "NOTE", text: "claude 2.1.247" }` and the kind identifies the line,
+ *  never a prefix inside the text. Tier 3 rows must name the client version
+ *  when it is visible, and the receipt is where it is visible. */
 function observedVersion(receipt, needs, cli) {
   const versions = new Set();
   for (const row of receipt.rows) {
     if (!needs.includes(row.id)) continue;
     for (const line of row.lines ?? []) {
-      const match = /^NOTE\s+(\w+)\s+(\d+\.\d+\.\d+)$/.exec(line?.text ?? "");
+      if (line?.kind !== "NOTE") continue;
+      const match = /^(\w+) (\d+\.\d+\.\d+)$/.exec(line.text ?? "");
       if (match !== null && match[1] === cli) versions.add(match[2]);
     }
   }
