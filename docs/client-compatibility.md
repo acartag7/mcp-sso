@@ -21,8 +21,8 @@ A row is `Verified` only when the named flow was driven against the named provid
 | Cloudflare Access | claude.ai custom connector | CIMD `client_id` → authorization → Access login → consent → token → `/mcp` | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Eighteen protected `/mcp` requests followed the token. |
 | Cloudflare Access | ChatGPT custom connector | CIMD `client_id` → authorization → Access login → consent → token → `/mcp` | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Ten protected `/mcp` requests followed the token. |
 | Google | claude.ai custom connector | CIMD `client_id` → authorization → Google identity → consent → token → `/mcp` | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Twelve protected `/mcp` requests followed the token. |
-| Google | Claude Code | CIMD `client_id` → `claude mcp login` → Google identity → consent → the CLI's loopback callback → token → `/mcp` | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Four protected `/mcp` requests, from the CLI's own connection check. |
-| Google | Codex CLI | `codex mcp add` → the client identity Codex chose → Google identity → consent → the CLI's loopback callback → token | Verified with limit | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Limit: no tool call ran, so this row proves the login and the code exchange only. Codex presented a per-instance CIMD document rather than a dynamic registration. |
+| Google | Claude Code | CIMD `client_id` → `claude mcp login` → Google identity → consent → the CLI's loopback callback → token → `/mcp` | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Four protected `/mcp` requests, from the CLI's own connection check. Client version 2.1.247. |
+| Google | Codex CLI | `codex mcp add` → the client identity Codex chose → Google identity → consent → the CLI's loopback callback → token | Verified with limit | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Limit: no tool call ran, so this row proves the login and the code exchange only. Codex presented a per-instance CIMD document rather than a dynamic registration. Client version 0.150.1. |
 
 ## Public export live evidence
 
@@ -52,6 +52,8 @@ Each row proves that the package entry point participated in the listed executab
 ## Client versions
 
 The 2026-08-19 matrix used Codex CLI 0.148.0 and Claude Code 2.1.235. The operator supplied the Codex CLI version because the clients ran on a different machine from this checkout.
+
+The 2026-08-27 matrix used Codex CLI 0.150.1 and Claude Code 2.1.247, both resolved from this machine's `PATH` at the time of the run. Codex CLI 0.150.1 identified itself with a per-instance client-id metadata document rather than a dynamic registration; both paths are accepted, and the served audit must record the one the client id claimed.
 
 Codex CLI 0.144.1 had failed its RFC 9207 `iss` callback on 2026-07-28. Codex CLI 0.148.0 completed all three provider flows on 2026-08-19. Both the client and this library changed between those runs, so the later result does not identify which change removed the failure.
 
