@@ -23,10 +23,13 @@ const STATUS_LINE = /^\|\s*npm package and tag\s*\|\s*`mcp-sso@(\d+\.\d+\.\d+(?:
  *  rows: not inside a fenced block, not inside an HTML comment, and starting
  *  the line. A row hidden in either is not published status. */
 function renderedStatusRows(status, errors) {
-  // A blockquoted heading still renders as a heading, and a blockquoted table
-  // still renders as a table. Reading only unquoted lines would let a second,
-  // conflicting published-release claim sit in the document unseen.
-  const lines = String(status ?? "").split("\n").map((line) => line.replace(/^(?: {0,3}> ?)+/, ""));
+  // A heading renders as a heading whether it is quoted or indented up to
+  // three spaces, and so does a table. Reading only unquoted, unindented lines
+  // would let a second, conflicting published-release claim sit in the document
+  // unseen. Four spaces is a code block, so that indentation is left alone.
+  const lines = String(status ?? "").split("\n")
+    .map((line) => line.replace(/^(?: {0,3}> ?)+/, ""))
+    .map((line) => (/^ {1,3}\S/.test(line) ? line.replace(/^ {1,3}/, "") : line));
   const headings = lines.map((line, index) => [line, index]).filter(([line]) => STATUS_HEADING_LINE.test(line));
   if (headings.length !== 1) {
     errors.push(`status version: expected one canonical ${STATUS_HEADING} section, found ${headings.length}`);

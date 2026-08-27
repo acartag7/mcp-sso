@@ -81,6 +81,9 @@ const CONDITIONS = [
   ["a rehearsal receipt claims completeness while missing rows",
     () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { rows: [{ id: "release-matrix", status: "PASS" }] }) }) }),
     "claims to be complete without"],
+  ["a second status section indented within what Markdown still renders",
+    () => ({ status: `${statusFor()}\n\n   ## Published release\n\n   | Item | Status |\n   | --- | --- |\n   | npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
+    "expected one canonical"],
   ["a table hidden after a fence line that does not close it",
     () => ({ status: `# Status\n\n## Published release\n\n\`\`\`\n\`\`\`not-a-closer\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |` }),
     "expected one npm package and tag row, found 0"],
@@ -110,7 +113,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 28, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 29, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages exactly as the previous gate aged it, plus the one correction", () => {
@@ -130,6 +133,13 @@ test("evidence ages exactly as the previous gate aged it, plus the one correctio
   assert.ok(ages(harnessRelease), "probe and rehearsal changes age the rehearsal receipt they produced");
   assert.ok(!ages(harnessRelease, "operator"),
     "and not an operator receipt, which is the correction: no probe produced what a real client did");
+});
+
+test("indentation Markdown treats as code is left alone", () => {
+  // Four spaces is a code block, so a heading written that way is not a
+  // rendered heading and must not count as a second section.
+  const asCode = `${statusFor()}\n\n    ## Published release\n\n    | npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
+  assert.deepEqual(fixture({ status: asCode }).errors, [], "a code block is not a second claim");
 });
 
 test("what was dropped is recorded, and every dropped condition is a rule about Markdown", () => {
