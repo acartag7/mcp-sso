@@ -23,37 +23,44 @@ A row is `Verified` only when the named flow was driven against the named provid
 | Google | claude.ai custom connector | CIMD `client_id` → authorization → Google identity → consent → token → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Twelve protected `/mcp` requests followed the token. |
 | Google | Claude Code | CIMD `client_id` → `claude mcp login` → Google identity → consent → the CLI's loopback callback → token → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Four protected `/mcp` requests, from the CLI's own connection check. Client version 2.1.247. |
 | Google | Codex CLI | `codex mcp add` → the client identity Codex chose → Google identity → consent → the CLI's loopback callback → token | operator | Verified with limit | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Limit: no tool call ran, so this row proves the login and the code exchange only. Codex presented a per-instance CIMD document rather than a dynamic registration. Client version 0.150.1. |
+| Entra ID | Official MCP SDK client, driven by the rehearsal | DCR → authorization → Entra identity through the headless driver as the member test user → consent → token → `/mcp` → refresh | rehearsal | Verified | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. |
+| Entra ID | Rehearsal deny fixtures | No-group, no-mapped-group, group-overage, wrong-tenant, and subject-allowlist denials | rehearsal | Verified | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. Each fixture produced its documented audit reason (`entra_no_groups`, `entra_no_mapped_groups`, `entra_groups_overage`, `entra_bad_tid`, `entra_subject_not_allowed`) and the client received `access_denied` with the documented description. |
+| Cloudflare Access | Official MCP SDK client, driven by the rehearsal | DCR → Access login through the Entra login method as the member test user → consent → token → `/mcp` → refresh | rehearsal | Verified | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. |
+| Cloudflare Access | Headless driver, driven by the rehearsal | A test user the Access policy does not admit is stopped at the Access edge before anything reaches the gateway | rehearsal | Verified | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. The row fails if the account is refused at the Microsoft login instead, so a broken test account cannot pass as an Access decision. |
+| Cloudflare Access and Entra ID | Claude Code, driven by the rehearsal | CIMD `client_id` → `claude mcp login --no-browser` → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token → connection check on `/mcp` | rehearsal | Verified | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. Client version 2.1.227. |
+| Cloudflare Access and Entra ID | Codex CLI, driven by the rehearsal | `codex mcp add` → the client identity Codex chose, CIMD document or dynamic registration → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token | rehearsal | Verified with limit | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. Limit: a tool call runs only when the client-keys file supplies `OPENAI_API_KEY`. Client version 0.147.0. |
+| Google | Provider probe, driven by the rehearsal | Discovery through the shipped resolver, the JWKS, and the authorize redirect | rehearsal | Verified with limit | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. Limit: the Google sign-in was not driven. |
 
 ## Public export live evidence
 
-These rows record the release matrix run against real MySQL and Redis services at live worktree commit `28d9744e0f155d67dbb79389971be2d470491003`. GitHub squash-merged the same runtime tree as main commit `965d8f410b0dfd0b219a9b26a0bfe555fd2488db`. The table records the main commit.
+These rows record the release matrix run against real MySQL and Redis services during the release rehearsal at main commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`, in the same job that drove the provider rows above. The previous receipt, taken at live worktree commit `28d9744e0f155d67dbb79389971be2d470491003` and squash-merged as `965d8f410b0dfd0b219a9b26a0bfe555fd2488db`, is in the [verification archive](archive/verification-history.md).
 
 Each row proves that the package entry point participated in the listed executable release row. The rows do not prove contact with an external identity provider. The provider matrix above owns that claim.
 
 | Export | Live evidence | Runtime commit |
 | --- | --- | --- |
-| `.` | `RM.1`, `RM.17` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/memory` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/sqlite` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/mysql` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./rate-limit/redis` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./fastify/protected-resource-rate-limit` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./fastify` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./express` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./hono` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/cloudflare-access` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/entra` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/console-pairing` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/generic-oidc` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/google` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./testing/store-conformance` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./testing/client-store-conformance` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `.` | `RM.1`, `RM.17` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./store/memory` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./store/sqlite` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./store/mysql` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./rate-limit/redis` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./fastify` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./fastify/protected-resource-rate-limit` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./express` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./hono` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/cloudflare-access` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/entra` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/console-pairing` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/generic-oidc` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/google` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./testing/store-conformance` | `RM.1`, `RM.16` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./testing/client-store-conformance` | `RM.1`, `RM.16` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
 
 ## Client versions
 
 The 2026-08-19 matrix used Codex CLI 0.148.0 and Claude Code 2.1.235. The operator supplied the Codex CLI version because the clients ran on a different machine from this checkout.
 
-The 2026-08-27 matrix used Codex CLI 0.150.1 and Claude Code 2.1.247, both resolved from this machine's `PATH` at the time of the run. Codex CLI 0.150.1 identified itself with a per-instance client-id metadata document rather than a dynamic registration; both paths are accepted, and the served audit must record the one the client id claimed.
+The 2026-08-27 operator matrix, which is the connector and Google rows a person drove, used Codex CLI 0.150.1 and Claude Code 2.1.247, both resolved from that machine's `PATH` at the time of the run. The rehearsal rows from the same date name different builds because CI installs the versions the [dependency ledger](dependency-ledger.md) pins, Claude Code 2.1.227 and Codex CLI 0.147.0, rather than whatever a machine happens to have. Codex CLI 0.150.1 identified itself with a per-instance client-id metadata document rather than a dynamic registration; both paths are accepted, and the served audit must record the one the client id claimed.
 
 Codex CLI 0.144.1 had failed its RFC 9207 `iss` callback on 2026-07-28. Codex CLI 0.148.0 completed all three provider flows on 2026-08-19. Both the client and this library changed between those runs, so the later result does not identify which change removed the failure.
 

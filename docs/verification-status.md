@@ -25,11 +25,11 @@ The two deviations are D00-4.2.1 and D00-4.2.2. Both ask the authorization serve
 
 The 2026-08-19 live campaign completed 11 flows across Cloudflare Access, Entra ID, and Google at runtime commit `d6143b3`. Codex CLI `0.148.0` completed all three identity paths. The campaign also tested Claude Code and claude.ai.
 
-That campaign does not prove the current source tree, and its rows have been replaced. On 2026-08-27 eight client flows were driven at runtime commit `c9cec91`: the claude.ai connector on Cloudflare Access, Entra ID, and Google, the ChatGPT connector on Cloudflare Access and Entra ID, the claude.ai connector against a deployment configured with `OAUTH_DCR_MODE=stateless`, and Claude Code and Codex CLI on the Google leg. Each was read from the served leg's audit trail rather than from the client's own report. The Entra denial fixtures are not in the current matrix: the rehearsal drives five of them unattended, and the next record run writes that row, so wrong-tenant and subject-allowlist outcomes stay pending until it does.
+That campaign does not prove the current source tree, and its rows have been replaced. On 2026-08-27 eight client flows were driven at runtime commit `c9cec91`: the claude.ai connector on Cloudflare Access, Entra ID, and Google, the ChatGPT connector on Cloudflare Access and Entra ID, the claude.ai connector against a deployment configured with `OAUTH_DCR_MODE=stateless`, and Claude Code and Codex CLI on the Google leg. Each was read from the served leg's audit trail rather than from the client's own report. The rehearsal drove five Entra denial fixtures unattended at runtime commit `be88677` and recorded them there: no-group, no-mapped-group, group-overage, wrong-tenant, and subject-allowlist. Each produced its documented audit reason and the client received `access_denied` with the documented description. Guest and B2B outcomes are still not driven.
 
 The remaining live gaps are:
 
-- Entra wrong-tenant, subject-allowlist, and guest or B2B rejection.
+- Entra guest or B2B rejection.
 - A second generic OIDC provider other than Google.
 - The GitHub identity port and device flow. Both remain contract-only and are not release claims.
 
