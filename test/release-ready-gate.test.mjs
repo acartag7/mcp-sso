@@ -530,3 +530,15 @@ test("the leg's own composition ages every row, and the row definitions age the 
   assert.deepEqual(operatorAfterDefinition.staleEvidence, [],
     "a row an operator drove does not depend on what the renderer writes");
 });
+
+test("a Not run row cannot skip the provenance check", () => {
+  // The Not run branch returns early, so the provenance check has to run before
+  // it: a row that never names how it was driven must fail whatever its status.
+  const notRun = compatibilityFor(ancestor).replace(
+    `| Provider | Client | Flow | operator | Verified | 2026-08-22 | Runtime commit \`${ancestor}\`. |`,
+    "| Provider | Client | Flow | typo | Not run |  | Not run: the provider was unavailable. |",
+  );
+  const result = fixture({ compatibility: notRun });
+  assert.ok(result.errors.some((error) => error.includes('has unknown "Recorded by" value typo')),
+    `a Not run row with unreadable provenance must fail: ${JSON.stringify(result.errors)}`);
+});

@@ -163,3 +163,12 @@ test("BEHAVIOUR the classifier hands the renderer a line it can read", () => {
   const rendered = render({ document, receipt, date: "2026-08-27", packageJson, releaseMatrix });
   assert.match(rendered, /Client version 2\.1\.247\./, "the version the classifier stored reaches the rendered row");
 });
+
+test("BEHAVIOUR render-evidence: every leg a CLI row covers names its own version", () => {
+  // The Claude Code row covers two legs. One leg's note must not stand for the
+  // other, or the rendered row claims a version the second leg never recorded.
+  const receipt = receiptFor(ALL);
+  receipt.rows.find((row) => row.id === "claude-code:cloudflare").lines = [];
+  assert.throws(() => render({ document, receipt, date: "2026-08-27", packageJson, releaseMatrix }),
+    /does not name the claude version/, "a leg with no version note stops the recording");
+});

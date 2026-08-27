@@ -25,6 +25,15 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
       errors.push(`provider evidence: ${provider} / ${client} has unknown status ${status}`);
       continue;
     }
+    // Provenance is recorded, never inferred from display text: a rendered
+    // row's wording can change, and a row that stopped matching would have been
+    // reclassified as an operator's. Anything but an explicit `operator` ages
+    // strictly, so an unreadable or absent value cannot loosen the rule.
+    if (rawCells[3] !== ` ${recordedBy} ` || !RECORDED_BY.has(recordedBy)) {
+      errors.push(`provider evidence: ${provider} / ${client} has unknown "Recorded by" value ${recordedBy}`);
+      continue;
+    }
+    const harnessDriven = recordedBy !== "operator";
     let malformedName = false;
     for (const [label, value, rawValue] of [
       ["Provider", provider, rawCells[0]], ["Client", client, rawCells[1]], ["Flow driven", flow, rawCells[2]],
@@ -81,15 +90,6 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
         continue;
       }
     }
-    // Provenance is recorded, never inferred from display text: a rendered
-    // row's wording can change, and a row that stopped matching would have been
-    // reclassified as an operator's. Anything but an explicit `operator` ages
-    // strictly, so an unreadable or absent value cannot loosen the rule.
-    if (rawCells[3] !== ` ${recordedBy} ` || !RECORDED_BY.has(recordedBy)) {
-      errors.push(`provider evidence: ${provider} / ${client} has unknown "Recorded by" value ${recordedBy}`);
-      continue;
-    }
-    const harnessDriven = recordedBy !== "operator";
     receipts.push(directMatch
       ? { provider, client, harnessDriven, runtimeCommit: directMatch[1] }
       : { provider, client, harnessDriven, evidenceDigest: squashMatch[1], mergeCommit: squashMatch[2] });

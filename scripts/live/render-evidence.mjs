@@ -113,13 +113,18 @@ function replaceTable(lines, header, transform) {
  *  when it is visible, and the receipt is where it is visible. */
 function observedVersion(receipt, needs, cli) {
   const versions = new Set();
-  for (const row of receipt.rows) {
-    if (!needs.includes(row.id)) continue;
-    for (const line of row.lines ?? []) {
-      if (line?.kind !== "NOTE") continue;
+  // Every leg the row covers must name its own version. Joining what was found
+  // across legs would let one leg's note stand for a leg that recorded none,
+  // and the rendered row claims both.
+  for (const id of needs) {
+    const row = receipt.rows.find((candidate) => candidate.id === id);
+    const found = (row?.lines ?? []).flatMap((line) => {
+      if (line?.kind !== "NOTE") return [];
       const match = /^(\w+) (\d+\.\d+\.\d+)$/.exec(line.text ?? "");
-      if (match !== null && match[1] === cli) versions.add(match[2]);
-    }
+      return match !== null && match[1] === cli ? [match[2]] : [];
+    });
+    if (found.length === 0) return "";
+    for (const version of found) versions.add(version);
   }
   return [...versions].sort().join(" and ");
 }
