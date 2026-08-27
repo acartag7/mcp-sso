@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { driveAuthorize, openBrowser } from "./drive-identity-browser.mjs";
 import { ARMABLE_OUTCOMES, ProbeRefusal } from "./drive-identity-support.mjs";
 import {
-  BROWSER_LAUNCHERS, CLIS, auditKinds, browserIsLocal, cliLoginHolds, extractAuthorizeUrl, parseCliArgs, plainText, spawnPty, stopPty,
+  BROWSER_LAUNCHERS, CLIS, auditKinds, browserIsLocal, cliLoginHolds, extractAuthorizeUrl, identityOf, parseCliArgs, plainText, spawnPty, stopPty,
   versionOf, waitForOutput,
 } from "./probe-cli-support.mjs";
 import { eventsSince } from "./probe-client-support.mjs";
@@ -126,7 +126,8 @@ try {
     await waitForOutput(login, (text) => extractAuthorizeUrl(text, origin) !== undefined, LOGIN_TIMEOUT_MS);
     const authorize = extractAuthorizeUrl(login.output, origin);
     if (!ok("the client prints an authorization URL on the served origin", authorize !== undefined)) throw new Error("no authorization url");
-    if (!ok(`the client identifies itself the documented way (${cli.registration})`, cli.clientIdShape.test(authorize.clientId))) failures++;
+    const identity = identityOf(options.cli, authorize.clientId);
+    if (!ok(`the client identifies itself a way this CLI declares (${cli.identities.map((i) => i.path).join(" or ")})`, identity !== undefined)) failures++;
     if (options.cli !== "codex") {
       if (!ok("the client opened no browser of its own (--no-browser)", !existsSync(join(home, OPEN_MARKER)))) failures++;
     } else if (process.platform === "darwin") {
@@ -178,7 +179,7 @@ try {
     const events = eventsSince(readAudit(), before);
     out.push(`NOTE  audit ${auditKinds(events).join(" > ") || "(no events)"}`);
     if (!ok("the served leg's audit records the client's registration, identity, and code exchange",
-      cliLoginHolds(events, options.cli, { expectProtectedRequest: protectedRequest }), `${events.length} events added`)) failures++;
+      cliLoginHolds(events, options.cli, { path: identity?.path, expectProtectedRequest: protectedRequest }), `${events.length} events added`)) failures++;
   }
 } catch (error) {
   failures++;

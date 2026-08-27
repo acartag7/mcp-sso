@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { hostPolicy } from "../scripts/live/drive-identity-support.mjs";
 import {
-  BROWSER_LAUNCHERS, CLIS, auditKinds, browserIsLocal, cliLoginHolds, extractAuthorizeUrl, parseCliArgs, plainText, spawnPty, stopPty, versionOf,
+  BROWSER_LAUNCHERS, CLIS, auditKinds, browserIsLocal, cliLoginHolds, extractAuthorizeUrl, identityOf, parseCliArgs, plainText, spawnPty, stopPty, versionOf,
   waitForOutput,
 } from "../scripts/live/probe-cli-support.mjs";
 import { readClientKeysFile } from "../scripts/live/run-support.mjs";
@@ -45,7 +45,7 @@ test("BEHAVIOUR extractAuthorizeUrl: only a complete authorize URL on the served
   assert.equal(found.clientId, CIMD);
   assert.equal(found.redirectUri, "http://localhost:1455/callback");
   assert.equal(found.state, "st4te");
-  assert.match(found.clientId, CLIS.claude.clientIdShape);
+  assert.equal(identityOf("claude", found.clientId)?.path, "cimd");
   const linked = `\x1b]8;;${authorizeUrl()}\x1b\\Open\x1b]8;;\x1b\\ ${authorizeUrl()}\n`;
   assert.equal(extractAuthorizeUrl(linked, ORIGIN)?.href, authorizeUrl(), "an OSC 8 hyperlink does not hide the URL");
   // Claude Code ends its hyperlink sequences with BEL. Two independent
@@ -74,8 +74,8 @@ test("BEHAVIOUR extractAuthorizeUrl: only a complete authorize URL on the served
   const twice = `${authorizeUrl().replace(ORIGIN, "https://other.example")}\n${authorizeUrl()}\n`;
   assert.equal(extractAuthorizeUrl(twice, ORIGIN)?.href, authorizeUrl(), "a foreign candidate does not shadow the real one");
   assert.equal(extractAuthorizeUrl("", ORIGIN), undefined);
-  assert.match("mcpdc_" + "0123456789abcdef".repeat(2), CLIS.codex.clientIdShape);
-  assert.doesNotMatch(CIMD, CLIS.codex.clientIdShape);
+  assert.equal(identityOf("codex", "mcpdc_" + "0123456789abcdef".repeat(2))?.path, "dcr");
+  assert.equal(identityOf("codex", CIMD), undefined, "Claude Code's document is not a Codex identity");
 });
 
 test("BEHAVIOUR plainText, versionOf, browserIsLocal, and auditKinds print or admit only fixed vocabulary", () => {
@@ -104,14 +104,36 @@ test("BEHAVIOUR cliLoginHolds: the registration path the CLI uses, the identity,
   const events = (...names) => names.map((name) => { const [event, status] = name.split(":"); return { event, status }; });
   const claude = events("auth.request:failure", "oauth.cimd.fetch:success", "identity.verify:success", "oauth.authorize.approve:success", "oauth.token.authorization_code:success");
   const codex = events("oauth.register:success", "identity.verify:success", "oauth.authorize.approve:success", "oauth.token.authorization_code:success");
-  assert.equal(cliLoginHolds(claude, "claude", { expectProtectedRequest: false }), true);
-  assert.equal(cliLoginHolds(codex, "codex", { expectProtectedRequest: false }), true);
-  assert.equal(cliLoginHolds(claude, "codex", { expectProtectedRequest: false }), false, "a CIMD fetch is not Codex's dynamic registration");
-  assert.equal(cliLoginHolds(codex, "claude", { expectProtectedRequest: false }), false, "a dynamic registration is not Claude Code's CIMD fetch");
-  assert.equal(cliLoginHolds(claude, "claude", { expectProtectedRequest: true }), false, "a connection check must show as a protected request");
-  assert.equal(cliLoginHolds([...claude, ...events("auth.request:success")], "claude", { expectProtectedRequest: true }), true);
-  assert.equal(cliLoginHolds(claude.filter((e) => e.event !== "oauth.token.authorization_code"), "claude", { expectProtectedRequest: false }), false);
-  assert.equal(cliLoginHolds([], "claude", { expectProtectedRequest: false }), false);
+  assert.equal(cliLoginHolds(claude, "claude", { path: "cimd", expectProtectedRequest: false }), true);
+  assert.equal(cliLoginHolds(codex, "codex", { path: "dcr", expectProtectedRequest: false }), true);
+  assert.equal(cliLoginHolds(claude, "codex", { path: "dcr", expectProtectedRequest: false }), false, "a CIMD fetch is not a dynamic registration");
+  assert.equal(cliLoginHolds(codex, "claude", { path: "cimd", expectProtectedRequest: false }), false, "a dynamic registration is not a CIMD fetch");
+  assert.equal(cliLoginHolds(claude, "claude", { path: "cimd", expectProtectedRequest: true }), false, "a connection check must show as a protected request");
+  assert.equal(cliLoginHolds([...claude, ...events("auth.request:success")], "claude", { path: "cimd", expectProtectedRequest: true }), true);
+  assert.equal(cliLoginHolds(claude.filter((e) => e.event !== "oauth.token.authorization_code"), "claude", { path: "cimd", expectProtectedRequest: false }), false);
+  assert.equal(cliLoginHolds([], "claude", { path: "cimd", expectProtectedRequest: false }), false);
+  assert.equal(cliLoginHolds(claude, "claude", { path: undefined, expectProtectedRequest: false }), false, "a client id that claimed no declared identity holds nothing");
+  assert.equal(cliLoginHolds(claude, "claude", { path: "dcr", expectProtectedRequest: false }), false, "Claude Code declares no dynamic-registration identity");
+});
+
+test("BEHAVIOUR identityOf: Codex identifies through either path, and the audit must show the one its client id claimed", () => {
+  // Observed live on 2026-08-26: a signed-in Codex CLI presents a per-instance
+  // CIMD document, while a signed-out one registers dynamically. Both are the
+  // same CLI, and the shipped 0.147.0 binary carries both paths.
+  const perInstance = "https://chatgpt.com/oauth/codex/c50ro4oho5AB/client.json";
+  assert.equal(identityOf("codex", perInstance)?.path, "cimd");
+  assert.equal(identityOf("codex", "mcpdc_" + "0123456789abcdef".repeat(2))?.path, "dcr");
+  assert.equal(identityOf("codex", "https://chatgpt.com/oauth/client.json"), undefined, "the hosted ChatGPT connector is not the CLI");
+  assert.equal(identityOf("codex", "https://evil.example/oauth/codex/x/client.json"), undefined, "another host is not the vendor");
+  assert.equal(identityOf("codex", "mcpdc_short"), undefined);
+  assert.equal(identityOf("codex", undefined), undefined);
+  assert.equal(identityOf("nosuch", perInstance), undefined, "an unknown CLI declares no identity");
+
+  const events = (...names) => names.map((name) => { const [event, status] = name.split(":"); return { event, status }; });
+  const withCimd = events("oauth.cimd.fetch:success", "identity.verify:success", "oauth.authorize.approve:success", "oauth.token.authorization_code:success");
+  const withDcr = events("oauth.register:success", "identity.verify:success", "oauth.authorize.approve:success", "oauth.token.authorization_code:success");
+  assert.equal(cliLoginHolds(withCimd, "codex", { path: identityOf("codex", perInstance)?.path, expectProtectedRequest: false }), true, "a signed-in Codex login holds");
+  assert.equal(cliLoginHolds(withDcr, "codex", { path: identityOf("codex", perInstance)?.path, expectProtectedRequest: false }), false, "a CIMD client id with no document fetch is not that identity");
 });
 
 test("BEHAVIOUR hostPolicy: the loopback callback the CLI named is the only plain-http page the driver accepts", () => {

@@ -4,22 +4,39 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+/** How a CLI may identify itself. A client chooses between the spec's two
+ *  paths at run time, so a row states which paths are that CLI's and binds the
+ *  one it used to the audit event that path must produce: a CIMD `client_id`
+ *  with no document fetch, or a dynamic id with no registration, is a client
+ *  identifying as something it did not do. */
 export const CLIS = Object.freeze({
   claude: {
     binary: "claude",
-    /** Claude Code registers through CIMD with its published document. */
-    clientIdShape: /^https:\/\/claude\.ai\/oauth\/claude-code-client-metadata$/,
-    registration: "cimd",
+    /** Claude Code identifies through its published CIMD document. */
+    identities: [{ path: "cimd", clientIdShape: /^https:\/\/claude\.ai\/oauth\/claude-code-client-metadata$/ }],
     versionArgs: ["--version"],
   },
   codex: {
     binary: "codex",
-    /** Codex CLI registers dynamically; opaque stored ids start with mcpdc_. */
-    clientIdShape: /^mcpdc_[a-f0-9]{32}$/,
-    registration: "dcr",
+    /** Codex CLI does both and decides at run time: a per-instance CIMD
+     *  document under its vendor's host (observed live 2026-08-26 on three
+     *  legs), or a dynamic registration whose stored id starts with `mcpdc_`
+     *  (what a signed-out CLI does, which is every CI run). The shipped
+     *  `0.147.0` binary carries both paths, so this is not a version to pin
+     *  away from. */
+    identities: [
+      { path: "cimd", clientIdShape: /^https:\/\/chatgpt\.com\/oauth\/codex\/[A-Za-z0-9_-]{1,64}\/client\.json$/ },
+      { path: "dcr", clientIdShape: /^mcpdc_[a-f0-9]{32}$/ },
+    ],
     versionArgs: ["--version"],
   },
 });
+
+/** The identity a client id claims for this CLI, or undefined when it claims
+ *  none of them. An unknown shape is never admitted. */
+export function identityOf(cli, clientId) {
+  return CLIS[cli]?.identities.find((identity) => typeof clientId === "string" && identity.clientIdShape.test(clientId));
+}
 const ROLE = /^[a-z]+$/;
 
 /** Every browser launcher a CLI or its libraries reach through PATH on Linux
@@ -160,11 +177,14 @@ export function auditKinds(events) {
 }
 
 /** What the served leg must have recorded for a CLI's completed login: the
- *  registration path the CLI uses, the identity, the code exchange, and, when
- *  the CLI then reached /mcp, a successful protected request. */
-export function cliLoginHolds(events, cli, { expectProtectedRequest }) {
+ *  identity path the client id claimed, the identity, the code exchange, and,
+ *  when the CLI then reached /mcp, a successful protected request. `path` is
+ *  the one `identityOf` matched, so the audit has to agree with the client id
+ *  the row already checked; a path this CLI does not declare holds nothing. */
+export function cliLoginHolds(events, cli, { path, expectProtectedRequest }) {
   const seen = kinds(events);
-  const registration = CLIS[cli].registration === "cimd" ? "oauth.cimd.fetch:success" : "oauth.register:success";
+  if (!CLIS[cli]?.identities.some((identity) => identity.path === path)) return false;
+  const registration = path === "cimd" ? "oauth.cimd.fetch:success" : "oauth.register:success";
   const required = [registration, "identity.verify:success", "oauth.authorize.approve:success", "oauth.token.authorization_code:success"];
   if (expectProtectedRequest) required.push("auth.request:success");
   return required.every((name) => seen.includes(name));
