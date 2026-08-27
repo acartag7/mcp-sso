@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "producer": "rehearsal",
+  "runtimeCommit": "be886778f5cf3018b48fa43511b5a07d892f5d2d",
+  "recordedAt": "2026-08-27T11:00:59.441Z",
+  "complete": true,
+  "source": "https://github.com/acartag7/mcp-sso/actions/runs/33065048989",
+  "rows": [
+    {
+      "id": "release-matrix",
+      "status": "PASS"
+    },
+    {
+      "id": "probe-entra",
+      "status": "PASS"
+    },
+    {
+      "id": "probe-google",
+      "status": "PASS"
+    },
+    {
+      "id": "access-login",
+      "status": "PASS"
+    },
+    {
+      "id": "access-edge-denial",
+      "status": "PASS"
+    },
+    {
+      "id": "probe-cloudflare",
+      "status": "PASS"
+    },
+    {
+      "id": "probe-e2e:stored",
+      "status": "PASS"
+    },
+    {
+      "id": "probe-e2e:stateless",
+      "status": "PASS"
+    },
+    {
+      "id": "client-entra:member",
+      "status": "PASS"
+    },
+    {
+      "id": "client-entra:nogroups",
+      "status": "PASS"
+    },
+    {
+      "id": "client-entra:wronggroup",
+      "status": "PASS"
+    },
+    {
+      "id": "client-entra:overage",
+      "status": "PASS"
+    },
+    {
+      "id": "client-cloudflare:member",
+      "status": "PASS"
+    },
+    {
+      "id": "claude-code:entra",
+      "status": "PASS"
+    },
+    {
+      "id": "claude-code:cloudflare",
+      "status": "PASS"
+    },
+    {
+      "id": "codex-cli:entra",
+      "status": "PASS"
+    },
+    {
+      "id": "codex-cli:cloudflare",
+      "status": "PASS"
+    },
+    {
+      "id": "client-entra:wrong-tenant",
+      "status": "PASS"
+    },
+    {
+      "id": "client-entra:not-allowlisted",
+      "status": "PASS"
+    }
+  ],
+  "releaseMatrix": [
+    "RM.1",
+    "RM.2",
+    "RM.3",
+    "RM.4",
+    "RM.5",
+    "RM.6",
+    "RM.7",
+    "RM.8",
+    "RM.9",
+    "RM.10",
+    "RM.11",
+    "RM.12",
+    "RM.13",
+    "RM.14",
+    "RM.15",
+    "RM.16",
+    "RM.17",
+    "RM.18"
+  ]
+}

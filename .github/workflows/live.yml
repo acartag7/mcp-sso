@@ -207,16 +207,20 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.record && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Read-only, and no repository credential. This job turns a receipt into the
+    # evidence document and uploads it; a person commits it. Actions cannot open
+    # a pull request in this repository, so the job that tried to was a step
+    # that could only ever fail, and its failure told the operator nothing the
+    # artifact does not.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-20)
         with:
           fetch-depth: 0
           persist-credentials: false
-      # The renderer imports only scripts/lib and Node built-ins: no install,
-      # so the one job with a write token loads no third-party code.
+      # record-receipt.mjs imports only scripts/live and Node built-ins: no
+      # install, so this job loads no third-party code.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (2026-07-14)
         with:
           node-version: "24"
@@ -224,34 +228,16 @@ jobs:
         with:
           name: rehearsal-receipt-${{ github.sha }}-${{ github.run_id }}
           path: ${{ runner.temp }}/receipt
-      - name: render the receipt into the evidence record
-        run: node scripts/live/render-evidence.mjs --receipt "$RUNNER_TEMP/receipt/receipt.json" --date "$(date -u +%F)" --write --require-head
-      - name: open the evidence pull request
+      - name: record the receipt as release evidence
         env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MCP_SSO_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/live/record-receipt.mjs --receipt "$RUNNER_TEMP/receipt/receipt.json" --write --require-head
+      - name: upload the evidence document
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (2026-04-10)
+        with:
+          name: evidence-${{ github.sha }}
+          path: docs/evidence/
+          if-no-files-found: error
+      - name: say how to land it
         run: |
-          set -euo pipefail
-          SHORT="$(git rev-parse --short=7 HEAD)"
-          # The run id is part of the branch name so a recording that failed
-          # after pushing can simply be dispatched again: a retry writes its
-          # own branch instead of a non-fast-forward push to the first one.
-          BRANCH="evidence/${SHORT}-${GITHUB_RUN_ID}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$BRANCH"
-          git add docs/client-compatibility.md
-          git commit -q -F - <<EOF
-          docs(evidence): record the release rehearsal at ${SHORT}
-
-          Rendered from the receipt of ${RUN_URL} by scripts/live/render-evidence.mjs.
-
-          Spec: docs/live-verification.md
-          EOF
-          # gh authenticates the push from GH_TOKEN through its credential helper,
-          # so no credential lands in .git/config or in a remote URL.
-          gh auth setup-git
-          git push origin "HEAD:refs/heads/${BRANCH}"
-          gh pr create --base main --head "$BRANCH" \
-            --title "docs(evidence): record the release rehearsal at ${SHORT}" \
-            --body "Rendered from the passing receipt of ${RUN_URL} at \`$(git rev-parse HEAD~1)\`. Every rehearsal row passed on a clean tree. This branch was pushed by the workflow token, so its checks did not start: run \`gh pr close <n> && gh pr reopen <n>\` (or push an empty commit) to start them, then review and merge."
+          echo "::notice::Download the evidence-${{ github.sha }} artifact, commit its file under docs/evidence/, and open a pull request."

@@ -1,5 +1,8 @@
 # Client compatibility
 
+> [!IMPORTANT]
+> This page is written for readers. The release gate gets its evidence from the receipts under [`docs/evidence/`](evidence/), one JSON document per campaign naming the commit it ran against and what it observed. Nothing here is parsed, so a sentence in this page can be clearer than a table cell without a check failing, and a claim here still has to be true.
+
 This reference records the latest client and identity-provider results that apply to v0.4.0 or the current source tree. Earlier results are in the [client compatibility archive](archive/client-compatibility-2026-07.md). Full dated receipts are in the [verification archive](archive/verification-history.md).
 
 ## Evidence levels

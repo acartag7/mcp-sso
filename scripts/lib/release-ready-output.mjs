@@ -48,7 +48,7 @@ export function formatReleaseReadinessFailure({ errors, staleEvidence, releaseTa
     }
     lines.push(
       `  Re-run live verification against ${releaseTarget} and record the new commit in`,
-      "  docs/client-compatibility.md.",
+      "  a receipt under docs/evidence/.",
     );
   }
   lines.push(...errors.map((error) => `- ${error}`));

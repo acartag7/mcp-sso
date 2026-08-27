@@ -47,7 +47,7 @@ Use this checklist for a release candidate. The [release verification reference]
 
 ## Record live compatibility claims
 
-Run the release rehearsal from the merged `main` commit and let it open the evidence pull request:
+Run the release rehearsal from the merged `main` commit:
 
 ```bash
 gh workflow run live.yml --ref main -f record=true
@@ -69,11 +69,11 @@ pnpm run check:release-ready
 
 The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence commit, or version mismatch.
 
-A row goes stale against the release commit when something it depends on changed, and two kinds of row depend on different things. A row the record run renders, and every export row, came out of the harness, so a change under `test/`, `scripts/live/`, the release-matrix scripts, `docs/verification.md`, or `.github/workflows/live.yml` ages it, and the next record run re-proves it. A row an operator recorded by driving a real client against a served leg came out of none of that code: it ages when `src/`, `examples/`, the TypeScript configuration, the lockfiles, the publish workflow, or a runtime field of `package.json` changes, because those are what a client would observe. It ages too when the leg's own composition changes, which is `scripts/live/run.sh`, `scripts/live/serve.sh`, and `scripts/live/run-support.mjs`: those choose the entry point, map the environment onto the example's identity selector, DCR mode, redirect allowlist and proxy trust, and expose the hostname, so a change there changes what any client observes without touching `src/`. Which kind a row is comes from its own `Recorded by` cell, `rehearsal` or `operator`, written when the row is recorded and never inferred from the row's wording: a rendered row whose text changes must not quietly become an operator's. Any other value fails the row, so an unreadable cell ages strictly rather than loosely. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
+A receipt goes stale when something that changes what a client would observe moved after its commit: `src/`, `examples/`, the TypeScript configuration, the lockfiles, the publish workflow, a runtime field of `package.json`, or the composition of the leg a client is driven against, which is `scripts/live/run.sh`, `scripts/live/serve.sh`, and `scripts/live/run-support.mjs`. Probe and rehearsal code is deliberately not an input: a rehearsal receipt is rewritten by every recorded run, and an operator receipt records what a real client did against a served leg, which no probe produced. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
 
 ## Merge the evidence record
 
-1. Commit only `docs/client-compatibility.md` on the evidence branch. The workflow's `record` job does this and opens the pull request; close and reopen that pull request once so the hosted checks start, because a branch pushed by the workflow token starts none on its own.
+1. Commit only the receipt under `docs/evidence/` from the `evidence-<sha>` artifact, and open the pull request from an account rather than a workflow token.
 2. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
 3. Read every review and inline thread.
 4. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.

@@ -342,7 +342,7 @@ test("BEHAVIOUR rehearsal-support: run.sh outcomes classify as PASS, FAIL, or an
   const pass = classifyRun({ code: 0, stderr: "", stdout: "PASS  a\nPASS  b\nCONTROL  c\n\n2 live checks passed; 1 local controls passed\n" });
   assert.deepEqual(pass, { status: "PASS", checks: { passed: 2, total: undefined, controls: 1 }, lines: [{ kind: "PASS", text: "a" }, { kind: "PASS", text: "b" }, { kind: "CONTROL", text: "c" }] });
   // A NOTE carries what the row observed, not a check. The receipt has to keep
-  // it — render-evidence.mjs reads the client version from exactly these lines
+  // it — record-receipt.mjs reads the client version from exactly these lines
   // — and it must not count as a check, or a refusal that happened after one
   // would read as a failed check instead of an armable BLOCKED reason.
   const noted = classifyRun({ code: 0, stderr: "", stdout: "NOTE  claude 2.1.247\nPASS  a\nPASS  b\nCONTROL  c\n\n2 live checks passed; 1 local controls passed\n" });
