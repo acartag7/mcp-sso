@@ -2,6 +2,14 @@
 
 This archive preserves dated verification receipts for earlier release candidates and source revisions. For current release and source-tree status, see [Verification status](../verification-status.md). For current client results, see [Client compatibility](../client-compatibility.md).
 
+## 2026-08-19 Entra deny fixtures, owner browser
+
+Superseded on 2026-08-27 by the rehearsal's `client-entra:nogroups`, `:wronggroup`, `:overage`, `:wrong-tenant`, and `:not-allowlisted` rows, which drive five fixtures unattended and assert each client-facing description as well as each audit reason. The original row read:
+
+| Entra ID | Owner browser with three provisioned deny fixtures | No-group, no-mapped-group, and group-overage denials | Verified | 2026-08-19 | Runtime commit `d6143b3`. Each fixture produced its audit reason once: `entra_no_groups`, `entra_no_mapped_groups`, or `entra_groups_overage`. This proves distinct server-side reason codes. It does not prove distinct client-facing text or cover wrong-tenant, allowlist, and guest/B2B outcomes. |
+
+Current results are in [Client compatibility](../client-compatibility.md).
+
 ## 2026-07-28 Tier 2 receipt
 
 T2.1 through T2.6 passed from clean commit `e71a2bbaf6902f98502a788a8d1e4bfc604b9bbc`: 866 tests passed with zero skipped. The tarball contained only `dist/`, `docs/`, `README.md`, `LICENSE`, and `package.json`. A temporary install without optional peers imported the eight peer-free public entry points, all 13 public entry points imported after their declared optional peers were installed, and the installed root package produced authorization-server and protected-resource metadata.
