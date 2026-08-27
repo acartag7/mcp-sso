@@ -75,6 +75,15 @@ const CONDITIONS = [
   ["the status section appears more than once",
     () => ({ status: `${statusFor()}\n\n## Published release ##\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
     "expected one canonical"],
+  ["a rehearsal receipt records a row the rehearsal does not define",
+    () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "invented-proof", status: "PASS" }] }) }) }),
+    "row(s) the rehearsal does not define"],
+  ["a rehearsal receipt claims completeness while missing rows",
+    () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { rows: [{ id: "release-matrix", status: "PASS" }] }) }) }),
+    "claims to be complete without"],
+  ["a second status section is written as a blockquote",
+    () => ({ status: `${statusFor()}\n\n> ## Published release\n>\n> | Item | Status |\n> | --- | --- |\n> | npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
+    "expected one canonical"],
   ["the release matrix is not an object with a rows array",
     () => ({ releaseMatrix: [] }), "expected an object with a rows array"],
   ["a matrix row has no RM.N id",
@@ -98,7 +107,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 24, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 27, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages exactly as the previous gate aged it, plus the one correction", () => {

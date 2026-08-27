@@ -23,7 +23,10 @@ const STATUS_LINE = /^\|\s*npm package and tag\s*\|\s*`mcp-sso@(\d+\.\d+\.\d+(?:
  *  rows: not inside a fenced block, not inside an HTML comment, and starting
  *  the line. A row hidden in either is not published status. */
 function renderedStatusRows(status, errors) {
-  const lines = String(status ?? "").split("\n");
+  // A blockquoted heading still renders as a heading, and a blockquoted table
+  // still renders as a table. Reading only unquoted lines would let a second,
+  // conflicting published-release claim sit in the document unseen.
+  const lines = String(status ?? "").split("\n").map((line) => line.replace(/^(?: {0,3}> ?)+/, ""));
   const headings = lines.map((line, index) => [line, index]).filter(([line]) => STATUS_HEADING_LINE.test(line));
   if (headings.length !== 1) {
     errors.push(`status version: expected one canonical ${STATUS_HEADING} section, found ${headings.length}`);
@@ -98,9 +101,14 @@ function readReceipt(receipt, label, errors) {
   // otherwise cover every export while the identity and client evidence was
   // gone.
   if (receipt.producer === "rehearsal") {
+    const expected = new Set(ROWS.map((row) => row.id));
     const ids = new Set((Array.isArray(receipt.rows) ? receipt.rows : []).map((row) => row?.id));
-    const missing = ROWS.map((row) => row.id).filter((id) => !ids.has(id));
+    const missing = [...expected].filter((id) => !ids.has(id));
     if (missing.length > 0) return fail(`claims to be complete without ${missing.length} row(s) the rehearsal runs`);
+    // Exact, not merely sufficient: a row the rehearsal does not define proves
+    // nothing, and a receipt carrying one is not the run it says it is.
+    const invented = [...ids].filter((id) => !expected.has(id));
+    if (invented.length > 0) return fail(`records ${invented.length} row(s) the rehearsal does not define: ${invented.slice(0, 3).join(", ")}`);
   }
   if (!Array.isArray(receipt.rows) || receipt.rows.length === 0) return fail("records no rows");
   const seen = new Set();
