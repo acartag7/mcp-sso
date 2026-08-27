@@ -28,7 +28,9 @@ test("BEHAVIOUR record-receipt: only a complete, passing receipt on a clean tree
     [{ kind: "something-else" }, /not a rehearsal receipt/],
     [{ schema: 2 }, /not a rehearsal receipt/],
     [{ runtimeCommit: "abc" }, /no full runtime commit/],
-    [{ dirty: true }, /dirty tree/],
+    [{ dirty: true }, /does not record a clean tree/],
+    [{ dirty: undefined }, /does not record a clean tree/],
+    [{ dirty: "yes" }, /does not record a clean tree/],
     [{ crashed: "stopped" }, /did not finish/],
     [{ interrupted: "signal" }, /did not finish/],
     [{ complete: false }, /--rows subset is never evidence/],
@@ -78,8 +80,10 @@ test("BEHAVIOUR record-receipt: a campaign supersedes the one before it", () => 
   // freshness forever: its commit predates the change the new run recorded.
   const source = readFileSync(new URL("../scripts/live/record-receipt.mjs", import.meta.url), "utf8");
   assert.match(source, /docs\/evidence\/rehearsal\.json/, "the active receipt has one name");
-  assert.match(source, /docs\/evidence\/archive\/rehearsal-\$\{String\(previous\.runtimeCommit\)\.slice\(0, 7\)\}-\$\{stamp\}/, "and the one it replaces is archived under its own campaign");
+  assert.match(source, /rehearsal-\$\{String\(previous\.runtimeCommit\)\.slice\(0, 7\)\}-\$\{stamp\}/, "and the one it replaces is archived under its own campaign");
   assert.match(source, /renameSync\(path, archive\)/, "moved, not deleted");
+  assert.match(source, /for \(let n = 2; existsSync\(archive\); n\+\+\)/,
+    "and a name already taken belongs to a campaign that ran, so the new one moves aside instead of replacing it");
   const gate = readFileSync(new URL("../scripts/check-release-ready.mjs", import.meta.url), "utf8");
   assert.match(gate, /name\.endsWith\("\.json"\)/, "the gate reads documents, so the archive directory is not one");
 });

@@ -45,11 +45,13 @@ function renderedStatusRows(status, errors) {
     // A backtick fence is closed by backticks, not by tildes, and the closer is
     // at least as long as the opener. Toggling on either would let a table
     // inside a code block read as a rendered one.
-    const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (opener !== undefined && opener !== null) {
-      const [, marks] = opener;
-      if (fence === undefined) fence = marks;
-      else if (marks[0] === fence[0] && marks.length >= fence.length) fence = undefined;
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (marker !== null) {
+      const [, marks, rest] = marker;
+      if (fence === undefined) { fence = marks; continue; }
+      // Only a bare delimiter closes a fence. `\`\`\`not-a-closer` leaves the
+      // block open, and a table after it still renders as code.
+      if (marks[0] === fence[0] && marks.length >= fence.length && rest.trim() === "") fence = undefined;
       continue;
     }
     if (line.includes("<!--")) commented = true;

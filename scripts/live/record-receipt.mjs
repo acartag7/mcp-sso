@@ -21,7 +21,7 @@ const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 export function readRehearsalReceipt(receipt, expectedRows = ROWS.map((row) => row.id)) {
   if (receipt?.kind !== "mcp-sso-release-rehearsal" || receipt.schema !== 1) throw new Error("not a rehearsal receipt");
   if (!/^[0-9a-f]{40}$/.test(receipt.runtimeCommit ?? "")) throw new Error("the receipt names no full runtime commit");
-  if (receipt.dirty === true) throw new Error("the receipt was produced from a dirty tree");
+  if (receipt.dirty !== false) throw new Error("the receipt does not record a clean tree");
   if (receipt.crashed !== undefined || receipt.interrupted !== undefined) throw new Error("the rehearsal did not finish");
   const rows = Array.isArray(receipt.rows) ? receipt.rows : [];
   const ids = rows.map((row) => row?.id);
@@ -131,8 +131,13 @@ if (invokedAsMain()) {
       // and observations, and overwriting it would discard a campaign that ran.
       const previous = JSON.parse(readFileSync(path, "utf8"));
       const stamp = String(previous.recordedAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
-      const archive = resolve(ROOT, `docs/evidence/archive/rehearsal-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}.json`);
-      mkdirSync(dirname(archive), { recursive: true });
+      const base = `rehearsal-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
+      mkdirSync(resolve(ROOT, "docs/evidence/archive"), { recursive: true });
+      // A repeated recording of the same artifact produces the same name. The
+      // file already there is a campaign that ran, so the new one takes a free
+      // name rather than replacing it: renameSync would delete it silently.
+      let archive = resolve(ROOT, `docs/evidence/archive/${base}.json`);
+      for (let n = 2; existsSync(archive); n++) archive = resolve(ROOT, `docs/evidence/archive/${base}-${n}.json`);
       renameSync(path, archive);
       process.stdout.write(`${archive} archived\n`);
     }
