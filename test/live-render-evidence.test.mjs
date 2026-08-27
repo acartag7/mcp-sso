@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
 import { PROVIDER_ROWS, readReceipt, render } from "../scripts/live/render-evidence.mjs";
-import { ROWS, classifyCommandRun } from "../scripts/live/rehearsal-support.mjs";
+import { ROWS, classifyCommandRun, classifyRun } from "../scripts/live/rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const packageJson = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
@@ -29,8 +29,11 @@ const document = (() => {
   return [...lines.slice(0, start), SENTINEL_ROW, ...lines.slice(end)].join("\n");
 })();
 
-const versionNote = (id) => (id.startsWith("claude-code") ? [{ kind: "NOTE", text: "NOTE  claude 2.1.227" }]
-  : id.startsWith("codex-cli") ? [{ kind: "NOTE", text: "NOTE  codex 0.147.0" }] : []);
+// The shape classifyRun writes: the kind identifies the line, and the text is
+// what followed it. A fixture carrying "NOTE  claude ..." inside the text is a
+// shape the pipeline never produces.
+const versionNote = (id) => (id.startsWith("claude-code") ? [{ kind: "NOTE", text: "claude 2.1.227" }]
+  : id.startsWith("codex-cli") ? [{ kind: "NOTE", text: "codex 0.147.0" }] : []);
 const receiptFor = (ids, extra = {}) => ({
   schema: 1, kind: "mcp-sso-release-rehearsal", runtimeCommit: HEAD, dirty: false, complete: true, evidence: true, runner: "local",
   startedAt: "s", finishedAt: "f", rows: ids.map((id) => ({ id, status: "PASS", lines: versionNote(id) })), ...extra,
@@ -72,7 +75,7 @@ test("BEHAVIOUR render-evidence: a CLI row names the client version the run obse
   assert.match(codex, /Client version 0\.147\.0\./);
   // Two rows on different legs may observe different versions; both are named.
   const mixed = receiptFor(ALL);
-  mixed.rows.find((row) => row.id === "claude-code:cloudflare").lines = [{ kind: "NOTE", text: "NOTE  claude 2.1.300" }];
+  mixed.rows.find((row) => row.id === "claude-code:cloudflare").lines = [{ kind: "NOTE", text: "claude 2.1.300" }];
   const both = render({ document, receipt: mixed, date: "2026-08-26", packageJson, releaseMatrix });
   assert.match(both.split("\n").find((line) => line.includes("Claude Code, driven")), /Client version 2\.1\.227 and 2\.1\.300\./);
   // A receipt whose CLI rows name no version cannot produce that row at all.
@@ -137,4 +140,26 @@ test("BEHAVIOUR rehearsal-support: the release-matrix command row passes only on
   assert.equal(classifyCommandRun({ code: 1, stdout: "", stderr: "some test said MYSQL_URL is required\n" }).reason, "matrix_failed", "only the runner's own preflight prefix means the services were absent");
   assert.equal(ROWS[0].id, "release-matrix");
   assert.deepEqual(ROWS[0].command, ["pnpm", "run", "test:release"]);
+});
+
+test("BEHAVIOUR the classifier hands the renderer a line it can read", () => {
+  // The two modules meet here and nowhere else: the probe prints a NOTE, the
+  // classifier stores it, and the renderer reads the client version out of it.
+  // A fixture written by hand can agree with neither, so this one is produced
+  // by the classifier from output shaped like a real CLI row's.
+  const classified = classifyRun({
+    code: 0, stderr: "",
+    stdout: [
+      "NOTE  claude 2.1.247",
+      "PASS  the client records the server",
+      "PASS  the client prints an authorization URL on the served origin",
+      "", "2/2 live checks passed", "",
+    ].join("\n"),
+  });
+  assert.equal(classified.status, "PASS");
+  assert.deepEqual(classified.lines[0], { kind: "NOTE", text: "claude 2.1.247" });
+  const receipt = receiptFor(ALL);
+  for (const row of receipt.rows) if (row.id.startsWith("claude-code")) row.lines = classified.lines;
+  const rendered = render({ document, receipt, date: "2026-08-27", packageJson, releaseMatrix });
+  assert.match(rendered, /Client version 2\.1\.247\./, "the version the classifier stored reaches the rendered row");
 });
