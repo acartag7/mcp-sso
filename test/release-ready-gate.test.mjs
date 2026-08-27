@@ -29,7 +29,9 @@ test("a receipt is rejected when it is not evidence", () => {
     [{ producer: "someone" }, 'unknown producer "someone"'],
     [{ runtimeCommit: "nope" }, "runtime commit is malformed"],
     [{ rows: [] }, "records no rows"],
-    [{ rows: [{ id: "probe-entra", status: "FAIL" }] }, "row probe-entra did not pass"],
+    [{ producer: "operator" }, "cannot carry release-matrix rows"],
+    [{ rows: [{ id: "probe-entra", status: "PASS" }] }, "without a passing release-matrix row"],
+    [{ rows: [{ id: "probe-entra", status: "FAIL" }, { id: "release-matrix", status: "PASS" }] }, "row probe-entra did not pass"],
     [{ rows: [{ id: "probe-entra", status: "PASS" }, { id: "probe-entra", status: "PASS" }] }, "repeats row probe-entra"],
     [{ rows: [{ id: "", status: "PASS" }] }, "has a row with no readable id"],
     [{ releaseMatrix: ["RM.1", "not a row id!"] }, "names release-matrix rows that are not readable ids"],
@@ -41,6 +43,14 @@ test("a receipt is rejected when it is not evidence", () => {
   assert.ok(fixture({ receipts: {} }).errors.includes("no evidence receipt found under docs/evidence/"),
     "no receipt at all is not a pass");
   assert.ok(fixture({ receipts: { "r.json": "a string" } }).errors.some((e) => e.includes("is not an object")));
+});
+
+test("an operator receipt is evidence, and covers no export", () => {
+  const operator = { producer: "operator", releaseMatrix: undefined, rows: [{ id: "F2", status: "PASS" }] };
+  const withBoth = fixture({ receipts: { "rehearsal.json": receiptFor(ancestor), "operator.json": receiptFor(ancestor, operator) } });
+  assert.deepEqual(withBoth.errors, [], "both producers are evidence");
+  const alone = fixture({ receipts: { "operator.json": receiptFor(ancestor, operator) } });
+  assert.equal(alone.errors.length, 2, "on its own it covers neither export");
 });
 
 test("a receipt must name a commit the release contains", () => {
@@ -59,7 +69,7 @@ test("every public export needs a passing packed-artifact row", () => {
   const split = fixture({
     receipts: {
       "a.json": receiptFor(ancestor, { releaseMatrix: ["RM.1"] }),
-      "b.json": receiptFor(ancestor, { producer: "operator", releaseMatrix: ["RM.2"] }),
+      "b.json": receiptFor(ancestor, { releaseMatrix: ["RM.2"] }),
     },
   });
   assert.deepEqual(split.errors, []);
@@ -100,11 +110,23 @@ test("a receipt ages when what a client would observe changes, and not otherwise
     assert.ok(deployment.staleEvidence[0].changedInputs.includes(path), `${path} must age a receipt`);
   }
 
-  // The rule the previous gate got wrong: probe and rehearsal code produced no
-  // operator observation, and a rehearsal receipt is rewritten by every
-  // recorded run, so neither can be stale because a probe changed.
-  assert.deepEqual(at(harnessRelease).staleEvidence, [],
-    "changing probes, the rehearsal, the tests or the matrix definition ages nothing");
+  // Evidence-producing code ages the receipt it produced, and only that one.
+  // A rehearsal receipt is rewritten by one dispatch, so requiring a fresh run
+  // after a probe changes costs a dispatch. An operator receipt records what a
+  // real client did against a served leg: no probe produced it, and ageing it
+  // on a probe change is what cost a browser campaign to re-record the same
+  // observations.
+  const rehearsalAfterProbe = at(harnessRelease);
+  assert.deepEqual(rehearsalAfterProbe.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "a probe change ages the rehearsal receipt it produced");
+  assert.ok(rehearsalAfterProbe.staleEvidence[0].changedInputs.includes("scripts/live/probe-entra.mjs"));
+
+  const operatorAfterProbe = fixture({
+    receipts: { "operator.json": receiptFor(ancestor, { producer: "operator", releaseMatrix: undefined, rows: [{ id: "F2", status: "PASS" }] }) },
+    releaseCommit: harnessRelease,
+    packageJson: { version: "0.5.0", exports: {} },
+  });
+  assert.deepEqual(operatorAfterProbe.staleEvidence, [], "and never an operator's");
 
   assert.deepEqual(at(packageRelease).staleEvidence.map((entry) => entry.commit), [ancestor], "an exports change ages it");
   assert.deepEqual(at(buildRelease).staleEvidence.map((entry) => entry.commit), [ancestor], "a build-script change ages it");

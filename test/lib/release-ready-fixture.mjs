@@ -24,7 +24,8 @@ function git(args) {
 export function receiptFor(commit, overrides = {}) {
   return {
     schema: 1, producer: "rehearsal", runtimeCommit: commit, recordedAt: "2026-08-27T00:00:00.000Z",
-    complete: true, rows: [{ id: "probe-entra", status: "PASS" }], releaseMatrix: ["RM.1", "RM.2"],
+    complete: true, rows: [{ id: "probe-entra", status: "PASS" }, { id: "release-matrix", status: "PASS" }],
+    releaseMatrix: ["RM.1", "RM.2"],
     ...overrides,
   };
 }
@@ -79,8 +80,8 @@ export function setupReleaseReadyFixture() {
 
   runtimeRelease = commitOnly("runtime-change", ["src/runtime.ts"], "export const changed = true;\n");
   deploymentRelease = commitOnly("deployment-change", ["scripts/live/serve.sh", "scripts/live/run.sh", "scripts/live/run-support.mjs"]);
-  // Probes, the rehearsal, the renderer and the tests: evidence-producing code,
-  // deliberately not a freshness input.
+  // Evidence-producing code: it ages a rehearsal receipt, which one dispatch
+  // rewrites, and never an operator's, which no probe produced.
   harnessRelease = commitOnly("harness-change", ["scripts/live/probe-entra.mjs", "scripts/live/rehearsal.mjs", "test/some.test.mjs", "docs/verification.md"]);
 
   git(["switch", "-q", "-c", "package-change", release]);

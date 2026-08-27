@@ -22,6 +22,21 @@ const EVIDENCE_PATHS = [
   "scripts/live/run.sh", "scripts/live/serve.sh", "scripts/live/run-support.mjs",
 ];
 
+/** What produced a rehearsal receipt: the probes, the drivers, the rehearsal
+ *  itself, the release matrix and its definition, and the workflow that
+ *  installs the pinned clients and dispatches it. A rehearsal receipt is
+ *  rewritten by every recorded run, so requiring one after a change here costs
+ *  a dispatch and nothing else, and it is what stops a receipt produced by a
+ *  probe that has since been corrected from standing as current.
+ *
+ *  An operator receipt records what a real client did against a served leg. No
+ *  code here produced it, and ageing it on a probe change is what previously
+ *  cost a browser campaign to re-record the same observations. */
+const REHEARSAL_PATHS = [
+  "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
+  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", ".github/workflows/live.yml",
+];
+
 function gitOutput(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
@@ -117,10 +132,12 @@ export function evidenceInputDigest(cwd, commit) {
   return hash.digest("hex");
 }
 
-/** The inputs that changed between a receipt's commit and the release commit. */
-export function changedEvidenceInputs(cwd, ancestor, descendant) {
+/** The inputs that changed between a receipt's commit and the release commit.
+ *  A rehearsal receipt additionally depends on the code that produced it. */
+export function changedEvidenceInputs(cwd, ancestor, descendant, { producer } = {}) {
+  const paths = producer === "rehearsal" ? [...EVIDENCE_PATHS, ...REHEARSAL_PATHS] : EVIDENCE_PATHS;
   return [
-    ...changedRuntimeInputs(cwd, ancestor, descendant, EVIDENCE_PATHS),
+    ...changedRuntimeInputs(cwd, ancestor, descendant, paths),
     ...changedRuntimePackageFields(cwd, ancestor, descendant),
   ];
 }

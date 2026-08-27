@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       record:
-        description: "Open the evidence pull request from a passing receipt (main only)"
+        description: "Record the passing receipt as release evidence and upload it (main only)"
         type: boolean
         default: false
   schedule:
@@ -197,7 +197,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # The evidence pull request, from a passing receipt, on main only and only
+  # The evidence document, from a passing receipt, on main only and only
   # when asked. This job never holds the AWS role; the job above never holds a
   # write token. A branch pushed with the workflow token starts no CI run of
   # its own, so the pull request body says how to start one.

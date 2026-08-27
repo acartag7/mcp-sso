@@ -9,13 +9,38 @@ const SHA = /^[0-9a-f]{40}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const ROW_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const PRODUCERS = new Set(["rehearsal", "operator"]);
-const STATUS_LINE = /^\|\s*npm package and tag\s*\|\s*`mcp-sso@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s+and\s+`v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s*\|$/m;
+const STATUS_HEADING = "## Published release";
+const STATUS_LINE = /^\|\s*npm package and tag\s*\|\s*`mcp-sso@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s+and\s+`v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s*\|$/;
+
+/** The lines of the one `Published release` section that are rendered table
+ *  rows: not inside a fenced block, not inside an HTML comment, and starting
+ *  the line. A row hidden in either is not published status. */
+function renderedStatusRows(status, errors) {
+  const lines = String(status ?? "").split("\n");
+  const headings = lines.map((line, index) => [line, index]).filter(([line]) => line === STATUS_HEADING);
+  if (headings.length !== 1) {
+    errors.push(`status version: expected one canonical ${STATUS_HEADING} section, found ${headings.length}`);
+    return [];
+  }
+  const rows = [];
+  let fenced = false;
+  let commented = false;
+  for (let i = headings[0][1] + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("## ")) break;
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
+    if (line.includes("<!--")) commented = true;
+    if (commented) { if (line.includes("-->")) commented = false; continue; }
+    if (!fenced && line.startsWith("|")) rows.push(line);
+  }
+  return rows;
+}
 
 /** The version the published-release row claims, or undefined. One row, one
  *  grammar; the pair must agree with itself before it can agree with the
  *  package. */
 function claimedVersion(status, errors) {
-  const matches = [...String(status ?? "").matchAll(new RegExp(STATUS_LINE.source, "gm"))];
+  const matches = renderedStatusRows(status, errors).map((line) => STATUS_LINE.exec(line)).filter(Boolean);
   if (matches.length !== 1) {
     errors.push(`status version: expected one npm package and tag row, found ${matches.length}`);
     return undefined;
@@ -53,6 +78,14 @@ function readReceipt(receipt, label, errors) {
     if (!Array.isArray(matrix) || matrix.some((id) => !ROW_ID.test(String(id)))) {
       return fail("names release-matrix rows that are not readable ids");
     }
+    // Export coverage comes from the release matrix, which only the rehearsal
+    // runs. An operator drives real clients against a served leg and proves
+    // nothing about a packed artifact, so a receipt of theirs claiming matrix
+    // rows is claiming someone else's work.
+    if (receipt.producer !== "rehearsal") return fail("is not a rehearsal receipt, so it cannot carry release-matrix rows");
+    if (matrix.length > 0 && !receipt.rows.some((row) => row.id === "release-matrix" && row.status === "PASS")) {
+      return fail("names release-matrix rows without a passing release-matrix row");
+    }
   }
   return receipt;
 }
@@ -74,7 +107,7 @@ function parseReleaseRows(releaseMatrix, errors) {
     ids.add(id);
     if (typeof row.title !== "string" || row.title.trim() === "") errors.push(`release matrix: ${id} requires a non-empty title`);
     const evidence = Array.isArray(row.evidence) ? row.evidence : [];
-    if (evidence.length === 0 || evidence.some((item) => typeof item?.file !== "string" || typeof item?.name !== "string")) {
+    if (evidence.length === 0 || evidence.some((item) => typeof item?.file !== "string" || item.file.trim() === "" || typeof item?.name !== "string" || item.name.trim() === "")) {
       errors.push(`release matrix: ${id} requires executable evidence with file and name`);
     }
     const exports = row.exports;
@@ -145,7 +178,7 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts,
       errors.push(`${label}: runtime commit ${receipt.runtimeCommit.slice(0, 7)} is not an ancestor of the release commit`);
       continue;
     }
-    const changedInputs = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedRelease);
+    const changedInputs = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedRelease, { producer: receipt.producer });
     if (changedInputs.length > 0) staleEvidence.push({ label, commit: receipt.runtimeCommit, changedInputs });
   }
 

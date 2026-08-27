@@ -2,6 +2,7 @@
 // What matters is that it refuses everything that is not evidence, and that the
 // document it writes is one the gate accepts.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -71,7 +72,20 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   assert.deepEqual(recorded.rows.find((r) => r.id === "claude-code:entra").observed, ["claude 2.1.247"],
     "the version the run observed reaches the record, and a check line does not");
 
-  // The committed receipts are the real proof: the gate reads them and passes.
+  // The generated value itself goes through the gate, not a static file beside
+  // it: dropping releaseMatrix from toEvidence must fail here rather than leave
+  // the workflow producing an artifact nothing accepts.
+  const head = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const generated = toEvidence(readRehearsalReceipt(receiptFor({ runtimeCommit: head })));
+  const onlyGenerated = evaluateReleaseReadiness({
+    packageJson: { version: "0.5.0", exports: { ".": {} } },
+    releaseMatrix: { rows: [{ id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "test/a.test.ts", name: "a" }] }] },
+    receipts: { "generated.json": generated },
+    status: readFileSync(new URL("../docs/verification-status.md", import.meta.url), "utf8"),
+    gitCwd: ROOT, releaseCommit: "HEAD",
+  });
+  assert.deepEqual(onlyGenerated.errors, [], "the gate accepts exactly what the recorder writes");
+
   const receipts = Object.fromEntries(["rehearsal-be88677.json", "operator-2026-08-27.json"]
     .map((name) => [name, JSON.parse(readFileSync(new URL(`../docs/evidence/${name}`, import.meta.url), "utf8"))]));
   const result = evaluateReleaseReadiness({
@@ -81,4 +95,12 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
     gitCwd: ROOT, releaseCommit: "HEAD",
   });
   assert.deepEqual(result.errors, [], "the repository's own evidence satisfies its own gate");
+  // Only a rehearsal receipt covers exports, and only through its own passing
+  // release-matrix row.
+  const forged = { ...receipts["operator-2026-08-27.json"], releaseMatrix: ["RM.1"] };
+  const claimed = evaluateReleaseReadiness({ ...result, packageJson: { version: "0.5.0", exports: { ".": {} } },
+    releaseMatrix: { rows: [{ id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "a", name: "b" }] }] },
+    receipts: { "operator.json": forged }, status: readFileSync(new URL("../docs/verification-status.md", import.meta.url), "utf8"),
+    gitCwd: ROOT, releaseCommit: "HEAD" });
+  assert.ok(claimed.errors.some((e) => e.includes("cannot carry release-matrix rows")), "an operator receipt cannot mint coverage");
 });
