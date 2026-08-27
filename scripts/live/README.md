@@ -90,7 +90,7 @@ RUN_INTEGRATION=true \
   node scripts/live/rehearsal.mjs
 ```
 
-`rehearsal.mjs` runs these rows, each through `run.sh`, in this order, and writes `.live-state/receipt.json`: the runtime commit, whether the tree was dirty, and per row the status, the probe's own `PASS`/`FAIL`/`CONTROL` lines, the check counts, and the duration. It exits 0 only when every row is `PASS` on a clean tree; that is the only receipt that counts as evidence.
+`rehearsal.mjs` runs these rows, each through `run.sh`, in this order, and writes `.live-state/receipt.json`: the runtime commit, whether the tree was dirty, and per row the status, the probe's own `PASS`/`FAIL`/`CONTROL` lines, its `NOTE` lines (what the row observed rather than what it checked: the client version a CLI row ran, the audit sequence, a skipped tool call), the check counts, and the duration. `render-evidence.mjs` reads the client version out of those `NOTE` lines, so a receipt that dropped them could not be recorded. It exits 0 only when every row is `PASS` on a clean tree; that is the only receipt that counts as evidence.
 
 | Row | What runs |
 | --- | --- |
