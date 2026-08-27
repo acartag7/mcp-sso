@@ -4,7 +4,8 @@ import { formatReleaseReadinessFailure, parseReleaseReadyArgs } from "../scripts
 import {
   ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceDigestFor, evidenceRelease, fixture,
   deploymentRelease, harnessRelease, metadataRelease, modeRelease, packageRelease, release, rowDefinitionRelease,
-  runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated, versionRelease, workflowRelease,
+  literalPathRelease, runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated, versionRelease,
+  workflowRelease,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -552,4 +553,44 @@ test("a squash digest binds the workflow that produced the row", () => {
   // evidence produced by a different workflow.
   assert.notEqual(evidenceDigestFor(release), evidenceDigestFor(workflowRelease),
     "a commit that changes only the live workflow changes the digest");
+});
+
+test("every literal runtime and deployment path ages an operator row", () => {
+  // Named one by one: dropping any single entry from the lists leaves a test
+  // red rather than passing because a neighbouring path covered for it.
+  const result = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: literalPathRelease }),
+    releaseCommit: literalPathRelease,
+  });
+  assert.deepEqual(result.staleEvidence.map((entry) => entry.commit), [ancestor]);
+  for (const path of [
+    "tsconfig.json", "tsconfig.build.json", "scripts/live/run.sh", "scripts/live/serve.sh",
+    "scripts/live/run-support.mjs", "pnpm-lock.yaml", "pnpm-workspace.yaml",
+  ]) {
+    assert.ok(result.staleEvidence[0].changedInputs.includes(path), `${path} must age an operator row`);
+  }
+});
+
+test("a squashed row keeps the lifecycle its provenance names", () => {
+  // The squash arm builds its receipt separately from the direct arm, so it
+  // needs its own proof that provenance survives: a squashed rehearsal row
+  // must still age with the harness.
+  const squashRow = (recordedBy, commit) => [
+    "# Client compatibility", "", "## Current matrix", "",
+    "| Provider | Client | Flow driven | Recorded by | Status | Date | Limits |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    `| Provider | Client | Flow | ${recordedBy} | Verified | 2026-08-22 | Runtime evidence digest \`sha256:${evidenceDigestFor(commit)}\`, merged as \`${commit}\`. |`,
+    "", "## Public export live evidence", "",
+    "| Export | Live evidence | Runtime commit |", "| --- | --- | --- |",
+    `| \`.\` | \`RM.1\` | \`${harnessRelease}\` |`,
+    `| \`./fastify\` | \`RM.2\` | \`${harnessRelease}\` |`,
+  ].join("\n");
+
+  const squashedRehearsal = fixture({ compatibility: squashRow("rehearsal", release), releaseCommit: harnessRelease });
+  assert.deepEqual(squashedRehearsal.staleEvidence.map((entry) => entry.commit), [release],
+    "a squashed rehearsal row ages with the harness");
+
+  const squashedOperator = fixture({ compatibility: squashRow("operator", release), releaseCommit: harnessRelease });
+  assert.deepEqual(squashedOperator.staleEvidence, [],
+    "a squashed operator row does not");
 });

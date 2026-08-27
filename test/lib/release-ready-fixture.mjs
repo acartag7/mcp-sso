@@ -18,6 +18,7 @@ export let versionRelease;
 export let buildRelease;
 export let harnessRelease;
 export let workflowRelease;
+export let literalPathRelease;
 export let deploymentRelease;
 export let rowDefinitionRelease;
 export let unrelated;
@@ -138,6 +139,18 @@ export function setupReleaseReadyFixture() {
   // The leg itself moves: what a client is pointed at, not what watches it.
   // Only the live workflow moves, so a digest test cannot pass on some other
   // file that happened to change in the same commit.
+  // Every literal path in the runtime and deployment sets, so removing any one
+  // entry from those lists turns a test red instead of passing unnoticed.
+  git(["switch", "-q", "-c", "literal-path-change", release]);
+  for (const directory of ["scripts/live"]) mkdirSync(join(repo, directory), { recursive: true });
+  const literalPaths = [
+    "tsconfig.json", "tsconfig.build.json", "scripts/live/run.sh", "scripts/live/serve.sh",
+    "scripts/live/run-support.mjs", "pnpm-lock.yaml", "pnpm-workspace.yaml",
+  ];
+  for (const file of literalPaths) writeFileSync(join(repo, file), "changed\n");
+  git(["add", ...literalPaths]);
+  git(["commit", "-qm", "literal path release"]);
+  literalPathRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "-c", "workflow-change", release]);
   mkdirSync(join(repo, ".github/workflows"), { recursive: true });
   writeFileSync(join(repo, ".github/workflows/live.yml"), "on: workflow_dispatch\n");
