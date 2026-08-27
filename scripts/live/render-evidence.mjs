@@ -51,7 +51,7 @@ export const PROVIDER_ROWS = Object.freeze([
   {
     needs: ["codex-cli:entra", "codex-cli:cloudflare"], version: "codex",
     provider: "Cloudflare Access and Entra ID", client: "Codex CLI, driven by the rehearsal",
-    flow: "`codex mcp add` → DCR → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token",
+    flow: "`codex mcp add` → the client identity Codex chose, CIMD document or dynamic registration → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token",
     status: "Verified with limit", limits: "Limit: a tool call runs only when the client-keys file supplies `OPENAI_API_KEY`.",
   },
   {

@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { hostPolicy } from "../scripts/live/drive-identity-support.mjs";
 import {
-  BROWSER_LAUNCHERS, CLIS, auditKinds, browserIsLocal, cliLoginHolds, extractAuthorizeUrl, parseCliArgs, plainText, spawnPty, stopPty, versionOf,
+  BROWSER_LAUNCHERS, CLIS, auditKinds, browserIsLocal, cliLoginHolds, extractAuthorizeUrl, identityOf, parseCliArgs, plainText, spawnPty, stopPty, versionOf,
   waitForOutput,
 } from "../scripts/live/probe-cli-support.mjs";
 import { readClientKeysFile } from "../scripts/live/run-support.mjs";
@@ -45,7 +45,7 @@ test("BEHAVIOUR extractAuthorizeUrl: only a complete authorize URL on the served
   assert.equal(found.clientId, CIMD);
   assert.equal(found.redirectUri, "http://localhost:1455/callback");
   assert.equal(found.state, "st4te");
-  assert.match(found.clientId, CLIS.claude.clientIdShape);
+  assert.equal(identityOf("claude", found.clientId)?.path, "cimd");
   const linked = `\x1b]8;;${authorizeUrl()}\x1b\\Open\x1b]8;;\x1b\\ ${authorizeUrl()}\n`;
   assert.equal(extractAuthorizeUrl(linked, ORIGIN)?.href, authorizeUrl(), "an OSC 8 hyperlink does not hide the URL");
   // Claude Code ends its hyperlink sequences with BEL. Two independent
@@ -74,8 +74,8 @@ test("BEHAVIOUR extractAuthorizeUrl: only a complete authorize URL on the served
   const twice = `${authorizeUrl().replace(ORIGIN, "https://other.example")}\n${authorizeUrl()}\n`;
   assert.equal(extractAuthorizeUrl(twice, ORIGIN)?.href, authorizeUrl(), "a foreign candidate does not shadow the real one");
   assert.equal(extractAuthorizeUrl("", ORIGIN), undefined);
-  assert.match("mcpdc_" + "0123456789abcdef".repeat(2), CLIS.codex.clientIdShape);
-  assert.doesNotMatch(CIMD, CLIS.codex.clientIdShape);
+  assert.equal(identityOf("codex", "mcpdc_" + "0123456789abcdef".repeat(2))?.path, "dcr");
+  assert.equal(identityOf("codex", CIMD), undefined, "Claude Code's document is not a Codex identity");
 });
 
 test("BEHAVIOUR plainText, versionOf, browserIsLocal, and auditKinds print or admit only fixed vocabulary", () => {
@@ -100,18 +100,58 @@ test("BEHAVIOUR plainText, versionOf, browserIsLocal, and auditKinds print or ad
   ]), ["oauth.cimd.fetch:success", "identity.verify:failure(entra_no_groups)", "auth.request:failure", "?:?"]);
 });
 
-test("BEHAVIOUR cliLoginHolds: the registration path the CLI uses, the identity, the approval, and the exchange", () => {
-  const events = (...names) => names.map((name) => { const [event, status] = name.split(":"); return { event, status }; });
-  const claude = events("auth.request:failure", "oauth.cimd.fetch:success", "identity.verify:success", "oauth.authorize.approve:success", "oauth.token.authorization_code:success");
-  const codex = events("oauth.register:success", "identity.verify:success", "oauth.authorize.approve:success", "oauth.token.authorization_code:success");
-  assert.equal(cliLoginHolds(claude, "claude", { expectProtectedRequest: false }), true);
-  assert.equal(cliLoginHolds(codex, "codex", { expectProtectedRequest: false }), true);
-  assert.equal(cliLoginHolds(claude, "codex", { expectProtectedRequest: false }), false, "a CIMD fetch is not Codex's dynamic registration");
-  assert.equal(cliLoginHolds(codex, "claude", { expectProtectedRequest: false }), false, "a dynamic registration is not Claude Code's CIMD fetch");
-  assert.equal(cliLoginHolds(claude, "claude", { expectProtectedRequest: true }), false, "a connection check must show as a protected request");
-  assert.equal(cliLoginHolds([...claude, ...events("auth.request:success")], "claude", { expectProtectedRequest: true }), true);
-  assert.equal(cliLoginHolds(claude.filter((e) => e.event !== "oauth.token.authorization_code"), "claude", { expectProtectedRequest: false }), false);
-  assert.equal(cliLoginHolds([], "claude", { expectProtectedRequest: false }), false);
+test("BEHAVIOUR cliLoginHolds: the identity path the client id claimed, the identity, the approval, and the exchange", () => {
+  const CODEX_CIMD = "https://chatgpt.com/oauth/codex/c50ro4oho5AB/client.json";
+  const DCR_ID = "mcpdc_" + "0123456789abcdef".repeat(2);
+  // `oauth.register` and `identity.verify` are emitted before the client is
+  // known and carry no id; everything after names the client.
+  const events = (clientId, ...names) => names.map((name) => {
+    const [event, status] = name.split(":");
+    return event === "oauth.register" || event === "identity.verify" ? { event, status } : { event, status, clientId };
+  });
+  const flow = (clientId, registration) => events(clientId, registration, "identity.verify:success", "oauth.authorize.approve:success", "oauth.token.authorization_code:success");
+  const claude = [...events(CIMD, "auth.request:failure"), ...flow(CIMD, "oauth.cimd.fetch:success")];
+  const codex = flow(DCR_ID, "oauth.register:success");
+
+  assert.equal(cliLoginHolds(claude, "claude", { path: "cimd", clientId: CIMD, expectProtectedRequest: false }), true);
+  assert.equal(cliLoginHolds(codex, "codex", { path: "dcr", clientId: DCR_ID, expectProtectedRequest: false }), true);
+  assert.equal(cliLoginHolds(claude, "codex", { path: "dcr", clientId: CIMD, expectProtectedRequest: false }), false, "a CIMD fetch is not a dynamic registration");
+  assert.equal(cliLoginHolds(codex, "claude", { path: "cimd", clientId: DCR_ID, expectProtectedRequest: false }), false, "a dynamic registration is not a CIMD fetch");
+  assert.equal(cliLoginHolds(claude, "claude", { path: "cimd", clientId: CIMD, expectProtectedRequest: true }), false, "a connection check must show as a protected request");
+  assert.equal(cliLoginHolds([...claude, ...events(CIMD, "auth.request:success")], "claude", { path: "cimd", clientId: CIMD, expectProtectedRequest: true }), true);
+  assert.equal(cliLoginHolds(claude.filter((e) => e.event !== "oauth.token.authorization_code"), "claude", { path: "cimd", clientId: CIMD, expectProtectedRequest: false }), false);
+  assert.equal(cliLoginHolds([], "claude", { path: "cimd", clientId: CIMD, expectProtectedRequest: false }), false);
+  assert.equal(cliLoginHolds(claude, "claude", { path: undefined, clientId: CIMD, expectProtectedRequest: false }), false, "a client id that claimed no declared identity holds nothing");
+  assert.equal(cliLoginHolds(claude, "claude", { path: "dcr", clientId: CIMD, expectProtectedRequest: false }), false, "Claude Code declares no dynamic-registration identity");
+  assert.equal(cliLoginHolds(claude, "claude", { path: "cimd", clientId: undefined, expectProtectedRequest: false }), false, "no observed client id, nothing to bind to");
+  assert.equal(cliLoginHolds(claude, "claude", { path: "cimd", clientId: "", expectProtectedRequest: false }), false);
+});
+
+test("BEHAVIOUR cliLoginHolds: a stranger's flow on the same served leg is not this row's evidence", () => {
+  // The served leg is public while the row runs, so another client can be
+  // signing in at the same time: tonight's own session had four clients
+  // against one leg. Counting event kinds alone would let that flow's
+  // document fetch stand in for this row's.
+  const MINE = "https://chatgpt.com/oauth/codex/c50ro4oho5AB/client.json";
+  const THEIRS = "https://claude.ai/oauth/claude-code-client-metadata";
+  const named = (clientId, ...names) => names.map((name) => { const [event, status] = name.split(":"); return { event, status, clientId }; });
+  const unnamed = (...names) => names.map((name) => { const [event, status] = name.split(":"); return { event, status }; });
+  const interleaved = [
+    ...named(THEIRS, "oauth.cimd.fetch:success"),
+    ...unnamed("identity.verify:success"),
+    ...named(MINE, "oauth.authorize.approve:success", "oauth.token.authorization_code:success"),
+  ];
+  assert.equal(cliLoginHolds(interleaved, "codex", { path: "cimd", clientId: MINE, expectProtectedRequest: false }), false,
+    "another client's document fetch does not prove this client fetched one");
+  assert.equal(cliLoginHolds([...interleaved, ...named(MINE, "oauth.cimd.fetch:success")], "codex", { path: "cimd", clientId: MINE, expectProtectedRequest: false }), true,
+    "this client's own fetch does");
+  const foreignExchange = [
+    ...named(MINE, "oauth.cimd.fetch:success"),
+    ...unnamed("identity.verify:success"),
+    ...named(THEIRS, "oauth.authorize.approve:success", "oauth.token.authorization_code:success"),
+  ];
+  assert.equal(cliLoginHolds(foreignExchange, "codex", { path: "cimd", clientId: MINE, expectProtectedRequest: false }), false,
+    "another client's code exchange is not this row's token");
 });
 
 test("BEHAVIOUR hostPolicy: the loopback callback the CLI named is the only plain-http page the driver accepts", () => {
