@@ -4,11 +4,30 @@ import { createHash } from "node:crypto";
 const NON_RUNTIME_PACKAGE_FIELDS = new Set([
   "author", "bugs", "contributors", "description", "funding", "homepage", "keywords", "license", "repository",
 ]);
-const EVIDENCE_PATHS = [
-  "src", "examples", "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
-  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", "tsconfig.json", "tsconfig.build.json",
+/** What a recorded observation is ABOUT: the library, the example a leg
+ *  serves, and how either is built or published. A change here can change what
+ *  any client would observe, so it ages every recorded row. */
+const RUNTIME_PATHS = [
+  "src", "examples", "tsconfig.json", "tsconfig.build.json",
   ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
 ];
+
+/** What PRODUCES harness-driven evidence: the probes, the rehearsal, the
+ *  release matrix and its definition. A change here can change what such a row
+ *  proves, so it ages those rows — and only those. A row an operator drove
+ *  through a real client against a served leg came from none of this, and the
+ *  two have different lifecycles: the record run re-proves the harness rows on
+ *  every dispatch, while an operator row keeps standing until the thing it
+ *  observed changes. */
+const HARNESS_PATHS = [
+  "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
+  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md",
+];
+
+/** Both sets together. `evidenceInputDigest` keeps using this: a digest
+ *  already recorded in the matrix was taken over the whole evidence tree, and
+ *  narrowing it now would silently stop matching. */
+const EVIDENCE_PATHS = [...RUNTIME_PATHS, ...HARNESS_PATHS];
 
 function gitOutput(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -32,12 +51,12 @@ export function isAncestor(cwd, ancestor, descendant) {
   }
 }
 
-function changedRuntimeInputs(cwd, ancestor, descendant) {
+function changedRuntimeInputs(cwd, ancestor, descendant, paths) {
   const output = execFileSync(
     "git",
     [
       "diff", "--name-only", "-z", ancestor, descendant, "--",
-      ...EVIDENCE_PATHS,
+      ...paths,
     ],
     { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -105,9 +124,13 @@ export function evidenceInputDigest(cwd, commit) {
   return hash.digest("hex");
 }
 
-export function changedEvidenceInputs(cwd, ancestor, descendant) {
+/** The inputs that changed between the commit a row named and the release
+ *  commit. `harnessDriven` says whether the row came out of the harness; a row
+ *  that did not is aged by runtime changes alone. */
+export function changedEvidenceInputs(cwd, ancestor, descendant, { harnessDriven = true } = {}) {
+  const paths = harnessDriven ? [...RUNTIME_PATHS, ...HARNESS_PATHS] : RUNTIME_PATHS;
   return [
-    ...changedRuntimeInputs(cwd, ancestor, descendant),
+    ...changedRuntimeInputs(cwd, ancestor, descendant, paths),
     ...changedRuntimePackageFields(cwd, ancestor, descendant),
   ];
 }

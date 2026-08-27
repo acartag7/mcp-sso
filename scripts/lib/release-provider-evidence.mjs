@@ -1,8 +1,6 @@
-const PROVIDER_STATUSES = new Set(["Verified", "Verified with limit", "Not run"]);
+import { isRenderedRow, renderedSubjectCell } from "./rendered-provider-rows.mjs";
 
-function renderedSubjectCell(value) {
-  return value.replace(/`([^`\r\n]+)`/g, "$1").replace(/\s+/gu, " ").trim();
-}
+const PROVIDER_STATUSES = new Set(["Verified", "Verified with limit", "Not run"]);
 
 export function parseProviderRuntimeCommits(tableRows, errors) {
   const receipts = [];
@@ -80,9 +78,12 @@ export function parseProviderRuntimeCommits(tableRows, errors) {
         continue;
       }
     }
+    // The renderer owns a fixed set of subjects; every other row was recorded
+    // by a person driving a real client, and the two age differently.
+    const harnessDriven = isRenderedRow(provider, client, flow);
     receipts.push(directMatch
-      ? { provider, client, runtimeCommit: directMatch[1] }
-      : { provider, client, evidenceDigest: squashMatch[1], mergeCommit: squashMatch[2] });
+      ? { provider, client, harnessDriven, runtimeCommit: directMatch[1] }
+      : { provider, client, harnessDriven, evidenceDigest: squashMatch[1], mergeCommit: squashMatch[2] });
   }
   return receipts;
 }

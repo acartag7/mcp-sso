@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evidenceInputDigest } from "../../scripts/lib/release-evidence-git.mjs";
+import { PROVIDER_ROWS } from "../../scripts/lib/rendered-provider-rows.mjs";
 import { evaluateReleaseReadiness } from "../../scripts/lib/release-ready.mjs";
 
 let repo;
@@ -15,22 +16,30 @@ export let packageRelease;
 export let metadataRelease;
 export let versionRelease;
 export let buildRelease;
+export let harnessRelease;
 export let unrelated;
 
 function git(args) {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-export function compatibilityFor(commit) {
+/** `provider` is the commit the matrix row names, `exportCommit` the one the
+ *  export table names, so a test can age one without the other. `rendered`
+ *  makes the provider row one the record run writes rather than one an
+ *  operator recorded. */
+export function compatibilityFor(commit, { exportCommit = commit, rendered = false } = {}) {
+  const row = rendered
+    ? `| ${PROVIDER_ROWS[0].provider} | ${PROVIDER_ROWS[0].client} | ${PROVIDER_ROWS[0].flow} | Verified | 2026-08-22 | Runtime commit \`${commit}\`. |`
+    : `| Provider | Client | Flow | Verified | 2026-08-22 | Runtime commit \`${commit}\`. |`;
   return [
     "# Client compatibility", "", "## Current matrix", "",
     "| Provider | Client | Flow driven | Status | Date | Limits |",
     "| --- | --- | --- | --- | --- | --- |",
-    `| Provider | Client | Flow | Verified | 2026-08-22 | Runtime commit \`${commit}\`. |`,
+    row,
     "", "## Public export live evidence", "",
     "| Export | Live evidence | Runtime commit |", "| --- | --- | --- |",
-    `| \`.\` | \`RM.1\` | \`${commit}\` |`,
-    `| \`./fastify\` | \`RM.2\` | \`${commit}\` |`,
+    `| \`.\` | \`RM.1\` | \`${exportCommit}\` |`,
+    `| \`./fastify\` | \`RM.2\` | \`${exportCommit}\` |`,
   ].join("\n");
 }
 
@@ -114,6 +123,15 @@ export function setupReleaseReadyFixture() {
   }));
   git(["commit", "-qam", "build release"]);
   buildRelease = git(["rev-parse", "HEAD"]);
+  // Only the harness moves here: what produces evidence, never what a client
+  // would observe.
+  git(["switch", "-q", "-c", "harness-change", release]);
+  for (const directory of ["test", "scripts/live", "docs"]) mkdirSync(join(repo, directory), { recursive: true });
+  const harnessFiles = ["test/evidence.test.ts", "scripts/live/probe.mjs", "docs/verification.md"];
+  for (const file of harnessFiles) writeFileSync(join(repo, file), "harness changed\n");
+  git(["add", ...harnessFiles]);
+  git(["commit", "-qm", "harness release"]);
+  harnessRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "--orphan", "unrelated"]);
   git(["commit", "--allow-empty", "-qm", "unrelated"]);
   unrelated = git(["rev-parse", "HEAD"]);
