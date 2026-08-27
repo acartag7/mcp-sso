@@ -483,6 +483,8 @@ test("harness evidence and operator evidence age separately", () => {
   assert.deepEqual(renderedAtAncestor.staleEvidence.map((entry) => entry.commit), [ancestor],
     "a harness change ages the rows the record run renders");
   assert.ok(renderedAtAncestor.staleEvidence[0].changedInputs.includes("scripts/live/probe.mjs"));
+  assert.ok(renderedAtAncestor.staleEvidence[0].changedInputs.includes(".github/workflows/live.yml"),
+    "the workflow that installs the pinned clients and dispatches the rehearsal produces those rows too");
 
   const exportsAtAncestor = fixture({
     compatibility: compatibilityFor(harnessRelease, { exportCommit: ancestor }),

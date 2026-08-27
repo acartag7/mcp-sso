@@ -128,8 +128,8 @@ export function setupReleaseReadyFixture() {
   // Only the harness moves here: what produces evidence, never what a client
   // would observe.
   git(["switch", "-q", "-c", "harness-change", release]);
-  for (const directory of ["test", "scripts/live", "docs"]) mkdirSync(join(repo, directory), { recursive: true });
-  const harnessFiles = ["test/evidence.test.ts", "scripts/live/probe.mjs", "docs/verification.md"];
+  for (const directory of ["test", "scripts/live", "docs", ".github/workflows"]) mkdirSync(join(repo, directory), { recursive: true });
+  const harnessFiles = ["test/evidence.test.ts", "scripts/live/probe.mjs", "docs/verification.md", ".github/workflows/live.yml"];
   for (const file of harnessFiles) writeFileSync(join(repo, file), "harness changed\n");
   git(["add", ...harnessFiles]);
   git(["commit", "-qm", "harness release"]);
