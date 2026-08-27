@@ -126,6 +126,12 @@ test("the published-release row must be in the section's rendered table", () => 
     "a bare row with no header and divider is not a rendered table");
 });
 
+test("a heading that renders the same counts the same", () => {
+  const ambiguous = `${statusFor()}\n\n## Published release ##\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
+  assert.ok(fixture({ status: ambiguous }).errors.some((error) => error.includes("expected one canonical")),
+    "closing hashes render the same heading, so two sections are two sections");
+});
+
 test("the published-release row and the package must agree", () => {
   assert.ok(fixture({ status: statusFor("0.4.0") }).errors.some((e) => e.includes("version mismatch")));
   assert.ok(fixture({ status: "# no row here" }).errors.some((e) => e.includes("expected one npm package and tag row, found 0")));

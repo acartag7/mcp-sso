@@ -8,7 +8,7 @@
 // a partial run, a dirty tree, or a failed row, is refused: the rehearsal
 // already decided that, and this never second-guesses it into a pass.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROWS } from "./rehearsal-support.mjs";
@@ -119,8 +119,21 @@ if (invokedAsMain()) {
   const evidence = toEvidence(receipt, { source: options.source });
   const body = `${JSON.stringify(evidence, null, 2)}\n`;
   if (options.write) {
-    const path = resolve(ROOT, `docs/evidence/rehearsal-${receipt.runtimeCommit.slice(0, 7)}.json`);
+    // One active receipt per producer. A campaign supersedes the one before it,
+    // and the gate would otherwise keep failing on the older document forever:
+    // its commit predates the very change the new run was recorded for. The
+    // superseded receipt is archived rather than deleted.
+    const path = resolve(ROOT, "docs/evidence/rehearsal.json");
     mkdirSync(dirname(path), { recursive: true });
+    if (existsSync(path)) {
+      const previous = JSON.parse(readFileSync(path, "utf8"));
+      if (previous.runtimeCommit !== evidence.runtimeCommit) {
+        const archive = resolve(ROOT, `docs/evidence/archive/rehearsal-${String(previous.runtimeCommit).slice(0, 7)}.json`);
+        mkdirSync(dirname(archive), { recursive: true });
+        renameSync(path, archive);
+        process.stdout.write(`${archive} archived\n`);
+      }
+    }
     writeFileSync(path, body);
     process.stdout.write(`${path} written for ${receipt.runtimeCommit}\n`);
   } else {

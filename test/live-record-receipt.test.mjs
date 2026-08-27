@@ -73,6 +73,17 @@ test("BEHAVIOUR record-receipt: the release-matrix rows come from the row that r
   assert.deepEqual(provenMatrixRows(noise), ["RM.2"], "only passing lines that name a row count");
 });
 
+test("BEHAVIOUR record-receipt: a campaign supersedes the one before it", () => {
+  // Two receipts for the same producer would leave the older one failing
+  // freshness forever: its commit predates the change the new run recorded.
+  const source = readFileSync(new URL("../scripts/live/record-receipt.mjs", import.meta.url), "utf8");
+  assert.match(source, /docs\/evidence\/rehearsal\.json/, "the active receipt has one name");
+  assert.match(source, /docs\/evidence\/archive\/rehearsal-\$\{String\(previous\.runtimeCommit\)/, "and the one it replaces is archived");
+  assert.match(source, /renameSync\(path, archive\)/, "moved, not deleted");
+  const gate = readFileSync(new URL("../scripts/check-release-ready.mjs", import.meta.url), "utf8");
+  assert.match(gate, /name\.endsWith\("\.json"\)/, "the gate reads documents, so the archive directory is not one");
+});
+
 test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => {
   const evidence = toEvidence(readRehearsalReceipt(receiptFor()), { source: "https://example.invalid/run" });
   assert.equal(evidence.schema, 1);
@@ -110,7 +121,7 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   // out full history before it calls check:release-ready.
   const shallow = execFileSync("git", ["-C", ROOT, "rev-parse", "--is-shallow-repository"], { encoding: "utf8" }).trim() === "true";
   if (shallow) return;
-  const receipts = Object.fromEntries(["rehearsal-be88677.json", "operator-2026-08-27.json"]
+  const receipts = Object.fromEntries(["rehearsal.json", "operator.json"]
     .map((name) => [name, JSON.parse(readFileSync(new URL(`../docs/evidence/${name}`, import.meta.url), "utf8"))]));
   const result = evaluateReleaseReadiness({
     packageJson: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")),
@@ -121,7 +132,7 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   assert.deepEqual(result.errors, [], "the repository's own evidence satisfies its own gate");
   // Only a rehearsal receipt covers exports, and only through its own passing
   // release-matrix row.
-  const forged = { ...receipts["operator-2026-08-27.json"], releaseMatrix: ["RM.1"] };
+  const forged = { ...receipts["operator.json"], releaseMatrix: ["RM.1"] };
   const claimed = evaluateReleaseReadiness({ ...result, packageJson: { version: "0.5.0", exports: { ".": {} } },
     releaseMatrix: { rows: [{ id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "a", name: "b" }] }] },
     receipts: { "operator.json": forged }, status: readFileSync(new URL("../docs/verification-status.md", import.meta.url), "utf8"),

@@ -10,6 +10,8 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const ROW_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const PRODUCERS = new Set(["rehearsal", "operator"]);
 const STATUS_HEADING = "## Published release";
+// `## Published release ##` renders as the same heading, so it counts as one.
+const STATUS_HEADING_LINE = /^##\s+Published release\s*#*\s*$/;
 const STATUS_LINE = /^\|\s*npm package and tag\s*\|\s*`mcp-sso@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s+and\s+`v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s*\|$/;
 
 /** The lines of the one `Published release` section that are rendered table
@@ -17,7 +19,7 @@ const STATUS_LINE = /^\|\s*npm package and tag\s*\|\s*`mcp-sso@(\d+\.\d+\.\d+(?:
  *  the line. A row hidden in either is not published status. */
 function renderedStatusRows(status, errors) {
   const lines = String(status ?? "").split("\n");
-  const headings = lines.map((line, index) => [line, index]).filter(([line]) => line === STATUS_HEADING);
+  const headings = lines.map((line, index) => [line, index]).filter(([line]) => STATUS_HEADING_LINE.test(line));
   if (headings.length !== 1) {
     errors.push(`status version: expected one canonical ${STATUS_HEADING} section, found ${headings.length}`);
     return [];
@@ -31,7 +33,7 @@ function renderedStatusRows(status, errors) {
   let commented = false;
   for (let i = headings[0][1] + 1; i < lines.length; i++) {
     const line = lines[i];
-    if (line.startsWith("## ")) break;
+    if (/^#{1,6}\s/.test(line)) break;
     if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
     if (line.includes("<!--")) commented = true;
     if (commented) { if (line.includes("-->")) commented = false; continue; }
