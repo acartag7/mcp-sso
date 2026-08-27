@@ -88,6 +88,32 @@ test("a malformed release matrix is rejected before it can cover anything", () =
     .some((e) => e.includes("duplicate exports")));
 });
 
+test("a receipt cannot claim a release-matrix row the matrix does not define", () => {
+  const invented = fixture({ receipts: { "r.json": receiptFor(ancestor, { releaseMatrix: ["RM.1", "invented"] }) } });
+  assert.ok(invented.errors.some((error) => error.includes("names invented, which the release matrix does not define")),
+    `an invented id proves nothing: ${JSON.stringify(invented.errors)}`);
+  assert.ok(invented.errors.some((error) => error.includes("no live evidence covers export ./fastify")),
+    "and it cannot stand in for the row that would have covered an export");
+});
+
+test("the published-release row must be in the section's rendered table", () => {
+  const table = statusFor();
+  // A row outside the rendered table is not published status: it cannot
+  // supply the version, and it cannot contradict the one that does.
+  const afterProse = `${table}\n\nSome prose about the release.\n\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
+  assert.deepEqual(fixture({ status: afterProse }).errors, [], "the table still supplies the version");
+  const onlyOutside = `# Status\n\n## Published release\n\n| Item | Status |\n| --- | --- |\n| something else | none |\n\nprose\n\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |`;
+  assert.ok(fixture({ status: onlyOutside }).errors.some((e) => e.includes("expected one npm package and tag row, found 0")),
+    "and a row that only exists outside the table supplies nothing");
+  const fenced = `${table}\n\n\`\`\`\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |\n\`\`\``;
+  assert.deepEqual(fixture({ status: fenced }).errors, [], "a fenced row is ignored, and the real one still counts");
+  const commented = `${table}\n\n<!--\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |\n-->`;
+  assert.deepEqual(fixture({ status: commented }).errors, [], "so is a commented one");
+  const noTable = "# Status\n\n## Published release\n\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |";
+  assert.ok(fixture({ status: noTable }).errors.some((e) => e.includes("expected one rendered table")),
+    "a bare row with no header and divider is not a rendered table");
+});
+
 test("the published-release row and the package must agree", () => {
   assert.ok(fixture({ status: statusFor("0.4.0") }).errors.some((e) => e.includes("version mismatch")));
   assert.ok(fixture({ status: "# no row here" }).errors.some((e) => e.includes("expected one npm package and tag row, found 0")));

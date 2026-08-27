@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
-import { provenMatrixRows, readRehearsalReceipt, toEvidence } from "../scripts/live/record-receipt.mjs";
+import { assertClientVersions, provenMatrixRows, readRehearsalReceipt, toEvidence } from "../scripts/live/record-receipt.mjs";
 import { ROWS } from "../scripts/live/rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -41,6 +41,24 @@ test("BEHAVIOUR record-receipt: only a complete, passing receipt on a clean tree
   for (const [override, pattern] of refused) {
     assert.throws(() => readRehearsalReceipt(receiptFor(override)), pattern, JSON.stringify(override).slice(0, 60));
   }
+});
+
+test("BEHAVIOUR record-receipt: a CLI row must name the client version it ran", () => {
+  const versioned = receiptFor();
+  for (const row of versioned.rows) {
+    if (row.id.startsWith("claude-code:")) row.lines = [{ kind: "NOTE", text: "claude 2.1.247" }];
+    if (row.id.startsWith("codex-cli:")) row.lines = [{ kind: "NOTE", text: "codex 0.150.1" }];
+  }
+  assert.equal(assertClientVersions(versioned), versioned);
+  const missing = structuredClone(versioned);
+  missing.rows.find((row) => row.id === "codex-cli:entra").lines = [];
+  assert.throws(() => assertClientVersions(missing), /codex-cli:entra does not name the codex version/);
+  const wrongShape = structuredClone(versioned);
+  wrongShape.rows.find((row) => row.id === "claude-code:entra").lines = [{ kind: "NOTE", text: "claude unknown" }];
+  assert.throws(() => assertClientVersions(wrongShape), /claude-code:entra does not name the claude version/);
+  const notANote = structuredClone(versioned);
+  notANote.rows.find((row) => row.id === "claude-code:entra").lines = [{ kind: "PASS", text: "claude 2.1.247" }];
+  assert.throws(() => assertClientVersions(notANote), /does not name the claude version/, "a check line is not an observation");
 });
 
 test("BEHAVIOUR record-receipt: the release-matrix rows come from the row that ran them", () => {

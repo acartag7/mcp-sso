@@ -55,6 +55,27 @@ export function observationsOf(row) {
   return (row.lines ?? []).flatMap((line) => (line?.kind === "NOTE" && typeof line.text === "string" ? [line.text] : []));
 }
 
+/** Rows whose evidence includes which build of a third-party client ran. The
+ *  page this evidence feeds tells a reader that one Codex version failed a
+ *  callback another completed, so a row without its version cannot be read. */
+const CLIENT_VERSIONS = Object.freeze([
+  { prefix: "claude-code:", cli: "claude" },
+  { prefix: "codex-cli:", cli: "codex" },
+]);
+
+/** Refuse a receipt whose CLI row observed no version. The rehearsal prints it
+ *  as a NOTE; a receipt that lost it would record a client flow nobody can
+ *  attribute to a build. */
+export function assertClientVersions(receipt) {
+  for (const row of receipt.rows) {
+    const expected = CLIENT_VERSIONS.find(({ prefix }) => String(row.id).startsWith(prefix));
+    if (expected === undefined) continue;
+    const named = observationsOf(row).some((text) => new RegExp(`^${expected.cli} \\d+\\.\\d+\\.\\d+$`).test(text));
+    if (!named) throw new Error(`row ${row.id} does not name the ${expected.cli} version it ran`);
+  }
+  return receipt;
+}
+
 /** The evidence document, in the schema the gate reads. */
 export function toEvidence(receipt, { source } = {}) {
   return {
@@ -90,7 +111,7 @@ if (invokedAsMain()) {
     else throw new Error("usage: record-receipt.mjs --receipt <file> [--write] [--require-head]");
   }
   if (!options.receipt) throw new Error("--receipt is required");
-  const receipt = readRehearsalReceipt(JSON.parse(readFileSync(options.receipt, "utf8")));
+  const receipt = assertClientVersions(readRehearsalReceipt(JSON.parse(readFileSync(options.receipt, "utf8"))));
   if (options.requireHead) {
     const head = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     if (head !== receipt.runtimeCommit) throw new Error("the receipt's runtime commit is not the checked-out HEAD");

@@ -22,7 +22,11 @@ function renderedStatusRows(status, errors) {
     errors.push(`status version: expected one canonical ${STATUS_HEADING} section, found ${headings.length}`);
     return [];
   }
-  const rows = [];
+  // Contiguous runs of table lines only, and only the one that is a rendered
+  // table: a header, a divider, then rows. A `|` line sitting in prose after
+  // the table is not a published-status row.
+  const blocks = [];
+  let current = [];
   let fenced = false;
   let commented = false;
   for (let i = headings[0][1] + 1; i < lines.length; i++) {
@@ -31,9 +35,16 @@ function renderedStatusRows(status, errors) {
     if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
     if (line.includes("<!--")) commented = true;
     if (commented) { if (line.includes("-->")) commented = false; continue; }
-    if (!fenced && line.startsWith("|")) rows.push(line);
+    if (!fenced && line.startsWith("|")) { current.push(line); continue; }
+    if (current.length > 0) { blocks.push(current); current = []; }
   }
-  return rows;
+  if (current.length > 0) blocks.push(current);
+  const tables = blocks.filter((block) => block.length >= 3 && /^\|( *:?-+:? *\|)+$/.test(block[1]));
+  if (tables.length !== 1) {
+    errors.push(`status version: expected one rendered table under ${STATUS_HEADING}, found ${tables.length}`);
+    return [];
+  }
+  return tables[0].slice(2);
 }
 
 /** The version the published-release row claims, or undefined. One row, one
@@ -96,7 +107,7 @@ function parseReleaseRows(releaseMatrix, errors) {
   const rows = Array.isArray(releaseMatrix?.rows) ? releaseMatrix.rows : undefined;
   if (rows === undefined) {
     errors.push("release matrix: rows must be an array");
-    return new Map();
+    return { byExport: new Map(), knownRows: new Set() };
   }
   const byExport = new Map();
   const ids = new Set();
@@ -123,7 +134,7 @@ function parseReleaseRows(releaseMatrix, errors) {
     }
     for (const name of exports) byExport.set(name, [...(byExport.get(name) ?? []), id]);
   }
-  return byExport;
+  return { byExport, knownRows: ids };
 }
 
 /**
@@ -161,8 +172,17 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts,
 
   // Every export needs one passing packed-artifact row, from any receipt that
   // carried a release-matrix result.
-  const byExport = parseReleaseRows(releaseMatrix, errors);
-  const provenRows = new Set(valid.flatMap(({ receipt }) => receipt.releaseMatrix ?? []));
+  const { byExport, knownRows } = parseReleaseRows(releaseMatrix, errors);
+  const provenRows = new Set();
+  for (const { label, receipt } of valid) {
+    for (const id of receipt.releaseMatrix ?? []) {
+      // A receipt names rows the matrix defines. An id it invents proves
+      // nothing, and silently counting it would let a receipt cover an export
+      // no executable row ever resolved.
+      if (!knownRows.has(id)) { errors.push(`${label}: names ${id}, which the release matrix does not define`); continue; }
+      provenRows.add(id);
+    }
+  }
   for (const name of publicExports) {
     const covering = (byExport.get(name) ?? []).filter((id) => provenRows.has(id));
     if (covering.length === 0) errors.push(`no live evidence covers export ${name}`);
