@@ -23,6 +23,12 @@ A row is `Verified` only when the named flow was driven against the named provid
 | Google | claude.ai custom connector | CIMD `client_id` → authorization → Google identity → consent → token → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Twelve protected `/mcp` requests followed the token. |
 | Google | Claude Code | CIMD `client_id` → `claude mcp login` → Google identity → consent → the CLI's loopback callback → token → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Four protected `/mcp` requests, from the CLI's own connection check. Client version 2.1.247. |
 | Google | Codex CLI | `codex mcp add` → the client identity Codex chose → Google identity → consent → the CLI's loopback callback → token | operator | Verified with limit | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Limit: no tool call ran, so this row proves the login and the code exchange only. Codex presented a per-instance CIMD document rather than a dynamic registration. Client version 0.150.1. |
+| Entra ID | Official MCP SDK client, driven by the rehearsal | DCR → authorization → Entra identity through the headless driver as the member test user → consent → token → `/mcp` → refresh | rehearsal | Verified | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. |
+| Entra ID | Rehearsal deny fixtures | No-group, no-mapped-group, group-overage, wrong-tenant, and subject-allowlist denials | rehearsal | Verified | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. Each fixture produced its audit reason once (`entra_no_groups`, `entra_no_mapped_groups`, `entra_groups_overage`, `entra_bad_tid`, `entra_subject_not_allowed`) and the client received `access_denied` with the documented description. |
+| Cloudflare Access | Official MCP SDK client, driven by the rehearsal | DCR → Access login through the Entra login method as the member test user → consent → token → `/mcp` → refresh; a non-admitted test user stopped at the Access edge | rehearsal | Verified | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. |
+| Cloudflare Access and Entra ID | Claude Code, driven by the rehearsal | CIMD `client_id` → `claude mcp login --no-browser` → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token → connection check on `/mcp` | rehearsal | Verified | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. Client version 2.1.227. |
+| Cloudflare Access and Entra ID | Codex CLI, driven by the rehearsal | `codex mcp add` → the client identity Codex chose, CIMD document or dynamic registration → provider identity through the headless driver as the member test user → consent → the CLI's loopback callback → token | rehearsal | Verified with limit | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. Limit: a tool call runs only when the client-keys file supplies `OPENAI_API_KEY`. Client version 0.147.0. |
+| Google | Provider probe, driven by the rehearsal | Discovery through the shipped resolver, the JWKS, and the authorize redirect | rehearsal | Verified with limit | 2026-08-27 | Runtime commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`. Limit: the Google sign-in was not driven. |
 
 ## Public export live evidence
 
@@ -32,22 +38,22 @@ Each row proves that the package entry point participated in the listed executab
 
 | Export | Live evidence | Runtime commit |
 | --- | --- | --- |
-| `.` | `RM.1`, `RM.17` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/memory` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/sqlite` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./store/mysql` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./rate-limit/redis` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./fastify/protected-resource-rate-limit` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./fastify` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./express` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./hono` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/cloudflare-access` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/entra` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/console-pairing` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/generic-oidc` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./identity/google` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./testing/store-conformance` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
-| `./testing/client-store-conformance` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `.` | `RM.1`, `RM.17` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./store/memory` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./store/sqlite` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./store/mysql` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./rate-limit/redis` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./fastify` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./fastify/protected-resource-rate-limit` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./express` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./hono` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/cloudflare-access` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/entra` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/console-pairing` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/generic-oidc` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./identity/google` | `RM.1` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./testing/store-conformance` | `RM.1`, `RM.16` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
+| `./testing/client-store-conformance` | `RM.1`, `RM.16` | `be886778f5cf3018b48fa43511b5a07d892f5d2d` |
 
 ## Client versions
 
