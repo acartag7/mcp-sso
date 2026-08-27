@@ -111,6 +111,6 @@ Run the checklist at the top of `src/identity/entra.ts` against your tenant befo
 - Confirm the bridge mints its **own** audience-bound token, the Entra `id_token` is verified then discarded.
 
 > [!IMPORTANT]
-> Wrong-tenant, subject-allowlist, and guest/B2B outcomes are not current verified rows. Test them in your tenant before relying on them. The [client compatibility reference](../client-compatibility.md) separates completed evidence from pending cases.
+> Guest and B2B outcomes are not current verified rows. Test them in your tenant before relying on them. Wrong-tenant and subject-allowlist rejections are verified: the rehearsal drives them as fixtures, and the [client compatibility reference](../client-compatibility.md) records them with the commit they ran at. Your own tenant still decides which claims it emits, so the checklist above is worth running either way.
 
 See [`authorization.md`](../authorization.md) for the IdP-gate vs mcp-sso-gate model and [§17.4](../contracts/17-v0-2-feature-contracts.md#174-entra-group-based-authorization-gate-2-becomes-a-scope-ceiling) / [§17.11](../contracts/17-v0-2-feature-contracts.md#1711-upstream-redirect-flow) for the group-ceiling and redirect-orchestrator contracts.
