@@ -67,7 +67,9 @@ pnpm run check:release-matrix
 pnpm run check:release-ready
 ```
 
-The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence commit, or version mismatch. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
+The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence commit, or version mismatch.
+
+A row goes stale against the release commit when something it depends on changed, and two kinds of row depend on different things. A row the record run renders, and every export row, came out of the harness, so a change under `test/`, `scripts/live/`, the release-matrix scripts, or `docs/verification.md` ages it, and the next record run re-proves it. A row an operator recorded by driving a real client against a served leg came out of none of that code: it ages when `src/`, `examples/`, the TypeScript configuration, the lockfiles, the publish workflow, or a runtime field of `package.json` changes, because those are what a client would observe. `scripts/lib/rendered-provider-rows.mjs` is the single list of rendered subjects that both the renderer and the gate read, so a new rendered row classifies itself. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
 
 ## Merge the evidence record
 

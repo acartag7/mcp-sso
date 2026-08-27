@@ -3,8 +3,8 @@ import { after, before, test } from "node:test";
 import { formatReleaseReadinessFailure, parseReleaseReadyArgs } from "../scripts/lib/release-ready-output.mjs";
 import {
   ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceDigestFor, evidenceRelease, fixture,
-  metadataRelease, modeRelease, packageRelease, release, runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated,
-  versionRelease,
+  harnessRelease, metadataRelease, modeRelease, packageRelease, release, runtimeRelease, setupReleaseReadyFixture,
+  statusFor, unrelated, versionRelease,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -462,4 +462,40 @@ test("publish runs release readiness with full git history and ordinary tests do
   assert.ok(checklist.indexOf("Commit only `docs/client-compatibility.md`") > checklist.indexOf("pnpm run check:release-ready"));
   assert.ok(checklist.indexOf("Merge the evidence pull request") > checklist.indexOf("Commit only `docs/client-compatibility.md`"));
   assert.equal(packageJson.scripts.test.includes("check:release-ready"), false);
+});
+
+test("harness evidence and operator evidence age separately", () => {
+  // A row a person drove through a real client against a served leg was not
+  // produced by the harness, so a change to the probes, the rehearsal, or the
+  // release-matrix definition cannot change what that row observed. A row the
+  // record run renders was produced by exactly that code, and ages with it.
+  const operatorAtAncestor = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: harnessRelease }),
+    releaseCommit: harnessRelease,
+  });
+  assert.deepEqual(operatorAtAncestor.errors, []);
+  assert.deepEqual(operatorAtAncestor.staleEvidence, [], "a harness change leaves an operator row standing");
+
+  const renderedAtAncestor = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: harnessRelease, rendered: true }),
+    releaseCommit: harnessRelease,
+  });
+  assert.deepEqual(renderedAtAncestor.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "a harness change ages the rows the record run renders");
+  assert.ok(renderedAtAncestor.staleEvidence[0].changedInputs.includes("scripts/live/probe.mjs"));
+
+  const exportsAtAncestor = fixture({
+    compatibility: compatibilityFor(harnessRelease, { exportCommit: ancestor }),
+    releaseCommit: harnessRelease,
+  });
+  assert.deepEqual(exportsAtAncestor.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "export rows come out of the release matrix, so they age with the harness too");
+
+  const operatorAfterRuntime = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: runtimeRelease }),
+    releaseCommit: runtimeRelease,
+  });
+  assert.deepEqual(operatorAfterRuntime.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "a runtime change ages every row, including one an operator drove");
+  assert.ok(operatorAfterRuntime.staleEvidence[0].changedInputs.includes("src/runtime.ts"));
 });
