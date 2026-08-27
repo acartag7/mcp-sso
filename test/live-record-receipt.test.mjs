@@ -78,7 +78,7 @@ test("BEHAVIOUR record-receipt: a campaign supersedes the one before it", () => 
   // freshness forever: its commit predates the change the new run recorded.
   const source = readFileSync(new URL("../scripts/live/record-receipt.mjs", import.meta.url), "utf8");
   assert.match(source, /docs\/evidence\/rehearsal\.json/, "the active receipt has one name");
-  assert.match(source, /docs\/evidence\/archive\/rehearsal-\$\{String\(previous\.runtimeCommit\)/, "and the one it replaces is archived");
+  assert.match(source, /docs\/evidence\/archive\/rehearsal-\$\{String\(previous\.runtimeCommit\)\.slice\(0, 7\)\}-\$\{stamp\}/, "and the one it replaces is archived under its own campaign");
   assert.match(source, /renameSync\(path, archive\)/, "moved, not deleted");
   const gate = readFileSync(new URL("../scripts/check-release-ready.mjs", import.meta.url), "utf8");
   assert.match(gate, /name\.endsWith\("\.json"\)/, "the gate reads documents, so the archive directory is not one");
@@ -109,7 +109,10 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   const onlyGenerated = evaluateReleaseReadiness({
     packageJson: { version: "0.5.0", exports: { ".": {} } },
     releaseMatrix: { rows: [{ id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "test/a.test.ts", name: "a" }] }] },
-    receipts: { "generated.json": generated },
+    receipts: {
+      "rehearsal.json": generated,
+      "operator.json": { schema: 1, producer: "operator", runtimeCommit: head, recordedAt: "x", complete: true, rows: [{ id: "F2", status: "PASS" }] },
+    },
     status: readFileSync(new URL("../docs/verification-status.md", import.meta.url), "utf8"),
     gitCwd: ROOT, releaseCommit: "HEAD",
   });
@@ -135,7 +138,7 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   const forged = { ...receipts["operator.json"], releaseMatrix: ["RM.1"] };
   const claimed = evaluateReleaseReadiness({ ...result, packageJson: { version: "0.5.0", exports: { ".": {} } },
     releaseMatrix: { rows: [{ id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "a", name: "b" }] }] },
-    receipts: { "operator.json": forged }, status: readFileSync(new URL("../docs/verification-status.md", import.meta.url), "utf8"),
+    receipts: { "rehearsal.json": receipts["rehearsal.json"], "operator.json": forged }, status: readFileSync(new URL("../docs/verification-status.md", import.meta.url), "utf8"),
     gitCwd: ROOT, releaseCommit: "HEAD" });
   assert.ok(claimed.errors.some((e) => e.includes("cannot carry release-matrix rows")), "an operator receipt cannot mint coverage");
 });

@@ -126,16 +126,26 @@ if (invokedAsMain()) {
     const path = resolve(ROOT, "docs/evidence/rehearsal.json");
     mkdirSync(dirname(path), { recursive: true });
     if (existsSync(path)) {
+      // Every superseded receipt is archived, including one from a second
+      // campaign against the same commit: it carries its own timestamp, source
+      // and observations, and overwriting it would discard a campaign that ran.
       const previous = JSON.parse(readFileSync(path, "utf8"));
-      if (previous.runtimeCommit !== evidence.runtimeCommit) {
-        const archive = resolve(ROOT, `docs/evidence/archive/rehearsal-${String(previous.runtimeCommit).slice(0, 7)}.json`);
-        mkdirSync(dirname(archive), { recursive: true });
-        renameSync(path, archive);
-        process.stdout.write(`${archive} archived\n`);
-      }
+      const stamp = String(previous.recordedAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
+      const archive = resolve(ROOT, `docs/evidence/archive/rehearsal-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}.json`);
+      mkdirSync(dirname(archive), { recursive: true });
+      renameSync(path, archive);
+      process.stdout.write(`${archive} archived\n`);
     }
     writeFileSync(path, body);
     process.stdout.write(`${path} written for ${receipt.runtimeCommit}\n`);
+    // The page a person reads is not generated, and it should not silently
+    // fall behind the receipt either. This is what changed, in the words the
+    // page uses, for whoever lands the evidence.
+    process.stdout.write(`\nFor docs/client-compatibility.md, at runtime commit ${receipt.runtimeCommit.slice(0, 7)}:\n`);
+    for (const row of evidence.rows) {
+      const observed = row.observed?.length > 0 ? `  (${row.observed.join("; ")})` : "";
+      process.stdout.write(`  ${row.id}${observed}\n`);
+    }
   } else {
     process.stdout.write(body);
   }

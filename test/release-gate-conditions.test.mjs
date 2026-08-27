@@ -12,7 +12,8 @@ import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
 import * as FIXTURE from "./lib/release-ready-fixture.mjs";
 import {
-  ancestor, cleanupReleaseReadyFixture, fixture, receiptFor, setupReleaseReadyFixture, statusFor, unrelated,
+  ancestor, cleanupReleaseReadyFixture, fixture, operatorReceiptFor, receiptFor, receipts, setupReleaseReadyFixture,
+  statusFor, unrelated,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -28,15 +29,15 @@ const CONDITIONS = [
   ["the release commit does not resolve",
     () => ({ releaseCommit: "f".repeat(40) }), "release commit is not available in git history"],
   ["a recorded runtime commit is malformed",
-    () => ({ receipts: { "r.json": receiptFor("nope") } }), "runtime commit is malformed"],
+    () => ({ receipts: receipts({ rehearsal: receiptFor("nope") }) }), "runtime commit is malformed"],
   ["a recorded runtime commit does not resolve",
-    () => ({ receipts: { "r.json": receiptFor("f".repeat(40)) } }), "not available in git history"],
+    () => ({ receipts: receipts({ rehearsal: receiptFor("f".repeat(40)) }) }), "not available in git history"],
   ["a recorded runtime commit is not an ancestor of the release commit",
-    () => ({ receipts: { "r.json": receiptFor(unrelated) } }), "is not an ancestor of the release commit"],
+    () => ({ receipts: receipts({ rehearsal: receiptFor(unrelated) }) }), "is not an ancestor of the release commit"],
   ["an export has no live evidence",
-    () => ({ receipts: { "r.json": receiptFor(ancestor, { releaseMatrix: ["RM.1"] }) } }), "no live evidence covers export ./fastify"],
+    () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { releaseMatrix: ["RM.1"] }) }) }), "no live evidence covers export ./fastify"],
   ["evidence names a matrix row the matrix does not define",
-    () => ({ receipts: { "r.json": receiptFor(ancestor, { releaseMatrix: ["RM.1", "RM.404"] }) } }),
+    () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { releaseMatrix: ["RM.1", "RM.404"] }) }) }),
     "names RM.404, which the release matrix does not define"],
   ["a matrix row names an export the package does not declare",
     () => ({ releaseMatrix: { rows: [
@@ -105,8 +106,8 @@ test("evidence ages exactly as the previous gate aged it, plus the one correctio
   // harness inputs alike. That is kept for everything except one case, which
   // is the correction this change exists to make.
   const { deploymentRelease, harnessRelease, packageRelease, runtimeRelease, versionRelease, buildRelease, metadataRelease } = FIXTURE;
-  const ages = (releaseCommit, receipt = receiptFor(ancestor)) =>
-    fixture({ receipts: { "r.json": receipt }, releaseCommit }).staleEvidence.length === 1;
+  const ages = (releaseCommit, which = "rehearsal") =>
+    fixture({ receipts: receipts(), releaseCommit }).staleEvidence.some((entry) => entry.label.startsWith(which));
 
   assert.ok(ages(runtimeRelease), "a src/ change ages evidence");
   assert.ok(ages(deploymentRelease), "so does the composition of the served leg");
@@ -115,8 +116,7 @@ test("evidence ages exactly as the previous gate aged it, plus the one correctio
   assert.ok(ages(buildRelease), "so does a build-script change");
   assert.ok(!ages(metadataRelease), "package description and the gate's own script do not");
   assert.ok(ages(harnessRelease), "probe and rehearsal changes age the rehearsal receipt they produced");
-  const operator = receiptFor(ancestor, { producer: "operator", releaseMatrix: undefined, rows: [{ id: "F2", status: "PASS" }] });
-  assert.ok(!ages(harnessRelease, operator),
+  assert.ok(!ages(harnessRelease, "operator"),
     "and not an operator receipt, which is the correction: no probe produced what a real client did");
 });
 

@@ -5,7 +5,7 @@ Use this checklist for a release candidate. The [release verification reference]
 ## Merge the version bump
 
 1. Push the final versioned runtime tree on a feature branch and open or update its pull request.
-2. Add or update the matching Tier 1 rows in [the release verification reference](verification.md).
+8. Add or update the matching Tier 1 rows in [the release verification reference](verification.md).
 3. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
 4. Read every review and inline thread.
 5. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
@@ -72,13 +72,14 @@ A receipt goes stale when something that changes what a client would observe mov
 
 ## Merge the evidence record
 
-1. Commit only the receipt under `docs/evidence/` from the `evidence-<sha>` artifact, and open the pull request from an account rather than a workflow token.
-2. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
-3. Read every review and inline thread.
-4. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
-5. Merge the pull request that adds the receipt into `main`.
-6. Fetch `origin/main` and run `pnpm run check:release-matrix` and `pnpm run check:release-ready` on that exact commit.
-7. Confirm that the commit selected for the tag is on `origin/main`. Do not tag an unmerged branch or a local-only commit.
+1. Commit the receipt under `docs/evidence/` from the `evidence-<sha>` artifact, and open the pull request from an account rather than a workflow token.
+2. Update [`docs/client-compatibility.md`](client-compatibility.md) in the same pull request. Nothing generates it, so nothing will notice it going stale: `record-receipt.mjs` prints what the campaign observed, in the words that page uses, and the receipt is the source for the runtime commit and the client versions.
+3. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
+4. Read every review and inline thread.
+5. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
+6. Merge the pull request that adds the receipt into `main`.
+7. Fetch `origin/main` and run `pnpm run check:release-matrix` and `pnpm run check:release-ready` on that exact commit.
+8. Confirm that the commit selected for the tag is on `origin/main`. Do not tag an unmerged branch or a local-only commit.
 
 ## Verify the publish controls
 

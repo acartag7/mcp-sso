@@ -3,6 +3,7 @@
 // matrix, and the published-release row, and refuses a release whose evidence
 // does not match what ships. It parses no prose. docs/client-compatibility.md
 // is written for readers, and nothing here reads it.
+import { ROWS } from "../live/rehearsal-support.mjs";
 import { changedEvidenceInputs, isAncestor, resolveCommit } from "./release-evidence-git.mjs";
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -10,6 +11,9 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const ROW_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const MATRIX_ROW_ID = /^RM\.\d+$/;
 const PRODUCERS = new Set(["rehearsal", "operator"]);
+/** The active receipt each producer writes. Anything else in the directory is
+ *  a document nobody records to, and a superseded one belongs in archive/. */
+export const ACTIVE_RECEIPTS = Object.freeze({ rehearsal: "rehearsal.json", operator: "operator.json" });
 const STATUS_HEADING = "## Published release";
 // `## Published release ##` renders as the same heading, so it counts as one.
 const STATUS_HEADING_LINE = /^##\s+Published release\s*#*\s*$/;
@@ -30,15 +34,24 @@ function renderedStatusRows(status, errors) {
   // the table is not a published-status row.
   const blocks = [];
   let current = [];
-  let fenced = false;
+  let fence;
   let commented = false;
   for (let i = headings[0][1] + 1; i < lines.length; i++) {
     const line = lines[i];
     if (/^#{1,6}\s/.test(line)) break;
-    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
+    // A backtick fence is closed by backticks, not by tildes, and the closer is
+    // at least as long as the opener. Toggling on either would let a table
+    // inside a code block read as a rendered one.
+    const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (opener !== undefined && opener !== null) {
+      const [, marks] = opener;
+      if (fence === undefined) fence = marks;
+      else if (marks[0] === fence[0] && marks.length >= fence.length) fence = undefined;
+      continue;
+    }
     if (line.includes("<!--")) commented = true;
     if (commented) { if (line.includes("-->")) commented = false; continue; }
-    if (!fenced && line.startsWith("|")) { current.push(line); continue; }
+    if (fence === undefined && line.startsWith("|")) { current.push(line); continue; }
     if (current.length > 0) { blocks.push(current); current = []; }
   }
   if (current.length > 0) blocks.push(current);
@@ -79,6 +92,16 @@ function readReceipt(receipt, label, errors) {
     return fail(`runtime commit is malformed: ${String(receipt.runtimeCommit)}`);
   }
   if (receipt.complete !== true) return fail("is partial, so it is not evidence");
+  // `complete` is the producer's summary of itself. For a rehearsal it is
+  // re-derived here, because the gate reads a committed file rather than the
+  // run that wrote it: a receipt truncated to its release-matrix row would
+  // otherwise cover every export while the identity and client evidence was
+  // gone.
+  if (receipt.producer === "rehearsal") {
+    const ids = new Set((Array.isArray(receipt.rows) ? receipt.rows : []).map((row) => row?.id));
+    const missing = ROWS.map((row) => row.id).filter((id) => !ids.has(id));
+    if (missing.length > 0) return fail(`claims to be complete without ${missing.length} row(s) the rehearsal runs`);
+  }
   if (!Array.isArray(receipt.rows) || receipt.rows.length === 0) return fail("records no rows");
   const seen = new Set();
   for (const row of receipt.rows) {
@@ -168,12 +191,20 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts,
     errors.push(`version mismatch: package.json is ${packageVersion}, docs/verification-status.md claims ${claimed}`);
   }
 
+  // One active receipt per producer, under the name that says which. A missing
+  // operator receipt would otherwise pass on the rehearsal alone, publishing
+  // without the campaign a person drove.
   const entries = Object.entries(receipts ?? {});
-  if (entries.length === 0) errors.push("no evidence receipt found under docs/evidence/");
   const valid = [];
-  for (const [label, value] of entries) {
-    const receipt = readReceipt(value, label, errors);
-    if (receipt !== undefined) valid.push({ label, receipt });
+  for (const [producer, label] of Object.entries(ACTIVE_RECEIPTS)) {
+    if (!Object.hasOwn(receipts ?? {}, label)) { errors.push(`no ${producer} receipt at docs/evidence/${label}`); continue; }
+    const receipt = readReceipt(receipts[label], label, errors);
+    if (receipt === undefined) continue;
+    if (receipt.producer !== producer) { errors.push(`${label}: holds a ${receipt.producer} receipt`); continue; }
+    valid.push({ label, receipt });
+  }
+  for (const [label] of entries) {
+    if (!Object.values(ACTIVE_RECEIPTS).includes(label)) errors.push(`docs/evidence/${label} is not an active receipt; a superseded one belongs in archive/`);
   }
 
   const resolvedRelease = resolveCommit(gitCwd, releaseCommit);

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateReleaseReadiness } from "../../scripts/lib/release-ready.mjs";
+import { ROWS } from "../../scripts/live/rehearsal-support.mjs";
 
 let repo;
 export let ancestor;
@@ -20,13 +21,32 @@ function git(args) {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-/** One receipt, in the shape a producer writes. */
+/** A rehearsal receipt, in the shape the recorder writes: every row the
+ *  rehearsal runs, because the gate re-derives completeness rather than
+ *  trusting the receipt's own summary. */
 export function receiptFor(commit, overrides = {}) {
   return {
     schema: 1, producer: "rehearsal", runtimeCommit: commit, recordedAt: "2026-08-27T00:00:00.000Z",
-    complete: true, rows: [{ id: "probe-entra", status: "PASS" }, { id: "release-matrix", status: "PASS" }],
+    complete: true, rows: ROWS.map((row) => ({ id: row.id, status: "PASS" })),
     releaseMatrix: ["RM.1", "RM.2"],
     ...overrides,
+  };
+}
+
+/** An operator receipt: a campaign a person drove, covering no export. */
+export function operatorReceiptFor(commit, overrides = {}) {
+  return {
+    schema: 1, producer: "operator", runtimeCommit: commit, recordedAt: "2026-08-27T00:00:00.000Z",
+    complete: true, rows: [{ id: "F2", status: "PASS" }],
+    ...overrides,
+  };
+}
+
+/** The active pair, with one side replaced. */
+export function receipts({ rehearsal, operator } = {}) {
+  return {
+    "rehearsal.json": rehearsal ?? receiptFor(ancestor),
+    "operator.json": operator ?? operatorReceiptFor(ancestor),
   };
 }
 
@@ -46,10 +66,10 @@ export function fixture(overrides = {}) {
       { id: "RM.2", title: "Fastify flow", packedArtifact: true, exports: ["./fastify"], evidence: [{ file: "test/fastify.test.ts", name: "fastify flow" }] },
     ],
   };
-  const receipts = overrides.receipts ?? { "rehearsal.json": receiptFor(ancestor) };
+  const evidence = overrides.receipts ?? receipts();
   const status = overrides.status ?? statusFor();
   const releaseCommit = overrides.releaseCommit ?? release;
-  return evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts, status, gitCwd: repo, releaseCommit });
+  return evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts: evidence, status, gitCwd: repo, releaseCommit });
 }
 
 export function setupReleaseReadyFixture() {
