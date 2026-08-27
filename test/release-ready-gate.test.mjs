@@ -3,8 +3,8 @@ import { after, before, test } from "node:test";
 import { formatReleaseReadinessFailure, parseReleaseReadyArgs } from "../scripts/lib/release-ready-output.mjs";
 import {
   ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceDigestFor, evidenceRelease, fixture,
-  harnessRelease, metadataRelease, modeRelease, packageRelease, release, runtimeRelease, setupReleaseReadyFixture,
-  statusFor, unrelated, versionRelease,
+  deploymentRelease, harnessRelease, metadataRelease, modeRelease, packageRelease, release, rowDefinitionRelease,
+  runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated, versionRelease,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -498,4 +498,35 @@ test("harness evidence and operator evidence age separately", () => {
   assert.deepEqual(operatorAfterRuntime.staleEvidence.map((entry) => entry.commit), [ancestor],
     "a runtime change ages every row, including one an operator drove");
   assert.ok(operatorAfterRuntime.staleEvidence[0].changedInputs.includes("src/runtime.ts"));
+});
+
+test("the leg's own composition ages every row, and the row definitions age the rendered ones", () => {
+  // `run.sh`, `serve.sh` and `run-support.mjs` choose the entry point, map the
+  // environment onto the example's configuration, and expose the hostname. A
+  // change there changes what any client observes without touching src/, so an
+  // operator's observation of the old served configuration is not current.
+  const operatorAfterDeployment = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: deploymentRelease }),
+    releaseCommit: deploymentRelease,
+  });
+  assert.deepEqual(operatorAfterDeployment.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "a change to the served leg ages an operator row");
+  assert.ok(operatorAfterDeployment.staleEvidence[0].changedInputs.includes("scripts/live/serve.sh"));
+
+  // The list of rows the record run renders is part of the harness, wherever
+  // the file lives: a row generated under an obsolete definition is not current.
+  const renderedAfterDefinition = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: rowDefinitionRelease, rendered: true }),
+    releaseCommit: rowDefinitionRelease,
+  });
+  assert.deepEqual(renderedAfterDefinition.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "moving the row definitions out of scripts/live did not stop them ageing rendered rows");
+  assert.ok(renderedAfterDefinition.staleEvidence[0].changedInputs.includes("scripts/lib/rendered-provider-rows.mjs"));
+
+  const operatorAfterDefinition = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: rowDefinitionRelease }),
+    releaseCommit: rowDefinitionRelease,
+  });
+  assert.deepEqual(operatorAfterDefinition.staleEvidence, [],
+    "a row an operator drove does not depend on what the renderer writes");
 });
