@@ -179,7 +179,7 @@ try {
     const events = eventsSince(readAudit(), before);
     out.push(`NOTE  audit ${auditKinds(events).join(" > ") || "(no events)"}`);
     if (!ok("the served leg's audit records the client's registration, identity, and code exchange",
-      cliLoginHolds(events, options.cli, { path: identity?.path, expectProtectedRequest: protectedRequest }), `${events.length} events added`)) failures++;
+      cliLoginHolds(events, options.cli, { path: identity?.path, clientId: authorize.clientId, expectProtectedRequest: protectedRequest }), `${events.length} events added`)) failures++;
   }
 } catch (error) {
   failures++;

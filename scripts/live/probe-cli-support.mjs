@@ -180,12 +180,22 @@ export function auditKinds(events) {
  *  identity path the client id claimed, the identity, the code exchange, and,
  *  when the CLI then reached /mcp, a successful protected request. `path` is
  *  the one `identityOf` matched, so the audit has to agree with the client id
- *  the row already checked; a path this CLI does not declare holds nothing. */
-export function cliLoginHolds(events, cli, { path, expectProtectedRequest }) {
-  const seen = kinds(events);
+ *  the row already checked; a path this CLI does not declare holds nothing.
+ *
+ *  Every event that names a client must name THIS one. The served leg is
+ *  public for the length of the row, so another client's flow can interleave
+ *  with it, and a row that counted kinds alone would accept a stranger's
+ *  document fetch as its own. `oauth.register` and `identity.verify` are
+ *  emitted before the client is known and carry no id, so they are the only
+ *  two required leg-wide. */
+export function cliLoginHolds(events, cli, { path, clientId, expectProtectedRequest }) {
   if (!CLIS[cli]?.identities.some((identity) => identity.path === path)) return false;
-  const registration = path === "cimd" ? "oauth.cimd.fetch:success" : "oauth.register:success";
-  const required = [registration, "identity.verify:success", "oauth.authorize.approve:success", "oauth.token.authorization_code:success"];
-  if (expectProtectedRequest) required.push("auth.request:success");
-  return required.every((name) => seen.includes(name));
+  if (typeof clientId !== "string" || clientId === "") return false;
+  const mine = kinds(events.filter((event) => event.clientId === clientId));
+  const anyClient = kinds(events);
+  const bound = ["oauth.authorize.approve:success", "oauth.token.authorization_code:success"];
+  if (path === "cimd") bound.push("oauth.cimd.fetch:success");
+  if (expectProtectedRequest) bound.push("auth.request:success");
+  const unnamed = path === "dcr" ? ["oauth.register:success", "identity.verify:success"] : ["identity.verify:success"];
+  return bound.every((name) => mine.includes(name)) && unnamed.every((name) => anyClient.includes(name));
 }

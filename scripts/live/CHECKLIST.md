@@ -33,7 +33,7 @@ for h in <CF_HOST> <ENTRA_HOST> <GOOGLE_HOST>; do
 done
 ```
 
-When a CIMD client (Claude Code, the ChatGPT and claude.ai connectors) connects, its first `/oauth/authorize` should be a `302` to the identity provider on the redirect legs, or the consent page on the Cloudflare leg. A `400` / `invalid_client` there means a document-validation or dispatch regression, and it is worth resolving before spending a browser session.
+When a CIMD client connects, its first `/oauth/authorize` should be a `302` to the identity provider on the redirect legs, or the consent page on the Cloudflare leg. A `400` / `invalid_client` there means a document-validation or dispatch regression, and it is worth resolving before spending a browser session. Claude Code and the ChatGPT and claude.ai connectors are always CIMD clients. Codex CLI (rows B1 to B3) is one only sometimes: it presents a per-instance document under `https://chatgpt.com/oauth/codex/<instance>/client.json` when it is signed in to its vendor, and registers dynamically when it is not, so apply this preflight to a Codex row whenever the authorization URL it prints carries a `client_id` that is a URL.
 
 ## The matrix
 
