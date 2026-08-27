@@ -67,7 +67,9 @@ pnpm run check:release-matrix
 pnpm run check:release-ready
 ```
 
-The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence commit, or version mismatch. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
+The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence commit, or version mismatch.
+
+A row goes stale against the release commit when something it depends on changed, and two kinds of row depend on different things. A row the record run renders, and every export row, came out of the harness, so a change under `test/`, `scripts/live/`, the release-matrix scripts, `docs/verification.md`, or `.github/workflows/live.yml` ages it, and the next record run re-proves it. A row an operator recorded by driving a real client against a served leg came out of none of that code: it ages when `src/`, `examples/`, the TypeScript configuration, the lockfiles, the publish workflow, or a runtime field of `package.json` changes, because those are what a client would observe. It ages too when the leg's own composition changes, which is `scripts/live/run.sh`, `scripts/live/serve.sh`, and `scripts/live/run-support.mjs`: those choose the entry point, map the environment onto the example's identity selector, DCR mode, redirect allowlist and proxy trust, and expose the hostname, so a change there changes what any client observes without touching `src/`. Which kind a row is comes from its own `Recorded by` cell, `rehearsal` or `operator`, written when the row is recorded and never inferred from the row's wording: a rendered row whose text changes must not quietly become an operator's. Any other value fails the row, so an unreadable cell ages strictly rather than loosely. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
 
 ## Merge the evidence record
 

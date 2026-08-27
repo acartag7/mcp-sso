@@ -38,7 +38,7 @@ export function formatReleaseReadinessFailure({ errors, staleEvidence, releaseTa
     const commits = staleEvidence.map((entry) => entry.commit);
     const noun = staleEvidence.length === 1 ? "commit" : "commits";
     const verb = staleEvidence.length === 1 ? "predates" : "predate";
-    lines.push(`- ${staleEvidence.length} recorded evidence ${noun} ${verb} release runtime changes`);
+    lines.push(`- ${staleEvidence.length} recorded evidence ${noun} ${verb} release evidence inputs`);
     for (const { commit, changedInputs } of staleEvidence) {
       const inputNoun = changedInputs.length === 1 ? "input" : "inputs";
       lines.push(

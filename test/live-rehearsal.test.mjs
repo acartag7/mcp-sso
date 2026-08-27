@@ -341,6 +341,17 @@ if [ -f "${values}/$name" ]; then cat "${values}/$name"; else echo "An error occ
 test("BEHAVIOUR rehearsal-support: run.sh outcomes classify as PASS, FAIL, or an armable BLOCKED", () => {
   const pass = classifyRun({ code: 0, stderr: "", stdout: "PASS  a\nPASS  b\nCONTROL  c\n\n2 live checks passed; 1 local controls passed\n" });
   assert.deepEqual(pass, { status: "PASS", checks: { passed: 2, total: undefined, controls: 1 }, lines: [{ kind: "PASS", text: "a" }, { kind: "PASS", text: "b" }, { kind: "CONTROL", text: "c" }] });
+  // A NOTE carries what the row observed, not a check. The receipt has to keep
+  // it — render-evidence.mjs reads the client version from exactly these lines
+  // — and it must not count as a check, or a refusal that happened after one
+  // would read as a failed check instead of an armable BLOCKED reason.
+  const noted = classifyRun({ code: 0, stderr: "", stdout: "NOTE  claude 2.1.247\nPASS  a\nPASS  b\nCONTROL  c\n\n2 live checks passed; 1 local controls passed\n" });
+  assert.equal(noted.status, "PASS");
+  assert.deepEqual(noted.lines[0], { kind: "NOTE", text: "claude 2.1.247" }, "the receipt keeps the version the row observed");
+  const refusedAfterNote = classifyRun({ code: 1, stderr: "probe-cli: claude is unavailable on PATH", stdout: "NOTE  claude 2.1.247\n" });
+  assert.equal(refusedAfterNote.status, "BLOCKED", "a NOTE is not a check, so an armable refusal is still BLOCKED");
+  assert.equal(classifyRun({ code: 1, stderr: "probe-cli: claude is unavailable on PATH", stdout: "PASS  a\n" }).status, "FAIL",
+    "a real check before the refusal still means the row ran and failed");
   assert.equal(classifyRun({ code: 0, stderr: "", stdout: "PASS  a\n\n1/1 checks passed\n" }).status, "PASS");
   assert.equal(classifyRun({ code: 0, stderr: "", stdout: "PASS  a\n\n1/1 live checks passed\n" }).status, "PASS");
   assert.equal(classifyRun({ code: 0, stderr: "", stdout: "PASS  a\nFAIL  b\n\n1/2 checks passed\n" }).reason, "checks_failed");

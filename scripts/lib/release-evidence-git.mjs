@@ -4,11 +4,44 @@ import { createHash } from "node:crypto";
 const NON_RUNTIME_PACKAGE_FIELDS = new Set([
   "author", "bugs", "contributors", "description", "funding", "homepage", "keywords", "license", "repository",
 ]);
-const EVIDENCE_PATHS = [
-  "src", "examples", "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
-  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", "tsconfig.json", "tsconfig.build.json",
+/** What a recorded observation is ABOUT: the library, the example a leg
+ *  serves, and how either is built or published. A change here can change what
+ *  any client would observe, so it ages every recorded row. */
+const RUNTIME_PATHS = [
+  "src", "examples", "tsconfig.json", "tsconfig.build.json",
   ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
 ];
+
+/** What composes and exposes the leg a client is driven against: the runner
+ *  that maps stack values onto the example's identity selector, DCR mode,
+ *  redirect allowlist and proxy trust, and the script that starts the servers
+ *  and the tunnel. A change here changes what ANY client observes without
+ *  touching `src/`, so it ages every row, an operator's included. */
+const DEPLOYMENT_PATHS = [
+  "scripts/live/run.sh", "scripts/live/serve.sh", "scripts/live/run-support.mjs",
+];
+
+/** What PRODUCES harness-driven evidence: the probes, the drivers, the
+ *  rehearsal, the renderer and the row definitions it writes from, the release
+ *  matrix and its definition. A change here can change what such a row proves,
+ *  so it ages those rows — and only those. A row an operator drove through a
+ *  real client came from none of this, and the two have different lifecycles:
+ *  the record run re-proves the harness rows on every dispatch, while an
+ *  operator row keeps standing until the thing it observed changes. */
+const HARNESS_PATHS = [
+  "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
+  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", ".github/workflows/live.yml",
+];
+
+/** Everything an evidence receipt depends on, in one list derived from the
+ *  three sets so it cannot drift from them. `evidenceInputDigest` hashes this,
+ *  and a squash receipt binds it: a worktree commit's digest must match the
+ *  merge commit's, so a change inherited through the merge cannot escape.
+ *  Changing any of the three sets changes every digest taken before it, which
+ *  is why the contract says a recorded digest is only valid against the set it
+ *  was taken with. The current matrix records none. */
+const DIGEST_PATHS = [...RUNTIME_PATHS, ...DEPLOYMENT_PATHS, ...HARNESS_PATHS];
+
 
 function gitOutput(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -32,12 +65,12 @@ export function isAncestor(cwd, ancestor, descendant) {
   }
 }
 
-function changedRuntimeInputs(cwd, ancestor, descendant) {
+function changedRuntimeInputs(cwd, ancestor, descendant, paths) {
   const output = execFileSync(
     "git",
     [
       "diff", "--name-only", "-z", ancestor, descendant, "--",
-      ...EVIDENCE_PATHS,
+      ...paths,
     ],
     { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -87,7 +120,7 @@ function runtimePackageProjection(value) {
 
 export function evidenceInputDigest(cwd, commit) {
   const entries = execFileSync(
-    "git", ["ls-tree", "-r", "-z", commit, "--", ...EVIDENCE_PATHS],
+    "git", ["ls-tree", "-r", "-z", commit, "--", ...DIGEST_PATHS],
     { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   ).split("\0").filter(Boolean).map((entry) => {
     const match = entry.match(/^([0-9]{6}) ([a-z]+) [0-9a-f]+\t([\s\S]+)$/);
@@ -105,9 +138,15 @@ export function evidenceInputDigest(cwd, commit) {
   return hash.digest("hex");
 }
 
-export function changedEvidenceInputs(cwd, ancestor, descendant) {
+/** The inputs that changed between the commit a row named and the release
+ *  commit. `harnessDriven` says whether the row came out of the harness; a row
+ *  that did not is aged by runtime changes alone. */
+export function changedEvidenceInputs(cwd, ancestor, descendant, { harnessDriven = true } = {}) {
+  const paths = harnessDriven
+    ? [...RUNTIME_PATHS, ...DEPLOYMENT_PATHS, ...HARNESS_PATHS]
+    : [...RUNTIME_PATHS, ...DEPLOYMENT_PATHS];
   return [
-    ...changedRuntimeInputs(cwd, ancestor, descendant),
+    ...changedRuntimeInputs(cwd, ancestor, descendant, paths),
     ...changedRuntimePackageFields(cwd, ancestor, descendant),
   ];
 }

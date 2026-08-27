@@ -92,7 +92,13 @@ export const BLOCKED_REASON_NAMES = Object.freeze([
   "tunnel_already_served", ...SERVE_BLOCKED.map((entry) => entry.reason), "prerequisite_row_did_not_pass",
 ]);
 
-const LINE = /^(PASS|FAIL|CONTROL)  (.*)$/;
+/** A probe's own report. `NOTE` carries what the row observed rather than what
+ *  it checked — the client version a CLI row ran, the audit sequence, a skipped
+ *  tool call — and the receipt has to keep it: `render-evidence.mjs` reads the
+ *  client version from exactly these lines, and a driver row already records
+ *  its trace as a NOTE. Only the other three kinds are checks, so every
+ *  "did this row run any checks" decision counts those. */
+const LINE = /^(PASS|FAIL|CONTROL|NOTE)  (.*)$/;
 const SUMMARIES = [
   { pattern: /^(\d+)\/(\d+) (?:live )?checks passed$/m, read: (m) => ({ passed: +m[1], total: +m[2], controls: 0 }) },
   { pattern: /^(\d+) live checks passed; (\d+) local controls passed$/m, read: (m) => ({ passed: +m[1], total: undefined, controls: +m[2] }) },
@@ -107,6 +113,7 @@ function blockedReason(stderr) {
 export function classifyRun({ code, stdout, stderr }) {
   const lines = stdout.split("\n").map((line) => LINE.exec(line)).filter(Boolean)
     .map((match) => ({ kind: match[1], text: match[2] }));
+  const checkLines = lines.filter((line) => line.kind !== "NOTE");
   const failed = lines.filter((line) => line.kind === "FAIL").length;
   let checks;
   for (const summary of SUMMARIES) {
@@ -115,11 +122,11 @@ export function classifyRun({ code, stdout, stderr }) {
   }
   if (code !== 0) {
     const reason = blockedReason(stderr);
-    if (reason !== undefined && lines.length === 0) return { status: "BLOCKED", reason, lines, checks };
-    return { status: "FAIL", reason: lines.length === 0 ? "runner_refused" : "checks_failed", lines, checks };
+    if (reason !== undefined && checkLines.length === 0) return { status: "BLOCKED", reason, lines, checks };
+    return { status: "FAIL", reason: checkLines.length === 0 ? "runner_refused" : "checks_failed", lines, checks };
   }
   if (failed > 0) return { status: "FAIL", reason: "checks_failed", lines, checks };
-  if (checks === undefined || lines.length === 0) return { status: "FAIL", reason: "no_summary", lines, checks };
+  if (checks === undefined || checkLines.length === 0) return { status: "FAIL", reason: "no_summary", lines, checks };
   if (checks.passed <= 0) return { status: "FAIL", reason: "no_checks", lines, checks };
   if (checks.total !== undefined && checks.passed !== checks.total) {
     return { status: "FAIL", reason: "summary_mismatch", lines, checks };

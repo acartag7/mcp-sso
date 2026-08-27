@@ -3,8 +3,9 @@ import { after, before, test } from "node:test";
 import { formatReleaseReadinessFailure, parseReleaseReadyArgs } from "../scripts/lib/release-ready-output.mjs";
 import {
   ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceDigestFor, evidenceRelease, fixture,
-  metadataRelease, modeRelease, packageRelease, release, runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated,
-  versionRelease,
+  deploymentRelease, harnessRelease, metadataRelease, modeRelease, packageRelease, release, rowDefinitionRelease,
+  literalPathRelease, runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated, versionRelease,
+  workflowRelease,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -63,7 +64,7 @@ test("release ready gate summarizes stale evidence and keeps changed paths behin
     releaseTarget: "HEAD",
     verbose: false,
   });
-  assert.match(compact, /- 1 recorded evidence commit predates release runtime changes/);
+  assert.match(compact, /- 1 recorded evidence commit predates release evidence inputs/);
   assert.match(compact, /d6143b3  5 changed inputs \(src\/, examples\/, scripts\/live\/, package\.json:version\)/);
   assert.doesNotMatch(compact, /src\/a\.ts/);
   assert.match(compact, /Re-run live verification against HEAD and record the new commit in\n  docs\/client-compatibility\.md\./);
@@ -134,8 +135,8 @@ test("release ready gate requires names for every provider row", () => {
     const cells = [...names];
     cells[index] = "";
     const compatibility = compatibilityFor(ancestor).replace(
-      "| Provider | Client | Flow | Verified |",
-      `| ${cells.join(" | ")} | Verified |`,
+      "| Provider | Client | Flow | operator |",
+      `| ${cells.join(" | ")} | operator |`,
     );
     const result = fixture({ compatibility });
     assert.ok(result.errors.includes(`provider evidence: row has missing or malformed ${label} cell`));
@@ -462,4 +463,134 @@ test("publish runs release readiness with full git history and ordinary tests do
   assert.ok(checklist.indexOf("Commit only `docs/client-compatibility.md`") > checklist.indexOf("pnpm run check:release-ready"));
   assert.ok(checklist.indexOf("Merge the evidence pull request") > checklist.indexOf("Commit only `docs/client-compatibility.md`"));
   assert.equal(packageJson.scripts.test.includes("check:release-ready"), false);
+});
+
+test("harness evidence and operator evidence age separately", () => {
+  // A row a person drove through a real client against a served leg was not
+  // produced by the harness, so a change to the probes, the rehearsal, or the
+  // release-matrix definition cannot change what that row observed. A row the
+  // record run renders was produced by exactly that code, and ages with it.
+  const operatorAtAncestor = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: harnessRelease }),
+    releaseCommit: harnessRelease,
+  });
+  assert.deepEqual(operatorAtAncestor.errors, []);
+  assert.deepEqual(operatorAtAncestor.staleEvidence, [], "a harness change leaves an operator row standing");
+
+  const renderedAtAncestor = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: harnessRelease, rendered: true }),
+    releaseCommit: harnessRelease,
+  });
+  assert.deepEqual(renderedAtAncestor.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "a harness change ages the rows the record run renders");
+  assert.ok(renderedAtAncestor.staleEvidence[0].changedInputs.includes("scripts/live/probe.mjs"));
+  assert.ok(renderedAtAncestor.staleEvidence[0].changedInputs.includes(".github/workflows/live.yml"),
+    "the workflow that installs the pinned clients and dispatches the rehearsal produces those rows too");
+
+  const exportsAtAncestor = fixture({
+    compatibility: compatibilityFor(harnessRelease, { exportCommit: ancestor }),
+    releaseCommit: harnessRelease,
+  });
+  assert.deepEqual(exportsAtAncestor.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "export rows come out of the release matrix, so they age with the harness too");
+
+  const operatorAfterRuntime = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: runtimeRelease }),
+    releaseCommit: runtimeRelease,
+  });
+  assert.deepEqual(operatorAfterRuntime.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "a runtime change ages every row, including one an operator drove");
+  assert.ok(operatorAfterRuntime.staleEvidence[0].changedInputs.includes("src/runtime.ts"));
+});
+
+test("the leg's own composition ages every row, and the row definitions age the rendered ones", () => {
+  // `run.sh`, `serve.sh` and `run-support.mjs` choose the entry point, map the
+  // environment onto the example's configuration, and expose the hostname. A
+  // change there changes what any client observes without touching src/, so an
+  // operator's observation of the old served configuration is not current.
+  const operatorAfterDeployment = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: deploymentRelease }),
+    releaseCommit: deploymentRelease,
+  });
+  assert.deepEqual(operatorAfterDeployment.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "a change to the served leg ages an operator row");
+  assert.ok(operatorAfterDeployment.staleEvidence[0].changedInputs.includes("scripts/live/serve.sh"));
+
+  // The list of rows the record run renders is part of the harness, wherever
+  // the file lives: a row generated under an obsolete definition is not current.
+  const renderedAfterDefinition = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: rowDefinitionRelease, rendered: true }),
+    releaseCommit: rowDefinitionRelease,
+  });
+  assert.deepEqual(renderedAfterDefinition.staleEvidence.map((entry) => entry.commit), [ancestor],
+    "the renderer's own row definitions age the rows it writes");
+  assert.ok(renderedAfterDefinition.staleEvidence[0].changedInputs.includes("scripts/live/render-evidence.mjs"));
+
+  const operatorAfterDefinition = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: rowDefinitionRelease }),
+    releaseCommit: rowDefinitionRelease,
+  });
+  assert.deepEqual(operatorAfterDefinition.staleEvidence, [],
+    "a row an operator drove does not depend on what the renderer writes");
+});
+
+test("a Not run row cannot skip the provenance check", () => {
+  // The Not run branch returns early, so the provenance check has to run before
+  // it: a row that never names how it was driven must fail whatever its status.
+  const notRun = compatibilityFor(ancestor).replace(
+    `| Provider | Client | Flow | operator | Verified | 2026-08-22 | Runtime commit \`${ancestor}\`. |`,
+    "| Provider | Client | Flow | typo | Not run |  | Not run: the provider was unavailable. |",
+  );
+  const result = fixture({ compatibility: notRun });
+  assert.ok(result.errors.some((error) => error.includes('has unknown "Recorded by" value typo')),
+    `a Not run row with unreadable provenance must fail: ${JSON.stringify(result.errors)}`);
+});
+
+test("a squash digest binds the workflow that produced the row", () => {
+  // A squash receipt's guarantee is that nothing inherited through the merge
+  // escapes the digest. The live workflow installs the pinned clients and
+  // dispatches the rehearsal, so a row digested without it would accept
+  // evidence produced by a different workflow.
+  assert.notEqual(evidenceDigestFor(release), evidenceDigestFor(workflowRelease),
+    "a commit that changes only the live workflow changes the digest");
+});
+
+test("every literal runtime and deployment path ages an operator row", () => {
+  // Named one by one: dropping any single entry from the lists leaves a test
+  // red rather than passing because a neighbouring path covered for it.
+  const result = fixture({
+    compatibility: compatibilityFor(ancestor, { exportCommit: literalPathRelease }),
+    releaseCommit: literalPathRelease,
+  });
+  assert.deepEqual(result.staleEvidence.map((entry) => entry.commit), [ancestor]);
+  for (const path of [
+    "tsconfig.json", "tsconfig.build.json", "scripts/live/run.sh", "scripts/live/serve.sh",
+    "scripts/live/run-support.mjs", "pnpm-lock.yaml", "pnpm-workspace.yaml",
+  ]) {
+    assert.ok(result.staleEvidence[0].changedInputs.includes(path), `${path} must age an operator row`);
+  }
+});
+
+test("a squashed row keeps the lifecycle its provenance names", () => {
+  // The squash arm builds its receipt separately from the direct arm, so it
+  // needs its own proof that provenance survives: a squashed rehearsal row
+  // must still age with the harness.
+  const squashRow = (recordedBy, commit) => [
+    "# Client compatibility", "", "## Current matrix", "",
+    "| Provider | Client | Flow driven | Recorded by | Status | Date | Limits |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    `| Provider | Client | Flow | ${recordedBy} | Verified | 2026-08-22 | Runtime evidence digest \`sha256:${evidenceDigestFor(commit)}\`, merged as \`${commit}\`. |`,
+    "", "## Public export live evidence", "",
+    "| Export | Live evidence | Runtime commit |", "| --- | --- | --- |",
+    `| \`.\` | \`RM.1\` | \`${harnessRelease}\` |`,
+    `| \`./fastify\` | \`RM.2\` | \`${harnessRelease}\` |`,
+  ].join("\n");
+
+  const squashedRehearsal = fixture({ compatibility: squashRow("rehearsal", release), releaseCommit: harnessRelease });
+  assert.deepEqual(squashedRehearsal.staleEvidence.map((entry) => entry.commit), [release],
+    "a squashed rehearsal row ages with the harness");
+
+  const squashedOperator = fixture({ compatibility: squashRow("operator", release), releaseCommit: harnessRelease });
+  assert.deepEqual(squashedOperator.staleEvidence, [],
+    "a squashed operator row does not");
 });

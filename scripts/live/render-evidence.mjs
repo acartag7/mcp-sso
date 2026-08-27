@@ -16,10 +16,6 @@ import { evaluateReleaseReadiness } from "../lib/release-ready.mjs";
 import { ROWS } from "./rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const PROVIDER_HEADER = "| Provider | Client | Flow driven | Status | Date | Limits |";
-const EXPORT_HEADER = "| Export | Live evidence | Runtime commit |";
-const DIVIDER = /^\|( --- \|)+$/;
-
 /** The provider rows a receipt can prove, each gated on the rehearsal rows it
  *  needs. Subjects (provider, client, flow) are what the parser dedupes on. */
 export const PROVIDER_ROWS = Object.freeze([
@@ -61,6 +57,11 @@ export const PROVIDER_ROWS = Object.freeze([
     status: "Verified with limit", limits: "Limit: the Google sign-in was not driven.",
   },
 ]);
+
+const PROVIDER_HEADER = "| Provider | Client | Flow driven | Recorded by | Status | Date | Limits |";
+const EXPORT_HEADER = "| Export | Live evidence | Runtime commit |";
+const DIVIDER = /^\|( --- \|)+$/;
+
 
 const subjectOf = (cells) => JSON.stringify(cells.slice(0, 3).map((cell) => cell.replace(/`([^`\r\n]+)`/g, "$1").replace(/\s+/gu, " ").trim()));
 const cellsOf = (line) => line.split("|").slice(1, -1).map((cell) => cell.trim());
@@ -104,17 +105,26 @@ function replaceTable(lines, header, transform) {
   return [...lines.slice(0, start + 2), ...rows, ...lines.slice(end)];
 }
 
-/** The client version a CLI row observed, from the row's own NOTE line
- *  (`NOTE  claude 2.1.227`). Tier 3 rows must name the client version when it
- *  is visible, and the receipt is where it is visible. */
+/** The client version a CLI row observed, from the row's own NOTE line. The
+ *  probe prints `NOTE  claude 2.1.247`; `classifyRun` splits that into a kind
+ *  and the text after it, so what reaches the receipt is
+ *  `{ kind: "NOTE", text: "claude 2.1.247" }` and the kind identifies the line,
+ *  never a prefix inside the text. Tier 3 rows must name the client version
+ *  when it is visible, and the receipt is where it is visible. */
 function observedVersion(receipt, needs, cli) {
   const versions = new Set();
-  for (const row of receipt.rows) {
-    if (!needs.includes(row.id)) continue;
-    for (const line of row.lines ?? []) {
-      const match = /^NOTE\s+(\w+)\s+(\d+\.\d+\.\d+)$/.exec(line?.text ?? "");
-      if (match !== null && match[1] === cli) versions.add(match[2]);
-    }
+  // Every leg the row covers must name its own version. Joining what was found
+  // across legs would let one leg's note stand for a leg that recorded none,
+  // and the rendered row claims both.
+  for (const id of needs) {
+    const row = receipt.rows.find((candidate) => candidate.id === id);
+    const found = (row?.lines ?? []).flatMap((line) => {
+      if (line?.kind !== "NOTE") return [];
+      const match = /^(\w+) (\d+\.\d+\.\d+)$/.exec(line.text ?? "");
+      return match !== null && match[1] === cli ? [match[2]] : [];
+    });
+    if (found.length === 0) return "";
+    for (const version of found) versions.add(version);
   }
   return [...versions].sort().join(" and ");
 }
@@ -127,7 +137,7 @@ export function render({ document, receipt, date, packageJson, releaseMatrix }) 
     const version = row.version === undefined ? "" : observedVersion(receipt, row.needs, row.version);
     if (row.version !== undefined && version === "") throw new Error(`the receipt does not name the ${row.version} version its rows ran`);
     const limits = `Runtime commit \`${commit}\`.${row.limits ? ` ${fence(row.limits)}` : ""}${version ? ` Client version ${fence(version)}.` : ""}`;
-    return `| ${fence(row.provider)} | ${fence(row.client)} | ${fence(row.flow)} | ${row.status} | ${date} | ${limits} |`;
+    return `| ${fence(row.provider)} | ${fence(row.client)} | ${fence(row.flow)} | rehearsal | ${row.status} | ${date} | ${limits} |`;
   });
   if (newRows.length === 0) throw new Error("the receipt proves no provider row");
   let lines = document.split("\n");

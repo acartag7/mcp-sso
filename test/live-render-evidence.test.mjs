@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
 import { PROVIDER_ROWS, readReceipt, render } from "../scripts/live/render-evidence.mjs";
-import { ROWS, classifyCommandRun } from "../scripts/live/rehearsal-support.mjs";
+import { ROWS, classifyCommandRun, classifyRun } from "../scripts/live/rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const packageJson = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
@@ -19,18 +19,21 @@ const status = readFileSync(join(ROOT, "docs/verification-status.md"), "utf8");
 const HEAD = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 // The real document's structure with its recorded rows replaced by one row at
 // HEAD, so the round trip does not depend on commits a shallow checkout lacks.
-const SENTINEL_ROW = `| Entra ID | claude.ai custom connector | CIMD flow | Verified | 2026-08-19 | Runtime commit \`${HEAD}\`. |`;
+const SENTINEL_ROW = `| Entra ID | claude.ai custom connector | CIMD flow | operator | Verified | 2026-08-19 | Runtime commit \`${HEAD}\`. |`;
 const document = (() => {
   const lines = readFileSync(join(ROOT, "docs/client-compatibility.md"), "utf8").split("\n");
-  const start = lines.indexOf("| Provider | Client | Flow driven | Status | Date | Limits |") + 2;
+  const start = lines.indexOf("| Provider | Client | Flow driven | Recorded by | Status | Date | Limits |") + 2;
   let end = start;
   while (end < lines.length && lines[end].startsWith("|")) end += 1;
   assert.ok(start > 1 && end > start, "the real document has a provider table");
   return [...lines.slice(0, start), SENTINEL_ROW, ...lines.slice(end)].join("\n");
 })();
 
-const versionNote = (id) => (id.startsWith("claude-code") ? [{ kind: "NOTE", text: "NOTE  claude 2.1.227" }]
-  : id.startsWith("codex-cli") ? [{ kind: "NOTE", text: "NOTE  codex 0.147.0" }] : []);
+// The shape classifyRun writes: the kind identifies the line, and the text is
+// what followed it. A fixture carrying "NOTE  claude ..." inside the text is a
+// shape the pipeline never produces.
+const versionNote = (id) => (id.startsWith("claude-code") ? [{ kind: "NOTE", text: "claude 2.1.227" }]
+  : id.startsWith("codex-cli") ? [{ kind: "NOTE", text: "codex 0.147.0" }] : []);
 const receiptFor = (ids, extra = {}) => ({
   schema: 1, kind: "mcp-sso-release-rehearsal", runtimeCommit: HEAD, dirty: false, complete: true, evidence: true, runner: "local",
   startedAt: "s", finishedAt: "f", rows: ids.map((id) => ({ id, status: "PASS", lines: versionNote(id) })), ...extra,
@@ -42,7 +45,7 @@ test("BEHAVIOUR render-evidence: a full receipt renders every provider row and t
   const check = evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibility: rendered, status, gitCwd: ROOT, releaseCommit: HEAD });
   assert.deepEqual(check.errors, [], "the gate's own parser accepts the rendered document");
   assert.ok(check.staleEvidence.every((stale) => stale.commit !== HEAD), "nothing the receipt recorded is stale at its own commit");
-  for (const row of PROVIDER_ROWS) assert.match(rendered, new RegExp(`^\\| ${row.provider} \\| ${row.client.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\|.*\\| ${row.status} \\| 2026-08-25 \\| Runtime commit \`${HEAD}\`\\.`, "m"));
+  for (const row of PROVIDER_ROWS) assert.match(rendered, new RegExp(`^\\| ${row.provider} \\| ${row.client.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\|.*\\| rehearsal \\| ${row.status} \\| 2026-08-25 \\| Runtime commit \`${HEAD}\`\\.`, "m"));
   for (const name of Object.keys(packageJson.exports)) assert.match(rendered, new RegExp(`^\\| \`${name.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\` \\| .* \\| \`${HEAD}\` \\|$`, "m"));
   assert.match(rendered, /\| Google \| Provider probe, driven by the rehearsal \| .* \| Verified with limit \| 2026-08-25 \| Runtime commit `[0-9a-f]{40}`\. Limit: the Google sign-in was not driven\. \|/);
   assert.equal((rendered.match(/^\| Entra ID \| Rehearsal deny fixtures \|/gm) ?? []).length, 1);
@@ -72,7 +75,7 @@ test("BEHAVIOUR render-evidence: a CLI row names the client version the run obse
   assert.match(codex, /Client version 0\.147\.0\./);
   // Two rows on different legs may observe different versions; both are named.
   const mixed = receiptFor(ALL);
-  mixed.rows.find((row) => row.id === "claude-code:cloudflare").lines = [{ kind: "NOTE", text: "NOTE  claude 2.1.300" }];
+  mixed.rows.find((row) => row.id === "claude-code:cloudflare").lines = [{ kind: "NOTE", text: "claude 2.1.300" }];
   const both = render({ document, receipt: mixed, date: "2026-08-26", packageJson, releaseMatrix });
   assert.match(both.split("\n").find((line) => line.includes("Claude Code, driven")), /Client version 2\.1\.227 and 2\.1\.300\./);
   // A receipt whose CLI rows name no version cannot produce that row at all.
@@ -137,4 +140,35 @@ test("BEHAVIOUR rehearsal-support: the release-matrix command row passes only on
   assert.equal(classifyCommandRun({ code: 1, stdout: "", stderr: "some test said MYSQL_URL is required\n" }).reason, "matrix_failed", "only the runner's own preflight prefix means the services were absent");
   assert.equal(ROWS[0].id, "release-matrix");
   assert.deepEqual(ROWS[0].command, ["pnpm", "run", "test:release"]);
+});
+
+test("BEHAVIOUR the classifier hands the renderer a line it can read", () => {
+  // The two modules meet here and nowhere else: the probe prints a NOTE, the
+  // classifier stores it, and the renderer reads the client version out of it.
+  // A fixture written by hand can agree with neither, so this one is produced
+  // by the classifier from output shaped like a real CLI row's.
+  const classified = classifyRun({
+    code: 0, stderr: "",
+    stdout: [
+      "NOTE  claude 2.1.247",
+      "PASS  the client records the server",
+      "PASS  the client prints an authorization URL on the served origin",
+      "", "2/2 live checks passed", "",
+    ].join("\n"),
+  });
+  assert.equal(classified.status, "PASS");
+  assert.deepEqual(classified.lines[0], { kind: "NOTE", text: "claude 2.1.247" });
+  const receipt = receiptFor(ALL);
+  for (const row of receipt.rows) if (row.id.startsWith("claude-code")) row.lines = classified.lines;
+  const rendered = render({ document, receipt, date: "2026-08-27", packageJson, releaseMatrix });
+  assert.match(rendered, /Client version 2\.1\.247\./, "the version the classifier stored reaches the rendered row");
+});
+
+test("BEHAVIOUR render-evidence: every leg a CLI row covers names its own version", () => {
+  // The Claude Code row covers two legs. One leg's note must not stand for the
+  // other, or the rendered row claims a version the second leg never recorded.
+  const receipt = receiptFor(ALL);
+  receipt.rows.find((row) => row.id === "claude-code:cloudflare").lines = [];
+  assert.throws(() => render({ document, receipt, date: "2026-08-27", packageJson, releaseMatrix }),
+    /does not name the claude version/, "a leg with no version note stops the recording");
 });

@@ -9,17 +9,20 @@ This reference records the latest client and identity-provider results that appl
 | OAuth mechanics | The client completes registration or CIMD discovery, authorization, consent, token exchange, and a protected `/mcp` call. A local identity stub can establish this level. |
 | Production identity | The upstream identity provider authenticates the user, and `mcp-sso` accepts or rejects that identity through the configured identity adapter. |
 
-A row is `Verified` only when the named flow was driven against the named provider and client and the outcome was recorded with a date and the runtime commit. `Verified with limit` names the step that was not driven. A session that did not drive a flow must not mark it `Verified`: a false green here is worse than an empty row, because people choose an identity provider from this table.
+A row is `Verified` only when the named flow was driven against the named provider and client and the outcome was recorded with a date and the runtime commit. The `Recorded by` cell says who drove it: `rehearsal` for a row the release rehearsal drives and rewrites on every recorded run, `operator` for a row a person drove through a real client against a served leg. The release gate reads that cell to decide what ages the row, so it is recorded rather than inferred from the wording. `Verified with limit` names the step that was not driven. A session that did not drive a flow must not mark it `Verified`: a false green here is worse than an empty row, because people choose an identity provider from this table.
 
 ## Current matrix
 
-| Provider | Client | Flow driven | Status | Date | Limits |
-| --- | --- | --- | --- | --- | --- |
-| Entra ID | Owner browser with three provisioned deny fixtures | No-group, no-mapped-group, and group-overage denials | Verified | 2026-08-19 | Runtime commit `d6143b3`. Each fixture produced its audit reason once: `entra_no_groups`, `entra_no_mapped_groups`, or `entra_groups_overage`. This proves distinct server-side reason codes. It does not prove distinct client-facing text or cover wrong-tenant, allowlist, and guest/B2B outcomes. |
-| Entra ID | claude.ai custom connector | CIMD `client_id` → authorization → Entra identity → consent → token → `/mcp` | Verified | 2026-08-19 | Runtime commit `d6143b3`. |
-| Entra ID | ChatGPT custom connector | CIMD `client_id` → authorization → Entra identity → consent → token → `/mcp` | Verified | 2026-08-19 | Runtime commit `d6143b3`. ChatGPT reports a denial as a cancelled connection. The audit trail carries the denial result. |
-| Cloudflare Access, Entra ID, and Google | Claude Code and Codex CLI on all three providers. claude.ai on all three providers. ChatGPT on Cloudflare Access and Entra ID | CIMD or DCR → authorization → provider identity → consent → token → `/mcp`. Clients also exercised refresh rotation and revocation. | Verified | 2026-08-19 | Runtime commit `d6143b3`. Eleven flows completed: four on Cloudflare Access, four on Entra ID, and three on Google. Google with ChatGPT was not run. A non-admitted Cloudflare account stopped at the Access edge and produced no gateway audit row, which was the expected result. The clients exercised `oauth.token.refresh` on all three providers and `oauth.revoke` on Entra ID. |
-| Entra ID | claude.ai custom connector | Deployment configured with `OAUTH_DCR_MODE=stateless`: CIMD `client_id` → authorization → Entra identity → consent → token → refresh → `/mcp` | Verified with limit | 2026-08-19 | Runtime evidence digest `sha256:f4eafe9eedd0a30b07d0d68a510423e1cdf58e9c9244c05837dc3a387a5cfe71`, merged as `7909642`. Limit: Stateless `POST /oauth/register` was not exercised. The audit contained one `oauth.cimd.fetch` event and no `oauth.register` event. This row proves a complete CIMD flow under stateless configuration. |
+| Provider | Client | Flow driven | Recorded by | Status | Date | Limits |
+| --- | --- | --- | --- | --- | --- | --- |
+| Entra ID | claude.ai custom connector | CIMD `client_id` → authorization → Entra identity → consent → token → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Eight protected `/mcp` requests followed the token. |
+| Entra ID | ChatGPT custom connector | CIMD `client_id` → authorization → Entra identity → consent → token → refresh → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Ten protected `/mcp` requests and three refreshes. |
+| Entra ID | claude.ai custom connector, stateless deployment | Deployment configured with `OAUTH_DCR_MODE=stateless`: CIMD `client_id` → authorization → Entra identity → consent → token → `/mcp` | operator | Verified with limit | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Limit: the connector identifies through CIMD, so this flow does not exercise stateless `POST /oauth/register`, which `probe-e2e:stateless` covers. Eight protected `/mcp` requests followed the token. |
+| Cloudflare Access | claude.ai custom connector | CIMD `client_id` → authorization → Access login → consent → token → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Eighteen protected `/mcp` requests followed the token. |
+| Cloudflare Access | ChatGPT custom connector | CIMD `client_id` → authorization → Access login → consent → token → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Ten protected `/mcp` requests followed the token. |
+| Google | claude.ai custom connector | CIMD `client_id` → authorization → Google identity → consent → token → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Twelve protected `/mcp` requests followed the token. |
+| Google | Claude Code | CIMD `client_id` → `claude mcp login` → Google identity → consent → the CLI's loopback callback → token → `/mcp` | operator | Verified | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Four protected `/mcp` requests, from the CLI's own connection check. Client version 2.1.247. |
+| Google | Codex CLI | `codex mcp add` → the client identity Codex chose → Google identity → consent → the CLI's loopback callback → token | operator | Verified with limit | 2026-08-27 | Runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b`. Limit: no tool call ran, so this row proves the login and the code exchange only. Codex presented a per-instance CIMD document rather than a dynamic registration. Client version 0.150.1. |
 
 ## Public export live evidence
 
@@ -49,6 +52,8 @@ Each row proves that the package entry point participated in the listed executab
 ## Client versions
 
 The 2026-08-19 matrix used Codex CLI 0.148.0 and Claude Code 2.1.235. The operator supplied the Codex CLI version because the clients ran on a different machine from this checkout.
+
+The 2026-08-27 matrix used Codex CLI 0.150.1 and Claude Code 2.1.247, both resolved from this machine's `PATH` at the time of the run. Codex CLI 0.150.1 identified itself with a per-instance client-id metadata document rather than a dynamic registration; both paths are accepted, and the served audit must record the one the client id claimed.
 
 Codex CLI 0.144.1 had failed its RFC 9207 `iss` callback on 2026-07-28. Codex CLI 0.148.0 completed all three provider flows on 2026-08-19. Both the client and this library changed between those runs, so the later result does not identify which change removed the failure.
 

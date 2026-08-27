@@ -2,6 +2,20 @@
 
 This archive preserves dated verification receipts for earlier release candidates and source revisions. For current release and source-tree status, see [Verification status](../verification-status.md). For current client results, see [Client compatibility](../client-compatibility.md).
 
+## 2026-08-19 client matrix, superseded 2026-08-27
+
+The five rows below were the current client matrix until 2026-08-27, when the flows were driven again at runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b` and recorded in [Client compatibility](../client-compatibility.md). They are kept here in full because each carries results the new rows do not repeat: the eleven-flow cross-provider campaign with its refresh and revocation observations, the stateless receipt digest, and the deny-fixture reason codes.
+
+The owner-browser deny row is superseded rather than re-run: the rehearsal drives five deny fixtures unattended (`client-entra:nogroups`, `:wronggroup`, `:overage`, `:wrong-tenant`, `:not-allowlisted`) and asserts each client-facing description as well as each audit reason, which is more than the owner-browser row established.
+
+| Provider | Client | Flow driven | Status | Date | Limits |
+| --- | --- | --- | --- | --- | --- |
+| Entra ID | Owner browser with three provisioned deny fixtures | No-group, no-mapped-group, and group-overage denials | Verified | 2026-08-19 | Runtime commit `d6143b3`. Each fixture produced its audit reason once: `entra_no_groups`, `entra_no_mapped_groups`, or `entra_groups_overage`. This proves distinct server-side reason codes. It does not prove distinct client-facing text or cover wrong-tenant, allowlist, and guest/B2B outcomes. |
+| Entra ID | claude.ai custom connector | CIMD `client_id` → authorization → Entra identity → consent → token → `/mcp` | Verified | 2026-08-19 | Runtime commit `d6143b3`. |
+| Entra ID | ChatGPT custom connector | CIMD `client_id` → authorization → Entra identity → consent → token → `/mcp` | Verified | 2026-08-19 | Runtime commit `d6143b3`. ChatGPT reports a denial as a cancelled connection. The audit trail carries the denial result. |
+| Cloudflare Access, Entra ID, and Google | Claude Code and Codex CLI on all three providers. claude.ai on all three providers. ChatGPT on Cloudflare Access and Entra ID | CIMD or DCR → authorization → provider identity → consent → token → `/mcp`. Clients also exercised refresh rotation and revocation. | Verified | 2026-08-19 | Runtime commit `d6143b3`. Eleven flows completed: four on Cloudflare Access, four on Entra ID, and three on Google. Google with ChatGPT was not run. A non-admitted Cloudflare account stopped at the Access edge and produced no gateway audit row, which was the expected result. The clients exercised `oauth.token.refresh` on all three providers and `oauth.revoke` on Entra ID. |
+| Entra ID | claude.ai custom connector | Deployment configured with `OAUTH_DCR_MODE=stateless`: CIMD `client_id` → authorization → Entra identity → consent → token → refresh → `/mcp` | Verified with limit | 2026-08-19 | Runtime evidence digest `sha256:f4eafe9eedd0a30b07d0d68a510423e1cdf58e9c9244c05837dc3a387a5cfe71`, merged as `7909642`. Limit: Stateless `POST /oauth/register` was not exercised. The audit contained one `oauth.cimd.fetch` event and no `oauth.register` event. This row proves a complete CIMD flow under stateless configuration. |
+
 ## 2026-07-28 Tier 2 receipt
 
 T2.1 through T2.6 passed from clean commit `e71a2bbaf6902f98502a788a8d1e4bfc604b9bbc`: 866 tests passed with zero skipped. The tarball contained only `dist/`, `docs/`, `README.md`, `LICENSE`, and `package.json`. A temporary install without optional peers imported the eight peer-free public entry points, all 13 public entry points imported after their declared optional peers were installed, and the installed root package produced authorization-server and protected-resource metadata.

@@ -7,8 +7,8 @@ const EXPORT_HEADING = "## Public export live evidence";
 const EXPORT_TABLE_HEADER = "| Export | Live evidence | Runtime commit |";
 const EXPORT_TABLE_DIVIDER = "| --- | --- | --- |";
 const PROVIDER_HEADING = "## Current matrix";
-const PROVIDER_TABLE_HEADER = "| Provider | Client | Flow driven | Status | Date | Limits |";
-const PROVIDER_TABLE_DIVIDER = "| --- | --- | --- | --- | --- | --- |";
+const PROVIDER_TABLE_HEADER = "| Provider | Client | Flow driven | Recorded by | Status | Date | Limits |";
+const PROVIDER_TABLE_DIVIDER = "| --- | --- | --- | --- | --- | --- | --- |";
 const STATUS_HEADING = "## Published release";
 const STATUS_TABLE_HEADER = "| Item | Status |";
 const STATUS_TABLE_DIVIDER = "| --- | --- |";
@@ -274,7 +274,7 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
         );
         continue;
       }
-      providerCommits.push(resolvedMerge);
+      providerCommits.push({ commit: resolvedMerge, harnessDriven: receipt.harnessDriven });
       continue;
     }
     const resolvedRuntime = resolveCommit(gitCwd, receipt.runtimeCommit);
@@ -282,10 +282,18 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
       errors.push(`provider evidence: ${receipt.provider} / ${receipt.client} runtime commit is unavailable: ${receipt.runtimeCommit}`);
       continue;
     }
-    providerCommits.push(resolvedRuntime);
+    providerCommits.push({ commit: resolvedRuntime, harnessDriven: receipt.harnessDriven });
   }
-  const commits = new Set([...providerCommits, ...[...evidenceRows.values()].map((row) => row.commit)]);
-  for (const commit of commits) {
+  // Every export row is written by the record run, so it ages with the
+  // harness. A commit carrying rows of both kinds takes the stricter one.
+  const lifecycles = new Map();
+  for (const entry of [
+    ...providerCommits,
+    ...[...evidenceRows.values()].map((row) => ({ commit: row.commit, harnessDriven: true })),
+  ]) {
+    lifecycles.set(entry.commit, (lifecycles.get(entry.commit) ?? false) || entry.harnessDriven);
+  }
+  for (const [commit, harnessDriven] of lifecycles) {
     if (!SHA.test(commit)) {
       errors.push(`recorded runtime commit is malformed: ${commit}`);
       continue;
@@ -300,7 +308,7 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, compatibi
       continue;
     }
     if (resolvedRelease) {
-      const changedInputs = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedRelease);
+      const changedInputs = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedRelease, { harnessDriven });
       if (changedInputs.length > 0) {
         staleEvidence.push({ commit, changedInputs });
       }
