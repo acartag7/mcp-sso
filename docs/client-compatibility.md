@@ -32,7 +32,7 @@ A row is `Verified` only when the named flow was driven against the named provid
 
 ## Public export live evidence
 
-These rows record the release matrix run against real MySQL and Redis services at live worktree commit `28d9744e0f155d67dbb79389971be2d470491003`. GitHub squash-merged the same runtime tree as main commit `965d8f410b0dfd0b219a9b26a0bfe555fd2488db`. The table records the main commit.
+These rows record the release matrix run against real MySQL and Redis services during the release rehearsal at main commit `be886778f5cf3018b48fa43511b5a07d892f5d2d`, in the same job that drove the provider rows above. The previous receipt, taken at live worktree commit `28d9744e0f155d67dbb79389971be2d470491003` and squash-merged as `965d8f410b0dfd0b219a9b26a0bfe555fd2488db`, is in the [verification archive](archive/verification-history.md).
 
 Each row proves that the package entry point participated in the listed executable release row. The rows do not prove contact with an external identity provider. The provider matrix above owns that claim.
 
@@ -59,7 +59,7 @@ Each row proves that the package entry point participated in the listed executab
 
 The 2026-08-19 matrix used Codex CLI 0.148.0 and Claude Code 2.1.235. The operator supplied the Codex CLI version because the clients ran on a different machine from this checkout.
 
-The 2026-08-27 matrix used Codex CLI 0.150.1 and Claude Code 2.1.247, both resolved from this machine's `PATH` at the time of the run. Codex CLI 0.150.1 identified itself with a per-instance client-id metadata document rather than a dynamic registration; both paths are accepted, and the served audit must record the one the client id claimed.
+The 2026-08-27 operator matrix, which is the connector and Google rows a person drove, used Codex CLI 0.150.1 and Claude Code 2.1.247, both resolved from that machine's `PATH` at the time of the run. The rehearsal rows from the same date name different builds because CI installs the versions the [dependency ledger](dependency-ledger.md) pins, Claude Code 2.1.227 and Codex CLI 0.147.0, rather than whatever a machine happens to have. Codex CLI 0.150.1 identified itself with a per-instance client-id metadata document rather than a dynamic registration; both paths are accepted, and the served audit must record the one the client id claimed.
 
 Codex CLI 0.144.1 had failed its RFC 9207 `iss` callback on 2026-07-28. Codex CLI 0.148.0 completed all three provider flows on 2026-08-19. Both the client and this library changed between those runs, so the later result does not identify which change removed the failure.
 

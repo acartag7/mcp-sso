@@ -2,6 +2,29 @@
 
 This archive preserves dated verification receipts for earlier release candidates and source revisions. For current release and source-tree status, see [Verification status](../verification-status.md). For current client results, see [Client compatibility](../client-compatibility.md).
 
+## 2026-08-19 public export receipt, superseded 2026-08-27
+
+These export rows were the current receipt until 2026-08-27, when the release rehearsal ran the release matrix again at main commit `be886778f5cf3018b48fa43511b5a07d892f5d2d` and recorded it in [Client compatibility](../client-compatibility.md). They were taken from the release matrix run against real MySQL and Redis services at live worktree commit `28d9744e0f155d67dbb79389971be2d470491003`, whose runtime tree GitHub squash-merged as main commit `965d8f410b0dfd0b219a9b26a0bfe555fd2488db`.
+
+| Export | Live evidence | Runtime commit |
+| --- | --- | --- |
+| `.` | `RM.1`, `RM.17` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/memory` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/sqlite` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./store/mysql` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./rate-limit/redis` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./fastify/protected-resource-rate-limit` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./fastify` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./express` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./hono` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/cloudflare-access` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/entra` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/console-pairing` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/generic-oidc` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./identity/google` | `RM.1` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./testing/store-conformance` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+| `./testing/client-store-conformance` | `RM.1`, `RM.16` | `965d8f410b0dfd0b219a9b26a0bfe555fd2488db` |
+
 ## 2026-08-19 client matrix, superseded 2026-08-27
 
 The five rows below were the current client matrix until 2026-08-27, when the flows were driven again at runtime commit `c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b` and recorded in [Client compatibility](../client-compatibility.md). They are kept here in full because each carries results the new rows do not repeat: the eleven-flow cross-provider campaign with its refresh and revocation observations, the stateless receipt digest, and the deny-fixture reason codes.
