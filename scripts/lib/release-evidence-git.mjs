@@ -12,22 +12,36 @@ const RUNTIME_PATHS = [
   ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
 ];
 
-/** What PRODUCES harness-driven evidence: the probes, the rehearsal, the
- *  release matrix and its definition. A change here can change what such a row
- *  proves, so it ages those rows — and only those. A row an operator drove
- *  through a real client against a served leg came from none of this, and the
- *  two have different lifecycles: the record run re-proves the harness rows on
- *  every dispatch, while an operator row keeps standing until the thing it
- *  observed changes. */
-const HARNESS_PATHS = [
-  "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
-  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md",
+/** What composes and exposes the leg a client is driven against: the runner
+ *  that maps stack values onto the example's identity selector, DCR mode,
+ *  redirect allowlist and proxy trust, and the script that starts the servers
+ *  and the tunnel. A change here changes what ANY client observes without
+ *  touching `src/`, so it ages every row, an operator's included. */
+const DEPLOYMENT_PATHS = [
+  "scripts/live/run.sh", "scripts/live/serve.sh", "scripts/live/run-support.mjs",
 ];
 
-/** Both sets together. `evidenceInputDigest` keeps using this: a digest
- *  already recorded in the matrix was taken over the whole evidence tree, and
- *  narrowing it now would silently stop matching. */
-const EVIDENCE_PATHS = [...RUNTIME_PATHS, ...HARNESS_PATHS];
+/** What PRODUCES harness-driven evidence: the probes, the drivers, the
+ *  rehearsal, the renderer and the row definitions it writes from, the release
+ *  matrix and its definition. A change here can change what such a row proves,
+ *  so it ages those rows — and only those. A row an operator drove through a
+ *  real client came from none of this, and the two have different lifecycles:
+ *  the record run re-proves the harness rows on every dispatch, while an
+ *  operator row keeps standing until the thing it observed changes. */
+const HARNESS_PATHS = [
+  "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
+  "scripts/lib/release-matrix-outcome.mjs", "scripts/lib/rendered-provider-rows.mjs", "docs/verification.md",
+];
+
+/** The set `evidenceInputDigest` hashes, frozen as it was when the first digest
+ *  was recorded. A digest already in the matrix was taken over exactly these
+ *  paths; widening or narrowing the set now would stop it matching, which is a
+ *  failure with no fix but re-running the campaign that produced it. */
+const DIGEST_PATHS = [
+  "src", "examples", "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
+  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", "tsconfig.json", "tsconfig.build.json",
+  ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
+];
 
 function gitOutput(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -106,7 +120,7 @@ function runtimePackageProjection(value) {
 
 export function evidenceInputDigest(cwd, commit) {
   const entries = execFileSync(
-    "git", ["ls-tree", "-r", "-z", commit, "--", ...EVIDENCE_PATHS],
+    "git", ["ls-tree", "-r", "-z", commit, "--", ...DIGEST_PATHS],
     { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   ).split("\0").filter(Boolean).map((entry) => {
     const match = entry.match(/^([0-9]{6}) ([a-z]+) [0-9a-f]+\t([\s\S]+)$/);
@@ -128,7 +142,9 @@ export function evidenceInputDigest(cwd, commit) {
  *  commit. `harnessDriven` says whether the row came out of the harness; a row
  *  that did not is aged by runtime changes alone. */
 export function changedEvidenceInputs(cwd, ancestor, descendant, { harnessDriven = true } = {}) {
-  const paths = harnessDriven ? [...RUNTIME_PATHS, ...HARNESS_PATHS] : RUNTIME_PATHS;
+  const paths = harnessDriven
+    ? [...RUNTIME_PATHS, ...DEPLOYMENT_PATHS, ...HARNESS_PATHS]
+    : [...RUNTIME_PATHS, ...DEPLOYMENT_PATHS];
   return [
     ...changedRuntimeInputs(cwd, ancestor, descendant, paths),
     ...changedRuntimePackageFields(cwd, ancestor, descendant),

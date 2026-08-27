@@ -17,6 +17,8 @@ export let metadataRelease;
 export let versionRelease;
 export let buildRelease;
 export let harnessRelease;
+export let deploymentRelease;
+export let rowDefinitionRelease;
 export let unrelated;
 
 function git(args) {
@@ -132,6 +134,20 @@ export function setupReleaseReadyFixture() {
   git(["add", ...harnessFiles]);
   git(["commit", "-qm", "harness release"]);
   harnessRelease = git(["rev-parse", "HEAD"]);
+  // The leg itself moves: what a client is pointed at, not what watches it.
+  git(["switch", "-q", "-c", "deployment-change", release]);
+  mkdirSync(join(repo, "scripts/live"), { recursive: true });
+  writeFileSync(join(repo, "scripts/live/serve.sh"), "serve differently\n");
+  git(["add", "scripts/live/serve.sh"]);
+  git(["commit", "-qm", "deployment release"]);
+  deploymentRelease = git(["rev-parse", "HEAD"]);
+  // The definition of what the record run renders moves.
+  git(["switch", "-q", "-c", "row-definition-change", release]);
+  mkdirSync(join(repo, "scripts/lib"), { recursive: true });
+  writeFileSync(join(repo, "scripts/lib/rendered-provider-rows.mjs"), "export const PROVIDER_ROWS = [];\n");
+  git(["add", "scripts/lib/rendered-provider-rows.mjs"]);
+  git(["commit", "-qm", "row definition release"]);
+  rowDefinitionRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "--orphan", "unrelated"]);
   git(["commit", "--allow-empty", "-qm", "unrelated"]);
   unrelated = git(["rev-parse", "HEAD"]);
