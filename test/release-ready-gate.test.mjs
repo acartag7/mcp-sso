@@ -4,7 +4,7 @@ import { formatReleaseReadinessFailure, parseReleaseReadyArgs } from "../scripts
 import {
   ancestor, buildRelease, cleanupReleaseReadyFixture, compatibilityFor, evidenceDigestFor, evidenceRelease, fixture,
   deploymentRelease, harnessRelease, metadataRelease, modeRelease, packageRelease, release, rowDefinitionRelease,
-  runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated, versionRelease,
+  runtimeRelease, setupReleaseReadyFixture, statusFor, unrelated, versionRelease, workflowRelease,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -63,7 +63,7 @@ test("release ready gate summarizes stale evidence and keeps changed paths behin
     releaseTarget: "HEAD",
     verbose: false,
   });
-  assert.match(compact, /- 1 recorded evidence commit predates release runtime changes/);
+  assert.match(compact, /- 1 recorded evidence commit predates release evidence inputs/);
   assert.match(compact, /d6143b3  5 changed inputs \(src\/, examples\/, scripts\/live\/, package\.json:version\)/);
   assert.doesNotMatch(compact, /src\/a\.ts/);
   assert.match(compact, /Re-run live verification against HEAD and record the new commit in\n  docs\/client-compatibility\.md\./);
@@ -550,6 +550,6 @@ test("a squash digest binds the workflow that produced the row", () => {
   // escapes the digest. The live workflow installs the pinned clients and
   // dispatches the rehearsal, so a row digested without it would accept
   // evidence produced by a different workflow.
-  assert.notEqual(evidenceDigestFor(release), evidenceDigestFor(harnessRelease),
-    "changing only harness inputs, the live workflow among them, changes the digest");
+  assert.notEqual(evidenceDigestFor(release), evidenceDigestFor(workflowRelease),
+    "a commit that changes only the live workflow changes the digest");
 });

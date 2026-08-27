@@ -17,6 +17,7 @@ export let metadataRelease;
 export let versionRelease;
 export let buildRelease;
 export let harnessRelease;
+export let workflowRelease;
 export let deploymentRelease;
 export let rowDefinitionRelease;
 export let unrelated;
@@ -135,6 +136,14 @@ export function setupReleaseReadyFixture() {
   git(["commit", "-qm", "harness release"]);
   harnessRelease = git(["rev-parse", "HEAD"]);
   // The leg itself moves: what a client is pointed at, not what watches it.
+  // Only the live workflow moves, so a digest test cannot pass on some other
+  // file that happened to change in the same commit.
+  git(["switch", "-q", "-c", "workflow-change", release]);
+  mkdirSync(join(repo, ".github/workflows"), { recursive: true });
+  writeFileSync(join(repo, ".github/workflows/live.yml"), "on: workflow_dispatch\n");
+  git(["add", ".github/workflows/live.yml"]);
+  git(["commit", "-qm", "workflow release"]);
+  workflowRelease = git(["rev-parse", "HEAD"]);
   git(["switch", "-q", "-c", "deployment-change", release]);
   mkdirSync(join(repo, "scripts/live"), { recursive: true });
   writeFileSync(join(repo, "scripts/live/serve.sh"), "serve differently\n");
