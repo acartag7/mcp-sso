@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
+import * as FIXTURE from "./lib/release-ready-fixture.mjs";
 import {
   ancestor, cleanupReleaseReadyFixture, fixture, receiptFor, setupReleaseReadyFixture, statusFor, unrelated,
 } from "./lib/release-ready-fixture.mjs";
@@ -63,7 +64,7 @@ const CONDITIONS = [
   ["a matrix row has no executable evidence",
     () => ({ releaseMatrix: { rows: [{ id: "RM.1", title: "t", evidence: [{ file: "", name: "" }] }] } }),
     "requires executable evidence with file and name"],
-  ["the published-release row is absent or repeated",
+  ["the published-release row is absent",
     () => ({ status: "# Status\n\n## Published release\n\n| Item | Status |\n| --- | --- |\n| other | none |" }),
     "expected one npm package and tag row"],
   ["the published-release row disagrees with itself",
@@ -73,6 +74,17 @@ const CONDITIONS = [
   ["the status section appears more than once",
     () => ({ status: `${statusFor()}\n\n## Published release ##\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
     "expected one canonical"],
+  ["the release matrix is not an object with a rows array",
+    () => ({ releaseMatrix: [] }), "expected an object with a rows array"],
+  ["a matrix row has no RM.N id",
+    () => ({ releaseMatrix: { rows: [{ id: "invented", title: "t", exports: [], evidence: [{ file: "a", name: "b" }] }] } }),
+    "every row requires an RM.N id"],
+  ["a matrix row omits its exports array",
+    () => ({ releaseMatrix: { rows: [{ id: "RM.1", title: "t", evidence: [{ file: "a", name: "b" }] }] } }),
+    "requires an exports array of strings"],
+  ["the published-release row is repeated",
+    () => ({ status: `${statusFor()}\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |` }),
+    "expected one npm package and tag row, found 2"],
   ["the status section holds more than one rendered table",
     () => ({ status: `${statusFor()}\n\nprose\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
     "expected one rendered table"],
@@ -85,13 +97,33 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 20, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 24, "the enumeration is the record; adding a check adds a row here");
 });
 
-test("the conditions this change dropped are recorded, and none of them is prose shape", () => {
+test("evidence ages exactly as the previous gate aged it, plus the one correction", () => {
+  // The old gate aged every recorded row on runtime, deployment, package and
+  // harness inputs alike. That is kept for everything except one case, which
+  // is the correction this change exists to make.
+  const { deploymentRelease, harnessRelease, packageRelease, runtimeRelease, versionRelease, buildRelease, metadataRelease } = FIXTURE;
+  const ages = (releaseCommit, receipt = receiptFor(ancestor)) =>
+    fixture({ receipts: { "r.json": receipt }, releaseCommit }).staleEvidence.length === 1;
+
+  assert.ok(ages(runtimeRelease), "a src/ change ages evidence");
+  assert.ok(ages(deploymentRelease), "so does the composition of the served leg");
+  assert.ok(ages(packageRelease), "so does an exports change");
+  assert.ok(ages(versionRelease), "so does a version change");
+  assert.ok(ages(buildRelease), "so does a build-script change");
+  assert.ok(!ages(metadataRelease), "package description and the gate's own script do not");
+  assert.ok(ages(harnessRelease), "probe and rehearsal changes age the rehearsal receipt they produced");
+  const operator = receiptFor(ancestor, { producer: "operator", releaseMatrix: undefined, rows: [{ id: "F2", status: "PASS" }] });
+  assert.ok(!ages(harnessRelease, operator),
+    "and not an operator receipt, which is the correction: no probe produced what a real client did");
+});
+
+test("what was dropped is recorded, and every dropped condition is a rule about Markdown", () => {
   // Reading the archive rather than trusting the commit message: what was
-  // dropped has to be written down where a reader finds it, and every entry
-  // has to be a rule about markdown rather than about evidence.
+  // dropped has to be written down where a reader finds it, and each entry has
+  // to say why a rule about Markdown stopped being needed.
   const archive = readFileSync(new URL("../docs/archive/2026-08-27-release-gate-conditions.md", import.meta.url), "utf8");
   for (const dropped of [
     "canonical level-two headings", "fenced blocks", "HTML comments", "raw angle-bracket markup",

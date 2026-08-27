@@ -8,6 +8,7 @@ import { changedEvidenceInputs, isAncestor, resolveCommit } from "./release-evid
 const SHA = /^[0-9a-f]{40}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const ROW_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+const MATRIX_ROW_ID = /^RM\.\d+$/;
 const PRODUCERS = new Set(["rehearsal", "operator"]);
 const STATUS_HEADING = "## Published release";
 // `## Published release ##` renders as the same heading, so it counts as one.
@@ -106,25 +107,31 @@ function readReceipt(receipt, label, errors) {
 /** The release matrix as a mapping from export name to the rows that resolve it
  *  from the packed artifact, rejecting a malformed row on the way. */
 function parseReleaseRows(releaseMatrix, errors) {
-  const rows = Array.isArray(releaseMatrix?.rows) ? releaseMatrix.rows : undefined;
+  if (!releaseMatrix || typeof releaseMatrix !== "object" || Array.isArray(releaseMatrix)) {
+    errors.push("release matrix: expected an object with a rows array");
+    return { byExport: new Map(), knownRows: new Set() };
+  }
+  const rows = Array.isArray(releaseMatrix.rows) ? releaseMatrix.rows : undefined;
   if (rows === undefined) {
-    errors.push("release matrix: rows must be an array");
+    errors.push("release matrix: expected an object with a rows array");
     return { byExport: new Map(), knownRows: new Set() };
   }
   const byExport = new Map();
   const ids = new Set();
   for (const row of rows) {
-    const id = String(row?.id);
-    if (!ROW_ID.test(id)) { errors.push("release matrix: a row has no readable id"); continue; }
+    const id = typeof row?.id === "string" ? row.id : "";
+    if (!MATRIX_ROW_ID.test(id)) { errors.push("release matrix: every row requires an RM.N id"); continue; }
     if (ids.has(id)) { errors.push(`release matrix: duplicate row ${id}`); continue; }
     ids.add(id);
-    if (typeof row.title !== "string" || row.title.trim() === "") errors.push(`release matrix: ${id} requires a non-empty title`);
+    if (typeof row.title !== "string" || row.title.trim() !== row.title || row.title === "") errors.push(`release matrix: ${id} requires a non-empty title`);
     const evidence = Array.isArray(row.evidence) ? row.evidence : [];
-    if (evidence.length === 0 || evidence.some((item) => typeof item?.file !== "string" || item.file.trim() === "" || typeof item?.name !== "string" || item.name.trim() === "")) {
+    const trimmed = (value) => typeof value === "string" && value.trim() === value && value !== "";
+    if (evidence.length === 0 || evidence.some((item) => !trimmed(item?.file) || !trimmed(item?.name))) {
       errors.push(`release matrix: ${id} requires executable evidence with file and name`);
     }
+    // Every row declares the exports it resolves, even when that is none: an
+    // absent array is a row that never said, which the old gate refused too.
     const exports = row.exports;
-    if (exports === undefined) continue;
     if (!Array.isArray(exports) || exports.some((name) => typeof name !== "string")) {
       errors.push(`release matrix: ${id} requires an exports array of strings`);
       continue;

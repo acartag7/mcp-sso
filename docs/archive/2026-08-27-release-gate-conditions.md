@@ -28,6 +28,12 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | the published-release row disagrees with the package | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | the status section appears more than once | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | the status section holds more than one rendered table | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| the release matrix is not an object with a rows array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a matrix row omits its exports array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| the published-release row is repeated | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+
+Evidence freshness is kept as it was, with one deliberate correction, and is pinned by its own case in the same file: runtime, deployment, package-exports, version and build-script changes age every receipt; the package description and the gate's own script do not; and probe or rehearsal changes age a rehearsal receipt but not an operator's.
 
 ## Dropped
 
@@ -56,6 +62,8 @@ Every one of these is a rule about Markdown rather than about evidence. They exi
 | live evidence ID does not cover export X | The mapping lived in two places, the table and the matrix, and had to agree. It lives in the matrix alone. |
 | live evidence row names unknown export | Kept in substance: a matrix row naming an export the package does not declare is refused. |
 | missing live evidence row for export X | Kept in substance: an export with no passing packed-artifact row is refused. |
+| provider evidence: malformed `Not run` evidence | The `Not run: <reason>.` marker and its empty date cell were a row shape in prose. A receipt records rows that ran; a campaign that did not run one records no row for it, and the gate refuses a receipt that claims rows it did not complete. |
+| table-shaped content outside the one rendered table | Applied to the provider and export tables, so that a `|` line in prose could not be read as evidence. Kept exactly where it still matters: the published-release version is read from that section's rendered table, and a row outside it supplies nothing. |
 | status version: malformed item label / malformed table row | Typography of the other rows in the status table. Nothing the gate decides depends on them, and the contract no longer claims otherwise. |
 
 ## What replaced them
