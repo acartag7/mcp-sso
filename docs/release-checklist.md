@@ -91,7 +91,9 @@ node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
 > [!IMPORTANT]
 > A `--row` names a row you drove and that passed. All seven are required, because they are the whole of what no probe may drive. Recording fewer is refused, and so is a row the rehearsal already checked or a row that is not on the checklist at all.
 
-`record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses. It refuses to write a receipt whose commit is not the checked-out `HEAD`, so a campaign spread across two checkouts fails here, and one whose commit is not an ancestor of `origin/main`, so a campaign run on a branch fails here rather than after the squash merge has thrown that commit away.
+`record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses. It refuses to write a receipt whose commit is not the checked-out `HEAD`, so a campaign spread across two checkouts fails here; one whose tree has uncommitted changes outside `docs/evidence/`, so rows driven against an edited tree are not filed under a commit that does not contain them; and one whose commit is not an ancestor of `origin/main`, so a campaign run on a branch fails here rather than after the squash merge has thrown that commit away.
+
+To record again, for a corrected `--row` list, run the same command again. The receipt and archive it already wrote do not block it, and nothing else needs cleaning up.
 
 Do not use a live result as the only evidence for a security property.
 

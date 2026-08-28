@@ -55,7 +55,7 @@ One campaign, not one per tool. The rows a probe drives and the rows a person dr
 
 The gate rejects a receipt whose schema it does not recognise, whose `runtimeCommit` is malformed, unresolvable, or not an ancestor of the release commit, or that claims rows it did not complete. It rejects a public export with no passing packed-artifact row covering it, an export-to-row pair absent from the release matrix, and a release-matrix row that is malformed, duplicated, or lacks executable evidence. `releaseMatrix` is accepted only when the receipt's own `release-matrix` row passed.
 
-**Receipt binding.** A receipt asserts that a set of rows passed against a particular tree. Everything that could make that assertion false is enumerated here, with where it is refused, because this class was discovered one review round at a time and the enumeration is what stops the next one.
+**Receipt binding.** A receipt asserts that a set of rows passed against a particular tree. Everything the harness refuses is enumerated here, with where it is refused, because this class was discovered one review round at a time and the enumeration is what stops the next one. Some ways that assertion could be false are refused nowhere, and those are named after the table rather than left for a reader to assume.
 
 | What could be false | Refused by | Where |
 | --- | --- | --- |
@@ -65,6 +65,7 @@ The gate rejects a receipt whose schema it does not recognise, whose `runtimeCom
 | The tree that ran is not the commit named | `HEAD` equals `runtimeCommit` when writing | recorder |
 | Something was on top of that tree | working tree clean when writing | recorder |
 | The rehearsal itself ran dirty, or never finished | the receipt's own `dirty` and completion fields | recorder |
+| The tree moved or was written to while the rehearsal ran | the rehearsal re-reads `HEAD` and the tree at the end, and the receipt is not evidence | recorder |
 | The commit will not survive the merge | ancestor of `origin/main` when writing | recorder |
 | The commit is not in the release | ancestor of the release commit | gate |
 | The code moved after the campaign | no evidence input changed between the two | gate |
@@ -76,10 +77,11 @@ The gate rejects a receipt whose schema it does not recognise, whose `runtimeCom
 | A person claims a row a probe decides | `driven` on a `ROWS` row, and a `--row` naming one | gate and recorder |
 | A CLI row does not say which client version ran | the row's `NOTE` lines name it | recorder |
 | Coverage is claimed without the run that proves it | `releaseMatrix` needs a passing `release-matrix` row | gate |
+| Coverage names a row the matrix does not define | every `releaseMatrix` id is a known `RM.N` row | gate |
 
 The recorder refuses at the moment of recording, where the fix is to run the campaign again; the gate refuses at release, where the fix is a new campaign. A property enforced only at the gate is one an operator discovers after merging, which is why every row above that a recorder can decide is decided there too.
 
-What this does not defend against: a receipt is unsigned, and the recorder's guards read the local repository. Someone who edits `docs/evidence/release.json` by hand, or points `refs/remotes/origin/main` at a commit of their choosing, can produce a receipt the gate accepts. The recorder's guards exist to catch an honest mistake at the moment it is made; the wall in front of a release is the tag gate and the review of the pull request that lands the receipt.
+What this does not defend against: a receipt is unsigned, and the recorder's guards read the local repository without fetching. Someone who edits `docs/evidence/release.json` by hand, points `refs/remotes/origin/main` at a commit of their choosing, moves the checkout and moves it back between `serve.sh` and recording, or passes `--row` for a row nobody drove, produces a receipt the gate accepts. The receipt is the maintainer's word, bound to a commit; the controls on that word are the review of the pull request that lands it and the required reviewer on the `publish` environment. The guards above exist to catch an honest mistake at the moment it is made, not to make the receipt tamper-evident.
 
 **Freshness.** A receipt is rejected when something that changes what a client would observe, or what produced the evidence, moved after its commit: `src/`, `examples/`, `test/`, `scripts/live/`, `scripts/run-release-matrix.mjs`, `scripts/check-release-matrix.mjs`, `scripts/lib/release-matrix-outcome.mjs`, `docs/verification.md`, `tsconfig.json`, `tsconfig.build.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.github/workflows/publish.yml`, or a runtime field of `package.json`. A `package.json` change that touches only `check:release-ready` or package-description metadata does not age a receipt.
 

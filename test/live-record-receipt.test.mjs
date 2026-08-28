@@ -243,6 +243,15 @@ test("BEHAVIOUR record-receipt: one campaign is one checkout, unmodified", () =>
     writeFileSync(join(dir, "f"), "a\n");
     assert.equal(assertRecordedAtHead(campaign, { cwd: dir }), campaign, "and reverting it is enough");
 
+    // The recorder's own output is not something the rows ran against. Counting
+    // it would refuse the second write of one campaign, and committing to clear
+    // it moves HEAD, which the check above refuses: recordable exactly once.
+    mkdirSync(join(dir, "docs/evidence/archive"), { recursive: true });
+    writeFileSync(join(dir, "docs/evidence/release.json"), "{}\n");
+    writeFileSync(join(dir, "docs/evidence/archive/release-old.json"), "{}\n");
+    assert.equal(assertRecordedAtHead(campaign, { cwd: dir }), campaign,
+      "a receipt already written here does not block recording again");
+
     git("commit", "--allow-empty", "-qm", "moved on");
     assert.throws(() => assertRecordedAtHead(campaign, { cwd: dir }), /but the checkout is now/,
       "a checkout moved between the rehearsal and the hand-driven rows is refused");

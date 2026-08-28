@@ -208,7 +208,14 @@ export function assertRecordedAtHead(commit, { cwd = ROOT } = {}) {
       "Check that commit out again, or run the campaign again here.",
     );
   }
-  const modified = execFileSync("git", ["-C", cwd, "status", "--porcelain"], { encoding: "utf8" }).trim();
+  // Everything except the recorder's own output. `docs/evidence/` is not an
+  // evidence input, and counting it would refuse the second `--write` of one
+  // campaign: the first leaves the receipt and its archived predecessor in the
+  // tree, and committing them to get a clean tree moves HEAD, which the check
+  // above then refuses. That left a campaign recordable exactly once.
+  const modified = execFileSync(
+    "git", ["-C", cwd, "status", "--porcelain", "--", ".", ":(exclude)docs/evidence"], { encoding: "utf8" },
+  ).trim();
   if (modified.length > 0) {
     throw new Error(
       `the working tree has uncommitted changes, so the rows you drove ran against something ${commit.slice(0, 7)} does not contain. ` +
