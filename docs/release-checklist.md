@@ -2,23 +2,28 @@
 
 Use this checklist for a release candidate. The [release verification reference](verification.md) defines each test row. The [Tier 3 evidence reference](verification-live.md) defines live evidence.
 
-## Open the release pull request
+## Run the campaign, then open the release pull request
 
-One pull request carries the version bump and the campaign that proves it. The campaign runs locally, against the commit the branch starts from, and its receipt records that commit. The version does not age a receipt, so the bump landing in the same pull request does not invalidate the evidence recorded for it.
+One pull request carries the version bump and the campaign that proves it. The order matters, and it is the one thing about this flow that is not obvious.
 
-1. Branch from `origin/main` and push the final versioned runtime tree, then open or update its pull request.
-2. Add or update the matching Tier 1 rows in [the release verification reference](verification.md).
+The receipt names the commit the campaign ran against, and the gate requires that commit to be an ancestor of the release commit. A squash merge does not put a branch commit into `main`'s history, so a campaign run on the release branch records a commit the release can never contain. The campaign therefore runs against `origin/main` itself, before the branch exists.
+
+> [!IMPORTANT]
+> The release pull request must change no evidence input. It changes `package.json:version`, which is exempt, plus `docs/evidence/`, `docs/evidence/archive/`, and `docs/client-compatibility.md`, none of which is an input. A Tier 1 row in [the release verification reference](verification.md) is an input, so it lands with the change that introduced the surface, never in the release pull request.
+
+1. Fetch `origin/main` and check it out with a clean tree. This is the commit the campaign proves and the commit the branch will start from.
 
 ## Run the source and package gates
 
-1. Fetch `origin/main` and create an evidence branch from it. Do not change a runtime, build, publication, or evidence-defining input on this branch.
-2. Record the reachable runtime commit:
+Still on that clean `origin/main` checkout.
+
+1. Record the commit the campaign will name:
 
    ```bash
    git rev-parse HEAD
    ```
 
-3. Run the source checks:
+2. Run the source checks:
 
    ```bash
    pnpm run typecheck
@@ -29,9 +34,9 @@ One pull request carries the version bump and the campaign that proves it. The c
    pnpm run build
    ```
 
-4. Confirm that `test/e2e-mcp-sdk.test.ts` completes registration, authorization, token exchange, the protected `/mcp` call, and refresh. It must replay the first family's consumed token and confirm that the successor is dead. It must then create a second family, revoke that family while it is active, and confirm that its refresh token is refused.
-5. Start disposable MySQL and Redis services.
-6. Run the release matrix with their connection URLs:
+3. Confirm that `test/e2e-mcp-sdk.test.ts` completes registration, authorization, token exchange, the protected `/mcp` call, and refresh. It must replay the first family's consumed token and confirm that the successor is dead. It must then create a second family, revoke that family while it is active, and confirm that its refresh token is refused.
+4. Start disposable MySQL and Redis services.
+5. Run the release matrix with their connection URLs:
 
    ```bash
    RUN_INTEGRATION=true MYSQL_URL='mysql://…' REDIS_URL='redis://…' pnpm run test:release
@@ -39,11 +44,11 @@ One pull request carries the version bump and the campaign that proves it. The c
 
    The command rebuilds the current tree after checking the required service variables and before running any matrix row.
 
-7. Confirm that every `RM.N` row passes. A missing service variable, missing evidence file, skipped selected test, undocumented row, removed export, or removed example makes the command fail.
-8. Run `npm pack --dry-run`.
-9. Confirm that the tarball root contains only `dist/`, `docs/`, `README.md`, `LICENSE`, and `package.json`.
+6. Confirm that every `RM.N` row passes. A missing service variable, missing evidence file, skipped selected test, undocumented row, removed export, or removed example makes the command fail.
+7. Run `npm pack --dry-run`.
+8. Confirm that the tarball root contains only `dist/`, `docs/`, `README.md`, `LICENSE`, and `package.json`.
 
-## Run the campaign locally
+## Record the campaign
 
 The rehearsal checks every row it defines. The rest of [`scripts/live/CHECKLIST.md`](../scripts/live/CHECKLIST.md), which is the hosted connectors and the CLI rows the rehearsal does not cover, you drive yourself against the same served leg, in the same sitting, against the same commit.
 
@@ -65,7 +70,15 @@ node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
 > [!IMPORTANT]
 > A `--row` names a row you drove and that passed. A row you did not drive is left out, and a row the rehearsal already checked is refused: the recorder will not take your word for something a probe decides.
 
-`record-receipt.mjs` writes `docs/evidence/release.json`, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses. Commit both the receipt and that page in this pull request.
+`record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses.
+
+## Open the release pull request
+
+1. Branch from the commit the campaign just named.
+2. Bump the version.
+3. Commit `docs/evidence/release.json`, the receipt it superseded under `docs/evidence/archive/`, and the [`client-compatibility.md`](client-compatibility.md) update.
+4. Change nothing else. Every other evidence input would age the receipt you just recorded, and the pull request would refuse its own release.
+5. Push the branch and open the pull request.
 
 Do not use a live result as the only evidence for a security property.
 

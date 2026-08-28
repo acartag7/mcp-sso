@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import { formatReleaseReadinessFailure, parseReleaseReadyArgs } from "../scripts/lib/release-ready-output.mjs";
 import {
   ancestor, buildRelease, cleanupReleaseReadyFixture, deploymentRelease, fixture, harnessRelease, metadataRelease,
-  packageRelease, receiptFor, receipts, release, runtimeRelease, setupReleaseReadyFixture,
+  packageRelease, receiptFor, receipts, release, releasePrRelease, runtimeRelease, setupReleaseReadyFixture,
+  verificationRelease,
   unrelated, versionRelease,
 } from "./lib/release-ready-fixture.mjs";
 
@@ -137,6 +138,16 @@ test("a receipt ages when what a client would observe changes, and not otherwise
   // forced the bump and the campaign proving it into two pull requests.
   assert.deepEqual(at(versionRelease).staleEvidence, [],
     "a version bump does not age evidence, so one pull request carries the bump and its evidence");
+
+  // The whole release pull request, not just the bump: a receipt recorded at
+  // the branch point has to survive everything that lands on top of it, or the
+  // release refuses its own evidence and there is no order that works.
+  assert.deepEqual(at(releasePrRelease).staleEvidence, [],
+    "the release pull request's own diff does not age the campaign it carries");
+
+  // And the one input a release pull request must not touch. A Tier 1 row
+  // belongs to the change that introduced the surface.
+  assert.ok(ages(verificationRelease), "a verification-reference change still ages evidence");
 });
 
 test("the failure output names the receipt and what changed", () => {

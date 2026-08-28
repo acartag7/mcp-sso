@@ -15,6 +15,8 @@ export let packageRelease;
 export let metadataRelease;
 export let versionRelease;
 export let buildRelease;
+export let releasePrRelease;
+export let verificationRelease;
 export let unrelated;
 
 function git(args) {
@@ -103,6 +105,21 @@ export function setupReleaseReadyFixture() {
   }));
   git(["commit", "-qam", "build release"]);
   buildRelease = git(["rev-parse", "HEAD"]);
+  // Exactly what a release pull request lands: the bump, the receipt, the
+  // receipt it superseded, and the page a person reads. A receipt recorded at
+  // the branch point has to survive this, or the release refuses itself.
+  git(["switch", "-q", "-c", "release-pr", release]);
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ version: "0.6.0", scripts: {}, exports: { ".": {} } }));
+  mkdirSync(join(repo, "docs/evidence/archive"), { recursive: true });
+  writeFileSync(join(repo, "docs/evidence/release.json"), "{}\n");
+  writeFileSync(join(repo, "docs/evidence/archive/release-old.json"), "{}\n");
+  writeFileSync(join(repo, "docs/client-compatibility.md"), "rows\n");
+  git(["add", "-A"]);
+  git(["commit", "-qm", "release pr"]);
+  releasePrRelease = git(["rev-parse", "HEAD"]);
+
+  verificationRelease = commitOnly("verification-change", ["docs/verification.md"]);
+
   git(["switch", "-q", "--orphan", "unrelated"]);
   git(["commit", "--allow-empty", "-qm", "unrelated"]);
   unrelated = git(["rev-parse", "HEAD"]);
