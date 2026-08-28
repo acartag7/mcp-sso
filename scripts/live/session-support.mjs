@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   chmodSync, closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, writeFileSync,
-  unlinkSync,
+  linkSync, unlinkSync,
 } from "node:fs";
 import { dirname } from "node:path";
 
@@ -196,9 +196,14 @@ export function classifyClient(flow, siblings = [], { codexDcr = false } = {}) {
   if (flow.unbound === true) return {
     kind: "unattributed", label: "unattributed identity denial", redirectHost: "",
   };
-  const origin = flow.events.find((event) => event.redirectHost)?.redirectHost
-    ?? siblings.find((candidate) => candidate.clientId === flow.clientId
-      && candidate.events.some((event) => event.redirectHost))?.events.find((event) => event.redirectHost)?.redirectHost
+  const identifiedHost = (candidate) => candidate.events.find((event) => event.event === "oauth.authorize.prepare"
+    && event.clientId === candidate.clientId && event.redirectHost)?.redirectHost
+    ?? candidate.events.find((event) => event.clientId === candidate.clientId && event.redirectHost)?.redirectHost;
+  const siblingHost = siblings.filter((candidate) => candidate.clientId === flow.clientId)
+    .map(identifiedHost).find((redirectHost) => redirectHost !== undefined);
+  const origin = identifiedHost(flow)
+    ?? siblingHost
+    ?? flow.events.find((event) => event.redirectHost)?.redirectHost
     ?? "";
   let redirectHost = origin;
   try { redirectHost = new URL(origin).hostname; } catch { redirectHost = origin.replace(/^[a-z]+:\/\//i, "").split(":")[0]; }
@@ -277,8 +282,9 @@ function ensurePrivateDir(path, uid = process.getuid?.()) {
   }
 }
 
-export function writeResults(path, results, { replace = false } = {}) {
+export function writeResults(path, results, { replace = false, beforeWrite } = {}) {
   if (!Array.isArray(results) || results.length > MAX_AUDIT_ROWS) throw new Error("live-session result set is invalid");
+  if (beforeWrite !== undefined && typeof beforeWrite !== "function") throw new Error("live-session result guard is invalid");
   ensurePrivateDir(dirname(path));
   if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) throw new Error("result writes require O_NOFOLLOW");
   const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK
@@ -288,6 +294,7 @@ export function writeResults(path, results, { replace = false } = {}) {
     try { fd = openSync(path, flags, 0o600); } catch { throw new Error("result path cannot be opened"); }
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("result path is not a private regular file");
+    beforeWrite?.();
     if (replace) ftruncateSync(fd, 0);
     const body = results.map((result) => JSON.stringify(result)).join("\n");
     if (body !== "") writeFileSync(fd, `${body}\n`);
@@ -334,6 +341,50 @@ function processIsAlive(pid) {
   }
 }
 
+function readClaimedLock(path) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 2 || (stat.mode & 0o077) !== 0 || stat.size > MAX_AUDIT_BYTES) {
+      throw new Error("stale live-session recovery claim is invalid");
+    }
+    const body = readFileSync(fd, "utf8");
+    if (Buffer.byteLength(body) > MAX_AUDIT_BYTES) throw new Error("stale live-session recovery claim is invalid");
+    let record;
+    try { record = JSON.parse(body); } catch { throw new Error("stale live-session recovery claim is invalid"); }
+    if (!validLock(record)) throw new Error("stale live-session recovery claim is invalid");
+    return { record, stat };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function claimStaleLock(path, current) {
+  const claimPath = `${path}.recovery`;
+  try { linkSync(path, claimPath); } catch (error) {
+    if (error?.code === "EEXIST") throw new Error("stale live-session lock recovery is active");
+    throw new Error("stale live-session lock cannot be claimed");
+  }
+  try {
+    const source = lstatSync(path);
+    const claimed = readClaimedLock(claimPath);
+    if (!source.isFile() || source.dev !== claimed.stat.dev || source.ino !== claimed.stat.ino
+      || source.nlink !== 2 || !sameLock(current, claimed.record)) {
+      throw new Error("stale live-session lock changed");
+    }
+    if (processIsAlive(claimed.record.pid)) throw new Error("another live session is active");
+    const confirmed = lstatSync(path);
+    if (!confirmed.isFile() || confirmed.dev !== claimed.stat.dev || confirmed.ino !== claimed.stat.ino
+      || confirmed.nlink !== 2) throw new Error("stale live-session lock changed");
+    unlinkSync(path);
+    return claimPath;
+  } catch (error) {
+    try { unlinkSync(claimPath); } catch { /* leave a failed claim fail-closed */ }
+    throw error;
+  }
+}
+
 export function acquireSessionLock(path, pid = process.pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("live-session lock owner is invalid");
   if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
@@ -341,36 +392,41 @@ export function acquireSessionLock(path, pid = process.pid) {
   }
   ensurePrivateDir(dirname(path));
   const record = { version: 1, pid, nonce: randomUUID() };
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let fd;
-    try {
-      fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw new Error("live-session lock cannot be created");
-      const current = readPrivateJson(path);
-      if (!validLock(current)) throw new Error("live-session lock is invalid");
-      if (processIsAlive(current.pid)) throw new Error("another live session is active");
-      const confirmed = readPrivateJson(path);
-      if (!sameLock(current, confirmed)) throw new Error("stale live-session lock changed");
-      if (processIsAlive(confirmed.pid)) throw new Error("another live session is active");
-      try { unlinkSync(path); } catch { throw new Error("stale live-session lock cannot be removed"); }
-      continue;
-    }
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("live-session lock is not private");
-      writeFileSync(fd, `${JSON.stringify(record)}\n`);
-    } catch {
-      try { unlinkSync(path); } catch { /* the failed lock stays fail-closed */ }
-      throw new Error("live-session lock cannot be written");
-    } finally { closeSync(fd); }
-    return () => {
-      const current = readPrivateJson(path);
-      if (!validLock(current) || current.pid !== record.pid || current.nonce !== record.nonce) {
-        throw new Error("live-session lock ownership changed");
+  let recoveryClaim;
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let fd;
+      try {
+        fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw new Error("live-session lock cannot be created");
+        const current = readPrivateJson(path);
+        if (!validLock(current)) throw new Error("live-session lock is invalid");
+        if (processIsAlive(current.pid)) throw new Error("another live session is active");
+        recoveryClaim = claimStaleLock(path, current);
+        continue;
       }
-      try { unlinkSync(path); } catch { throw new Error("live-session lock cannot be released"); }
-    };
+      try {
+        const stat = fstatSync(fd);
+        if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("live-session lock is not private");
+        writeFileSync(fd, `${JSON.stringify(record)}\n`);
+      } catch {
+        try { unlinkSync(path); } catch { /* the failed lock stays fail-closed */ }
+        throw new Error("live-session lock cannot be written");
+      } finally { closeSync(fd); }
+      if (recoveryClaim !== undefined) { unlinkSync(recoveryClaim); recoveryClaim = undefined; }
+      return () => {
+        const current = readPrivateJson(path);
+        if (!validLock(current) || current.pid !== record.pid || current.nonce !== record.nonce) {
+          throw new Error("live-session lock ownership changed");
+        }
+        try { unlinkSync(path); } catch { throw new Error("live-session lock cannot be released"); }
+      };
+    }
+    throw new Error("live-session lock could not be acquired");
+  } finally {
+    if (recoveryClaim !== undefined) {
+      try { unlinkSync(recoveryClaim); } catch { /* leave a failed claim fail-closed */ }
+    }
   }
-  throw new Error("live-session lock could not be acquired");
 }

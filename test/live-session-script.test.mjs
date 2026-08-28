@@ -376,6 +376,55 @@ test("stale lock recovery rechecks the exact record before unlinking", () => {
   }
 });
 
+test("concurrent stale lock recovery admits only one owner", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-lock-race-"));
+  const path = join(root, "session.lock");
+  const runner = join(root, "runner.mjs");
+  const start = join(root, "start");
+  const releaseSignal = join(root, "release");
+  const acquired = join(root, "acquired");
+  const children = [];
+  try {
+    chmodSync(root, 0o700);
+    writeFileSync(path, `${JSON.stringify({
+      version: 1, pid: 2_147_483_647, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    })}\n`, { mode: 0o600 });
+    writeFileSync(runner, `
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { acquireSessionLock } from ${JSON.stringify(new URL("../scripts/live/session-support.mjs", import.meta.url).href)};
+writeFileSync(\`${join(root, "ready.")}\${process.pid}\`, "ready");
+while (!existsSync(${JSON.stringify(start)})) await new Promise((resolve) => setTimeout(resolve, 5));
+try {
+  const release = acquireSessionLock(${JSON.stringify(path)});
+  appendFileSync(${JSON.stringify(acquired)}, \`\${process.pid}\\n\`);
+  while (!existsSync(${JSON.stringify(releaseSignal)})) await new Promise((resolve) => setTimeout(resolve, 5));
+  release();
+} catch (error) {
+  process.stderr.write(\`\${error.message}\\n\`);
+  process.exitCode = 1;
+}
+`);
+    children.push(spawn(process.execPath, [runner]), spawn(process.execPath, [runner]));
+    await Promise.all(children.map((child) => waitForFile(join(root, `ready.${child.pid}`))));
+    writeFileSync(start, "start");
+    await waitForFile(acquired);
+    await new Promise((resolve) => { setTimeout(resolve, 100); });
+    writeFileSync(releaseSignal, "release");
+    const codes = await Promise.all(children.map((child) => child.exitCode !== null
+      ? Promise.resolve(child.exitCode)
+      : new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", resolve);
+      })));
+    assert.deepEqual(codes.sort(), [0, 1]);
+    assert.equal(lines(acquired).length, 1);
+    assert.equal(existsSync(`${path}.recovery`), false);
+  } finally {
+    for (const child of children) if (child.exitCode === null) child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("session rejects unknown and repeated legs before any side effect", () => {
   for (const args of [["serve", "other"], ["serve", "google", "google"]]) {
     const f = fixture();
@@ -499,6 +548,21 @@ test("Codex DCR attribution rejects the wrong id shape and non-loopback redirect
   assert.equal(classifyClient(flow(generated, "http://[::1]:1455/callback"), [], { codexDcr: true }).kind, "codex");
 });
 
+test("an abandoned registration cannot override the identified flow redirect", () => {
+  const clientId = "https://claude.ai/oauth-client";
+  const events = audit(clientId);
+  events.unshift({
+    occurredAt: new Date(Date.parse(events[0].occurredAt) - 1).toISOString(),
+    event: "oauth.register", status: "success", redirectHost: "https://claude.ai/callback",
+  });
+  const flows = buildFlows(events);
+  assert.equal(flows.length, 1);
+  assert.equal(flows[0].events[0].event, "oauth.register");
+  const client = classifyClient(flows[0], flows);
+  assert.equal(client.kind, "claude-code");
+  assert.equal(client.redirectHost, "localhost");
+});
+
 test("watch rejects unknown and repeated options", () => {
   for (const args of [["watch", "--other"], ["watch", "--codex-dcr", "--codex-dcr"]]) {
     const f = fixture();
@@ -555,6 +619,40 @@ test("continuous watch stops before attributing a replacement session", async ()
     }
     rmSync(f.root, { recursive: true, force: true });
   }
+});
+
+test("watch rechecks its session after opening the result file and before changing it", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const leg = join(f.repo, ".live-state/google");
+    const statePath = join(f.repo, ".live-state/session.json");
+    const resultsPath = join(f.repo, ".live-state/session-results.jsonl");
+    const preload = join(f.root, "replace-session.cjs");
+    mkdirSync(leg, { recursive: true });
+    writeFileSync(join(leg, "audit.jsonl"), `${audit("https://claude.ai/oauth-client").map(JSON.stringify).join("\n")}\n`);
+    writeFileSync(resultsPath, "sentinel\n", { mode: 0o600 });
+    writeFileSync(preload, `
+const fs = require("node:fs");
+const { syncBuiltinESMExports } = require("node:module");
+const originalOpenSync = fs.openSync;
+let replaced = false;
+fs.openSync = function (path, ...args) {
+  if (!replaced && String(path).endsWith("/.live-state/session-results.jsonl")) {
+    replaced = true;
+    const session = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
+    session.startedAt = new Date(Date.parse(session.startedAt) + 1).toISOString();
+    fs.writeFileSync(${JSON.stringify(statePath)}, \`\${JSON.stringify(session)}\\n\`);
+  }
+  return originalOpenSync.call(this, path, ...args);
+};
+syncBuiltinESMExports();
+`);
+    const result = run(f, ["watch", "--all", "--once"], { NODE_OPTIONS: `--require=${preload}` });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /live session changed while watch was running/);
+    assert.equal(readFileSync(resultsPath, "utf8"), "sentinel\n");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test("watch rejects state that is hard-linked, permission-widened, wrongly owned, or under a replaced directory", () => {

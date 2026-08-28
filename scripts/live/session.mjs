@@ -79,6 +79,14 @@ function sameSession(left, right) {
     && left.legs.every((leg, index) => leg === right.legs[index]);
 }
 
+function assertSameSession(session) {
+  let current;
+  try { current = validSession(readPrivateJson(SESSION_FILE)); } catch { current = undefined; }
+  if (current === undefined || !sameSession(session, current)) {
+    throw new SessionChangedError("live session changed while watch was running");
+  }
+}
+
 function invalidateSession() {
   try { unlinkSync(SESSION_FILE); return true; } catch (error) {
     if (error?.code === "ENOENT") return true;
@@ -180,18 +188,11 @@ function clientVersions() {
 }
 
 function readFlows(session) {
-  let current;
-  try { current = validSession(readPrivateJson(SESSION_FILE)); } catch { current = undefined; }
-  if (current === undefined || !sameSession(session, current)) {
-    throw new SessionChangedError("live session changed while watch was running");
-  }
+  assertSameSession(session);
   const startedAt = Date.parse(session.startedAt);
   const flows = new Map(session.legs.map((leg) => [leg, buildFlows(readAudit(join(STATE_DIR, leg, "audit.jsonl"))
     .filter((event) => Date.parse(event.occurredAt) >= startedAt))]));
-  try { current = validSession(readPrivateJson(SESSION_FILE)); } catch { current = undefined; }
-  if (current === undefined || !sameSession(session, current)) {
-    throw new SessionChangedError("live session changed while watch was running");
-  }
+  assertSameSession(session);
   return flows;
 }
 
@@ -237,6 +238,7 @@ async function watch(args) {
       failed = true;
       return;
     }
+    const pending = [];
     for (const [leg, flows] of byLeg) {
       for (const flow of flows) {
         if (isFragment(flow)) continue;
@@ -248,11 +250,23 @@ async function watch(args) {
           leg, flow, flows, mode: session.mode, commit: session.commit, clean: session.clean,
           clientVersions: versions, observedAt: new Date().toISOString(), codexDcr,
         });
-        reported.add(key);
-        printResult(result);
-        if (once) oneShot.push(result);
-        else writeResults(RESULTS_FILE, [result]);
+        pending.push({ key, result });
       }
+    }
+    if (once) oneShot.push(...pending.map(({ result }) => result));
+    else if (pending.length > 0) {
+      try {
+        writeResults(RESULTS_FILE, pending.map(({ result }) => result), {
+          beforeWrite: () => { assertSameSession(session); },
+        });
+      } catch (error) {
+        process.stderr.write(error instanceof SessionChangedError
+          ? "session.mjs: live session changed while watch was running\n"
+          : "session.mjs: results cannot be written\n");
+        failed = true;
+        return;
+      }
+      for (const { key, result } of pending) { reported.add(key); printResult(result); }
     }
   };
   if (once) scan(true);
@@ -262,7 +276,19 @@ async function watch(args) {
   }
   process.off("SIGINT", stop);
   process.off("SIGTERM", stop);
-  if (once && !failed) writeResults(RESULTS_FILE, oneShot, { replace: true });
+  if (once && !failed) {
+    try {
+      writeResults(RESULTS_FILE, oneShot, {
+        replace: true, beforeWrite: () => { assertSameSession(session); },
+      });
+      for (const result of oneShot) printResult(result);
+    } catch (error) {
+      process.stderr.write(error instanceof SessionChangedError
+        ? "session.mjs: live session changed while watch was running\n"
+        : "session.mjs: results cannot be written\n");
+      failed = true;
+    }
+  }
   if (!failed) process.stdout.write(`saved ${once ? oneShot.length : "new"} result(s) in .live-state/session-results.jsonl\n`);
   return failed ? 1 : 0;
 }
