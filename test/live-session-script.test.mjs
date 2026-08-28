@@ -236,7 +236,7 @@ test("a killed session wrapper closes its lifeline and stops serve.sh", async ()
     assert.equal(existsSync(join(f.repo, ".live-state/session.lock")), true);
     assert.equal(run(f, ["cleanup"]).status, 0);
     assert.equal(lines(f.clientLog).length, 6);
-    assert.equal(existsSync(join(f.repo, ".live-state/session.lock")), false);
+    assert.equal(existsSync(join(f.repo, ".live-state/session.lock")), true);
   } finally {
     if (servePid) try { process.kill(-servePid, "SIGKILL"); } catch { /* already gone */ }
     rmSync(f.root, { recursive: true, force: true });
@@ -275,7 +275,7 @@ test("one active serve owns the session state and cleanup targets", async () => 
     assert.deepEqual(lines(f.clientLog), [
       "claude mcp remove mcp-sso-live-google", "codex mcp remove mcp-sso-live-google",
     ]);
-    assert.equal(existsSync(lockPath), false);
+    assert.equal(existsSync(lockPath), true);
   } finally {
     if (child?.exitCode === null) {
       child.kill("SIGKILL");
@@ -285,45 +285,25 @@ test("one active serve owns the session state and cleanup targets", async () => 
   }
 });
 
-test("serve rejects malformed and untrusted lock files before any side effect", () => {
-  for (const variant of ["missing-field", "extra-field", "wrong-pid", "wrong-nonce", "active", "hard-link", "mode", "symlink", "directory-mode"]) {
+test("serve rejects untrusted lock paths before any side effect", () => {
+  for (const variant of ["hard-link", "mode", "symlink", "lock-directory", "directory-mode"]) {
     const f = fixture();
     try {
       const stateDir = join(f.repo, ".live-state");
       const lockPath = join(stateDir, "session.lock");
       mkdirSync(stateDir, { mode: 0o700 });
-      if (variant === "missing-field") writeFileSync(lockPath, '{"version":1}\n', { mode: 0o600 });
-      if (variant === "extra-field") writeFileSync(lockPath, `${JSON.stringify({
-        version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", extra: true,
-      })}\n`, { mode: 0o600 });
-      if (variant === "wrong-pid") writeFileSync(lockPath, `${JSON.stringify({
-        version: 1, pid: "1", nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      })}\n`, { mode: 0o600 });
-      if (variant === "wrong-nonce") writeFileSync(lockPath, `${JSON.stringify({
-        version: 1, pid: process.pid, nonce: "not-a-nonce",
-      })}\n`, { mode: 0o600 });
-      if (variant === "active") writeFileSync(lockPath, `${JSON.stringify({
-        version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      })}\n`, { mode: 0o600 });
       if (variant === "hard-link") {
         const original = join(f.root, "original-lock");
-        writeFileSync(original, `${JSON.stringify({
-          version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        })}\n`, { mode: 0o600 });
+        writeFileSync(original, "", { mode: 0o600 });
         linkSync(original, lockPath);
       }
-      if (variant === "mode") {
-        writeFileSync(lockPath, `${JSON.stringify({
-          version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        })}\n`, { mode: 0o644 });
-      }
+      if (variant === "mode") writeFileSync(lockPath, "", { mode: 0o644 });
       if (variant === "symlink") {
         const target = join(f.root, "lock-target");
-        writeFileSync(target, `${JSON.stringify({
-          version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        })}\n`, { mode: 0o600 });
+        writeFileSync(target, "", { mode: 0o600 });
         symlinkSync(target, lockPath);
       }
+      if (variant === "lock-directory") mkdirSync(lockPath);
       if (variant === "directory-mode") chmodSync(stateDir, 0o755);
       const result = run(f, ["serve", "google"]);
       assert.equal(result.status, 1, variant);
@@ -334,117 +314,48 @@ test("serve rejects malformed and untrusted lock files before any side effect", 
   }
 });
 
-test("lock release refuses to remove a replacement with another nonce", () => {
+test("the kernel lock refuses a second owner and remains reusable after release", async () => {
   const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-lock-release-"));
   const path = join(root, "session.lock");
   try {
     chmodSync(root, 0o700);
-    const release = acquireSessionLock(path);
-    const record = JSON.parse(readFileSync(path, "utf8"));
-    writeFileSync(path, `${JSON.stringify({
-      ...record, nonce: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-    })}\n`);
-    assert.throws(release, /lock ownership changed/);
+    const release = await acquireSessionLock(path);
+    assert.throws(() => acquireSessionLock(path), /another live session is active/);
+    await release();
+    const nextRelease = await acquireSessionLock(path);
+    await nextRelease();
     assert.equal(existsSync(path), true);
+    assert.equal(statSync(path).nlink, 1);
+    assert.equal(statSync(path).mode & 0o077, 0);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("stale lock recovery rechecks the exact record before unlinking", () => {
-  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-lock-stale-"));
-  const path = join(root, "session.lock");
-  const originalKill = process.kill;
-  try {
-    chmodSync(root, 0o700);
-    writeFileSync(path, `${JSON.stringify({
-      version: 1, pid: 2_147_483_647, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    })}\n`, { mode: 0o600 });
-    let calls = 0;
-    process.kill = (pid, signal) => {
-      calls += 1;
-      if (calls === 1) writeFileSync(path, `${JSON.stringify({
-        version: 1, pid: process.pid, nonce: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      })}\n`);
-      return originalKill.call(process, pid, signal);
-    };
-    assert.throws(() => acquireSessionLock(path), /stale live-session lock changed/);
-    const replacement = JSON.parse(readFileSync(path, "utf8"));
-    assert.equal(replacement.pid, process.pid);
-    assert.equal(replacement.nonce, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-  } finally {
-    process.kill = originalKill;
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("concurrent stale lock recovery admits only one owner", async () => {
+test("concurrent kernel lock acquisition admits only one owner", async () => {
   const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-lock-race-"));
   const path = join(root, "session.lock");
   const runner = join(root, "runner.mjs");
   const start = join(root, "start");
   const releaseSignal = join(root, "release");
   const acquired = join(root, "acquired");
-  const preload = join(root, "interleave.cjs");
   const children = [];
   try {
     chmodSync(root, 0o700);
-    writeFileSync(path, `${JSON.stringify({
-      version: 1, pid: 2_147_483_647, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    })}\n`, { mode: 0o600 });
-    writeFileSync(preload, `
-const fs = require("node:fs");
-const { syncBuiltinESMExports } = require("node:module");
-const lockPath = ${JSON.stringify(path)};
-const releasePath = ${JSON.stringify(releaseSignal)};
-const arrived = (role) => ${JSON.stringify(join(root, "unlink."))} + role;
-const opened = ${JSON.stringify(join(root, "a-opened"))};
-const originalOpenSync = fs.openSync;
-const originalUnlinkSync = fs.unlinkSync;
-const waitFor = (target) => {
-  const deadline = Date.now() + 5_000;
-  while (!fs.existsSync(target)) {
-    if (Date.now() >= deadline) throw new Error(\`timed out waiting for \${target}\`);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
-  }
-};
-let intercepted = false;
-fs.unlinkSync = function (target, ...args) {
-  if (!intercepted && String(target) === lockPath && !fs.existsSync(releasePath)) {
-    intercepted = true;
-    if (!fs.existsSync(\`\${lockPath}.recovery\`)) {
-      fs.writeFileSync(arrived(process.env.RACE_ROLE), "arrived");
-      if (process.env.RACE_ROLE === "a") waitFor(arrived("b"));
-      else waitFor(opened);
-    }
-  }
-  return originalUnlinkSync.call(this, target, ...args);
-};
-fs.openSync = function (target, flags, ...args) {
-  const fd = originalOpenSync.call(this, target, flags, ...args);
-  if (process.env.RACE_ROLE === "a" && String(target) === lockPath
-    && fs.existsSync(arrived("a")) && fs.existsSync(arrived("b"))) fs.writeFileSync(opened, "opened");
-  return fd;
-};
-syncBuiltinESMExports();
-`);
     writeFileSync(runner, `
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { acquireSessionLock } from ${JSON.stringify(new URL("../scripts/live/session-support.mjs", import.meta.url).href)};
 writeFileSync(\`${join(root, "ready.")}\${process.pid}\`, "ready");
 while (!existsSync(${JSON.stringify(start)})) await new Promise((resolve) => setTimeout(resolve, 5));
 try {
-  const release = acquireSessionLock(${JSON.stringify(path)});
+  const release = await acquireSessionLock(${JSON.stringify(path)});
   appendFileSync(${JSON.stringify(acquired)}, \`\${process.pid}\\n\`);
   while (!existsSync(${JSON.stringify(releaseSignal)})) await new Promise((resolve) => setTimeout(resolve, 5));
-  release();
+  await release();
 } catch (error) {
   process.stderr.write(\`\${error.message}\\n\`);
   process.exitCode = 1;
 }
 `);
-    children.push(
-      spawn(process.execPath, [runner], { env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, RACE_ROLE: "a" } }),
-      spawn(process.execPath, [runner], { env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, RACE_ROLE: "b" } }),
-    );
+    children.push(spawn(process.execPath, [runner]), spawn(process.execPath, [runner]));
     await Promise.all(children.map((child) => waitForFile(join(root, `ready.${child.pid}`))));
     writeFileSync(start, "start");
     await waitForFile(acquired);
@@ -458,7 +369,8 @@ try {
       })));
     assert.deepEqual(codes.sort(), [0, 1]);
     assert.equal(lines(acquired).length, 1);
-    assert.equal(existsSync(`${path}.recovery`), false);
+    const release = await acquireSessionLock(path);
+    await release();
   } finally {
     for (const child of children) if (child.exitCode === null) child.kill("SIGKILL");
     rmSync(root, { recursive: true, force: true });
