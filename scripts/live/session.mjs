@@ -84,8 +84,8 @@ async function serve(args) {
   const state = { version: 1, status: "starting", legs, mode, ...source, startedAt: new Date().toISOString() };
   writePrivateJson(SESSION_FILE, state);
   const child = spawn(join(ROOT, "scripts/live/serve.sh"), legs, {
-    detached: true, stdio: ["inherit", "inherit", "inherit", "pipe"],
-    env: { ...process.env, MCP_SSO_SESSION_READY_FD: "3" },
+    detached: true, stdio: ["inherit", "inherit", "inherit", "pipe", "pipe"],
+    env: { ...process.env, MCP_SSO_SESSION_READY_FD: "3", MCP_SSO_SESSION_PARENT_FD: "4" },
   });
   let ready = false;
   let readinessFailed = false;
@@ -167,7 +167,7 @@ function readFlows(session) {
 
 function printResult(result) {
   const row = result.row === undefined ? "extra" : result.row;
-  const calls = result.toolCalls === 0 ? "no protected /mcp request" : `${result.toolCalls} protected /mcp request(s)`;
+  const calls = result.toolCalls === 0 ? (result.ambiguousToolCalls > 0 ? `no attributable protected /mcp request (${result.ambiguousToolCalls} ambiguous)` : "no protected /mcp request") : `${result.toolCalls} protected /mcp request(s)`;
   process.stdout.write(`${result.verdict} ${row} ${result.leg} ${result.clientLabel}: ${calls}\n`);
 }
 

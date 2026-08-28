@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { buildFlows, classifyClient, readAudit, readPrivateJson, writeResults } from "../scripts/live/session-support.mjs";
+import { buildFlows, classifyClient, outcomeOf, readAudit, readPrivateJson, writeResults } from "../scripts/live/session-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const executable = (path, body) => { writeFileSync(path, body); chmodSync(path, 0o700); };
@@ -24,6 +24,13 @@ function fixture() {
   for (const file of ["session.mjs", "session-support.mjs"]) copyFileSync(join(ROOT, "scripts/live", file), join(live, file));
   executable(join(live, "serve.sh"), `#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SERVE_LOG"
+[[ "\${MCP_SSO_SESSION_PARENT_FD-}" == "4" ]] || exit 91
+PARENT_WATCH_PID=""
+cleanup() {
+  trap - EXIT INT TERM
+  if [[ -n "$PARENT_WATCH_PID" ]]; then kill "$PARENT_WATCH_PID" 2>/dev/null || true; wait "$PARENT_WATCH_PID" 2>/dev/null || true; fi
+}
+trap cleanup EXIT
 if [[ "\${FAKE_SERVE_STATUS:-0}" == "0" && "\${MCP_SSO_SESSION_READY_FD-}" == "3" ]]; then
   case "\${FAKE_READY_MARKER-}" in
     bad) printf 'not-ready\n' >&3 ;;
@@ -33,8 +40,16 @@ if [[ "\${FAKE_SERVE_STATUS:-0}" == "0" && "\${MCP_SSO_SESSION_READY_FD-}" == "3
   exec 3>&-
 fi
 if [[ "\${FAKE_SERVE_WAIT-}" == "true" ]]; then
+  (
+    trap - EXIT INT TERM
+    while IFS= read -r -u 4; do :; done
+    printf parent-gone > "$PARENT_GONE_FILE"
+    kill -TERM "$$" 2>/dev/null || true
+  ) 3>&- &
+  PARENT_WATCH_PID=$!
   trap 'exit 130' INT
-  trap 'exit 143' TERM
+  trap 'printf terminated > "$SERVE_TERMINATED_FILE"; exit 143' TERM
+  printf '%s' "$$" > "$SERVE_PID_FILE"
   printf started > "$STARTED_FILE"
   while true; do sleep 0.1; done
 fi
@@ -57,7 +72,8 @@ if [[ "$target" == "\${FAIL_TARGET-}" ]]; then exit 9; fi
   ]) assert.equal(spawnSync("git", args, { cwd: repo }).status, 0);
   const env = {
     ...process.env, PATH: `${bin}:${process.env.PATH}`, SERVE_LOG: join(root, "serve.log"), CLIENT_LOG: join(root, "client.log"),
-    STARTED_FILE: join(root, "started"),
+    STARTED_FILE: join(root, "started"), PARENT_GONE_FILE: join(root, "parent-gone"),
+    SERVE_PID_FILE: join(root, "serve-pid"), SERVE_TERMINATED_FILE: join(root, "serve-terminated"),
   };
   return { root, repo, live, env, serveLog: env.SERVE_LOG, clientLog: env.CLIENT_LOG };
 }
@@ -68,6 +84,18 @@ function waitForFile(path) {
     const poll = () => {
       if (existsSync(path)) resolve();
       else if (Date.now() >= deadline) reject(new Error(`timed out waiting for ${path}`));
+      else setTimeout(poll, 10);
+    };
+    poll();
+  });
+}
+
+function waitForProcessExit(pid) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + 10_000;
+    const poll = () => {
+      try { process.kill(pid, 0); } catch { resolve(); return; }
+      if (Date.now() >= deadline) reject(new Error(`timed out waiting for process ${pid} to exit`));
       else setTimeout(poll, 10);
     };
     poll();
@@ -187,6 +215,28 @@ test("Ctrl-C reaches serve.sh and then cleans the selected client entries", asyn
       "claude mcp remove mcp-sso-live-cloudflare_access", "codex mcp remove mcp-sso-live-cloudflare_access",
     ]);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a killed session wrapper closes its lifeline and stops serve.sh", async () => {
+  const f = fixture();
+  let servePid;
+  try {
+    const child = spawn(process.execPath, [join(f.repo, "session.mjs"), "serve", "google"], {
+      cwd: f.repo, env: { ...f.env, FAKE_SERVE_WAIT: "true" }, stdio: "ignore",
+    });
+    await waitForReadySession(join(f.repo, ".live-state/session.json"));
+    servePid = Number(readFileSync(f.env.SERVE_PID_FILE, "utf8"));
+    process.kill(child.pid, "SIGKILL");
+    await new Promise((resolve) => { child.once("exit", resolve); });
+    await waitForFile(f.env.PARENT_GONE_FILE);
+    await waitForFile(f.env.SERVE_TERMINATED_FILE);
+    await waitForProcessExit(servePid);
+    assert.equal(run(f, ["cleanup"]).status, 0);
+    assert.equal(lines(f.clientLog).length, 6);
+  } finally {
+    if (servePid) try { process.kill(-servePid, "SIGKILL"); } catch { /* already gone */ }
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });
 
 test("session rejects unknown and repeated legs before any side effect", () => {
@@ -391,7 +441,7 @@ test("default watch reports a flow that was incomplete when watching began", asy
   }
 });
 
-test("repeated authorization preparation splits attempts that reuse one stored client id", () => {
+test("reused-client attempts split and later protected requests stay ambiguous", () => {
   const clientId = "stored-client";
   const events = audit(clientId, true);
   const second = audit(clientId, true, Date.parse(events.at(-1).occurredAt) + 1);
@@ -402,6 +452,10 @@ test("repeated authorization preparation splits attempts that reuse one stored c
   assert.deepEqual(flows.map((flow) => flow.events.filter((event) => event.event === "oauth.token.authorization_code").length), [1, 1]);
   assert.equal(flows[0].events[0].event, "oauth.cimd.fetch");
   assert.equal(flows[1].events[0].event, "identity.verify");
+  assert.deepEqual(flows.map(outcomeOf), [
+    { verdict: "PASS", toolCalls: 1, ambiguousToolCalls: 1 },
+    { verdict: "TOKEN_ONLY", toolCalls: 0, ambiguousToolCalls: 1 },
+  ]);
 });
 
 test("a protected request before the code exchange does not turn the later token into PASS", () => {

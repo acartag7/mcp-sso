@@ -1,19 +1,7 @@
 #!/usr/bin/env bash
-# Bring one or more legs up PUBLICLY so a real MCP client (Claude Code, Codex
-# CLI, Claude Desktop, claude.ai / ChatGPT custom connectors) can be pointed at
-# them.
-#
+# Bring one or more legs up publicly for a real MCP client.
 #   scripts/live/serve.sh <leg> [leg ...]     leg = cloudflare_access | entra | google
-#
-# Starts the shipped example once per leg on that leg's gateway port (through
-# run.sh, so every provider value comes from the stack outputs) and runs the
-# named Cloudflare tunnel with an ingress generated for exactly those
-# hostnames. One tunnel carries all requested legs; a second connector with a
-# different ingress would receive some of the traffic, so start every leg you
-# want served in ONE invocation. Ctrl-C stops the tunnel and the servers.
-#
-# Requires cloudflared, curl, and lsof on PATH. MCP_SSO_TUNNEL is the tunnel
-# UUID whose credentials file lives at ~/.cloudflared/<uuid>.json.
+# One tunnel carries every requested leg. Ctrl-C stops it and the servers.
 set -uo pipefail
 set +xv
 
@@ -22,6 +10,10 @@ fail() { echo "serve.sh: $1" >&2; exit 1; }
 SESSION_READY_FD="${MCP_SSO_SESSION_READY_FD:-}"
 if [[ -n "$SESSION_READY_FD" && "$SESSION_READY_FD" != "3" ]]; then
   fail "MCP_SSO_SESSION_READY_FD must be 3 when set"
+fi
+SESSION_PARENT_FD="${MCP_SSO_SESSION_PARENT_FD:-}"
+if [[ -n "$SESSION_PARENT_FD" && "$SESSION_PARENT_FD" != "4" ]]; then
+  fail "MCP_SSO_SESSION_PARENT_FD must be 4 when set"
 fi
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -90,6 +82,7 @@ done
 CONF=""
 SERVER_PIDS=()
 TUNNEL_PID=""
+PARENT_WATCH_PID=""
 
 # Terminate one child this script started, bounded: TERM, a grace period, then
 # KILL. An unbounded `wait` would let one child that ignores TERM — cloudflared
@@ -112,8 +105,10 @@ reap() {
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
-  # Signal only the processes this script started — never the process group,
-  # which would include the invoking shell and any sibling job.
+  if [[ -n "$PARENT_WATCH_PID" ]]; then
+    kill -9 "$PARENT_WATCH_PID" 2>/dev/null || true
+    wait "$PARENT_WATCH_PID" 2>/dev/null || true
+  fi
   if [[ -n "$TUNNEL_PID" ]]; then
     reap "$TUNNEL_PID"
   fi
@@ -128,6 +123,14 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [[ "$SESSION_PARENT_FD" == "4" ]]; then
+  (
+    trap - EXIT INT TERM
+    while IFS= read -r -u 4; do :; done
+    kill -TERM "$$" 2>/dev/null || true
+  ) 3>&- &
+  PARENT_WATCH_PID=$!
+fi
 
 # An explicit directory: `mktemp -t` picks one differently across platforms and
 # has written this file into the working directory, which is the repository.
@@ -158,8 +161,8 @@ echo
 # the child — as the listener. A stale process on the port would otherwise be
 # exposed as the build under test.
 for i in "${!LEGS[@]}"; do
-  env -u MCP_SSO_SESSION_READY_FD PORT="${GATEWAY_PORTS[$i]}" \
-    "$REPO/scripts/live/run.sh" examples/fastify-sqlite/index.ts "${LEGS[$i]}" 3>&- &
+  env -u MCP_SSO_SESSION_READY_FD -u MCP_SSO_SESSION_PARENT_FD PORT="${GATEWAY_PORTS[$i]}" \
+    "$REPO/scripts/live/run.sh" examples/fastify-sqlite/index.ts "${LEGS[$i]}" 3>&- 4>&- &
   SERVER_PIDS+=("$!")
 done
 for i in "${!LEGS[@]}"; do
@@ -215,8 +218,8 @@ done
 # the vendor keys are removed from its environment. It still runs as this
 # user, so their 0600 modes remain the boundary for the files themselves;
 # docs/reference/live-harness.md records what that does and does not buy.
-env -u MCP_SSO_BUNDLE_DIR -u MCP_SSO_GOOGLE_ENV -u MCP_SSO_CLIENT_KEYS_FILE -u MCP_SSO_SESSION_READY_FD \
-  cloudflared tunnel --config "$CONF" run "$TUNNEL" 3>&- &
+env -u MCP_SSO_BUNDLE_DIR -u MCP_SSO_GOOGLE_ENV -u MCP_SSO_CLIENT_KEYS_FILE -u MCP_SSO_SESSION_READY_FD -u MCP_SSO_SESSION_PARENT_FD \
+  cloudflared tunnel --config "$CONF" run "$TUNNEL" 3>&- 4>&- &
 TUNNEL_PID=$!
 SESSION_READY=false
 while kill -0 "$TUNNEL_PID" 2>/dev/null; do

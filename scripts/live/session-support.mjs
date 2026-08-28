@@ -150,6 +150,7 @@ const STARTS = new Set(["oauth.cimd.fetch", "oauth.register"]);
 export function buildFlows(events) {
   const flows = [];
   const active = new Map();
+  const attempts = new Map();
   let held = [];
   for (const event of events) {
     if (isChallenge(event)) continue;
@@ -160,12 +161,19 @@ export function buildFlows(events) {
       continue;
     }
     let flow = active.get(event.clientId);
+    let clientAttempts = attempts.get(event.clientId);
+    if (clientAttempts === undefined) { clientAttempts = []; attempts.set(event.clientId, clientAttempts); }
     const startsAnotherAttempt = event.event === "oauth.authorize.prepare"
       && flow?.events.some((candidate) => candidate.event === "oauth.authorize.prepare");
     if (flow === undefined || STARTS.has(event.event) || startsAnotherAttempt) {
       flow = { clientId: event.clientId, events: [] };
       flows.push(flow);
+      clientAttempts.push(flow);
       active.set(event.clientId, flow);
+    }
+    if (event.event === "auth.request" && clientAttempts.length > 1) {
+      for (const attempt of clientAttempts) attempt.ambiguousToolCalls = (attempt.ambiguousToolCalls ?? 0) + 1;
+      continue;
     }
     if (held.length > 0) { flow.events.push(...held); held = []; }
     flow.events.push(event);
@@ -212,10 +220,11 @@ export function outcomeOf(flow) {
   const tokenAt = flow.events.findIndex((event) => event.event === "oauth.token.authorization_code" && event.status === "success");
   const toolCalls = tokenAt < 0 ? 0 : flow.events.slice(tokenAt + 1)
     .filter((event) => event.event === "auth.request" && event.status === "success").length;
-  if (denial !== undefined) return { verdict: "DENIED", reason: denial.reason ?? "unspecified", toolCalls };
-  if (tokenAt >= 0 && toolCalls > 0) return { verdict: "PASS", toolCalls };
-  if (tokenAt >= 0) return { verdict: "TOKEN_ONLY", toolCalls };
-  return { verdict: "INCOMPLETE", toolCalls: 0 };
+  const ambiguousToolCalls = flow.ambiguousToolCalls ?? 0;
+  if (denial !== undefined) return { verdict: "DENIED", reason: denial.reason ?? "unspecified", toolCalls, ambiguousToolCalls };
+  if (tokenAt >= 0 && toolCalls > 0) return { verdict: "PASS", toolCalls, ambiguousToolCalls };
+  if (tokenAt >= 0) return { verdict: "TOKEN_ONLY", toolCalls, ambiguousToolCalls };
+  return { verdict: "INCOMPLETE", toolCalls: 0, ambiguousToolCalls };
 }
 
 export function chainOf(flow) {
