@@ -121,7 +121,7 @@ Do not use a live result as the only evidence for a security property.
    > [!WARNING]
    > Plain `npm version` also creates a `vX.Y.Z` tag and commit. `publish.yml` triggers on exactly that tag, so a stray local tag pushed later starts a real publish from whatever it points at.
 
-3. Update the two pages that carry the version and the campaign in prose. Neither is an evidence input, so both belong in this pull request: the `npm package and tag` row and the "What vX.Y.Z adds" section of [`verification-status.md`](verification-status.md), and every `Runtime commit` and `Date` cell in [`client-compatibility.md`](client-compatibility.md), plus its client-version sentences, from what `record-receipt.mjs` printed.
+3. Update the two pages that carry the version and the campaign in prose. Neither is an evidence input, so both belong in this pull request: the `npm package and tag` row and the "What vX.Y.Z adds" section of [`verification-status.md`](verification-status.md), and every `Runtime commit` and `Date` cell in [`client-compatibility.md`](client-compatibility.md), plus its client-version sentences. `record-receipt.mjs` prints the commit, the date for the rehearsal rows, and each row with what it observed; the rows you drove take the day you drove them.
 4. Commit those, `docs/evidence/release.json`, and the receipt it superseded under `docs/evidence/archive/` if there was one.
 5. Change nothing else. Every other evidence input would age the receipt you just recorded, and the pull request would refuse its own release.
 
@@ -145,8 +145,17 @@ Then push the branch and open the pull request.
 3. Read every review and inline thread.
 4. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
 5. Merge it into `main`.
-6. Fetch `origin/main` and run `pnpm run check:release-matrix` and `pnpm run check:release-ready` on that exact commit.
-7. Confirm that the commit selected for the tag is on `origin/main`. Do not tag an unmerged branch or a local-only commit.
+6. Fetch `origin/main`, note the merge commit, and run the gates on that exact commit:
+
+   ```bash
+   git fetch origin
+   RELEASE_SHA=$(git rev-parse origin/main)
+   git log -1 --format='%h %s' "$RELEASE_SHA"   # must be your chore(release) merge
+   git switch --detach "$RELEASE_SHA"
+   pnpm run check:release-matrix && pnpm run check:release-ready
+   ```
+
+7. Keep that sha. The tag goes on it by sha, not on whatever `origin/main` points at later.
 
 ## Verify the publish controls
 
@@ -160,11 +169,16 @@ Then push the branch and open the pull request.
 ## Publish
 
 1. Confirm that the tag is `v${package.version}`. `.github/workflows/publish.yml` re-checks this in its `build` job and fails the run before any install, build, pack, or publish step, so a mismatched tag cannot reach npm. Confirming it here avoids a failed run and a tag you then have to delete and re-push.
-2. Push the tag, on the merged commit and only after the pull request is in `origin/main`. Do not create the GitHub Release first.
+2. Tag the sha from Merge step 6, confirm the tag landed on the release merge, and push it. Do not create the GitHub Release first.
 
    ```bash
-   git fetch origin && git tag vX.Y.Z origin/main && git push origin vX.Y.Z
+   git tag vX.Y.Z "$RELEASE_SHA"
+   git log -1 --format='%s' vX.Y.Z    # must read: chore(release): X.Y.Z (#N)
+   git push origin vX.Y.Z
    ```
+
+   > [!WARNING]
+   > Do not tag `origin/main` by name. Any pull request merged between the release merge and this step moves it, and the tag would land on that commit instead: the published tarball would then be built from a tree the campaign never ran against, and no gate refuses it because the file that moved need not be an evidence input.
 3. Confirm that the build job creates one tarball and one SHA-256 file.
 4. Confirm that the OIDC job publishes that digest-verified tarball without a checkout, dependency installation, or repository scripts.
 5. Confirm that the GitHub Release job starts only after npm publication succeeds.

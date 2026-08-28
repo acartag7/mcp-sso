@@ -89,7 +89,7 @@ test("BEHAVIOUR record-receipt: a campaign supersedes the one before it, and a f
     const first = `${JSON.stringify({ runtimeCommit: COMMIT, ranAt: "2026-08-27T00:00:00.000Z" })}\n`;
     assert.equal(writeActiveReceipt(path, first), null, "the first recording supersedes nothing");
     const archived = writeActiveReceipt(path, `${JSON.stringify({ runtimeCommit: "b".repeat(40) })}\n`);
-    assert.ok(archived?.includes(`release-${COMMIT.slice(0, 7)}-20260827T0000`), "the one it replaces is archived under its own campaign");
+    assert.ok(archived?.includes(`release-${COMMIT.slice(0, 7)}-20260827T000000`), "the one it replaces is archived under its own campaign");
     assert.equal(readFileSync(archived, "utf8"), first, "moved, not deleted");
     assert.match(readFileSync(path, "utf8"), /bbbbbbb/, "and the new one is active");
 

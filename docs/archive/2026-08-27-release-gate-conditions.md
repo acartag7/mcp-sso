@@ -56,7 +56,7 @@ Every one of these is a rule about Markdown rather than about evidence. They exi
 | provider evidence: row has missing or malformed Provider/Client/Flow driven cell | Those three cells identified a row. A receipt row has an id. |
 | provider evidence: duplicate row for provider / client / flow | Duplicate detection over a three-cell tuple. A receipt rejects a repeated row id. |
 | provider evidence: has malformed status / unknown status | The closed vocabulary Verified, Verified with limit, Not run. A receipt row is PASS or it is not evidence. |
-| provider evidence: missing or malformed date | The date was part of the receipt-in-prose. A receipt records recordedAt and, more importantly, the commit. |
+| provider evidence: missing or malformed date | The date was part of the receipt-in-prose. A receipt records `ranAt` and `recordedAt` and, more importantly, the commit. |
 | provider evidence: missing or malformed limitation | The `Limit:` marker had to follow the runtime receipt in the same cell. A limit is prose for a reader now, and what was actually driven is in the receipt's rows. |
 | provider evidence: contradictory Verified evidence | A status that disagreed with its own cell payload. Not expressible in a receipt. |
 | provider evidence: malformed runtime evidence receipt | The `Runtime commit ...` grammar inside a table cell. A receipt has a runtimeCommit field. |

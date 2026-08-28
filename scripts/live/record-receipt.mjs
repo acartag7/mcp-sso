@@ -186,7 +186,9 @@ export function writeActiveReceipt(path, body) {
     }
     // Named by when the run happened, not when it was filed, so one campaign
     // has one archive name however many times it was recorded.
-    const stamp = String(previous.ranAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
+    // 15 characters is YYYYMMDDTHHMMSS. Fourteen cut seconds after their first
+    // digit, so the name claimed a precision it did not have.
+    const stamp = String(previous.ranAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 15) || "undated";
     const base = `release-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
     const archiveDir = resolve(dirname(path), "archive");
     mkdirSync(archiveDir, { recursive: true });
@@ -308,7 +310,11 @@ if (invokedAsMain()) {
     // The page a person reads is not generated, and it should not silently
     // fall behind the receipt either. This is what changed, in the words the
     // page uses, for whoever lands the evidence.
-    process.stdout.write(`\nFor docs/client-compatibility.md, at runtime commit ${receipt.runtimeCommit.slice(0, 7)}:\n`);
+    process.stdout.write(
+      `\nFor docs/client-compatibility.md, at runtime commit ${receipt.runtimeCommit.slice(0, 7)}.\n`
+      + `Date for the rehearsal rows: ${String(evidence.ranAt).slice(0, 10)}. `
+      + "Hand-driven rows take the day you drove them.\n",
+    );
     for (const row of evidence.rows) {
       const observed = row.observed?.length > 0 ? `  (${row.observed.join("; ")})` : "";
       process.stdout.write(`  ${row.id}${observed}\n`);
