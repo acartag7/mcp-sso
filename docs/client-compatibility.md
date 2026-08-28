@@ -12,7 +12,7 @@ This reference records the latest client and identity-provider results that appl
 | OAuth mechanics | The client completes registration or CIMD discovery, authorization, consent, token exchange, and a protected `/mcp` call. A local identity stub can establish this level. |
 | Production identity | The upstream identity provider authenticates the user, and `mcp-sso` accepts or rejects that identity through the configured identity adapter. |
 
-Each campaign is recorded as a receipt under [`docs/evidence/`](evidence/), and the receipt's `producer` field, `rehearsal` or `operator`, is what the release gate reads to decide what ages that evidence. Editing a cell in this page changes nothing about release readiness.
+Each campaign is recorded as one receipt at [`docs/evidence/release.json`](evidence/release.json), holding both the rows a probe checked and the rows a person drove. That receipt is what the release gate reads. Editing a cell in this page changes nothing about release readiness.
 
 ## Current matrix
 

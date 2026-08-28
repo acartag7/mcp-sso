@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { formatReleaseReadinessFailure, parseReleaseReadyArgs } from "../scripts/lib/release-ready-output.mjs";
 import {
   ancestor, buildRelease, cleanupReleaseReadyFixture, deploymentRelease, fixture, harnessRelease, metadataRelease,
-  operatorReceiptFor, packageRelease, receiptFor, receipts, release, runtimeRelease, setupReleaseReadyFixture,
+  packageRelease, receiptFor, receipts, release, runtimeRelease, setupReleaseReadyFixture,
   unrelated, versionRelease,
 } from "./lib/release-ready-fixture.mjs";
 
@@ -24,57 +24,52 @@ test("a complete receipt at an ancestor commit is accepted", () => {
 });
 
 test("a receipt is rejected when it is not evidence", () => {
-  // Built as operator receipts where the shape under test is not about the
-  // rehearsal's row set, which is re-derived separately.
+  const rows = receiptFor(ancestor).rows;
   const cases = [
     [{ complete: false }, "is partial, so it is not evidence"],
     [{ schema: 2 }, "unrecognised schema 2"],
-    [{ producer: "someone" }, 'unknown producer "someone"'],
     [{ runtimeCommit: "nope" }, "runtime commit is malformed"],
     [{ rows: [] }, "records no rows"],
-    [{ releaseMatrix: ["RM.1"] }, "cannot carry release-matrix rows"],
-    [{ rows: [{ id: "F2", status: "FAIL" }] }, "row F2 did not pass"],
-    [{ rows: [{ id: "F2", status: "PASS" }, { id: "F2", status: "PASS" }] }, "repeats row F2"],
-    [{ rows: [{ id: "", status: "PASS" }] }, "has a row with no readable id"],
+    [{ rows: [...rows, { id: "F2", status: "FAIL" }] }, "row F2 did not pass"],
+    [{ rows: [...rows, { id: "F2", status: "PASS" }, { id: "F2", status: "PASS" }] }, "repeats row F2"],
+    [{ rows: [...rows, { id: "", status: "PASS" }] }, "has a row with no readable id"],
     [{ releaseMatrix: ["RM.1", "not a row id!"] }, "names release-matrix rows that are not readable ids"],
   ];
   for (const [override, expected] of cases) {
-    const errors = fixture({
-      receipts: { "rehearsal.json": receiptFor(ancestor), "operator.json": operatorReceiptFor(ancestor, override) },
-    }).errors;
+    const errors = fixture({ receipts: receipts(receiptFor(ancestor, override)) }).errors;
     assert.ok(errors.some((error) => error.includes(expected)), `${JSON.stringify(override)} → ${JSON.stringify(errors)}`);
   }
-  assert.ok(fixture({ receipts: { "operator.json": operatorReceiptFor(ancestor) } }).errors.includes("no rehearsal receipt at docs/evidence/rehearsal.json"),
+  assert.ok(fixture({ receipts: {} }).errors.includes("no receipt at docs/evidence/release.json"),
     "no receipt at all is not a pass");
-  assert.ok(fixture({ receipts: { ...receipts(), "rehearsal.json": "a string" } }).errors.some((e) => e.includes("is not an object")));
+  assert.ok(fixture({ receipts: { "release.json": "a string" } }).errors.some((e) => e.includes("is not an object")));
 });
 
-test("an operator receipt is evidence, and covers no export", () => {
-  const operator = { producer: "operator", releaseMatrix: undefined, rows: [{ id: "F2", status: "PASS" }] };
-  const withBoth = fixture({ receipts: { "rehearsal.json": receiptFor(ancestor), "operator.json": receiptFor(ancestor, operator) } });
-  assert.deepEqual(withBoth.errors, [], "both producers are evidence");
-  const alone = fixture({ receipts: { "operator.json": receiptFor(ancestor, operator) } });
-  assert.ok(alone.errors.includes("no rehearsal receipt at docs/evidence/rehearsal.json"), "and it is not a substitute for one");
-  for (const name of [".", "./fastify"]) {
-    assert.ok(alone.errors.includes(`no live evidence covers export ${name}`), `on its own it covers no export: ${name}`);
-  }
+test("one campaign, so a second active document is a superseded one left behind", () => {
+  // Rows a person drove ride in the same receipt as the machine-checked ones,
+  // because they were driven in the same campaign against the same commit.
+  const together = receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "F2", status: "PASS", driven: true }] });
+  assert.deepEqual(fixture({ receipts: receipts(together) }).errors, [], "hand-driven rows are evidence in the one receipt");
+
+  const stray = { ...receipts(), "operator.json": receiptFor(ancestor) };
+  assert.ok(fixture({ receipts: stray }).errors.some((e) => e.includes("docs/evidence/operator.json is not the active receipt")),
+    "and a second document belongs in archive/");
 });
 
 test("a receipt must name a commit the release contains", () => {
-  const missing = fixture({ receipts: receipts({ rehearsal: receiptFor("f".repeat(40)) }) });
+  const missing = fixture({ receipts: receipts(receiptFor("f".repeat(40))) });
   assert.ok(missing.errors.some((error) => error.includes("not available in git history")));
-  const foreign = fixture({ receipts: receipts({ rehearsal: receiptFor(unrelated) }) });
+  const foreign = fixture({ receipts: receipts(receiptFor(unrelated)) });
   assert.ok(foreign.errors.some((error) => error.includes("is not an ancestor of the release commit")));
 });
 
 test("every public export needs a passing packed-artifact row", () => {
-  const uncovered = fixture({ receipts: receipts({ rehearsal: receiptFor(ancestor, { releaseMatrix: ["RM.1"] }) }) });
+  const uncovered = fixture({ receipts: receipts(receiptFor(ancestor, { releaseMatrix: ["RM.1"] })) });
   assert.deepEqual(uncovered.errors, ["no live evidence covers export ./fastify"]);
-  const none = fixture({ receipts: receipts({ rehearsal: receiptFor(ancestor, { releaseMatrix: [] }) }) });
+  const none = fixture({ receipts: receipts(receiptFor(ancestor, { releaseMatrix: [] })) });
   assert.equal(none.errors.length, 2, "both exports uncovered");
   // Coverage may come from more than one campaign.
   const split = fixture({
-    receipts: receipts({ rehearsal: receiptFor(ancestor, { releaseMatrix: ["RM.1", "RM.2"] }) }),
+    receipts: receipts(receiptFor(ancestor, { releaseMatrix: ["RM.1", "RM.2"] })),
   });
   assert.deepEqual(split.errors, []);
 });
@@ -93,7 +88,7 @@ test("a malformed release matrix is rejected before it can cover anything", () =
 });
 
 test("a receipt cannot claim a release-matrix row the matrix does not define", () => {
-  const invented = fixture({ receipts: receipts({ rehearsal: receiptFor(ancestor, { releaseMatrix: ["RM.1", "invented"] }) }) });
+  const invented = fixture({ receipts: receipts(receiptFor(ancestor, { releaseMatrix: ["RM.1", "invented"] })) });
   assert.ok(invented.errors.some((error) => error.includes("names invented, which the release matrix does not define")),
     `an invented id proves nothing: ${JSON.stringify(invented.errors)}`);
   assert.ok(invented.errors.some((error) => error.includes("no live evidence covers export ./fastify")),
@@ -113,42 +108,41 @@ test("a matrix row cannot name an export the package does not declare", () => {
 });
 
 test("a receipt ages when what a client would observe changes, and not otherwise", () => {
-  const at = (releaseCommit) => fixture({ receipts: receipts({ rehearsal: receiptFor(ancestor) }), releaseCommit });
+  const at = (releaseCommit) => fixture({ receipts: receipts(receiptFor(ancestor)), releaseCommit });
+  const ages = (releaseCommit) => at(releaseCommit).staleEvidence.length === 1;
 
   const runtime = at(runtimeRelease);
-  assert.deepEqual([...new Set(runtime.staleEvidence.map((entry) => entry.commit))], [ancestor], "a src/ change ages it");
-  assert.equal(runtime.staleEvidence.length, 2, "and it ages both campaigns, because both observed that code");
+  assert.ok(ages(runtimeRelease), "a src/ change ages it");
   assert.ok(runtime.staleEvidence[0].changedInputs.includes("src/runtime.ts"));
 
   const deployment = at(deploymentRelease);
-  assert.equal(deployment.staleEvidence.length, 2, "the leg's own composition changes what any client observes");
+  assert.ok(ages(deploymentRelease), "the leg's own composition changes what any client observes");
   for (const path of ["scripts/live/serve.sh", "scripts/live/run.sh", "scripts/live/run-support.mjs"]) {
     assert.ok(deployment.staleEvidence[0].changedInputs.includes(path), `${path} must age a receipt`);
   }
 
-  // Evidence-producing code ages the receipt it produced, and only that one.
-  // A rehearsal receipt is rewritten by one dispatch, so requiring a fresh run
-  // after a probe changes costs a dispatch. An operator receipt records what a
-  // real client did against a served leg: no probe produced it, and ageing it
-  // on a probe change is what cost a browser campaign to re-record the same
-  // observations.
-  const rehearsalAfterProbe = at(harnessRelease);
-  assert.deepEqual(rehearsalAfterProbe.staleEvidence.map((entry) => entry.label), ["rehearsal.json"],
-    "a probe change ages the rehearsal receipt it produced, and only that one");
-  assert.ok(rehearsalAfterProbe.staleEvidence[0].changedInputs.includes("scripts/live/probe-entra.mjs"));
+  // The code that produced the evidence ages it too: a receipt produced by a
+  // probe that has since been corrected should not stand as current, and
+  // re-running is a local command.
+  const afterProbe = at(harnessRelease);
+  assert.ok(ages(harnessRelease), "a probe change ages the receipt it produced");
+  assert.ok(afterProbe.staleEvidence[0].changedInputs.includes("scripts/live/probe-entra.mjs"));
 
-  assert.ok(!rehearsalAfterProbe.staleEvidence.some((entry) => entry.label === "operator.json"), "and never an operator's");
-
-  assert.equal(at(packageRelease).staleEvidence.length, 2, "an exports change ages it");
-  assert.equal(at(buildRelease).staleEvidence.length, 2, "a build-script change ages it");
-  assert.equal(at(versionRelease).staleEvidence.length, 2, "a version change ages it");
+  assert.ok(ages(packageRelease), "an exports change ages it");
+  assert.ok(ages(buildRelease), "a build-script change ages it");
   assert.deepEqual(at(metadataRelease).staleEvidence, [], "description and the gate's own script do not");
+
+  // The bump is a step of every release, and nothing a client observes over the
+  // OAuth and MCP endpoints changes with it. Ageing evidence on it is what
+  // forced the bump and the campaign proving it into two pull requests.
+  assert.deepEqual(at(versionRelease).staleEvidence, [],
+    "a version bump does not age evidence, so one pull request carries the bump and its evidence");
 });
 
 test("the failure output names the receipt and what changed", () => {
-  const stale = fixture({ receipts: receipts({ rehearsal: receiptFor(ancestor) }), releaseCommit: runtimeRelease });
+  const stale = fixture({ receipts: receipts(receiptFor(ancestor)), releaseCommit: runtimeRelease });
   const compact = formatReleaseReadinessFailure({ ...stale, releaseTarget: "HEAD", verbose: false });
-  assert.match(compact, /- 2 recorded evidence commits predate release evidence inputs/);
+  assert.match(compact, /- 1 recorded evidence commit predates release evidence inputs/);
   assert.match(compact, /src\//);
   assert.match(compact, /record the new commit in\n  a receipt under docs\/evidence\//, "the recovery step names where evidence lives");
   const verbose = formatReleaseReadinessFailure({ ...stale, releaseTarget: "HEAD", verbose: true });

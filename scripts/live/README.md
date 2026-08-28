@@ -110,14 +110,14 @@ The client rows run against legs the rehearsal brings up itself through `serve.s
 ### Recording a passing receipt
 
 ```sh
-node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json --write
+node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json --row C1 --row F2 --write
 ```
 
-`record-receipt.mjs` turns a receipt whose every row passed on a clean tree into the release evidence the gate reads: one JSON document under `docs/evidence/` naming the runtime commit, every row and its status, and the release-matrix rows the run proved. It re-derives completeness from the receipt's own rows rather than trusting the receipt to summarise itself, so a partial run, a dirty tree, a failed row, or a row the rehearsal does not define is refused and nothing is written.
+`record-receipt.mjs` turns a receipt whose every row passed on a clean tree into the release evidence the gate reads: `docs/evidence/release.json`, naming the runtime commit, every row and its status, and the release-matrix rows the run proved. Each `--row` adds a row you drove yourself and that passed, for the hosted connectors no probe can drive; naming a row the rehearsal already checked is refused, because the recorder does not take a person's word for what a probe decides. It re-derives completeness from the receipt's own rows rather than trusting the receipt to summarise itself, so a partial run, a dirty tree, or a failed row is refused and nothing is written.
 
-`check:release-ready` reads those documents. It reads no prose: [`docs/client-compatibility.md`](../../docs/client-compatibility.md) is written for readers, and an operator's own live client runs are recorded the same way, as a receipt with `producer: "operator"`.
+`check:release-ready` reads that document and no prose: [`docs/client-compatibility.md`](../../docs/client-compatibility.md) is written for readers. A new campaign supersedes the one before it, which moves to `docs/evidence/archive/`.
 
-In CI, `gh workflow run live.yml -f record=true` on `main` runs the rehearsal and then records the receipt from a passing run whose commit is the checked-out `HEAD`, uploading the document as the `evidence-<sha>` artifact. That job holds no write token and no checkout credential. Download the artifact, commit the file, and open a pull request. The nightly run and the `rehearsal/*` runs never record.
+Release evidence is recorded locally, not in CI: the rows a person drives against a served leg cannot be driven by a workflow, and a document holding only the machine-checked half is not the campaign. The nightly `live.yml` run and the `rehearsal/*` runs are a canary for drift in the probes; they record nothing. The release procedure is in [the release checklist](../../docs/release-checklist.md).
 
 ### The identity driver
 

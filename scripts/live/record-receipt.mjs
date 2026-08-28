@@ -76,19 +76,31 @@ export function assertClientVersions(receipt) {
   return receipt;
 }
 
-/** The evidence document, in the schema the gate reads. */
-export function toEvidence(receipt, { source } = {}) {
+/** The evidence document, in the schema the gate reads. One campaign: the rows
+ *  the rehearsal machine-checked, plus the rows a person drove against the same
+ *  served leg, which no probe can drive. */
+export function toEvidence(receipt, { source, driven = [] } = {}) {
+  const machineChecked = new Set(receipt.rows.map((row) => row.id));
+  for (const id of driven) {
+    if (machineChecked.has(id)) throw new Error(`row ${id} is machine-checked; it cannot also be recorded by hand`);
+  }
+  if (new Set(driven).size !== driven.length) throw new Error("a hand-driven row is named twice");
   return {
     schema: 1,
-    producer: "rehearsal",
     runtimeCommit: receipt.runtimeCommit,
     recordedAt: receipt.finishedAt ?? receipt.startedAt,
     ...(source === undefined ? {} : { source }),
     complete: true,
-    rows: receipt.rows.map((row) => {
-      const observed = observationsOf(row);
-      return { id: row.id, status: row.status, ...(observed.length === 0 ? {} : { observed }) };
-    }),
+    rows: [
+      ...receipt.rows.map((row) => {
+        const observed = observationsOf(row);
+        return { id: row.id, status: row.status, ...(observed.length === 0 ? {} : { observed }) };
+      }),
+      // A hand-driven row is recorded only when it passed: a row that failed or
+      // was not driven is left out, and the campaign is not evidence until it
+      // is driven. There is no status to record but PASS.
+      ...driven.map((id) => ({ id, status: "PASS", driven: true })),
+    ],
     releaseMatrix: provenMatrixRows(receipt),
   };
 }
@@ -103,7 +115,7 @@ const invokedAsMain = () => {
 
 /** Replace the active receipt with `body`, archiving the one it supersedes.
  *
- *  One active receipt per producer. A campaign supersedes the one before it,
+ *  One active receipt. A campaign supersedes the one before it,
  *  and the gate would otherwise keep failing on the older document forever:
  *  its commit predates the very change the new run was recorded for. The
  *  superseded receipt is archived rather than deleted. Returns the archive
@@ -132,7 +144,7 @@ export function writeActiveReceipt(path, body) {
     // and observations, and overwriting it would discard a campaign that ran.
     const previous = JSON.parse(readFileSync(path, "utf8"));
     const stamp = String(previous.recordedAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
-    const base = `rehearsal-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
+    const base = `release-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
     const archiveDir = resolve(dirname(path), "archive");
     mkdirSync(archiveDir, { recursive: true });
     // A repeated recording of the same artifact produces the same name. The
@@ -166,12 +178,13 @@ export function writeActiveReceipt(path, body) {
 
 if (invokedAsMain()) {
   const argv = process.argv.slice(2);
-  const options = { receipt: undefined, write: false, requireHead: false, source: process.env.MCP_SSO_RUN_URL };
+  const options = { receipt: undefined, write: false, requireHead: false, source: process.env.MCP_SSO_RUN_URL, driven: [] };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--receipt" && argv[i + 1]) options.receipt = argv[++i];
     else if (argv[i] === "--write") options.write = true;
     else if (argv[i] === "--require-head") options.requireHead = true;
-    else throw new Error("usage: record-receipt.mjs --receipt <file> [--write] [--require-head]");
+    else if (argv[i] === "--row" && argv[i + 1]) options.driven.push(argv[++i]);
+    else throw new Error("usage: record-receipt.mjs --receipt <file> [--row <id>]... [--write] [--require-head]");
   }
   if (!options.receipt) throw new Error("--receipt is required");
   const receipt = assertClientVersions(readRehearsalReceipt(JSON.parse(readFileSync(options.receipt, "utf8"))));
@@ -179,10 +192,10 @@ if (invokedAsMain()) {
     const head = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     if (head !== receipt.runtimeCommit) throw new Error("the receipt's runtime commit is not the checked-out HEAD");
   }
-  const evidence = toEvidence(receipt, { source: options.source });
+  const evidence = toEvidence(receipt, { source: options.source, driven: options.driven });
   const body = `${JSON.stringify(evidence, null, 2)}\n`;
   if (options.write) {
-    const path = resolve(ROOT, "docs/evidence/rehearsal.json");
+    const path = resolve(ROOT, "docs/evidence/release.json");
     const archived = writeActiveReceipt(path, body);
     if (archived) process.stdout.write(`${archived} archived\n`);
     process.stdout.write(`${path} written for ${receipt.runtimeCommit}\n`);

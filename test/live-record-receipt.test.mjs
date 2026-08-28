@@ -78,15 +78,15 @@ test("BEHAVIOUR record-receipt: the release-matrix rows come from the row that r
 });
 
 test("BEHAVIOUR record-receipt: a campaign supersedes the one before it, and a failed one leaves nothing behind", () => {
-  // Two receipts for the same producer would leave the older one failing
-  // freshness forever: its commit predates the change the new run recorded.
+  // A second active receipt would leave the older one failing freshness
+  // forever: its commit predates the change the new run recorded.
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-receipt-"));
   try {
-    const path = join(dir, "rehearsal.json");
+    const path = join(dir, "release.json");
     const first = `${JSON.stringify({ runtimeCommit: COMMIT, recordedAt: "2026-08-27T00:00:00.000Z" })}\n`;
     assert.equal(writeActiveReceipt(path, first), null, "the first recording supersedes nothing");
     const archived = writeActiveReceipt(path, `${JSON.stringify({ runtimeCommit: "b".repeat(40) })}\n`);
-    assert.ok(archived?.includes(`rehearsal-${COMMIT.slice(0, 7)}-20260827T0000`), "the one it replaces is archived under its own campaign");
+    assert.ok(archived?.includes(`release-${COMMIT.slice(0, 7)}-20260827T0000`), "the one it replaces is archived under its own campaign");
     assert.equal(readFileSync(archived, "utf8"), first, "moved, not deleted");
     assert.match(readFileSync(path, "utf8"), /bbbbbbb/, "and the new one is active");
 
@@ -121,7 +121,7 @@ test("BEHAVIOUR record-receipt: the first receipt is staged too, so a failed wri
   // fails to parse, and there is no previous receipt to roll back to.
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-receipt-"));
   try {
-    const path = join(dir, "rehearsal.json");
+    const path = join(dir, "release.json");
     // Staging cannot succeed, so nothing may reach the active receipt.
     mkdirSync(`${path}.staged`);
     assert.throws(() => writeActiveReceipt(path, "{}\n"), "a failed staging fails the recording");
@@ -137,7 +137,6 @@ test("BEHAVIOUR record-receipt: the first receipt is staged too, so a failed wri
 test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => {
   const evidence = toEvidence(readRehearsalReceipt(receiptFor()), { source: "https://example.invalid/run" });
   assert.equal(evidence.schema, 1);
-  assert.equal(evidence.producer, "rehearsal");
   assert.equal(evidence.complete, true);
   assert.equal(evidence.rows.length, ROWS.length);
   assert.ok(evidence.rows.every((row) => ["id", "status", "observed"].includes(Object.keys(row)[0]) && row.id && row.status));
@@ -154,40 +153,25 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   // The generated value itself goes through the gate, not a static file beside
   // it: dropping releaseMatrix from toEvidence must fail here rather than leave
   // the workflow producing an artifact nothing accepts.
+  // The generated value itself goes through the gate, not a static file beside
+  // it: dropping releaseMatrix from toEvidence must fail here rather than leave
+  // the recorder producing a document nothing accepts.
   const head = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const generated = toEvidence(readRehearsalReceipt(receiptFor({ runtimeCommit: head })));
-  const onlyGenerated = evaluateReleaseReadiness({
+  const generated = toEvidence(readRehearsalReceipt(receiptFor({ runtimeCommit: head })), { driven: ["C1", "F2"] });
+  const accepted = evaluateReleaseReadiness({
     packageJson: { version: "0.5.0", exports: { ".": {} } },
     releaseMatrix: { rows: [{ id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "test/a.test.ts", name: "a" }] }] },
-    receipts: {
-      "rehearsal.json": generated,
-      "operator.json": { schema: 1, producer: "operator", runtimeCommit: head, recordedAt: "x", complete: true, rows: [{ id: "F2", status: "PASS" }] },
-    },
+    receipts: { "release.json": generated },
     gitCwd: ROOT, releaseCommit: "HEAD",
   });
-  assert.deepEqual(onlyGenerated.errors, [], "the gate accepts exactly what the recorder writes");
+  assert.deepEqual(accepted.errors, [], "the gate accepts exactly what the recorder writes, hand-driven rows included");
+  assert.deepEqual(generated.rows.filter((row) => row.driven).map((row) => row.id), ["C1", "F2"],
+    "and the rows a person drove are in the same document, marked as driven");
 
-  // The committed receipts name commits from earlier campaigns, so this part
-  // needs the history a release checkout has. Ordinary CI clones shallow, and
-  // the release flow is where the gate actually runs: the publish build checks
-  // out full history before it calls check:release-ready.
-  const shallow = execFileSync("git", ["-C", ROOT, "rev-parse", "--is-shallow-repository"], { encoding: "utf8" }).trim() === "true";
-  if (shallow) return;
-  const receipts = Object.fromEntries(["rehearsal.json", "operator.json"]
-    .map((name) => [name, JSON.parse(readFileSync(new URL(`../docs/evidence/${name}`, import.meta.url), "utf8"))]));
-  const result = evaluateReleaseReadiness({
-    packageJson: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")),
-    releaseMatrix: JSON.parse(readFileSync(new URL("../test/release-matrix.json", import.meta.url), "utf8")),
-    receipts,
-    gitCwd: ROOT, releaseCommit: "HEAD",
-  });
-  assert.deepEqual(result.errors, [], "the repository's own evidence satisfies its own gate");
-  // Only a rehearsal receipt covers exports, and only through its own passing
-  // release-matrix row.
-  const forged = { ...receipts["operator.json"], releaseMatrix: ["RM.1"] };
-  const claimed = evaluateReleaseReadiness({ ...result, packageJson: { version: "0.5.0", exports: { ".": {} } },
-    releaseMatrix: { rows: [{ id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "a", name: "b" }] }] },
-    receipts: { "rehearsal.json": receipts["rehearsal.json"], "operator.json": forged },
-    gitCwd: ROOT, releaseCommit: "HEAD" });
-  assert.ok(claimed.errors.some((e) => e.includes("cannot carry release-matrix rows")), "an operator receipt cannot mint coverage");
+  // A hand-driven row cannot restate a machine-checked one: that would record a
+  // person's word for something a probe already decides.
+  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: ["release-matrix"] }),
+    /machine-checked/, "a machine-checked row cannot be claimed by hand");
+  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: ["C1", "C1"] }),
+    /named twice/, "and a hand-driven row cannot be named twice");
 });

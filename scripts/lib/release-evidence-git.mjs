@@ -3,38 +3,26 @@ import { createHash } from "node:crypto";
 
 const NON_RUNTIME_PACKAGE_FIELDS = new Set([
   "author", "bugs", "contributors", "description", "funding", "homepage", "keywords", "license", "repository",
+  // The version reaches a user through `src/bin/init.ts`, which pins it in the
+  // package.json `mcp-sso init` generates, and through the name of the packed
+  // tarball. Nothing a client observes over the OAuth and MCP endpoints changes
+  // when it changes, while the bump is a step of every release. Ageing evidence
+  // on it would mean re-running a campaign to prove a number changed, and it is
+  // what forced the bump and its evidence into two pull requests.
+  "version",
 ]);
-/** What changes what a client would observe: the library, the example a leg
- *  serves, how either is built or published, and the composition of the leg a
- *  client is driven against. `run.sh`, `serve.sh`, and `run-support.mjs` choose
- *  the entry point, map configuration onto the example's identity selector, DCR
- *  mode, redirect allowlist, and proxy trust, and expose the hostname.
- *
- *  Probe and rehearsal code is deliberately absent. A rehearsal receipt is
- *  rewritten by every recorded run, so it cannot be current and produced by
- *  superseded probe code at once; and an operator receipt records what a real
- *  client did against a served leg, which no probe produced. Treating probe
- *  code as an input is what previously invalidated hand-driven evidence
- *  whenever a parser changed. */
+/** What ages a receipt: the library, the example a leg serves, how either is
+ *  built or published, the composition of the leg a client is driven against,
+ *  and the code that produced the evidence. `run.sh`, `serve.sh`, and
+ *  `run-support.mjs` choose the entry point, map configuration onto the
+ *  example's identity selector, DCR mode, redirect allowlist, and proxy trust,
+ *  and expose the hostname. The probes and the rehearsal are here because a
+ *  receipt produced by a probe that has since been corrected should not stand
+ *  as current, and re-running is a local command. */
 const EVIDENCE_PATHS = [
-  "src", "examples", "tsconfig.json", "tsconfig.build.json",
+  "src", "examples", "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
+  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", "tsconfig.json", "tsconfig.build.json",
   ".github/workflows/publish.yml", "pnpm-lock.yaml", "pnpm-workspace.yaml",
-  "scripts/live/run.sh", "scripts/live/serve.sh", "scripts/live/run-support.mjs",
-];
-
-/** What produced a rehearsal receipt: the probes, the drivers, the rehearsal
- *  itself, the release matrix and its definition, and the workflow that
- *  installs the pinned clients and dispatches it. A rehearsal receipt is
- *  rewritten by every recorded run, so requiring one after a change here costs
- *  a dispatch and nothing else, and it is what stops a receipt produced by a
- *  probe that has since been corrected from standing as current.
- *
- *  An operator receipt records what a real client did against a served leg. No
- *  code here produced it, and ageing it on a probe change is what previously
- *  cost a browser campaign to re-record the same observations. */
-const REHEARSAL_PATHS = [
-  "test", "scripts/live", "scripts/run-release-matrix.mjs", "scripts/check-release-matrix.mjs",
-  "scripts/lib/release-matrix-outcome.mjs", "docs/verification.md", ".github/workflows/live.yml",
 ];
 
 function gitOutput(cwd, args) {
@@ -59,12 +47,12 @@ export function isAncestor(cwd, ancestor, descendant) {
   }
 }
 
-function changedRuntimeInputs(cwd, ancestor, descendant, paths) {
+function changedRuntimeInputs(cwd, ancestor, descendant) {
   const output = execFileSync(
     "git",
     [
       "diff", "--name-only", "-z", ancestor, descendant, "--",
-      ...paths,
+      ...EVIDENCE_PATHS,
     ],
     { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -132,12 +120,10 @@ export function evidenceInputDigest(cwd, commit) {
   return hash.digest("hex");
 }
 
-/** The inputs that changed between a receipt's commit and the release commit.
- *  A rehearsal receipt additionally depends on the code that produced it. */
-export function changedEvidenceInputs(cwd, ancestor, descendant, { producer } = {}) {
-  const paths = producer === "rehearsal" ? [...EVIDENCE_PATHS, ...REHEARSAL_PATHS] : EVIDENCE_PATHS;
+/** The inputs that changed between the receipt's commit and the release commit. */
+export function changedEvidenceInputs(cwd, ancestor, descendant) {
   return [
-    ...changedRuntimeInputs(cwd, ancestor, descendant, paths),
+    ...changedRuntimeInputs(cwd, ancestor, descendant),
     ...changedRuntimePackageFields(cwd, ancestor, descendant),
   ];
 }

@@ -21,33 +21,21 @@ function git(args) {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-/** A rehearsal receipt, in the shape the recorder writes: every row the
- *  rehearsal runs, because the gate re-derives completeness rather than
- *  trusting the receipt's own summary. */
+/** A receipt in the shape the recorder writes: every row the rehearsal
+ *  machine-checks, because the gate re-derives completeness rather than
+ *  trusting the receipt's own summary, plus whatever a person drove. */
 export function receiptFor(commit, overrides = {}) {
   return {
-    schema: 1, producer: "rehearsal", runtimeCommit: commit, recordedAt: "2026-08-27T00:00:00.000Z",
+    schema: 1, runtimeCommit: commit, recordedAt: "2026-08-27T00:00:00.000Z",
     complete: true, rows: ROWS.map((row) => ({ id: row.id, status: "PASS" })),
     releaseMatrix: ["RM.1", "RM.2"],
     ...overrides,
   };
 }
 
-/** An operator receipt: a campaign a person drove, covering no export. */
-export function operatorReceiptFor(commit, overrides = {}) {
-  return {
-    schema: 1, producer: "operator", runtimeCommit: commit, recordedAt: "2026-08-27T00:00:00.000Z",
-    complete: true, rows: [{ id: "F2", status: "PASS" }],
-    ...overrides,
-  };
-}
-
-/** The active pair, with one side replaced. */
-export function receipts({ rehearsal, operator } = {}) {
-  return {
-    "rehearsal.json": rehearsal ?? receiptFor(ancestor),
-    "operator.json": operator ?? operatorReceiptFor(ancestor),
-  };
+/** The one active receipt, or a replacement for it. */
+export function receipts(receipt) {
+  return { "release.json": receipt ?? receiptFor(ancestor) };
 }
 
 export function fixture(overrides = {}) {

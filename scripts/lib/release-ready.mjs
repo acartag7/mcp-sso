@@ -1,8 +1,8 @@
 // The release-readiness gate (§15). Evidence is data: one JSON receipt per
-// campaign under docs/evidence/. This reads receipts, package.json, the release
-// matrix, and the published-release row, and refuses a release whose evidence
-// does not match what ships. It parses no prose. docs/client-compatibility.md
-// is written for readers, and nothing here reads it.
+// campaign under docs/evidence/. This reads that receipt, package.json, and the
+// release matrix, and refuses a release whose evidence does not match what
+// ships. It parses no prose. docs/client-compatibility.md is written for
+// readers, and nothing here reads it.
 import { ROWS } from "../live/rehearsal-support.mjs";
 import { changedEvidenceInputs, isAncestor, resolveCommit } from "./release-evidence-git.mjs";
 
@@ -10,10 +10,9 @@ const SHA = /^[0-9a-f]{40}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const ROW_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const MATRIX_ROW_ID = /^RM\.\d+$/;
-const PRODUCERS = new Set(["rehearsal", "operator"]);
-/** The active receipt each producer writes. Anything else in the directory is
- *  a document nobody records to, and a superseded one belongs in archive/. */
-export const ACTIVE_RECEIPTS = Object.freeze({ rehearsal: "rehearsal.json", operator: "operator.json" });
+/** The one active receipt. Anything else in the directory is a document nobody
+ *  records to, and a superseded one belongs in archive/. */
+export const ACTIVE_RECEIPT = "release.json";
 /** One receipt, validated as data. A receipt that claims rows it did not
  *  complete is not evidence, and says so itself rather than leaving a reader
  *  to infer it from row statuses. */
@@ -21,27 +20,20 @@ function readReceipt(receipt, label, errors) {
   const fail = (message) => { errors.push(`${label}: ${message}`); return undefined; };
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) return fail("is not an object");
   if (receipt.schema !== 1) return fail(`unrecognised schema ${JSON.stringify(receipt.schema)}`);
-  if (!PRODUCERS.has(receipt.producer)) return fail(`unknown producer ${JSON.stringify(receipt.producer)}`);
   if (typeof receipt.runtimeCommit !== "string" || !SHA.test(receipt.runtimeCommit)) {
     return fail(`runtime commit is malformed: ${String(receipt.runtimeCommit)}`);
   }
   if (receipt.complete !== true) return fail("is partial, so it is not evidence");
-  // `complete` is the producer's summary of itself. For a rehearsal it is
-  // re-derived here, because the gate reads a committed file rather than the
-  // run that wrote it: a receipt truncated to its release-matrix row would
-  // otherwise cover every export while the identity and client evidence was
-  // gone.
-  if (receipt.producer === "rehearsal") {
-    const expected = new Set(ROWS.map((row) => row.id));
-    const ids = new Set((Array.isArray(receipt.rows) ? receipt.rows : []).map((row) => row?.id));
-    const missing = [...expected].filter((id) => !ids.has(id));
-    if (missing.length > 0) return fail(`claims to be complete without ${missing.length} row(s) the rehearsal runs`);
-    // Exact, not merely sufficient: a row the rehearsal does not define proves
-    // nothing, and a receipt carrying one is not the run it says it is.
-    const invented = [...ids].filter((id) => !expected.has(id));
-    if (invented.length > 0) return fail(`records ${invented.length} row(s) the rehearsal does not define: ${invented.slice(0, 3).join(", ")}`);
-  }
   if (!Array.isArray(receipt.rows) || receipt.rows.length === 0) return fail("records no rows");
+  // `complete` is the recorder's summary of itself, re-derived here because the
+  // gate reads a committed file rather than the run that wrote it: a receipt
+  // truncated to its release-matrix row would otherwise cover every export
+  // while the identity and client evidence was gone. Rows a person drives are
+  // additional, so the automated set is a floor, not the whole receipt.
+  const expected = new Set(ROWS.map((row) => row.id));
+  const ids = new Set((Array.isArray(receipt.rows) ? receipt.rows : []).map((row) => row?.id));
+  const missing = [...expected].filter((id) => !ids.has(id));
+  if (missing.length > 0) return fail(`claims to be complete without ${missing.length} row(s) the rehearsal runs`);
   const seen = new Set();
   for (const row of receipt.rows) {
     // typeof before the pattern: String(123) matches it, and a numeric id then
@@ -58,11 +50,6 @@ function readReceipt(receipt, label, errors) {
     if (!Array.isArray(matrix) || matrix.some((id) => typeof id !== "string" || !ROW_ID.test(id))) {
       return fail("names release-matrix rows that are not readable ids");
     }
-    // Export coverage comes from the release matrix, which only the rehearsal
-    // runs. An operator drives real clients against a served leg and proves
-    // nothing about a packed artifact, so a receipt of theirs claiming matrix
-    // rows is claiming someone else's work.
-    if (receipt.producer !== "rehearsal") return fail("is not a rehearsal receipt, so it cannot carry release-matrix rows");
     if (matrix.length > 0 && !receipt.rows.some((row) => row.id === "release-matrix" && row.status === "PASS")) {
       return fail("names release-matrix rows without a passing release-matrix row");
     }
@@ -129,27 +116,24 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts,
   const publicExports = exportsValue && typeof exportsValue === "object" && !Array.isArray(exportsValue)
     ? Object.keys(exportsValue) : [];
 
-  // One active receipt per producer, under the name that says which. A missing
-  // operator receipt would otherwise pass on the rehearsal alone, publishing
-  // without the campaign a person drove.
-  const entries = Object.entries(receipts ?? {});
+  // One active receipt. A directory holding a second document is a superseded
+  // campaign left active, and it would keep answering for a release it predates.
   const valid = [];
-  for (const [producer, label] of Object.entries(ACTIVE_RECEIPTS)) {
-    if (!Object.hasOwn(receipts ?? {}, label)) { errors.push(`no ${producer} receipt at docs/evidence/${label}`); continue; }
-    const receipt = readReceipt(receipts[label], label, errors);
-    if (receipt === undefined) continue;
-    if (receipt.producer !== producer) { errors.push(`${label}: holds a ${receipt.producer} receipt`); continue; }
-    valid.push({ label, receipt });
+  if (!Object.hasOwn(receipts ?? {}, ACTIVE_RECEIPT)) {
+    errors.push(`no receipt at docs/evidence/${ACTIVE_RECEIPT}`);
+  } else {
+    const receipt = readReceipt(receipts[ACTIVE_RECEIPT], ACTIVE_RECEIPT, errors);
+    if (receipt !== undefined) valid.push({ label: ACTIVE_RECEIPT, receipt });
   }
-  for (const [label] of entries) {
-    if (!Object.values(ACTIVE_RECEIPTS).includes(label)) errors.push(`docs/evidence/${label} is not an active receipt; a superseded one belongs in archive/`);
+  for (const label of Object.keys(receipts ?? {})) {
+    if (label !== ACTIVE_RECEIPT) errors.push(`docs/evidence/${label} is not the active receipt; a superseded one belongs in archive/`);
   }
 
   const resolvedRelease = resolveCommit(gitCwd, releaseCommit);
   if (!resolvedRelease) errors.push(`release commit is not available in git history: ${releaseCommit}`);
 
-  // Every export needs one passing packed-artifact row, from any receipt that
-  // carried a release-matrix result.
+  // Every export needs one passing packed-artifact row from the receipt's
+  // release-matrix result.
   const { byExport, knownRows } = parseReleaseRows(releaseMatrix, errors);
   const provenRows = new Set();
   for (const { label, receipt } of valid) {
@@ -181,7 +165,7 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts,
       errors.push(`${label}: runtime commit ${receipt.runtimeCommit.slice(0, 7)} is not an ancestor of the release commit`);
       continue;
     }
-    const changedInputs = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedRelease, { producer: receipt.producer });
+    const changedInputs = changedEvidenceInputs(gitCwd, resolvedRuntime, resolvedRelease);
     if (changedInputs.length > 0) staleEvidence.push({ label, commit: receipt.runtimeCommit, changedInputs });
   }
 

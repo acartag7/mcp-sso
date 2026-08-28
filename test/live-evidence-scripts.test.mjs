@@ -489,7 +489,7 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(workflow, /branches: \["rehearsal\/\*"\]/, "pushes run only for rehearsal branches, with the pattern the environment policy uses");
   assert.match(workflow, /role-to-assume: \$\{\{ secrets\.MCP_SSO_LIVE_ROLE_ARN \}\}/, "the role ARN is a masked secret, not a variable");
   assert.match(workflow, /run: google-chrome --version/, "the browser the driver runs is checked once, up front");
-  assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 2, "neither job persists a checkout credential");
+  assert.equal((workflow.match(/persist-credentials: false/g) ?? []).length, 1, "the job persists no checkout credential");
   assert.match(workflow, /node scripts\/live\/ci\/mask-bundle\.mjs/, "private values are masked before the probes print");
   assert.ok(workflow.indexOf("mask-bundle.mjs") < workflow.indexOf("rehearsal.mjs"), "masking precedes the run");
   assert.match(workflow, /rm -rf -- "\$MCP_SSO_BUNDLE_DIR"/, "the bundle is removed on every exit path");
@@ -687,29 +687,20 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   }
   assert.match(orchestrator, /childEnv\(\{ \.\.\.env, \.\.\.serve\.env, MCP_SSO_TUNNEL: tunnel, TMPDIR: scratchDir \}\)/,
     "the tunnel connector least of all, and its configuration is written in the directory the run owns");
-  // The recording job used to push a branch and open a pull request, which it
-  // could not do: Actions cannot create one in this repository. It now uploads
-  // the document and a person commits it, so the job needs no write token.
-  assert.match(workflow, /name: evidence-\$\{\{ github\.sha \}\}/, "the evidence document leaves as an artifact");
-  assert.doesNotMatch(workflow, /gh pr create/, "the job does not try to open a pull request");
-  assert.doesNotMatch(workflow, /pull-requests: write/, "and holds no permission to");
-  const recordJob = workflow.slice(workflow.indexOf("  record:"));
-  assert.doesNotMatch(recordJob, /contents: write/, "the recording job writes nothing to the repository");
+  // Evidence is recorded locally. A campaign includes rows a person drives
+  // against a served leg, which no workflow can drive, so a job recording the
+  // machine-checked half alone would write a document that is not the campaign.
+  assert.doesNotMatch(workflow, /record-receipt\.mjs/, "the workflow records no evidence");
+  assert.doesNotMatch(workflow, /gh pr create/, "and opens no pull request");
+  assert.doesNotMatch(workflow, /pull-requests: write|contents: write/, "and holds no permission to write anything");
   // The recorder writes data the gate reads, so the two agree by schema rather
   // than by the recorder re-running the gate on its own output. That agreement
   // is pinned where it can actually fail: test/live-record-receipt.test.mjs
   // evaluates the committed receipts through evaluateReleaseReadiness.
   const recorderTest = read("test/live-record-receipt.test.mjs");
   assert.match(recorderTest, /evaluateReleaseReadiness\(/, "what the recorder writes is checked against the gate");
-  const jobs = workflow.split(/^  record:$/m);
-  assert.equal(jobs.length, 2, "one record job");
-  assert.doesNotMatch(jobs[0].slice(jobs[0].indexOf("  rehearse:")), /contents: write|pull-requests: write/, "the rehearsal job holds no write token");
-  assert.doesNotMatch(jobs[1], /environment:|configure-aws-credentials/, "the record job holds no AWS role");
-  assert.doesNotMatch(jobs[1], /pnpm install|pnpm\/action-setup/, "the recording job installs no third-party code");
-  assert.match(jobs[1], /persist-credentials: false/);
-  assert.match(jobs[1], /--require-head/, "the record binds the receipt to the checked-out commit");
-  assert.match(jobs[1], /if: github\.event_name == 'workflow_dispatch' && inputs\.record && github\.ref == 'refs\/heads\/main'/, "recording is opt-in and main only");
-  assert.match(jobs[1], /record-receipt\.mjs --receipt .* --write/);
+  assert.doesNotMatch(workflow.slice(workflow.indexOf("  rehearse:")), /contents: write|pull-requests: write/,
+    "the rehearsal job holds no write token");
   assert.match(README, /record-receipt\.mjs/);
   assert.match(DOC, /record-receipt\.mjs/);
   assert.match(workflow, /cloudflared-linux-amd64/);

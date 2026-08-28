@@ -4,9 +4,8 @@
 // The substantive ones are listed here as behaviour, not as prose. Each row
 // builds an input that must be refused and names the refusal, so deleting a
 // check turns this red rather than leaving a gap for a reviewer to find. The
-// conditions that were deliberately dropped, all of them markdown shape, are
-// recorded in docs/archive/2026-08-27-release-gate-conditions.md with the
-// reason; nothing here should pass for them, because nothing parses prose. The
+// conditions that were deliberately dropped are recorded in
+// docs/archive/2026-08-27-release-gate-conditions.md with the reason. The
 // version claim went with them: publish.yml compares the pushed tag against
 // package.json, which is that property enforced against the real tag.
 import assert from "node:assert/strict";
@@ -14,8 +13,7 @@ import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
 import * as FIXTURE from "./lib/release-ready-fixture.mjs";
 import {
-  ancestor, cleanupReleaseReadyFixture, fixture, operatorReceiptFor, receiptFor, receipts, setupReleaseReadyFixture,
-  unrelated,
+  ancestor, cleanupReleaseReadyFixture, fixture, receiptFor, receipts, setupReleaseReadyFixture, unrelated,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -31,15 +29,15 @@ const CONDITIONS = [
   ["the release commit does not resolve",
     () => ({ releaseCommit: "f".repeat(40) }), "release commit is not available in git history"],
   ["a recorded runtime commit is malformed",
-    () => ({ receipts: receipts({ rehearsal: receiptFor("nope") }) }), "runtime commit is malformed"],
+    () => ({ receipts: receipts(receiptFor("nope")) }), "runtime commit is malformed"],
   ["a recorded runtime commit does not resolve",
-    () => ({ receipts: receipts({ rehearsal: receiptFor("f".repeat(40)) }) }), "not available in git history"],
+    () => ({ receipts: receipts(receiptFor("f".repeat(40))) }), "not available in git history"],
   ["a recorded runtime commit is not an ancestor of the release commit",
-    () => ({ receipts: receipts({ rehearsal: receiptFor(unrelated) }) }), "is not an ancestor of the release commit"],
+    () => ({ receipts: receipts(receiptFor(unrelated)) }), "is not an ancestor of the release commit"],
   ["an export has no live evidence",
-    () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { releaseMatrix: ["RM.1"] }) }) }), "no live evidence covers export ./fastify"],
+    () => ({ receipts: receipts(receiptFor(ancestor, { releaseMatrix: ["RM.1"] })) }), "no live evidence covers export ./fastify"],
   ["evidence names a matrix row the matrix does not define",
-    () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { releaseMatrix: ["RM.1", "RM.404"] }) }) }),
+    () => ({ receipts: receipts(receiptFor(ancestor, { releaseMatrix: ["RM.1", "RM.404"] })) }),
     "names RM.404, which the release matrix does not define"],
   ["a matrix row names an export the package does not declare",
     () => ({ releaseMatrix: { rows: [
@@ -68,13 +66,10 @@ const CONDITIONS = [
     () => ({ releaseMatrix: { rows: [{ id: "RM.1", title: "t", evidence: [{ file: "", name: "" }] }] } }),
     "requires executable evidence with file and name"],
   ["a receipt row has a wrongly typed id",
-    () => ({ receipts: receipts({ operator: { ...operatorReceiptFor(ancestor), rows: [{ id: 123, status: "PASS" }] } }) }),
+    () => ({ receipts: receipts(receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: 123, status: "PASS" }] })) }),
     "has a row with no readable id"],
-  ["a rehearsal receipt records a row the rehearsal does not define",
-    () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "invented-proof", status: "PASS" }] }) }) }),
-    "row(s) the rehearsal does not define"],
   ["a rehearsal receipt claims completeness while missing rows",
-    () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { rows: [{ id: "release-matrix", status: "PASS" }] }) }) }),
+    () => ({ receipts: receipts(receiptFor(ancestor, { rows: [{ id: "release-matrix", status: "PASS" }] })) }),
     "claims to be complete without"],
   ["the release matrix is not an object with a rows array",
     () => ({ releaseMatrix: [] }), "expected an object with a rows array"],
@@ -93,37 +88,34 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 21, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 20, "the enumeration is the record; adding a check adds a row here");
 });
 
-test("evidence ages exactly as the previous gate aged it, plus the one correction", () => {
-  // The old gate aged every recorded row on runtime, deployment, package and
-  // harness inputs alike. That is kept for everything except one case, which
-  // is the correction this change exists to make.
+test("evidence ages as it did, plus the correction that lets one pull request carry both", () => {
   const { deploymentRelease, harnessRelease, packageRelease, runtimeRelease, versionRelease, buildRelease, metadataRelease } = FIXTURE;
-  const ages = (releaseCommit, which = "rehearsal") =>
-    fixture({ receipts: receipts(), releaseCommit }).staleEvidence.some((entry) => entry.label.startsWith(which));
+  const ages = (releaseCommit) =>
+    fixture({ receipts: receipts(), releaseCommit }).staleEvidence.length > 0;
 
   assert.ok(ages(runtimeRelease), "a src/ change ages evidence");
   assert.ok(ages(deploymentRelease), "so does the composition of the served leg");
   assert.ok(ages(packageRelease), "so does an exports change");
-  assert.ok(ages(versionRelease), "so does a version change");
   assert.ok(ages(buildRelease), "so does a build-script change");
+  assert.ok(ages(harnessRelease), "so does the code that produced the evidence");
   assert.ok(!ages(metadataRelease), "package description and the gate's own script do not");
-  assert.ok(ages(harnessRelease), "probe and rehearsal changes age the rehearsal receipt they produced");
-  assert.ok(!ages(harnessRelease, "operator"),
-    "and not an operator receipt, which is the correction: no probe produced what a real client did");
+  assert.ok(!ages(versionRelease),
+    "and neither does the version bump, which is what lets one pull request carry the bump and its campaign");
 });
 
-test("what was dropped is recorded, and every dropped condition is a rule about Markdown", () => {
+test("what was dropped is recorded, with the reason it stopped being needed", () => {
   // Reading the archive rather than trusting the commit message: what was
   // dropped has to be written down where a reader finds it, and each entry has
-  // to say why a rule about Markdown stopped being needed.
+  // to say why the gate no longer needs it.
   const archive = readFileSync(new URL("../docs/archive/2026-08-27-release-gate-conditions.md", import.meta.url), "utf8");
   for (const dropped of [
     "canonical level-two headings", "fenced blocks", "HTML comments", "raw angle-bracket markup",
     "malformed divider", "noncanonical Markdown", "Recorded by", "evidence digest",
     "the published-release row is absent or repeated", "raw HTML block",
+    "records a row the rehearsal does not define",
   ]) {
     assert.ok(archive.includes(dropped), `the archive records dropping ${dropped}`);
   }

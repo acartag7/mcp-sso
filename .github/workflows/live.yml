@@ -10,11 +10,6 @@ name: live
 # branch pushed). A job below refuses any other ref before it does anything.
 on:
   workflow_dispatch:
-    inputs:
-      record:
-        description: "Record the passing receipt as release evidence and upload it (main only)"
-        type: boolean
-        default: false
   schedule:
     - cron: "17 3 * * *" # nightly ~03:17 UTC (off the :00 mark)
   push:
@@ -196,48 +191,3 @@ jobs:
           path: ${{ runner.temp }}/receipt.json
           if-no-files-found: error
           retention-days: 30
-
-  # The evidence document, from a passing receipt, on main only and only
-  # when asked. This job never holds the AWS role; the job above never holds a
-  # write token. A branch pushed with the workflow token starts no CI run of
-  # its own, so the pull request body says how to start one.
-  record:
-    name: record the evidence
-    needs: rehearse
-    if: github.event_name == 'workflow_dispatch' && inputs.record && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Read-only, and no repository credential. This job turns a receipt into the
-    # evidence document and uploads it; a person commits it. Actions cannot open
-    # a pull request in this repository, so the job that tried to was a step
-    # that could only ever fail, and its failure told the operator nothing the
-    # artifact does not.
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-20)
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      # record-receipt.mjs imports only scripts/live and Node built-ins: no
-      # install, so this job loads no third-party code.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0 (2026-07-14)
-        with:
-          node-version: "24"
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1 (2026-03-11)
-        with:
-          name: rehearsal-receipt-${{ github.sha }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/receipt
-      - name: record the receipt as release evidence
-        env:
-          MCP_SSO_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node scripts/live/record-receipt.mjs --receipt "$RUNNER_TEMP/receipt/receipt.json" --write --require-head
-      - name: upload the evidence document
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (2026-04-10)
-        with:
-          name: evidence-${{ github.sha }}
-          path: docs/evidence/
-          if-no-files-found: error
-      - name: say how to land it
-        run: |
-          echo "::notice::Download the evidence-${{ github.sha }} artifact, commit its file under docs/evidence/, and open a pull request."
