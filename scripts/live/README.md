@@ -149,7 +149,7 @@ node session.mjs serve
 node session.mjs watch
 ```
 
-`serve` defaults to all three legs and prints the Claude Code, Codex, ChatGPT, and claude.ai connection commands. Press Ctrl-C in the `serve` terminal when the run is finished. The helper stops `serve.sh` and removes its selected `mcp-sso-live-<leg>` entries from Claude Code and Codex. After a crash, run `node session.mjs cleanup`; it removes all six reserved entries and leaves every other MCP entry alone.
+`serve` defaults to all three legs and prints the Claude Code, Codex, ChatGPT, and claude.ai connection commands. Press Ctrl-C in the `serve` terminal when the run is finished. The helper stops `serve.sh` and attempts to remove its selected `mcp-sso-live-<leg>` entries from Claude Code and Codex. After a crash, run `node session.mjs cleanup`; it attempts all six reserved entries and leaves every other MCP entry alone.
 
 `watch` prints one settled result per client flow and appends it to `.live-state/session-results.jsonl`. `PASS` means the audit trail contains both an authorization-code exchange and a later successful protected `/mcp` request. `TOKEN_ONLY` means the code exchange completed but no protected request followed. Run `node session.mjs watch --all --once` to rebuild a one-shot summary from the current audit files. If this run uses a signed-out Codex CLI that dynamically registers an opaque `mcpdc_` client id, run `node session.mjs watch --codex-dcr`; this explicit annotation lets that loopback flow fill B1 through B3. Without it, the helper records the flow as an unassigned local CLI.
 

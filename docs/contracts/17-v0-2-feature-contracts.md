@@ -594,7 +594,7 @@ The session record starts with `status: "starting"`. `scripts/live/serve.sh` sen
 
 `watch [--all] [--once] [--codex-dcr]` accepts each option at most once. `--all` includes observations already present when watching begins. `--once` scans once, includes incomplete observations, and replaces the result file. The default follows new settled observations and appends them. `--codex-dcr` is an operator assertion for the current watch only: an opaque client id matching `^mcpdc_[a-f0-9]{32}$` with a loopback redirect is attributed to Codex and can fill B1 through B3. Without that option the same flow remains `cli-dcr` and cannot fill a Codex row. Other opaque ids, non-loopback redirects, and CIMD clients are unaffected.
 
-`cleanup` and every `serve` exit attempt only the fixed Cartesian product of the selected CLI names (`claude`, `codex`) and `mcp-sso-live-<leg>`. A client-reported absent entry counts as clean. One failure does not stop the remaining removals, and cleanup never reads a target name from the session file or audit trail.
+`cleanup` attempts only the fixed Cartesian product of the selected CLI names (`claude`, `codex`) and `mcp-sso-live-<leg>`. After `serve.sh` exits or reports a spawn error, `serve` makes the same attempts for its selected legs. A client-reported absent entry counts as clean. One failure does not stop the remaining removals, and cleanup never reads a target name from the session file or audit trail.
 
 ### Audit interpretation
 
