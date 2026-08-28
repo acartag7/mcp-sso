@@ -3,7 +3,7 @@
 // document it writes is one the gate accepts.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -99,13 +99,15 @@ test("BEHAVIOUR record-receipt: a campaign supersedes the one before it, and a f
     // A recording that fails leaves the evidence set exactly as it was: the
     // active receipt still active, and no staged file to make the next
     // rehearsal record a dirty tree and refuse itself as evidence.
+    //
+    // The failure is injected as a file where the archive directory belongs,
+    // which fails for any user. File permissions would not: a suite running as
+    // root, as it does in many containers, renames into a mode 0500 directory
+    // quite happily and the test would fail on correct code.
     const before = readFileSync(path, "utf8");
-    chmodSync(join(dir, "archive"), 0o500);
-    try {
-      assert.throws(() => writeActiveReceipt(path, "{}\n"), "an unwritable archive fails the recording");
-    } finally {
-      chmodSync(join(dir, "archive"), 0o700);
-    }
+    rmSync(join(dir, "archive"), { recursive: true, force: true });
+    writeFileSync(join(dir, "archive"), "not a directory\n");
+    assert.throws(() => writeActiveReceipt(path, "{}\n"), "an archive directory that cannot exist fails the recording");
     assert.equal(readFileSync(path, "utf8"), before, "the active receipt is untouched");
     assert.equal(existsSync(`${path}.staged`), false, "and no staged file is left behind");
   } finally {
