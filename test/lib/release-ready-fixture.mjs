@@ -28,11 +28,11 @@ function git(args) {
  *  trusting the receipt's own summary, plus whatever a person drove. */
 export function receiptFor(commit, overrides = {}) {
   return {
-    schema: 1, runtimeCommit: commit, ranAt: "2026-08-27T00:00:00.000Z", recordedAt: "2026-08-27T00:30:00.000Z",
+    schema: 1, runtimeCommit: commit, recordedAt: "2026-08-27T00:00:00.000Z",
     complete: true,
     rows: [
       ...ROWS.map((row) => ({ id: row.id, status: "PASS" })),
-      ...DRIVEN_ROWS.map((id) => ({ id, status: "PASS", driven: true })),
+      ...DRIVEN_ROWS.map((id) => ({ id, status: "PASS" })),
     ],
     releaseMatrix: ["RM.1", "RM.2"],
     ...overrides,

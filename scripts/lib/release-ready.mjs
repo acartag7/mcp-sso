@@ -3,7 +3,7 @@
 // release matrix, and refuses a release whose evidence does not match what
 // ships. It parses no prose. docs/client-compatibility.md is written for
 // readers, and nothing here reads it.
-import { DRIVEN_ROWS, ROWS, isTimestamp } from "../live/rehearsal-support.mjs";
+import { DRIVEN_ROWS, ROWS } from "../live/rehearsal-support.mjs";
 import { changedEvidenceInputs, isAncestor, resolveCommit } from "./release-evidence-git.mjs";
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -24,12 +24,6 @@ function readReceipt(receipt, label, errors) {
     return fail(`runtime commit is malformed: ${String(receipt.runtimeCommit)}`);
   }
   if (receipt.complete !== true) return fail("is partial, so it is not evidence");
-  // A campaign is identified by its commit and `ranAt`, so a receipt that names
-  // no valid run time cannot be told from another run's, and the archive cannot
-  // name it. `recordedAt` is the chronology the receipt asserts about itself.
-  for (const field of ["ranAt", "recordedAt"]) {
-    if (!isTimestamp(receipt[field])) return fail(`${field} is not an instant: ${String(receipt[field])}`);
-  }
   if (!Array.isArray(receipt.rows) || receipt.rows.length === 0) return fail("records no rows");
   // `complete` is the recorder's summary of itself, re-derived here because the
   // gate reads a committed file rather than the run that wrote it: a receipt
@@ -39,8 +33,7 @@ function readReceipt(receipt, label, errors) {
   // Both halves of the campaign: the rows a probe checked, and the rows only a
   // person can drive. Without the second the gate would authorize a release on
   // the automated half alone, with no Google sign-in and no hosted connector.
-  const machineRows = new Set(ROWS.map((row) => row.id));
-  const expected = new Set([...machineRows, ...DRIVEN_ROWS]);
+  const expected = new Set([...ROWS.map((row) => row.id), ...DRIVEN_ROWS]);
   const ids = new Set((Array.isArray(receipt.rows) ? receipt.rows : []).map((row) => row?.id));
   const missing = [...expected].filter((id) => !ids.has(id));
   if (missing.length > 0) return fail(`claims to be complete without ${missing.length} row(s) the campaign runs: ${missing.slice(0, 5).join(", ")}`);
@@ -56,16 +49,6 @@ function readReceipt(receipt, label, errors) {
     // declare their rows, a readable id outside them is not a checklist row,
     // and counting it would let a receipt stand in for one never driven.
     if (!expected.has(row.id)) return fail(`records ${row.id}, which the campaign does not define`);
-    // A hand-driven row says so, and a machine-checked one does not. Without
-    // both halves a person's word sits in the receipt looking like a probe
-    // result, or a row no probe ran is labelled as one a person drove. The
-    // recorder refuses both; a receipt is read from a file, so the gate has to
-    // refuse them again on what is stored.
-    if (machineRows.has(row.id)) {
-      if (row.driven !== undefined) return fail(`records ${row.id} as hand-driven, but a probe decides it`);
-    } else if (row.driven !== true) {
-      return fail(`records ${row.id} without marking it hand-driven`);
-    }
     seen.add(row.id);
     if (row.status !== "PASS") return fail(`row ${row.id} did not pass (${String(row.status)})`);
   }

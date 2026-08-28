@@ -100,7 +100,7 @@ node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
 
 `record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses. It refuses to write a receipt whose commit is not the checked-out `HEAD`, so a campaign spread across two checkouts fails here; one whose tree has uncommitted changes outside `docs/evidence/`, so rows driven against an edited tree are not filed under a commit that does not contain them; and one whose commit is not an ancestor of `origin/main`, so a campaign run on a branch fails here rather than after the squash merge has thrown that commit away.
 
-To record again, for a corrected `--row` list, run the same command again. Recording the same run twice replaces the receipt rather than archiving it, because a correction is not a campaign, so the archive keeps only receipts that were superseded by a later run.
+To record again, for a corrected `--row` list, run the same command again. Recording the same commit twice replaces the receipt, so the archive keeps only receipts for earlier commits.
 
 Do not use a live result as the only evidence for a security property.
 
@@ -121,7 +121,7 @@ Do not use a live result as the only evidence for a security property.
    > [!WARNING]
    > Plain `npm version` also creates a `vX.Y.Z` tag and commit. `publish.yml` triggers on exactly that tag, so a stray local tag pushed later starts a real publish from whatever it points at.
 
-3. Update the two pages that carry the version and the campaign in prose. Neither is an evidence input, so both belong in this pull request: the `npm package and tag` row and the "What vX.Y.Z adds" section of [`verification-status.md`](verification-status.md), and every `Runtime commit` and `Date` cell in [`client-compatibility.md`](client-compatibility.md), plus its client-version sentences. `record-receipt.mjs` prints the commit, the date for the rehearsal rows, and each row with what it observed; the rows you drove take the day you drove them.
+3. Update the two pages that carry the version and the campaign in prose. Neither is an evidence input, so both belong in this pull request: the `npm package and tag` row and the "What vX.Y.Z adds" section of [`verification-status.md`](verification-status.md), and every `Runtime commit` and `Date` cell in [`client-compatibility.md`](client-compatibility.md), plus its client-version sentences, from the commit, date, and rows `record-receipt.mjs` prints.
 4. Commit those, `docs/evidence/release.json`, and the receipt it superseded under `docs/evidence/archive/` if there was one.
 5. Change nothing else. Every other evidence input would age the receipt you just recorded, and the pull request would refuse its own release.
 

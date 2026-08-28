@@ -28,11 +28,6 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | the release matrix is not an object with a rows array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row omits its exports array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| a receipt names no valid run time | New here: a campaign is identified by its commit and `ranAt`, so an absent or impossible one cannot be told from another run's. Pinned in `test/release-gate-conditions.test.mjs` |
-| a receipt names a day that does not exist | New here: parsing normalizes `2026-02-31` onto March, so shape plus `Date.parse` accepted it. Proven by the `toISOString` round trip instead. Pinned in `test/release-gate-conditions.test.mjs` |
-| a receipt names an impossible recording time | New here, the other half: `recordedAt` is the chronology the receipt asserts about itself. Pinned in `test/release-gate-conditions.test.mjs` |
-| a machine-checked row claims to be hand-driven | New here, the mirror of the row below: the recorder refuses a `--row` naming a rehearsal id, so the gate refuses the same claim in a stored receipt. Pinned in `test/release-gate-conditions.test.mjs` |
-| a hand-driven row is not marked as one | New here: a row only a person can drive carries `driven: true`, so a person's word cannot sit in the receipt looking like a probe result. Pinned in `test/release-gate-conditions.test.mjs` |
 | a receipt claims completeness while missing a hand-driven row | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a rehearsal receipt claims completeness while missing rows | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 
@@ -59,7 +54,7 @@ Every one of these is a rule about Markdown rather than about evidence. They exi
 | provider evidence: row has missing or malformed Provider/Client/Flow driven cell | Those three cells identified a row. A receipt row has an id. |
 | provider evidence: duplicate row for provider / client / flow | Duplicate detection over a three-cell tuple. A receipt rejects a repeated row id. |
 | provider evidence: has malformed status / unknown status | The closed vocabulary Verified, Verified with limit, Not run. A receipt row is PASS or it is not evidence. |
-| provider evidence: missing or malformed date | The date was part of the receipt-in-prose. A receipt records `ranAt` and `recordedAt` and, more importantly, the commit. |
+| provider evidence: missing or malformed date | The date was part of the receipt-in-prose. A receipt records `recordedAt` and, more importantly, the commit. |
 | provider evidence: missing or malformed limitation | The `Limit:` marker had to follow the runtime receipt in the same cell. A limit is prose for a reader now, and what was actually driven is in the receipt's rows. |
 | provider evidence: contradictory Verified evidence | A status that disagreed with its own cell payload. Not expressible in a receipt. |
 | provider evidence: malformed runtime evidence receipt | The `Runtime commit ...` grammar inside a table cell. A receipt has a runtimeCommit field. |

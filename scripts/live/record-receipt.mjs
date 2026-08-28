@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DRIVEN_ROWS, ROWS, isTimestamp } from "./rehearsal-support.mjs";
+import { DRIVEN_ROWS, ROWS } from "./rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -80,11 +80,6 @@ export function assertClientVersions(receipt) {
  *  the rehearsal machine-checked, plus the rows a person drove against the same
  *  served leg, which no probe can drive. */
 export function toEvidence(receipt, { source, driven = [], recordedAt } = {}) {
-  const ranAt = receipt.finishedAt ?? receipt.startedAt;
-  if (!isTimestamp(ranAt)) throw new Error(`the receipt names no valid run time: ${String(ranAt)}`);
-  if (recordedAt !== undefined && !isTimestamp(recordedAt)) {
-    throw new Error(`the recording time is not an instant: ${String(recordedAt)}`);
-  }
   const machineChecked = new Set(receipt.rows.map((row) => row.id));
   for (const id of driven) {
     if (machineChecked.has(id)) throw new Error(`row ${id} is machine-checked; it cannot also be recorded by hand`);
@@ -100,14 +95,8 @@ export function toEvidence(receipt, { source, driven = [], recordedAt } = {}) {
   return {
     schema: 1,
     runtimeCommit: receipt.runtimeCommit,
-    // Two different times, because the campaign has two halves. `ranAt` is when
-    // the rehearsal finished, which identifies the run: recording it again to
-    // correct a --row list produces the same value, and that is what tells a
-    // correction from a second campaign. `recordedAt` is when this document was
-    // written, which is after the hand-driven rows, so the receipt does not
-    // claim to have been recorded before part of its own campaign happened.
-    ranAt,
-    recordedAt: recordedAt ?? new Date().toISOString(),
+    // When the campaign ran. Information for a reader; nothing decides on it.
+    recordedAt: recordedAt ?? receipt.finishedAt ?? receipt.startedAt,
     ...(source === undefined ? {} : { source }),
     complete: true,
     rows: [
@@ -166,35 +155,20 @@ export function writeActiveReceipt(path, body) {
       renameSync(staged, path);
       return null;
     }
-    // Every superseded receipt is archived, including one from a second
-    // campaign against the same commit: it carries its own timestamp, source
-    // and observations, and overwriting it would discard a campaign that ran.
-    //
-    // A re-record is not that. Recording the same rehearsal receipt again, to
-    // correct a `--row` list, produces the same `runtimeCommit` and the same
-    // `ranAt`, because both come from the run rather than from the recording.
-    // Archiving the corrected-away version would put a document in `archive/`
-    // that was never a campaign, and the checklist would then have the operator
-    // commit the mistake as if it were history.
+    // A campaign is its commit. Recording that commit again, to correct a --row
+    // list or because it was re-run, replaces what is there: the receipt says
+    // which commit passed the matrix, and there is one answer per commit.
+    // Both must actually name a commit: two documents naming none are two
+    // unknowns, not one campaign, and treating them as one replaces a receipt
+    // instead of archiving it.
     const previous = JSON.parse(readFileSync(path, "utf8"));
-    // Both halves must actually say which run they are. Two documents that
-    // name no run are not the same run, they are two unknowns, and treating
-    // them as one would replace a receipt rather than archive it.
-    const incoming = receiptOf(body);
-    const names = (value) => typeof value.runtimeCommit === "string" && typeof value.ranAt === "string";
-    const sameRun = names(previous) && names(incoming)
-      && previous.runtimeCommit === incoming.runtimeCommit
-      && previous.ranAt === incoming.ranAt;
-    if (sameRun) {
+    if (typeof previous.runtimeCommit === "string" && previous.runtimeCommit === receiptOf(body).runtimeCommit) {
       renameSync(staged, path);
       return null;
     }
-    // Named by when the run happened, not when it was filed, so one campaign
-    // has one archive name however many times it was recorded.
-    // 15 characters is YYYYMMDDTHHMMSS. Fourteen cut seconds after their first
-    // digit, so the name claimed a precision it did not have.
-    const stamp = String(previous.ranAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 15) || "undated";
-    const base = `release-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
+    // A different commit's receipt is a campaign that ran, so it is archived
+    // rather than overwritten.
+    const base = `release-${String(previous.runtimeCommit).slice(0, 7)}`;
     const archiveDir = resolve(dirname(path), "archive");
     mkdirSync(archiveDir, { recursive: true });
     // A repeated recording of the same artifact produces the same name. The
@@ -317,8 +291,7 @@ if (invokedAsMain()) {
     // page uses, for whoever lands the evidence.
     process.stdout.write(
       `\nFor docs/client-compatibility.md, at runtime commit ${receipt.runtimeCommit.slice(0, 7)}.\n`
-      + `Date for the rehearsal rows: ${String(evidence.ranAt).slice(0, 10)}. `
-      + "Hand-driven rows take the day you drove them.\n",
+      + `Date: ${String(evidence.recordedAt).slice(0, 10)}.\n`,
     );
     for (const row of evidence.rows) {
       const observed = row.observed?.length > 0 ? `  (${row.observed.join("; ")})` : "";

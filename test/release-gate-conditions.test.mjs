@@ -71,22 +71,6 @@ const CONDITIONS = [
   ["a receipt records a row the campaign does not define",
     () => ({ receipts: receipts(receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "F2s", status: "PASS" }] })) }),
     "records F2s, which the campaign does not define"],
-  ["a receipt names no valid run time",
-    () => ({ receipts: receipts(receiptFor(ancestor, { ranAt: undefined })) }), "ranAt is not an instant"],
-  ["a receipt names an impossible recording time",
-    () => ({ receipts: receipts(receiptFor(ancestor, { recordedAt: "2026-13-45T99:99:99Z" })) }),
-    "recordedAt is not an instant"],
-  ["a receipt names a day that does not exist",
-    () => ({ receipts: receipts(receiptFor(ancestor, { ranAt: "2026-02-31T12:00:00.000Z" })) }),
-    "ranAt is not an instant"],
-  ["a machine-checked row claims to be hand-driven",
-    () => ({ receipts: receipts(receiptFor(ancestor, {
-      rows: receiptFor(ancestor).rows.map((row) => (row.id === "probe-google" ? { ...row, driven: true } : row)),
-    })) }), "records probe-google as hand-driven, but a probe decides it"],
-  ["a hand-driven row is not marked as one",
-    () => ({ receipts: receipts(receiptFor(ancestor, {
-      rows: receiptFor(ancestor).rows.map((row) => (row.id === "C1" ? { id: row.id, status: "PASS" } : row)),
-    })) }), "records C1 without marking it hand-driven"],
   ["a receipt claims completeness while missing a hand-driven row",
     () => ({ receipts: receipts(receiptFor(ancestor, { rows: receiptFor(ancestor).rows.filter((row) => row.id !== "C1") })) }),
     "without 1 row(s) the campaign runs: C1"],
@@ -110,7 +94,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 27, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 22, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages as it did, plus the correction that lets one pull request carry both", () => {

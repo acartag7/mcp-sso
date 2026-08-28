@@ -51,40 +51,15 @@ Those same three composition roots mount protected routes with the real `@fastif
 
 **A receipt** is one JSON document describing one campaign. `docs/evidence/` holds exactly one active receipt, `release.json`. A new campaign supersedes the one before it and the superseded document moves to `docs/evidence/archive/`, which the gate does not read: an older receipt names a commit that predates the very change the new run was recorded for, so keeping it active would refuse every release from then on.
 
-A campaign is identified by its `runtimeCommit` and its `ranAt`, both of which come from the run rather than from the recording. A document naming the same pair as the active receipt is that same campaign recorded again, to correct the `--row` list, and it replaces the active receipt in place rather than archiving it: the version corrected away was never a campaign, and archiving it would put a document in the history that never happened. Every other supersession is archived, and nothing archived is deleted. It names its `schema`, the `runtimeCommit` it ran against, `ranAt` when the rehearsal finished and `recordedAt` when the document was written, which differ because the hand-driven rows run between them, its `rows`, and the release-matrix result its `release-matrix` row produced, which is what covers the public exports. Each row names what was driven and its `status`. A receipt is evidence only when every row it claims ran passed on a clean tree; a partial receipt is never evidence, and the recorder says so in the receipt rather than leaving the reader to infer it.
+A campaign is its commit. A document naming the same `runtimeCommit` as the active receipt is that commit recorded again, and it replaces the active receipt in place: the receipt says which commit passed the matrix, and there is one answer per commit. A different commit's receipt is archived, and nothing archived is deleted. It names its `schema`, the `runtimeCommit` it ran against, `recordedAt` for a reader, its `rows`, and the release-matrix result its `release-matrix` row produced, which is what covers the public exports. Each row names what was driven and its `status`. A receipt is evidence only when every row it claims ran passed on a clean tree; a partial receipt is never evidence, and the recorder says so in the receipt rather than leaving the reader to infer it.
 
 One campaign, not one per tool. The rows a probe drives and the rows a person drives against a served leg are recorded together, because they are run together, locally, against one commit, immediately before the release that ships it.
 
 The gate rejects a receipt whose schema it does not recognise, whose `runtimeCommit` is malformed, unresolvable, or not an ancestor of the release commit, or that claims rows it did not complete. It rejects a public export with no passing packed-artifact row covering it, an export-to-row pair absent from the release matrix, and a release-matrix row that is malformed, duplicated, or lacks executable evidence. `releaseMatrix` is accepted only when the receipt's own `release-matrix` row passed.
 
-**Receipt binding.** A receipt asserts that a set of rows passed against a particular tree. Everything the harness refuses is enumerated here, with where it is refused, because this class was discovered one review round at a time and the enumeration is what stops the next one. Some ways that assertion could be false are refused nowhere, and those are named after the table rather than left for a reader to assume.
+**What a receipt has to be true about.** A receipt says one thing: this commit passed the matrix. The gate refuses it when the document is not a receipt it knows, when the commit is malformed, absent from the repository, or not an ancestor of the release commit, when an evidence input moved after that commit, when a row did not pass or is missing or is not a row the campaign defines, when a row is counted twice, and when `releaseMatrix` names an unknown row or arrives without a passing `release-matrix` row. The recorder refuses the same row rules before writing, plus a tree that is not the commit it names, a tree with uncommitted changes, a commit that is not an ancestor of `origin/main`, and a CLI row that does not name the client version it ran.
 
-| What could be false | Refused by | Where |
-| --- | --- | --- |
-| The document is not a receipt this gate knows | `schema` is 1, and the value is an object | gate |
-| The receipt names no valid run or recording time | `ranAt` and `recordedAt` are instants | gate and recorder |
-| The receipt names no commit, or not a commit | `runtimeCommit` is a 40-character hex sha | gate and recorder |
-| The commit is not in the repository | `git rev-parse --verify` | gate |
-| The tree that ran is not the commit named | `HEAD` equals `runtimeCommit` when writing | recorder |
-| Something was on top of that tree | working tree clean when writing | recorder |
-| The rehearsal itself ran dirty, or never finished | the receipt's own `dirty` and completion fields | recorder |
-| The tree moved or was written to while the rehearsal ran | the rehearsal re-reads `HEAD` and the tree at the end, and the receipt is not evidence | recorder |
-| The commit will not survive the merge | ancestor of `origin/main` when writing | recorder |
-| The commit is not in the release | ancestor of the release commit | gate |
-| The code moved after the campaign | no evidence input changed between the two | gate |
-| A row did not pass | every row is `PASS` | gate and recorder |
-| A row is missing | every `ROWS` and `DRIVEN_ROWS` id present | gate and recorder |
-| A row was invented | no row outside those two sets | gate and recorder |
-| A row is counted twice | no repeated row id | gate and recorder |
-| A person's word looks like a probe's | `driven: true` on every non-`ROWS` row | gate |
-| A person claims a row a probe decides | `driven` on a `ROWS` row, and a `--row` naming one | gate and recorder |
-| A CLI row does not say which client version ran | the row's `NOTE` lines name it | recorder |
-| Coverage is claimed without the run that proves it | `releaseMatrix` needs a passing `release-matrix` row | gate |
-| Coverage names a row the matrix does not define | every `releaseMatrix` id is a known `RM.N` row | gate |
-
-The recorder refuses at the moment of recording, where the fix is to run the campaign again; the gate refuses at release, where the fix is a new campaign. A property enforced only at the gate is one an operator discovers after merging, which is why every row above that a recorder can decide is decided there too.
-
-What this does not defend against: a receipt is unsigned, and the recorder's guards read the local repository without fetching. Someone who edits `docs/evidence/release.json` by hand, points `refs/remotes/origin/main` at a commit of their choosing, moves the checkout and moves it back between `serve.sh` and recording, or passes `--row` for a row nobody drove, produces a receipt the gate accepts. The receipt is the maintainer's word, bound to a commit; the controls on that word are the review of the pull request that lands it and the required reviewer on the `publish` environment. The guards above exist to catch an honest mistake at the moment it is made, not to make the receipt tamper-evident.
+The recorder refuses at the moment of recording, where the fix is to run the campaign again; the gate refuses at release, where the fix is a new campaign. Neither makes the receipt tamper-evident: it is unsigned, the recorder reads the local repository without fetching, and a hand-written document or a repointed `origin/main` produces one the gate accepts. The receipt is the maintainer's word bound to a commit, and the controls on that word are the review of the pull request that lands it and the required reviewer on the `publish` environment.
 
 **Freshness.** A receipt is rejected when something that changes what a client would observe, or what produced the evidence, moved after its commit: `src/`, `examples/`, `test/`, `scripts/live/`, `scripts/run-release-matrix.mjs`, `scripts/check-release-matrix.mjs`, `scripts/lib/release-matrix-outcome.mjs`, `docs/verification.md`, `tsconfig.json`, `tsconfig.build.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.github/workflows/publish.yml`, or a runtime field of `package.json`. A `package.json` change that touches only `check:release-ready` or package-description metadata does not age a receipt.
 

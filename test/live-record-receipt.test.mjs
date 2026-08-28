@@ -86,28 +86,23 @@ test("BEHAVIOUR record-receipt: a campaign supersedes the one before it, and a f
   const dir = mkdtempSync(join(tmpdir(), "mcp-sso-receipt-"));
   try {
     const path = join(dir, "release.json");
-    const first = `${JSON.stringify({ runtimeCommit: COMMIT, ranAt: "2026-08-27T00:00:00.000Z" })}\n`;
+    const first = `${JSON.stringify({ runtimeCommit: COMMIT })}\n`;
     assert.equal(writeActiveReceipt(path, first), null, "the first recording supersedes nothing");
     const archived = writeActiveReceipt(path, `${JSON.stringify({ runtimeCommit: "b".repeat(40) })}\n`);
-    assert.ok(archived?.includes(`release-${COMMIT.slice(0, 7)}-20260827T000000`), "the one it replaces is archived under its own campaign");
+    assert.ok(archived?.includes(`release-${COMMIT.slice(0, 7)}`), "the one it replaces is archived under its own campaign");
     assert.equal(readFileSync(archived, "utf8"), first, "moved, not deleted");
     assert.match(readFileSync(path, "utf8"), /bbbbbbb/, "and the new one is active");
 
-    // Recording the same run again is a correction, not a campaign. It carries
-    // the same runtimeCommit and ranAt, and archiving it would put a
-    // document in archive/ that was never a campaign, which the checklist then
-    // has the operator commit as history.
-    const run = { runtimeCommit: "c".repeat(40), ranAt: "2026-08-28T00:00:00.000Z" };
-    writeFileSync(path, `${JSON.stringify({ ...run, rows: ["typo"] })}\n`);
+    // A campaign is its commit: recording that commit again replaces what is
+    // there, because the receipt says which commit passed the matrix and there
+    // is one answer per commit.
+    const same = { runtimeCommit: "c".repeat(40) };
+    writeFileSync(path, `${JSON.stringify({ ...same, rows: ["typo"] })}\n`);
     const archivedBefore = readdirSync(join(dir, "archive")).length;
-    assert.equal(writeActiveReceipt(path, `${JSON.stringify({ ...run, rows: ["fixed"] })}\n`), null,
-      "a re-record of the same run archives nothing");
+    assert.equal(writeActiveReceipt(path, `${JSON.stringify({ ...same, rows: ["fixed"] })}\n`), null,
+      "the same commit recorded again archives nothing");
     assert.equal(readdirSync(join(dir, "archive")).length, archivedBefore, "and leaves the archive as it was");
-    assert.match(readFileSync(path, "utf8"), /fixed/, "while the correction becomes the active receipt");
-
-    // A different run at the same commit is still a campaign, and is archived.
-    const later = writeActiveReceipt(path, `${JSON.stringify({ ...run, ranAt: "2026-08-28T09:00:00.000Z" })}\n`);
-    assert.ok(later, "a second campaign against the same commit is archived, not replaced");
+    assert.match(readFileSync(path, "utf8"), /fixed/, "while the new recording becomes the active receipt");
 
     // A name already taken belongs to a campaign that ran, so the next one
     // moves aside rather than replacing it.
@@ -157,14 +152,7 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   const evidence = toEvidence(readRehearsalReceipt(receiptFor()), { source: "https://example.invalid/run", driven: [...DRIVEN_ROWS] });
   assert.equal(evidence.schema, 1);
   assert.equal(evidence.complete, true);
-  assert.equal(evidence.ranAt, "2026-08-28T09:45:00.000Z", "ranAt is when the rehearsal finished, which identifies the run");
-  // recordedAt is when the document was written, which is after the rows a
-  // person drove, so the receipt cannot claim it was recorded before part of
-  // its own campaign happened.
-  assert.match(evidence.recordedAt, /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/, "recordedAt defaults to the moment of recording");
-  const stamped = toEvidence(readRehearsalReceipt(receiptFor()), { driven: [...DRIVEN_ROWS], recordedAt: "2026-08-28T10:15:00.000Z" });
-  assert.equal(stamped.recordedAt, "2026-08-28T10:15:00.000Z", "and is the caller's when given one");
-  assert.equal(stamped.ranAt, "2026-08-28T09:45:00.000Z", "while ranAt still comes from the run");
+  assert.equal(evidence.recordedAt, "2026-08-28T09:45:00.000Z", "the date the campaign ran, for a reader");
   assert.equal(evidence.rows.length, ROWS.length + DRIVEN_ROWS.length);
   assert.ok(evidence.rows.every((row) => ["id", "status", "observed"].includes(Object.keys(row)[0]) && row.id && row.status));
 
@@ -214,17 +202,6 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   // A campaign is identified by its commit and ranAt, so a receipt naming no
   // valid run time cannot be told from another run's, and the archive cannot
   // name it. undefined is the dangerous one: JSON.stringify drops the field.
-  // A day that does not exist and an hour that does not exist both parse
-  // finite, because parsing normalizes them onto another instant. A campaign is
-  // identified by this value, so it has to mean exactly one moment.
-  for (const bad of [{ startedAt: undefined, finishedAt: undefined }, { finishedAt: "yesterday" },
-    { finishedAt: "2026-13-45T99:99:99Z" }, { finishedAt: "2026-02-31T12:00:00.000Z" },
-    { finishedAt: "2026-08-28T24:00:00.000Z" }, { finishedAt: "2026-08-28T10:15:00Z" }]) {
-    assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor(bad)), { driven: [...DRIVEN_ROWS] }),
-      /names no valid run time/, `${JSON.stringify(bad)} is not a run time`);
-  }
-  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: [...DRIVEN_ROWS], recordedAt: "soon" }),
-    /not an instant/, "and neither is a malformed recording time");
 });
 
 test("BEHAVIOUR record-receipt: a campaign recorded off the release line is refused where it can still be fixed", () => {

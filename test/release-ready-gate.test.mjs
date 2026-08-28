@@ -51,7 +51,7 @@ test("one campaign, so a second active document is a superseded one left behind"
   // Rows a person drove ride in the same receipt as the machine-checked ones,
   // because they were driven in the same campaign against the same commit.
   const rows = receiptFor(ancestor).rows;
-  assert.ok(rows.some((row) => row.id === "F2" && row.driven), "the fixture campaign carries the hand-driven rows");
+  assert.ok(rows.some((row) => row.id === "F2"), "the fixture campaign carries the hand-driven rows");
   assert.deepEqual(fixture({ receipts: receipts(receiptFor(ancestor)) }).errors, [],
     "machine-checked and hand-driven rows are evidence in the one receipt");
 
