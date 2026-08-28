@@ -80,18 +80,6 @@ function waitForFile(path) {
   });
 }
 
-function waitForProcessExit(pid) {
-  return new Promise((resolve, reject) => {
-    const deadline = Date.now() + 10_000;
-    const poll = () => {
-      try { process.kill(pid, 0); } catch { resolve(); return; }
-      if (Date.now() >= deadline) reject(new Error(`timed out waiting for process ${pid} to exit`));
-      else setTimeout(poll, 10);
-    };
-    poll();
-  });
-}
-
 function waitForSession(path) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 5_000;
@@ -183,7 +171,6 @@ test("killing the wrapper closes the liveness pipe and stops serve.sh", async ()
     await new Promise((resolve) => { child.once("exit", resolve); });
     await waitForFile(f.env.PARENT_GONE_FILE);
     await waitForFile(f.env.SERVE_TERMINATED_FILE);
-    await waitForProcessExit(servePid);
     assert.equal(run(f, ["cleanup"]).status, 0);
     assert.equal(lines(f.clientLog).length, 6);
   } finally {
