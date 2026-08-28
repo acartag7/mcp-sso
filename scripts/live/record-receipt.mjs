@@ -8,7 +8,7 @@
 // a partial run, a dirty tree, or a failed row, is refused: the rehearsal
 // already decided that, and this never second-guesses it into a pass.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROWS } from "./rehearsal-support.mjs";
@@ -101,6 +101,65 @@ const invokedAsMain = () => {
   }
 };
 
+/** Replace the active receipt with `body`, archiving the one it supersedes.
+ *
+ *  One active receipt per producer. A campaign supersedes the one before it,
+ *  and the gate would otherwise keep failing on the older document forever:
+ *  its commit predates the very change the new run was recorded for. The
+ *  superseded receipt is archived rather than deleted. Returns the archive
+ *  path, or null when there was nothing to supersede. */
+export function writeActiveReceipt(path, body) {
+  const staged = `${path}.staged`;
+  mkdirSync(dirname(path), { recursive: true });
+  if (!existsSync(path)) {
+    writeFileSync(path, body);
+    return null;
+  }
+  // Every superseded receipt is archived, including one from a second campaign
+  // against the same commit: it carries its own timestamp, source and
+  // observations, and overwriting it would discard a campaign that ran.
+  const previous = JSON.parse(readFileSync(path, "utf8"));
+  const stamp = String(previous.recordedAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
+  const base = `rehearsal-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
+  const archiveDir = resolve(dirname(path), "archive");
+  mkdirSync(archiveDir, { recursive: true });
+  // A repeated recording of the same artifact produces the same name. The file
+  // already there is a campaign that ran, so the new one takes a free name
+  // rather than replacing it: renameSync would delete it silently.
+  let archive = resolve(archiveDir, `${base}.json`);
+  for (let n = 2; existsSync(archive); n++) archive = resolve(archiveDir, `${base}-${n}.json`);
+  // Write the replacement first: a failure here leaves the active receipt where
+  // it was. Moving first and then failing to write would leave the repository
+  // with no active receipt and a gate that refuses everything.
+  //
+  // Every exit from the sequence, not only the one that fails most visibly: a
+  // partial staged write, a failed archive move, a failed activation, and a
+  // failed restore all leave `staged` behind, and an untracked file there makes
+  // the next rehearsal record a dirty tree and refuse itself as evidence. The
+  // finally covers all four.
+  try {
+    writeFileSync(staged, body);
+    renameSync(path, archive);
+    try {
+      renameSync(staged, path);
+    } catch (error) {
+      try {
+        renameSync(archive, path);
+      } catch (restoreError) {
+        throw new Error(
+          `could not activate the new receipt (${error.message}) and could not restore the previous one ` +
+          `(${restoreError.message}); the previous receipt is at ${archive}`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+  } finally {
+    rmSync(staged, { force: true });
+  }
+  return archive;
+}
+
 if (invokedAsMain()) {
   const argv = process.argv.slice(2);
   const options = { receipt: undefined, write: false, requireHead: false, source: process.env.MCP_SSO_RUN_URL };
@@ -119,42 +178,9 @@ if (invokedAsMain()) {
   const evidence = toEvidence(receipt, { source: options.source });
   const body = `${JSON.stringify(evidence, null, 2)}\n`;
   if (options.write) {
-    // One active receipt per producer. A campaign supersedes the one before it,
-    // and the gate would otherwise keep failing on the older document forever:
-    // its commit predates the very change the new run was recorded for. The
-    // superseded receipt is archived rather than deleted.
     const path = resolve(ROOT, "docs/evidence/rehearsal.json");
-    const staged = `${path}.staged`;
-    let recorded = false;
-    mkdirSync(dirname(path), { recursive: true });
-    if (existsSync(path)) {
-      // Every superseded receipt is archived, including one from a second
-      // campaign against the same commit: it carries its own timestamp, source
-      // and observations, and overwriting it would discard a campaign that ran.
-      const previous = JSON.parse(readFileSync(path, "utf8"));
-      const stamp = String(previous.recordedAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
-      const base = `rehearsal-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
-      mkdirSync(resolve(ROOT, "docs/evidence/archive"), { recursive: true });
-      // A repeated recording of the same artifact produces the same name. The
-      // file already there is a campaign that ran, so the new one takes a free
-      // name rather than replacing it: renameSync would delete it silently.
-      let archive = resolve(ROOT, `docs/evidence/archive/${base}.json`);
-      for (let n = 2; existsSync(archive); n++) archive = resolve(ROOT, `docs/evidence/archive/${base}-${n}.json`);
-      // Write the replacement first: a failure here leaves the active receipt
-      // where it was. Moving first and then failing to write would leave the
-      // repository with no active receipt and a gate that refuses everything.
-      writeFileSync(staged, body);
-      renameSync(path, archive);
-      try {
-        renameSync(staged, path);
-      } catch (error) {
-        renameSync(archive, path);
-        throw error;
-      }
-      process.stdout.write(`${archive} archived\n`);
-      recorded = true;
-    }
-    if (!recorded) writeFileSync(path, body);
+    const archived = writeActiveReceipt(path, body);
+    if (archived) process.stdout.write(`${archived} archived\n`);
     process.stdout.write(`${path} written for ${receipt.runtimeCommit}\n`);
     // The page a person reads is not generated, and it should not silently
     // fall behind the receipt either. This is what changed, in the words the

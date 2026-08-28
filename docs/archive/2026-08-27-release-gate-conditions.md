@@ -23,6 +23,7 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | a matrix row repeats an export | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row claims exports without packedArtifact | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no executable evidence | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a receipt row has a wrongly typed id | New here rather than carried over: the id pattern was applied to `String(row.id)`, so a numeric id passed it and then failed every later comparison, which are all against strings. Pinned in `test/release-gate-conditions.test.mjs` |
 | the release matrix is not an object with a rows array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row omits its exports array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |

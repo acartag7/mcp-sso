@@ -44,14 +44,18 @@ function readReceipt(receipt, label, errors) {
   if (!Array.isArray(receipt.rows) || receipt.rows.length === 0) return fail("records no rows");
   const seen = new Set();
   for (const row of receipt.rows) {
-    if (!row || typeof row !== "object" || !ROW_ID.test(String(row.id))) return fail("has a row with no readable id");
+    // typeof before the pattern: String(123) matches it, and a numeric id then
+    // survives every later comparison, which are all against strings.
+    if (!row || typeof row !== "object" || typeof row.id !== "string" || !ROW_ID.test(row.id)) {
+      return fail("has a row with no readable id");
+    }
     if (seen.has(row.id)) return fail(`repeats row ${row.id}`);
     seen.add(row.id);
     if (row.status !== "PASS") return fail(`row ${row.id} did not pass (${String(row.status)})`);
   }
   const matrix = receipt.releaseMatrix;
   if (matrix !== undefined) {
-    if (!Array.isArray(matrix) || matrix.some((id) => !ROW_ID.test(String(id)))) {
+    if (!Array.isArray(matrix) || matrix.some((id) => typeof id !== "string" || !ROW_ID.test(id))) {
       return fail("names release-matrix rows that are not readable ids");
     }
     // Export coverage comes from the release matrix, which only the rehearsal

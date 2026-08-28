@@ -3,11 +3,13 @@
 // document it writes is one the gate accepts.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
-import { assertClientVersions, provenMatrixRows, readRehearsalReceipt, toEvidence } from "../scripts/live/record-receipt.mjs";
+import { assertClientVersions, provenMatrixRows, readRehearsalReceipt, toEvidence, writeActiveReceipt } from "../scripts/live/record-receipt.mjs";
 import { ROWS } from "../scripts/live/rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -75,22 +77,41 @@ test("BEHAVIOUR record-receipt: the release-matrix rows come from the row that r
   assert.deepEqual(provenMatrixRows(noise), ["RM.2"], "only passing lines that name a row count");
 });
 
-test("BEHAVIOUR record-receipt: a campaign supersedes the one before it", () => {
+test("BEHAVIOUR record-receipt: a campaign supersedes the one before it, and a failed one leaves nothing behind", () => {
   // Two receipts for the same producer would leave the older one failing
   // freshness forever: its commit predates the change the new run recorded.
-  const source = readFileSync(new URL("../scripts/live/record-receipt.mjs", import.meta.url), "utf8");
-  assert.match(source, /docs\/evidence\/rehearsal\.json/, "the active receipt has one name");
-  assert.match(source, /rehearsal-\$\{String\(previous\.runtimeCommit\)\.slice\(0, 7\)\}-\$\{stamp\}/, "and the one it replaces is archived under its own campaign");
-  assert.match(source, /renameSync\(path, archive\)/, "moved, not deleted");
-  // The replacement is written before anything moves, and a failed move is
-  // rolled back: a recording that fails must leave the evidence set as it was,
-  // not with the active receipt gone.
-  assert.ok(source.indexOf("writeFileSync(staged, body)") < source.indexOf("renameSync(path, archive)"),
-    "the replacement is staged before the active receipt moves");
-  assert.match(source, /catch \(error\) \{\s*renameSync\(archive, path\);\s*throw error;/,
-    "and a failed swap puts the archived receipt back");
-  assert.match(source, /for \(let n = 2; existsSync\(archive\); n\+\+\)/,
-    "and a name already taken belongs to a campaign that ran, so the new one moves aside instead of replacing it");
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-receipt-"));
+  try {
+    const path = join(dir, "rehearsal.json");
+    const first = `${JSON.stringify({ runtimeCommit: COMMIT, recordedAt: "2026-08-27T00:00:00.000Z" })}\n`;
+    assert.equal(writeActiveReceipt(path, first), null, "the first recording supersedes nothing");
+    const archived = writeActiveReceipt(path, `${JSON.stringify({ runtimeCommit: "b".repeat(40) })}\n`);
+    assert.ok(archived?.includes(`rehearsal-${COMMIT.slice(0, 7)}-20260827T0000`), "the one it replaces is archived under its own campaign");
+    assert.equal(readFileSync(archived, "utf8"), first, "moved, not deleted");
+    assert.match(readFileSync(path, "utf8"), /bbbbbbb/, "and the new one is active");
+
+    // A name already taken belongs to a campaign that ran, so the next one
+    // moves aside rather than replacing it.
+    writeFileSync(path, first);
+    const second = writeActiveReceipt(path, "{}\n");
+    assert.ok(second.endsWith("-2.json"), `a taken name is not overwritten: ${second}`);
+
+    // A recording that fails leaves the evidence set exactly as it was: the
+    // active receipt still active, and no staged file to make the next
+    // rehearsal record a dirty tree and refuse itself as evidence.
+    const before = readFileSync(path, "utf8");
+    chmodSync(join(dir, "archive"), 0o500);
+    try {
+      assert.throws(() => writeActiveReceipt(path, "{}\n"), "an unwritable archive fails the recording");
+    } finally {
+      chmodSync(join(dir, "archive"), 0o700);
+    }
+    assert.equal(readFileSync(path, "utf8"), before, "the active receipt is untouched");
+    assert.equal(existsSync(`${path}.staged`), false, "and no staged file is left behind");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
   const gate = readFileSync(new URL("../scripts/check-release-ready.mjs", import.meta.url), "utf8");
   assert.match(gate, /name\.endsWith\("\.json"\)/, "the gate reads documents, so the archive directory is not one");
 });

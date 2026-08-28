@@ -14,7 +14,8 @@ import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
 import * as FIXTURE from "./lib/release-ready-fixture.mjs";
 import {
-  ancestor, cleanupReleaseReadyFixture, fixture, receiptFor, receipts, setupReleaseReadyFixture, unrelated,
+  ancestor, cleanupReleaseReadyFixture, fixture, operatorReceiptFor, receiptFor, receipts, setupReleaseReadyFixture,
+  unrelated,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -66,6 +67,9 @@ const CONDITIONS = [
   ["a matrix row has no executable evidence",
     () => ({ releaseMatrix: { rows: [{ id: "RM.1", title: "t", evidence: [{ file: "", name: "" }] }] } }),
     "requires executable evidence with file and name"],
+  ["a receipt row has a wrongly typed id",
+    () => ({ receipts: receipts({ operator: { ...operatorReceiptFor(ancestor), rows: [{ id: 123, status: "PASS" }] } }) }),
+    "has a row with no readable id"],
   ["a rehearsal receipt records a row the rehearsal does not define",
     () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "invented-proof", status: "PASS" }] }) }) }),
     "row(s) the rehearsal does not define"],
@@ -89,7 +93,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 20, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 21, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages exactly as the previous gate aged it, plus the one correction", () => {
