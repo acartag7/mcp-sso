@@ -1,12 +1,9 @@
-import { spawnSync } from "node:child_process";
-import {
-  chmodSync, closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readSync, writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 export const LEGS = Object.freeze(["cloudflare_access", "entra", "google"]);
-const MAX_AUDIT_BYTES = 10 * 1024 * 1024;
-const MAX_AUDIT_ROWS = 10_000;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_ROWS = 10_000;
 const MAX_FIELD_BYTES = 2_048;
 const SHORT = Object.freeze({
   "oauth.cimd.fetch": "cimd", "oauth.register": "register", "identity.verify": "identity",
@@ -37,14 +34,6 @@ const ROWS = Object.freeze([
 
 const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value)
   && Object.getPrototypeOf(value) === Object.prototype;
-const optionalField = (row, name) => {
-  const value = row[name];
-  if (value === undefined) return undefined;
-  if (typeof value !== "string" || Buffer.byteLength(value) > MAX_FIELD_BYTES || /[\r\n\0]/.test(value)) {
-    throw new Error(`audit row has an invalid ${name}`);
-  }
-  return value;
-};
 
 export function validateLegs(values) {
   const legs = values.length === 0 ? [...LEGS] : values;
@@ -61,87 +50,34 @@ export function clientEntries(legs = LEGS) {
   ]);
 }
 
-function readCappedUtf8(fd, overflowMessage) {
-  const chunks = [];
-  const scratch = Buffer.allocUnsafe(64 * 1024);
-  let total = 0;
-  while (total <= MAX_AUDIT_BYTES) {
-    const length = Math.min(scratch.length, MAX_AUDIT_BYTES + 1 - total);
-    const count = readSync(fd, scratch, 0, length, null);
-    if (count === 0) return Buffer.concat(chunks, total).toString("utf8");
-    chunks.push(Buffer.from(scratch.subarray(0, count)));
-    total += count;
-  }
-  throw new Error(overflowMessage);
-}
-
-function readBoundedFile(path) {
-  if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
-    throw new Error("live-session file reads require O_NOFOLLOW");
-  }
-  let fd;
-  try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch (error) {
-    if (error?.code === "ENOENT") return undefined;
-    throw new Error("live-session file cannot be opened");
-  }
-  try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > MAX_AUDIT_BYTES) throw new Error("live-session file is not a bounded regular file");
-    return readCappedUtf8(fd, "live-session file grew beyond its size limit");
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function inspectPrivateDir(path, uid) {
+function readText(path) {
   let stat;
-  try { stat = lstatSync(path); } catch (error) {
+  try { stat = statSync(path); } catch (error) {
     if (error?.code === "ENOENT") return undefined;
-    throw new Error("live-session state directory cannot be inspected");
+    throw new Error("live-session file cannot be read");
   }
-  if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o077) !== 0) {
-    throw new Error("live-session state directory is not private");
-  }
-  return stat;
+  if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error("live-session file is too large or is not a file");
+  const body = readFileSync(path, "utf8");
+  if (Buffer.byteLength(body) > MAX_FILE_BYTES) throw new Error("live-session file grew beyond its size limit");
+  return body;
 }
 
-function readPrivateFile(path, uid) {
-  const before = inspectPrivateDir(dirname(path), uid);
-  if (before === undefined) return undefined;
-  if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
-    throw new Error("live-session file reads require O_NOFOLLOW");
+const optionalField = (row, name) => {
+  const value = row[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || Buffer.byteLength(value) > MAX_FIELD_BYTES || /[\r\n\0]/.test(value)) {
+    throw new Error(`audit row has an invalid ${name}`);
   }
-  let fd;
-  try {
-    try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (error) {
-      if (error?.code === "ENOENT") return undefined;
-      throw new Error("live-session state cannot be opened");
-    }
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || (uid !== undefined && stat.uid !== uid)
-      || (stat.mode & 0o077) !== 0 || stat.size > MAX_AUDIT_BYTES) {
-      throw new Error("live-session state is not a private bounded regular file");
-    }
-    const body = readCappedUtf8(fd, "live-session state grew beyond its size limit");
-    const after = inspectPrivateDir(dirname(path), uid);
-    if (after === undefined || before.dev !== after.dev || before.ino !== after.ino) {
-      throw new Error("live-session state directory changed while reading");
-    }
-    return body;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
+  return value;
+};
 
 export function readAudit(path) {
-  const body = readBoundedFile(path);
+  const body = readText(path);
   if (body === undefined || body === "") return [];
   const lines = body.split("\n");
   if (lines.at(-1) === "") lines.pop();
   if (lines.some((line) => line === "")) throw new Error("audit trail contains a blank record");
-  if (lines.length > MAX_AUDIT_ROWS) throw new Error("audit trail has too many rows");
+  if (lines.length > MAX_ROWS) throw new Error("audit trail has too many rows");
   return lines.map((line) => {
     let row;
     try { row = JSON.parse(line); } catch { throw new Error("audit trail contains invalid JSON"); }
@@ -172,8 +108,7 @@ export function buildFlows(events) {
   const attempts = new Map();
   let held = [];
   for (const event of events) {
-    if (isChallenge(event)) continue;
-    if (!SESSION_EVENTS.has(event.event)) continue;
+    if (isChallenge(event) || !SESSION_EVENTS.has(event.event)) continue;
     if (event.clientId === undefined) {
       if (event.event === "identity.verify" && event.status === "failure") {
         flows.push({ ordinal: flows.length, clientId: "unattributed", events: [event], unbound: true });
@@ -205,18 +140,13 @@ export const isFragment = (flow) => !flow.events.some((event) => event.event ===
   || event.event === "oauth.token.authorization_code") && flow.unbound !== true;
 
 export function classifyClient(flow, siblings = [], { codexDcr = false } = {}) {
-  if (flow.unbound === true) return {
-    kind: "unattributed", label: "unattributed identity denial", redirectHost: "",
-  };
+  if (flow.unbound === true) return { kind: "unattributed", label: "unattributed identity denial", redirectHost: "" };
   const identifiedHost = (candidate) => candidate.events.find((event) => event.event === "oauth.authorize.prepare"
     && event.clientId === candidate.clientId && event.redirectHost)?.redirectHost
     ?? candidate.events.find((event) => event.clientId === candidate.clientId && event.redirectHost)?.redirectHost;
-  const siblingHost = siblings.filter((candidate) => candidate.clientId === flow.clientId)
-    .map(identifiedHost).find((redirectHost) => redirectHost !== undefined);
   const origin = identifiedHost(flow)
-    ?? siblingHost
-    ?? flow.events.find((event) => event.redirectHost)?.redirectHost
-    ?? "";
+    ?? siblings.filter((candidate) => candidate.clientId === flow.clientId).map(identifiedHost).find(Boolean)
+    ?? flow.events.find((event) => event.redirectHost)?.redirectHost ?? "";
   let redirectHost = origin;
   try { redirectHost = new URL(origin).hostname; } catch { redirectHost = origin.replace(/^[a-z]+:\/\//i, "").split(":")[0]; }
   if (redirectHost.startsWith("[") && redirectHost.endsWith("]")) redirectHost = redirectHost.slice(1, -1);
@@ -224,8 +154,7 @@ export function classifyClient(flow, siblings = [], { codexDcr = false } = {}) {
   let document;
   try { document = new URL(flow.clientId); } catch { document = undefined; }
   if (document === undefined && codexDcr && loopback && /^mcpdc_[a-f0-9]{32}$/.test(flow.clientId)) return {
-    kind: "codex", label: "Codex CLI (operator-annotated DCR)", redirectHost,
-    attribution: "operator-annotated",
+    kind: "codex", label: "Codex CLI (operator-annotated DCR)", redirectHost, attribution: "operator-annotated",
   };
   if (document === undefined) return {
     kind: loopback ? "cli-dcr" : "dcr-hosted",
@@ -281,93 +210,25 @@ export function flowKey(leg, flow) {
   return `${leg}\0${flow.clientId}\0${flow.ordinal}\0${first?.occurredAt ?? ""}\0${first?.event ?? ""}`;
 }
 
-function ensurePrivateDir(path, uid = process.getuid?.()) {
-  let stat;
-  try { stat = lstatSync(path); } catch (error) {
-    if (error?.code !== "ENOENT") throw new Error("live-session state directory cannot be inspected");
-    mkdirSync(path, { mode: 0o700 });
-    chmodSync(path, 0o700);
-    stat = lstatSync(path);
-  }
-  if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o077) !== 0) {
-    throw new Error("live-session state directory is not private");
-  }
+function ensureStateDir(path) {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  chmodSync(path, 0o700);
 }
 
-export function writeResults(path, results, { replace = false, beforeWrite } = {}) {
-  if (!Array.isArray(results) || results.length > MAX_AUDIT_ROWS) throw new Error("live-session result set is invalid");
-  if (beforeWrite !== undefined && typeof beforeWrite !== "function") throw new Error("live-session result guard is invalid");
-  ensurePrivateDir(dirname(path));
-  if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) throw new Error("result writes require O_NOFOLLOW");
-  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK
-    | (replace ? 0 : constants.O_APPEND);
-  let fd;
-  try {
-    try { fd = openSync(path, flags, 0o600); } catch { throw new Error("result path cannot be opened"); }
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("result path is not a private regular file");
-    beforeWrite?.();
-    if (replace) ftruncateSync(fd, 0);
-    const body = results.map((result) => JSON.stringify(result)).join("\n");
-    if (body !== "") writeFileSync(fd, `${body}\n`);
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
+export function writeResults(path, results, { replace = false } = {}) {
+  if (!Array.isArray(results) || results.length > MAX_ROWS) throw new Error("live-session result set is invalid");
+  ensureStateDir(dirname(path));
+  const body = results.map((result) => JSON.stringify(result)).join("\n");
+  writeFileSync(path, body === "" ? "" : `${body}\n`, { flag: replace ? "w" : "a", mode: 0o600 });
 }
 
-export function readPrivateJson(path, uid = process.getuid?.()) {
-  const body = readPrivateFile(path, uid);
+export function readJson(path) {
+  const body = readText(path);
   if (body === undefined) return undefined;
   try { return JSON.parse(body); } catch { throw new Error("live-session state contains invalid JSON"); }
 }
 
-export function writePrivateJson(path, value) {
-  ensurePrivateDir(dirname(path));
-  if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) throw new Error("state writes require O_NOFOLLOW");
-  let fd;
-  try {
-    try {
-      fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
-    } catch { throw new Error("state path cannot be opened"); }
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("state path is not a private regular file");
-    ftruncateSync(fd, 0);
-    writeFileSync(fd, `${JSON.stringify(value)}\n`);
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
-
-export function acquireSessionLock(path) {
-  if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
-    throw new Error("live-session lock requires O_NOFOLLOW");
-  }
-  ensurePrivateDir(dirname(path));
-  let fd;
-  try {
-    fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("live-session lock is not private");
-  } catch (error) {
-    if (fd !== undefined) closeSync(fd);
-    if (error instanceof Error && error.message === "live-session lock is not private") throw error;
-    throw new Error("live-session lock cannot be opened");
-  }
-  const utility = process.platform === "darwin" ? { path: "/usr/bin/lockf", args: ["-s", "-t", "0", "3"], busy: 75 }
-    : process.platform === "linux" ? { path: "/usr/bin/flock", args: ["-n", "3"], busy: 1 } : undefined;
-  if (utility === undefined) { closeSync(fd); throw new Error("live-session locking is unsupported on this platform"); }
-  const result = spawnSync(utility.path, utility.args, {
-    stdio: ["ignore", "ignore", "ignore", fd], timeout: 5_000,
-  });
-  if (result.status !== 0) {
-    closeSync(fd);
-    if (result.status === utility.busy) throw new Error("another live session is active");
-    throw new Error("live-session lock acquisition failed");
-  }
-  let released = false;
-  return () => {
-    if (released) throw new Error("live-session lock was already released");
-    released = true;
-    closeSync(fd);
-  };
+export function writeJson(path, value) {
+  ensureStateDir(dirname(path));
+  writeFileSync(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
 }
