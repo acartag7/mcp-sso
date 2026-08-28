@@ -221,7 +221,7 @@ test("cleanup attempts all six reserved entries and continues after a failure", 
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("one-shot watch records PASS only after a protected request", () => {
+test("a same-client cached-token request cannot upgrade a token observation", () => {
   const f = fixture();
   try {
     assert.equal(run(f, ["serve", "google"]).status, 0);
@@ -230,15 +230,16 @@ test("one-shot watch records PASS only after a protected request", () => {
     writeFileSync(join(leg, "audit.jsonl"), `${audit("https://claude.ai/oauth-client").map(JSON.stringify).join("\n")}\n`);
     const result = run(f, ["watch", "--all", "--once"]);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /PASS A3 google Claude Code/);
-    const saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
-    assert.equal(saved.verdict, "PASS");
-    assert.equal(saved.toolCalls, 1);
-    assert.equal(saved.clientVersion, "claude 1.2.3");
+    assert.match(result.stdout, /TOKEN A3 google Claude Code/);
+    assert.match(result.stdout, /REQUEST A3 google Claude Code/);
+    const saved = lines(join(f.repo, ".live-state/session-results.jsonl")).map((line) => JSON.parse(line));
+    assert.deepEqual(saved.map(({ verdict }) => verdict), ["TOKEN", "REQUEST"]);
+    assert.deepEqual(saved.map(({ protectedRequests }) => protectedRequests), [0, 1]);
+    assert.ok(saved.every(({ clientVersion }) => clientVersion === "claude 1.2.3"));
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("watch records TOKEN_ONLY and explicit Codex dynamic registration", () => {
+test("watch records TOKEN and explicit Codex dynamic registration", () => {
   const f = fixture();
   try {
     assert.equal(run(f, ["serve", "google"]).status, 0);
@@ -248,7 +249,7 @@ test("watch records TOKEN_ONLY and explicit Codex dynamic registration", () => {
     writeFileSync(join(leg, "audit.jsonl"), `${audit(clientId, false).map(JSON.stringify).join("\n")}\n`);
     assert.equal(run(f, ["watch", "--all", "--once", "--codex-dcr"]).status, 0);
     const saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
-    assert.equal(saved.verdict, "TOKEN_ONLY");
+    assert.equal(saved.verdict, "TOKEN");
     assert.equal(saved.client, "codex");
     assert.equal(saved.row, "B3");
     assert.equal(saved.clientAttribution, "operator-annotated");
@@ -270,7 +271,9 @@ test("default watch reports a flow that settles after watch starts", async () =>
     });
     await new Promise((resolve) => { setTimeout(resolve, 1_200); });
     appendFileSync(auditPath, `${events.slice(3).map(JSON.stringify).join("\n")}\n`);
-    assert.match(await waitForOutput(child, /PASS A3 google Claude Code/), /PASS A3 google Claude Code/);
+    const output = await waitForOutput(child, /REQUEST A3 google Claude Code/);
+    assert.match(output, /TOKEN A3 google Claude Code/);
+    assert.match(output, /REQUEST A3 google Claude Code/);
     child.kill("SIGINT");
     assert.equal(await new Promise((resolve) => { child.once("exit", resolve); }), 0);
   } finally {
@@ -279,7 +282,7 @@ test("default watch reports a flow that settles after watch starts", async () =>
   }
 });
 
-test("flow grouping keeps repeated attempts and unattributed denials separate", () => {
+test("flow grouping keeps requests, repeated attempts, and unattributed denials separate", () => {
   const clientId = "stored-client";
   const events = audit(clientId, true, Date.parse("2026-08-28T20:00:00.000Z"));
   const second = audit(clientId, true, Date.parse(events.at(-1).occurredAt) + 1);
@@ -289,13 +292,11 @@ test("flow grouping keeps repeated attempts and unattributed denials separate", 
     event: "identity.verify", status: "failure", reason: "identity_rejected",
   };
   const flows = buildFlows([...events, ...second, denial]);
-  assert.equal(flows.length, 3);
-  assert.notEqual(flowKey("google", flows[0]), flowKey("google", flows[1]));
-  assert.deepEqual(flows.slice(0, 2).map(outcomeOf), [
-    { verdict: "PASS", toolCalls: 1, ambiguousToolCalls: 1 },
-    { verdict: "TOKEN_ONLY", toolCalls: 0, ambiguousToolCalls: 1 },
+  assert.equal(flows.length, 5);
+  assert.equal(new Set(flows.map((flow) => flowKey("google", flow))).size, 5);
+  assert.deepEqual(flows.map((flow) => outcomeOf(flow).verdict), [
+    "TOKEN", "REQUEST", "TOKEN", "REQUEST", "DENIED",
   ]);
-  assert.equal(outcomeOf(flows[2]).verdict, "DENIED");
 });
 
 test("audit parsing rejects malformed rows and ignores known unrelated events", () => {
@@ -308,10 +309,31 @@ test("audit parsing rejects malformed rows and ignores known unrelated events", 
       event: "oauth.token.client_credentials", status: "failure", clientId: "other",
     });
     writeFileSync(path, `${rows.map(JSON.stringify).join("\n")}\n`);
-    assert.equal(buildFlows(readAudit(path)).length, 1);
-    for (const body of ["{not-json}\n", `${JSON.stringify(rows[0])}\n\n${JSON.stringify(rows[1])}\n`]) {
+    assert.equal(buildFlows(readAudit(path)).length, 2);
+    for (const body of [
+      "{not-json}\n", `${JSON.stringify(rows[0])}\n\n${JSON.stringify(rows[1])}\n`,
+      `${JSON.stringify({ ...rows[0], event: 42 })}\n`, "x".repeat(10 * 1024 * 1024 + 1),
+    ]) {
       writeFileSync(path, body);
       assert.throws(() => readAudit(path));
     }
+    rmSync(path);
+    mkdirSync(path);
+    assert.throws(() => readAudit(path));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("watch rejects malformed session state without writing results", () => {
+  for (const body of [
+    "", "{not-json}\n", `${JSON.stringify({ version: 1, legs: [] })}\n`,
+    `${JSON.stringify({ version: 1, legs: ["google"], mode: "stored", commit: "a".repeat(40), clean: true, startedAt: "2026-08-28T20:00:00.000Z", extra: true })}\n`,
+  ]) {
+    const f = fixture();
+    try {
+      mkdirSync(join(f.repo, ".live-state"), { recursive: true });
+      writeFileSync(join(f.repo, ".live-state/session.json"), body);
+      assert.equal(run(f, ["watch", "--all", "--once"]).status, 1);
+      assert.equal(existsSync(join(f.repo, ".live-state/session-results.jsonl")), false);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
 });

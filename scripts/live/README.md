@@ -151,10 +151,14 @@ node session.mjs watch
 
 `serve` defaults to all three legs and prints the Claude Code, Codex, ChatGPT, and claude.ai connection commands. Press Ctrl-C in the `serve` terminal when the run is finished. The helper stops `serve.sh` and attempts to remove its selected `mcp-sso-live-<leg>` entries from Claude Code and Codex. A liveness pipe also stops the public tunnel and servers if the wrapper exits. Run `node session.mjs cleanup` after a crash to attempt all six fixed entries again.
 
-`watch` prints one settled result per client flow and appends it to `.live-state/session-results.jsonl`. `PASS` means the audit trail contains both an authorization-code exchange and a later successful protected `/mcp` request attributable to the same attempt. `TOKEN_ONLY` means the exchange completed without that request. `DENIED` records an identity failure, and `INCOMPLETE` records an unfinished flow. Run `node session.mjs watch --all --once` to rebuild a one-shot summary from the current audit files. For a signed-out Codex CLI that uses dynamic registration, add `--codex-dcr` so the generated loopback flow is identified as Codex.
+`watch` appends audit-derived observations to `.live-state/session-results.jsonl`. `TOKEN` records an authorization-code exchange. `REQUEST` separately records a successful protected `/mcp` request for that client id. The audit does not identify which access token made a request, so the helper does not claim that a `REQUEST` used the token from a `TOKEN` observation. `DENIED` records an identity failure, and `INCOMPLETE` records an unfinished flow. Run `node session.mjs watch --all --once` to rebuild a one-shot summary from the current audit files. For a signed-out Codex CLI that uses dynamic registration, add `--codex-dcr` so the generated loopback flow is identified as Codex.
 
 > [!IMPORTANT]
 > This is a single-operator helper. Run one `serve` and one `watch`, and stop both before starting another session. The helper does not coordinate concurrent commands. Its `.live-state/` files are local working notes, not release evidence.
+
+The helper rejects unknown or repeated command options, malformed session JSON, malformed audit rows, audit files over 10 MiB, and audit trails over 10,000 rows. One final LF is valid JSONL; another blank record is not. These checks prevent bad working data from becoming a result, but they do not make `.live-state/` a security boundary. Another process running as the operator can replace or forge those files.
+
+Run the helper from a trusted checkout and `PATH`. It executes the checkout's `scripts/live/serve.sh` and resolves `git`, `claude`, and `codex` from `PATH`. The npm package excludes this helper and `scripts/live/`.
 
 ```sh
 scripts/live/serve.sh cloudflare_access entra google

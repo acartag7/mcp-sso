@@ -100,15 +100,19 @@ export function readAudit(path) {
   });
 }
 
-const isChallenge = (event) => event.event === "auth.request" && event.status === "failure";
 const STARTS = new Set(["oauth.cimd.fetch", "oauth.register"]);
 export function buildFlows(events) {
   const flows = [];
   const active = new Map();
-  const attempts = new Map();
   let held = [];
   for (const event of events) {
-    if (isChallenge(event) || !SESSION_EVENTS.has(event.event)) continue;
+    if (!SESSION_EVENTS.has(event.event)) continue;
+    if (event.event === "auth.request") {
+      if (event.status === "success" && event.clientId !== undefined) {
+        flows.push({ ordinal: flows.length, clientId: event.clientId, events: [event], requestOnly: true });
+      }
+      continue;
+    }
     if (event.clientId === undefined) {
       if (event.event === "identity.verify" && event.status === "failure") {
         flows.push({ ordinal: flows.length, clientId: "unattributed", events: [event], unbound: true });
@@ -116,19 +120,12 @@ export function buildFlows(events) {
       continue;
     }
     let flow = active.get(event.clientId);
-    let clientAttempts = attempts.get(event.clientId);
-    if (clientAttempts === undefined) { clientAttempts = []; attempts.set(event.clientId, clientAttempts); }
     const startsAnotherAttempt = event.event === "oauth.authorize.prepare"
       && flow?.events.some((candidate) => candidate.event === "oauth.authorize.prepare");
     if (flow === undefined || STARTS.has(event.event) || startsAnotherAttempt) {
       flow = { ordinal: flows.length, clientId: event.clientId, events: [] };
       flows.push(flow);
-      clientAttempts.push(flow);
       active.set(event.clientId, flow);
-    }
-    if (event.event === "auth.request" && clientAttempts.length > 1) {
-      for (const attempt of clientAttempts) attempt.ambiguousToolCalls = (attempt.ambiguousToolCalls ?? 0) + 1;
-      continue;
     }
     if (held.length > 0) { flow.events.push(...held); held = []; }
     flow.events.push(event);
@@ -137,7 +134,7 @@ export function buildFlows(events) {
 }
 
 export const isFragment = (flow) => !flow.events.some((event) => event.event === "oauth.authorize.prepare"
-  || event.event === "oauth.token.authorization_code") && flow.unbound !== true;
+  || event.event === "oauth.token.authorization_code") && flow.unbound !== true && flow.requestOnly !== true;
 
 export function classifyClient(flow, siblings = [], { codexDcr = false } = {}) {
   if (flow.unbound === true) return { kind: "unattributed", label: "unattributed identity denial", redirectHost: "" };
@@ -170,15 +167,12 @@ export function classifyClient(flow, siblings = [], { codexDcr = false } = {}) {
 }
 
 export function outcomeOf(flow) {
+  if (flow.requestOnly === true) return { verdict: "REQUEST", protectedRequests: 1 };
   const denial = flow.events.find((event) => event.event === "identity.verify" && event.status === "failure");
   const tokenAt = flow.events.findIndex((event) => event.event === "oauth.token.authorization_code" && event.status === "success");
-  const toolCalls = tokenAt < 0 ? 0 : flow.events.slice(tokenAt + 1)
-    .filter((event) => event.event === "auth.request" && event.status === "success").length;
-  const ambiguousToolCalls = flow.ambiguousToolCalls ?? 0;
-  if (denial !== undefined) return { verdict: "DENIED", reason: denial.reason ?? "unspecified", toolCalls, ambiguousToolCalls };
-  if (tokenAt >= 0 && toolCalls > 0) return { verdict: "PASS", toolCalls, ambiguousToolCalls };
-  if (tokenAt >= 0) return { verdict: "TOKEN_ONLY", toolCalls, ambiguousToolCalls };
-  return { verdict: "INCOMPLETE", toolCalls: 0, ambiguousToolCalls };
+  if (denial !== undefined) return { verdict: "DENIED", reason: denial.reason ?? "unspecified", protectedRequests: 0 };
+  if (tokenAt >= 0) return { verdict: "TOKEN", protectedRequests: 0 };
+  return { verdict: "INCOMPLETE", protectedRequests: 0 };
 }
 
 export function chainOf(flow) {

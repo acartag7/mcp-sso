@@ -134,10 +134,12 @@ function readFlows(session) {
 
 function printResult(result) {
   const row = result.row === undefined ? "extra" : result.row;
-  const calls = result.toolCalls === 0
-    ? (result.ambiguousToolCalls > 0 ? `no attributable protected /mcp request (${result.ambiguousToolCalls} ambiguous)` : "no protected /mcp request")
-    : `${result.toolCalls} protected /mcp request(s)`;
-  process.stdout.write(`${result.verdict} ${row} ${result.leg} ${result.clientLabel}: ${calls}\n`);
+  const detail = result.verdict === "REQUEST"
+    ? "protected /mcp request observed for this client id"
+    : result.verdict === "TOKEN"
+      ? "authorization code exchanged; protected requests are separate observations"
+      : result.verdict === "DENIED" ? `identity denied (${result.reason})` : "authorization flow incomplete";
+  process.stdout.write(`${result.verdict} ${row} ${result.leg} ${result.clientLabel}: ${detail}\n`);
 }
 
 async function watch(args) {
@@ -155,7 +157,7 @@ async function watch(args) {
   if (!fromStart) {
     for (const [leg, flows] of readFlows(session)) {
       for (const flow of flows) {
-        if (!isFragment(flow) && ["PASS", "DENIED"].includes(outcomeOf(flow).verdict)) reported.add(flowKey(leg, flow));
+        if (!isFragment(flow) && ["TOKEN", "REQUEST", "DENIED"].includes(outcomeOf(flow).verdict)) reported.add(flowKey(leg, flow));
       }
     }
   }
@@ -179,7 +181,7 @@ async function watch(args) {
         const key = flowKey(leg, flow);
         if (reported.has(key)) continue;
         const outcome = outcomeOf(flow);
-        if (!finalize && ["INCOMPLETE", "TOKEN_ONLY"].includes(outcome.verdict)) continue;
+        if (!finalize && outcome.verdict === "INCOMPLETE") continue;
         pending.push({
           key,
           result: resultFor({
