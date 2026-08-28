@@ -77,6 +77,47 @@ function readBoundedFile(path) {
   }
 }
 
+function inspectPrivateDir(path, uid) {
+  let stat;
+  try { stat = lstatSync(path); } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw new Error("live-session state directory cannot be inspected");
+  }
+  if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o077) !== 0) {
+    throw new Error("live-session state directory is not private");
+  }
+  return stat;
+}
+
+function readPrivateFile(path, uid) {
+  const before = inspectPrivateDir(dirname(path), uid);
+  if (before === undefined) return undefined;
+  if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
+    throw new Error("live-session file reads require O_NOFOLLOW");
+  }
+  let fd;
+  try {
+    try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (error) {
+      if (error?.code === "ENOENT") return undefined;
+      throw new Error("live-session state cannot be opened");
+    }
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || (uid !== undefined && stat.uid !== uid)
+      || (stat.mode & 0o077) !== 0 || stat.size > MAX_AUDIT_BYTES) {
+      throw new Error("live-session state is not a private bounded regular file");
+    }
+    const body = readFileSync(fd, "utf8");
+    if (Buffer.byteLength(body) > MAX_AUDIT_BYTES) throw new Error("live-session state grew beyond its size limit");
+    const after = inspectPrivateDir(dirname(path), uid);
+    if (after === undefined || before.dev !== after.dev || before.ino !== after.ino) {
+      throw new Error("live-session state directory changed while reading");
+    }
+    return body;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 export function readAudit(path) {
   const body = readBoundedFile(path);
   if (body === undefined || body === "") return [];
@@ -119,7 +160,9 @@ export function buildFlows(events) {
       continue;
     }
     let flow = active.get(event.clientId);
-    if (flow === undefined || STARTS.has(event.event)) {
+    const startsAnotherAttempt = event.event === "oauth.authorize.prepare"
+      && flow?.events.some((candidate) => candidate.event === "oauth.authorize.prepare");
+    if (flow === undefined || STARTS.has(event.event) || startsAnotherAttempt) {
       flow = { clientId: event.clientId, events: [] };
       flows.push(flow);
       active.set(event.clientId, flow);
@@ -236,8 +279,8 @@ export function writeResults(path, results, { replace = false } = {}) {
   }
 }
 
-export function readPrivateJson(path) {
-  const body = readBoundedFile(path);
+export function readPrivateJson(path, uid = process.getuid?.()) {
+  const body = readPrivateFile(path, uid);
   if (body === undefined) return undefined;
   try { return JSON.parse(body); } catch { throw new Error("live-session state contains invalid JSON"); }
 }

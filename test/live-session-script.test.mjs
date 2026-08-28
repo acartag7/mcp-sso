@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
-  chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
+  appendFileSync, chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync,
+  statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { classifyClient, readAudit, writeResults } from "../scripts/live/session-support.mjs";
+import { buildFlows, classifyClient, readAudit, readPrivateJson, writeResults } from "../scripts/live/session-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const executable = (path, body) => { writeFileSync(path, body); chmodSync(path, 0o700); };
@@ -70,6 +71,21 @@ function waitForFile(path) {
       else setTimeout(poll, 10);
     };
     poll();
+  });
+}
+
+function waitForOutput(child, pattern) {
+  return new Promise((resolve, reject) => {
+    let output = "";
+    const timer = setTimeout(() => reject(new Error(`timed out waiting for ${pattern}`)), 5_000);
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      if (pattern.test(output)) { clearTimeout(timer); resolve(output); }
+    });
+    child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    child.once("exit", (code) => {
+      if (!pattern.test(output)) { clearTimeout(timer); reject(new Error(`watch exited ${code}: ${output}`)); }
+    });
   });
 }
 
@@ -302,6 +318,73 @@ test("watch rejects starting state and session records with unknown fields", () 
       assert.equal(run(f, ["watch", "--once"]).status, 1);
     }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("watch rejects state that is hard-linked, permission-widened, wrongly owned, or under a replaced directory", () => {
+  for (const variant of ["hard-link", "mode", "owner", "directory"]) {
+    const f = fixture();
+    try {
+      assert.equal(run(f, ["serve", "google"]).status, 0);
+      const stateDir = join(f.repo, ".live-state");
+      const statePath = join(stateDir, "session.json");
+      if (variant === "hard-link") linkSync(statePath, join(f.root, "other-state"));
+      if (variant === "mode") chmodSync(statePath, 0o644);
+      if (variant === "directory") chmodSync(stateDir, 0o755);
+      if (variant === "owner") assert.throws(() => readPrivateJson(statePath, statSync(statePath).uid + 1), /not private/);
+      else assert.equal(run(f, ["watch", "--once"]).status, 1, variant);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const stateDir = join(f.repo, ".live-state");
+    const moved = join(f.repo, ".live-state-private");
+    renameSync(stateDir, moved);
+    symlinkSync(moved, stateDir);
+    assert.equal(run(f, ["watch", "--once"]).status, 1);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("default watch reports a flow that was incomplete when watching began", async () => {
+  const f = fixture();
+  let child;
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const leg = join(f.repo, ".live-state/google");
+    mkdirSync(leg, { recursive: true });
+    const events = audit("https://claude.ai/oauth-client");
+    const auditPath = join(leg, "audit.jsonl");
+    writeFileSync(auditPath, `${events.slice(0, 3).map(JSON.stringify).join("\n")}\n`);
+    child = spawn(process.execPath, [join(f.repo, "session.mjs"), "watch"], {
+      cwd: f.repo, env: f.env, stdio: ["ignore", "pipe", "pipe"],
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 1_200); });
+    appendFileSync(auditPath, `${events.slice(3).map(JSON.stringify).join("\n")}\n`);
+    const output = await waitForOutput(child, /PASS A3 google Claude Code/);
+    assert.match(output, /PASS A3 google Claude Code/);
+    child.kill("SIGINT");
+    const code = await new Promise((resolve) => { child.once("exit", resolve); });
+    assert.equal(code, 0);
+    const saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
+    assert.equal(saved.verdict, "PASS");
+  } finally {
+    if (child?.exitCode === null) child.kill("SIGKILL");
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("repeated authorization preparation splits attempts that reuse one stored client id", () => {
+  const clientId = "stored-client";
+  const events = audit(clientId, true);
+  const second = audit(clientId, true, Date.parse(events.at(-1).occurredAt) + 1);
+  second.shift();
+  const flows = buildFlows([...events, ...second]);
+  assert.equal(flows.length, 2);
+  assert.deepEqual(flows.map((flow) => flow.events.filter((event) => event.event === "oauth.authorize.prepare").length), [1, 1]);
+  assert.deepEqual(flows.map((flow) => flow.events.filter((event) => event.event === "oauth.token.authorization_code").length), [1, 1]);
+  assert.equal(flows[0].events[0].event, "oauth.cimd.fetch");
+  assert.equal(flows[1].events[0].event, "identity.verify");
 });
 
 test("a protected request before the code exchange does not turn the later token into PASS", () => {

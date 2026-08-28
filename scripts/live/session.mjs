@@ -173,7 +173,13 @@ async function watch(args) {
   const versions = clientVersions();
   const reported = new Set();
   if (!fromStart) {
-    for (const [leg, flows] of readFlows(session)) for (const flow of flows) reported.add(flowKey(leg, flow));
+    for (const [leg, flows] of readFlows(session)) {
+      for (const flow of flows) {
+        if (!isFragment(flow) && ["PASS", "DENIED"].includes(outcomeOf(flow).verdict)) {
+          reported.add(flowKey(leg, flow));
+        }
+      }
+    }
   }
   let stopped = false;
   let failed = false;
