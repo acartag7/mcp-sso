@@ -66,7 +66,7 @@ pnpm run check:release-matrix
 pnpm run check:release-ready
 ```
 
-The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence commit, or version mismatch.
+The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, or stale evidence commit. Neither reads a version out of a document: tag and package agreement is checked at publish time against the tag you push, in step 1 below.
 
 A receipt goes stale when something that changes what a client would observe moved after its commit: `src/`, `examples/`, the TypeScript configuration, the lockfiles, the publish workflow, a runtime field of `package.json`, or the composition of the leg a client is driven against, which is `scripts/live/run.sh`, `scripts/live/serve.sh`, and `scripts/live/run-support.mjs`. The code that produces a receipt ages that receipt and no other. A change under `test/`, `scripts/live/`, the release-matrix scripts, `docs/verification.md`, or `.github/workflows/live.yml` ages `rehearsal.json`, so landing one means dispatching a recorded run before the tag; one dispatch rewrites it. It never ages `operator.json`, which records what a real client did against a served leg and which no probe produced. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
 
@@ -92,7 +92,7 @@ A receipt goes stale when something that changes what a client would observe mov
 
 ## Publish
 
-1. Confirm that the tag is `v${package.version}`.
+1. Confirm that the tag is `v${package.version}`. `.github/workflows/publish.yml` re-checks this in its `build` job and fails the run before any install, build, pack, or publish step, so a mismatched tag cannot reach npm. Confirming it here avoids a failed run and a tag you then have to delete and re-push.
 2. Push the tag. Do not create the GitHub Release first.
 3. Confirm that the build job creates one tarball and one SHA-256 file.
 4. Confirm that the OIDC job publishes that digest-verified tarball without a checkout, dependency installation, or repository scripts.
