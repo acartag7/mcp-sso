@@ -50,17 +50,32 @@ Still on that clean `origin/main` checkout.
 
 ## Record the campaign
 
-The rehearsal checks its 19 rows. Seven rows of [`scripts/live/CHECKLIST.md`](../scripts/live/CHECKLIST.md) it may not drive, because their web applications forbid an automated browser: the Google sign-ins A3 and B3, and the hosted connectors C1, C2, and F1 to F3. You drive those yourself, against the same served leg, in the same sitting, against the same commit.
+The rehearsal checks its 19 rows. Seven rows of [`scripts/live/CHECKLIST.md`](../scripts/live/CHECKLIST.md) it may not drive, because their web applications forbid an automated browser: the Google sign-ins A3 and B3, and the hosted connectors C1, C2, and F1 to F3. You drive those yourself, after the rehearsal has finished and released its tunnel.
+
+Start the services and run the rehearsal:
 
 ```bash
 docker run -d --rm --name rehearsal-mysql -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=mcp_sso -e MYSQL_USER=mcp -e MYSQL_PASSWORD=mcppw -p 127.0.0.1:3306:3306 mysql:8.4
 docker run -d --rm --name rehearsal-redis -p 127.0.0.1:6379:6379 redis:7-alpine
-node scripts/live/rehearsal.mjs
+RUN_INTEGRATION=true MYSQL_URL='mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso' REDIS_URL='redis://127.0.0.1:6379' \
+  node scripts/live/rehearsal.mjs
 ```
 
-`rehearsal.mjs` brings up each leg through `serve.sh`, runs its 19 rows, and writes `.live-state/receipt.json`. It exits 0 only when every row passed on a clean tree.
+> [!IMPORTANT]
+> The three service variables are required. The `release-matrix` row reads them from the environment, and without them it is `BLOCKED release_services_absent`, the run exits 1, and nothing it produced is evidence.
 
-Then drive the seven rows no probe may drive and record the campaign as one document naming each:
+`rehearsal.mjs` brings up each leg through `serve.sh`, runs its 19 rows, and writes `.live-state/receipt.json`. It exits 0 only when every row passed on a clean tree. It stops every leg it started before it exits, and it never serves the Google leg, so the rows you drive need their own.
+
+Serve all three legs and drive the seven rows from `CHECKLIST.md`:
+
+```bash
+scripts/live/serve.sh cloudflare_access entra google
+```
+
+> [!WARNING]
+> Do not start this while the rehearsal is running. Two `serve.sh` invocations on one tunnel split the traffic, and the rehearsal refuses a generation as `BLOCKED tunnel_already_served` when a public hostname already answers.
+
+Stop it when the seven rows pass, then record the campaign. Recording needs no leg:
 
 ```bash
 node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
@@ -68,9 +83,11 @@ node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
 ```
 
 > [!IMPORTANT]
-> A `--row` names a row you drove and that passed. All seven are required, because they are the whole of what no probe may drive: the Google sign-ins A3 and B3, and the hosted connectors C1, C2, and F1 to F3. Recording fewer is refused, and so is a row the rehearsal already checked or a row that is not on the checklist at all.
+> A `--row` names a row you drove and that passed. All seven are required, because they are the whole of what no probe may drive. Recording fewer is refused, and so is a row the rehearsal already checked or a row that is not on the checklist at all.
 
-`record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses.
+`record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses. It refuses to write a receipt whose commit is not an ancestor of `origin/main`, so a campaign run on a branch fails here rather than after the squash merge has thrown that commit away.
+
+Do not use a live result as the only evidence for a security property.
 
 ## Open the release pull request
 

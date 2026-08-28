@@ -28,6 +28,7 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | the release matrix is not an object with a rows array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row omits its exports array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a hand-driven row is not marked as one | New here: a row only a person can drive carries `driven: true`, so a person's word cannot sit in the receipt looking like a probe result. Pinned in `test/release-gate-conditions.test.mjs` |
 | a receipt claims completeness while missing a hand-driven row | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a rehearsal receipt claims completeness while missing rows | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 

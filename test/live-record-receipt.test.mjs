@@ -9,7 +9,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
-import { assertClientVersions, provenMatrixRows, readRehearsalReceipt, toEvidence, writeActiveReceipt } from "../scripts/live/record-receipt.mjs";
+import {
+  assertClientVersions, assertReachableFrom, provenMatrixRows, readRehearsalReceipt, toEvidence, writeActiveReceipt,
+} from "../scripts/live/record-receipt.mjs";
 import { DRIVEN_ROWS, ROWS } from "../scripts/live/rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -183,4 +185,34 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
     /machine-checked/, "a machine-checked row cannot be claimed by hand");
   assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: ["C1", ...DRIVEN_ROWS] }),
     /named twice/, "and a hand-driven row cannot be named twice");
+});
+
+test("BEHAVIOUR record-receipt: a campaign recorded off the release line is refused where it can still be fixed", () => {
+  // The gate needs the receipt's commit to be an ancestor of the release. A
+  // squash merge keeps no branch commit, so a campaign run on the release
+  // branch passes on the pull request head and fails on main, after the merge
+  // has thrown that commit away. Refuse it at recording time instead.
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-reach-"));
+  const git = (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
+  try {
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@example.invalid");
+    git("config", "user.name", "T");
+    writeFileSync(join(dir, "f"), "a\n");
+    git("add", "-A");
+    git("commit", "-qm", "base");
+    const base = git("rev-parse", "HEAD");
+    git("switch", "-qc", "release-branch");
+    git("commit", "--allow-empty", "-qm", "bump");
+    const onBranch = git("rev-parse", "HEAD");
+
+    assert.equal(assertReachableFrom(base, { cwd: dir, ref: "main" }), base, "a commit on the line is accepted");
+    assert.throws(() => assertReachableFrom(onBranch, { cwd: dir, ref: "main" }), /not an ancestor of main/,
+      "a commit only on the release branch is refused");
+    // Fail closed: no reachable ref is a refusal, never a pass.
+    assert.throws(() => assertReachableFrom(base, { cwd: dir, ref: "origin/main" }), /cannot resolve origin\/main/,
+      "and an absent ref is refused rather than skipped");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

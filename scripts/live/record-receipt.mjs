@@ -183,6 +183,33 @@ export function writeActiveReceipt(path, body) {
   }
 }
 
+/** The gate requires the receipt's commit to be an ancestor of the release
+ *  commit, and a squash merge keeps no branch commit in main's history. A
+ *  campaign recorded on a release branch therefore passes on the pull request
+ *  head and fails on main, after the merge has thrown that commit away and the
+ *  recovery is a whole new campaign. Refuse it here instead, where the fix is
+ *  to check out origin/main and run again.
+ *
+ *  Fail closed: no reachable origin/main is a refusal, not a pass. */
+export function assertReachableFrom(commit, { cwd = ROOT, ref = "origin/main" } = {}) {
+  let resolved;
+  try {
+    resolved = execFileSync("git", ["-C", cwd, "rev-parse", "--verify", `${ref}^{commit}`], { encoding: "utf8" }).trim();
+  } catch {
+    throw new Error(`cannot resolve ${ref}; fetch it before recording a campaign`);
+  }
+  try {
+    execFileSync("git", ["-C", cwd, "merge-base", "--is-ancestor", commit, resolved], { stdio: "ignore" });
+  } catch {
+    throw new Error(
+      `the campaign ran at ${commit.slice(0, 7)}, which is not an ancestor of ${ref}. ` +
+      "A squash merge keeps no branch commit, so the release would refuse this receipt after merging. " +
+      `Check out ${ref} and run the campaign again.`,
+    );
+  }
+  return commit;
+}
+
 if (invokedAsMain()) {
   const argv = process.argv.slice(2);
   const options = { receipt: undefined, write: false, requireHead: false, source: process.env.MCP_SSO_RUN_URL, driven: [] };
@@ -199,6 +226,9 @@ if (invokedAsMain()) {
     const head = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
     if (head !== receipt.runtimeCommit) throw new Error("the receipt's runtime commit is not the checked-out HEAD");
   }
+  // Only when the document is being written: printing one for inspection asks
+  // nothing of the repository.
+  if (options.write) assertReachableFrom(receipt.runtimeCommit);
   const evidence = toEvidence(receipt, { source: options.source, driven: options.driven });
   const body = `${JSON.stringify(evidence, null, 2)}\n`;
   if (options.write) {

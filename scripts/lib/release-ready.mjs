@@ -33,7 +33,8 @@ function readReceipt(receipt, label, errors) {
   // Both halves of the campaign: the rows a probe checked, and the rows only a
   // person can drive. Without the second the gate would authorize a release on
   // the automated half alone, with no Google sign-in and no hosted connector.
-  const expected = new Set([...ROWS.map((row) => row.id), ...DRIVEN_ROWS]);
+  const machineRows = new Set(ROWS.map((row) => row.id));
+  const expected = new Set([...machineRows, ...DRIVEN_ROWS]);
   const ids = new Set((Array.isArray(receipt.rows) ? receipt.rows : []).map((row) => row?.id));
   const missing = [...expected].filter((id) => !ids.has(id));
   if (missing.length > 0) return fail(`claims to be complete without ${missing.length} row(s) the campaign runs: ${missing.slice(0, 5).join(", ")}`);
@@ -49,6 +50,9 @@ function readReceipt(receipt, label, errors) {
     // declare their rows, a readable id outside them is not a checklist row,
     // and counting it would let a receipt stand in for one never driven.
     if (!expected.has(row.id)) return fail(`records ${row.id}, which the campaign does not define`);
+    // A hand-driven row says so. Without this a person's word can sit in the
+    // receipt looking exactly like a probe result to whoever reads it.
+    if (!machineRows.has(row.id) && row.driven !== true) return fail(`records ${row.id} without marking it hand-driven`);
     seen.add(row.id);
     if (row.status !== "PASS") return fail(`row ${row.id} did not pass (${String(row.status)})`);
   }
