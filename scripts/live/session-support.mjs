@@ -127,7 +127,9 @@ function readPrivateFile(path, uid) {
 export function readAudit(path) {
   const body = readBoundedFile(path);
   if (body === undefined || body === "") return [];
-  const lines = body.split("\n").filter(Boolean);
+  const lines = body.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  if (lines.some((line) => line === "")) throw new Error("audit trail contains a blank record");
   if (lines.length > MAX_AUDIT_ROWS) throw new Error("audit trail has too many rows");
   return lines.map((line) => {
     let row;

@@ -16,7 +16,7 @@ Hostnames, tenant identifiers, and test-account names are **not** in this reposi
 ## Before you start
 
 1. `aws sso login` (and `az login` for the Entra stack) — the only interactive logins for the stacks.
-2. Run `node session.mjs serve` in one terminal and `node session.mjs watch` in another. The helper runs `scripts/live/serve.sh cloudflare_access entra google` once, waits until serving is supervised, prints the client commands, reads the audit trails, saves only attributable results, and attempts to remove its temporary Claude Code and Codex entries when serving stops. Only one `serve` session can run at a time. A second `serve` or `cleanup` fails without changing the active state or entries. If the Node wrapper dies, its open lock descriptor closes and releases the kernel session lock, while the liveness pipe stops the public tunnel and servers. Run `node session.mjs cleanup` afterward to remove the six reserved client entries. Only one `watch` command can run at a time. A second watcher fails before it reads or changes results. `watch` ignores valid audit events outside the manual authorization-code flow and rejects unknown or malformed events. It rechecks the session immediately before changing the result file and stops when another `serve` replaces the session record. Start `watch` again for that new run. For a signed-out Codex run that uses dynamic registration, use `node session.mjs watch --codex-dcr` so the generated loopback `mcpdc_` flow fills the Codex row.
+2. Run `node session.mjs serve` in one terminal and `node session.mjs watch` in another. The helper runs `scripts/live/serve.sh cloudflare_access entra google` once, waits until serving is supervised, prints the client commands, reads the audit trails, saves only attributable results, and attempts to remove its temporary Claude Code and Codex entries when serving stops. Only one `serve` session can run at a time. A second `serve` or `cleanup` fails without changing the active state or entries. If the Node wrapper dies, its open lock descriptor closes and releases the kernel session lock, while the liveness pipe stops the public tunnel and servers. Run `node session.mjs cleanup` afterward to remove the six reserved client entries. Only one `watch` command can run at a time. A second watcher fails before it reads or changes results. `watch` ignores valid audit events outside the manual authorization-code flow and rejects unknown or malformed events, including any blank record except the one created by a final LF. It rechecks the session immediately before changing the result file and stops when another `serve` replaces the session record. Start `watch` again for that new run. For a signed-out Codex run that uses dynamic registration, use `node session.mjs watch --codex-dcr` so the generated loopback `mcpdc_` flow fills the Codex row.
 3. All legs run **stored DCR with loopback allowlisted** (the `run.sh` default): that is the supported shape for CLI clients with ephemeral callback ports, and stored DCR requires a bounded limiter (the example supplies one). For the #278 mode differential, set `MCP_SSO_DCR_MODE=stateless` while retaining loopback; the example now supplies the same bounded limiter and the preflight admits that composition. `probe-e2e.mjs` consumes the selected mode and proves the unknown-opaque-client differential; its machine-client rows run only under stored mode because that feature requires stored DCR. The same probe also drives claims-only completion through Fastify, Express, and Hono in both modes. A pass requires both callback cookies and the fixed, redacted completion-failure response.
 4. Each leg gets its **own** state directory, `.live-state/<leg>`, from `run.sh`; at start the last run's state for that leg is rotated to `.live-state/<leg>.previous` when it holds an `audit.jsonl` (a failed start without one is discarded instead), so the last round's `audit.jsonl` is still there to compare against — even after a failed start and a retry. A shared directory would let one leg delete another's database, and every later store write would then fail as a generic `internal_error` that reads exactly like a product bug.
 5. **A fresh private window for every row.** Entra and Cloudflare both reuse sessions; that has produced false failures more than once.
@@ -78,7 +78,16 @@ node --input-type=module -e '
 import { readFileSync } from "node:fs";
 for (const leg of ["cloudflare_access", "entra", "google"]) {
   let rows = [];
-  try { rows = readFileSync(`.live-state/${leg}/audit.jsonl`, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { continue; }
+  try {
+    const body = readFileSync(`.live-state/${leg}/audit.jsonl`, "utf8");
+    const lines = body === "" ? [] : body.split("\n");
+    if (lines.at(-1) === "") lines.pop();
+    if (lines.some((line) => line === "")) throw new Error("audit trail contains a blank record");
+    rows = lines.map((line) => JSON.parse(line));
+  } catch (error) {
+    if (error?.code === "ENOENT") continue;
+    throw error;
+  }
   const count = (key, filter = () => true) => Object.fromEntries([...rows.filter(filter).reduce((m, e) => m.set(e[key], (m.get(e[key]) ?? 0) + 1), new Map())]);
   console.log(leg, count("event"));
   console.log("  denials:", count("reason", (e) => e.status === "failure" && e.reason));

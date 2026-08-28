@@ -765,17 +765,20 @@ test("a protected request before the code exchange does not turn the later token
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("watch fails closed on malformed audit JSON and writes no result", () => {
+test("watch fails closed on malformed audit JSON or a blank record and writes no result", () => {
   const f = fixture();
   try {
     assert.equal(run(f, ["serve", "entra"]).status, 0);
     const leg = join(f.repo, ".live-state/entra");
     mkdirSync(leg, { recursive: true });
-    writeFileSync(join(leg, "audit.jsonl"), "{not-json}\n");
-    const result = run(f, ["watch", "--all", "--once"]);
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /audit trail is unreadable/);
-    assert.equal(existsSync(join(f.repo, ".live-state/session-results.jsonl")), false);
+    const valid = audit("https://claude.ai/oauth-client").map(JSON.stringify);
+    for (const body of ["{not-json}\n", `${valid[0]}\n\n${valid.slice(1).join("\n")}\n`]) {
+      writeFileSync(join(leg, "audit.jsonl"), body);
+      const result = run(f, ["watch", "--all", "--once"]);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /audit trail is unreadable/);
+      assert.equal(existsSync(join(f.repo, ".live-state/session-results.jsonl")), false);
+    }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -856,6 +859,22 @@ test("audit reads reject non-files, oversized input, unknown events, and wrong f
     ]) {
       writeFileSync(path, `${JSON.stringify(row)}\n`);
       assert.throws(() => readAudit(path), /invalid status|valid event status/);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("audit reads accept one final LF and reject every other blank record", () => {
+  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-audit-blank-"));
+  const path = join(root, "audit.jsonl");
+  const row = JSON.stringify(audit("https://claude.ai/oauth-client")[0]);
+  try {
+    for (const body of [row, `${row}\n`]) {
+      writeFileSync(path, body);
+      assert.equal(readAudit(path).length, 1);
+    }
+    for (const body of [`\n${row}\n`, `${row}\n\n`, `${row}\n\n${row}\n`]) {
+      writeFileSync(path, body);
+      assert.throws(() => readAudit(path), /blank record/);
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
