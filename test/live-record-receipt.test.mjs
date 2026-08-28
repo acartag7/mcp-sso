@@ -124,7 +124,6 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
       "rehearsal.json": generated,
       "operator.json": { schema: 1, producer: "operator", runtimeCommit: head, recordedAt: "x", complete: true, rows: [{ id: "F2", status: "PASS" }] },
     },
-    status: readFileSync(new URL("../docs/verification-status.md", import.meta.url), "utf8"),
     gitCwd: ROOT, releaseCommit: "HEAD",
   });
   assert.deepEqual(onlyGenerated.errors, [], "the gate accepts exactly what the recorder writes");
@@ -140,7 +139,7 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   const result = evaluateReleaseReadiness({
     packageJson: JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")),
     releaseMatrix: JSON.parse(readFileSync(new URL("../test/release-matrix.json", import.meta.url), "utf8")),
-    receipts, status: readFileSync(new URL("../docs/verification-status.md", import.meta.url), "utf8"),
+    receipts,
     gitCwd: ROOT, releaseCommit: "HEAD",
   });
   assert.deepEqual(result.errors, [], "the repository's own evidence satisfies its own gate");
@@ -149,7 +148,7 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   const forged = { ...receipts["operator.json"], releaseMatrix: ["RM.1"] };
   const claimed = evaluateReleaseReadiness({ ...result, packageJson: { version: "0.5.0", exports: { ".": {} } },
     releaseMatrix: { rows: [{ id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "a", name: "b" }] }] },
-    receipts: { "rehearsal.json": receipts["rehearsal.json"], "operator.json": forged }, status: readFileSync(new URL("../docs/verification-status.md", import.meta.url), "utf8"),
+    receipts: { "rehearsal.json": receipts["rehearsal.json"], "operator.json": forged },
     gitCwd: ROOT, releaseCommit: "HEAD" });
   assert.ok(claimed.errors.some((e) => e.includes("cannot carry release-matrix rows")), "an operator receipt cannot mint coverage");
 });

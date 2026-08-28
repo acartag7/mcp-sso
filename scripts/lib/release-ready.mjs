@@ -14,65 +14,6 @@ const PRODUCERS = new Set(["rehearsal", "operator"]);
 /** The active receipt each producer writes. Anything else in the directory is
  *  a document nobody records to, and a superseded one belongs in archive/. */
 export const ACTIVE_RECEIPTS = Object.freeze({ rehearsal: "rehearsal.json", operator: "operator.json" });
-const STATUS_LINE = /^\|\s*npm package and tag\s*\|\s*`mcp-sso@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s+and\s+`v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s*\|$/;
-
-/** The version the published-release row claims, or undefined.
- *
- *  This reads one row out of a document a person writes, which is the last
- *  thing here that reads prose at all. It asks the only question that has an
- *  unambiguous answer: does the document contain exactly one rendered
- *  `npm package and tag` row, and does it agree with itself. Which section the
- *  row sits in is deliberately not asked. Four attempts to answer that,
- *  through closing hashes, blockquotes, indentation, and Setext underlines,
- *  each admitted a document with two conflicting claims, because section
- *  membership in Markdown has more spellings than a gate should chase. A row
- *  inside a fenced block or an HTML comment renders as neither a row nor a
- *  claim, so those are still skipped. */
-function claimedVersion(status, errors) {
-  const lines = String(status ?? "").split("\n")
-    .map((line) => line.replace(/^(?: {0,3}> ?)+/, ""))
-    .map((line) => (/^ {1,3}\S/.test(line) ? line.replace(/^ {1,3}/, "") : line));
-  // Contiguous runs of pipe lines, so a row can be read from the block it
-  // belongs to. A lone `| ... |` line renders as prose, not as a table row, and
-  // a claim nobody sees rendered is not a claim.
-  const blocks = [];
-  let current = [];
-  let fence;
-  let commented = false;
-  const endBlock = () => { if (current.length > 0) { blocks.push(current); current = []; } };
-  for (const line of lines) {
-    const marker = /^(`{3,}|~{3,})(.*)$/.exec(line);
-    if (marker !== null) {
-      const [, marks, rest] = marker;
-      if (fence === undefined) fence = marks;
-      else if (marks[0] === fence[0] && marks.length >= fence.length && rest.trim() === "") fence = undefined;
-      endBlock();
-      continue;
-    }
-    if (fence !== undefined) continue;
-    if (line.includes("<!--")) commented = true;
-    if (commented) { if (line.includes("-->")) commented = false; endBlock(); continue; }
-    if (line.startsWith("|")) current.push(line);
-    else endBlock();
-  }
-  endBlock();
-  const rows = blocks
-    .filter((block) => block.length >= 3 && /^\|( *:?-+:? *\|)+$/.test(block[1]))
-    .flatMap((block) => block.slice(2))
-    .map((line) => STATUS_LINE.exec(line))
-    .filter((match) => match !== null);
-  if (rows.length !== 1) {
-    errors.push(`status version: expected one npm package and tag row, found ${rows.length}`);
-    return undefined;
-  }
-  const [, npmVersion, tagVersion] = rows[0];
-  if (npmVersion !== tagVersion) {
-    errors.push(`status version mismatch: npm claims ${npmVersion}, tag claims ${tagVersion}`);
-    return undefined;
-  }
-  return npmVersion;
-}
-
 /** One receipt, validated as data. A receipt that claims rows it did not
  *  complete is not evidence, and says so itself rather than leaving a reader
  *  to infer it from row statuses. */
@@ -170,7 +111,7 @@ function parseReleaseRows(releaseMatrix, errors) {
 /**
  * @param receipts `{ [label]: receipt }`, one entry per file under docs/evidence/.
  */
-export function evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts, status, gitCwd, releaseCommit = "HEAD" }) {
+export function evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts, gitCwd, releaseCommit = "HEAD" }) {
   const errors = [];
   const staleEvidence = [];
   const packageVersion = packageJson?.version;
@@ -183,11 +124,6 @@ export function evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts,
   }
   const publicExports = exportsValue && typeof exportsValue === "object" && !Array.isArray(exportsValue)
     ? Object.keys(exportsValue) : [];
-
-  const claimed = claimedVersion(status, errors);
-  if (claimed !== undefined && packageVersion !== undefined && claimed !== packageVersion) {
-    errors.push(`version mismatch: package.json is ${packageVersion}, docs/verification-status.md claims ${claimed}`);
-  }
 
   // One active receipt per producer, under the name that says which. A missing
   // operator receipt would otherwise pass on the rehearsal alone, publishing

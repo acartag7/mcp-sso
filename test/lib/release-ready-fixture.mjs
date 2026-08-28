@@ -50,14 +50,6 @@ export function receipts({ rehearsal, operator } = {}) {
   };
 }
 
-export function statusFor(version = "0.5.0") {
-  return [
-    "# Current verification status", "", "## Published release", "",
-    "| Item | Status |", "| --- | --- |",
-    `| npm package and tag | \`mcp-sso@${version}\` and \`v${version}\` |`,
-  ].join("\n");
-}
-
 export function fixture(overrides = {}) {
   const packageJson = overrides.packageJson ?? { version: "0.5.0", exports: { ".": {}, "./fastify": {} } };
   const releaseMatrix = overrides.releaseMatrix ?? {
@@ -67,9 +59,8 @@ export function fixture(overrides = {}) {
     ],
   };
   const evidence = overrides.receipts ?? receipts();
-  const status = overrides.status ?? statusFor();
   const releaseCommit = overrides.releaseCommit ?? release;
-  return evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts: evidence, status, gitCwd: repo, releaseCommit });
+  return evaluateReleaseReadiness({ packageJson, releaseMatrix, receipts: evidence, gitCwd: repo, releaseCommit });
 }
 
 export function setupReleaseReadyFixture() {

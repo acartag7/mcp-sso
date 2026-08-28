@@ -23,26 +23,17 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | a matrix row repeats an export | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row claims exports without packedArtifact | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no executable evidence | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| the published-release row is absent or repeated | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| the published-release row disagrees with itself | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| the published-release row disagrees with the package | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| the status section appears more than once, in any Markdown spelling | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| a second version claim in a second rendered table | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| a version claim that is a lone line rather than a rendered table row | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| a second version claim under a Setext heading | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | the release matrix is not an object with a rows array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row omits its exports array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| the published-release row is repeated | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a rehearsal receipt records a row the rehearsal does not define | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a rehearsal receipt claims completeness while missing rows | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| a second status section is written as a blockquote | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| a second status section indented within what Markdown still renders | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| a table hidden after a fence line that does not close it | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 
 Evidence freshness is kept as it was, with one deliberate correction, and is pinned by its own case in the same file: runtime, deployment, package-exports, version and build-script changes age every receipt; the package description and the gate's own script do not; and probe or rehearsal changes age a rehearsal receipt but not an operator's.
 
-The published-version check changed shape rather than scope. The old gate asked which section a row was in, and this one asks whether the document contains exactly one rendered `npm package and tag` row. Four attempts at the first question, through closing hashes, blockquotes, indentation, and Setext underlines, each admitted a document carrying two conflicting claims; the second question has one answer. A row inside a fence, an HTML comment, or code-block indentation still renders as neither a row nor a claim, and is still skipped.
+The published-version check is gone, and that is the largest single change here. The gate used to read `docs/verification-status.md`, find the `npm package and tag` row, and compare the version written there against `package.json`. Seven review rounds each found another Markdown spelling that put a second, conflicting claim into a document the parser called clean: closing hashes, blockquotes, one-to-three-space indentation, Setext underlines, a lone pipe line, a fence whose closer carried trailing text, and finally a table inside a raw `<div>` block, which renders as text and is not a table at all. Each fix was correct and the next spelling was still there, because the check was a hand-rolled Markdown parser reading a document anyone may edit.
+
+The property it was defending is enforced already, mechanically, and against the real tag rather than a sentence about it. [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml) refuses to publish unless the pushed tag equals `v$PACKAGE_VERSION` read from `package.json`, before any build or publish step runs. A document that names the wrong version cannot cause a wrong publish; it can only be wrong prose, which is what [`docs/verification-status.md`](../verification-status.md) is for and what a reader corrects. The gate now reads no prose at all.
 
 ## Dropped
 
@@ -74,9 +65,11 @@ Every one of these is a rule about Markdown rather than about evidence. They exi
 | provider evidence: malformed `Not run` evidence | The `Not run: <reason>.` marker and its empty date cell were a row shape in prose. A receipt records rows that ran; a campaign that did not run one records no row for it, and the gate refuses a receipt that claims rows it did not complete. |
 | table-shaped content outside the one rendered table | Applied to the provider and export tables, so that a `|` line in prose could not be read as evidence. Kept exactly where it still matters: the published-release version is read from that section's rendered table, and a row outside it supplies nothing. |
 | status version: malformed item label / malformed table row | Typography of the other rows in the status table. Nothing the gate decides depends on them, and the contract no longer claims otherwise. |
+| the published-release row is absent or repeated | The version claim is no longer read from prose. `publish.yml` compares the pushed tag against `package.json` before publishing, so agreement is enforced against the tag, not a restatement of it. |
+| the published-release row disagrees with itself, with the package, or appears twice in any Markdown spelling | Seven rounds of Markdown shapes, one per review: closing hashes, blockquotes, indentation, Setext underlines, a lone pipe line, an unclosed fence, a raw HTML block. Hand-rolling a Markdown parser over a document anyone may edit has no last edge case. |
 
 ## What replaced them
 
 A receipt is refused when its schema is unrecognised, its producer is unknown, its runtime commit is malformed, it is partial, it records no rows, a row did not pass, it repeats a row id, or it carries release-matrix rows without being a rehearsal receipt whose own release-matrix row passed. `docs/evidence/` holds one active receipt per producer and the superseded document moves to `docs/evidence/archive/`.
 
-Current results are in [Client compatibility](../client-compatibility.md), which is written for readers and which nothing parses.
+Current results are in [Client compatibility](../client-compatibility.md) and [Verification status](../verification-status.md). Both are written for readers, and nothing parses either of them.

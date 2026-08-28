@@ -6,14 +6,15 @@
 // check turns this red rather than leaving a gap for a reviewer to find. The
 // conditions that were deliberately dropped, all of them markdown shape, are
 // recorded in docs/archive/2026-08-27-release-gate-conditions.md with the
-// reason; nothing here should pass for them, because nothing parses prose.
+// reason; nothing here should pass for them, because nothing parses prose. The
+// version claim went with them: publish.yml compares the pushed tag against
+// package.json, which is that property enforced against the real tag.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
 import * as FIXTURE from "./lib/release-ready-fixture.mjs";
 import {
-  ancestor, cleanupReleaseReadyFixture, fixture, operatorReceiptFor, receiptFor, receipts, setupReleaseReadyFixture,
-  statusFor, unrelated,
+  ancestor, cleanupReleaseReadyFixture, fixture, receiptFor, receipts, setupReleaseReadyFixture, unrelated,
 } from "./lib/release-ready-fixture.mjs";
 
 before(setupReleaseReadyFixture);
@@ -65,31 +66,12 @@ const CONDITIONS = [
   ["a matrix row has no executable evidence",
     () => ({ releaseMatrix: { rows: [{ id: "RM.1", title: "t", evidence: [{ file: "", name: "" }] }] } }),
     "requires executable evidence with file and name"],
-  ["the published-release row is absent",
-    () => ({ status: "# Status\n\n## Published release\n\n| Item | Status |\n| --- | --- |\n| other | none |" }),
-    "expected one npm package and tag row"],
-  ["the published-release row disagrees with itself",
-    () => ({ status: statusFor().replace("and `v0.5.0`", "and `v0.4.0`") }), "npm claims 0.5.0, tag claims 0.4.0"],
-  ["the published-release row disagrees with the package",
-    () => ({ status: statusFor("0.4.0") }), "version mismatch: package.json is 0.5.0"],
-  ["the status section appears more than once",
-    () => ({ status: `${statusFor()}\n\n## Published release ##\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
-    "expected one npm package and tag row, found 2"],
   ["a rehearsal receipt records a row the rehearsal does not define",
     () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "invented-proof", status: "PASS" }] }) }) }),
     "row(s) the rehearsal does not define"],
   ["a rehearsal receipt claims completeness while missing rows",
     () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { rows: [{ id: "release-matrix", status: "PASS" }] }) }) }),
     "claims to be complete without"],
-  ["a second status section indented within what Markdown still renders",
-    () => ({ status: `${statusFor()}\n\n   ## Published release\n\n   | Item | Status |\n   | --- | --- |\n   | npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
-    "expected one npm package and tag row, found 2"],
-  ["a table hidden after a fence line that does not close it",
-    () => ({ status: `# Status\n\n## Published release\n\n\`\`\`\n\`\`\`not-a-closer\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |` }),
-    "expected one npm package and tag row, found 0"],
-  ["a second status section is written as a blockquote",
-    () => ({ status: `${statusFor()}\n\n> ## Published release\n>\n> | Item | Status |\n> | --- | --- |\n> | npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
-    "expected one npm package and tag row, found 2"],
   ["the release matrix is not an object with a rows array",
     () => ({ releaseMatrix: [] }), "expected an object with a rows array"],
   ["a matrix row has no RM.N id",
@@ -98,18 +80,6 @@ const CONDITIONS = [
   ["a matrix row omits its exports array",
     () => ({ releaseMatrix: { rows: [{ id: "RM.1", title: "t", evidence: [{ file: "a", name: "b" }] }] } }),
     "requires an exports array of strings"],
-  ["the published-release row is repeated",
-    () => ({ status: `${statusFor()}\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |` }),
-    "expected one npm package and tag row, found 2"],
-  ["a second version claim in a second rendered table",
-    () => ({ status: `${statusFor()}\n\nprose\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
-    "expected one npm package and tag row, found 2"],
-  ["a version claim that is a lone line rather than a rendered table row",
-    () => ({ status: "# Status\n\n## Published release\n\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |" }),
-    "expected one npm package and tag row, found 0"],
-  ["a second version claim under a Setext heading",
-    () => ({ status: `${statusFor()}\n\nDifferent release\n---\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
-    "expected one npm package and tag row, found 2"],
 ];
 
 test("every substantive condition the previous gate refused is still refused", () => {
@@ -119,7 +89,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 31, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 20, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages exactly as the previous gate aged it, plus the one correction", () => {
@@ -141,13 +111,6 @@ test("evidence ages exactly as the previous gate aged it, plus the one correctio
     "and not an operator receipt, which is the correction: no probe produced what a real client did");
 });
 
-test("indentation Markdown treats as code is left alone", () => {
-  // Four spaces is a code block, so a heading written that way is not a
-  // rendered heading and must not count as a second section.
-  const asCode = `${statusFor()}\n\n    ## Published release\n\n    | npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
-  assert.deepEqual(fixture({ status: asCode }).errors, [], "a code block is not a second claim");
-});
-
 test("what was dropped is recorded, and every dropped condition is a rule about Markdown", () => {
   // Reading the archive rather than trusting the commit message: what was
   // dropped has to be written down where a reader finds it, and each entry has
@@ -156,6 +119,7 @@ test("what was dropped is recorded, and every dropped condition is a rule about 
   for (const dropped of [
     "canonical level-two headings", "fenced blocks", "HTML comments", "raw angle-bracket markup",
     "malformed divider", "noncanonical Markdown", "Recorded by", "evidence digest",
+    "the published-release row is absent or repeated", "raw HTML block",
   ]) {
     assert.ok(archive.includes(dropped), `the archive records dropping ${dropped}`);
   }

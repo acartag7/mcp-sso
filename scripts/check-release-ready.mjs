@@ -41,7 +41,6 @@ const result = evaluateReleaseReadiness({
   receipts: readReceipts(resolve(root, "docs/evidence")),
   packageJson: readJson(resolve(root, "package.json"), "package.json"),
   releaseMatrix: readJson(resolve(root, "test/release-matrix.json"), "test/release-matrix.json"),
-  status: readFileSync(resolve(root, "docs/verification-status.md"), "utf8"),
   gitCwd: root,
   releaseCommit: process.env.RELEASE_COMMIT ?? "HEAD",
 });
