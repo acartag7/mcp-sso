@@ -75,7 +75,7 @@ scripts/live/serve.sh cloudflare_access entra google
 > [!WARNING]
 > Do not start this while the rehearsal is running. Two `serve.sh` invocations on one tunnel split the traffic, and the rehearsal refuses a generation as `BLOCKED tunnel_already_served` when a public hostname already answers.
 
-Stop it when the seven rows pass, then record the campaign. Recording needs no leg:
+Stay on this checkout for all of it. The rows you drive run against whatever `serve.sh` is serving, so moving the checkout between the rehearsal and the connectors would file them under a commit whose code they never ran. Stop the leg when the seven rows pass, then record. Recording needs no leg:
 
 ```bash
 node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
@@ -85,7 +85,7 @@ node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
 > [!IMPORTANT]
 > A `--row` names a row you drove and that passed. All seven are required, because they are the whole of what no probe may drive. Recording fewer is refused, and so is a row the rehearsal already checked or a row that is not on the checklist at all.
 
-`record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses. It refuses to write a receipt whose commit is not an ancestor of `origin/main`, so a campaign run on a branch fails here rather than after the squash merge has thrown that commit away.
+`record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses. It refuses to write a receipt whose commit is not the checked-out `HEAD`, so a campaign spread across two checkouts fails here, and one whose commit is not an ancestor of `origin/main`, so a campaign run on a branch fails here rather than after the squash merge has thrown that commit away.
 
 Do not use a live result as the only evidence for a security property.
 

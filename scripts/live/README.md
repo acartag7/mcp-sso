@@ -116,6 +116,8 @@ node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
 
 `record-receipt.mjs` turns a receipt whose every row passed on a clean tree into the release evidence the gate reads: `docs/evidence/release.json`, naming the runtime commit, every row and its status, and the release-matrix rows the run proved. Each `--row` adds a row you drove yourself and that passed. `DRIVEN_ROWS` in `rehearsal-support.mjs` declares the seven the rehearsal may not drive, A3, B3, C1, C2, and F1 to F3, and all seven are required: recording fewer is refused, and so is a row the rehearsal already checked or a row outside that set. It re-derives completeness from the receipt's own rows rather than trusting the receipt to summarise itself, so a partial run, a dirty tree, or a failed row is refused and nothing is written.
 
+Writing requires the working tree to be the commit the receipt names and that commit to be an ancestor of `origin/main`: one campaign is one checkout, and a commit a squash merge would discard is refused before it becomes evidence rather than after.
+
 `check:release-ready` reads that document and no prose: [`docs/client-compatibility.md`](../../docs/client-compatibility.md) is written for readers. A new campaign supersedes the one before it, which moves to `docs/evidence/archive/`.
 
 Release evidence is recorded locally, not in CI: the rows a person drives against a served leg cannot be driven by a workflow, and a document holding only the machine-checked half is not the campaign. The nightly `live.yml` run and the `rehearsal/*` runs are a canary for drift in the probes; they record nothing. The release procedure is in [the release checklist](../../docs/release-checklist.md).

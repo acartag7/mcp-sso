@@ -10,7 +10,8 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
 import {
-  assertClientVersions, assertReachableFrom, provenMatrixRows, readRehearsalReceipt, toEvidence, writeActiveReceipt,
+  assertClientVersions, assertReachableFrom, assertRecordedAtHead, provenMatrixRows, readRehearsalReceipt, toEvidence,
+  writeActiveReceipt,
 } from "../scripts/live/record-receipt.mjs";
 import { DRIVEN_ROWS, ROWS } from "../scripts/live/rehearsal-support.mjs";
 
@@ -212,6 +213,31 @@ test("BEHAVIOUR record-receipt: a campaign recorded off the release line is refu
     // Fail closed: no reachable ref is a refusal, never a pass.
     assert.throws(() => assertReachableFrom(base, { cwd: dir, ref: "origin/main" }), /cannot resolve origin\/main/,
       "and an absent ref is refused rather than skipped");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("BEHAVIOUR record-receipt: one campaign is one checkout", () => {
+  // The rehearsal records the commit it ran at, but the rows a person drives
+  // run against whatever serve.sh is serving. A checkout moved in between would
+  // file those rows under a commit whose code they never exercised, and the
+  // gate would authorize the release on them.
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-head-"));
+  const git = (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
+  try {
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@example.invalid");
+    git("config", "user.name", "T");
+    writeFileSync(join(dir, "f"), "a\n");
+    git("add", "-A");
+    git("commit", "-qm", "campaign");
+    const campaign = git("rev-parse", "HEAD");
+    assert.equal(assertRecordedAtHead(campaign, { cwd: dir }), campaign, "recording where the campaign ran is fine");
+
+    git("commit", "--allow-empty", "-qm", "moved on");
+    assert.throws(() => assertRecordedAtHead(campaign, { cwd: dir }), /but the checkout is now/,
+      "a checkout moved between the rehearsal and the hand-driven rows is refused");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -2,7 +2,7 @@
 // (§15): one JSON document under docs/evidence/, naming the commit the campaign
 // ran against and what it observed.
 //
-//   node scripts/live/record-receipt.mjs --receipt <receipt.json> [--write] [--require-head]
+//   node scripts/live/record-receipt.mjs --receipt <receipt.json> [--row <id>]... [--write]
 //
 // Without --write the document goes to stdout. A receipt that is not evidence,
 // a partial run, a dirty tree, or a failed row, is refused: the rehearsal
@@ -191,6 +191,24 @@ export function writeActiveReceipt(path, body) {
  *  to check out origin/main and run again.
  *
  *  Fail closed: no reachable origin/main is a refusal, not a pass. */
+/** One campaign is one checkout. The rehearsal records the commit it ran at,
+ *  but the rows a person drives run against whatever `serve.sh` is serving, so
+ *  a checkout moved between the two would file those rows under a commit whose
+ *  code they never exercised, and the gate would authorize the release on them.
+ *  Writing evidence therefore requires the working tree to still be the commit
+ *  the receipt names. */
+export function assertRecordedAtHead(commit, { cwd = ROOT } = {}) {
+  const head = execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  if (head !== commit) {
+    throw new Error(
+      `the campaign ran at ${commit.slice(0, 7)} but the checkout is now ${head.slice(0, 7)}. ` +
+      "The rows you drove ran against this checkout, not that commit. " +
+      "Check that commit out again, or run the campaign again here.",
+    );
+  }
+  return commit;
+}
+
 export function assertReachableFrom(commit, { cwd = ROOT, ref = "origin/main" } = {}) {
   let resolved;
   try {
@@ -212,23 +230,22 @@ export function assertReachableFrom(commit, { cwd = ROOT, ref = "origin/main" } 
 
 if (invokedAsMain()) {
   const argv = process.argv.slice(2);
-  const options = { receipt: undefined, write: false, requireHead: false, source: process.env.MCP_SSO_RUN_URL, driven: [] };
+  const options = { receipt: undefined, write: false, source: process.env.MCP_SSO_RUN_URL, driven: [] };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--receipt" && argv[i + 1]) options.receipt = argv[++i];
     else if (argv[i] === "--write") options.write = true;
-    else if (argv[i] === "--require-head") options.requireHead = true;
     else if (argv[i] === "--row" && argv[i + 1]) options.driven.push(argv[++i]);
-    else throw new Error("usage: record-receipt.mjs --receipt <file> [--row <id>]... [--write] [--require-head]");
+    else throw new Error("usage: record-receipt.mjs --receipt <file> [--row <id>]... [--write]");
   }
   if (!options.receipt) throw new Error("--receipt is required");
   const receipt = assertClientVersions(readRehearsalReceipt(JSON.parse(readFileSync(options.receipt, "utf8"))));
-  if (options.requireHead) {
-    const head = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    if (head !== receipt.runtimeCommit) throw new Error("the receipt's runtime commit is not the checked-out HEAD");
-  }
   // Only when the document is being written: printing one for inspection asks
-  // nothing of the repository.
-  if (options.write) assertReachableFrom(receipt.runtimeCommit);
+  // nothing of the repository. Both guards, because a campaign has to be one
+  // commit and that commit has to survive the merge.
+  if (options.write) {
+    assertRecordedAtHead(receipt.runtimeCommit);
+    assertReachableFrom(receipt.runtimeCommit);
+  }
   const evidence = toEvidence(receipt, { source: options.source, driven: options.driven });
   const body = `${JSON.stringify(evidence, null, 2)}\n`;
   if (options.write) {
