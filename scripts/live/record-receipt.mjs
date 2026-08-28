@@ -79,7 +79,7 @@ export function assertClientVersions(receipt) {
 /** The evidence document, in the schema the gate reads. One campaign: the rows
  *  the rehearsal machine-checked, plus the rows a person drove against the same
  *  served leg, which no probe can drive. */
-export function toEvidence(receipt, { source, driven = [] } = {}) {
+export function toEvidence(receipt, { source, driven = [], recordedAt } = {}) {
   const machineChecked = new Set(receipt.rows.map((row) => row.id));
   for (const id of driven) {
     if (machineChecked.has(id)) throw new Error(`row ${id} is machine-checked; it cannot also be recorded by hand`);
@@ -95,7 +95,14 @@ export function toEvidence(receipt, { source, driven = [] } = {}) {
   return {
     schema: 1,
     runtimeCommit: receipt.runtimeCommit,
-    recordedAt: receipt.finishedAt ?? receipt.startedAt,
+    // Two different times, because the campaign has two halves. `ranAt` is when
+    // the rehearsal finished, which identifies the run: recording it again to
+    // correct a --row list produces the same value, and that is what tells a
+    // correction from a second campaign. `recordedAt` is when this document was
+    // written, which is after the hand-driven rows, so the receipt does not
+    // claim to have been recorded before part of its own campaign happened.
+    ranAt: receipt.finishedAt ?? receipt.startedAt,
+    recordedAt: recordedAt ?? new Date().toISOString(),
     ...(source === undefined ? {} : { source }),
     complete: true,
     rows: [
@@ -160,24 +167,26 @@ export function writeActiveReceipt(path, body) {
     //
     // A re-record is not that. Recording the same rehearsal receipt again, to
     // correct a `--row` list, produces the same `runtimeCommit` and the same
-    // `recordedAt`, because both come from the run rather than from the
-    // recording. Archiving the corrected-away version would put a document in
-    // `archive/` that was never a campaign, and the checklist would then have
-    // the operator commit the mistake as if it were history.
+    // `ranAt`, because both come from the run rather than from the recording.
+    // Archiving the corrected-away version would put a document in `archive/`
+    // that was never a campaign, and the checklist would then have the operator
+    // commit the mistake as if it were history.
     const previous = JSON.parse(readFileSync(path, "utf8"));
     // Both halves must actually say which run they are. Two documents that
     // name no run are not the same run, they are two unknowns, and treating
     // them as one would replace a receipt rather than archive it.
     const incoming = receiptOf(body);
-    const names = (value) => typeof value.runtimeCommit === "string" && typeof value.recordedAt === "string";
+    const names = (value) => typeof value.runtimeCommit === "string" && typeof value.ranAt === "string";
     const sameRun = names(previous) && names(incoming)
       && previous.runtimeCommit === incoming.runtimeCommit
-      && previous.recordedAt === incoming.recordedAt;
+      && previous.ranAt === incoming.ranAt;
     if (sameRun) {
       renameSync(staged, path);
       return null;
     }
-    const stamp = String(previous.recordedAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
+    // Named by when the run happened, not when it was filed, so one campaign
+    // has one archive name however many times it was recorded.
+    const stamp = String(previous.ranAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
     const base = `release-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
     const archiveDir = resolve(dirname(path), "archive");
     mkdirSync(archiveDir, { recursive: true });
