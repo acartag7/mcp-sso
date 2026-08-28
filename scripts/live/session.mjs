@@ -15,6 +15,7 @@ const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const STATE_DIR = join(ROOT, ".live-state");
 const SESSION_FILE = join(STATE_DIR, "session.json");
 const SESSION_LOCK = join(STATE_DIR, "session.lock");
+const WATCH_LOCK = join(STATE_DIR, "watch.lock");
 const RESULTS_FILE = join(STATE_DIR, "session-results.jsonl");
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
@@ -202,14 +203,7 @@ function printResult(result) {
   process.stdout.write(`${result.verdict} ${row} ${result.leg} ${result.clientLabel}: ${calls}\n`);
 }
 
-async function watch(args) {
-  const allowed = new Set(["--all", "--once", "--codex-dcr"]);
-  if (args.some((arg) => !allowed.has(arg)) || new Set(args).size !== args.length) {
-    throw new Error("usage: session.mjs watch [--all] [--once] [--codex-dcr]");
-  }
-  const once = args.includes("--once");
-  const fromStart = once || args.includes("--all");
-  const codexDcr = args.includes("--codex-dcr");
+async function watchOwned({ once, fromStart, codexDcr }) {
   const session = validSession(readPrivateJson(SESSION_FILE));
   if (session === undefined) throw new Error("run session.mjs serve before watch");
   const versions = clientVersions();
@@ -291,6 +285,18 @@ async function watch(args) {
   }
   if (!failed) process.stdout.write(`saved ${once ? oneShot.length : "new"} result(s) in .live-state/session-results.jsonl\n`);
   return failed ? 1 : 0;
+}
+
+async function watch(args) {
+  const allowed = new Set(["--all", "--once", "--codex-dcr"]);
+  if (args.some((arg) => !allowed.has(arg)) || new Set(args).size !== args.length) {
+    throw new Error("usage: session.mjs watch [--all] [--once] [--codex-dcr]");
+  }
+  const once = args.includes("--once");
+  const release = acquireSessionLock(WATCH_LOCK);
+  try {
+    return await watchOwned({ once, fromStart: once || args.includes("--all"), codexDcr: args.includes("--codex-dcr") });
+  } finally { release(); }
 }
 
 async function main([name, ...args]) {

@@ -104,6 +104,36 @@ function waitForProcessExit(pid) {
   });
 }
 
+function signalAndWait(child, signal, label) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} did not stop after ${signal}`)), 5_000);
+    child.once("error", reject);
+    child.once("exit", (code, exitSignal) => {
+      clearTimeout(timer);
+      resolve({ code, signal: exitSignal });
+    });
+    child.kill(signal);
+  });
+}
+
+async function waitForLockOwner(path) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      const release = acquireSessionLock(path);
+      release();
+    } catch (error) {
+      if (error instanceof Error && error.message === "another live session is active") return;
+      throw error;
+    }
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+  }
+  throw new Error(`timed out waiting for lock owner on ${path}`);
+}
+
 function waitForReadySession(path) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + 5_000;
@@ -524,6 +554,47 @@ test("watch rejects unknown and repeated options", () => {
       assert.match(result.stderr, /usage: session\.mjs watch/);
       assert.equal(existsSync(join(f.repo, ".live-state")), false);
     } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("one watcher owns the result file and releases its lock on exit", async () => {
+  const f = fixture();
+  let serveChild;
+  let servePid;
+  let child;
+  try {
+    serveChild = spawn(process.execPath, [join(f.repo, "session.mjs"), "serve", "google"], {
+      cwd: f.repo, env: { ...f.env, FAKE_SERVE_WAIT: "true" }, stdio: "ignore",
+    });
+    const stateDir = join(f.repo, ".live-state");
+    await waitForReadySession(join(stateDir, "session.json"));
+    await waitForFile(f.env.SERVE_PID_FILE);
+    servePid = Number(readFileSync(f.env.SERVE_PID_FILE, "utf8"));
+    const resultsPath = join(stateDir, "session-results.jsonl");
+    const watchLock = join(stateDir, "watch.lock");
+    writeFileSync(resultsPath, "sentinel\n", { mode: 0o600 });
+    child = spawn(process.execPath, [join(f.repo, "session.mjs"), "watch"], {
+      cwd: f.repo, env: f.env, stdio: "ignore",
+    });
+    await waitForLockOwner(watchLock);
+
+    const second = run(f, ["watch", "--all", "--once"]);
+    assert.equal(second.status, 1);
+    assert.match(second.stderr, /another live session is active/);
+    assert.equal(readFileSync(resultsPath, "utf8"), "sentinel\n");
+
+    assert.deepEqual(await signalAndWait(child, "SIGKILL", "watch"), { code: null, signal: "SIGKILL" });
+    assert.equal(run(f, ["watch", "--all", "--once"]).status, 0);
+    assert.equal(readFileSync(resultsPath, "utf8"), "");
+  } finally {
+    if (child !== undefined) await signalAndWait(child, "SIGKILL", "watch");
+    if (serveChild !== undefined) await signalAndWait(serveChild, "SIGKILL", "serve");
+    if (servePid !== undefined) {
+      await waitForFile(f.env.PARENT_GONE_FILE);
+      await waitForFile(f.env.SERVE_TERMINATED_FILE);
+      await waitForProcessExit(servePid);
+    }
+    rmSync(f.root, { recursive: true, force: true });
   }
 });
 
