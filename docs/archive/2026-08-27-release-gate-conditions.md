@@ -27,7 +27,8 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | the published-release row disagrees with itself | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | the published-release row disagrees with the package | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | the status section appears more than once, in any Markdown spelling | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| a second version claim written anywhere in the document | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a second version claim in a second rendered table | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a version claim that is a lone line rather than a rendered table row | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a second version claim under a Setext heading | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | the release matrix is not an object with a rows array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |

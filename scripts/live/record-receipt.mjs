@@ -124,6 +124,8 @@ if (invokedAsMain()) {
     // its commit predates the very change the new run was recorded for. The
     // superseded receipt is archived rather than deleted.
     const path = resolve(ROOT, "docs/evidence/rehearsal.json");
+    const staged = `${path}.staged`;
+    let recorded = false;
     mkdirSync(dirname(path), { recursive: true });
     if (existsSync(path)) {
       // Every superseded receipt is archived, including one from a second
@@ -138,10 +140,21 @@ if (invokedAsMain()) {
       // name rather than replacing it: renameSync would delete it silently.
       let archive = resolve(ROOT, `docs/evidence/archive/${base}.json`);
       for (let n = 2; existsSync(archive); n++) archive = resolve(ROOT, `docs/evidence/archive/${base}-${n}.json`);
+      // Write the replacement first: a failure here leaves the active receipt
+      // where it was. Moving first and then failing to write would leave the
+      // repository with no active receipt and a gate that refuses everything.
+      writeFileSync(staged, body);
       renameSync(path, archive);
+      try {
+        renameSync(staged, path);
+      } catch (error) {
+        renameSync(archive, path);
+        throw error;
+      }
       process.stdout.write(`${archive} archived\n`);
+      recorded = true;
     }
-    writeFileSync(path, body);
+    if (!recorded) writeFileSync(path, body);
     process.stdout.write(`${path} written for ${receipt.runtimeCommit}\n`);
     // The page a person reads is not generated, and it should not silently
     // fall behind the receipt either. This is what changed, in the words the

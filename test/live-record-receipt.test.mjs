@@ -82,6 +82,13 @@ test("BEHAVIOUR record-receipt: a campaign supersedes the one before it", () => 
   assert.match(source, /docs\/evidence\/rehearsal\.json/, "the active receipt has one name");
   assert.match(source, /rehearsal-\$\{String\(previous\.runtimeCommit\)\.slice\(0, 7\)\}-\$\{stamp\}/, "and the one it replaces is archived under its own campaign");
   assert.match(source, /renameSync\(path, archive\)/, "moved, not deleted");
+  // The replacement is written before anything moves, and a failed move is
+  // rolled back: a recording that fails must leave the evidence set as it was,
+  // not with the active receipt gone.
+  assert.ok(source.indexOf("writeFileSync(staged, body)") < source.indexOf("renameSync(path, archive)"),
+    "the replacement is staged before the active receipt moves");
+  assert.match(source, /catch \(error\) \{\s*renameSync\(archive, path\);\s*throw error;/,
+    "and a failed swap puts the archived receipt back");
   assert.match(source, /for \(let n = 2; existsSync\(archive\); n\+\+\)/,
     "and a name already taken belongs to a campaign that ran, so the new one moves aside instead of replacing it");
   const gate = readFileSync(new URL("../scripts/check-release-ready.mjs", import.meta.url), "utf8");

@@ -101,11 +101,14 @@ const CONDITIONS = [
   ["the published-release row is repeated",
     () => ({ status: `${statusFor()}\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |` }),
     "expected one npm package and tag row, found 2"],
-  ["a second version claim written anywhere in the document",
-    () => ({ status: `${statusFor()}\n\nprose\n\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
+  ["a second version claim in a second rendered table",
+    () => ({ status: `${statusFor()}\n\nprose\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
     "expected one npm package and tag row, found 2"],
+  ["a version claim that is a lone line rather than a rendered table row",
+    () => ({ status: "# Status\n\n## Published release\n\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |" }),
+    "expected one npm package and tag row, found 0"],
   ["a second version claim under a Setext heading",
-    () => ({ status: `${statusFor()}\n\nDifferent release\n---\n\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
+    () => ({ status: `${statusFor()}\n\nDifferent release\n---\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
     "expected one npm package and tag row, found 2"],
 ];
 
@@ -116,7 +119,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 30, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 31, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages exactly as the previous gate aged it, plus the one correction", () => {

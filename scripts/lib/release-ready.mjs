@@ -32,23 +32,35 @@ function claimedVersion(status, errors) {
   const lines = String(status ?? "").split("\n")
     .map((line) => line.replace(/^(?: {0,3}> ?)+/, ""))
     .map((line) => (/^ {1,3}\S/.test(line) ? line.replace(/^ {1,3}/, "") : line));
-  const rows = [];
+  // Contiguous runs of pipe lines, so a row can be read from the block it
+  // belongs to. A lone `| ... |` line renders as prose, not as a table row, and
+  // a claim nobody sees rendered is not a claim.
+  const blocks = [];
+  let current = [];
   let fence;
   let commented = false;
+  const endBlock = () => { if (current.length > 0) { blocks.push(current); current = []; } };
   for (const line of lines) {
     const marker = /^(`{3,}|~{3,})(.*)$/.exec(line);
     if (marker !== null) {
       const [, marks, rest] = marker;
       if (fence === undefined) fence = marks;
       else if (marks[0] === fence[0] && marks.length >= fence.length && rest.trim() === "") fence = undefined;
+      endBlock();
       continue;
     }
     if (fence !== undefined) continue;
     if (line.includes("<!--")) commented = true;
-    if (commented) { if (line.includes("-->")) commented = false; continue; }
-    const match = STATUS_LINE.exec(line);
-    if (match !== null) rows.push(match);
+    if (commented) { if (line.includes("-->")) commented = false; endBlock(); continue; }
+    if (line.startsWith("|")) current.push(line);
+    else endBlock();
   }
+  endBlock();
+  const rows = blocks
+    .filter((block) => block.length >= 3 && /^\|( *:?-+:? *\|)+$/.test(block[1]))
+    .flatMap((block) => block.slice(2))
+    .map((line) => STATUS_LINE.exec(line))
+    .filter((match) => match !== null);
   if (rows.length !== 1) {
     errors.push(`status version: expected one npm package and tag row, found ${rows.length}`);
     return undefined;

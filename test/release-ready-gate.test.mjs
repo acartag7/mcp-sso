@@ -115,13 +115,26 @@ test("a matrix row cannot name an export the package does not declare", () => {
 test("exactly one rendered version claim, however the document is written", () => {
   // Section membership is not the question: four ways of writing a second
   // section each slipped past a gate that asked it. Uniqueness is the question.
-  const claim = (version) => `| npm package and tag | \`mcp-sso@${version}\` and \`v${version}\` |`;
+  // A claim is a rendered table row, so a second claim needs a real table:
+  // a lone pipe line renders as prose and is not a claim at all.
+  const claim = (version) => `| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@${version}\` and \`v${version}\` |`;
   for (const [name, second] of [
     ["closing hashes", `## Published release ##\n\n${claim("9.9.9")}`],
-    ["a blockquote", `> ## Published release\n>\n> ${claim("9.9.9")}`],
-    ["indentation", `   ## Published release\n\n   ${claim("9.9.9")}`],
+    ["a blockquote", `> ## Published release\n>\n${claim("9.9.9").split("\n").map((line) => `> ${line}`).join("\n")}`],
+    ["indentation", `   ## Published release\n\n${claim("9.9.9").split("\n").map((line) => `   ${line}`).join("\n")}`],
     ["a Setext heading", `Different release\n---\n\n${claim("9.9.9")}`],
     ["no heading at all", `prose\n\n${claim("9.9.9")}`],
+  ]) {
+    const errors = fixture({ status: `${statusFor()}\n\n${second}` }).errors;
+    assert.ok(errors.some((error) => error.includes("expected one npm package and tag row, found 2")),
+      `a second claim written with ${name} is still a second claim: ${JSON.stringify(errors)}`);
+  }
+
+  // A lone pipe line is prose, not a row, so it is not a claim and cannot
+  // contradict the one that is.
+  const lone = `${statusFor()}\n\nprose\n\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
+  assert.deepEqual(fixture({ status: lone }).errors, [], "a lone pipe line is not a claim");
+  for (const [name, second] of [
   ]) {
     const errors = fixture({ status: `${statusFor()}\n\n${second}` }).errors;
     assert.ok(errors.some((error) => error.includes("expected one npm package and tag row, found 2")),
