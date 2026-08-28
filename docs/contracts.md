@@ -13,7 +13,7 @@ Read this index by task. Open the numbered file only when you need its exact con
 | Resource-server authentication | [§8 Verifier](contracts/08-resource-server-verifier-contract.md) and [§11 Scopes](contracts/11-scope-contract.md) |
 | Durable state or audit | [§12 Stores](contracts/12-store-conformance-contract.md) and [§13 Audit](contracts/13-audit-contract.md) |
 | MCP-version claims | [§16 Conformance matrix](contracts/16-spec-conformance-matrix.md) |
-| CIMD, machine clients, device flow, Entra groups, console pairing, OIDC and Google, audit sinks, quickstart secrets, the Redis limiter, or the upstream redirect flow | [§17 Feature contracts](contracts/17-v0-2-feature-contracts.md) |
+| CIMD, machine clients, device flow, Entra groups, console pairing, OIDC and Google, audit sinks, quickstart secrets, the Redis limiter, the upstream redirect flow, or the local live-session CLI | [§17 Feature contracts](contracts/17-v0-2-feature-contracts.md) |
 
 Current release and conformance status: [verification status](verification-status.md).
 
