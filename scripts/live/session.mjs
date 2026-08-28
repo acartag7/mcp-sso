@@ -89,29 +89,38 @@ async function serve(args) {
   });
   let ready = false;
   let readinessFailed = false;
+  let stoppedForReadiness = false;
+  let childExited = false;
+  let emptyMarkerTimer;
   let marker = "";
   const readiness = child.stdio[3];
+  const failReadiness = () => {
+    readinessFailed = true;
+    try { stoppedForReadiness = child.kill("SIGTERM") || stoppedForReadiness; } catch { /* the child already stopped */ }
+  };
+  child.once("exit", () => {
+    childExited = true;
+    if (emptyMarkerTimer !== undefined) clearTimeout(emptyMarkerTimer);
+  });
   readiness.setEncoding("utf8");
   readiness.on("data", (chunk) => {
     marker += chunk;
-    if (Buffer.byteLength(marker) > 16) {
-      readinessFailed = true;
-      try { child.kill("SIGTERM"); } catch { /* the child already stopped */ }
-    }
+    if (Buffer.byteLength(marker) > 16) failReadiness();
   });
-  readiness.on("error", () => {
-    readinessFailed = true;
-    try { child.kill("SIGTERM"); } catch { /* the child already stopped */ }
-  });
+  readiness.on("error", failReadiness);
   readiness.once("end", () => {
     if (!readinessFailed && marker === "ready\n") {
       try { writePrivateJson(SESSION_FILE, { ...state, status: "ready" }); ready = true; } catch {
-        readinessFailed = true;
-        try { child.kill("SIGTERM"); } catch { /* the child already stopped */ }
+        failReadiness();
       }
     } else if (!ready) {
       readinessFailed = true;
-      try { child.kill("SIGTERM"); } catch { /* the child already stopped */ }
+      if (marker !== "") failReadiness();
+      else {
+        emptyMarkerTimer = setTimeout(() => {
+          if (!childExited && !ready) failReadiness();
+        }, 100);
+      }
     }
   });
   let forwarded;
@@ -133,8 +142,10 @@ async function serve(args) {
   process.off("SIGTERM", onTerm);
   const stateClean = ready || invalidateSession();
   const clean = cleanupClients(legs);
-  if (result.code !== 0) return result.code ?? (result.signal === "SIGINT" ? 130 : 143);
   if (forwarded !== undefined) return forwarded === "SIGINT" ? 130 : 143;
+  if (stoppedForReadiness || (readinessFailed && result.code === 0)) return 1;
+  if (typeof result.code === "number" && result.code !== 0) return result.code;
+  if (result.signal !== null) return result.signal === "SIGINT" ? 130 : 143;
   return clean && stateClean && !readinessFailed ? 0 : 1;
 }
 

@@ -74,6 +74,20 @@ function waitForFile(path) {
   });
 }
 
+function waitForReadySession(path) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + 5_000;
+    const poll = () => {
+      try {
+        if (JSON.parse(readFileSync(path, "utf8")).status === "ready") { resolve(); return; }
+      } catch { /* the state is absent or between writes */ }
+      if (Date.now() >= deadline) reject(new Error(`timed out waiting for ready state in ${path}`));
+      else setTimeout(poll, 10);
+    };
+    poll();
+  });
+}
+
 function waitForOutput(child, pattern) {
   return new Promise((resolve, reject) => {
     let output = "";
@@ -142,14 +156,16 @@ test("session serve preserves a serve failure and still cleans every selected cl
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
-test("session serve rejects a malformed readiness marker and leaves no usable state", () => {
-  const f = fixture();
-  try {
-    const result = run(f, ["serve", "google"], { FAKE_READY_MARKER: "bad" });
-    assert.equal(result.status, 1, result.stderr);
-    assert.equal(existsSync(join(f.repo, ".live-state/session.json")), false);
-    assert.equal(run(f, ["watch", "--once"]).status, 1);
-  } finally { rmSync(f.root, { recursive: true, force: true }); }
+test("session serve rejects malformed and missing readiness markers and leaves no usable state", () => {
+  for (const marker of ["bad", "none"]) {
+    const f = fixture();
+    try {
+      const result = run(f, ["serve", "google"], { FAKE_READY_MARKER: marker, FAKE_SERVE_WAIT: "true" });
+      assert.equal(result.status, 1, `${marker}: ${result.stderr}`);
+      assert.equal(existsSync(join(f.repo, ".live-state/session.json")), false);
+      assert.equal(run(f, ["watch", "--once"]).status, 1);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
 });
 
 test("Ctrl-C reaches serve.sh and then cleans the selected client entries", async () => {
@@ -159,6 +175,7 @@ test("Ctrl-C reaches serve.sh and then cleans the selected client entries", asyn
       cwd: f.repo, env: { ...f.env, FAKE_SERVE_WAIT: "true" }, stdio: "ignore",
     });
     await waitForFile(f.env.STARTED_FILE);
+    await waitForReadySession(join(f.repo, ".live-state/session.json"));
     process.kill(child.pid, "SIGINT");
     const status = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("session.mjs did not stop after Ctrl-C")), 10_000);
