@@ -50,9 +50,16 @@ function readReceipt(receipt, label, errors) {
     // declare their rows, a readable id outside them is not a checklist row,
     // and counting it would let a receipt stand in for one never driven.
     if (!expected.has(row.id)) return fail(`records ${row.id}, which the campaign does not define`);
-    // A hand-driven row says so. Without this a person's word can sit in the
-    // receipt looking exactly like a probe result to whoever reads it.
-    if (!machineRows.has(row.id) && row.driven !== true) return fail(`records ${row.id} without marking it hand-driven`);
+    // A hand-driven row says so, and a machine-checked one does not. Without
+    // both halves a person's word sits in the receipt looking like a probe
+    // result, or a row no probe ran is labelled as one a person drove. The
+    // recorder refuses both; a receipt is read from a file, so the gate has to
+    // refuse them again on what is stored.
+    if (machineRows.has(row.id)) {
+      if (row.driven !== undefined) return fail(`records ${row.id} as hand-driven, but a probe decides it`);
+    } else if (row.driven !== true) {
+      return fail(`records ${row.id} without marking it hand-driven`);
+    }
     seen.add(row.id);
     if (row.status !== "PASS") return fail(`row ${row.id} did not pass (${String(row.status)})`);
   }

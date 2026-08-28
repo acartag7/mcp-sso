@@ -71,6 +71,10 @@ const CONDITIONS = [
   ["a receipt records a row the campaign does not define",
     () => ({ receipts: receipts(receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "F2s", status: "PASS" }] })) }),
     "records F2s, which the campaign does not define"],
+  ["a machine-checked row claims to be hand-driven",
+    () => ({ receipts: receipts(receiptFor(ancestor, {
+      rows: receiptFor(ancestor).rows.map((row) => (row.id === "probe-google" ? { ...row, driven: true } : row)),
+    })) }), "records probe-google as hand-driven, but a probe decides it"],
   ["a hand-driven row is not marked as one",
     () => ({ receipts: receipts(receiptFor(ancestor, {
       rows: receiptFor(ancestor).rows.map((row) => (row.id === "C1" ? { id: row.id, status: "PASS" } : row)),
@@ -98,7 +102,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 23, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 24, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages as it did, plus the correction that lets one pull request carry both", () => {

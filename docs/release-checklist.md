@@ -35,7 +35,13 @@ Still on that clean `origin/main` checkout.
    ```
 
 3. Confirm that `test/e2e-mcp-sdk.test.ts` completes registration, authorization, token exchange, the protected `/mcp` call, and refresh. It must replay the first family's consumed token and confirm that the successor is dead. It must then create a second family, revoke that family while it is active, and confirm that its refresh token is refused.
-4. Start disposable MySQL and Redis services.
+4. Start disposable MySQL and Redis services. The campaign needs the same two, so start them once here and leave them running:
+
+   ```bash
+   docker run -d --rm --name rehearsal-mysql -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=mcp_sso -e MYSQL_USER=mcp -e MYSQL_PASSWORD=mcppw -p 127.0.0.1:3306:3306 mysql:8.4
+   docker run -d --rm --name rehearsal-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+   ```
+
 5. Run the release matrix with their connection URLs:
 
    ```bash
@@ -50,14 +56,14 @@ Still on that clean `origin/main` checkout.
 
 ## Record the campaign
 
+The rehearsal and `serve.sh` need the live prerequisites: the identity-provider sessions, the infrastructure checkout, the tunnel, and the clients on `PATH`. [`scripts/live/README.md`](../scripts/live/README.md) lists them, and neither command starts without them.
+
 The rehearsal checks its 19 rows. Seven rows of [`scripts/live/CHECKLIST.md`](../scripts/live/CHECKLIST.md) it may not drive, because their web applications forbid an automated browser: the Google sign-ins A3 and B3, and the hosted connectors C1, C2, and F1 to F3. You drive those yourself, after the rehearsal has finished and released its tunnel.
 
 Start the services and run the rehearsal:
 
 ```bash
-docker run -d --rm --name rehearsal-mysql -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=mcp_sso -e MYSQL_USER=mcp -e MYSQL_PASSWORD=mcppw -p 127.0.0.1:3306:3306 mysql:8.4
-docker run -d --rm --name rehearsal-redis -p 127.0.0.1:6379:6379 redis:7-alpine
-RUN_INTEGRATION=true MYSQL_URL='mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso' REDIS_URL='redis://127.0.0.1:6379' \
+RUN_INTEGRATION=true MYSQL_URL='mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4' REDIS_URL='redis://127.0.0.1:6379' \
   node scripts/live/rehearsal.mjs
 ```
 
@@ -95,11 +101,8 @@ Do not use a live result as the only evidence for a security property.
 2. Bump the version.
 3. Commit `docs/evidence/release.json`, the receipt it superseded under `docs/evidence/archive/`, and the [`client-compatibility.md`](client-compatibility.md) update.
 4. Change nothing else. Every other evidence input would age the receipt you just recorded, and the pull request would refuse its own release.
-5. Push the branch and open the pull request.
 
-Do not use a live result as the only evidence for a security property.
-
-Run the evidence gates after recording the campaign:
+Then run the evidence gates, before pushing, so a refusal costs a local run rather than a review round:
 
 ```bash
 pnpm run check:release-matrix
@@ -109,6 +112,8 @@ pnpm run check:release-ready
 The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, or stale evidence commit. Neither reads a version out of a document: tag and package agreement is checked at publish time against the tag you push.
 
 A receipt goes stale when something that changes what a client would observe, or what produced the evidence, moved after its commit: `src/`, `examples/`, `test/`, `scripts/live/`, the release-matrix scripts, `docs/verification.md`, the TypeScript configuration, the lockfiles, the publish workflow, or a runtime field of `package.json`. The version is the exception, and it is why the bump and the campaign proving it ride in one pull request: nothing a client observes over the OAuth and MCP endpoints changes when the version string changes. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
+
+Then push the branch and open the pull request.
 
 ## Merge the release pull request
 

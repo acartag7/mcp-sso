@@ -28,11 +28,12 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | the release matrix is not an object with a rows array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row omits its exports array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a machine-checked row claims to be hand-driven | New here, the mirror of the row below: the recorder refuses a `--row` naming a rehearsal id, so the gate refuses the same claim in a stored receipt. Pinned in `test/release-gate-conditions.test.mjs` |
 | a hand-driven row is not marked as one | New here: a row only a person can drive carries `driven: true`, so a person's word cannot sit in the receipt looking like a probe result. Pinned in `test/release-gate-conditions.test.mjs` |
 | a receipt claims completeness while missing a hand-driven row | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a rehearsal receipt claims completeness while missing rows | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 
-Evidence freshness is kept as it was, with one deliberate correction, and is pinned by its own case in the same file: runtime, deployment, package-exports, version and build-script changes age every receipt; the package description and the gate's own script do not; and probe or rehearsal changes age a rehearsal receipt but not an operator's.
+Evidence freshness is kept as it was, and is pinned by its own case in the same file: runtime, deployment, package-exports and build-script changes age the receipt, and the package description and the gate's own script do not. Two rules changed after this page was first written, and the current ones are in [§15](../contracts/15-package-and-export-map.md): a version bump no longer ages a receipt, which is what lets one pull request carry the bump and the campaign proving it, and there is one receipt rather than one per producer, so probe and rehearsal changes age it like everything else.
 
 The published-version check is gone, and that is the largest single change here. The gate used to read `docs/verification-status.md`, find the `npm package and tag` row, and compare the version written there against `package.json`. Seven review rounds each found another Markdown spelling that put a second, conflicting claim into a document the parser called clean: closing hashes, blockquotes, one-to-three-space indentation, Setext underlines, a lone pipe line, a fence whose closer carried trailing text, and finally a table inside a raw `<div>` block, which renders as text and is not a table at all. Each fix was correct and the next spelling was still there, because the check was a hand-rolled Markdown parser reading a document anyone may edit.
 
@@ -73,6 +74,6 @@ Every one of these is a rule about Markdown rather than about evidence. They exi
 
 ## What replaced them
 
-A receipt is refused when its schema is unrecognised, its producer is unknown, its runtime commit is malformed, it is partial, it records no rows, a row did not pass, it repeats a row id, or it carries release-matrix rows without being a rehearsal receipt whose own release-matrix row passed. `docs/evidence/` holds one active receipt per producer and the superseded document moves to `docs/evidence/archive/`.
+A receipt is refused when its schema is unrecognised, its runtime commit is malformed, it is partial, it records no rows, a row did not pass, it repeats a row id, or it carries release-matrix rows without a passing `release-matrix` row. `docs/evidence/` holds one active receipt and the superseded document moves to `docs/evidence/archive/`. The producer split this page describes was removed later; the full binding rules are the table in [§15](../contracts/15-package-and-export-map.md).
 
 Current results are in [Client compatibility](../client-compatibility.md) and [Verification status](../verification-status.md). Both are written for readers, and nothing parses either of them.
