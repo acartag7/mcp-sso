@@ -26,8 +26,9 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | the published-release row is absent or repeated | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | the published-release row disagrees with itself | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | the published-release row disagrees with the package | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| the status section appears more than once | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
-| the status section holds more than one rendered table | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| the status section appears more than once, in any Markdown spelling | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a second version claim written anywhere in the document | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a second version claim under a Setext heading | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | the release matrix is not an object with a rows array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row omits its exports array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
@@ -39,6 +40,8 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | a table hidden after a fence line that does not close it | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 
 Evidence freshness is kept as it was, with one deliberate correction, and is pinned by its own case in the same file: runtime, deployment, package-exports, version and build-script changes age every receipt; the package description and the gate's own script do not; and probe or rehearsal changes age a rehearsal receipt but not an operator's.
+
+The published-version check changed shape rather than scope. The old gate asked which section a row was in, and this one asks whether the document contains exactly one rendered `npm package and tag` row. Four attempts at the first question, through closing hashes, blockquotes, indentation, and Setext underlines, each admitted a document carrying two conflicting claims; the second question has one answer. A row inside a fence, an HTML comment, or code-block indentation still renders as neither a row nor a claim, and is still skipped.
 
 ## Dropped
 

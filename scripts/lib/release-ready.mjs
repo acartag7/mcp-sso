@@ -14,73 +14,46 @@ const PRODUCERS = new Set(["rehearsal", "operator"]);
 /** The active receipt each producer writes. Anything else in the directory is
  *  a document nobody records to, and a superseded one belongs in archive/. */
 export const ACTIVE_RECEIPTS = Object.freeze({ rehearsal: "rehearsal.json", operator: "operator.json" });
-const STATUS_HEADING = "## Published release";
-// `## Published release ##` renders as the same heading, so it counts as one.
-const STATUS_HEADING_LINE = /^##\s+Published release\s*#*\s*$/;
 const STATUS_LINE = /^\|\s*npm package and tag\s*\|\s*`mcp-sso@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s+and\s+`v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`\s*\|$/;
 
-/** The lines of the one `Published release` section that are rendered table
- *  rows: not inside a fenced block, not inside an HTML comment, and starting
- *  the line. A row hidden in either is not published status. */
-function renderedStatusRows(status, errors) {
-  // A heading renders as a heading whether it is quoted or indented up to
-  // three spaces, and so does a table. Reading only unquoted, unindented lines
-  // would let a second, conflicting published-release claim sit in the document
-  // unseen. Four spaces is a code block, so that indentation is left alone.
+/** The version the published-release row claims, or undefined.
+ *
+ *  This reads one row out of a document a person writes, which is the last
+ *  thing here that reads prose at all. It asks the only question that has an
+ *  unambiguous answer: does the document contain exactly one rendered
+ *  `npm package and tag` row, and does it agree with itself. Which section the
+ *  row sits in is deliberately not asked. Four attempts to answer that,
+ *  through closing hashes, blockquotes, indentation, and Setext underlines,
+ *  each admitted a document with two conflicting claims, because section
+ *  membership in Markdown has more spellings than a gate should chase. A row
+ *  inside a fenced block or an HTML comment renders as neither a row nor a
+ *  claim, so those are still skipped. */
+function claimedVersion(status, errors) {
   const lines = String(status ?? "").split("\n")
     .map((line) => line.replace(/^(?: {0,3}> ?)+/, ""))
     .map((line) => (/^ {1,3}\S/.test(line) ? line.replace(/^ {1,3}/, "") : line));
-  const headings = lines.map((line, index) => [line, index]).filter(([line]) => STATUS_HEADING_LINE.test(line));
-  if (headings.length !== 1) {
-    errors.push(`status version: expected one canonical ${STATUS_HEADING} section, found ${headings.length}`);
-    return [];
-  }
-  // Contiguous runs of table lines only, and only the one that is a rendered
-  // table: a header, a divider, then rows. A `|` line sitting in prose after
-  // the table is not a published-status row.
-  const blocks = [];
-  let current = [];
+  const rows = [];
   let fence;
   let commented = false;
-  for (let i = headings[0][1] + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^#{1,6}\s/.test(line)) break;
-    // A backtick fence is closed by backticks, not by tildes, and the closer is
-    // at least as long as the opener. Toggling on either would let a table
-    // inside a code block read as a rendered one.
-    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  for (const line of lines) {
+    const marker = /^(`{3,}|~{3,})(.*)$/.exec(line);
     if (marker !== null) {
       const [, marks, rest] = marker;
-      if (fence === undefined) { fence = marks; continue; }
-      // Only a bare delimiter closes a fence. `\`\`\`not-a-closer` leaves the
-      // block open, and a table after it still renders as code.
-      if (marks[0] === fence[0] && marks.length >= fence.length && rest.trim() === "") fence = undefined;
+      if (fence === undefined) fence = marks;
+      else if (marks[0] === fence[0] && marks.length >= fence.length && rest.trim() === "") fence = undefined;
       continue;
     }
+    if (fence !== undefined) continue;
     if (line.includes("<!--")) commented = true;
     if (commented) { if (line.includes("-->")) commented = false; continue; }
-    if (fence === undefined && line.startsWith("|")) { current.push(line); continue; }
-    if (current.length > 0) { blocks.push(current); current = []; }
+    const match = STATUS_LINE.exec(line);
+    if (match !== null) rows.push(match);
   }
-  if (current.length > 0) blocks.push(current);
-  const tables = blocks.filter((block) => block.length >= 3 && /^\|( *:?-+:? *\|)+$/.test(block[1]));
-  if (tables.length !== 1) {
-    errors.push(`status version: expected one rendered table under ${STATUS_HEADING}, found ${tables.length}`);
-    return [];
-  }
-  return tables[0].slice(2);
-}
-
-/** The version the published-release row claims, or undefined. One row, one
- *  grammar; the pair must agree with itself before it can agree with the
- *  package. */
-function claimedVersion(status, errors) {
-  const matches = renderedStatusRows(status, errors).map((line) => STATUS_LINE.exec(line)).filter(Boolean);
-  if (matches.length !== 1) {
-    errors.push(`status version: expected one npm package and tag row, found ${matches.length}`);
+  if (rows.length !== 1) {
+    errors.push(`status version: expected one npm package and tag row, found ${rows.length}`);
     return undefined;
   }
-  const [, npmVersion, tagVersion] = matches[0];
+  const [, npmVersion, tagVersion] = rows[0];
   if (npmVersion !== tagVersion) {
     errors.push(`status version mismatch: npm claims ${npmVersion}, tag claims ${tagVersion}`);
     return undefined;

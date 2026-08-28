@@ -62,7 +62,7 @@ An **operator** receipt does not. It records what a real client did against a se
 Only a rehearsal receipt may carry `releaseMatrix`, and only when its own `release-matrix` row passed: export coverage comes from the release matrix, which an operator's client runs do not exercise.
 
 
-The gate requires exactly one `Published release` section containing exactly one rendered table, and reads the `npm package and tag` row from it. That row matches the exact `mcp-sso@X.Y.Z` and `vX.Y.Z` grammar, and its two halves agree with each other and with `package.json`. A row in a fenced block, in an HTML comment, or outside the rendered table supplies nothing: it is neither read nor able to contradict the row that is. The gate does not check the typography of the section's other rows, because nothing it decides depends on them.
+The gate requires exactly one rendered `npm package and tag` row in `docs/verification-status.md`, matching the exact `mcp-sso@X.Y.Z` and `vX.Y.Z` grammar, whose two halves agree with each other and with `package.json`. A row inside a fenced block, an HTML comment, or an indentation Markdown renders as code is not a rendered row and is skipped. Which section the row appears in is deliberately not checked: section membership has more spellings in Markdown than a gate can chase, and four attempts to check it each admitted a document carrying two conflicting claims. Uniqueness across the document is the property that matters, and it is unambiguous.
 
 A campaign run from a worktree records the commit on `main` whose runtime tree it tested, so a receipt does not depend on a worktree commit remaining reachable.
 

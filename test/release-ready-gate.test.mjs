@@ -112,28 +112,34 @@ test("a matrix row cannot name an export the package does not declare", () => {
     `a mapping left behind keeps looking like coverage: ${JSON.stringify(stale.errors)}`);
 });
 
-test("the published-release row must be in the section's rendered table", () => {
-  const table = statusFor();
-  // A row outside the rendered table is not published status: it cannot
-  // supply the version, and it cannot contradict the one that does.
-  const afterProse = `${table}\n\nSome prose about the release.\n\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
-  assert.deepEqual(fixture({ status: afterProse }).errors, [], "the table still supplies the version");
-  const onlyOutside = `# Status\n\n## Published release\n\n| Item | Status |\n| --- | --- |\n| something else | none |\n\nprose\n\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |`;
-  assert.ok(fixture({ status: onlyOutside }).errors.some((e) => e.includes("expected one npm package and tag row, found 0")),
-    "and a row that only exists outside the table supplies nothing");
-  const fenced = `${table}\n\n\`\`\`\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |\n\`\`\``;
-  assert.deepEqual(fixture({ status: fenced }).errors, [], "a fenced row is ignored, and the real one still counts");
-  const commented = `${table}\n\n<!--\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |\n-->`;
-  assert.deepEqual(fixture({ status: commented }).errors, [], "so is a commented one");
-  const noTable = "# Status\n\n## Published release\n\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |";
-  assert.ok(fixture({ status: noTable }).errors.some((e) => e.includes("expected one rendered table")),
-    "a bare row with no header and divider is not a rendered table");
-});
+test("exactly one rendered version claim, however the document is written", () => {
+  // Section membership is not the question: four ways of writing a second
+  // section each slipped past a gate that asked it. Uniqueness is the question.
+  const claim = (version) => `| npm package and tag | \`mcp-sso@${version}\` and \`v${version}\` |`;
+  for (const [name, second] of [
+    ["closing hashes", `## Published release ##\n\n${claim("9.9.9")}`],
+    ["a blockquote", `> ## Published release\n>\n> ${claim("9.9.9")}`],
+    ["indentation", `   ## Published release\n\n   ${claim("9.9.9")}`],
+    ["a Setext heading", `Different release\n---\n\n${claim("9.9.9")}`],
+    ["no heading at all", `prose\n\n${claim("9.9.9")}`],
+  ]) {
+    const errors = fixture({ status: `${statusFor()}\n\n${second}` }).errors;
+    assert.ok(errors.some((error) => error.includes("expected one npm package and tag row, found 2")),
+      `a second claim written with ${name} is still a second claim: ${JSON.stringify(errors)}`);
+  }
 
-test("a heading that renders the same counts the same", () => {
-  const ambiguous = `${statusFor()}\n\n## Published release ##\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |`;
-  assert.ok(fixture({ status: ambiguous }).errors.some((error) => error.includes("expected one canonical")),
-    "closing hashes render the same heading, so two sections are two sections");
+  // What renders as neither a row nor a claim is skipped, so the real one stands.
+  for (const [name, hidden] of [
+    ["a fenced block", "```\n" + claim("9.9.9") + "\n```"],
+    ["an HTML comment", `<!--\n${claim("9.9.9")}\n-->`],
+    ["code-block indentation", `    ${claim("9.9.9")}`],
+    ["a fence closed by a bare delimiter, reopened", "```\n" + claim("9.9.9") + "\n```not-a-closer"],
+  ]) {
+    assert.deepEqual(fixture({ status: `${statusFor()}\n\n${hidden}` }).errors, [], `${name} is not a claim`);
+  }
+
+  assert.ok(fixture({ status: "# Status\n\nno claim here" }).errors
+    .some((error) => error.includes("expected one npm package and tag row, found 0")), "and one has to exist");
 });
 
 test("the published-release row and the package must agree", () => {

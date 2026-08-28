@@ -74,7 +74,7 @@ const CONDITIONS = [
     () => ({ status: statusFor("0.4.0") }), "version mismatch: package.json is 0.5.0"],
   ["the status section appears more than once",
     () => ({ status: `${statusFor()}\n\n## Published release ##\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
-    "expected one canonical"],
+    "expected one npm package and tag row, found 2"],
   ["a rehearsal receipt records a row the rehearsal does not define",
     () => ({ receipts: receipts({ rehearsal: receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "invented-proof", status: "PASS" }] }) }) }),
     "row(s) the rehearsal does not define"],
@@ -83,13 +83,13 @@ const CONDITIONS = [
     "claims to be complete without"],
   ["a second status section indented within what Markdown still renders",
     () => ({ status: `${statusFor()}\n\n   ## Published release\n\n   | Item | Status |\n   | --- | --- |\n   | npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
-    "expected one canonical"],
+    "expected one npm package and tag row, found 2"],
   ["a table hidden after a fence line that does not close it",
     () => ({ status: `# Status\n\n## Published release\n\n\`\`\`\n\`\`\`not-a-closer\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |` }),
     "expected one npm package and tag row, found 0"],
   ["a second status section is written as a blockquote",
     () => ({ status: `${statusFor()}\n\n> ## Published release\n>\n> | Item | Status |\n> | --- | --- |\n> | npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
-    "expected one canonical"],
+    "expected one npm package and tag row, found 2"],
   ["the release matrix is not an object with a rows array",
     () => ({ releaseMatrix: [] }), "expected an object with a rows array"],
   ["a matrix row has no RM.N id",
@@ -101,9 +101,12 @@ const CONDITIONS = [
   ["the published-release row is repeated",
     () => ({ status: `${statusFor()}\n| npm package and tag | \`mcp-sso@0.5.0\` and \`v0.5.0\` |` }),
     "expected one npm package and tag row, found 2"],
-  ["the status section holds more than one rendered table",
-    () => ({ status: `${statusFor()}\n\nprose\n\n| Item | Status |\n| --- | --- |\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
-    "expected one rendered table"],
+  ["a second version claim written anywhere in the document",
+    () => ({ status: `${statusFor()}\n\nprose\n\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
+    "expected one npm package and tag row, found 2"],
+  ["a second version claim under a Setext heading",
+    () => ({ status: `${statusFor()}\n\nDifferent release\n---\n\n| npm package and tag | \`mcp-sso@9.9.9\` and \`v9.9.9\` |` }),
+    "expected one npm package and tag row, found 2"],
 ];
 
 test("every substantive condition the previous gate refused is still refused", () => {
@@ -113,7 +116,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 29, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 30, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages exactly as the previous gate aged it, plus the one correction", () => {
