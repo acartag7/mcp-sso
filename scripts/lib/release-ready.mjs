@@ -3,7 +3,7 @@
 // release matrix, and refuses a release whose evidence does not match what
 // ships. It parses no prose. docs/client-compatibility.md is written for
 // readers, and nothing here reads it.
-import { DRIVEN_ROWS, ROWS } from "../live/rehearsal-support.mjs";
+import { DRIVEN_ROWS, ROWS, isTimestamp } from "../live/rehearsal-support.mjs";
 import { changedEvidenceInputs, isAncestor, resolveCommit } from "./release-evidence-git.mjs";
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -24,6 +24,12 @@ function readReceipt(receipt, label, errors) {
     return fail(`runtime commit is malformed: ${String(receipt.runtimeCommit)}`);
   }
   if (receipt.complete !== true) return fail("is partial, so it is not evidence");
+  // A campaign is identified by its commit and `ranAt`, so a receipt that names
+  // no valid run time cannot be told from another run's, and the archive cannot
+  // name it. `recordedAt` is the chronology the receipt asserts about itself.
+  for (const field of ["ranAt", "recordedAt"]) {
+    if (!isTimestamp(receipt[field])) return fail(`${field} is not an instant: ${String(receipt[field])}`);
+  }
   if (!Array.isArray(receipt.rows) || receipt.rows.length === 0) return fail("records no rows");
   // `complete` is the recorder's summary of itself, re-derived here because the
   // gate reads a committed file rather than the run that wrote it: a receipt

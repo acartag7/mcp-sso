@@ -28,6 +28,14 @@ const cli = (id, leg, which, serve) => ({ id, kind: "client", entry: CLI, leg, e
  *  of them, and the release gate requires all of them present and passing. A
  *  row outside this set is not a checklist row, so recording one is refused
  *  rather than counted. */
+/** An instant, in the one spelling `toISOString` produces. A campaign is
+ *  identified by its commit and `ranAt`, so a receipt whose timestamps are
+ *  absent, malformed, or impossible cannot be told from another run's. Both the
+ *  recorder and the gate use this, from here, so the two cannot drift. */
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+export const isTimestamp = (value) =>
+  typeof value === "string" && TIMESTAMP.test(value) && Number.isFinite(Date.parse(value));
+
 export const DRIVEN_ROWS = Object.freeze(["A3", "B3", "C1", "C2", "F1", "F2", "F3"]);
 
 export const ROWS = Object.freeze([

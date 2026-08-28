@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DRIVEN_ROWS, ROWS } from "./rehearsal-support.mjs";
+import { DRIVEN_ROWS, ROWS, isTimestamp } from "./rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -80,6 +80,11 @@ export function assertClientVersions(receipt) {
  *  the rehearsal machine-checked, plus the rows a person drove against the same
  *  served leg, which no probe can drive. */
 export function toEvidence(receipt, { source, driven = [], recordedAt } = {}) {
+  const ranAt = receipt.finishedAt ?? receipt.startedAt;
+  if (!isTimestamp(ranAt)) throw new Error(`the receipt names no valid run time: ${String(ranAt)}`);
+  if (recordedAt !== undefined && !isTimestamp(recordedAt)) {
+    throw new Error(`the recording time is not an instant: ${String(recordedAt)}`);
+  }
   const machineChecked = new Set(receipt.rows.map((row) => row.id));
   for (const id of driven) {
     if (machineChecked.has(id)) throw new Error(`row ${id} is machine-checked; it cannot also be recorded by hand`);
@@ -101,7 +106,7 @@ export function toEvidence(receipt, { source, driven = [], recordedAt } = {}) {
     // correction from a second campaign. `recordedAt` is when this document was
     // written, which is after the hand-driven rows, so the receipt does not
     // claim to have been recorded before part of its own campaign happened.
-    ranAt: receipt.finishedAt ?? receipt.startedAt,
+    ranAt,
     recordedAt: recordedAt ?? new Date().toISOString(),
     ...(source === undefined ? {} : { source }),
     complete: true,

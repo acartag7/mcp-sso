@@ -62,6 +62,7 @@ The gate rejects a receipt whose schema it does not recognise, whose `runtimeCom
 | What could be false | Refused by | Where |
 | --- | --- | --- |
 | The document is not a receipt this gate knows | `schema` is 1, and the value is an object | gate |
+| The receipt names no valid run or recording time | `ranAt` and `recordedAt` are instants | gate and recorder |
 | The receipt names no commit, or not a commit | `runtimeCommit` is a 40-character hex sha | gate and recorder |
 | The commit is not in the repository | `git rev-parse --verify` | gate |
 | The tree that ran is not the commit named | `HEAD` equals `runtimeCommit` when writing | recorder |

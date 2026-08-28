@@ -19,7 +19,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const COMMIT = "a".repeat(40);
 const receiptFor = (overrides = {}) => ({
   kind: "mcp-sso-release-rehearsal", schema: 1, runtimeCommit: COMMIT, dirty: false, complete: true, evidence: true,
-  startedAt: "s", finishedAt: "f",
+  startedAt: "2026-08-28T09:00:00.000Z", finishedAt: "2026-08-28T09:45:00.000Z",
   rows: ROWS.map((row) => ({
     id: row.id, status: "PASS",
     lines: row.id === "release-matrix" ? [{ kind: "PASS", text: "RM.1 Packed exports (1 evidence item)" }] : [],
@@ -157,14 +157,14 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   const evidence = toEvidence(readRehearsalReceipt(receiptFor()), { source: "https://example.invalid/run", driven: [...DRIVEN_ROWS] });
   assert.equal(evidence.schema, 1);
   assert.equal(evidence.complete, true);
-  assert.equal(evidence.ranAt, "f", "ranAt is when the rehearsal finished, which identifies the run");
+  assert.equal(evidence.ranAt, "2026-08-28T09:45:00.000Z", "ranAt is when the rehearsal finished, which identifies the run");
   // recordedAt is when the document was written, which is after the rows a
   // person drove, so the receipt cannot claim it was recorded before part of
   // its own campaign happened.
   assert.match(evidence.recordedAt, /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/, "recordedAt defaults to the moment of recording");
   const stamped = toEvidence(readRehearsalReceipt(receiptFor()), { driven: [...DRIVEN_ROWS], recordedAt: "2026-08-28T10:15:00.000Z" });
   assert.equal(stamped.recordedAt, "2026-08-28T10:15:00.000Z", "and is the caller's when given one");
-  assert.equal(stamped.ranAt, "f", "while ranAt still comes from the run");
+  assert.equal(stamped.ranAt, "2026-08-28T09:45:00.000Z", "while ranAt still comes from the run");
   assert.equal(evidence.rows.length, ROWS.length + DRIVEN_ROWS.length);
   assert.ok(evidence.rows.every((row) => ["id", "status", "observed"].includes(Object.keys(row)[0]) && row.id && row.status));
 
@@ -210,6 +210,17 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
     /machine-checked/, "a machine-checked row cannot be claimed by hand");
   assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: ["C1", ...DRIVEN_ROWS] }),
     /named twice/, "and a hand-driven row cannot be named twice");
+
+  // A campaign is identified by its commit and ranAt, so a receipt naming no
+  // valid run time cannot be told from another run's, and the archive cannot
+  // name it. undefined is the dangerous one: JSON.stringify drops the field.
+  for (const bad of [{ startedAt: undefined, finishedAt: undefined }, { finishedAt: "yesterday" },
+    { finishedAt: "2026-13-45T99:99:99Z" }]) {
+    assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor(bad)), { driven: [...DRIVEN_ROWS] }),
+      /names no valid run time/, `${JSON.stringify(bad)} is not a run time`);
+  }
+  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: [...DRIVEN_ROWS], recordedAt: "soon" }),
+    /not an instant/, "and neither is a malformed recording time");
 });
 
 test("BEHAVIOUR record-receipt: a campaign recorded off the release line is refused where it can still be fixed", () => {
