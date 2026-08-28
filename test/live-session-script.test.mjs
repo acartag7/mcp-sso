@@ -383,12 +383,49 @@ test("concurrent stale lock recovery admits only one owner", async () => {
   const start = join(root, "start");
   const releaseSignal = join(root, "release");
   const acquired = join(root, "acquired");
+  const preload = join(root, "interleave.cjs");
   const children = [];
   try {
     chmodSync(root, 0o700);
     writeFileSync(path, `${JSON.stringify({
       version: 1, pid: 2_147_483_647, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     })}\n`, { mode: 0o600 });
+    writeFileSync(preload, `
+const fs = require("node:fs");
+const { syncBuiltinESMExports } = require("node:module");
+const lockPath = ${JSON.stringify(path)};
+const releasePath = ${JSON.stringify(releaseSignal)};
+const arrived = (role) => ${JSON.stringify(join(root, "unlink."))} + role;
+const opened = ${JSON.stringify(join(root, "a-opened"))};
+const originalOpenSync = fs.openSync;
+const originalUnlinkSync = fs.unlinkSync;
+const waitFor = (target) => {
+  const deadline = Date.now() + 5_000;
+  while (!fs.existsSync(target)) {
+    if (Date.now() >= deadline) throw new Error(\`timed out waiting for \${target}\`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  }
+};
+let intercepted = false;
+fs.unlinkSync = function (target, ...args) {
+  if (!intercepted && String(target) === lockPath && !fs.existsSync(releasePath)) {
+    intercepted = true;
+    if (!fs.existsSync(\`\${lockPath}.recovery\`)) {
+      fs.writeFileSync(arrived(process.env.RACE_ROLE), "arrived");
+      if (process.env.RACE_ROLE === "a") waitFor(arrived("b"));
+      else waitFor(opened);
+    }
+  }
+  return originalUnlinkSync.call(this, target, ...args);
+};
+fs.openSync = function (target, flags, ...args) {
+  const fd = originalOpenSync.call(this, target, flags, ...args);
+  if (process.env.RACE_ROLE === "a" && String(target) === lockPath
+    && fs.existsSync(arrived("a")) && fs.existsSync(arrived("b"))) fs.writeFileSync(opened, "opened");
+  return fd;
+};
+syncBuiltinESMExports();
+`);
     writeFileSync(runner, `
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { acquireSessionLock } from ${JSON.stringify(new URL("../scripts/live/session-support.mjs", import.meta.url).href)};
@@ -404,7 +441,10 @@ try {
   process.exitCode = 1;
 }
 `);
-    children.push(spawn(process.execPath, [runner]), spawn(process.execPath, [runner]));
+    children.push(
+      spawn(process.execPath, [runner], { env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, RACE_ROLE: "a" } }),
+      spawn(process.execPath, [runner], { env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, RACE_ROLE: "b" } }),
+    );
     await Promise.all(children.map((child) => waitForFile(join(root, `ready.${child.pid}`))));
     writeFileSync(start, "start");
     await waitForFile(acquired);
