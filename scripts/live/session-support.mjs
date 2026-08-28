@@ -89,11 +89,17 @@ export function readAudit(path) {
     const event = optionalField(row, "event");
     const status = optionalField(row, "status");
     const reason = optionalField(row, "reason");
+    const occurredAt = optionalField(row, "occurredAt");
+    const timestamp = occurredAt === undefined ? Number.NaN : Date.parse(occurredAt);
     if (!event || !EVENTS.has(event) || !["success", "failure"].includes(status)
-      || (reason !== undefined && !/^[a-z0-9_]+$/.test(reason))) throw new Error("audit row has no valid event status");
+      || (reason !== undefined && !/^[a-z0-9_]+$/.test(reason))
+      || !occurredAt || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(occurredAt)
+      || Number.isNaN(timestamp) || new Date(timestamp).toISOString() !== occurredAt) {
+      throw new Error("audit row has no valid event status");
+    }
     return {
       event, status, reason, clientId: optionalField(row, "clientId"),
-      redirectHost: optionalField(row, "redirectHost"), occurredAt: optionalField(row, "occurredAt"),
+      redirectHost: optionalField(row, "redirectHost"), occurredAt,
     };
   });
 }
@@ -207,10 +213,11 @@ export function writeResults(path, results, { replace = false } = {}) {
   if (!Array.isArray(results) || results.length > MAX_AUDIT_ROWS) throw new Error("live-session result set is invalid");
   ensurePrivateDir(dirname(path));
   if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) throw new Error("result writes require O_NOFOLLOW");
-  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | (replace ? 0 : constants.O_APPEND);
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    | (replace ? 0 : constants.O_APPEND);
   let fd;
   try {
-    fd = openSync(path, flags, 0o600);
+    try { fd = openSync(path, flags, 0o600); } catch { throw new Error("result path cannot be opened"); }
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("result path is not a private regular file");
     if (replace) ftruncateSync(fd, 0);
@@ -232,7 +239,9 @@ export function writePrivateJson(path, value) {
   if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) throw new Error("state writes require O_NOFOLLOW");
   let fd;
   try {
-    fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+    try {
+      fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+    } catch { throw new Error("state path cannot be opened"); }
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("state path is not a private regular file");
     ftruncateSync(fd, 0);

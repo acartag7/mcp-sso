@@ -14,7 +14,6 @@ const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const STATE_DIR = join(ROOT, ".live-state");
 const SESSION_FILE = join(STATE_DIR, "session.json");
 const RESULTS_FILE = join(STATE_DIR, "session-results.jsonl");
-const SETTLE_MS = 6_000;
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 function command(cmd, args, options = {}) {
@@ -59,8 +58,10 @@ function validSession(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   let legs;
   try { legs = validateLegs(value.legs); } catch { return undefined; }
+  const started = typeof value.startedAt === "string" ? Date.parse(value.startedAt) : Number.NaN;
   if (value.version !== 1 || !["stored", "stateless"].includes(value.mode) || !/^[0-9a-f]{40,64}$/.test(value.commit)
-    || typeof value.clean !== "boolean" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.startedAt)) return undefined;
+    || typeof value.clean !== "boolean" || Number.isNaN(started)
+    || new Date(started).toISOString() !== value.startedAt) return undefined;
   return { legs, mode: value.mode, commit: value.commit, clean: value.clean, startedAt: value.startedAt };
 }
 
@@ -103,8 +104,10 @@ function clientVersions() {
   return versions;
 }
 
-function readFlows(legs) {
-  return new Map(legs.map((leg) => [leg, buildFlows(readAudit(join(STATE_DIR, leg, "audit.jsonl")))]));
+function readFlows(session) {
+  const startedAt = Date.parse(session.startedAt);
+  return new Map(session.legs.map((leg) => [leg, buildFlows(readAudit(join(STATE_DIR, leg, "audit.jsonl"))
+    .filter((event) => Date.parse(event.occurredAt) >= startedAt))]));
 }
 
 function printResult(result) {
@@ -123,21 +126,20 @@ async function watch(args) {
   const versions = clientVersions();
   const reported = new Set();
   if (!fromStart) {
-    for (const [leg, flows] of readFlows(session.legs)) for (const flow of flows) reported.add(flowKey(leg, flow));
+    for (const [leg, flows] of readFlows(session)) for (const flow of flows) reported.add(flowKey(leg, flow));
   }
-  const waiting = new Map();
   let stopped = false;
   let failed = false;
   const stop = () => { stopped = true; };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
   const oneShot = [];
-  do {
+  const scan = (finalize) => {
     let byLeg;
-    try { byLeg = readFlows(session.legs); } catch {
+    try { byLeg = readFlows(session); } catch {
       process.stderr.write("session.mjs: an audit trail is unreadable\n");
       failed = true;
-      break;
+      return;
     }
     for (const [leg, flows] of byLeg) {
       for (const flow of flows) {
@@ -145,25 +147,23 @@ async function watch(args) {
         const key = flowKey(leg, flow);
         if (reported.has(key)) continue;
         const outcome = outcomeOf(flow);
-        if (!once && outcome.verdict === "INCOMPLETE" && !stopped) continue;
-        if (!once && outcome.verdict === "TOKEN_ONLY" && !stopped) {
-          const firstSeen = waiting.get(key) ?? Date.now();
-          waiting.set(key, firstSeen);
-          if (Date.now() - firstSeen < SETTLE_MS) continue;
-        }
+        if (!finalize && ["INCOMPLETE", "TOKEN_ONLY"].includes(outcome.verdict)) continue;
         const result = resultFor({
           leg, flow, flows, mode: session.mode, commit: session.commit, clean: session.clean,
           clientVersions: versions, observedAt: new Date().toISOString(),
         });
         reported.add(key);
-        waiting.delete(key);
         printResult(result);
         if (once) oneShot.push(result);
         else writeResults(RESULTS_FILE, [result]);
       }
     }
-    if (!once && !stopped) await sleep(1_000);
-  } while (!once && !stopped);
+  };
+  if (once) scan(true);
+  else {
+    while (!stopped && !failed) { scan(false); if (!stopped && !failed) await sleep(1_000); }
+    if (!failed) scan(true);
+  }
   process.off("SIGINT", stop);
   process.off("SIGTERM", stop);
   if (once && !failed) writeResults(RESULTS_FILE, oneShot, { replace: true });

@@ -72,14 +72,17 @@ function run(f, args, extraEnv = {}) {
 }
 
 const lines = (path) => existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").filter(Boolean) : [];
-const audit = (clientId, withRequest = true) => [
-  { occurredAt: "2026-08-28T10:00:00.000Z", event: "oauth.cimd.fetch", status: "success", clientId },
-  { occurredAt: "2026-08-28T10:00:01.000Z", event: "identity.verify", status: "success" },
-  { occurredAt: "2026-08-28T10:00:02.000Z", event: "oauth.authorize.prepare", status: "success", clientId, redirectHost: "http://localhost:49152/callback" },
-  { occurredAt: "2026-08-28T10:00:03.000Z", event: "oauth.authorize.approve", status: "success", clientId },
-  { occurredAt: "2026-08-28T10:00:04.000Z", event: "oauth.token.authorization_code", status: "success", clientId },
-  ...(withRequest ? [{ occurredAt: "2026-08-28T10:00:05.000Z", event: "auth.request", status: "success", clientId }] : []),
-];
+const audit = (clientId, withRequest = true, started = Date.now() + 1_000) => {
+  const at = (offset) => new Date(started + offset).toISOString();
+  return [
+    { occurredAt: at(0), event: "oauth.cimd.fetch", status: "success", clientId },
+    { occurredAt: at(1), event: "identity.verify", status: "success" },
+    { occurredAt: at(2), event: "oauth.authorize.prepare", status: "success", clientId, redirectHost: "http://localhost:49152/callback" },
+    { occurredAt: at(3), event: "oauth.authorize.approve", status: "success", clientId },
+    { occurredAt: at(4), event: "oauth.token.authorization_code", status: "success", clientId },
+    ...(withRequest ? [{ occurredAt: at(5), event: "auth.request", status: "success", clientId }] : []),
+  ];
+};
 
 test("session serve delegates to serve.sh and cleans only the selected fixed entries", () => {
   const f = fixture();
@@ -197,7 +200,7 @@ test("a protected request before the code exchange does not turn the later token
     const leg = join(f.repo, ".live-state/google");
     mkdirSync(leg, { recursive: true });
     const events = audit("https://claude.ai/oauth-client", false);
-    events.splice(-1, 0, { occurredAt: "2026-08-28T10:00:03.500Z", event: "auth.request", status: "success", clientId: "https://claude.ai/oauth-client" });
+    events.splice(-1, 0, { ...events.at(-1), event: "auth.request" });
     writeFileSync(join(leg, "audit.jsonl"), `${events.map(JSON.stringify).join("\n")}\n`);
     assert.equal(run(f, ["watch", "--all", "--once"]).status, 0);
     const saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
@@ -231,6 +234,20 @@ test("watch refuses a symlinked audit trail and writes no result", () => {
     symlinkSync(target, join(leg, "audit.jsonl"));
     assert.equal(run(f, ["watch", "--all", "--once"]).status, 1);
     assert.equal(existsSync(join(f.repo, ".live-state/session-results.jsonl")), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("one-shot watch ignores audit events from before the current serve session", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const leg = join(f.repo, ".live-state/google");
+    mkdirSync(leg, { recursive: true });
+    writeFileSync(join(leg, "audit.jsonl"), `${audit("https://claude.ai/oauth-client", true, Date.parse("2020-01-01T00:00:00.000Z")).map(JSON.stringify).join("\n")}\n`);
+    const result = run(f, ["watch", "--all", "--once"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /saved 0 result/);
+    assert.equal(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"), "");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
