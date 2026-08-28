@@ -141,9 +141,11 @@ echo "tunnel config: ${CONF}"
 for i in "${!LEGS[@]}"; do
   echo "leg=${LEGS[$i]}  host=${HOSTS[$i]}  port=${GATEWAY_PORTS[$i]}"
   echo "  Point a client at:  https://${HOSTS[$i]}/mcp"
-  echo "  Claude Code:  claude mcp add --transport http live-${LEGS[$i]} https://${HOSTS[$i]}/mcp"
-  echo "  Codex CLI:    codex mcp add live-${LEGS[$i]} --url https://${HOSTS[$i]}/mcp"
+  echo "  Claude Code:  claude mcp add --transport http mcp-sso-live-${LEGS[$i]} https://${HOSTS[$i]}/mcp"
+  echo "  Codex CLI:    codex mcp add mcp-sso-live-${LEGS[$i]} --url https://${HOSTS[$i]}/mcp"
+  echo "  Connectors:   https://${HOSTS[$i]}/mcp"
 done
+echo "Cleanup: node session.mjs cleanup"
 echo
 
 # Start every leg's server, then prove readiness of THAT process: the leg's

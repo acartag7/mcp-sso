@@ -143,15 +143,15 @@ Use the session helper for a manual client run. It keeps the operator flow to tw
 
 ```sh
 # terminal 1
-node scripts/live/session.mjs serve
+node session.mjs serve
 
 # terminal 2
-node scripts/live/session.mjs watch
+node session.mjs watch
 ```
 
-`serve` defaults to all three legs and prints the Claude Code, Codex, ChatGPT, and claude.ai connection commands. Press Ctrl-C in the `serve` terminal when the run is finished. The helper stops `serve.sh` and removes its selected `mcp-sso-live-<leg>` entries from Claude Code and Codex. After a crash, run `node scripts/live/session.mjs cleanup`; it removes all six reserved entries and leaves every other MCP entry alone.
+`serve` defaults to all three legs and prints the Claude Code, Codex, ChatGPT, and claude.ai connection commands. Press Ctrl-C in the `serve` terminal when the run is finished. The helper stops `serve.sh` and removes its selected `mcp-sso-live-<leg>` entries from Claude Code and Codex. After a crash, run `node session.mjs cleanup`; it removes all six reserved entries and leaves every other MCP entry alone.
 
-`watch` prints one settled result per client flow and appends it to `.live-state/session-results.jsonl`. `PASS` means the audit trail contains both an authorization-code exchange and a successful protected `/mcp` request. `TOKEN_ONLY` means the code exchange completed but no protected request followed. Run `node scripts/live/session.mjs watch --all --once` to rebuild a one-shot summary from the current audit files.
+`watch` prints one settled result per client flow and appends it to `.live-state/session-results.jsonl`. `PASS` means the audit trail contains both an authorization-code exchange and a successful protected `/mcp` request. `TOKEN_ONLY` means the code exchange completed but no protected request followed. Run `node session.mjs watch --all --once` to rebuild a one-shot summary from the current audit files.
 
 ```sh
 scripts/live/serve.sh cloudflare_access entra google
@@ -160,7 +160,7 @@ scripts/live/serve.sh cloudflare_access entra google
 Starts the shipped example once per leg on that leg's gateway port and runs the named Cloudflare tunnel with an ingress generated for exactly those hostnames. One tunnel carries every leg you name; start all the legs you want served in **one** invocation, because a second connector with a different ingress would receive part of the traffic. Before it exposes anything it proves readiness of the process it started — the port answers, the child is alive, and `lsof` reports the child as the only listener, re-proved immediately before the tunnel is exposed — and refuses a port that already has a listener. It prints the public URL and the client command per leg, for example:
 
 ```
-claude mcp add --transport http live-entra https://<host>/mcp
+claude mcp add --transport http mcp-sso-live-entra https://<host>/mcp
 ```
 
 The tunnel and every server run supervised: a signal delivered to `serve.sh` itself — Ctrl-C, or a `kill` by PID — stops the tunnel and the servers it started — with a bounded grace period before each is killed, so one child that ignores the signal cannot stall the rest of the cleanup — never the process group, and a server that dies **or whose port changes hands** while serving stops the run rather than leaving the tunnel exposing a dead or foreign backend (ownership is re-proved every second, not only before exposure). A leg named twice, or two legs the stack maps to the same hostname or port, is refused before anything starts. Readiness waits up to `MCP_SSO_READINESS_SECONDS` per leg (default 60; provider discovery at boot can take a while) — a wall-clock budget, so a server that accepts the connection and then stalls cannot stretch the wait. The client then performs discovery, registration, and authorize. **The consent and identity-provider sign-in steps need a human at a browser** — that is why `docs/live-verification.md` records those rows as owner-run, and a row flips to verified only when the owner records the observed result and caveat. The repeatable client × leg matrix is `scripts/live/CHECKLIST.md`.

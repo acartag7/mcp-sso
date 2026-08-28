@@ -16,7 +16,7 @@ Hostnames, tenant identifiers, and test-account names are **not** in this reposi
 ## Before you start
 
 1. `aws sso login` (and `az login` for the Entra stack) — the only interactive logins for the stacks.
-2. Run `node scripts/live/session.mjs serve` in one terminal and `node scripts/live/session.mjs watch` in another. The helper serves every leg through one `serve.sh` invocation, prints the client commands, reads the audit trails, saves the observed results, and removes its temporary Claude Code and Codex entries when serving stops.
+2. Run `node session.mjs serve` in one terminal and `node session.mjs watch` in another. The helper runs `scripts/live/serve.sh cloudflare_access entra google` once, prints the client commands, reads the audit trails, saves the observed results, and removes its temporary Claude Code and Codex entries when serving stops.
 3. All legs run **stored DCR with loopback allowlisted** (the `run.sh` default): that is the supported shape for CLI clients with ephemeral callback ports, and stored DCR requires a bounded limiter (the example supplies one). For the #278 mode differential, set `MCP_SSO_DCR_MODE=stateless` while retaining loopback; the example now supplies the same bounded limiter and the preflight admits that composition. `probe-e2e.mjs` consumes the selected mode and proves the unknown-opaque-client differential; its machine-client rows run only under stored mode because that feature requires stored DCR. The same probe also drives claims-only completion through Fastify, Express, and Hono in both modes. A pass requires both callback cookies and the fixed, redacted completion-failure response.
 4. Each leg gets its **own** state directory, `.live-state/<leg>`, from `run.sh`; at start the last run's state for that leg is rotated to `.live-state/<leg>.previous` when it holds an `audit.jsonl` (a failed start without one is discarded instead), so the last round's `audit.jsonl` is still there to compare against — even after a failed start and a retry. A shared directory would let one leg delete another's database, and every later store write would then fail as a generic `internal_error` that reads exactly like a product bug.
 5. **A fresh private window for every row.** Entra and Cloudflare both reuse sessions; that has produced false failures more than once.
@@ -67,7 +67,7 @@ codex  mcp add <name> --url <HOST>/mcp
 # ChatGPT / claude.ai: add <HOST>/mcp as a custom connector
 ```
 
-Use the names that `session.mjs serve` prints. They start with `mcp-sso-live-`, which lets normal shutdown and `node scripts/live/session.mjs cleanup` remove only this helper's entries.
+Use the names that `session.mjs serve` prints. They start with `mcp-sso-live-`, which lets normal shutdown and `node session.mjs cleanup` remove only this helper's entries.
 
 ## Reading the results
 

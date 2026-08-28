@@ -1,0 +1,247 @@
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
+import { writeResults } from "../scripts/live/session-support.mjs";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const executable = (path, body) => { writeFileSync(path, body); chmodSync(path, 0o700); };
+
+function fixture() {
+  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-"));
+  const repo = join(root, "repo");
+  const live = join(repo, "scripts/live");
+  const bin = join(root, "bin");
+  mkdirSync(live, { recursive: true });
+  mkdirSync(bin);
+  copyFileSync(join(ROOT, "session.mjs"), join(repo, "session.mjs"));
+  for (const file of ["session.mjs", "session-support.mjs"]) copyFileSync(join(ROOT, "scripts/live", file), join(live, file));
+  executable(join(live, "serve.sh"), `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$SERVE_LOG"
+if [[ "\${FAKE_SERVE_WAIT-}" == "true" ]]; then
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  printf started > "$STARTED_FILE"
+  while true; do sleep 0.1; done
+fi
+exit "\${FAKE_SERVE_STATUS:-0}"
+`);
+  const cli = `#!/usr/bin/env bash
+tool="\${0##*/}"
+if [[ "$1" == "--version" ]]; then printf '%s 1.2.3\n' "$tool"; exit 0; fi
+printf '%s %s\n' "$tool" "$*" >> "$CLIENT_LOG"
+target="$tool:$3"
+if [[ "$target" == "\${ABSENT_TARGET-}" ]]; then printf 'No MCP server named %s\n' "$3" >&2; exit 1; fi
+if [[ "$target" == "\${FAIL_TARGET-}" ]]; then exit 9; fi
+`;
+  executable(join(bin, "claude"), cli);
+  executable(join(bin, "codex"), cli);
+  writeFileSync(join(repo, ".gitignore"), ".live-state/\n");
+  for (const args of [
+    ["init", "-q"], ["config", "user.email", "fixture@example.test"], ["config", "user.name", "Fixture"],
+    ["add", "."], ["commit", "-qm", "fixture"],
+  ]) assert.equal(spawnSync("git", args, { cwd: repo }).status, 0);
+  const env = {
+    ...process.env, PATH: `${bin}:${process.env.PATH}`, SERVE_LOG: join(root, "serve.log"), CLIENT_LOG: join(root, "client.log"),
+    STARTED_FILE: join(root, "started"),
+  };
+  return { root, repo, live, env, serveLog: env.SERVE_LOG, clientLog: env.CLIENT_LOG };
+}
+
+function waitForFile(path) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + 5_000;
+    const poll = () => {
+      if (existsSync(path)) resolve();
+      else if (Date.now() >= deadline) reject(new Error(`timed out waiting for ${path}`));
+      else setTimeout(poll, 10);
+    };
+    poll();
+  });
+}
+
+function run(f, args, extraEnv = {}) {
+  return spawnSync(process.execPath, [join(f.repo, "session.mjs"), ...args], {
+    cwd: f.repo, env: { ...f.env, ...extraEnv }, encoding: "utf8", timeout: 20_000,
+  });
+}
+
+const lines = (path) => existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").filter(Boolean) : [];
+const audit = (clientId, withRequest = true) => [
+  { occurredAt: "2026-08-28T10:00:00.000Z", event: "oauth.cimd.fetch", status: "success", clientId },
+  { occurredAt: "2026-08-28T10:00:01.000Z", event: "identity.verify", status: "success" },
+  { occurredAt: "2026-08-28T10:00:02.000Z", event: "oauth.authorize.prepare", status: "success", clientId, redirectHost: "http://localhost:49152/callback" },
+  { occurredAt: "2026-08-28T10:00:03.000Z", event: "oauth.authorize.approve", status: "success", clientId },
+  { occurredAt: "2026-08-28T10:00:04.000Z", event: "oauth.token.authorization_code", status: "success", clientId },
+  ...(withRequest ? [{ occurredAt: "2026-08-28T10:00:05.000Z", event: "auth.request", status: "success", clientId }] : []),
+];
+
+test("session serve delegates to serve.sh and cleans only the selected fixed entries", () => {
+  const f = fixture();
+  try {
+    const result = run(f, ["serve", "google"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(lines(f.serveLog), ["google"]);
+    assert.deepEqual(lines(f.clientLog), [
+      "claude mcp remove mcp-sso-live-google", "codex mcp remove mcp-sso-live-google",
+    ]);
+    const state = JSON.parse(readFileSync(join(f.repo, ".live-state/session.json"), "utf8"));
+    assert.deepEqual(state.legs, ["google"]);
+    assert.equal(state.mode, "stored");
+    assert.equal(state.clean, true);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("session serve preserves a serve failure and still cleans every selected client", () => {
+  const f = fixture();
+  try {
+    const result = run(f, ["serve", "entra"], { FAKE_SERVE_STATUS: "23", FAIL_TARGET: "claude:mcp-sso-live-entra" });
+    assert.equal(result.status, 23, result.stderr);
+    assert.deepEqual(lines(f.clientLog), [
+      "claude mcp remove mcp-sso-live-entra", "codex mcp remove mcp-sso-live-entra",
+    ]);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Ctrl-C reaches serve.sh and then cleans the selected client entries", async () => {
+  const f = fixture();
+  try {
+    const child = spawn(process.execPath, [join(f.repo, "session.mjs"), "serve", "cloudflare_access"], {
+      cwd: f.repo, env: { ...f.env, FAKE_SERVE_WAIT: "true" }, stdio: "ignore",
+    });
+    await waitForFile(f.env.STARTED_FILE);
+    process.kill(child.pid, "SIGINT");
+    const status = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("session.mjs did not stop after Ctrl-C")), 10_000);
+      child.once("error", reject);
+      child.once("exit", (code) => { clearTimeout(timer); resolve(code); });
+    });
+    assert.equal(status, 130);
+    assert.deepEqual(lines(f.clientLog), [
+      "claude mcp remove mcp-sso-live-cloudflare_access", "codex mcp remove mcp-sso-live-cloudflare_access",
+    ]);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("session rejects unknown and repeated legs before any side effect", () => {
+  for (const args of [["serve", "other"], ["serve", "google", "google"]]) {
+    const f = fixture();
+    try {
+      const result = run(f, args);
+      assert.equal(result.status, 1);
+      assert.equal(existsSync(f.serveLog), false);
+      assert.equal(existsSync(f.clientLog), false);
+      assert.equal(existsSync(join(f.repo, ".live-state")), false);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("explicit cleanup attempts all six fixed targets and continues after failure", () => {
+  const f = fixture();
+  try {
+    const result = run(f, ["cleanup"], { FAIL_TARGET: "claude:mcp-sso-live-entra", ABSENT_TARGET: "claude:mcp-sso-live-google" });
+    assert.equal(result.status, 1);
+    assert.deepEqual(lines(f.clientLog), [
+      "claude mcp remove mcp-sso-live-cloudflare_access", "codex mcp remove mcp-sso-live-cloudflare_access",
+      "claude mcp remove mcp-sso-live-entra", "codex mcp remove mcp-sso-live-entra",
+      "claude mcp remove mcp-sso-live-google", "codex mcp remove mcp-sso-live-google",
+    ]);
+    assert.match(result.stdout, /cleaned claude MCP entry mcp-sso-live-google/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("one-shot watch records PASS only after a protected request", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const leg = join(f.repo, ".live-state/google");
+    mkdirSync(leg, { recursive: true });
+    writeFileSync(join(leg, "audit.jsonl"), `${audit("https://claude.ai/oauth-client").map(JSON.stringify).join("\n")}\n`);
+    const result = run(f, ["watch", "--all", "--once"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /PASS A3 google Claude Code/);
+    const saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
+    assert.equal(saved.verdict, "PASS");
+    assert.equal(saved.row, "A3");
+    assert.equal(saved.toolCalls, 1);
+    assert.equal(saved.clientVersion, "claude 1.2.3");
+    assert.equal(saved.clean, true);
+    assert.match(saved.commit, /^[0-9a-f]{40}$/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("one-shot watch records a token without a protected request as TOKEN_ONLY", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const leg = join(f.repo, ".live-state/google");
+    mkdirSync(leg, { recursive: true });
+    writeFileSync(join(leg, "audit.jsonl"), `${audit("https://chatgpt.com/oauth-client", false).map(JSON.stringify).join("\n")}\n`);
+    const result = run(f, ["watch", "--all", "--once"]);
+    assert.equal(result.status, 0, result.stderr);
+    const saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
+    assert.equal(saved.verdict, "TOKEN_ONLY");
+    assert.equal(saved.toolCalls, 0);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a protected request before the code exchange does not turn the later token into PASS", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const leg = join(f.repo, ".live-state/google");
+    mkdirSync(leg, { recursive: true });
+    const events = audit("https://claude.ai/oauth-client", false);
+    events.splice(-1, 0, { occurredAt: "2026-08-28T10:00:03.500Z", event: "auth.request", status: "success", clientId: "https://claude.ai/oauth-client" });
+    writeFileSync(join(leg, "audit.jsonl"), `${events.map(JSON.stringify).join("\n")}\n`);
+    assert.equal(run(f, ["watch", "--all", "--once"]).status, 0);
+    const saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
+    assert.equal(saved.verdict, "TOKEN_ONLY");
+    assert.equal(saved.toolCalls, 0);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("watch fails closed on malformed audit JSON and writes no result", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "entra"]).status, 0);
+    const leg = join(f.repo, ".live-state/entra");
+    mkdirSync(leg, { recursive: true });
+    writeFileSync(join(leg, "audit.jsonl"), "{not-json}\n");
+    const result = run(f, ["watch", "--all", "--once"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /audit trail is unreadable/);
+    assert.equal(existsSync(join(f.repo, ".live-state/session-results.jsonl")), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("watch refuses a symlinked audit trail and writes no result", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "entra"]).status, 0);
+    const leg = join(f.repo, ".live-state/entra");
+    const target = join(f.root, "audit.jsonl");
+    mkdirSync(leg, { recursive: true });
+    writeFileSync(target, `${audit("https://claude.ai/oauth-client").map(JSON.stringify).join("\n")}\n`);
+    symlinkSync(target, join(leg, "audit.jsonl"));
+    assert.equal(run(f, ["watch", "--all", "--once"]).status, 1);
+    assert.equal(existsSync(join(f.repo, ".live-state/session-results.jsonl")), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("a hard-linked result path is rejected before its other name is truncated", () => {
+  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-results-"));
+  try {
+    const original = join(root, "original");
+    const results = join(root, "results.jsonl");
+    writeFileSync(original, "keep\n", { mode: 0o600 });
+    linkSync(original, results);
+    assert.throws(() => writeResults(results, [{ verdict: "PASS" }], { replace: true }), /single-link|private regular file/);
+    assert.equal(readFileSync(original, "utf8"), "keep\n");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
