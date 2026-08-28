@@ -127,6 +127,14 @@ const invokedAsMain = () => {
  *  its commit predates the very change the new run was recorded for. The
  *  superseded receipt is archived rather than deleted. Returns the archive
  *  path, or null when there was nothing to supersede. */
+const receiptOf = (body) => {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return {};
+  }
+};
+
 export function writeActiveReceipt(path, body) {
   const staged = `${path}.staged`;
   mkdirSync(dirname(path), { recursive: true });
@@ -149,7 +157,26 @@ export function writeActiveReceipt(path, body) {
     // Every superseded receipt is archived, including one from a second
     // campaign against the same commit: it carries its own timestamp, source
     // and observations, and overwriting it would discard a campaign that ran.
+    //
+    // A re-record is not that. Recording the same rehearsal receipt again, to
+    // correct a `--row` list, produces the same `runtimeCommit` and the same
+    // `recordedAt`, because both come from the run rather than from the
+    // recording. Archiving the corrected-away version would put a document in
+    // `archive/` that was never a campaign, and the checklist would then have
+    // the operator commit the mistake as if it were history.
     const previous = JSON.parse(readFileSync(path, "utf8"));
+    // Both halves must actually say which run they are. Two documents that
+    // name no run are not the same run, they are two unknowns, and treating
+    // them as one would replace a receipt rather than archive it.
+    const incoming = receiptOf(body);
+    const names = (value) => typeof value.runtimeCommit === "string" && typeof value.recordedAt === "string";
+    const sameRun = names(previous) && names(incoming)
+      && previous.runtimeCommit === incoming.runtimeCommit
+      && previous.recordedAt === incoming.recordedAt;
+    if (sameRun) {
+      renameSync(staged, path);
+      return null;
+    }
     const stamp = String(previous.recordedAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
     const base = `release-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
     const archiveDir = resolve(dirname(path), "archive");

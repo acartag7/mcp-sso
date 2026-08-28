@@ -3,7 +3,7 @@
 // document it writes is one the gate accepts.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -92,6 +92,22 @@ test("BEHAVIOUR record-receipt: a campaign supersedes the one before it, and a f
     assert.ok(archived?.includes(`release-${COMMIT.slice(0, 7)}-20260827T0000`), "the one it replaces is archived under its own campaign");
     assert.equal(readFileSync(archived, "utf8"), first, "moved, not deleted");
     assert.match(readFileSync(path, "utf8"), /bbbbbbb/, "and the new one is active");
+
+    // Recording the same run again is a correction, not a campaign. It carries
+    // the same runtimeCommit and recordedAt, and archiving it would put a
+    // document in archive/ that was never a campaign, which the checklist then
+    // has the operator commit as history.
+    const run = { runtimeCommit: "c".repeat(40), recordedAt: "2026-08-28T00:00:00.000Z" };
+    writeFileSync(path, `${JSON.stringify({ ...run, rows: ["typo"] })}\n`);
+    const archivedBefore = readdirSync(join(dir, "archive")).length;
+    assert.equal(writeActiveReceipt(path, `${JSON.stringify({ ...run, rows: ["fixed"] })}\n`), null,
+      "a re-record of the same run archives nothing");
+    assert.equal(readdirSync(join(dir, "archive")).length, archivedBefore, "and leaves the archive as it was");
+    assert.match(readFileSync(path, "utf8"), /fixed/, "while the correction becomes the active receipt");
+
+    // A different run at the same commit is still a campaign, and is archived.
+    const later = writeActiveReceipt(path, `${JSON.stringify({ ...run, recordedAt: "2026-08-28T09:00:00.000Z" })}\n`);
+    assert.ok(later, "a second campaign against the same commit is archived, not replaced");
 
     // A name already taken belongs to a campaign that ran, so the next one
     // moves aside rather than replacing it.

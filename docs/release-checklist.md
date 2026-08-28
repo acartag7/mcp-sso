@@ -11,7 +11,13 @@ The receipt names the commit the campaign ran against, and the gate requires tha
 > [!IMPORTANT]
 > The release pull request must change no evidence input. It changes `package.json:version`, which is exempt, plus `docs/evidence/`, `docs/evidence/archive/`, and `docs/client-compatibility.md`, none of which is an input. A Tier 1 row in [the release verification reference](verification.md) is an input, so it lands with the change that introduced the surface, never in the release pull request.
 
-1. Fetch `origin/main` and check it out with a clean tree. This is the commit the campaign proves and the commit the branch will start from.
+1. Fetch `origin/main` and check it out detached, with a clean tree. This is the commit the campaign proves and the commit the branch will start from.
+
+   ```bash
+   git fetch origin
+   git checkout --detach origin/main
+   git status --porcelain   # must print nothing
+   ```
 
 ## Run the source and package gates
 
@@ -34,8 +40,8 @@ Still on that clean `origin/main` checkout.
    pnpm run build
    ```
 
-3. Confirm that `test/e2e-mcp-sdk.test.ts` completes registration, authorization, token exchange, the protected `/mcp` call, and refresh. It must replay the first family's consumed token and confirm that the successor is dead. It must then create a second family, revoke that family while it is active, and confirm that its refresh token is refused.
-4. Start disposable MySQL and Redis services. The campaign needs the same two, so start them once here and leave them running:
+3. Confirm the `pnpm test` output shows `test/e2e-mcp-sdk.test.ts` passing. It completes registration, authorization, token exchange, the protected `/mcp` call, and refresh. It must replay the first family's consumed token and confirm that the successor is dead. It must then create a second family, revoke that family while it is active, and confirm that its refresh token is refused.
+4. Start disposable MySQL and Redis services. The campaign needs the same two, so start them once here and leave them running. If a previous run left them up, `docker rm -f rehearsal-mysql rehearsal-redis` first:
 
    ```bash
    docker run -d --rm --name rehearsal-mysql -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=mcp_sso -e MYSQL_USER=mcp -e MYSQL_PASSWORD=mcppw -p 127.0.0.1:3306:3306 mysql:8.4
@@ -45,7 +51,8 @@ Still on that clean `origin/main` checkout.
 5. Run the release matrix with their connection URLs:
 
    ```bash
-   RUN_INTEGRATION=true MYSQL_URL='mysql://…' REDIS_URL='redis://…' pnpm run test:release
+   RUN_INTEGRATION=true MYSQL_URL='mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset=utf8mb4' REDIS_URL='redis://127.0.0.1:6379' \
+     pnpm run test:release
    ```
 
    The command rebuilds the current tree after checking the required service variables and before running any matrix row.
@@ -70,7 +77,7 @@ RUN_INTEGRATION=true MYSQL_URL='mysql://mcp:mcppw@127.0.0.1:3306/mcp_sso?charset
 > [!IMPORTANT]
 > The three service variables are required. The `release-matrix` row reads them from the environment, and without them it is `BLOCKED release_services_absent`, the run exits 1, and nothing it produced is evidence.
 
-`rehearsal.mjs` brings up each leg through `serve.sh`, runs its 19 rows, and writes `.live-state/receipt.json`. It exits 0 only when every row passed on a clean tree. It stops every leg it started before it exits, and it never serves the Google leg, so the rows you drive need their own.
+`rehearsal.mjs` brings up each leg through `serve.sh`, runs its 19 rows, and writes `.live-state/receipt.json`. It exits 0 only when every row passed on a clean tree; check with `echo $?` before going on. It stops every leg it started before it exits, and it never serves the Google leg, so the rows you drive need their own.
 
 Serve all three legs and drive the seven rows from `CHECKLIST.md`:
 
@@ -81,7 +88,7 @@ scripts/live/serve.sh cloudflare_access entra google
 > [!WARNING]
 > Do not start this while the rehearsal is running. Two `serve.sh` invocations on one tunnel split the traffic, and the rehearsal refuses a generation as `BLOCKED tunnel_already_served` when a public hostname already answers.
 
-Stay on this checkout for all of it. The rows you drive run against whatever `serve.sh` is serving, so moving the checkout between the rehearsal and the connectors would file them under a commit whose code they never ran. Stop the leg when the seven rows pass, then record. Recording needs no leg:
+Stay on this checkout for all of it. The rows you drive run against whatever `serve.sh` is serving, so moving the checkout between the rehearsal and the connectors would file them under a commit whose code they never ran. Stop the leg when the seven rows pass, with Ctrl-C in its terminal so the tunnel and the servers come down together, then record. Recording needs no leg:
 
 ```bash
 node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
@@ -93,16 +100,30 @@ node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
 
 `record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses. It refuses to write a receipt whose commit is not the checked-out `HEAD`, so a campaign spread across two checkouts fails here; one whose tree has uncommitted changes outside `docs/evidence/`, so rows driven against an edited tree are not filed under a commit that does not contain them; and one whose commit is not an ancestor of `origin/main`, so a campaign run on a branch fails here rather than after the squash merge has thrown that commit away.
 
-To record again, for a corrected `--row` list, run the same command again. The receipt and archive it already wrote do not block it, and nothing else needs cleaning up.
+To record again, for a corrected `--row` list, run the same command again. Recording the same run twice replaces the receipt rather than archiving it, because a correction is not a campaign, so the archive keeps only receipts that were superseded by a later run.
 
 Do not use a live result as the only evidence for a security property.
 
 ## Open the release pull request
 
-1. Branch from the commit the campaign just named.
-2. Bump the version.
-3. Commit `docs/evidence/release.json`, the receipt it superseded under `docs/evidence/archive/`, and the [`client-compatibility.md`](client-compatibility.md) update.
-4. Change nothing else. Every other evidence input would age the receipt you just recorded, and the pull request would refuse its own release.
+1. Branch from the commit the campaign just named. The untracked receipt comes with you.
+
+   ```bash
+   git switch -c release/vX.Y.Z
+   ```
+
+2. Set the version in `package.json` by hand, or with a command that creates no tag and no commit:
+
+   ```bash
+   npm version X.Y.Z --no-git-tag-version
+   ```
+
+   > [!WARNING]
+   > Plain `npm version` also creates a `vX.Y.Z` tag and commit. `publish.yml` triggers on exactly that tag, so a stray local tag pushed later starts a real publish from whatever it points at.
+
+3. Update the two pages that carry the version and the campaign in prose. Neither is an evidence input, so both belong in this pull request: the `npm package and tag` row and the "What vX.Y.Z adds" section of [`verification-status.md`](verification-status.md), and every `Runtime commit` and `Date` cell in [`client-compatibility.md`](client-compatibility.md), plus its client-version sentences, from what `record-receipt.mjs` printed.
+4. Commit those, `docs/evidence/release.json`, and the receipt it superseded under `docs/evidence/archive/` if there was one.
+5. Change nothing else. Every other evidence input would age the receipt you just recorded, and the pull request would refuse its own release.
 
 Then run the evidence gates, before pushing, so a refusal costs a local run rather than a review round:
 
@@ -119,7 +140,7 @@ Then push the branch and open the pull request.
 
 ## Merge the release pull request
 
-1. Confirm the pull request carries the version bump, `docs/evidence/release.json`, the receipt it superseded under `docs/evidence/archive/`, and the [`client-compatibility.md`](client-compatibility.md) update.
+1. Confirm the pull request carries the version bump, `docs/evidence/release.json`, the receipt it superseded under `docs/evidence/archive/` if there was one, and the [`client-compatibility.md`](client-compatibility.md) and [`verification-status.md`](verification-status.md) updates.
 2. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on the current head.
 3. Read every review and inline thread.
 4. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
@@ -129,17 +150,21 @@ Then push the branch and open the pull request.
 
 ## Verify the publish controls
 
-1. Read the `publish` GitHub Environment through the repository API.
+1. Read the `publish` GitHub Environment through the repository API: `gh api repos/acartag7/mcp-sso/environments/publish`.
 2. Confirm that the owner is a required reviewer.
 3. Confirm that administrator bypass is disabled.
 4. Confirm that `v*.*.*` is the only custom deployment branch or tag pattern.
-5. Run the `workflow_dispatch` dry run.
+5. Run the `workflow_dispatch` dry run: `gh workflow run publish.yml --ref main && gh run watch`.
 6. Confirm that the dry run builds the artifact but does not run the OIDC publish job or the GitHub Release job.
 
 ## Publish
 
 1. Confirm that the tag is `v${package.version}`. `.github/workflows/publish.yml` re-checks this in its `build` job and fails the run before any install, build, pack, or publish step, so a mismatched tag cannot reach npm. Confirming it here avoids a failed run and a tag you then have to delete and re-push.
-2. Push the tag. Do not create the GitHub Release first.
+2. Push the tag, on the merged commit and only after the pull request is in `origin/main`. Do not create the GitHub Release first.
+
+   ```bash
+   git fetch origin && git tag vX.Y.Z origin/main && git push origin vX.Y.Z
+   ```
 3. Confirm that the build job creates one tarball and one SHA-256 file.
 4. Confirm that the OIDC job publishes that digest-verified tarball without a checkout, dependency installation, or repository scripts.
 5. Confirm that the GitHub Release job starts only after npm publication succeeds.
