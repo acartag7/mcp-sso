@@ -7,13 +7,14 @@ import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  LEGS, buildFlows, clientEntries, flowKey, isFragment, outcomeOf, readAudit,
+  LEGS, acquireSessionLock, buildFlows, clientEntries, flowKey, isFragment, outcomeOf, readAudit,
   readPrivateJson, resultFor, validateLegs, writePrivateJson, writeResults,
 } from "./session-support.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const STATE_DIR = join(ROOT, ".live-state");
 const SESSION_FILE = join(STATE_DIR, "session.json");
+const SESSION_LOCK = join(STATE_DIR, "session.lock");
 const RESULTS_FILE = join(STATE_DIR, "session-results.jsonl");
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
@@ -77,9 +78,7 @@ function invalidateSession() {
   }
 }
 
-async function serve(args) {
-  const legs = validateLegs(args);
-  const mode = modeFromEnvironment();
+async function serveOwned(legs, mode) {
   const source = checkout();
   const state = { version: 1, status: "starting", legs, mode, ...source, startedAt: new Date().toISOString() };
   writePrivateJson(SESSION_FILE, state);
@@ -147,6 +146,18 @@ async function serve(args) {
   if (typeof result.code === "number" && result.code !== 0) return result.code;
   if (result.signal !== null) return result.signal === "SIGINT" ? 130 : 143;
   return clean && stateClean && !readinessFailed ? 0 : 1;
+}
+
+async function serve(args) {
+  const legs = validateLegs(args);
+  const mode = modeFromEnvironment();
+  const release = acquireSessionLock(SESSION_LOCK);
+  try { return await serveOwned(legs, mode); } finally { release(); }
+}
+
+function cleanup() {
+  const release = acquireSessionLock(SESSION_LOCK);
+  try { return cleanupClients() ? 0 : 1; } finally { release(); }
 }
 
 function clientVersions() {
@@ -238,7 +249,7 @@ async function watch(args) {
 async function main([name, ...args]) {
   if (name === "serve") return serve(args);
   if (name === "watch") return watch(args);
-  if (name === "cleanup" && args.length === 0) return cleanupClients() ? 0 : 1;
+  if (name === "cleanup" && args.length === 0) return cleanup();
   throw new Error("usage: session.mjs serve [cloudflare_access|entra|google ...] | watch [--all] [--once] [--codex-dcr] | cleanup");
 }
 

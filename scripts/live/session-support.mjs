@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import {
   chmodSync, closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, writeFileSync,
+  unlinkSync,
 } from "node:fs";
 import { dirname } from "node:path";
 
@@ -13,7 +15,12 @@ const SHORT = Object.freeze({
   "oauth.authorize.approve": "consent", "oauth.token.authorization_code": "token",
   "auth.request": "/mcp", "oauth.token.refresh": "refresh", "oauth.revoke": "revoke",
 });
-const EVENTS = new Set(Object.keys(SHORT));
+const SESSION_EVENTS = new Set(Object.keys(SHORT));
+const EVENTS = new Set([
+  ...SESSION_EVENTS, "oauth.pairing.attempt", "oauth.device.authorization", "oauth.device.approve",
+  "oauth.token.device_code", "oauth.token.client_credentials", "oauth.client.provision",
+  "oauth.client.rotate_secret", "oauth.client.disable",
+]);
 const ROWS = Object.freeze([
   { id: "A1", leg: "cloudflare_access", kind: "claude-code", mode: "any" },
   { id: "A2", leg: "entra", kind: "claude-code", mode: "any" },
@@ -154,6 +161,7 @@ export function buildFlows(events) {
   let held = [];
   for (const event of events) {
     if (isChallenge(event)) continue;
+    if (!SESSION_EVENTS.has(event.event)) continue;
     if (event.clientId === undefined) {
       if (event.event === "identity.verify" && event.status === "failure") {
         flows.push({ clientId: "unattributed", events: [event], unbound: true });
@@ -309,4 +317,55 @@ export function writePrivateJson(path, value) {
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+const validLock = (value) => isPlainObject(value)
+  && Object.keys(value).sort().join("\0") === "nonce\0pid\0version"
+  && value.version === 1 && Number.isSafeInteger(value.pid) && value.pid > 0
+  && typeof value.nonce === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.nonce);
+
+function processIsAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
+    throw new Error("live-session lock owner cannot be checked");
+  }
+}
+
+export function acquireSessionLock(path, pid = process.pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("live-session lock owner is invalid");
+  if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
+    throw new Error("live-session lock requires O_NOFOLLOW");
+  }
+  ensurePrivateDir(dirname(path));
+  const record = { version: 1, pid, nonce: randomUUID() };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let fd;
+    try {
+      fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw new Error("live-session lock cannot be created");
+      const current = readPrivateJson(path);
+      if (!validLock(current)) throw new Error("live-session lock is invalid");
+      if (processIsAlive(current.pid)) throw new Error("another live session is active");
+      try { unlinkSync(path); } catch { throw new Error("stale live-session lock cannot be removed"); }
+      continue;
+    }
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("live-session lock is not private");
+      writeFileSync(fd, `${JSON.stringify(record)}\n`);
+    } catch {
+      try { unlinkSync(path); } catch { /* the failed lock stays fail-closed */ }
+      throw new Error("live-session lock cannot be written");
+    } finally { closeSync(fd); }
+    return () => {
+      const current = readPrivateJson(path);
+      if (!validLock(current) || current.pid !== record.pid || current.nonce !== record.nonce) {
+        throw new Error("live-session lock ownership changed");
+      }
+      try { unlinkSync(path); } catch { throw new Error("live-session lock cannot be released"); }
+    };
+  }
+  throw new Error("live-session lock could not be acquired");
 }

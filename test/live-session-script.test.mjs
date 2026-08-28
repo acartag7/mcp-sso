@@ -8,7 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { buildFlows, classifyClient, outcomeOf, readAudit, readPrivateJson, writeResults } from "../scripts/live/session-support.mjs";
+import {
+  acquireSessionLock, buildFlows, classifyClient, outcomeOf, readAudit, readPrivateJson, writeResults,
+} from "../scripts/live/session-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const executable = (path, body) => { writeFileSync(path, body); chmodSync(path, 0o700); };
@@ -231,12 +233,120 @@ test("a killed session wrapper closes its lifeline and stops serve.sh", async ()
     await waitForFile(f.env.PARENT_GONE_FILE);
     await waitForFile(f.env.SERVE_TERMINATED_FILE);
     await waitForProcessExit(servePid);
+    assert.equal(existsSync(join(f.repo, ".live-state/session.lock")), true);
     assert.equal(run(f, ["cleanup"]).status, 0);
     assert.equal(lines(f.clientLog).length, 6);
+    assert.equal(existsSync(join(f.repo, ".live-state/session.lock")), false);
   } finally {
     if (servePid) try { process.kill(-servePid, "SIGKILL"); } catch { /* already gone */ }
     rmSync(f.root, { recursive: true, force: true });
   }
+});
+
+test("one active serve owns the session state and cleanup targets", async () => {
+  const f = fixture();
+  let child;
+  try {
+    child = spawn(process.execPath, [join(f.repo, "session.mjs"), "serve", "google"], {
+      cwd: f.repo, env: { ...f.env, FAKE_SERVE_WAIT: "true" }, stdio: "ignore",
+    });
+    const statePath = join(f.repo, ".live-state/session.json");
+    const lockPath = join(f.repo, ".live-state/session.lock");
+    await waitForReadySession(statePath);
+    const state = readFileSync(statePath, "utf8");
+
+    const second = run(f, ["serve", "entra"]);
+    assert.equal(second.status, 1);
+    assert.match(second.stderr, /another live session is active/);
+    const cleanup = run(f, ["cleanup"]);
+    assert.equal(cleanup.status, 1);
+    assert.match(cleanup.stderr, /another live session is active/);
+    assert.deepEqual(lines(f.serveLog), ["google"]);
+    assert.equal(existsSync(f.clientLog), false);
+    assert.equal(readFileSync(statePath, "utf8"), state);
+    assert.equal(existsSync(lockPath), true);
+    process.kill(child.pid, "SIGINT");
+    const status = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("session.mjs did not stop after Ctrl-C")), 10_000);
+      child.once("error", reject);
+      child.once("exit", (code) => { clearTimeout(timer); resolve(code); });
+    });
+    assert.equal(status, 130);
+    assert.deepEqual(lines(f.clientLog), [
+      "claude mcp remove mcp-sso-live-google", "codex mcp remove mcp-sso-live-google",
+    ]);
+    assert.equal(existsSync(lockPath), false);
+  } finally {
+    if (child?.exitCode === null) {
+      child.kill("SIGKILL");
+      await new Promise((resolve) => { child.once("exit", resolve); });
+    }
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test("serve rejects malformed and untrusted lock files before any side effect", () => {
+  for (const variant of ["missing-field", "extra-field", "wrong-pid", "wrong-nonce", "active", "hard-link", "mode", "symlink", "directory-mode"]) {
+    const f = fixture();
+    try {
+      const stateDir = join(f.repo, ".live-state");
+      const lockPath = join(stateDir, "session.lock");
+      mkdirSync(stateDir, { mode: 0o700 });
+      if (variant === "missing-field") writeFileSync(lockPath, '{"version":1}\n', { mode: 0o600 });
+      if (variant === "extra-field") writeFileSync(lockPath, `${JSON.stringify({
+        version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", extra: true,
+      })}\n`, { mode: 0o600 });
+      if (variant === "wrong-pid") writeFileSync(lockPath, `${JSON.stringify({
+        version: 1, pid: "1", nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      })}\n`, { mode: 0o600 });
+      if (variant === "wrong-nonce") writeFileSync(lockPath, `${JSON.stringify({
+        version: 1, pid: process.pid, nonce: "not-a-nonce",
+      })}\n`, { mode: 0o600 });
+      if (variant === "active") writeFileSync(lockPath, `${JSON.stringify({
+        version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      })}\n`, { mode: 0o600 });
+      if (variant === "hard-link") {
+        const original = join(f.root, "original-lock");
+        writeFileSync(original, `${JSON.stringify({
+          version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        })}\n`, { mode: 0o600 });
+        linkSync(original, lockPath);
+      }
+      if (variant === "mode") {
+        writeFileSync(lockPath, `${JSON.stringify({
+          version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        })}\n`, { mode: 0o644 });
+      }
+      if (variant === "symlink") {
+        const target = join(f.root, "lock-target");
+        writeFileSync(target, `${JSON.stringify({
+          version: 1, pid: process.pid, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        })}\n`, { mode: 0o600 });
+        symlinkSync(target, lockPath);
+      }
+      if (variant === "directory-mode") chmodSync(stateDir, 0o755);
+      const result = run(f, ["serve", "google"]);
+      assert.equal(result.status, 1, variant);
+      assert.equal(existsSync(f.serveLog), false, variant);
+      assert.equal(existsSync(f.clientLog), false, variant);
+      assert.equal(existsSync(join(stateDir, "session.json")), false, variant);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("lock release refuses to remove a replacement with another nonce", () => {
+  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-lock-release-"));
+  const path = join(root, "session.lock");
+  try {
+    chmodSync(root, 0o700);
+    const release = acquireSessionLock(path);
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    writeFileSync(path, `${JSON.stringify({
+      ...record, nonce: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    })}\n`);
+    assert.throws(release, /lock ownership changed/);
+    assert.equal(existsSync(path), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("session rejects unknown and repeated legs before any side effect", () => {
@@ -566,5 +676,30 @@ test("audit reads reject non-files, oversized input, unknown events, and wrong f
       writeFileSync(path, `${JSON.stringify(row)}\n`);
       assert.throws(() => readAudit(path), /invalid status|valid event status/);
     }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("known non-session audit events are accepted and ignored by session flows", () => {
+  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-audit-known-"));
+  const path = join(root, "audit.jsonl");
+  try {
+    const sessionEvents = audit("https://claude.ai/oauth-client");
+    const unrelatedNames = [
+      "oauth.pairing.attempt", "oauth.device.authorization", "oauth.device.approve",
+      "oauth.token.device_code", "oauth.token.client_credentials", "oauth.client.provision",
+      "oauth.client.rotate_secret", "oauth.client.disable",
+    ];
+    const unrelated = unrelatedNames.map((event, index) => ({
+      occurredAt: new Date(Date.parse(sessionEvents[1].occurredAt) + index + 1).toISOString(),
+      event, status: "success", clientId: "unrelated-client",
+    }));
+    writeFileSync(path, `${[...sessionEvents.slice(0, 2), ...unrelated, ...sessionEvents.slice(2)]
+      .map(JSON.stringify).join("\n")}\n`);
+    const rows = readAudit(path);
+    assert.equal(rows.length, sessionEvents.length + unrelated.length);
+    const flows = buildFlows(rows);
+    assert.equal(flows.length, 1);
+    assert.deepEqual(flows[0].events.map((event) => event.event), sessionEvents.map((event) => event.event));
+    assert.deepEqual(outcomeOf(flows[0]), { verdict: "PASS", toolCalls: 1, ambiguousToolCalls: 0 });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
